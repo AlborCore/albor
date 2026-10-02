@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "prototypes/d/strategies.h"
+#include "prototypes/d/strategy_dirty_bitset.h"
 
 namespace albor::prototype_d
 {

@@ -8,6 +8,7 @@
 
 #include "prototypes/d/engine.h"
 #include "prototypes/d/strategies.h"
+#include "prototypes/d/strategy_dirty_bitset.h"
 #include "prototypes/d/workload.h"
 
 namespace albor::prototype_d

@@ -8,6 +8,7 @@ add_executable(albor-tests
 
 find_package(GTest CONFIG REQUIRED)
 
-target_link_libraries(albor-tests PRIVATE albor-prototype-d GTest::gtest GTest::gtest_main)
+target_link_libraries(albor-tests PRIVATE albor-prototype-d albor-prototype-d-topo GTest::gtest GTest::gtest_main)
+
 include(GoogleTest)
 gtest_discover_tests(albor-tests DISCOVERY_TIMEOUT 60)

@@ -22,6 +22,7 @@ Violating any of these is a defect, not a style issue.
 
 - **No interpreter in Release** (AD-01, §2.1): production builds contain no `.ui` parser, no IR evaluator, no type registry, no property-by-name reflection, no automation channel.
 - **Layout invariance** (AD-02, §2.3): runtime class layout and virtual interfaces are identical in Release, Dev and Test. Dev/Test features attach only through registration hooks that exist in every build, side tables keyed by node identity, and separately linked/generated translation units. Never change class layout or inline code under `#ifdef`.
+- **Dev/Test-only code is excluded at link time, never with `#ifdef`** (AD-04, §2.3). Keep the source byte-identical across configurations, put the feature in its own linked target, and install it through the registration hook. A Release reference to an excluded symbol must fail the link, not compile away silently.
 - **Automation is excluded from Release at compile/link time** (AD-10, §19.6), not by a runtime flag. Local-only transport, per-session token, application allow-list, off unless explicitly enabled.
 - **MCP is an adapter over the automation layer only** (AD-20, §19.7). It must not reach commands or runtime internals directly.
 - **Identity is explicit** (AD-11, §18.1): a node's `id:` is its identity; compiler-generated implicit keys are correlation hints for live reload and must never be used by automation selectors or semantic keys.

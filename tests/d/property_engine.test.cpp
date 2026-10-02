@@ -7,6 +7,7 @@
 #include "prototypes/d/property.h"
 #include "prototypes/d/store.h"
 #include "prototypes/d/strategies.h"
+#include "prototypes/d/strategy_dirty_bitset.h"
 #include "prototypes/d/value.h"
 
 namespace albor::prototype_d
