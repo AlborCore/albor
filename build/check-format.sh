@@ -1,43 +1,28 @@
-#!/usr/bin/env bash
-# check-format.sh - verify that every C++ source in the repository matches .clang-format
+#!/bin/bash
 
-set -euo pipefail
+# clang-format linter for the C++ sources under src/ and tests/
+# exits non-zero when any file violates the project .clang-format
 
-root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-style_file="$root_dir/.clang-format"
-diff_file="$(mktemp)"
-status=0
-count=0
+# root of the repository, independent of the current working directory
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
 
-trap 'rm -f "$diff_file"' EXIT
+# generated sources that clang-format must not reformat
+EXCLUDED=(
+    "src/ui/font_data.h"
+)
 
-# collect the C++ files tracked in the repository, skipping build directories
-sources="$(cd "$root_dir" && git ls-files --cached --others --exclude-standard -- '*.cpp' '*.h')"
+# collect tracked C++ sources, dropping the generated files
+files=()
+while IFS= read -r file; do
+    [ -z "$file" ] && continue
+    files+=("$file")
+done < <(git ls-files 'src/**' 'tests/**' | grep -E '\.(cpp|h|c\+\+|mm)$' | grep -Fxv -e "${EXCLUDED[0]}" -e "${EXCLUDED[1]}" -e "${EXCLUDED[2]}")
 
-if [ -z "$sources" ]; then
-    echo "check-format: no C++ sources found"
-    exit 0
+if [ ${#files[@]} -eq 0 ]; then
+    echo "error: no C++ source files found" >&2
+    exit 1
 fi
 
-while IFS= read -r source; do
-    if [ -z "$source" ]; then
-        continue
-    fi
-
-    count=$((count + 1))
-
-    # compare the file with its formatted form, one file at a time so the report names the offender
-    if ! diff -u "$root_dir/$source" <(clang-format --style=file:"$style_file" "$root_dir/$source") > "$diff_file"; then
-        echo "check-format: $source is not formatted"
-        cat "$diff_file"
-        status=1
-    fi
-done <<EOF
-$sources
-EOF
-
-if [ "$status" -eq 0 ]; then
-    echo "check-format: $count files OK"
-fi
-
-exit "$status"
+# clang-format's --dry-run --Werror prints each violation and exits non-zero
+clang-format --dry-run --Werror "${files[@]}"
