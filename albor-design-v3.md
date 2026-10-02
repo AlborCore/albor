@@ -979,9 +979,9 @@ Albor Runtime -> Platform Abstraction
 - **X11:** its own input, clipboard, IME (IBus or XIM), DPI and presentation handling (Tier 2).
 - **Headless:** no native window, no GPU requirement (§25).
 
-### 24.1 Platform implementation strategy (AD-16, Open)
+### 24.1 Platform implementation strategy (AD-16, Decided)
 
-Whether to implement the platform layer directly, reuse a C++ windowing library, or take a hybrid approach **must be decided before Prototype A2 and Phase 1 platform work**. Decision criteria:
+AD-16 settles the ownership boundary: Albor implements its own lightweight Window, EventLoop and Platform abstractions per OS and reuses low-level standard C libraries only for specialized protocol tasks. A general-purpose windowing library is not used as the platform layer. The criteria that produced the decision were:
 
 - ability to express window roles, popups, modality and client-side decorations (Wayland positioner/popup behavior is the key test);
 - ability to run custom nested-loop handling and register event sources in all run-loop modes (§7.4);
@@ -990,7 +990,14 @@ Whether to implement the platform layer directly, reuse a C++ windowing library,
 - ability to create surfaces from renderer-owned GPU devices (§9.2);
 - licensing, binary size and maintenance burden.
 
-A library that cannot express Wayland popup placement or surface roles is acceptable for the renderer-only prototype A1 but disqualifying as the final platform layer.
+A library that cannot express Wayland popup placement or surface roles is acceptable for the renderer-only prototype A1 but disqualifying as the final platform layer; that is why A1 may use a convenience library while the platform layer is written directly.
+
+| Platform | Direct layer | Reused libraries |
+| --- | --- | --- |
+| macOS | AppKit plus an Objective-C runtime bridge | CAMetalLayer for presentation |
+| Windows | Win32 | DirectComposition, DXGI, TSF |
+| Linux Wayland | Wayland client | libdecor, xkbcommon, libwayland-egl |
+| Linux X11 (Tier 2) | X11 client | xcb, xkbcommon |
 
 ---
 
@@ -1107,7 +1114,7 @@ Acceptance thresholds are **set and recorded before a prototype runs**, based on
 
 **AD-08 — Window roles and modality.** *Decided.* Role (Normal/Dialog/Tool/Popup) at creation; modality is a separate framework-enforced property; popup carries parent/anchor/placement.
 
-**AD-16 — Platform implementation strategy.** *Open.* Decide before Prototype A2 using the criteria in §24.1.
+**AD-16 — Platform Implementation Strategy.** *Decided.* 1. **Ownership Boundary:** Albor directly implements its own lightweight Window, EventLoop, and Platform abstractions per OS (macOS AppKit, Windows Win32, Linux Wayland, Linux X11). General-purpose windowing libraries (GLFW, SDL) are rejected as they fail Wayland popup requirements (xdg_positioner), nested run-loop event registration (§7.4), IME text input, and OS accessibility integration. 2. **Targeted Modular Plumbing:** Albor reuses low-level, standard C platform libraries for specialized protocol tasks where appropriate: Linux Wayland: libdecor (client-side decorations), xkbcommon (keyboard mapping/state), libwayland-egl; Linux X11: xcb, xkbcommon; macOS: Direct AppKit / Objective-C runtime bridge + CAMetalLayer; Windows: Direct Win32 / DirectComposition / DXGI / TSF. 3. **Prototype Unblocking:** This unblocks Prototype A2 (platform presentation, surface creation, popups, and nested-loop validation across macOS, Windows, and Wayland).
 
 **AD-21 — Nested native loops and re-entrancy.** *Decided* as a principle (§7.4); platform mechanisms are implementation work.
 
@@ -1158,7 +1165,7 @@ A1 may use a convenience windowing library; it must not decide AD-16.
 
 ### Prototype A2 — Platform presentation
 
-After AD-16. Per-platform surface creation, presentation, resize behavior (including nested resize loops), frame callbacks, DPI changes, window roles, popups and modality on macOS, Windows and Wayland (X11 for completeness).
+After AD-16, which is Decided. Per-platform surface creation, presentation, resize behavior (including nested resize loops), frame callbacks, DPI changes, window roles, popups and modality on macOS, Windows and Wayland (X11 for completeness).
 Questions: GPU backend viability per platform, Wayland roles/popups, and nested-loop behavior.
 
 ### Prototype B — Generated-code build performance
@@ -1314,7 +1321,6 @@ The `Column` has no explicit `id` and therefore only an implicit key (§18.1). `
 11. Final `RenderContext` API (Prototype A1).
 12. Level 3 native GPU interop.
 13. Modal/popup implementation details per platform.
-14. Platform/windowing-library reuse (AD-16).
 15. Text implementation and library.
 16. Layout algorithm.
 17. Animation API details.
@@ -1325,7 +1331,7 @@ The `Column` has no explicit `id` and therefore only an implicit key (§18.1). `
 22. Platform accessibility details.
 23. Initial widget set.
 
-Resolved in v3 (no longer open): window role/modality model, single source for scale factor, custom-canvas semantics, MCP routing, identity policy, automation build exclusion, compiler language (Proposed), X11 tier (Proposed), manifest authoring model (Proposed), property representation and binding invalidation algorithm (AD-04).
+Resolved in v3 (no longer open): window role/modality model, single source for scale factor, custom-canvas semantics, MCP routing, identity policy, automation build exclusion, compiler language (Proposed), X11 tier (Proposed), manifest authoring model (Proposed), property representation and binding invalidation algorithm (AD-04), platform implementation strategy (AD-16).
 
 ---
 
