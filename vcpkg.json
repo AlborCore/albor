@@ -1,0 +1,11 @@
+{
+  "name": "albor",
+  "version-string": "0.1.0",
+  "description": "Cross-platform declarative UI framework for C++",
+  "dependencies": [
+    {
+      "name": "gtest",
+      "default-features": false
+    }
+  ]
+}
