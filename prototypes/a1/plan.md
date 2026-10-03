@@ -155,6 +155,38 @@ that a CPU recording worker is cheap (0.46 ms p99 against 8.33 ms), so the two-s
 is in question is whether Ganesh's single-owner context can be driven from a worker while the UI thread wraps the
 surface. That split is left open rather than guessed.
 
+## A1.4 — Graphite offscreen, thresholds recorded before the run
+
+Enabling the port's `graphite` feature makes `skgpu::graphite::ContextFactory::MakeMetal` link, so Q5 is reachable for
+the first time. What the public API still does not allow is **presentation**: `Recorder::createBackendTexture` is
+public, but it takes a `TextureInfo`, and `TextureInfo` exposes only a default and a copy constructor — the
+`(BackendApi, Data, SkISize)` constructor is private to `MtlTextureInfo` and friends. A client therefore cannot point
+Graphite at a `CAMetalLayer` drawable's texture, and a `SkSurfaces::RenderTarget` surface does not hand its texture
+back. So this phase measures Graphite **offscreen**: create the context, allocate the surface, record, submit, and skip
+presentation entirely.
+
+**Hardware / build:** as A1.3 — Intel Core i7-9750H @ 2.60 GHz, 16 GB, macOS 26.6.2, `release` preset. The surface is
+2560 × 1440 to match the A1.3 window's pixel size, so the workloads are comparable.
+
+**Workload:** the same retained batches as W1 — 10^6 cosmetic segments growing to 1.8 × 10^6 through the same append
+stream — recorded into a 2560 × 1440 offscreen surface with the same continuous pan and zoom, 400 frames. No window and
+no window server are involved, which also makes this slice runnable in CI.
+
+| Category | Threshold |
+| --- | --- |
+| Recording the frame, p99 | ≤ 8.33 ms (the R1 processing deadline, the same bar A1.3 set for Ganesh) |
+| Recording p95 while the view moves / while it is still | ≤ 1.25× (the O(1) claim of §11.2, retested on Graphite) |
+| Recording p99 per segment | ≤ 8 ns |
+| Submitting the frame, p99 | ≤ 150 ms, the GPU throughput the A1.3 on-screen run implied |
+| Frames completed | 400 of 400, no crash |
+
+**How to read the submit number:** offscreen submission has no vsync in the loop, so this is a throughput measurement of
+the GPU's real work, not a cadence measurement. A1.3's 149 ms submit included presentation back-pressure. A smaller
+number here is therefore **not** an improvement claim; only a *larger* one would be a regression against Ganesh.
+
+**What this phase cannot answer:** anything about presenting through Graphite, and therefore anything about
+per-window pacing with a Graphite surface. Those stay open until the port exports a `BackendTexture` factory.
+
 ## A1.2b — resolved, and folded into A1.3
 
 `RenderContext`, `CustomRenderNode`, the retained resource factory and workloads W1 to W3 are unchanged. The blocker was
