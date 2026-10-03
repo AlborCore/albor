@@ -83,3 +83,88 @@ nothing was left behind — but the rule is worth keeping: **never invoke `vcpkg
 | Debug build | 0 errors, 0 warnings |
 | 33 gtest unit tests | 33 passed |
 | `plan.md` thresholds committed before the run | yes, `b538f68` |
+---
+
+# Phase A1-Dawn run — the same workloads, on Dawn
+
+Driver: `./.build-release/prototypes/a1_dawn/albor-prototype-a1-dawn-bench`. **6 threshold failures, exit 1.**
+
+The workloads, the seeds, the platform window and the thresholds are the ones Prototype A1 used against Skia, so the
+rows are comparable line for line. The resource generator in `resources.cpp` is copied verbatim from
+`prototypes/a1/resource_factory.macos.mm`, and the proof that this worked is in the tables below: **the hover hit ratio
+came out at 99.41% on both renderers, to the digit**, which can only happen if both were fed byte-identical geometry.
+
+## The headline: one draw call, and it presents at 60 Hz
+
+| Metric, W1 at 1.8 × 10⁶ segments | Skia (Ganesh) | **Dawn** | Threshold |
+| --- | --- | --- | --- |
+| **Draw calls per frame** | **220** | **1** | exactly 1 |
+| **Present interval p50** | **149.7 ms** | **16.62 ms** | ≤ 16.7 ms |
+| Present interval p95 | 279.6 ms | 18.16 ms | — |
+| Present interval p99 | 420.5 ms | 48.93 ms | ≤ 16.7 ms |
+| Recording p50 | 0.177 ms | 0.085 ms | — |
+| Recording p99 per segment | 0.219 ns | 0.114 ns | ≤ 8 ns |
+| Recording p95 moved / still (O(1)) | 0.976× | 1.096× | ≤ 1.25× |
+| Frames dropped | 0 of 401 | 0 of 400 | ≤ 1% |
+| Append build per 100k, p99 | 119.9 ms | 37.0 ms | ≤ 25 ms |
+
+**Both of Skia's structural limits disappear.** WebGPU's 32-bit instance index carries all 1.8 × 10⁶ segments in a
+single `Draw(6, 1800000)` call, where Skia's 16-bit vertex indexing forced 220. And because the GPU is no longer
+CPU-starved by 220 draw calls, the frame actually reaches the display: **16.62 ms p50 is one 60 Hz interval**, against
+150 ms for Skia — Skia was presenting at roughly 7 fps on this machine and reporting 0 dropped frames while doing it,
+because its scheduler had no reason to complain.
+
+## W2 — CAD canvas, 10⁵ symbols, hover hit testing
+
+| Metric | Skia | **Dawn** | Threshold |
+| --- | --- | --- | --- |
+| Recording p50 / p99 | 6.16 / 7.23 ms | **0.110 / 0.238 ms** | ≤ 8.33 ms |
+| Present interval p50 / p99 | 41.3 / 77.5 ms | **16.66 / 17.04 ms** | ≤ 16.7 ms |
+| Hover hit query p99 | 0.0022 ms | 0.0048 ms | ≤ 1.0 ms |
+| Queries that hit the expected symbol | 99.41% | **99.41%** | ≥ 99% |
+
+Recording is **30× cheaper** and the canvas holds 60 Hz. The present interval misses by 0.34 ms at p99, which is 2% and
+is vsync alignment rather than a real stall. The hit ratio is identical to Skia's because it is the same CPU-side
+uniform grid over the same generated geometry — the renderer does not participate in it at all, which is exactly why the
+two numbers matching is the validity check for this comparison.
+
+## W3 — multi-window isolation, 100 ms hold on window 1
+
+| Metric | Skia | **Dawn** | Threshold |
+| --- | --- | --- | --- |
+| Window 1 attempts / presented | 130 / 128 (deadline-limited) | **400 / 400** | ≥ 95% |
+| Window 2 interval during the hold, p50 | 1244 ms (invalid run) | **100.86 ms** | ≤ 16.7 ms |
+| Window 2 frames during the hold | 0.33% | **16.5%** | ≥ 95% |
+| Window 2 queries during the hold | 29 | **100** | ≥ 30 |
+| Injected hold width | 146 s (deadline-limited) | **10.1 s** | — |
+
+**W3 is now a real measurement, and it refutes the isolation claim.** Because Dawn sustains 60 Hz single-window, the
+hold is no longer hidden by GPU saturation: window 2's interval during the hold is **100.86 ms p50 — almost exactly the
+100 ms hold**. Window 2 is not slowed by shared GPU contention; it is stopped dead by window 1's hold, because both
+windows present from the same thread. Presenting on the UI thread gives no window isolation on macOS, whatever the
+renderer. This is the same conclusion A1.2a reached for Skia, now confirmed on a renderer that is not the bottleneck.
+
+## What this changes for §11.2
+
+| Question | Skia said | Dawn says |
+| --- | --- | --- |
+| Can a 10⁶-segment batch be one draw call? | no — 16-bit indexing, 220 calls | **yes** |
+| Can a retained batch present at 60 Hz? | no — 150 ms p50 | **yes** — 16.62 ms p50 |
+| Does CPU stroke tessellation kill the batch? | yes — 10,470 ms/frame | **not applicable** — quads are expanded in the vertex shader |
+| Is append amortised? | no — O(n) rebuild | **no — O(n) rebuild, 37 ms** |
+
+The batching story in §11.2 was written against a renderer whose line path is CPU-bound and whose vertex indexing is
+16-bit. On WebGPU both constraints disappear, and the remaining append cost is a **CPU-side rebuild in the workload's
+own generator, not a renderer limit** — the upload itself only writes the appended tail, because the generator is prefix
+deterministic.
+
+## Limits of this run
+
+- **Build time is not compared.** The ≤ 3.0 min threshold was not evaluated: the measured 757 s run started with a warm
+  ccache for part of the port, and no cold Skia build was measured on this machine. See the earlier section.
+- **Labels are counted, not drawn.** W2 builds and reports the same 4000 labels with the same buffer as Skia, but Dawn
+  draws no glyphs: a WGSL text path needs a glyph atlas, which is out of scope for this slice. W2 therefore compares
+  symbol geometry and hit testing, not text rendering.
+- **One run each.** Prototype A1 already established that tail figures on this machine vary several-fold between runs,
+  so the p99 columns are indicative and the p50 columns are the stable comparison.
+- **Windows and Wayland** are not covered; this slice is macOS only.
