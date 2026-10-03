@@ -56,6 +56,24 @@ This prototype links **both** prior prototypes and adds nothing new to them:
 Fairness is enforced by construction, not by discipline: one `ResourceSet` is generated once and both renderers are
 handed the same immutable object, the same view transform, the same clip, the same pixel size and the same clear colour.
 
+## Scope change, recorded before any valid run
+
+The first two attempts are **not** measurements and are not counted as runs. Both were diagnostic: dawn drew nothing,
+because the pipeline and the readback were still being brought up, so every parity figure they produced was
+meaningless. Two things were fixed as a result, and both are recorded here because they change the workload:
+
+1. **An empty request now clears the target.** It previously returned before issuing any work, which is why the readback
+   sanity check T1 failed for a reason that had nothing to do with the readback.
+2. **The workload is smaller.** The first attempt used 200,000 segments and 60 frames per engine and took about seven
+   minutes, almost all of it skia's cpu stroke path at roughly 1.1 seconds per frame. A parity check that takes seven
+   minutes is not a parity check, so the committed workload is reduced to **20,000 segments and 10 frames per engine**,
+   and the recorded run is **2 repeats**.
+
+No threshold value is relaxed by this change. T1 through T4, T6, T7 and T8 keep the values committed in `54800c7`.
+T5 is **deferred, not weakened**: comparing ganesh against dawn needs a metal render target that this skia build
+(milestone 148) only exposes through a narrower api, so the gpu-against-gpu column is left unevaluated rather than
+approximated by the cpu backend and presented as a gpu result.
+
 ## Reference machine
 
 Intel Core i7-9750H @ 2.60 GHz, 16 GB, macOS 26.6.2 (Darwin 25.6.0), `release` preset. Recorded before any run, as

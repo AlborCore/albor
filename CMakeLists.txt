@@ -40,6 +40,7 @@ if(ALBOR_PROTOTYPES)
     add_subdirectory(prototypes/a2)
     add_subdirectory(prototypes/a1)
     add_subdirectory(prototypes/a1_dawn)
+    add_subdirectory(prototypes/a1_parity)
 endif()
 
 enable_testing()
