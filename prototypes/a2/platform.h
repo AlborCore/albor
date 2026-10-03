@@ -62,6 +62,13 @@ namespace albor::a2
         // run the loop until the window closes, handing every presented frame to the callback
         void run(const std::function<void(const FrameRecord&)>& on_frame);
 
+        // hand frames to the callback without entering a loop, so a second window can be driven by the first one
+        void set_frame_callback(const std::function<void(const FrameRecord&)>& on_frame);
+
+        // stop delivering frames and detach the frame source, which a caller must do before it destroys what
+        // the callback captured: a window that was only driven by another window's loop still has a live source
+        void detach_frame_source();
+
         // request a resize, which is the platform's live resize entry point (§7.4)
         void request_resize(std::size_t logical_width, std::size_t logical_height);
 

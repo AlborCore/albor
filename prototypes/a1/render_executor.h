@@ -24,7 +24,8 @@ namespace albor::a1
         std::uint64_t index = 0;
         double build_ms = 0.0; // stage 1 on the ui thread
         double submit_blocked_ms = 0.0; // how long the ui thread waited to hand the scene over
-        double present_ms = 0.0; // stage 2 on the render thread
+        double encode_ms = 0.0; // stage 2 recording on the worker
+        double present_ms = 0.0; // presenting on the ui thread
         double submit_to_present_ms = 0.0; // end to end across the handoff
         double interval_ms = 0.0; // time between consecutive presents
     };

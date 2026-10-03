@@ -51,3 +51,14 @@ The original result stands as recorded (a miss against 16.7 ms). Under R1 the me
 - One display only, so Q5 verifies that the scale-change hook is installed and fires, not that a cross-display move is handled.
 - The resize loop is driven programmatically rather than by a human drag, so gesture-level behaviour is not covered.
 - Text, IME and accessibility are Prototype C and Prototype A2's later platform slices, not this one.
+
+## Platform slices beyond macOS
+
+The macOS slice is the only one that can run on the current host. The other two platforms have their own directories, with their own pre-recorded thresholds, because a threshold recorded on one platform is not a threshold on another:
+
+| Slice | Directory | Plan | Status |
+| --- | --- | --- | --- |
+| **A2-W** | `prototypes/a2/win32/` | `win32/plan.md` | `PENDING_CI_MATRIX_RUN (Requires Windows Host)` |
+| **A2-L** | `prototypes/a2/linux/` | `linux/plan.md` | `PENDING_CI_MATRIX_RUN (Requires Wayland Host)` |
+
+Both record the same R1 budgets (≤ 25.0 ms input-to-present, ≤ 8.33 ms processing, ≤ 1.0 ms UI thread block) plus the platform-specific questions: `WM_ENTERSIZEMOVE` and `WM_DPICHANGED` for Win32, `wl_frame` throttling and `xdg_positioner` for Wayland. Both leave the reference machine table empty on purpose: §28.4 forbids starting a run before the hardware is named.

@@ -1,6 +1,6 @@
 #include "prototypes/a2/platform.h"
 
-#import "prototypes/a2/native_surface_mac.h"
+#import "prototypes/a2/native_surface.macos.h"
 
 #import <AppKit/AppKit.h>
 #import <Metal/Metal.h>
@@ -69,6 +69,10 @@ namespace albor::a2
 
         // the last observed backing scale, to detect a scale change (§9.1)
         double last_scale = 1.0;
+
+        // where the window sits on the screen, so a live resize keeps its corner (§7.4)
+        double origin_x = 120.0;
+        double origin_y = 120.0;
 
         // the application object that owns the run loop
         NSApplication* application = nil;
@@ -211,11 +215,21 @@ namespace albor::a2
         // reach the shared application and activate it, because the display link only ticks for an active application
         m_state->application = [NSApplication sharedApplication];
         [m_state->application setActivationPolicy:NSApplicationActivationPolicyRegular];
-        [m_state->application finishLaunching];
+
+        // launch the application only for the first window, because finishLaunching may only be called once
+        static std::atomic<std::size_t> window_ordinal{0};
+        const std::size_t ordinal = window_ordinal.fetch_add(1);
+        if (ordinal == 0) {
+            [m_state->application finishLaunching];
+        }
         [m_state->application activateIgnoringOtherApps:YES];
 
+        // cascade the window origins so a second window does not hide behind the first one
+        m_state->origin_x = 120.0 + 80.0 * static_cast<double>(ordinal);
+        m_state->origin_y = 120.0 + 60.0 * static_cast<double>(ordinal);
+
         // create the resizable window, which is what makes a live resize loop possible (§7.4)
-        const NSRect frame = NSMakeRect(120, 120, static_cast<double>(logical_width), static_cast<double>(logical_height));
+        const NSRect frame = NSMakeRect(m_state->origin_x, m_state->origin_y, static_cast<double>(logical_width), static_cast<double>(logical_height));
         m_state->window = [[NSWindow alloc] initWithContentRect:frame styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
         if (m_state->window == nil) {
             return false;
@@ -277,16 +291,18 @@ namespace albor::a2
     void PlatformWindow::show() {
         // put the window on screen
         [m_state->window makeKeyAndOrderFront:nil];
+
+        // attach the frame source to the common run loop modes, which is what keeps it alive inside a nested
+        // loop (§7.4) and also lets a second window tick while the first one owns the loop
+        CADisplayLink* link = (CADisplayLink*)m_state->display_link;
+        [link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+
         m_state->running = true;
     }
 
     void PlatformWindow::run(const std::function<void(const FrameRecord&)>& on_frame) {
         // remember the callback the display link hands its frames to
         m_state->on_frame = on_frame;
-
-        // add the frame source to the common run loop modes, which is what keeps it alive inside a nested loop (§7.4)
-        CADisplayLink* link = (CADisplayLink*)m_state->display_link;
-        [link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
 
         // run the application loop until the window closes
         while (m_state->running) {
@@ -301,6 +317,30 @@ namespace albor::a2
                 }
             }
         }
+
+        // detach the frame source before the caller destroys what the callback captured: a display link that
+        // stayed attached would fire a lambda whose references no longer exist. show() attaches it again, so
+        // the same window can drive a later workload.
+        detach_frame_source();
+    }
+
+    void PlatformWindow::set_frame_callback(const std::function<void(const FrameRecord&)>& on_frame) {
+        // remember the callback without entering a loop, so a second window can be driven by the first one
+        const std::lock_guard<std::mutex> lock(m_state->mutex);
+        m_state->on_frame = on_frame;
+    }
+
+    void PlatformWindow::detach_frame_source() {
+        // take the frame source off the run loop first, so no further frame can be delivered at all
+        CADisplayLink* link = (CADisplayLink*)m_state->display_link;
+        if (link != nil) {
+            [link removeFromRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+        }
+
+        // then drop the callback, so a frame delivered a moment ago cannot reach captures that are going away
+        const std::lock_guard<std::mutex> lock(m_state->mutex);
+        m_state->on_frame = nullptr;
+        m_state->running = false;
     }
 
     void PlatformWindow::request_resize(std::size_t logical_width, std::size_t logical_height) {
@@ -313,7 +353,7 @@ namespace albor::a2
         }
 
         // ask appkit to resize, which is the live resize entry point
-        [m_state->window setFrame:NSMakeRect(120, 120, static_cast<double>(logical_width), static_cast<double>(logical_height)) display:YES];
+        [m_state->window setFrame:NSMakeRect(m_state->origin_x, m_state->origin_y, static_cast<double>(logical_width), static_cast<double>(logical_height)) display:YES];
     }
 
     void PlatformWindow::run_nested_loop_for_ms(std::size_t duration_ms) {

@@ -24,6 +24,7 @@ namespace
     constexpr double FRAME_INTERVAL_BUDGET_MS = 16.7;
     constexpr double SUBMIT_BLOCKED_BUDGET_MS = 1.0;
     constexpr double BUILD_BUDGET_MS = 2.0;
+    constexpr double ENCODE_BUDGET_MS = 8.33;
     constexpr double SUBMIT_TO_PRESENT_BUDGET_MS = 25.0;
     constexpr double RESIZE_PRESENT_RATIO = 0.95;
 
@@ -160,6 +161,7 @@ int main() {
 
     // split the render side timings into the metrics the phase has to report
     std::vector<double> present_intervals;
+    std::vector<double> encode_ms;
     std::vector<double> present_ms;
     std::vector<double> submit_to_present_ms;
     for (const FrameTiming& timing : timings) {
@@ -167,6 +169,7 @@ int main() {
         if (timing.interval_ms > 0.0) {
             present_intervals.push_back(timing.interval_ms);
         }
+        encode_ms.push_back(timing.encode_ms);
         present_ms.push_back(timing.present_ms);
         submit_to_present_ms.push_back(timing.submit_to_present_ms);
     }
@@ -186,13 +189,15 @@ int main() {
     // report the render thread side of the pipeline
     std::printf("present interval p50 ms   %.4f\n", percentile(present_intervals, 0.50));
     std::printf("present interval p99 ms   %.4f (budget %.1f)\n", percentile(present_intervals, 0.99), FRAME_INTERVAL_BUDGET_MS);
-    std::printf("present cost p99 ms       %.4f\n", percentile(present_ms, 0.99));
+    std::printf("worker encoding p99 ms    %.4f (budget %.2f)\n", percentile(encode_ms, 0.99), ENCODE_BUDGET_MS);
+    std::printf("ui present cost p99 ms    %.4f\n", percentile(present_ms, 0.99));
     std::printf("submit to present p99 ms  %.4f (budget %.1f)\n", percentile(submit_to_present_ms, 0.99), SUBMIT_TO_PRESENT_BUDGET_MS);
 
     // compare every measurement with the thresholds recorded before the run
     const bool interval_ok = percentile(present_intervals, 0.99) <= FRAME_INTERVAL_BUDGET_MS;
     const bool blocked_ok = percentile(submit_blocked_ms, 0.99) <= SUBMIT_BLOCKED_BUDGET_MS;
     const bool build_ok = percentile(build_ms, 0.99) <= BUILD_BUDGET_MS;
+    const bool encode_ok = percentile(encode_ms, 0.99) <= ENCODE_BUDGET_MS;
     const bool latency_ok = percentile(submit_to_present_ms, 0.99) <= SUBMIT_TO_PRESENT_BUDGET_MS;
     const bool resize_ok = static_cast<double>(window.frames_presented_while_resizing()) / static_cast<double>(RESIZE_STEPS) >= RESIZE_PRESENT_RATIO;
 
@@ -200,9 +205,10 @@ int main() {
     std::printf("interval within budget    %s\n", interval_ok ? "yes" : "no");
     std::printf("blocked within budget     %s\n", blocked_ok ? "yes" : "no");
     std::printf("build within budget       %s\n", build_ok ? "yes" : "no");
+    std::printf("encoding within budget    %s\n", encode_ok ? "yes" : "no");
     std::printf("latency within budget     %s\n", latency_ok ? "yes" : "no");
     std::printf("resize within budget      %s\n", resize_ok ? "yes" : "no");
 
     // report a failing run to the shell so a ci job notices
-    return interval_ok && blocked_ok && build_ok && latency_ok && resize_ok && !deadline_reached ? 0 : 1;
+    return interval_ok && blocked_ok && build_ok && encode_ok && latency_ok && resize_ok && !deadline_reached ? 0 : 1;
 }

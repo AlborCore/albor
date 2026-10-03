@@ -1,6 +1,6 @@
 #include "prototypes/a1/render_executor.h"
 
-#import "prototypes/a2/native_surface_mac.h"
+#import "prototypes/a2/native_surface.macos.h"
 
 #include <atomic>
 #include <chrono>
@@ -250,6 +250,7 @@ namespace albor::a1
             FrameTiming timing;
             timing.index = item.build_ms > 0.0 ? item.frame_index : 0;
             timing.build_ms = item.build_ms;
+            timing.encode_ms = item.encode_ms;
             timing.present_ms = to_ms(done - tick_start);
             timing.submit_to_present_ms = to_ms(done - item.submitted_at);
             timing.interval_ms = m_state->has_last_present ? to_ms(done - m_state->last_present) : 0.0;

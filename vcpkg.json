@@ -5,7 +5,37 @@
   "dependencies": [
     {
       "name": "gtest",
+      "version>=": "1.18.0",
       "default-features": false
+    },
+    {
+      "name": "skia",
+      "version>=": "148",
+      "platform": "osx",
+      "default-features": false,
+      "features": [
+        "metal"
+      ]
+    },
+    {
+      "name": "skia",
+      "version>=": "148",
+      "platform": "windows",
+      "default-features": false,
+      "features": [
+        "direct3d"
+      ]
+    },
+    {
+      "name": "skia",
+      "version>=": "148",
+      "platform": "linux",
+      "default-features": false,
+      "features": [
+        "freetype",
+        "fontconfig",
+        "vulkan"
+      ]
     }
   ]
 }

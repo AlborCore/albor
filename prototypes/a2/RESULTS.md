@@ -61,3 +61,12 @@ Run-to-run variance on the same binary: steady interval p99 was 17.7, 23.7, 25.6
 - The resize loop is programmatic, so a human drag (which coalesces and interpolates differently) is not covered.
 - Window roles, popups and modality (§8.1) are not implemented yet; they are the next part of A2.
 - Windows and Wayland need their own slices on their own hardware.
+
+## Other platform slices
+
+| Slice | Directory | Status |
+| --- | --- | --- |
+| Windows (Win32, DirectComposition, DXGI) | `prototypes/a2/win32/` | `PENDING_CI_MATRIX_RUN (Requires Windows Host)` |
+| Linux (Wayland, xdg-shell, libdecor) | `prototypes/a2/linux/` | `PENDING_CI_MATRIX_RUN (Requires Wayland Host)` |
+
+Both directories carry their own `plan.md` with thresholds recorded before any run, their own `RESULTS.md` whose execution tables stay pending, and platform-named sources (`*.win32.c++`, `*.linux.c++`) that are linted on every host and refuse to compile anywhere but their own platform.

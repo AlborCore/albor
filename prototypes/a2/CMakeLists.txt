@@ -13,9 +13,9 @@ set(CMAKE_OBJCXX_STANDARD 20)
 set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
 
 add_library(albor-prototype-a2 STATIC
-    native_surface_mac.h
+    native_surface.macos.h
     platform.h
-    platform_mac.mm
+    platform.macos.mm
 )
 
 target_include_directories(albor-prototype-a2 PUBLIC ${CMAKE_SOURCE_DIR})
