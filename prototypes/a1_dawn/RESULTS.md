@@ -168,3 +168,38 @@ deterministic.
 - **One run each.** Prototype A1 already established that tail figures on this machine vary several-fold between runs,
   so the p99 columns are indicative and the p50 columns are the stable comparison.
 - **Windows and Wayland** are not covered; this slice is macOS only.
+
+---
+
+# Architecture decisions recorded from this run
+
+Recorded in `albor-design-v3.md` §29 (this commit).
+
+## AD-28 — Candidate primary HAL (Dawn / WebGPU C++): **Proposed, in active evaluation**
+
+Dawn is the primary **candidate** HAL for `albor::Renderer` over Metal on macOS, on the evidence in this file. Skia is
+**not** retired. Four items block any decision to replace it:
+
+1. **Platform parity** — D3D12 and Vulkan are unvalidated. This slice enabled one feature, `metal`, on one platform.
+2. **Text and glyph pipeline** — Dawn has no native text or glyph stack. The W2 labels were built and counted but never
+   drawn, so text rendering is untested end to end. A GPU glyph atlas (MSDF / FreeType / HarfBuzz) is required first.
+3. **Software and headless parity (AD-26)** — AD-26 is *Decided* and required. Dawn ships no software rasterizer, and
+   Skia's raster backend was the natural path to it. A CPU fallback strategy must be identified before Dawn can be primary.
+4. **Build cost** — unevaluated, for the reasons given above.
+
+Also recorded: **Skia Graphite was never driven through presentation.** It was measured offscreen only, where it came out
+1.24× slower than Ganesh at p50 and 3.85× worse at p99 per segment, so the Skia side of this comparison rests on Ganesh.
+
+## AD-18 — threading and presentation isolation: **core division Decided, multi-window isolation Open**
+
+The stage division is settled: stage 1 (scene build and application callbacks) on the UI thread, stage 2 (render
+execution and GPU encoding) decoupled from application code.
+
+Multi-window presentation isolation is **Open**, and the spec's previous claim that AD-18 was "Validated by A1 workloads
+W1–W3" has been corrected — it was not. W3's answer is negative: presenting two windows on the UI thread stalls window 2
+for 100.86 ms p50, which is the hold itself rather than GPU contention.
+
+One phrase in the drafted text was **not** written into the spec as given: the draft cited thread-affinity deadlocks
+"observed in A1.2a". A1.2a observed the UI thread blocking inside `nextDrawable` and refuted "the render thread owns the
+surface" for Ganesh on macOS; it did **not** observe a deadlock from an off-thread presentation attempt. The spec records
+the affinity constraint and the refutation, which is what was measured, and leaves the off-thread case untested.

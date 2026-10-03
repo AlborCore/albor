@@ -1106,9 +1106,11 @@ Acceptance thresholds are **set and recorded before a prototype runs**, based on
 
 **AD-07 — Render scene model.** *Proposed.* Retained UI tree; UI-thread scene build produces an immutable `FrameScene`; renderer-internal caching and layers.
 
-**AD-18 — Threading and render execution.** *Proposed.* Scene build on the UI thread; render execution on a dedicated render thread by default with a single-thread fallback; immutable snapshots for worker data; thread-safe resource creation (§10). Validated by A1 workloads W1–W3.
+**AD-18 — Threading, render execution, and presentation isolation.** *Decided* for the core stage division; the multi-window presentation question remains *Open*. **Core division (Decided):** Stage 1 (scene build and application callbacks) on the UI thread; stage 2 (render execution and GPU encoding) decoupled from application code; immutable snapshots for worker data (§10.5). *Open:* multi-window presentation isolation. Evidence (A1-Dawn W3, macOS/Metal): presenting two windows synchronously on the UI thread stalls window 2 for 100.86 ms p50 while window 1 executes an artificial 100 ms hold, which is the hold itself rather than GPU contention. Constraint: AppKit/QuartzCore main-thread affinity on `CAMetalLayer` means presentation cannot simply be dispatched to another thread; A1.2a already refuted "the render thread owns the surface" for Ganesh on macOS. Next action: resolve via deadline-driven scheduling or layer delegation before Phase 1 threading rules are locked. Status: *In validation; W3 demonstrates main-thread presentation stall under multi-window loads.*
 
 **AD-26 — Software/headless parity.** *Decided.* Required; software renderer is the screenshot reference (§25).
+
+**AD-28 — Candidate primary HAL (Google Dawn / WebGPU C++).** *Proposed (in active evaluation).* **Candidate backend:** Google Dawn (WebGPU C++) is the primary candidate HAL for `albor::Renderer` over Metal on macOS. **Verified performance gains (A1-Dawn, macOS/Metal, one run per workload):** 1.8 × 10⁶ line segments of custom vector geometry in a single `RenderPassEncoder::Draw(6, 1800000)` instanced call, against 220 draw calls under Skia Ganesh; frame recording 0.085 ms p50 against 0.177 ms; sustained 60 Hz at 16.62 ms p50 present interval against 149.7 ms under GPU-saturated Ganesh; CAD workload W2 recording 0.238 ms p99, 30× cheaper than Ganesh. **Open dependencies and blocking validation items:** (1) *Platform parity* — D3D12 (Windows) and Vulkan (Linux) remain unvalidated; the slice enabled the `metal` feature only. (2) *Text and glyph pipeline* — Dawn has no native text or glyph stack; a GPU glyph atlas (MSDF / FreeType / HarfBuzz) is required for the W2 labels before Skia can be replaced. (3) *Software and headless parity (AD-26)* — Dawn provides no software rasterizer equivalent, and a CPU fallback strategy must be identified for AD-26 compliance. (4) *Build cost* — the ≤ 3.0 min clean-build threshold was not evaluated: the measured 757 s run began with a warm ccache for part of the port and no cold Skia build was measured for comparison. (5) *Skia is not retired* — it remains the fallback baseline until text, software parity, and cross-platform benchmarks are resolved. Skia Graphite was measured offscreen only (recording 1.24× slower than Ganesh at p50, 3.85× worse at p99 per segment) and has never been driven through presentation.
 
 ### Windows and platform
 
@@ -1422,6 +1424,8 @@ The next implementation work validates these boundaries through Prototypes D, A1
 | No retained geometry; per-segment cost | §11.2, §11.3 |
 | Render threading and worker-data ownership undefined | §10.2, §10.5, AD-18 |
 | Multi-window presentation stalls (second review) | §10.3, workload W3 |
+| Primary renderer HAL undecided; Dawn is a candidate, Skia retained | §11, AD-05, AD-06, AD-28 |
+| Dawn has no text or glyph pipeline; no software rasterizer fallback | §11.4, AD-26, AD-28 |
 | Benchmark workload underspecified; no failure condition | §28.3, §28.4 |
 | Software/GPU parity | §11.7, §25, §27 |
 | Custom-canvas semantic children/automation regressed | §19.3 |
