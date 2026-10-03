@@ -1152,6 +1152,74 @@ Acceptance thresholds are **set and recorded before a prototype runs**, based on
 
 Each prototype states its questions, scope and pass/fail criteria recorded in advance (§28.4).
 
+### Status, tests run, and conclusions so far
+
+Every threshold below was committed to the prototype's `plan.md` before its run (§28.4), and every result is in the
+prototype's `RESULTS.md`. Nothing was restated after a run; failures are recorded as failures.
+
+| Prototype | State | Tests and runs performed |
+| --- | --- | --- |
+| **D — property and binding engine** | complete | 33/33 gtest unit tests (`tests/d/`); benchmark at 100,000 properties and 11,032 bindings |
+| **A2 — platform presentation (macOS)** | complete | 200 steady frames, 60-step live resize, 500 ms nested modal session |
+| **A2 — Windows and Wayland** | not run | plans and platform scaffolds committed; execution tables `PENDING_CI_MATRIX_RUN` |
+| **A1 — renderer (Skia)** | complete | A1.1, A1.2a, A1.3 workloads W1/W2/W3 (401, 401, deadline-limited frames), A1.4 offscreen (400/400) |
+| **A1-Dawn — renderer (WebGPU)** | complete, macOS only | workloads W1/W2/W3 (400, 400, 400/400 frames; 3,200 hover queries) |
+| **B — generated-code build performance** | not started | none |
+| **C — text, IME and accessibility** | not started | none |
+| **E — dev runtime slice** | not started | none |
+
+**Conclusions reached**
+
+**D.** The property and binding engine fits its budget and is adopted as AD-04 (*Decided*): compact CSR index with
+eager-push evaluation, Kahn ordering kept out of Release and excluded at link time, 64 B per animation slot. Measured
+56 B per property and 39.3 B per binding, all recorded budgets passed. This unblocks the Phase 2 property layout and the
+binding representation Prototype B depends on.
+
+**A2 (macOS).** Platform presentation works on AppKit: steady cadence 16.67 ms p50, 60/60 frames presented through a
+live resize, 32 event dispatches inside a 500 ms nested modal loop. The frame tail that motivated the slice was attributed
+to layer-recycling back-pressure rather than GPU submission (`t_acquire` p99 20.75 ms against 0.12 ms for encode and
+submit), which produced A2 Revision R1: the input-to-present budget is 25.0 ms, not 16.7 ms. Run-to-run p99 variance was
+17.7 to 45.4 ms across five runs of one binary, so a single tail sample is not a decision input on this machine. Window
+roles, popups and modality remain unimplemented.
+
+**A1 — renderer (Skia).** Three findings stand out:
+
+1. *Ganesh strokes lines on the CPU.* A stroked retained batch cost 10,470 ms per frame at 1.8 × 10⁶ segments, all
+   inside `skcpu::Draw::drawDevicePoints` → `StrokeTessellateOp`. The same geometry as pre-tessellated filled quads
+   costs 0.18 ms, roughly 55,000× less. A §11.2 line batch must be filled quads or the O(1) promise is meaningless.
+2. *Ganesh cannot present this workload at 60 Hz.* Present interval p50 was 149.7 ms with the GPU saturated, while the
+   scheduling itself was sound: recording p50 0.18 ms, 0.219 ns per segment, O(1) pan/zoom ratio 0.976×, zero frames
+   dropped.
+3. *The frame window is layer-bound, not thread-bound.* A1.1's render-thread ownership was refuted for Ganesh on macOS
+   because `nextDrawable` blocks about one display cycle; A1.2a restored a 16.68 ms p50 cadence by presenting on the UI
+   thread and recording on a worker, but left the UI thread blocked a median 16.59 ms, since `CAMetalLayer` exposes no
+   non-blocking availability check.
+
+Two pre-registered thresholds failed and stay failed: appending to a retained batch is O(n) (94–120 ms against a 25 ms
+budget), and a 10⁶-segment frame costs 220 draw calls because Skia indexes a vertex batch with 16 bits. Workload W3 was
+deadline-limited at 130 of 400 frames and is recorded as invalid rather than as a result.
+
+**A1.4 — Graphite, offscreen.** Graphite links once the port's `graphite` feature is enabled; the earlier claim that
+milestone 148 lacked it was a configuration mistake, corrected in `1e6aa68`. Offscreen, Graphite's CPU recording is
+**1.24× slower than Ganesh at p50 and 3.85× worse at p99 per segment**, while the O(1) pan/zoom claim holds on both. Its
+submit is asynchronous, so this slice measured no GPU throughput, and presenting through Graphite is blocked:
+`createBackendTexture` needs a `TextureInfo` and `TextureInfo` has no public constructor from backend data.
+
+**A1-Dawn — renderer (WebGPU), same workloads, seeds and thresholds as the Skia runs:**
+
+- *Both Skia structural limits disappear.* 1.8 × 10⁶ segments draw in **one** `Draw(6, 1800000)` call where Skia
+  needed 220, and present interval p50 is **16.62 ms** — one 60 Hz interval — where Ganesh managed 149.7 ms. Recording
+  is 0.085 ms p50 and 0.114 ns per segment; W2 recording is 30× cheaper at 0.238 ms p99.
+- *The comparison is valid.* Hover hit ratio is 99.41% on both renderers to the digit, which can only happen if both
+  were fed byte-identical geometry.
+- *Multi-window isolation does not exist when presenting on the UI thread, on either renderer.* Window 2's interval
+  during window 1's 100 ms hold is 100.86 ms p50 — the hold itself, not GPU contention. This is the evidence behind
+  AD-18's open question.
+- Text was counted but never drawn: Dawn has no glyph stack.
+
+These results make Dawn *Proposed* as candidate primary HAL (AD-28) with four blocking items: D3D12 and Vulkan
+unvalidated, no text pipeline, no software rasterizer against AD-26, and build cost unevaluated. Skia is **not** retired.
+
 ### Prototype D — Property and binding engine
 
 Scope: property storage, dependency tracking, dirty propagation and batched evaluation; ~10⁵ properties and ~10⁴ bindings; observable external state, environment properties (theme, locale) and animation-driven properties.
@@ -1161,9 +1229,16 @@ Outputs: input to AD-04 (recorded in `prototypes/d/RESULTS.md`), to the property
 
 ### Prototype A1 — Renderer (single platform)
 
-Native window via any adequate library + render surface + Skia GPU renderer + `CustomRenderNode`/`RenderContext` + retained resources + workloads W1, W2 and W3 + pointer interaction + frame scheduling and the two-stage pipeline.
-Questions: custom-render API shape (retained geometry, batch primitives), render-thread model, surface/device ownership, synchronization, Skia backend choice (Ganesh versus Graphite), and the software-renderer parity of Level 2.
+The A2 platform window (AD-16 decides the windowing layer; this prototype does not) + render surface + Skia GPU renderer + `CustomRenderNode`/`RenderContext` + retained resources + workloads W1, W2 and W3 + pointer interaction + frame scheduling and the two-stage pipeline.
+Questions: custom-render API shape (retained geometry, batch primitives), render-thread model, surface/device ownership, synchronization, Skia backend choice (Ganesh versus Graphite — measured offscreen in A1.4, presentation still open), and the software-renderer parity of Level 2 (not run).
 A1 may use a convenience windowing library; it must not decide AD-16.
+
+### Prototype A1-Dawn — Renderer candidate (WebGPU)
+
+After AD-06. Dawn (WebGPU C++) through the A2 platform window, with the same retained resources, seeds and workloads
+W1, W2 and W3 as Prototype A1, so the two renderers are comparable line for line. macOS only; no Skia dependency at all.
+Questions: does instancing remove Skia's draw-call cap, and does a renderer that is not CPU-bound change the
+multi-window result? Status: run and recorded; feeds AD-28 (*Proposed*) and AD-18's open presentation question.
 
 ### Prototype A2 — Platform presentation
 
@@ -1191,7 +1266,7 @@ These prototypes address the highest-risk assumptions before full-scale implemen
 
 ## 31. Implementation Phases
 
-**Phase 0:** AD-16 decision; Prototypes D, A1, B, E and C (parallelizable); then A2.
+**Phase 0:** AD-16 decision; Prototypes D, A1, A1-Dawn, B, E and C (parallelizable); then A2.
 
 **Phase 1:** Application, EventLoop, tasks/timers, Window and `WindowHandle`, platform abstraction (including the **headless backend**), renderer, software renderer, frame scheduler and two-stage pipeline.
 
