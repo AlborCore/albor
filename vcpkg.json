@@ -37,6 +37,14 @@
         "fontconfig",
         "vulkan"
       ]
+    },
+    {
+      "name": "dawn",
+      "platform": "osx",
+      "default-features": false,
+      "features": [
+        "metal"
+      ]
     }
   ]
 }
