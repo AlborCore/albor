@@ -66,9 +66,83 @@ Design under test, per AD-18 R1 as restated by this prototype:
 
 **Also measured, as a diagnostic rather than a gate:** `t_acquire` (the `nextDrawable` call) against `t_encode_submit` (command encoding plus `commit`) in the A2 path, to establish whether A2's 25.56 ms tail came from layer recycling or from GPU submission.
 
-## A1.2b — blocked on the pinned Skia binaries
+## A1.3 — Skia workloads W1 to W3, thresholds recorded before the run
 
-`RenderContext`, `CustomRenderNode`, the retained resource factory and workloads W1 to W3 are unchanged, but they cannot start until pinned pre-built Skia binaries are available. AD-19 requires Skia as a pinned dependency, and routine test cycles must not build it from source, so this phase stays parked rather than silently switching to a source build.
+A1.2b was parked waiting for the renderer. The dependency is now resolved: `vcpkg.json` pins the `skia` port for each
+platform, and the vcpkg installed tree provides `unofficial::skia::skia` as a CMake target. Milestone 148 is the
+version in that tree.
+
+**What milestone 148 actually ships, verified against the installed archive rather than assumed:**
+
+| Capability | Status in this build |
+| --- | --- |
+| Ganesh on Metal | present — `GrDirectContexts::MakeMetal` and `SkSurfaces::WrapCAMetalLayer` |
+| Graphite | **headers only, zero symbols** — `ContextFactory::MakeMetal` does not link |
+| `SkSurfaces::WrapMetal` | removed in 148; the surface factory is `WrapCAMetalLayer` |
+| `SkFontMgr::RefDefault`, `SkTypeface::MakeFromName` | removed in 148; fonts resolve through `SkFontMgr_New_CoreText` |
+| `skparagraph`, `SkShaper` (HarfBuzz) | headers only, zero symbols |
+| `SkPictureRecorder::endRecordingAsPicture` | renamed to `finishRecordingAsPicture` |
+| `SkCanvas::drawText` | renamed to `drawSimpleText` / `drawString` |
+| `SkFont` | no longer ref counted, so it is held by value |
+
+So this phase measures **Ganesh on Metal**. Q5 (Ganesh versus Graphite) cannot be answered from this dependency, and the
+missing Graphite symbols are themselves a finding for §29: a pinned Skia that ships no Graphite pins the renderer to
+Ganesh, and the frame pipeline design has to assume Ganesh threading rules.
+
+**W1 — waveform, 10^6 cosmetic line segments.** One retained batch built by `ResourceFactory::create_line_batch` on a
+background worker, replayed with a single `drawPoints` call while the view pans and zooms continuously. An append stream
+publishes growing batches through an atomic `Snapshot<T>` swap.
+
+| Category | Threshold |
+| --- | --- |
+| Retained batch build on the worker, first 10^6 segments | ≤ 250 ms |
+| Append build on the worker, per 100k added segments | ≤ 25 ms |
+| Recording the frame, p99 | ≤ 8.33 ms (the R1 processing deadline) |
+| Recording on frames where the view transform changed, p95 | ≤ 1.25 × recording p95 on frames where it did not (this is the O(1) claim of §11.2) |
+| Recording cost per segment, p99 | ≤ 8 ns |
+| Recording on frames that observed a `Snapshot` swap, p99 | ≤ 16.7 ms |
+| Draw calls per frame | exactly 1 |
+| Present interval, p99 | ≤ 16.7 ms |
+| Frames dropped | ≤ 1% of the frames the display offered |
+
+**W2 — CAD canvas, 10^5 symbols, ~10^6 segments, 4000 labels.** Retained geometry, a retained uniform grid over the
+symbols, and one shared label buffer. Every frame issues 8 hover queries at symbol centres while the view pans and zooms.
+
+| Category | Threshold |
+| --- | --- |
+| Recording the frame, p99 | ≤ 8.33 ms |
+| Hover hit query on the UI thread, p99 | ≤ 1.0 ms |
+| Queries that hit the expected symbol | ≥ 99% (a miss is a grid or transform bug, not a workload fact) |
+| Present interval, p99 | ≤ 16.7 ms |
+| Retained bytes for the whole set | ≤ 64 MB |
+
+**W3 — multi-window isolation.** Two windows, each replaying W1 from one shared immutable retained set. Window 1 holds
+its presenting thread for 100 ms after each submit, which is the injected GPU presentation stall.
+
+| Category | Threshold |
+| --- | --- |
+| Window 2 frames presented during the hold | ≥ 95% of the frames the display offered |
+| Window 2 interval during the hold, p99 | ≤ 16.7 ms |
+| Window 2 hover queries answered during the hold | ≥ 30 |
+| Window 1 frames presented | ≥ 95% of its own attempts |
+
+**Hardware / build:** the same reference machine as A1.2a — Intel Core i7-9750H @ 2.60 GHz, 16 GB, macOS 26.6.2,
+`release` preset, display at 60 Hz and 2.00 backing scale.
+
+**Workload:** 400 frames per workload. W1 and W2 run single window; W3 runs both windows until window 1 has presented 400
+frames. The run reports p50, p95 and p99 for every timing, because a single tail sample is not a decision input on this
+machine (see the A2 variance finding).
+
+**Recorded limitation:** this phase records and submits on the UI thread inside the display tick. A1.2a already showed
+that a CPU recording worker is cheap (0.46 ms p99 against 8.33 ms), so the two-stage shape is not in question here; what
+is in question is whether Ganesh's single-owner context can be driven from a worker while the UI thread wraps the
+surface. That split is left open rather than guessed.
+
+## A1.2b — resolved, and folded into A1.3
+
+`RenderContext`, `CustomRenderNode`, the retained resource factory and workloads W1 to W3 are unchanged. The blocker was
+the absence of a pinned Skia build; `vcpkg.json` now pins the port per platform and the installed tree provides a CMake
+target, so the phase runs as **A1.3** above rather than as a separate step.
 
 ## Known limits of A1.1
 
