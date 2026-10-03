@@ -91,8 +91,8 @@ Driver: `./.build-release/prototypes/a1_dawn/albor-prototype-a1-dawn-bench`. **6
 
 The workloads, the seeds, the platform window and the thresholds are the ones Prototype A1 used against Skia, so the
 rows are comparable line for line. The resource generator in `resources.cpp` is copied verbatim from
-`prototypes/a1/resource_factory.macos.mm`, and the proof that this worked is in the tables below: **the hover hit ratio
-came out at 99.41% on both renderers, to the digit**, which can only happen if both were fed byte-identical geometry.
+`prototypes/a1/resource_factory.macos.mm`. What the shared fixture proves is narrower than it first looked:
+the **hover hit ratio came out at 99.41% on both renderers, to the digit**, which shows both were fed byte-identical geometry.
 
 ## The headline: one draw call, and it presents at 60 Hz
 
@@ -123,10 +123,12 @@ because its scheduler had no reason to complain.
 | Hover hit query p99 | 0.0022 ms | 0.0048 ms | ≤ 1.0 ms |
 | Queries that hit the expected symbol | 99.41% | **99.41%** | ≥ 99% |
 
-Recording is **30× cheaper** and the canvas holds 60 Hz. The present interval misses by 0.34 ms at p99, which is 2% and
+Recording is **30× cheaper** — but that figure is **partly an artefact**: the Skia run drew its 4000 labels through
+`drawSimpleText`, and this run drew no glyphs at all. The symbol-geometry comparison is like-for-like; the text comparison
+is not, and no text conclusion can be drawn from it. The present interval misses by 0.34 ms at p99, which is 2% and
 is vsync alignment rather than a real stall. The hit ratio is identical to Skia's because it is the same CPU-side
-uniform grid over the same generated geometry — the renderer does not participate in it at all, which is exactly why the
-two numbers matching is the validity check for this comparison.
+uniform grid over the same generated geometry — **the renderer takes no part in it at all**. That makes the figure a
+useful fixture check, and it is *not* evidence that the two renderers produce the same image.
 
 ## W3 — multi-window isolation, 100 ms hold on window 1
 
@@ -162,6 +164,10 @@ deterministic.
 
 - **Build time is not compared.** The ≤ 3.0 min threshold was not evaluated: the measured 757 s run started with a warm
   ccache for part of the port, and no cold Skia build was measured on this machine. See the earlier section.
+- **The Skia baseline has a known defect.** Its pre-tessellated quads fix stroke width in geometry space, so strokes scale
+  with zoom and are not the cosmetic device-pixel lines W1 specifies. This run's shader expands in pixel space and is
+  correct. The Skia W1 "O(1)" result therefore describes geometry-space strokes, not cosmetic ones, and the two recording
+  figures are not strictly like-for-like.
 - **Labels are counted, not drawn.** W2 builds and reports the same 4000 labels with the same buffer as Skia, but Dawn
   draws no glyphs: a WGSL text path needs a glyph atlas, which is out of scope for this slice. W2 therefore compares
   symbol geometry and hit testing, not text rendering.
