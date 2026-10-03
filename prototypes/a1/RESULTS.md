@@ -227,3 +227,52 @@ machine, W2's recording p50 was 5.92 ms, 6.16 ms, 47.13 ms and 47.48 ms. W1's pr
 - **The two-stage frame is not used here.** Recording and submission both happen on the UI thread. A1.2a already showed a
   CPU recording worker costs 0.46 ms p99, so the open question is whether Ganesh's single-owner context can be driven
   from a worker while the UI thread wraps the surface.
+
+---
+
+# Phase A1.4 — Graphite offscreen
+
+Thresholds were committed to `plan.md` before the run. Driver: `./.build-release/prototypes/a1/albor-prototype-a1-graphite-bench`. No window and no window server are involved, so this slice is the first one in A1 that CI can run.
+
+**Backend that came up: `graphite-metal`.** 400 of 400 frames completed, same retained batches as A1.3's W1 (10^6 segments growing to 1.8 × 10^6 through the same append stream, 79,215,840 bytes, 220 draw calls per frame), recorded into a 2560 × 1440 offscreen surface with the same continuous pan and zoom. **All five recorded thresholds passed.**
+
+| Category | Threshold | p50 | p95 | p99 | Result |
+| --- | --- | --- | --- | --- | --- |
+| Recording the frame | ≤ 8.33 ms | 0.22 ms | 0.63 ms | 1.52 ms | pass |
+| Submitting the frame (no vsync) | ≤ 150 ms | 0.0016 ms | 0.0020 ms | 0.0065 ms | pass |
+| Frames completed | 400 of 400 | 400 | — | — | pass |
+| Recording p95 moved / still (the O(1) claim) | ≤ 1.25× | — | — | 0.885× | pass |
+| Recording p99 per segment | ≤ 8 ns | — | — | 0.845 ns | pass |
+| Allocating the offscreen surface (diagnostic) | — | 0.099 ms | 0.370 ms | 0.660 ms | — |
+| Whole CPU-side frame (diagnostic) | — | 0.333 ms | 0.896 ms | 2.041 ms | — |
+
+## What it answers about Q5
+
+| Metric | Ganesh (A1.3, W1) | Graphite (A1.4) | Ratio |
+| --- | --- | --- | --- |
+| Recording p50 | 0.177 ms | 0.220 ms | **1.24× slower** |
+| Recording p99 per segment | 0.219 ns | 0.845 ns | **3.85× worse** |
+| Recording p95 moved / still | 0.976× | 0.885× | both hold |
+
+**On this machine and this workload, Graphite's CPU-side recording is not faster than Ganesh's — it is about 1.24× slower at the median and 3.85× worse in the tail.** The O(1) promise of §11.2 holds on both backends, so a retained batch is a backend-independent idea; the *cost* of replaying it is not.
+
+The tail is the more interesting half. Graphite's recording p99 is 1.52 ms against a 0.63 ms p95, a 2.4× spread, where Ganesh's was 0.39 ms p99 against 0.29 ms p95. Whatever Graphite does per recorded op is more variable, and a prototype that gates on a tail (§28.4) should prefer the backend with the tighter one.
+
+## The submit column is not comparable, and this matters
+
+A1.3 recorded a Ganesh submit of **149 ms p50**; A1.4 records a Graphite submit of **0.0016 ms**. That 5-order-of-magnitude gap is **not** a result and must not be read as one:
+
+- **Ganesh's `flush` + `submit` blocked.** With presentation and vsync back-pressure in the loop, it was measuring a saturated pipeline.
+- **Graphite's `submit` is asynchronous.** It returns after the command buffer is enqueued; the GPU has not started. 0.0016 ms is the cost of an enqueue, not of a frame.
+
+So the two submit columns measure different quantities, and A1.4 gives **no** measurement of Graphite's GPU throughput. The honest reading of the whole-frame figure (0.333 ms p50) is that it is CPU-side only. Getting GPU truth needs a fence: `context->submit(skgpu::graphite::SyncToCpu::kYes)`, or `hasUnfinishedGpuWork()` polled to quiescence. That is left as the next step and is a one-line change.
+
+## What this phase still cannot answer
+
+- **Presenting through Graphite.** `Recorder::createBackendTexture` is public but takes a `TextureInfo`, and `TextureInfo` exposes only a default and a copy constructor, so a client cannot build a Metal `TextureInfo` or a `BackendTexture`. Graphite can allocate its own surface (`SkSurfaces::RenderTarget`) but that surface does not hand its texture back, so it cannot be blitted into a `CAMetalLayer` drawable either. Presenting needs the port to export a `BackendTexture` factory, which is a small and upstream-friendly patch.
+- **Per-window pacing with a Graphite surface**, for the same reason.
+- **GPU throughput for Graphite**, per the fence argument above.
+
+## One thing this slice makes cheap
+
+Because it needs no window, no display link and no window server, A1.4 is a plain command-line benchmark. That is the shape every renderer gate in §27 should take: the on-screen path is the integration test, and the throughput path should not need a window server to run.

@@ -30,6 +30,8 @@ add_library(albor-prototype-a1 STATIC
     custom_render_node.h
     gpu_context.h
     gpu_context.macos.mm
+    graphite_context.h
+    graphite_context.macos.mm
     render_executor.h
     render_executor.macos.mm
     resource_factory.h
@@ -50,3 +52,7 @@ target_link_libraries(albor-prototype-a1-bench PRIVATE albor-prototype-a1)
 # the driver that runs the recorded workloads w1 to w3
 add_executable(albor-prototype-a1-workloads workloads.cpp)
 target_link_libraries(albor-prototype-a1-workloads PRIVATE albor-prototype-a1)
+
+# the driver that runs the recorded offscreen graphite slice, which needs no window and no window server
+add_executable(albor-prototype-a1-graphite-bench graphite_bench.cpp)
+target_link_libraries(albor-prototype-a1-graphite-bench PRIVATE albor-prototype-a1)
