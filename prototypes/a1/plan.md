@@ -72,22 +72,39 @@ A1.2b was parked waiting for the renderer. The dependency is now resolved: `vcpk
 platform, and the vcpkg installed tree provides `unofficial::skia::skia` as a CMake target. Milestone 148 is the
 version in that tree.
 
-**What milestone 148 actually ships, verified against the installed archive rather than assumed:**
+**Two different things have to be separated here: what Skia milestone 148 *is*, and what our dependency
+configuration actually *built*. Conflating them is how this section first got a wrong answer.**
 
-| Capability | Status in this build |
+*What milestone 148 is — genuine API facts, read out of the installed headers:*
+
+| Fact | Consequence for the prototype |
 | --- | --- |
-| Ganesh on Metal | present — `GrDirectContexts::MakeMetal` and `SkSurfaces::WrapCAMetalLayer` |
-| Graphite | **headers only, zero symbols** — `ContextFactory::MakeMetal` does not link |
-| `SkSurfaces::WrapMetal` | removed in 148; the surface factory is `WrapCAMetalLayer` |
-| `SkFontMgr::RefDefault`, `SkTypeface::MakeFromName` | removed in 148; fonts resolve through `SkFontMgr_New_CoreText` |
-| `skparagraph`, `SkShaper` (HarfBuzz) | headers only, zero symbols |
-| `SkPictureRecorder::endRecordingAsPicture` | renamed to `finishRecordingAsPicture` |
-| `SkCanvas::drawText` | renamed to `drawSimpleText` / `drawString` |
-| `SkFont` | no longer ref counted, so it is held by value |
+| `SkSurfaces::WrapMetal` no longer exists | the surface factory is `gpu/ganesh/mtl/SkSurfaceMetal.h`'s `WrapCAMetalLayer` |
+| `SkCanvas::drawText` is gone | text is drawn with `drawSimpleText` / `drawString` |
+| `SkPictureRecorder::endRecordingAsPicture` is gone | renamed to `finishRecordingAsPicture` |
+| `SkFont` is no longer reference counted | held by value, not in an `sk_sp` |
+| `SkFontMgr::RefDefault`, `SkTypeface::MakeFromName/MakeDefault` are gone | fonts resolve through `SkFontMgr_New_CoreText` on macOS |
+| `SkPicture::performanceCount`, `SkRTreeFactory` are gone | no picture stats, no `SkRTreeFactory`; `beginRecording` takes `nullptr` |
+| `SkCanvas::drawPoints` takes an `SkSpan` and there is one overload | no legacy `SkScalar*` + count form |
+| `SkCanvas::drawVertices` lost `colorsMode`/`texsMode` | presence is inferred from the `SkVertices::Builder` flags |
 
-So this phase measures **Ganesh on Metal**. Q5 (Ganesh versus Graphite) cannot be answered from this dependency, and the
-missing Graphite symbols are themselves a finding for §29: a pinned Skia that ships no Graphite pins the renderer to
-Ganesh, and the frame pipeline design has to assume Ganesh threading rules.
+*What our configuration built — a property of `vcpkg.json`, not of Skia:*
+
+| Capability | In the installed archive | Why |
+| --- | --- | --- |
+| Ganesh on Metal | **present** | `vcpkg.json` requests the `metal` feature |
+| Graphite | absent | the port has a `graphite` feature and we did **not** request it |
+| HarfBuzz shaping, `skparagraph` | absent | the port has a `harfbuzz` feature and we did **not** request it |
+
+Headers are installed unconditionally by the port, so `gpu/graphite/mtl/MtlBackendContext.h` and
+`modules/skparagraph/` are on disk while the matching symbols are not in `libskia.a`. **Reading those headers as proof
+that Graphite is unavailable in milestone 148 was wrong**: the port ships `002-graphite.patch` and maps the `graphite`
+feature to `skia_enable_graphite=true`, so Graphite is available and simply unrequested.
+
+This phase therefore measures **Ganesh on Metal**, which is what the current dependency builds. **Q5 (Ganesh versus
+Graphite) stays open.** Enabling `graphite` on macOS costs `vulkan-headers` and `vulkan-memory-allocator` (the port's
+self-dependency, so Graphite has a backend to link) plus a full Skia rebuild; that is a dependency change, not a
+renderer change, and it is queued as a separate slice.
 
 **W1 — waveform, 10^6 cosmetic line segments.** One retained batch built by `ResourceFactory::create_line_batch` on a
 background worker, replayed with a single `drawPoints` call while the view pans and zooms continuously. An append stream

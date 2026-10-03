@@ -213,9 +213,13 @@ machine, W2's recording p50 was 5.92 ms, 6.16 ms, 47.13 ms and 47.48 ms. W1's pr
 
 ## What the phase did not answer
 
-- **Q5 (Ganesh versus Graphite) is unanswerable from this dependency.** `skgpu::graphite::ContextFactory::MakeMetal` is
-  declared in the headers but has zero symbols in `libskia.a`, so the link fails. A pinned Skia that ships no Graphite
-  pins the renderer to Ganesh and forces the frame pipeline to assume Ganesh's single-owner threading.
+- **Q5 (Ganesh versus Graphite) stays open.** This phase measured Ganesh, but not because Skia 148 lacks Graphite:
+  `vcpkg.json` requests only the `metal` feature, and the port's `graphite` feature was never enabled. The headers
+  `gpu/graphite/mtl/MtlBackendContext.h` are installed unconditionally, which is what made the missing symbols look
+  like a missing capability rather than an unrequested one. Enabling it needs `vulkan-headers`,
+  `vulkan-memory-allocator` and a Skia rebuild, and is queued as a dependency change. The same correction applies to
+  HarfBuzz and `skparagraph`, which are absent for the same reason: their port features were not requested. Until that
+  slice runs, the frame pipeline must assume Ganesh threading rules, and nothing here says Graphite would be worse.
 - **Q6 (software renderer parity) was not run**: this phase measured the GPU path only.
 - **W3's isolation question is unresolved.** At 10^6 segments both windows are GPU-bound, so a 100 ms hold on window 1 is
   invisible in window 2's cadence and the experiment cannot discriminate. W3 needs a segment count this GPU sustains at
