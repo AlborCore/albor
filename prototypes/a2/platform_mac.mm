@@ -1,5 +1,7 @@
 #include "prototypes/a2/platform.h"
 
+#import "prototypes/a2/native_surface_mac.h"
+
 #import <AppKit/AppKit.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/CADisplayLink.h>
@@ -50,6 +52,12 @@ namespace albor::a2
         std::size_t close_after_frames = 0;
         std::size_t nested_loops_running = 0;
         std::size_t resizing = 0;
+
+        // whether stage 2 presents from the ui thread, which is what prototype A2 measured
+        std::size_t present_on_ui_thread = 1;
+
+        // the native surface handed to a render thread (§10.2)
+        NativeSurface surface;
 
         // the timestamp of the previous presented frame, for the interval metric
         Clock::time_point last_frame{};
@@ -223,6 +231,11 @@ namespace albor::a2
         // start from the backing scale the window reports (§9.1)
         m_state->last_scale = m_state->window.backingScaleFactor;
 
+        // publish the native surface for a render thread (§10.2)
+        m_state->surface.layer = m_state->layer;
+        m_state->surface.device = m_state->device;
+        m_state->surface.queue = m_state->queue;
+
         // install the hooks that count resize and scale changes (§7.4, §23.1)
         NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
         [center addObserverForName:NSWindowDidResizeNotification
@@ -327,6 +340,14 @@ namespace albor::a2
         const std::lock_guard<std::mutex> lock(m_state->mutex);
         m_state->close_after_frames = frames;
     }
+
+    void PlatformWindow::set_present_on_ui_thread(bool present) {
+        // remember whether stage 2 presents from the ui thread
+        const std::lock_guard<std::mutex> lock(m_state->mutex);
+        m_state->present_on_ui_thread = present ? 1 : 0;
+    }
+
+    NativeSurface* PlatformWindow::native_surface() const { return &m_state->surface; }
 
     Metrics PlatformWindow::metrics() const {
         // read the authoritative metrics from the window (§9.1)

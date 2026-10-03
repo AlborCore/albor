@@ -11,6 +11,9 @@ namespace albor::a2
     // the opaque platform state, defined by the implementation file so that no platform type leaks (§3.5)
     struct PlatformWindowState;
 
+    // the opaque native presentation surface, so that a render thread can reach it without a platform type (§3.5)
+    struct NativeSurface;
+
     // the window metrics the framework treats as authoritative (§9.1)
     struct Metrics
     {
@@ -65,6 +68,12 @@ namespace albor::a2
 
         // ask the window to close after the given number of presented frames
         void close_after_frames(std::size_t frames);
+
+        // choose whether stage 2 presents on the ui thread, which is what A2 measured and what A1.1 replaces
+        void set_present_on_ui_thread(bool present);
+
+        // hand out the native surface so that a render thread can present (§10.2)
+        [[nodiscard]] NativeSurface* native_surface() const;
 
         [[nodiscard]] Metrics metrics() const;
 

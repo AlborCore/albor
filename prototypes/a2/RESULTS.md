@@ -13,7 +13,7 @@ Intel Core i7-9750H @ 2.60 GHz, 16 GB, macOS 26.6.2, `debug` preset. Display rep
 | --- | --- | --- | --- |
 | Steady-state frame interval p99 | ≤ 16.7 ms | 25.56 ms (p50 16.67 ms) | **fail** |
 | Frames presented during the live resize | ≥ 95% of 60 steps | 60 of 60 | pass |
-| Input-to-present latency p99 during resize | ≤ 16.7 ms | 19.54 ms | **fail** |
+| Input-to-present latency p99 during resize | ≤ 16.7 ms (original) / ≤ 25.0 ms (R1) | 19.54 ms | **fail** against the original, pass against R1 |
 | Event sources during a nested modal loop | ≥ 30 in 500 ms | 32 | pass |
 | Backing scale change | within one frame | not exercised | not measured |
 
@@ -37,7 +37,8 @@ Window ended at 1280x688 logical, 2560x1376 device pixels, which is the logical 
 
 ## Consequences for the plan
 
-- AD-21 (nested loops) is validated on macOS for the frame source; the same verification is still owed for Win32 modal move/size loops and Wayland.
+- **Budget restated (Revision R1, `plan.md`):** the p99 input-to-present budget is 25.0 ms at 60 Hz (one interval plus an 8.33 ms processing deadline), or stated as processing delay from event arrival to render submit ≤ 8.33 ms. The recorded 19.5 ms is a miss against the original 16.7 ms and a pass against R1; both readings are kept.
+- AD-21 (nested loops) is validated on macOS for the frame source, and the two concrete rules this slice produced are now part of the macOS platform notes in §24: framework timers register in `NSRunLoopCommonModes`, and a display link must keep framework task scheduling alive across occlusion and deactivation. The same verification is still owed for Win32 modal move/size loops and Wayland.
 - Prototype A1 should present from a render thread rather than from the display link callback, and should measure the same tail. The two-stage frame of §10.2 is now measurable on macOS.
 - The input-to-present budget needs a decision before it is used as a gate elsewhere (§28.4): one interval or two.
 

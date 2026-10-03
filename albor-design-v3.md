@@ -973,7 +973,7 @@ Albor Runtime -> Platform Abstraction
                  +-- Headless
 ```
 
-- **macOS:** AppKit/native windows and a Metal-compatible presentation path.
+- **macOS:** AppKit/native windows and a Metal-compatible presentation path. Framework timers and posted tasks register in `NSRunLoopCommonModes`, and the display link must keep framework task scheduling alive across window occlusion and application deactivation, because a nested modal session services the modal run-loop mode only (AD-21, validated by Prototype A2 on macOS).
 - **Windows:** Win32 and a validated Skia GPU backend (open question 8).
 - **Wayland:** explicit surface roles; positioner-based popups; client-side decoration strategy; frame callbacks (and throttling for occluded windows); text-input protocol and IME; portal integration for dialogs and notifications; GPU presentation through the platform's EGL or Vulkan window-system integration, with a shared-memory software fallback. Wayland clients cannot position windows or read global coordinates, so the window API reports "unsupported" for those queries (§8.4).
 - **X11:** its own input, clipboard, IME (IBus or XIM), DPI and presentation handling (Tier 2).

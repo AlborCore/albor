@@ -13,6 +13,7 @@ set(CMAKE_OBJCXX_STANDARD 20)
 set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
 
 add_library(albor-prototype-a2 STATIC
+    native_surface_mac.h
     platform.h
     platform_mac.mm
 )
