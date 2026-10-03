@@ -1086,7 +1086,15 @@ Acceptance thresholds are **set and recorded before a prototype runs**, based on
 
 **AD-03 — Generated public headers.** *Decided.* Concrete, non-virtual facade classes; interface-only; implementation private; write-if-changed generation.
 
-**AD-04 — Property and Binding Engine Implementation.** *Decided.* 1. **Index & Invalidation:** Use a Compact CSR (Compressed Sparse Row) dependent index with an epoch-stamped deduplication set and pending-property set. 2. **Evaluation Strategy:** Eager pass-based push evaluation for compiled static bindings. Kahn topological ordering is retained as a Dev/Test debug aid (cycle detection, deterministic order) and excluded from Release builds. The exclusion is at **link time**: the Kahn unit is a separately linked target installed through the §2.3 registration hook, and it is never removed with `#ifdef`, so every source file stays identical in all three configurations and a Release reference to a Kahn symbol fails the link instead of compiling away. 3. **Animation Shadowing:** Category 6 animation-driven properties write through a 64 B/slot side-table shadowing layer. Explicit imperative writes cancel active animations; ending an animation restores the shadowed binding value. Validated by Prototype D, recorded in `prototypes/d/RESULTS.md`.
+**AD-04a — Invalidation index.** *Proposed.* Compact CSR (Compressed Sparse Row) index over declared dependencies with eager push evaluation and no per-binding allocation. Supported by Prototype D at 56 B per property and 39.3 B per binding. **Not covered:** the prototype's index is sealed, while §18 and §20 require runtime mutation — virtualized delegates, `if`/`for` constructs, popups, live-reload `ReplaceBinding`. Per-component or segmented indices are the likely answer and none was tested. `PropertyId` assignment is also unspecified: ids must be component-local with a runtime base offset, or any interface change cascades through every generated file and breaks §14.2/§14.3.
+
+**AD-04b — Storage layout.** *Open.* Prototype D measured a single uniform value slot. Typed per-component storage and the realistic value types (strings, translated strings, snapshots) were not measured, so the layout is not settled.
+
+**AD-04c — Evaluation model.** *Open.* Eager push is implemented and meets its budget, but the prototype also measured one pass per chain layer (depth 8 → 8 passes) and flagged it as a Phase 2 risk; a pull or hybrid model would remove the per-layer passes and is unmeasured. Kahn ordering is a Dev/Test aid only, so tests exercise a different evaluation order from Release, which conflicts with §2.4 unless cycle detection becomes a compile-time error on the static graph. The prototype's 64-pass budget is a guard that should stay in Release, which this entry does not otherwise provide.
+
+**AD-04d — Animation shadowing.** *Proposed.* 64 B per animation slot, matching the measured budget. Its interaction with AD-24 (imperative writes breaking bindings) is unspecified, and whether ending an animation re-evaluates the shadowed binding rather than restoring a stale value was not verified.
+
+**AD-04 prototype caveats.** The workload gave every category a 16 ms p99 budget — a whole frame, shared with layout and scene build — so no category could fail. It contained no reconvergent (diamond) dependencies, since redundant visits were zero, while real UIs have many. It was one run on one machine and there is no `plan.md`, so the thresholds cannot be shown to have been pre-recorded and the reference hardware was declared only afterwards (§28.4). Follow-up is Prototype D2, not a re-reading of this run.
 
 **AD-17 — Native component manifest.** *Proposed.* The manifest is the source of truth; glue is generated; the compiler never parses C++ (§15).
 
@@ -1106,11 +1114,127 @@ Acceptance thresholds are **set and recorded before a prototype runs**, based on
 
 **AD-07 — Render scene model.** *Proposed.* Retained UI tree; UI-thread scene build produces an immutable `FrameScene`; renderer-internal caching and layers.
 
-**AD-18 — Threading, render execution, and presentation isolation.** *Decided* for the core stage division; the multi-window presentation question remains *Open*. **Core division (Decided):** Stage 1 (scene build and application callbacks) on the UI thread; stage 2 (render execution and GPU encoding) decoupled from application code; immutable snapshots for worker data (§10.5). *Open:* multi-window presentation isolation. Evidence (A1-Dawn W3, macOS/Metal): presenting two windows synchronously on the UI thread stalls window 2 for 100.86 ms p50 while window 1 executes an artificial 100 ms hold, which is the hold itself rather than GPU contention. Constraint: AppKit/QuartzCore main-thread affinity on `CAMetalLayer` means presentation cannot simply be dispatched to another thread; A1.2a already refuted "the render thread owns the surface" for Ganesh on macOS. Next action: resolve via deadline-driven scheduling or layer delegation before Phase 1 threading rules are locked. Status: *In validation; W3 demonstrates main-thread presentation stall under multi-window loads.*
+**AD-18a — Render execution and stage division.** *Decided.* Stage 1 (scene build and application callbacks) on the UI thread; stage 2 (render execution and GPU encoding) decoupled from application code; immutable snapshots for worker data (§10.5). Supported by A1: recording a frame on a worker costs 0.46 ms p99 against an 8.33 ms processing deadline, and recording on the UI thread is equivalent within noise, so the division is close to free.
+
+**AD-18b — Multi-window presentation isolation.** *Open.* Two windows presented synchronously on the UI thread stall each other: window 2's interval during window 1's 100 ms hold is 100.86 ms p50 (A1-Dawn W3), i.e. the hold itself rather than GPU contention. **That result is close to a tautology** — any design that presents on the UI thread fails it by construction, so repeating the measurement proves nothing. The open question is narrower: can presentation be moved off the UI thread on macOS at all, given AppKit/QuartzCore main-thread affinity, which refuted "the render thread owns the surface" for Ganesh in A1.2a? Two candidate mechanisms are untested: `CAMetalDisplayLink` (macOS 14+, present in this SDK, which delivers the drawable with the display-link callback and so addresses the missing non-blocking availability signal) and `CAMetalLayer.maximumDrawableCount`. Until one is measured, §10.2 and §10.3 still describe a default that A1.1 and A1.2a refuted on macOS and must be read as provisional.
 
 **AD-26 — Software/headless parity.** *Decided.* Required; software renderer is the screenshot reference (§25).
 
-**AD-28 — Candidate primary HAL (Google Dawn / WebGPU C++).** *Proposed (in active evaluation).* **Candidate backend:** Google Dawn (WebGPU C++) is the primary candidate HAL for `albor::Renderer` over Metal on macOS. **Measured on A1-Dawn (macOS/Metal, single run per workload, 2019 Intel laptop):** 1.8 × 10⁶ line segments in a single `Draw(6, 1800000)` instanced call against 220 draw calls under Ganesh; frame recording 0.085 ms p50 against 0.177 ms; present interval p50 16.62 ms against 149.7 ms. **How far that evidence goes, stated narrowly:** the 99.41% hover hit ratio common to both renderers proves only that both received *identical input geometry* — hit testing is CPU-side and the renderer takes no part in it, so it is a fixture check, not a rendering-parity check. Pixel-level output parity and GPU timestamp queries are still outstanding. The headline conflates two effects: Ganesh's 10,470 ms stroke figure is CPU tessellation that the pre-tessellated quad path already avoids (the like-for-like recording gap is about 2×), and the present-interval gap is GPU-bound, so a 60 Hz lock demonstrates no missed vsync but no headroom either. The Skia baseline also has a known defect: its pre-tessellated quads fix stroke width in geometry space, so strokes scale under zoom and are not the cosmetic device-pixel lines the workload specifies. **Blocking items:** (1) *Platform parity* — D3D12 and Vulkan unvalidated; only the `metal` feature was enabled. (2) *Text* — Dawn has no glyph stack, and the Skia W2 run drew its 4000 labels while the Dawn run did not, so the "30× cheaper W2" figure is partly an artefact of unequal work. (3) *2D feature surface* — replacing Skia means rebuilding paths with joins, caps and dashes, clip paths, gradients, opacity layers and effects; this is the largest unlisted cost. (4) *Software and headless parity (AD-26)* — Dawn has no first-party CPU rasterizer, though software adapters (SwiftShader, lavapipe, WARP) are candidates and are slow and non-deterministic; a CPU fallback strategy must still be identified. (5) *Build cost* — unevaluated; the 757 s run began with a warm ccache for part of the port and no cold Skia build was measured. (6) *A middle option exists and is untested* — the same vcpkg `skia` port offers a `dawn` feature that pulls in `skia[graphite]`, so Skia Graphite on a Dawn backend could let Skia's text, paths and effects share one device with custom Level 2/3 passes. That would remove blockers 2 and 3 and must be evaluated before committing. **Skia is not retired** and remains the default renderer until these close. Evidence standard: single runs, and A2 established that tail figures on this hardware vary several-fold between runs, so no p99 here is a decision input on its own.
+**AD-28 — Candidate primary HAL (Google Dawn / WebGPU C++).** *Proposed (in active evaluation).* **Candidate backend:** Google Dawn (WebGPU C++) is the primary candidate HAL for `albor::Renderer` over Metal on macOS. **Measured on A1-Dawn (macOS/Metal, single run per workload, 2019 Intel laptop):** 1.8 × 10⁶ line segments in a single `Draw(6, 1800000)` instanced call against 220 draw calls under Ganesh; frame recording 0.085 ms p50 against 0.177 ms; present interval p50 16.62 ms against 149.7 ms. **How far that evidence goes, stated narrowly:** the 99.41% hover hit ratio common to both renderers shows only that both received *identical input geometry* — hit testing is CPU-side and the renderer takes no part in it — so it is a fixture check, not a rendering-parity check; pixel-level output parity and GPU timestamp queries are still outstanding. The headline conflates two effects: Ganesh's 10,470 ms stroke figure is CPU tessellation that the pre-tessellated quad path already avoids, so the like-for-like recording gap is about 2×, and the present-interval gap is GPU-bound, so a 60 Hz lock demonstrates no missed vsync but no headroom either. The Skia baseline has a known defect of its own: its pre-tessellated quads fix stroke width in geometry space, so strokes scale under zoom and are not the cosmetic device-pixel lines the workload specifies. **Blocking items:** (1) *Platform parity* — D3D12 and Vulkan unvalidated; only the `metal` feature was enabled. (2) *Text* — Dawn has no glyph stack, and the Skia W2 run drew its 4000 labels while the Dawn run drew none, so the "30× cheaper W2" figure is partly an artefact of unequal work. (3) *2D feature surface* — replacing Skia means rebuilding paths with joins, caps and dashes, clip paths, gradients, opacity layers and effects; this is the largest unlisted cost. (4) *Software and headless parity (AD-26)* — Dawn has no first-party CPU rasterizer, though software adapters (SwiftShader, lavapipe, WARP) are candidates and are slow and non-deterministic. (5) *Build cost* — unevaluated; the 757 s run began with a warm ccache for part of the port and no cold Skia build was measured. (6) *A middle option exists and is untested* — the same vcpkg `skia` port offers a `dawn` feature that pulls in `skia[graphite]`, so Skia Graphite on a Dawn backend could let Skia's text, paths and effects share one device with custom Level 2/3 passes, which would remove blockers 2 and 3. **Skia is not retired** and remains the default renderer until these close. Evidence standard: single runs, and A2 established that tail figures on this hardware vary several-fold between runs, so no p99 here is a decision input on its own.
+
+### Windows and platform
+
+**AD-08 — Window roles and modality.** *Decided.* Role (Normal/Dialog/Tool/Popup) at creation; modality is a separate framework-enforced property; popup carries parent/anchor/placement.
+
+**AD-16 — Platform Implementation Strategy.** *Decided.* 1. **Ownership Boundary:** Albor directly implements its own lightweight Window, EventLoop, and Platform abstractions per OS (macOS AppKit, Windows Win32, Linux Wayland, Linux X11). General-purpose windowing libraries (GLFW, SDL) are rejected as they fail Wayland popup requirements (xdg_positioner), nested run-loop event registration (§7.4), IME text input, and OS accessibility integration. 2. **Targeted Modular Plumbing:** Albor reuses low-level, standard C platform libraries for specialized protocol tasks where appropriate: Linux Wayland: libdecor (client-side decorations), xkbcommon (keyboard mapping/state), libwayland-egl; Linux X11: xcb, xkbcommon; macOS: Direct AppKit / Objective-C runtime bridge + CAMetalLayer; Windows: Direct Win32 / DirectComposition / DXGI / TSF. 3. **Prototype Unblocking:** This unblocks Prototype A2 (platform presentation, surface creation, popups, and nested-loop validation across macOS, Windows, and Wayland). **Evidence status.** *Decided*, but the factual claims in point 1 are **not verified against current library versions**: the claim that SDL fails Wayland popups needs re-checking, since SDL3 added popup and tooltip windows. The supporting evidence is Prototype A2 on macOS only, and A2 left window roles, popups and modality unimplemented, which are exactly the capabilities the rejection rests on. No record yet exists of what would reverse this decision, and the reuse list omits D-Bus (portals, AT-SPI) and IME libraries. Reversal criteria to be recorded: if one library is shown to satisfy Wayland `xdg_positioner` popups, nested-loop source registration, IME and accessibility on both Wayland and Win32, this decision should be reopened.
+
+**AD-21 — Nested native loops and re-entrancy.** *Decided* as a principle (§7.4); platform mechanisms are implementation work.
+
+**AD-22 — X11 tier.** *Proposed.* Tier 2 for the first production milestone.
+
+### Semantics, identity, automation
+
+**AD-09 — Semantic tree.** *Decided.* One tree; custom nodes provide virtualized semantic children (§19.3).
+
+**AD-10 — Automation security.** *Decided.* Excluded from Release at compile/link time; local-only, token-authenticated and allow-listed in Dev/Test.
+
+**AD-11 — Node identity.** *Decided.* Explicit keys are identity; implicit keys are correlation hints only (§18.1).
+
+**AD-20 — MCP routing.** *Decided.* MCP goes only through the automation layer.
+
+### Live reload, models, text, commands
+
+**AD-12 — Live reload.** *Proposed.* External dev service sends serialized IR/patches to the in-app reload adapter in `devrt`.
+
+**AD-13 — Virtualization and model keys.** *Decided* as a principle; the model interface (§20.1) is *Proposed* pending Phase 6 design.
+
+**AD-14 — Text/layout dependency.** *Decided.* Text measurement is a foundational layout contract.
+
+**AD-15 — Commands and undo/redo.** *Decided.* Commands are the shared action abstraction; undo/redo integrates at that layer. The history API remains open.
+
+### Distribution
+
+**AD-19 — ABI, versioning and distribution.** *Proposed.* Pre-1.0: no C++ ABI stability promise; distribute as source/CMake package building static or pinned-toolchain libraries; Skia built as a pinned dependency of Albor; no Skia or platform types in public headers; standard-library types in public APIs limited to those stable within a supported toolchain set. A stable ABI (for example through a C facade) is revisited at 1.0. Validated in Prototype B (build/distribution) and A1 (Skia build cost).
+
+---
+
+## 30. Prototype Plan
+
+Each prototype states its questions, scope and pass/fail criteria recorded in advance (§28.4).
+
+### Status, tests run, and conclusions so far
+
+Every threshold below was committed before its run (§28.4) and every result is in the prototype's `RESULTS.md`, with one
+exception recorded as such: **A2's Revision R1 restated the input-to-present budget from 16.7 ms to 25.0 ms after the
+first run had already failed against 16.7 ms.** The original miss stands as recorded. Prototype D has no `plan.md` at
+all, so its thresholds cannot be shown to have been pre-recorded and its reference hardware was declared only after
+the run.
+
+| Prototype | State | Tests and runs performed |
+| --- | --- | --- |
+| **D — property and binding engine** | complete | 33/33 gtest unit tests (`tests/d/`); benchmark at 100,000 properties and 11,032 bindings |
+| **A2 — platform presentation (macOS)** | complete | 200 steady frames, 60-step live resize, 500 ms nested modal session |
+| **A2 — Windows and Wayland** | not run | plans and platform scaffolds committed; execution tables `PENDING_CI_MATRIX_RUN` |
+| **A1 — renderer (Skia)** | complete | A1.1, A1.2a, A1.3 workloads W1/W2/W3 (401, 401, deadline-limited frames), A1.4 offscreen (400/400) |
+| **A1-Dawn — renderer (WebGPU)** | complete, macOS only | workloads W1/W2/W3 (400, 400, 400/400 frames; 3,200 hover queries) |
+| **B — generated-code build performance** | not started | none |
+| **C — text, IME and accessibility** | not started | none |
+| **E — dev runtime slice** | not started | none |
+
+**Conclusions reached**
+
+**D.** The property and binding engine fits its budget, and what it measured is adopted as AD-04a and AD-04d
+(*Proposed*), not as one *Decided* entry: compact CSR index with
+eager-push evaluation, Kahn ordering kept out of Release and excluded at link time, 64 B per animation slot. Measured
+56 B per property and 39.3 B per binding, all recorded budgets passed. Storage layout (AD-04b) and the
+evaluation model (AD-04c) stay **Open**, because the prototype tested neither runtime index mutation nor
+diamond dependencies nor the per-chain-layer passes it itself flagged. This unblocks the Phase 2 property layout and the
+binding representation Prototype B depends on.
+
+**A2 (macOS).** Platform presentation works on AppKit: steady cadence 16.67 ms p50, 60/60 frames presented through a
+live resize, 32 event dispatches inside a 500 ms nested modal loop. The frame tail that motivated the slice was attributed
+to layer-recycling back-pressure rather than GPU submission (`t_acquire` p99 20.75 ms against 0.12 ms for encode and
+submit), which produced A2 Revision R1: the input-to-present budget is 25.0 ms, not 16.7 ms. Run-to-run p99 variance was
+17.7 to 45.4 ms across five runs of one binary, so a single tail sample is not a decision input on this machine. Window
+roles, popups and modality remain unimplemented.
+
+**A1 — renderer (Skia).** Three findings stand out:
+
+1. *Ganesh strokes lines on the CPU.* A stroked retained batch cost 10,470 ms per frame at 1.8 × 10⁶ segments, all
+   inside `skcpu::Draw::drawDevicePoints` → `StrokeTessellateOp`. The same geometry as pre-tessellated filled quads
+   costs 0.18 ms, roughly 55,000× less. A §11.2 line batch must be filled quads or the O(1) promise is meaningless.
+2. *Ganesh cannot present this workload at 60 Hz.* Present interval p50 was 149.7 ms with the GPU saturated, while the
+   scheduling itself was sound: recording p50 0.18 ms, 0.219 ns per segment, O(1) pan/zoom ratio 0.976×, zero frames
+   dropped.
+3. *The frame window is layer-bound, not thread-bound.* A1.1's render-thread ownership was refuted for Ganesh on macOS
+   because `nextDrawable` blocks about one display cycle; A1.2a restored a 16.68 ms p50 cadence by presenting on the UI
+   thread and recording on a worker, but left the UI thread blocked a median 16.59 ms, since `CAMetalLayer` exposes no
+   non-blocking availability check.
+
+Two pre-registered thresholds failed and stay failed: appending to a retained batch is O(n) (94–120 ms against a 25 ms
+budget), and a 10⁶-segment frame costs 220 draw calls because Skia indexes a vertex batch with 16 bits. Workload W3 was
+deadline-limited at 130 of 400 frames and is recorded as invalid rather than as a result.
+
+**A1.4 — Graphite, offscreen.** Graphite links once the port's `graphite` feature is enabled; the earlier claim that
+milestone 148 lacked it was a configuration mistake, corrected in `1e6aa68`. Offscreen, Graphite's CPU recording is
+**1.24× slower than Ganesh at p50 and 3.85× worse at p99 per segment**, while the O(1) pan/zoom claim holds on both. Its
+submit is asynchronous, so this slice measured no GPU throughput, and presenting through Graphite is blocked:
+`createBackendTexture` needs a `TextureInfo` and `TextureInfo` has no public constructor from backend data.
+
+**A1-Dawn — renderer (WebGPU), same workloads, seeds and thresholds as the Skia runs:**
+
+- *Both Skia structural limits disappear.* 1.8 × 10⁶ segments draw in **one** `Draw(6, 1800000)` call where Skia
+  needed 220, and present interval p50 is **16.62 ms** — one 60 Hz interval — where Ganesh managed 149.7 ms. Recording
+  is 0.085 ms p50 and 0.114 ns per segment; W2 recording is 30× cheaper at 0.238 ms p99.
+- *The comparison is valid.* Hover hit ratio is 99.41% on both renderers to the digit, which can only happen if both
+  were fed byte-identical geometry.
+- *Multi-window isolation does not exist when presenting on the UI thread, on either renderer.* Window 2's interval
+  during window 1's 100 ms hold is 100.86 ms p50 — the hold itself, not GPU contention. This is the evidence behind
+  AD-18's open question.
+- Text was counted but never drawn: Dawn has no glyph stack.
+
+These results make Dawn *Proposed* as candidate primary HAL (AD-28) with four blocking items: D3D12 and Vulkan
+unvalidated, no text pipeline, no software rasterizer against AD-26, and build cost unevaluated. Skia is **not** retired.
 
 ### Prototype D — Property and binding engine
 
@@ -1158,7 +1282,9 @@ These prototypes address the highest-risk assumptions before full-scale implemen
 
 ## 31. Implementation Phases
 
-**Phase 0:** AD-16 decision; Prototypes D, A1, A1-Dawn, B, E and C (parallelizable); then A2.
+**Phase 0:** AD-16 (*Decided*, with its evaluation and reversal criteria still to be written); Prototypes D, A1,
+A1-Dawn, B, E and C (parallelizable); then A2. D is complete; A1 and A1-Dawn are complete on macOS; A2 is complete on
+macOS with Windows and Wayland `PENDING_CI_MATRIX_RUN`; B, E and C have not started.
 
 **Phase 1:** Application, EventLoop, tasks/timers, Window and `WindowHandle`, platform abstraction (including the **headless backend**), renderer, software renderer, frame scheduler and two-stage pipeline.
 
