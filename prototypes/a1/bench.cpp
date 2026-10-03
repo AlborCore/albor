@@ -56,7 +56,7 @@ int main() {
     using namespace albor::a1;
 
     // report the prototype and the phase that runs
-    std::printf("Albor Prototype A1 phase 1: two-stage frame on a render thread (§10.2, AD-18)\n");
+    std::printf("Albor Prototype A1.2a: ui thread presents, worker records (§10.2, AD-18 R1)\n");
     std::fflush(stdout);
 
     // create the platform window that the render thread presents into
@@ -115,6 +115,7 @@ int main() {
             scene.vertices.at(index + 1) = static_cast<float>((frame.index * 2 + index) % 512) / 512.0F;
         }
         const double built = to_ms(Clock::now() - build_start);
+        executor.set_build_ms(built);
 
         // hand the immutable scene to the render thread and measure the block
         const double blocked = executor.submit(std::move(scene));

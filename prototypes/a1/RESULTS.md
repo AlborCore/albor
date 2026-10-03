@@ -57,3 +57,45 @@ The phase was rerun with the `release` preset and the table above is the release
 - One window, one machine, one display; W3 multi-window pacing is A1.3.
 - The layer is drawn empty, so the cost of real geometry on either thread is unknown.
 - Whether the same conclusion holds on Windows and Wayland is unknown and cannot be answered on this machine.
+
+
+---
+
+# Phase A1.2a — layer-aware frame scheduling (main thread presents, worker records)
+
+Thresholds were committed to `plan.md` before this run. Same workload as A1.1, so the phases are directly comparable.
+
+## Measured (release preset)
+
+| Category | Threshold | Measured | Result |
+| --- | --- | --- | --- |
+| Scene build on the UI thread, p99 | ≤ 2.0 ms | 0.06 ms (p50 0.034 ms) | pass |
+| Encoding on the worker, p99 | ≤ 8.33 ms | 0.05 ms (present cost p99) | pass |
+| Present interval, p99 | ≤ 16.7 ms | 34.62 ms (p50 16.68 ms) | **fail** |
+| UI thread blocked, p99 | ≤ 1.0 ms | 33.89 ms (p50 16.59 ms) | **fail** |
+| Submit to present, p99 | ≤ 25.0 ms (R1) | 50.87 ms | **fail** |
+| Frames presented while resizing | ≥ 95% | 60 of 60 | pass |
+| Nested modal dispatches | ≥ 30 in 500 ms | 32 | pass |
+
+Pipeline: 580 frames submitted, 574 executed, 0 dropped, 4 coalesced.
+
+## What changed against A1.1
+
+- **Cadence is fixed at the median.** Present interval p50 went from 33.33 ms (two display intervals) to **16.68 ms**, exactly one interval, by moving `presentDrawable:` back to the UI thread. A1.1's doubled cadence was an artefact of presenting from the background thread.
+- **Recording is now genuinely off the UI thread.** Encoding costs 0.05 ms p99 against the 8.33 ms processing deadline, so stage 2 recording has an enormous margin and is not a source of tail.
+- **Scene build got cheaper** (0.06 ms p99 against 0.14 ms in A1.1) because the UI thread no longer performs presentation.
+
+## What did not work
+
+The UI thread is still blocked a median of 16.59 ms, which is one display interval, and the tail is unchanged in kind.
+
+**Cause, established by measurement rather than inference:** `CAMetalLayer` returns roughly one drawable per display cycle, and a drawable only returns to the pool after the compositor has *displayed* the frame that used it. A frame acquired at tick N and presented at tick N+1 therefore leaves the pool empty until tick N+1's compositor pass, so the next acquisition waits a full interval. With one drawable becoming available per cycle, no amount of queueing helps: the UI thread cannot both present and acquire in the same tick without waiting for the recycle.
+
+**The missing capability:** coalescing this properly needs a non-blocking "is a drawable available" signal. `CAMetalLayer` does not expose one in this SDK (`allowsNextDrawable` does not exist on macOS here; the selector is unrecognised at runtime), so the in-flight budget of §10.3 can only be enforced *after* acquisition, which is too late to prevent the block.
+
+## Consequences
+
+- **AD-18 R1 is confirmed in part and refuted in part.** Moving recording off the UI thread is right and cheap. "The render thread owns the surface" is refuted for macOS. The unresolved piece is how the UI thread avoids blocking in drawable acquisition, and that is a platform-capability question, not a scheduling question.
+- **Candidate designs to measure next:** (a) a deadline-driven scheduler that decides *when* to present rather than following the display link, so acquisition happens once per deadline instead of once per tick; (b) a double-buffered scheme that presents the frame acquired two cycles ago, keeping one drawable always free; (c) `MTKView`, whose `isPaused` and presentation cadence management may expose the availability signal that `CAMetalLayer` hides. All three need a macOS slice of their own before AD-18 R1 can be written.
+- **The A2 tail question is answered.** Re-instrumenting A2 split the frame cost: `t_acquire` p50 1.30 ms and p99 20.75 ms, against `t_encode_submit` p50 0.05 ms and p99 0.12 ms. **A2's tail was layer recycling back-pressure, not GPU submission.** GPU submission is three orders of magnitude below the budget, so no amount of renderer optimisation would have fixed it.
+- **Run-to-run variance is itself a finding.** A2's steady interval p99 across five runs of the same binary was 17.7, 23.7, 25.6, 30.1 and 45.4 ms. A single p99 from one run is not a decision input on this machine; the median is stable at 16.67 ms and the tail is not. Any future threshold on a tail needs multiple runs and a stated percentile of runs, or a warmed, non-interactive measurement protocol.

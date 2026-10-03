@@ -71,6 +71,8 @@ int main() {
     // collect the frame timings as the platform presents them
     std::vector<double> steady_intervals;
     std::vector<double> resize_input_to_present;
+    std::vector<double> acquire_samples;
+    std::vector<double> encode_samples;
     steady_intervals.reserve(TOTAL_FRAMES);
     resize_input_to_present.reserve(RESIZE_STEPS);
 
@@ -100,6 +102,10 @@ int main() {
         if (resize_steps_done == 0) {
             if (frame.interval_ms > 0.0) {
                 steady_intervals.push_back(frame.interval_ms);
+
+                // separate the layer cost from the submission cost, which is the a2 tail question
+                acquire_samples.push_back(frame.acquire_ms);
+                encode_samples.push_back(frame.encode_submit_ms);
                 steady_seen++;
             }
 
@@ -143,6 +149,10 @@ int main() {
     std::printf("steady frames            %zu\n", steady_intervals.size());
     std::printf("steady interval p50 ms   %.4f\n", percentile(steady_intervals, 0.50));
     std::printf("steady interval p99 ms   %.4f (budget %.1f)\n", steady_p99, FRAME_INTERVAL_BUDGET_MS);
+
+    // report where the steady frame time actually goes
+    std::printf("acquire p50 / p99 ms      %.4f / %.4f\n", percentile(acquire_samples, 0.50), percentile(acquire_samples, 0.99));
+    std::printf("encode submit p50/p99 ms %.4f / %.4f\n", percentile(encode_samples, 0.50), percentile(encode_samples, 0.99));
 
     // report the live resize result of §7.4
     std::printf("resize events            %zu\n", window.resize_events());

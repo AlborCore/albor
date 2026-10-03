@@ -2,9 +2,6 @@
 
 #import "prototypes/a2/native_surface_mac.h"
 
-#import <Metal/Metal.h>
-#import <QuartzCore/CAMetalLayer.h>
-
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -25,31 +22,43 @@ namespace albor::a1
         // convert a duration into milliseconds
         double to_ms(Clock::duration elapsed) { return std::chrono::duration<double, std::milli>(elapsed).count(); }
 
-        // how many scenes may wait for the render thread before the ui thread drops the oldest one (§10.3)
-        constexpr std::size_t MAX_PENDING_SCENES = 3;
-
-        // how many frames may be in flight before the ui thread stops asking for a drawable, which is the
-        // bounded in flight budget of the frame scheduler and the reason the ui thread never waits (§10.3)
-        constexpr std::size_t MAX_IN_FLIGHT_FRAMES = 3;
-
-        // one queued scene with the drawable the ui thread acquired for it and the timings it measured
-        struct Envelope
-        {
-            FrameScene scene;
-            id<CAMetalDrawable> drawable = nil;
-            Clock::time_point submitted_at;
-            double build_ms = 0.0;
-        };
+        // the in flight budget of the frame scheduler: drawables that may be pending at once (§10.3)
+        constexpr std::size_t MAX_IN_FLIGHT_DRAWABLES = 2;
 
     } // namespace
+
+    // the queue slot that crosses from the ui thread to the encoding worker
+    struct RenderWorkItem
+    {
+        std::uint64_t frame_index = 0;
+        FrameScene scene;
+        albor::a2::NativeSurface* surface = nullptr;
+        id<CAMetalDrawable> drawable = nil;
+        Clock::time_point submitted_at;
+        double build_ms = 0.0;
+    };
+
+    // the encoded command buffer that crosses back from the worker to the presenting thread
+    struct RenderEncodedItem
+    {
+        std::uint64_t frame_index = 0;
+        id<MTLCommandBuffer> commands = nil;
+        albor::a2::NativeSurface* surface = nullptr;
+        id<CAMetalDrawable> drawable = nil;
+        Clock::time_point submitted_at;
+        double build_ms = 0.0;
+        double encode_ms = 0.0;
+    };
 
     struct RenderExecutor::State
     {
         albor::a2::NativeSurface* surface = nullptr;
         std::thread worker;
         std::mutex mutex;
-        std::condition_variable ready;
-        std::deque<Envelope> pending;
+        std::condition_variable to_worker;
+        std::condition_variable to_ui;
+        std::deque<RenderWorkItem> pending;
+        std::deque<RenderEncodedItem> encoded;
         std::vector<FrameTiming> recorded;
         Clock::time_point last_present{};
         bool has_last_present = false;
@@ -57,6 +66,7 @@ namespace albor::a1
         std::size_t frames_dropped = 0;
         std::size_t frames_coalesced = 0;
         std::atomic<std::size_t> in_flight{0};
+        double last_build_ms = 0.0;
         bool running = false;
         albor::a2::Metrics last_geometry{};
 
@@ -94,20 +104,20 @@ namespace albor::a1
         // resolve the native surface of the window
         m_state->surface = window.native_surface();
 
-        // the executor needs a device and a queue to present with
+        // the executor needs a device and a queue to record with
         if (m_state->surface == nullptr || m_state->surface->layer == nil || m_state->surface->queue == nil) {
             return false;
         }
 
-        // start the render thread that owns stage 2 (§10.2)
+        // start the worker that only records command buffers, which is what stage 2 may do off the ui thread (§10.2)
         m_state->running = true;
         m_state->worker = std::thread([state = m_state] {
             while (state->running) {
                 // take one scene off the queue, waiting for one when the queue is empty
-                Envelope envelope;
+                RenderWorkItem work;
                 {
                     std::unique_lock<std::mutex> lock(state->mutex);
-                    state->ready.wait(lock, [state] { return !state->running || !state->pending.empty(); });
+                    state->to_worker.wait(lock, [state] { return !state->running || !state->pending.empty(); });
 
                     // leave the loop once the executor was stopped and the queue drained
                     if (state->pending.empty()) {
@@ -117,71 +127,71 @@ namespace albor::a1
                         continue;
                     }
 
-                    envelope = std::move(state->pending.front());
+                    work = std::move(state->pending.front());
                     state->pending.pop_front();
                 }
 
-                // stage 2 never calls application code and never touches the layer, it only executes the immutable scene (§10.2)
+                // record one command buffer on the worker, without presenting it (§10.2)
                 const Clock::time_point start = Clock::now();
-                id<MTLCommandBuffer> commands = [state->surface->queue commandBuffer];
+                id<MTLCommandBuffer> commands = [work.surface->queue commandBuffer];
 
-                if (envelope.drawable != nil && commands != nil) {
+                if (work.drawable != nil && commands != nil) {
                     // describe the single attachment this phase clears
                     MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
                     MTLRenderPassColorAttachmentDescriptor* color = pass.colorAttachments[0];
-                    color.texture = envelope.drawable.texture;
+                    color.texture = work.drawable.texture;
                     color.loadAction = MTLLoadActionClear;
                     color.storeAction = MTLStoreActionStore;
                     color.clearColor = MTLClearColorMake(0.05, 0.06, 0.08, 1.0);
 
-                    // encode and present the frame without waiting for the gpu, because the compositor paces it
+                    // encode the passes, which is the only work the worker performs
                     id<MTLRenderCommandEncoder> encoder = [commands renderCommandEncoderWithDescriptor:pass];
-                    encoder.label = @"albor-a1-clear";
+                    encoder.label = @"albor-a1-encode";
                     [encoder endEncoding];
-                    [commands presentDrawable:envelope.drawable];
-                    [commands commit];
                 }
 
-                // the drawable is not needed once the frame was submitted to the compositor
-                [envelope.drawable release];
+                {
+                    // hand the encoded buffer to the thread that presents
+                    const std::lock_guard<std::mutex> lock(state->mutex);
+                    RenderEncodedItem item;
+                    item.frame_index = work.frame_index;
+                    item.commands = commands;
+                    item.surface = work.surface;
+                    item.drawable = work.drawable;
+                    item.submitted_at = work.submitted_at;
+                    item.build_ms = work.build_ms;
+                    item.encode_ms = to_ms(Clock::now() - start);
+                    state->encoded.push_back(item);
+                }
 
-                // release the in flight slot so the ui thread may ask for another drawable
-                state->in_flight--;
-
-                const Clock::time_point done = Clock::now();
-                const std::lock_guard<std::mutex> lock(state->mutex);
-
-                // record what the frame cost on both sides of the handoff
-                FrameTiming timing;
-                timing.index = envelope.scene.index;
-                timing.build_ms = envelope.build_ms;
-                timing.present_ms = to_ms(done - start);
-                timing.submit_to_present_ms = to_ms(done - envelope.submitted_at);
-                timing.interval_ms = state->has_last_present ? to_ms(done - state->last_present) : 0.0;
-                state->last_present = done;
-                state->has_last_present = true;
-                state->recorded.push_back(timing);
-                state->frames_executed++;
+                // wake the ui thread so it can present
+                state->to_ui.notify_one();
             }
         });
 
-        // report that the render thread is running
+        // report that the recording worker is running
         return true;
     }
 
     double RenderExecutor::submit(FrameScene scene) {
-        // the ui thread drives the layer, because cametal layer drawables are only produced for the thread that owns it
+        // the present path starts on the ui thread, because cametal layer drawables belong to the thread that drives it
         const Clock::time_point start = Clock::now();
-        m_state->update_layer_geometry(scene.metrics);
 
-        // stop asking for a drawable while the in flight budget is spent, because coalescing a frame is
-        // what the frame scheduler requires and blocking the ui thread is what it forbids (§10.3)
-        if (m_state->in_flight.load() >= MAX_IN_FLIGHT_FRAMES) {
+        // present whatever the worker finished, because presentation stays pinned to this thread
+        present_ready(start);
+
+        // stop asking for a drawable while the in flight budget is spent, because coalescing is what the
+        // frame scheduler requires and blocking the ui thread is what it forbids (§10.3)
+        if (m_state->in_flight.load() >= MAX_IN_FLIGHT_DRAWABLES) {
             const std::lock_guard<std::mutex> busy_lock(m_state->mutex);
             m_state->frames_coalesced++;
             return to_ms(Clock::now() - start);
         }
 
+        // keep the layer in step with the window before asking for a drawable
+        m_state->update_layer_geometry(scene.metrics);
+
+        // acquire the drawable, which is the only blocking call the ui thread still makes
         id<CAMetalDrawable> drawable = [m_state->surface->layer nextDrawable];
 
         // retain the drawable explicitly, because a c++ container does not hold an objective c reference
@@ -194,32 +204,64 @@ namespace albor::a1
 
         const std::lock_guard<std::mutex> lock(m_state->mutex);
 
-        // drop the oldest scene when the queue is full, because coalescing beats blocking the ui thread (§10.3)
-        if (m_state->pending.size() >= MAX_PENDING_SCENES) {
-            // release the drawable of the dropped scene, because nothing else owns it
-            Envelope dropped = std::move(m_state->pending.front());
-            m_state->pending.pop_front();
-            [dropped.drawable release];
-            m_state->in_flight--;
-            m_state->frames_dropped++;
-        }
+        // hand the immutable scene and its drawable to the recording worker
+        RenderWorkItem work;
+        work.frame_index = scene.index;
+        work.scene = std::move(scene);
+        work.surface = m_state->surface;
+        work.drawable = drawable;
+        work.submitted_at = start;
+        work.build_ms = m_state->last_build_ms;
+        m_state->pending.push_back(std::move(work));
 
-        // hand the immutable scene and its drawable to stage 2
-        Envelope envelope;
-        envelope.scene = std::move(scene);
-        envelope.drawable = drawable;
-        envelope.submitted_at = start;
-        m_state->pending.push_back(std::move(envelope));
+        // wake the worker
+        m_state->to_worker.notify_one();
 
-        // wake the render thread
-        m_state->ready.notify_one();
-
-        // report how long the ui thread was blocked by the handoff
+        // report how long the ui thread was blocked
         return to_ms(Clock::now() - start);
     }
 
+    void RenderExecutor::present_ready(std::chrono::steady_clock::time_point tick_start) {
+        // take everything the worker finished, without waiting for it
+        std::deque<RenderEncodedItem> ready;
+        {
+            const std::lock_guard<std::mutex> lock(m_state->mutex);
+            ready.swap(m_state->encoded);
+        }
+
+        // present each encoded buffer on this thread, which is where the layer lives
+        for (RenderEncodedItem& item : ready) {
+            // present and submit the frame
+            if (item.commands != nil && item.drawable != nil) {
+                [item.commands presentDrawable:item.drawable];
+                [item.commands commit];
+            }
+
+            // the drawable is not needed once the frame was submitted to the compositor
+            [item.drawable release];
+
+            // release the in flight slot so the ui thread may ask for another drawable
+            m_state->in_flight--;
+
+            const Clock::time_point done = Clock::now();
+            const std::lock_guard<std::mutex> lock(m_state->mutex);
+
+            // record what the frame cost on both sides of the handoff
+            FrameTiming timing;
+            timing.index = item.build_ms > 0.0 ? item.frame_index : 0;
+            timing.build_ms = item.build_ms;
+            timing.present_ms = to_ms(done - tick_start);
+            timing.submit_to_present_ms = to_ms(done - item.submitted_at);
+            timing.interval_ms = m_state->has_last_present ? to_ms(done - m_state->last_present) : 0.0;
+            m_state->last_present = done;
+            m_state->has_last_present = true;
+            m_state->recorded.push_back(timing);
+            m_state->frames_executed++;
+        }
+    }
+
     void RenderExecutor::stop() {
-        // tell the render thread to finish and wait for it
+        // tell the worker to finish and wait for it
         {
             const std::lock_guard<std::mutex> lock(m_state->mutex);
             if (!m_state->running) {
@@ -228,8 +270,8 @@ namespace albor::a1
             m_state->running = false;
         }
 
-        // wake the render thread so it observes the stop request
-        m_state->ready.notify_all();
+        // wake the worker so it observes the stop request
+        m_state->to_worker.notify_all();
 
         // join the thread when it was started
         if (m_state->worker.joinable()) {
@@ -237,19 +279,21 @@ namespace albor::a1
         }
     }
 
+    void RenderExecutor::set_build_ms(double build_ms) { m_state->last_build_ms = build_ms; }
+
     std::size_t RenderExecutor::frames_executed() const {
         const std::lock_guard<std::mutex> lock(m_state->mutex);
         return m_state->frames_executed;
     }
 
-    std::size_t RenderExecutor::frames_coalesced() const {
-        const std::lock_guard<std::mutex> lock(m_state->mutex);
-        return m_state->frames_coalesced;
-    }
-
     std::size_t RenderExecutor::frames_dropped() const {
         const std::lock_guard<std::mutex> lock(m_state->mutex);
         return m_state->frames_dropped;
+    }
+
+    std::size_t RenderExecutor::frames_coalesced() const {
+        const std::lock_guard<std::mutex> lock(m_state->mutex);
+        return m_state->frames_coalesced;
     }
 
     std::vector<FrameTiming> RenderExecutor::timings() const {

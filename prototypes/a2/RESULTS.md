@@ -35,6 +35,19 @@ Window ended at 1280x688 logical, 2560x1376 device pixels, which is the logical 
 4. **The frame tail does not meet the recorded budget.** p50 is exactly one display interval (16.67 ms) while p99 is 25.56 ms, so the cost is a tail, not a steady offset. The present path runs synchronously inside the display link callback on the main thread, which is the most likely cause. §10.2 already prescribes moving render execution off the UI thread; this measurement is the first evidence on macOS that doing so matters.
 5. **Latency has a hard floor of one display interval.** An input-to-present measurement that starts when the request is issued cannot beat the next tick. The 16.7 ms budget for input-to-present latency therefore needs to be restated as ~2 intervals (33.4 ms) for a display-driven presentation model, or the budget has to be defined against a deadline-based scheduler instead.
 
+## Re-instrumentation: where the tail actually goes
+
+The A2 path was instrumented to separate the two costs inside one frame. Release build, steady phase:
+
+| Cost | p50 | p99 |
+| --- | --- | --- |
+| `t_acquire` (`nextDrawable`) | 1.30 ms | 20.75 ms |
+| `t_encode_submit` (encode + `commit`) | 0.05 ms | 0.12 ms |
+
+**The 25.56 ms tail was layer recycling back-pressure, not GPU submission.** Encoding and submission are roughly three orders of magnitude below any plausible budget, so no renderer optimisation would have addressed it.
+
+Run-to-run variance on the same binary: steady interval p99 was 17.7, 23.7, 25.6, 30.1 and 45.4 ms over five runs, while p50 stayed at 16.67 ms. A single p99 is therefore not a decision input on this machine, and the recorded 25.56 ms should be read as one sample of a noisy tail, not as a stable figure.
+
 ## Consequences for the plan
 
 - **Budget restated (Revision R1, `plan.md`):** the p99 input-to-present budget is 25.0 ms at 60 Hz (one interval plus an 8.33 ms processing deadline), or stated as processing delay from event arrival to render submit ≤ 8.33 ms. The recorded 19.5 ms is a miss against the original 16.7 ms and a pass against R1; both readings are kept.

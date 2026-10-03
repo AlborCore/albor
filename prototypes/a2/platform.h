@@ -37,6 +37,8 @@ namespace albor::a2
         std::size_t pixel_height = 0;
         double scale_factor = 1.0;
         bool resizing = false;
+        double acquire_ms = 0.0; // time spent waiting for a drawable from the layer
+        double encode_submit_ms = 0.0; // time spent recording and submitting the frame
     };
 
     // the slice of the platform layer this prototype needs, without any platform type in the interface (§3.5, AD-05)

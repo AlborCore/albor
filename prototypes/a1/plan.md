@@ -41,6 +41,35 @@ A1.1 deliberately reuses the Prototype A2 macOS window rather than writing a sec
 
 **Baseline to beat:** Prototype A2 measured a steady interval p99 of 25.56 ms with presentation on the UI thread.
 
+## A1.2a — layer-aware frame scheduling, thresholds recorded before the run
+
+A1.1 showed that the layer, not the scheduler, applies back pressure: the UI thread blocked inside `nextDrawable` and cadence doubled to two display intervals. A1.2a tests the correction without Skia, so the dependency on the pinned Skia binaries does not block the scheduling question.
+
+Design under test, per AD-18 R1 as restated by this prototype:
+- `nextDrawable` acquisition and `presentDrawable:` stay pinned to the UI thread inside the `CADisplayLink` tick.
+- Command encoding runs on a background worker, so stage 2 never makes the UI thread wait for recording.
+- The frame scheduler applies a **layer-aware admission check**: at most `MAX_IN_FLIGHT_DRAWABLES` drawables may be pending, and while the budget is spent the UI thread coalesces the request instead of asking the layer for a drawable (§10.3).
+
+| Category | Threshold |
+| --- | --- |
+| Present interval p99 | ≤ 16.7 ms |
+| UI thread blocked by the handoff, p99 | ≤ 1.0 ms |
+| Scene build on the UI thread, p99 | ≤ 2.0 ms |
+| Encoding on the worker, p99 | ≤ 8.33 ms (the R1 processing deadline) |
+| Input-to-present p99 | ≤ 25.0 ms (Revision R1) |
+| Frames presented while resizing | ≥ 95% of the resize steps |
+| Nested modal session dispatches | ≥ 30 in 500 ms |
+
+**Workload:** unchanged from A1.1 (400 steady frames, 60 resize steps, 500 ms nested modal session, 4096 primitive records per scene), so the two phases are directly comparable.
+
+**Baseline to beat:** A1.1 measured a present interval p50 of 33.33 ms and a UI thread block p50 of 16.49 ms. A2, presenting on the UI thread, measured 16.67 ms p50.
+
+**Also measured, as a diagnostic rather than a gate:** `t_acquire` (the `nextDrawable` call) against `t_encode_submit` (command encoding plus `commit`) in the A2 path, to establish whether A2's 25.56 ms tail came from layer recycling or from GPU submission.
+
+## A1.2b — blocked on the pinned Skia binaries
+
+`RenderContext`, `CustomRenderNode`, the retained resource factory and workloads W1 to W3 are unchanged, but they cannot start until pinned pre-built Skia binaries are available. AD-19 requires Skia as a pinned dependency, and routine test cycles must not build it from source, so this phase stays parked rather than silently switching to a source build.
+
 ## Known limits of A1.1
 
 - No content is drawn: the renderer clears and presents, so the frame cost is a lower bound.

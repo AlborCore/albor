@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -28,7 +29,13 @@ namespace albor::a1
         double interval_ms = 0.0; // time between consecutive presents
     };
 
-    // the render executor that owns presentation and never runs application code (§10.2)
+    // the queue slot that crosses from the ui thread to the recording worker
+    struct RenderWorkItem;
+
+    // the encoded command buffer that crosses back from the worker to the presenting thread
+    struct RenderEncodedItem;
+
+    // the render executor that owns recording and presentation and never runs application code (§10.2)
     class RenderExecutor
     {
     public:
@@ -42,6 +49,10 @@ namespace albor::a1
 
         // start the render thread against the native layer of a window
         [[nodiscard]] bool start(albor::a2::PlatformWindow& window);
+
+        // hand an immutable scene to stage 2, returning how long the ui thread was blocked
+        // remember how long stage 1 took, so the record carries the scene build cost
+        void set_build_ms(double build_ms);
 
         // hand an immutable scene to stage 2, returning how long the ui thread was blocked
         double submit(FrameScene scene);
@@ -58,6 +69,9 @@ namespace albor::a1
 
     private:
         struct State;
+
+        // present everything the recording worker finished, on the thread that owns the layer
+        void present_ready(std::chrono::steady_clock::time_point tick_start);
         State* m_state = nullptr;
     };
 

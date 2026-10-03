@@ -113,13 +113,18 @@ namespace albor::a2
     state.layer.drawableSize = CGSizeMake(bounds.size.width * scale, bounds.size.height * scale);
 
     // acquire the drawable the platform hands us for this frame
-    id<CAMetalDrawable> drawable = [state.layer nextDrawable];
+    // acquire the drawable only when this thread presents, because acquiring one blocks (§10.2)
+    const albor::a2::Clock::time_point acquire_start = albor::a2::Clock::now();
+    id<CAMetalDrawable> drawable = state.present_on_ui_thread != 0 ? [state.layer nextDrawable] : nil;
+    const double acquire_ms = albor::a2::to_ms(albor::a2::Clock::now() - acquire_start);
+
     albor::a2::FrameRecord record;
+    double encode_submit_ms = 0.0;
 
     // build the record even without a drawable, so a dropped frame is still observable
     const albor::a2::Clock::time_point now = albor::a2::Clock::now();
 
-    if (drawable != nil && state.queue != nil) {
+    if (drawable != nil && state.queue != nil && state.present_on_ui_thread != 0) {
         // describe the single attachment this prototype clears
         MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
         MTLRenderPassColorAttachmentDescriptor* color = pass.colorAttachments[0];
@@ -129,12 +134,14 @@ namespace albor::a2
         color.clearColor = MTLClearColorMake(0.05, 0.06, 0.08, 1.0);
 
         // encode and present one clear, which is enough to exercise presentation
+        const albor::a2::Clock::time_point encode_start = albor::a2::Clock::now();
         id<MTLCommandBuffer> commands = [state.queue commandBuffer];
         id<MTLRenderCommandEncoder> encoder = [commands renderCommandEncoderWithDescriptor:pass];
         encoder.label = @"albor-a2-clear";
         [encoder endEncoding];
         [commands presentDrawable:drawable];
         [commands commit];
+        encode_submit_ms = albor::a2::to_ms(albor::a2::Clock::now() - encode_start);
     }
 
     {
@@ -155,6 +162,8 @@ namespace albor::a2
         record.pixel_height = static_cast<std::size_t>(bounds.size.height * scale);
         record.scale_factor = scale;
         record.resizing = state.resizing != 0;
+        record.acquire_ms = acquire_ms;
+        record.encode_submit_ms = encode_submit_ms;
 
         // count the presented frame and whether it answered a resize request (§7.4)
         state.frames_presented++;
