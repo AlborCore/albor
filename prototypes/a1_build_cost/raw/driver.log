@@ -1,0 +1,7 @@
+=== W1: cold skia[graphite,metal] ===
+w1_skia_cold: status=0 wall=2058.8s cpu=0.0s ccache_hits=0
+=== W2: warm skia rebuild from W1's state ===
+w2_skia_warm: status=0 wall=3.0s cpu=-0.0s ccache_hits=0
+=== W3: cold dawn[metal] (the honest comparator) ===
+w3_dawn_cold: status=0 wall=996.6s cpu=-0.0s ccache_hits=0
+raw logs in /Users/rogelio/Projects/albor/prototypes/a1_build_cost/raw

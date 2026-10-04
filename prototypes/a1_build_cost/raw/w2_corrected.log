@@ -1,0 +1,170 @@
+CORRECTED W2: ccache recovery
+  phase 1: populate a dedicated cache with one full build
+  phase 2: wipe build tree and install root, keep only the cache, rebuild
+  compiler launcher: VCPKG_C/CXX_COMPILER_LAUNCHER=ccache (the repository preset does not reach vcpkg)
+Detecting compiler hash for triplet x64-osx...
+Compiler found: /usr/bin/c++
+The following packages will be built and installed:
+  * abseil:x64-osx@20260107.1#3
+  * brotli:x64-osx@1.2.0
+  * bzip2[core,tool]:x64-osx@1.0.8#6
+  * egl-registry:x64-osx@2025-05-27
+  * expat:x64-osx@2.8.2
+  * freetype[brotli,bzip2,core,png,zlib]:x64-osx@2.14.3
+  * harfbuzz[core,freetype]:x64-osx@14.2.1#1
+  * icu[core,tools]:x64-osx@78.3#1
+  * libjpeg-turbo:x64-osx@3.2.0
+  * libpng:x64-osx@1.6.58
+  * libwebp[core,libwebpmux,nearlossless,simd]:x64-osx@1.6.0#2
+  * opengl-registry:x64-osx@2026-01-26
+  * pkgconf:x64-osx@3.0.3
+    skia[core,dng,gl,graphite,harfbuzz,icu,jpeg,metal,png,vulkan,webp]:x64-osx@148
+  * vcpkg-cmake:x64-osx@2024-04-23
+  * vcpkg-cmake-config:x64-osx@2024-05-23
+  * vcpkg-cmake-get-vars:x64-osx@2025-05-29
+  * vcpkg-gn:x64-osx@2025-08-05
+  * vcpkg-make:x64-osx@2026-07-09
+  * vcpkg-pkgconfig-get-modules:x64-osx@2024-04-03
+  * vcpkg-tool-gn:x64-osx@2025-08-05#1
+  * vcpkg-tool-meson:x64-osx@1.9.0#10
+  * vulkan-headers:x64-osx@1.4.350.1
+  * vulkan-memory-allocator:x64-osx@3.4.0
+  * zlib:x64-osx@1.3.2#1
+Additional packages (*) will be modified to complete this operation.
+Installing 1/25 vcpkg-cmake-config:x64-osx@2024-05-23...
+vcpkg-cmake-config:x64-osx@2024-05-23 package ABI: 06d70a96777c8f85d075eaf152571a67890a3b60e7b0b988e0b6bf5b292b2b7e
+Building vcpkg-cmake-config:x64-osx@2024-05-23...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-cmake-config_x64-osx/share/vcpkg-cmake-config/vcpkg_cmake_config_fixup.cmake
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-cmake-config_x64-osx/share/vcpkg-cmake-config/vcpkg-port-config.cmake
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-cmake-config_x64-osx/share/vcpkg-cmake-config/copyright
+-- Skipping post-build validation due to VCPKG_POLICY_EMPTY_PACKAGE
+Elapsed time to handle vcpkg-cmake-config:x64-osx: 60.9 ms
+Installing 2/25 vcpkg-cmake:x64-osx@2024-04-23...
+vcpkg-cmake:x64-osx@2024-04-23 package ABI: 53a6aef13c704539d053f43cc97b7af4a58100cadd4ae26be49576c13352bb86
+Building vcpkg-cmake:x64-osx@2024-04-23...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-cmake_x64-osx/share/vcpkg-cmake/vcpkg_cmake_configure.cmake
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-cmake_x64-osx/share/vcpkg-cmake/vcpkg_cmake_build.cmake
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-cmake_x64-osx/share/vcpkg-cmake/vcpkg_cmake_install.cmake
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-cmake_x64-osx/share/vcpkg-cmake/vcpkg-port-config.cmake
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-cmake_x64-osx/share/vcpkg-cmake/copyright
+-- Performing post-build validation
+Elapsed time to handle vcpkg-cmake:x64-osx: 53.6 ms
+Installing 3/25 libwebp[core,libwebpmux,nearlossless,simd]:x64-osx@1.6.0#2...
+libwebp[core,libwebpmux,nearlossless,simd]:x64-osx@1.6.0#2 package ABI: 418d4c420130312d3c43cab7c03bddbba39ba9cbe0a18b303a96d0d29c63543f
+Building libwebp[core,libwebpmux,nearlossless,simd]:x64-osx@1.6.0#2...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Using cached webmproject-libwebp-v1.6.0.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/webmproject-libwebp-v1.6.0.tar.gz
+-- Applying patch 0002-cmake-config.patch
+-- Applying patch 0003-simd.patch
+-- Applying patch 0008-sdl.patch
+-- Applying patch 0009-cpufeatures-android.patch
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/libwebp/src/v1.6.0-bbdfbfe91d.clean
+-- Configuring x64-osx
+-- Building x64-osx-dbg
+-- Building x64-osx-rel
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libwebp_x64-osx/lib/pkgconfig/libsharpyuv.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libwebp_x64-osx/lib/pkgconfig/libwebp.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libwebp_x64-osx/lib/pkgconfig/libwebpdecoder.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libwebp_x64-osx/lib/pkgconfig/libwebpdemux.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libwebp_x64-osx/lib/pkgconfig/libwebpmux.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libwebp_x64-osx/debug/lib/pkgconfig/libsharpyuv.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libwebp_x64-osx/debug/lib/pkgconfig/libwebp.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libwebp_x64-osx/debug/lib/pkgconfig/libwebpdecoder.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libwebp_x64-osx/debug/lib/pkgconfig/libwebpdemux.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libwebp_x64-osx/debug/lib/pkgconfig/libwebpmux.pc
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/libwebp_x64-osx/share/libwebp/usage
+-- Performing post-build validation
+Elapsed time to handle libwebp:x64-osx: 17 s
+Installing 4/25 vulkan-memory-allocator:x64-osx@3.4.0...
+vulkan-memory-allocator:x64-osx@3.4.0 package ABI: 158f02e49bafc3796f07fdc22a9366e558cc2144f94198097ac09a2423810096
+Building vulkan-memory-allocator:x64-osx@3.4.0...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Using cached GPUOpen-LibrariesAndSDKs-VulkanMemoryAllocator-v3.4.0.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/GPUOpen-LibrariesAndSDKs-VulkanMemoryAllocator-v3.4.0.tar.gz
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/vulkan-memory-allocator/src/v3.4.0-141324f130.clean
+-- Configuring x64-osx
+-- Building x64-osx-rel
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vulkan-memory-allocator_x64-osx/share/vulkan-memory-allocator/copyright
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vulkan-memory-allocator_x64-osx/share/vulkan-memory-allocator/usage
+-- Performing post-build validation
+Elapsed time to handle vulkan-memory-allocator:x64-osx: 1.2 s
+Installing 5/25 vulkan-headers:x64-osx@1.4.350.1...
+vulkan-headers:x64-osx@1.4.350.1 package ABI: 10eee942414c23f9ab42e1a7b0457252c18f31bb76e7a3d85688a0db0acbabf9
+Building vulkan-headers:x64-osx@1.4.350.1...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Using cached KhronosGroup-Vulkan-Headers-vulkan-sdk-1.4.350.1.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/KhronosGroup-Vulkan-Headers-vulkan-sdk-1.4.350.1.tar.gz
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/vulkan-headers/src/-1.4.350.1-9c7e87a66b.clean
+-- Configuring x64-osx
+-- Building x64-osx-rel
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vulkan-headers_x64-osx/share/vulkan-headers/copyright
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vulkan-headers_x64-osx/share/vulkan-headers/usage
+-- Performing post-build validation
+Elapsed time to handle vulkan-headers:x64-osx: 2 s
+Installing 6/25 zlib:x64-osx@1.3.2#1...
+zlib:x64-osx@1.3.2#1 package ABI: 1f9129edd7d7880150bab21dde6f6e3d3d81013a4add2dd7b76f7234a4de90a2
+Building zlib:x64-osx@1.3.2#1...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Using cached madler-zlib-v1.3.2.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/madler-zlib-v1.3.2.tar.gz
+-- Applying patch 0001-no-version-script-on-ohos.patch
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/zlib/src/v1.3.2-c19a0bfd23.clean
+-- Configuring x64-osx
+-- Building x64-osx-dbg
+-- Building x64-osx-rel
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/zlib_x64-osx/lib/pkgconfig/zlib.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/zlib_x64-osx/debug/lib/pkgconfig/zlib.pc
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/zlib_x64-osx/share/zlib/vcpkg-cmake-wrapper.cmake
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/zlib_x64-osx/share/zlib/copyright
+-- Performing post-build validation
+Elapsed time to handle zlib:x64-osx: 6.8 s
+Installing 7/25 libpng:x64-osx@1.6.58...
+libpng:x64-osx@1.6.58 package ABI: 1522ac1ba42f4609fcd94025011cf78d96ac0a3234a629df1f0896f379fcbd2d
+Building libpng:x64-osx@1.6.58...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Using cached pnggroup-libpng-v1.6.58.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/pnggroup-libpng-v1.6.58.tar.gz
+-- Applying patch cmake.patch
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/libpng/src/v1.6.58-b91136795d.clean
+-- Configuring x64-osx
+-- Building x64-osx-dbg
+-- Building x64-osx-rel
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/libpng_x64-osx/share/png/vcpkg-cmake-wrapper.cmake
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/libpng_x64-osx/share/libpng/libpng-config.cmake
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libpng_x64-osx/lib/pkgconfig/libpng16.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libpng_x64-osx/debug/lib/pkgconfig/libpng16.pc
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/libpng_x64-osx/debug/lib/pkgconfig/libpng.pc
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/libpng_x64-osx/lib/pkgconfig/libpng.pc
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/libpng_x64-osx/share/libpng/usage
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/libpng_x64-osx/share/libpng/copyright
+-- Performing post-build validation
+Elapsed time to handle libpng:x64-osx: 5 s
+Installing 8/25 libjpeg-turbo:x64-osx@3.2.0...
+libjpeg-turbo:x64-osx@3.2.0 package ABI: 49a81eaa422452ded3fb286c3b0798d0721924d2fa4d895b549c1dde7ad993c6
+Building libjpeg-turbo:x64-osx@3.2.0...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Using cached libjpeg-turbo-libjpeg-turbo-3.2.0.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/libjpeg-turbo-libjpeg-turbo-3.2.0.tar.gz
+-- Applying patch add-options-for-docs-headers.patch
+-- Applying patch workaround_cmake_system_processor.patch
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/libjpeg-turbo/src/3.2.0-3cdbbb0a83.clean
+-- Configuring x64-osx
+CMake Warning at /Users/rogelio/Projects/albor/.build-cost/skia-cold/installed/x64-osx/share/vcpkg-cmake/vcpkg_cmake_configure.cmake:344 (message):
+  The following variables are not used in CMakeLists.txt:
+
+      NEON_INTRINSICS
+
+  Please recheck them and remove the unnecessary options from the
+  `vcpkg_cmake_configure` call.
+
+  If these options should still be passed for whatever reason, please use the
+  `MAYBE_UNUSED_VARIABLES` argument.
+Call Stack (most recent call first):
+  ports/libjpeg-turbo/portfile.cmake:45 (vcpkg_cmake_configure)
+  scripts/ports.cmake:206 (include)
+
+
+-- Building x64-osx-dbg

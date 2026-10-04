@@ -4,3 +4,4 @@ compile_commands.json
 build/vcpkg_installed/
 .DS_Store
 .vscode/
+.build-cost/
