@@ -103,10 +103,13 @@ the **hover hit ratio came out at 99.41% on both renderers, to the digit**, whic
 | Present interval p95 | 279.6 ms | 18.16 ms | — |
 | Present interval p99 | 420.5 ms | 48.93 ms | ≤ 16.7 ms |
 | Recording p50 | 0.177 ms | 0.085 ms | — |
+| Recording p99 | 0.394 ms | 0.205 ms | ≤ 8.33 ms |
 | Recording p99 per segment | 0.219 ns | 0.114 ns | ≤ 8 ns |
 | Recording p95 moved / still (O(1)) | 0.976× | 1.096× | ≤ 1.25× |
 | Frames dropped | 0 of 401 | 0 of 400 | ≤ 1% |
 | Append build per 100k, p99 | 119.9 ms | 37.0 ms | ≤ 25 ms |
+
+*Note on per-segment figures:* `Recording p99 per segment` is calculated as $\text{Recording p99} \times 10^6\text{ ns/ms} \div 1,800,000\text{ segments}$ (for Skia: $0.394\text{ ms} \times 10^6 \div 1.8\times 10^6 \approx 0.219\text{ ns}$; for Dawn: $0.205\text{ ms} \times 10^6 \div 1.8\times 10^6 \approx 0.114\text{ ns}$). `Recording p50` ($0.177\text{ ms}$ and $0.085\text{ ms}$) corresponds to $0.098\text{ ns}$ and $0.047\text{ ns}$ per segment at median; the threshold is evaluated against p99.
 
 **Both of Skia's structural limits disappear.** WebGPU's 32-bit instance index carries all 1.8 × 10⁶ segments in a
 single `Draw(6, 1800000)` call, where Skia's 16-bit vertex indexing forced 220. And because the GPU is no longer

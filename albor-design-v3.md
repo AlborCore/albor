@@ -36,7 +36,7 @@ Body text uses "must" and "should" accordingly: a "must" backed only by a Propos
 | Windows | Role and modality are separated. `WindowHandle` replaces raw references. Option structures are completed. Nested native loops are specified (§7, §8). |
 | Native components | The manifest is the single source of truth; C++ glue is generated from it. The compiler never parses C++ (§15). |
 | Phasing and prototypes | The semantic tree and an automation core move to Phase 2. Resources, animation and i18n core move earlier. A binding-engine prototype (D) and a dev-runtime prototype (E) are added. Prototype A is split. Prototype B gains a baseline (§30, §31). |
-| Decision register | Expanded from 16 to 28 entries, including ABI and distribution, render threading, MCP routing, X11 tier, compiler language, and unit naming (§29). |
+| Decision register | Expanded from 16 to 32 entries (28 original numbers with AD-04 and AD-18 split into sub-decisions), including ABI and distribution, render threading, MCP routing, X11 tier, compiler language, and unit naming (§29). |
 
 Appendix A maps each review finding to the section that addresses it.
 
@@ -557,7 +557,7 @@ A central `FocusManager` owns focus scopes, traversal, keyboard navigation, moda
 
 ## 13. Reactive Properties and Bindings
 
-The property/binding system is a load-bearing architecture decision, settled by AD-04.
+The property/binding system is a load-bearing architecture decision, addressed by the AD-04 series (AD-04a and AD-04d *Proposed*; AD-04b storage layout and AD-04c evaluation model remain *Open*).
 
 ### 13.1 Expression categories
 
@@ -1164,11 +1164,11 @@ Each prototype states its questions, scope and pass/fail criteria recorded in ad
 
 ### Status, tests run, and conclusions so far
 
-Every threshold below was committed before its run (§28.4) and every result is in the prototype's `RESULTS.md`, with one
-exception recorded as such: **A2's Revision R1 restated the input-to-present budget from 16.7 ms to 25.0 ms after the
-first run had already failed against 16.7 ms.** The original miss stands as recorded. Prototype D has no `plan.md` at
-all, so its thresholds cannot be shown to have been pre-recorded and its reference hardware was declared only after
-the run.
+Every threshold below was committed before its run (§28.4) and every result is in the prototype's `RESULTS.md`, with two
+exceptions recorded as such: **A2's Revision R1 restated the input-to-present budget from 16.7 ms to 25.0 ms after the
+first run had already failed against 16.7 ms** (the original miss stands as recorded), and **Prototype D's `plan.md` was
+written retroactively after the run**, so its thresholds cannot be shown to have been pre-recorded and its reference hardware
+was declared only after the run.
 
 | Prototype | State | Tests and runs performed |
 | --- | --- | --- |
@@ -1177,6 +1177,8 @@ the run.
 | **A2 — Windows and Wayland** | not run | plans and platform scaffolds committed; execution tables `PENDING_CI_MATRIX_RUN` |
 | **A1 — renderer (Skia)** | complete | A1.1, A1.2a, A1.3 workloads W1/W2/W3 (401, 401, deadline-limited frames), A1.4 offscreen (400/400) |
 | **A1-Dawn — renderer (WebGPU)** | complete, macOS only | workloads W1/W2/W3 (400, 400, 400/400 frames; 3,200 hover queries) |
+| **A1-Parity — renderer output parity (Skia vs. Dawn)** | run | isolated-segment ink matched after corner-5 fix; batch parity not established (13.95% zoom 1, 63.68% zoom 8) |
+| **D2 — binding engine follow-up** | not started | none (follow-up to D for AD-04b/c: typed storage, diamond topologies, runtime mutation) |
 | **B — generated-code build performance** | not started | none |
 | **C — text, IME and accessibility** | not started | none |
 | **E — dev runtime slice** | not started | none |
@@ -1225,16 +1227,20 @@ submit is asynchronous, so this slice measured no GPU throughput, and presenting
 
 - *Both Skia structural limits disappear.* 1.8 × 10⁶ segments draw in **one** `Draw(6, 1800000)` call where Skia
   needed 220, and present interval p50 is **16.62 ms** — one 60 Hz interval — where Ganesh managed 149.7 ms. Recording
-  is 0.085 ms p50 and 0.114 ns per segment; W2 recording is 30× cheaper at 0.238 ms p99.
-- *The comparison is valid.* Hover hit ratio is 99.41% on both renderers to the digit, which can only happen if both
-  were fed byte-identical geometry.
+  is 0.085 ms p50 (0.114 ns per segment p99); W2 recording was reported as 30× cheaper at 0.238 ms p99 vs 7.23 ms, but that
+  figure is **partly an artefact of unequal work**: Skia drew 4,000 text labels through `drawSimpleText`, while Dawn drew no
+  glyphs at all.
+- *Input geometry matches, output parity unproven.* Hover hit ratio is 99.41% on both renderers to the digit: this is a
+  CPU-side geometry fixture check confirming both were fed byte-identical geometry; the renderer takes no part in it and
+  it does not establish pixel parity.
 - *Multi-window isolation does not exist when presenting on the UI thread, on either renderer.* Window 2's interval
-  during window 1's 100 ms hold is 100.86 ms p50 — the hold itself, not GPU contention. This is the evidence behind
-  AD-18's open question.
+  during window 1's 100 ms hold is 100.86 ms p50 — the hold itself, not GPU contention. (This result is true by construction
+  for any design presenting on the UI thread, and is the evidence behind AD-18b's open question.)
 - Text was counted but never drawn: Dawn has no glyph stack.
 
-These results make Dawn *Proposed* as candidate primary HAL (AD-28) with four blocking items: D3D12 and Vulkan
-unvalidated, no text pipeline, no software rasterizer against AD-26, and build cost unevaluated. Skia is **not** retired.
+These results make Dawn *Proposed* as candidate primary HAL (AD-28) with six blocking items: (1) platform parity (D3D12 and
+Vulkan unvalidated), (2) no text pipeline, (3) 2D feature surface rebuild, (4) no first-party software rasterizer against AD-26,
+(5) build cost unevaluated, and (6) Skia Graphite on a Dawn backend untested. Skia is **not** retired.
 
 **Pixel-parity findings (Prototype A1-Parity, `prototypes/a1_parity/RESULTS.md`).** Both engines render
 deterministically (T2: 0 differing bytes across repeats) and Dawn's offscreen readback is exact (T1: 1024000 of 1024000
@@ -1262,7 +1268,13 @@ question stays blocked on the platform.
 Scope: property storage, dependency tracking, dirty propagation and batched evaluation; ~10⁵ properties and ~10⁴ bindings; observable external state, environment properties (theme, locale) and animation-driven properties.
 Candidates: compact dependency records, dirty bitsets with topological evaluation, shared dependency nodes.
 Measures: memory per property and per binding, update latency, cache behavior, invalidation throughput.
-Outputs: input to AD-04 (recorded in `prototypes/d/RESULTS.md`), to the property layout in Phase 2, and the binding representation required by Prototype B. Completed: the AD-04 decision and the Phase 2 property-layout question follow from it.
+Outputs: input to AD-04 (recorded in `prototypes/d/RESULTS.md`), to the property layout in Phase 2, and the binding representation required by Prototype B. What was measured is adopted as AD-04a and AD-04d (*Proposed*); typed storage layout (AD-04b) and the evaluation model (AD-04c) remain *Open*, with Prototype D2 as the follow-up.
+
+### Prototype D2 — Binding engine follow-up (typed storage, diamond topologies, runtime mutation)
+
+Scope: follow-up to Prototype D for settling AD-04b (typed storage layout) and AD-04c (evaluation model: push vs. hybrid pull).
+Variants: typed per-component storage vs. 40 B variant (including `std::string`, translated strings, snapshot shared pointers); deep chains (depth up to 16) and diamond (reconvergent) topologies; runtime graph mutation (delegate subtrees, live-reload `ReplaceBinding`, popups); component-local `PropertyId`s with runtime base offsets; cycle detection and animation interplay (AD-04d, AD-24).
+Outputs: input to AD-04b/c and the Phase 2 property layout.
 
 ### Prototype A1 — Renderer (single platform)
 
@@ -1317,9 +1329,9 @@ These prototypes address the highest-risk assumptions before full-scale implemen
 
 ## 31. Implementation Phases
 
-**Phase 0:** AD-16 (*Decided*, with its evaluation and reversal criteria still to be written); Prototypes D, A1,
-A1-Dawn, B, E and C (parallelizable); then A2. D is complete; A1 and A1-Dawn are complete on macOS; A2 is complete on
-macOS with Windows and Wayland `PENDING_CI_MATRIX_RUN`; B, E and C have not started.
+**Phase 0:** AD-16 (*Decided*, with its evaluation and reversal criteria still to be written); Prototypes D, D2, A1,
+A1-Dawn, A1-Parity, B, E and C (parallelizable); then A2. D is complete; A1 and A1-Dawn are complete on macOS; A1-Parity has
+run; A2 is complete on macOS with Windows and Wayland `PENDING_CI_MATRIX_RUN`; D2, B, E and C have not started.
 
 **Phase 1:** Application, EventLoop, tasks/timers, Window and `WindowHandle`, platform abstraction (including the **headless backend**), renderer, software renderer, frame scheduler and two-stage pipeline.
 
@@ -1461,7 +1473,7 @@ The `Column` has no explicit `id` and therefore only an implicit key (§18.1). `
 22. Platform accessibility details.
 23. Initial widget set.
 
-Resolved in v3 (no longer open): window role/modality model, single source for scale factor, custom-canvas semantics, MCP routing, identity policy, automation build exclusion, compiler language (Proposed), X11 tier (Proposed), manifest authoring model (Proposed), property representation and binding invalidation algorithm (AD-04), platform implementation strategy (AD-16).
+Resolved in v3 (no longer open): window role/modality model, single source for scale factor, custom-canvas semantics, MCP routing, identity policy, automation build exclusion, compiler language (Proposed), X11 tier (Proposed), manifest authoring model (Proposed), property invalidation index and animation shadowing (AD-04a/d Proposed; storage layout AD-04b and evaluation model AD-04c remain Open, follow-up in Prototype D2), platform implementation strategy (AD-16).
 
 ---
 
@@ -1554,7 +1566,7 @@ The next implementation work validates these boundaries through Prototypes D, A1
 | Multi-window presentation stalls (second review) | §10.3, workload W3 |
 | Primary renderer HAL undecided; Dawn is a candidate, Skia retained | §11, AD-05, AD-06, AD-28 |
 | Dawn has no text or glyph pipeline; no first-party software rasterizer | §21.2, AD-26, AD-28 |
-| Replacing Skia means rebuilding the 2D feature surface: joins, caps, dashes, clips, gradients, layers, effects | §11.4, AD-06, AD-28 |
+| Replacing Skia means rebuilding the 2D feature surface: joins, caps, dashes, clips, gradients, layers, effects | §11.1, §11.2, AD-06, AD-28 |
 | Skia Graphite on a Dawn backend as a middle option, untested | AD-28 |
 | Pixel parity Skia vs Dawn: Dawn half-ink defect resolved (WGSL quad vertex 5 side selector bug); edge antialiasing differences remain | AD-28 |
 | Windowed frame pacing not reproducible on this platform; windowed timings unverified | AD-18, AD-28 |

@@ -126,6 +126,8 @@ Driver: `./.build-release/prototypes/a1/albor-prototype-a1-workloads`. The proce
 
 401 frames offered, 401 drawn, 9 stream publishes, 1.8 × 10^6 segments at the end, 79,215,840 bytes retained in the final set, 554,511,096 bytes allocated across every published set.
 
+*Note on per-segment figures:* `Recording p99 per segment` is calculated against the final retained set size of $1.8 \times 10^6$ segments ($0.394\text{ ms} \times 10^6\text{ ns/ms} \div 1.8\times 10^6\text{ segments} \approx 0.219\text{ ns}$). `Recording p50` ($0.18\text{ ms}$) corresponds to $0.098\text{ ns}$ per segment at median.
+
 ## W2 — CAD canvas, 10^5 symbols, 10^6 segments, 4000 labels
 
 | Category | Threshold | p50 | p95 | p99 | Result |
@@ -251,8 +253,11 @@ Thresholds were committed to `plan.md` before the run. Driver: `./.build-release
 | Metric | Ganesh (A1.3, W1) | Graphite (A1.4) | Ratio |
 | --- | --- | --- | --- |
 | Recording p50 | 0.177 ms | 0.220 ms | **1.24× slower** |
+| Recording p99 | 0.394 ms | 1.521 ms | **3.86× slower** |
 | Recording p99 per segment | 0.219 ns | 0.845 ns | **3.85× worse** |
 | Recording p95 moved / still | 0.976× | 0.885× | both hold |
+
+*Note on per-segment figures:* Computed from p99 recording time divided by $1.8 \times 10^6$ segments ($0.394\text{ ms} \times 10^6 \div 1.8\times 10^6 \approx 0.219\text{ ns}$ for Ganesh; $1.521\text{ ms} \times 10^6 \div 1.8\times 10^6 \approx 0.845\text{ ns}$ for Graphite).
 
 **On this machine and this workload, Graphite's CPU-side recording is not faster than Ganesh's — it is about 1.24× slower at the median and 3.85× worse in the tail.** The O(1) promise of §11.2 holds on both backends, so a retained batch is a backend-independent idea; the *cost* of replaying it is not.
 
