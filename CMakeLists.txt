@@ -41,6 +41,8 @@ if(ALBOR_PROTOTYPES)
     add_subdirectory(prototypes/a1)
     add_subdirectory(prototypes/a1_dawn)
     add_subdirectory(prototypes/a1_parity)
+    add_subdirectory(prototypes/b)
+    add_subdirectory(prototypes/e)
 endif()
 
 enable_testing()

@@ -1,0 +1,22 @@
+#include "Component206.h"
+
+#include <cstdint>
+
+struct Component206::Impl
+{
+    uint32_t m_base_offset = 0;
+    float m_color = 0;
+    float m_opacity = 1;
+    float m_width = 0;
+    float m_height = 0;
+    Component205* m_child = nullptr;
+};
+
+void Component206::set_color(float v) { m_impl->m_color = v; }
+void Component206::set_opacity(float v) { m_impl->m_opacity = v; }
+void Component206::set_width(float v) { m_impl->m_width = v; }
+void Component206::set_height(float v) { m_impl->m_height = v; }
+void Component206::set_child(Component205* child) { m_impl->m_child = child; }
+void Component206::on_click() {}
+void Component206::on_hover() {}
+void Component206::on_focus() {}

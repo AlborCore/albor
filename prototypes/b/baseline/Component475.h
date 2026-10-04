@@ -1,0 +1,28 @@
+#pragma once
+
+#include <cstdint>
+
+struct Component474;
+
+static constexpr int kProp475_Color = 475 * 4 + 0;
+static constexpr int kProp475_Opacity = 475 * 4 + 1;
+static constexpr int kProp475_Width = 475 * 4 + 2;
+static constexpr int kProp475_Height = 475 * 4 + 3;
+
+template <typename Derived>
+struct Component475
+{
+    float m_color = 0;
+    float m_opacity = 1;
+    float m_width = 0;
+    float m_height = 0;
+    Component474* m_child = nullptr;
+    void set_color(float v) { m_color = v; }
+    void set_opacity(float v) { m_opacity = v; }
+    void set_width(float v) { m_width = v; }
+    void set_height(float v) { m_height = v; }
+    void set_child(Component474* child) { m_child = child; }
+    void on_click() {}
+    void on_hover() {}
+    void on_focus() {}
+};
