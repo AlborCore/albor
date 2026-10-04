@@ -361,9 +361,23 @@ fn fs_main() -> @location(0) vec4<f32> {
     }
 
     void DawnOffscreenRenderer::upload_segments(const albor::a1_dawn::ResourceSet& resources) {
-        // both endpoints of every segment, packed as two vec2 attributes of one instance
-        m_state->vertices.resize(resources.lines.size() * 16);
-        std::memcpy(m_state->vertices.data(), resources.lines.data(), m_state->vertices.size());
+        // the draw issues six vertices per instance, so the buffer must carry six vertices per segment at the
+        // sixteen byte stride of two vec2 attributes. copying the segment list straight in left two vertices per
+        // segment, which made every instance read from the wrong offset and left the trailing instances reading past
+        // the end of the buffer. every vertex of an instance carries the same endpoint pair, because which of the six
+        // corners it is belongs to the vertex index the shader already takes as its corner selector.
+        constexpr std::size_t kVerticesPerSegment = 6;
+        constexpr std::size_t kBytesPerVertex = 16;
+        m_state->vertices.resize(resources.lines.size() * kVerticesPerSegment * kBytesPerVertex);
+        auto* out = reinterpret_cast<float*>(m_state->vertices.data());
+        for (const albor::a1_dawn::Segment& segment : resources.lines) {
+            for (std::size_t corner = 0; corner < kVerticesPerSegment; corner++) {
+                *out++ = segment.x0;
+                *out++ = segment.y0;
+                *out++ = segment.x1;
+                *out++ = segment.y1;
+            }
+        }
 
         wgpu::BufferDescriptor vertex_desc{};
         vertex_desc.size = m_state->vertices.size();

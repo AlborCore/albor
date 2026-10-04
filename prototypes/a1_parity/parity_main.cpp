@@ -619,6 +619,70 @@ int main(int argc, char** argv) {
         }
     }
 
+    // T7b, ink against requested width at zoom 1. The zoom ratio above says how a stroke responds to the view but
+    // cannot say whether a renderer lays down the ink it was asked for, because a cosmetic stroke legitimately
+    // delivers one pixel whatever the view asks for. This asks the direct question: at zoom 1 the requested width in
+    // pixels is the requested width, so ink divided by requested width is 1.0 for a correct renderer and stays
+    // comparable across widths. A renderer that loses a constant fraction of the ink shows that fraction here, which
+    // is what separates a width bug from a sub-pixel placement difference, since placement conserves the integral.
+    std::printf("\n== T7b, ink against requested width at zoom 1\n");
+    {
+        const float widths[] = {0.5F, 1.0F, 2.0F, 4.0F, 8.0F};
+        for (auto& [engine, renderer] : engines) {
+            for (const float width : widths) {
+                albor::a1_dawn::ResourceSet single;
+                single.extent = 1000.0F;
+                single.stroke_width = width;
+                single.lines.push_back({400.0F, 400.0F, 600.0F, 400.0F});
+
+                albor::a1_dawn::ViewTransform view{};
+                view.scale = 1.0F;
+
+                const EngineResult result = run_view(*renderer, single, ViewCase{"zoom 1", view});
+                const std::vector<double> profile = ink_profile(result.pixels, 500);
+                double ink = 0.0;
+                for (const double value : profile) {
+                    ink += value;
+                }
+                std::printf("  %-12s requested %.2f px, ink %.3f px, ratio %.3f", engine_name(engine), static_cast<double>(width), ink, ink / static_cast<double>(width));
+                // the rows that carry ink, so the shape is read from the pixels rather than inferred from the total
+                std::printf("  rows:");
+                for (std::size_t y = 0; y < profile.size(); y++) {
+                    if (profile[y] > 0.0) {
+                        std::printf(" %zu:%.3f", y, profile[y]);
+                    }
+                }
+                std::printf("\n");
+            }
+        }
+    }
+
+    // T7c, the same width at several heights. Every row above is cut at y = 400, the vertical midpoint of the
+    // framebuffer, whatever the width, so this separates a stroke width bug from a clip: a width bug loses the same
+    // fraction at every height, a clip loses nothing above the line and everything below it.
+    std::printf("\n== T7c, requested width 2 at several heights\n");
+    {
+        const float heights[] = {100.0F, 300.0F, 400.0F, 500.0F, 700.0F};
+        for (auto& [engine, renderer] : engines) {
+            for (const float height : heights) {
+                albor::a1_dawn::ResourceSet single;
+                single.extent = 1000.0F;
+                single.stroke_width = 2.0F;
+                single.lines.push_back({400.0F, height, 600.0F, height});
+
+                albor::a1_dawn::ViewTransform view{};
+                view.scale = 1.0F;
+
+                const EngineResult result = run_view(*renderer, single, ViewCase{"zoom 1", view});
+                double ink = 0.0;
+                for (const double value : ink_profile(result.pixels, 500)) {
+                    ink += value;
+                }
+                std::printf("  %-12s at y %.0f, ink %.3f px of 2 requested\n", engine_name(engine), static_cast<double>(height), ink);
+            }
+        }
+    }
+
     std::printf("\n== %d threshold failures\n", failures);
     return failures == 0 ? 0 : 1;
 }
