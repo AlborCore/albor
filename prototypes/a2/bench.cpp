@@ -146,9 +146,25 @@ int main() {
 
     // report the pacing result of the steady phase
     const double steady_p99 = percentile(steady_intervals, 0.99);
+    const double steady_max = *std::max_element(steady_intervals.begin(), steady_intervals.end());
+
+    // count how many intervals miss the budget, so a tail is described by its frequency and not only by p99
+    std::size_t missed = 0;
+    std::size_t doubled = 0;
+    for (const double interval : steady_intervals) {
+        if (interval > FRAME_INTERVAL_BUDGET_MS) {
+            missed++;
+        }
+        if (interval > 2.0 * FRAME_INTERVAL_BUDGET_MS) {
+            doubled++;
+        }
+    }
+
     std::printf("steady frames            %zu\n", steady_intervals.size());
     std::printf("steady interval p50 ms   %.4f\n", percentile(steady_intervals, 0.50));
     std::printf("steady interval p99 ms   %.4f (budget %.1f)\n", steady_p99, FRAME_INTERVAL_BUDGET_MS);
+    std::printf("steady interval max ms   %.4f\n", steady_max);
+    std::printf("intervals over budget    %zu of %zu, of which over 2 frames: %zu\n", missed, steady_intervals.size(), doubled);
 
     // report where the steady frame time actually goes
     std::printf("acquire p50 / p99 ms      %.4f / %.4f\n", percentile(acquire_samples, 0.50), percentile(acquire_samples, 0.99));

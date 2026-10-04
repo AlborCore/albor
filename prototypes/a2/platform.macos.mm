@@ -3,13 +3,19 @@
 #import "prototypes/a2/native_surface.macos.h"
 
 #import <AppKit/AppKit.h>
+#import <CoreVideo/CoreVideo.h>
 #import <Metal/Metal.h>
-#import <QuartzCore/CADisplayLink.h>
 #import <QuartzCore/CAMetalLayer.h>
 
 #include <atomic>
 #include <chrono>
 #include <mutex>
+
+// CVDisplayLink is deprecated in macOS 15 in favour of the NSView/NSWindow display links, but Prototype A2's
+// recorded finding disqualified those (whole-process stalls, prototypes/a2_macos/PACING.md), so the deprecation
+// is expected rather than a defect (plan.md revision 2)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
 namespace albor::a2
 {
@@ -28,16 +34,29 @@ namespace albor::a2
     // the opaque platform state, so that no appkit type reaches the interface (§3.5, AD-05)
     struct PlatformWindowState
     {
+        // a self reference, because a queued frame delivery must keep this state alive after the window is gone
+        std::shared_ptr<PlatformWindowState> self;
+
+        // the frame record waiting for the run loop to deliver it, because a callback entered from a dispatch
+        // block cannot start a modal session (§7.4, revision 2)
+        FrameRecord pending_record;
+        bool has_pending_record = false;
+
         NSWindow* window = nil;
         CAMetalLayer* layer = nil;
         id<MTLDevice> device = nil;
         id<MTLCommandQueue> queue = nil;
         id<MTLTexture> depth_stencil = nil;
-        id display_link = nil;
-        NSObject* link_target = nil;
+        CVDisplayLinkRef cv_link = nullptr;
 
         // the frame callback the benchmark installed
         std::function<void(const FrameRecord&)> on_frame;
+
+        // the window facts the pacing thread reads, mirrored because an appkit property may not be read from
+        // core video's own thread; the main queue refreshes them on every resize and backing change (§9.1)
+        CGSize mirrored_bounds = CGSizeZero;
+        double last_scale = 1.0;
+        double framed_scale = 0.0;
 
         // protects every counter the display link and the main thread share
         std::mutex mutex;
@@ -67,9 +86,6 @@ namespace albor::a2
         Clock::time_point resize_request{};
         bool has_resize_request = false;
 
-        // the last observed backing scale, to detect a scale change (§9.1)
-        double last_scale = 1.0;
-
         // where the window sits on the screen, so a live resize keeps its corner (§7.4)
         double origin_x = 120.0;
         double origin_y = 120.0;
@@ -83,132 +99,180 @@ namespace albor::a2
 
 } // namespace albor::a2
 
-// the object the display link calls back into, because a display link targets a selector
-@interface AlborFrameSource : NSObject
-@property(nonatomic, assign) albor::a2::PlatformWindowState* state;
-- (void)on_display_link:(id)link;
-@end
+namespace albor::a2
+{
 
-@implementation AlborFrameSource
+    // present one frame through the metal layer and report what the platform observed
+    //
+    // this is a free function over the window state rather than an objc method because the pacing source is now
+    // core video's callback, which is a c function running on core video's own thread (plan.md revision)
+    void present_one_frame(PlatformWindowState& state) {
+        // read the mirrored window facts, because an appkit property may not be read from core video's thread
+        // (plan.md revision); the main queue refreshes them on every resize and backing change (§9.1)
+        CGSize bounds = CGSizeZero;
+        double scale = 1.0;
 
-// present one frame through the metal layer and report what the platform observed
-- (void)on_display_link:(id)link {
-    static_cast<void>(link);
+        {
+            const std::lock_guard<std::mutex> lock(state.mutex);
+            bounds = state.mirrored_bounds;
+            scale = state.last_scale;
 
-    // resolve the window state the frame source belongs to
-    albor::a2::PlatformWindowState& state = *self.state;
+            // observe a backing scale change before drawing so the frame carries the new scale
+            if (scale != state.framed_scale) {
+                state.framed_scale = scale;
+                state.scale_changes++;
+            }
+        }
 
-    // read the bounds the window reports, which are authoritative for the metrics (§9.1)
-    const NSRect bounds = state.window.contentView ? state.window.contentView.bounds : NSMakeRect(0, 0, 0, 0);
-    const double scale = state.window.backingScaleFactor;
+        // keep the layer in step with the window size and scale, which is the resize contract (§7.4)
+        state.layer.frame = CGRectMake(0.0, 0.0, bounds.width, bounds.height);
+        state.layer.contentsScale = scale;
+        state.layer.drawableSize = CGSizeMake(bounds.width * scale, bounds.height * scale);
 
-    {
-        // observe a backing scale change before drawing so the frame carries the new scale
-        const std::lock_guard<std::mutex> lock(state.mutex);
-        if (scale != state.last_scale) {
-            state.last_scale = scale;
-            state.scale_changes++;
+        // acquire the drawable the platform hands us for this frame
+        // acquire the drawable only when this thread presents, because acquiring one blocks (§10.2)
+        const albor::a2::Clock::time_point acquire_start = albor::a2::Clock::now();
+        id<CAMetalDrawable> drawable = state.present_on_ui_thread != 0 ? [state.layer nextDrawable] : nil;
+        const double acquire_ms = albor::a2::to_ms(albor::a2::Clock::now() - acquire_start);
+
+        albor::a2::FrameRecord record;
+        double encode_submit_ms = 0.0;
+
+        // build the record even without a drawable, so a dropped frame is still observable
+        const albor::a2::Clock::time_point now = albor::a2::Clock::now();
+
+        if (drawable != nil && state.queue != nil && state.present_on_ui_thread != 0) {
+            // describe the single attachment this prototype clears
+            MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
+            MTLRenderPassColorAttachmentDescriptor* color = pass.colorAttachments[0];
+            color.texture = drawable.texture;
+            color.loadAction = MTLLoadActionClear;
+            color.storeAction = MTLStoreActionStore;
+            color.clearColor = MTLClearColorMake(0.05, 0.06, 0.08, 1.0);
+
+            // encode and present one clear, which is enough to exercise presentation
+            const albor::a2::Clock::time_point encode_start = albor::a2::Clock::now();
+            id<MTLCommandBuffer> commands = [state.queue commandBuffer];
+            id<MTLRenderCommandEncoder> encoder = [commands renderCommandEncoderWithDescriptor:pass];
+            encoder.label = @"albor-a2-clear";
+            [encoder endEncoding];
+            [commands presentDrawable:drawable];
+            [commands commit];
+            encode_submit_ms = albor::a2::to_ms(albor::a2::Clock::now() - encode_start);
+        }
+
+        {
+            // fill the frame record with what the platform measured
+            const std::lock_guard<std::mutex> lock(state.mutex);
+            record.index = state.frames_presented;
+            record.interval_ms = state.has_last_frame ? albor::a2::to_ms(now - state.last_frame) : 0.0;
+            record.input_to_present_ms = state.has_resize_request ? albor::a2::to_ms(now - state.resize_request) : 0.0;
+            state.last_frame = now;
+            state.has_last_frame = true;
+
+            // clear the pending resize request once it has been answered
+            state.has_resize_request = false;
+
+            record.logical_width = static_cast<std::size_t>(bounds.width);
+            record.logical_height = static_cast<std::size_t>(bounds.height);
+            record.pixel_width = static_cast<std::size_t>(bounds.width * scale);
+            record.pixel_height = static_cast<std::size_t>(bounds.height * scale);
+            record.scale_factor = scale;
+            record.resizing = state.resizing != 0;
+            record.acquire_ms = acquire_ms;
+            record.encode_submit_ms = encode_submit_ms;
+
+            // count the presented frame and whether it answered a resize request (§7.4)
+            state.frames_presented++;
+            state.frames_presented_while_resizing += state.resizing != 0 ? 1 : 0;
+
+            // clear the resize mark now that the request has been answered
+            state.resizing = 0;
+
+            // count the display link as one framework event source for the nested loop measurement
+            state.posted_tasks_total++;
+            state.posted_tasks_during_nested_loop += state.nested_loops_running != 0 ? 1 : 0;
+
+            // stop the loop once the requested number of frames has been presented
+            if (state.close_after_frames != 0 && state.frames_presented >= state.close_after_frames) {
+                state.running = false;
+            }
+        }
+
+        // hand the frame to the benchmark on the main queue, because the callback drives appkit, which is
+        // main-thread only, and core video's thread is not it (the crash report recorded in revision 2's results)
+        //
+        // the pacing source is what moved to core video; the delivery stays on the ui thread, so the off-ui-thread
+        // presentation question stays a separate package (plan.md revision 2)
+        // a record is only worth handing over when the window still has a callback, so a detached window's pacing
+        // thread stops queueing (§7.4)
+        {
+            const std::lock_guard<std::mutex> lock(state.mutex);
+            if (!state.on_frame) {
+                return;
+            }
+
+            state.pending_record = record;
+            state.has_pending_record = true;
         }
     }
 
-    // keep the layer in step with the window size and scale, which is the resize contract (§7.4)
-    state.layer.frame = bounds;
-    state.layer.contentsScale = scale;
-    state.layer.drawableSize = CGSizeMake(bounds.size.width * scale, bounds.size.height * scale);
+    // deliver one frame record on the ui thread, called by the run loop rather than from the pacing callback
+    //
+    // this is the same place revision 1 invoked the callback from - inside the run loop's own iteration - so the
+    // benchmark's workload, including the nested modal session, runs in the same context as before (§7.4)
+    void deliver_pending_frame(PlatformWindowState& state) {
+        std::function<void(const FrameRecord&)> callback;
+        FrameRecord record;
 
-    // acquire the drawable the platform hands us for this frame
-    // acquire the drawable only when this thread presents, because acquiring one blocks (§10.2)
-    const albor::a2::Clock::time_point acquire_start = albor::a2::Clock::now();
-    id<CAMetalDrawable> drawable = state.present_on_ui_thread != 0 ? [state.layer nextDrawable] : nil;
-    const double acquire_ms = albor::a2::to_ms(albor::a2::Clock::now() - acquire_start);
+        {
+            const std::lock_guard<std::mutex> lock(state.mutex);
 
-    albor::a2::FrameRecord record;
-    double encode_submit_ms = 0.0;
+            // nothing to deliver when no record is waiting, which is the common case between frames
+            if (!state.has_pending_record) {
+                return;
+            }
 
-    // build the record even without a drawable, so a dropped frame is still observable
-    const albor::a2::Clock::time_point now = albor::a2::Clock::now();
+            callback = state.on_frame;
+            record = state.pending_record;
+            state.has_pending_record = false;
+        }
 
-    if (drawable != nil && state.queue != nil && state.present_on_ui_thread != 0) {
-        // describe the single attachment this prototype clears
-        MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
-        MTLRenderPassColorAttachmentDescriptor* color = pass.colorAttachments[0];
-        color.texture = drawable.texture;
-        color.loadAction = MTLLoadActionClear;
-        color.storeAction = MTLStoreActionStore;
-        color.clearColor = MTLClearColorMake(0.05, 0.06, 0.08, 1.0);
-
-        // encode and present one clear, which is enough to exercise presentation
-        const albor::a2::Clock::time_point encode_start = albor::a2::Clock::now();
-        id<MTLCommandBuffer> commands = [state.queue commandBuffer];
-        id<MTLRenderCommandEncoder> encoder = [commands renderCommandEncoderWithDescriptor:pass];
-        encoder.label = @"albor-a2-clear";
-        [encoder endEncoding];
-        [commands presentDrawable:drawable];
-        [commands commit];
-        encode_submit_ms = albor::a2::to_ms(albor::a2::Clock::now() - encode_start);
-    }
-
-    {
-        // fill the frame record with what the platform measured
-        const std::lock_guard<std::mutex> lock(state.mutex);
-        record.index = state.frames_presented;
-        record.interval_ms = state.has_last_frame ? albor::a2::to_ms(now - state.last_frame) : 0.0;
-        record.input_to_present_ms = state.has_resize_request ? albor::a2::to_ms(now - state.resize_request) : 0.0;
-        state.last_frame = now;
-        state.has_last_frame = true;
-
-        // clear the pending resize request once it has been answered
-        state.has_resize_request = false;
-
-        record.logical_width = static_cast<std::size_t>(bounds.size.width);
-        record.logical_height = static_cast<std::size_t>(bounds.size.height);
-        record.pixel_width = static_cast<std::size_t>(bounds.size.width * scale);
-        record.pixel_height = static_cast<std::size_t>(bounds.size.height * scale);
-        record.scale_factor = scale;
-        record.resizing = state.resizing != 0;
-        record.acquire_ms = acquire_ms;
-        record.encode_submit_ms = encode_submit_ms;
-
-        // count the presented frame and whether it answered a resize request (§7.4)
-        state.frames_presented++;
-        state.frames_presented_while_resizing += state.resizing != 0 ? 1 : 0;
-
-        // clear the resize mark now that the request has been answered
-        state.resizing = 0;
-
-        // count the display link as one framework event source for the nested loop measurement
-        state.posted_tasks_total++;
-        state.posted_tasks_during_nested_loop += state.nested_loops_running != 0 ? 1 : 0;
-
-        // stop the loop once the requested number of frames has been presented
-        if (state.close_after_frames != 0 && state.frames_presented >= state.close_after_frames) {
-            state.running = false;
+        if (callback) {
+            callback(record);
         }
     }
 
-    // hand the frame to the benchmark outside the lock
-    if (state.on_frame) {
-        state.on_frame(record);
+    // the core video callback presents one frame on core video's own thread, which is the mechanism the pacing
+    // triage measured as uniformly reliable (prototypes/a2_macos/PACING.md)
+    CVReturn on_cv_display_link(CVDisplayLinkRef, const CVTimeStamp*, const CVTimeStamp*, CVOptionFlags, CVOptionFlags*, void* user) {
+        present_one_frame(*static_cast<PlatformWindowState*>(user));
+        return kCVReturnSuccess;
     }
-}
 
-@end
+} // namespace albor::a2
 
 namespace albor::a2
 {
 
     PlatformWindow::PlatformWindow() :
-        m_state(new PlatformWindowState()) {}
+        m_state(std::make_shared<PlatformWindowState>()) {
+        // let a queued frame delivery keep the state alive (§7.4)
+        m_state->self = m_state;
+    }
 
     PlatformWindow::~PlatformWindow() {
-        // stop the pacing before the window goes away
-        if (m_state->display_link != nil) {
-            [(CADisplayLink*)m_state->display_link invalidate];
+        // stop and release the pacing source before the window goes away (§10.3)
+        if (m_state->cv_link != nullptr) {
+            CVDisplayLinkStop(m_state->cv_link);
+            CFRelease(m_state->cv_link);
+            m_state->cv_link = nullptr;
         }
 
-        // release the state object
-        delete m_state;
-        m_state = nullptr;
+        // the state outlives this object when a frame delivery is still queued, and the shared owner decides
+        // when it goes (§7.4)
+        m_state->self.reset();
+        m_state.reset();
     }
 
     bool PlatformWindow::create(const std::string& title, std::size_t logical_width, std::size_t logical_height) {
@@ -251,8 +315,10 @@ namespace albor::a2
         m_state->layer.device = m_state->device;
         m_state->queue = [m_state->device newCommandQueue];
 
-        // start from the backing scale the window reports (§9.1)
+        // start from the backing scale and the bounds the window reports, mirrored because the pacing
+        // thread may not read appkit properties (§9.1)
         m_state->last_scale = m_state->window.backingScaleFactor;
+        m_state->mirrored_bounds = m_state->window.contentView ? m_state->window.contentView.bounds.size : CGSizeZero;
 
         // publish the native surface for a render thread (§10.2)
         m_state->surface.layer = m_state->layer;
@@ -267,35 +333,39 @@ namespace albor::a2
                         usingBlock:^(NSNotification*) {
                           const std::lock_guard<std::mutex> lock(m_state->mutex);
                           m_state->resize_events++;
+
+                          // mirror the new bounds, because the pacing thread may not read appkit (§7.4)
+                          m_state->mirrored_bounds = m_state->window.contentView ? m_state->window.contentView.bounds.size : CGSizeZero;
                         }];
         [center addObserverForName:NSWindowDidChangeBackingPropertiesNotification
                             object:m_state->window
                              queue:[NSOperationQueue mainQueue]
                         usingBlock:^(NSNotification*) {
                           const std::lock_guard<std::mutex> lock(m_state->mutex);
-                          m_state->scale_changes++;
+                          m_state->last_scale = m_state->window.backingScaleFactor;
+                          m_state->mirrored_bounds = m_state->window.contentView ? m_state->window.contentView.bounds.size : CGSizeZero;
                         }];
 
-        // create the frame source that the display link calls back into
-        AlborFrameSource* source = [[AlborFrameSource alloc] init];
-        source.state = m_state;
-        m_state->link_target = source;
+        // create the core video pacing source, which the triage measured as the only uniformly reliable
+        // mechanism on this machine (§10.3, prototypes/a2_macos/PACING.md)
+        if (CVDisplayLinkCreateWithActiveCGDisplays(&m_state->cv_link) != kCVReturnSuccess) {
+            return false;
+        }
 
-        // create the display link that paces the frames (§10.3)
-        m_state->display_link = [NSScreen.mainScreen displayLinkWithTarget:source selector:@selector(on_display_link:)];
+        // hand the callback the window state it presents through, which core video keeps as an opaque pointer
+        CVDisplayLinkSetOutputCallback(m_state->cv_link, &albor::a2::on_cv_display_link, m_state.get());
 
-        // a display link is required to answer the pacing question of this slice
-        return m_state->display_link != nil;
+        // a pacing source is required to answer the pacing question of this slice
+        return m_state->cv_link != nullptr;
     }
 
     void PlatformWindow::show() {
         // put the window on screen
         [m_state->window makeKeyAndOrderFront:nil];
 
-        // attach the frame source to the common run loop modes, which is what keeps it alive inside a nested
-        // loop (§7.4) and also lets a second window tick while the first one owns the loop
-        CADisplayLink* link = (CADisplayLink*)m_state->display_link;
-        [link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+        // start core video, which delivers the callback on its own thread and therefore keeps ticking inside a
+        // nested loop without any run loop registration (§7.4)
+        CVDisplayLinkStart(m_state->cv_link);
 
         m_state->running = true;
     }
@@ -307,9 +377,15 @@ namespace albor::a2
         // run the application loop until the window closes
         while (m_state->running) {
             @autoreleasepool {
+                // deliver the record core video produced, from inside the run loop's own iteration, so the
+                // workload may start a modal session (§7.4)
+                deliver_pending_frame(*m_state);
+
                 // give the run loop a short deadline in the future so it actually services its sources,
                 // which is what lets the display link callback fire (§10.3)
-                NSEvent* event = [m_state->application nextEventMatchingMask:NSEventMaskAny untilDate:[NSDate dateWithTimeIntervalSinceNow:0.002] inMode:NSDefaultRunLoopMode dequeue:YES];
+                // poll with a sub-millisecond deadline: the pacing thread now hands records over rather than
+                // waking the loop itself, so the poll interval is part of the frame's latency budget (§10.3)
+                NSEvent* event = [m_state->application nextEventMatchingMask:NSEventMaskAny untilDate:[NSDate dateWithTimeIntervalSinceNow:0.0002] inMode:NSDefaultRunLoopMode dequeue:YES];
 
                 // forward the event to the application when one arrived
                 if (event != nil) {
@@ -331,10 +407,10 @@ namespace albor::a2
     }
 
     void PlatformWindow::detach_frame_source() {
-        // take the frame source off the run loop first, so no further frame can be delivered at all
-        CADisplayLink* link = (CADisplayLink*)m_state->display_link;
-        if (link != nil) {
-            [link removeFromRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+        // stop core video first, which blocks until an in-flight callback has returned, so no further frame can
+        // be delivered at all (§7.4)
+        if (m_state->cv_link != nullptr) {
+            CVDisplayLinkStop(m_state->cv_link);
         }
 
         // then drop the callback, so a frame delivered a moment ago cannot reach captures that are going away
@@ -369,6 +445,10 @@ namespace albor::a2
 
         // end the modal session after the requested time, on the main queue rather than in a run loop timer,
         // because a default mode timer is not serviced while a modal session owns the loop (§7.4)
+        //
+        // the block carries the deadline as a captured value rather than reading a shared flag, because with
+        // core video driving the pacing the main queue carries a continuous frame backlog and a flag poll would
+        // have to win that race; a dispatched block runs in order, once the backlog in front of it has drained
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(NSEC_PER_MSEC * duration_ms)), dispatch_get_main_queue(), ^{
           // leave the nested loop with a normal response code
           [NSApp stopModalWithCode:NSModalResponseOK];
@@ -444,3 +524,5 @@ namespace albor::a2
     }
 
 } // namespace albor::a2
+
+#pragma clang diagnostic pop

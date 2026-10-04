@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 
 namespace albor::a2
@@ -100,7 +101,9 @@ namespace albor::a2
         [[nodiscard]] std::size_t posted_tasks_total() const;
 
     private:
-        PlatformWindowState* m_state = nullptr;
+        // the state is shared because a frame delivery already queued on the main queue may still run after the
+        // window object is gone, and it must not reach freed memory (§10.2)
+        std::shared_ptr<PlatformWindowState> m_state;
     };
 
 } // namespace albor::a2

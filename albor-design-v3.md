@@ -1119,7 +1119,7 @@ Acceptance thresholds are **set and recorded before a prototype runs**, based on
 
 **AD-18a — Render execution and stage division.** *Decided.* Stage 1 (scene build and application callbacks) on the UI thread; stage 2 (render execution and GPU encoding) decoupled from application code; immutable snapshots for worker data (§10.5). Supported by A1: recording a frame on a worker costs 0.46 ms p99 against an 8.33 ms processing deadline, and recording on the UI thread is equivalent within noise, so the division is close to free.
 
-**AD-18b — Multi-window presentation isolation.** *Open.* Two windows presented synchronously on the UI thread stall each other: window 2's interval during window 1's 100 ms hold is 100.86 ms p50 (A1-Dawn W3), i.e. the hold itself rather than GPU contention. **That result is close to a tautology** — any design that presents on the UI thread fails it by construction, so repeating the measurement proves nothing. The open question is narrower: can presentation be moved off the UI thread on macOS at all, given AppKit/QuartzCore main-thread affinity, which refuted "the render thread owns the surface" for Ganesh in A1.2a? Two candidate mechanisms are untested: `CAMetalDisplayLink` (macOS 14+, present in this SDK, which delivers the drawable with the display-link callback and so addresses the missing non-blocking availability signal) and `CAMetalLayer.maximumDrawableCount`. Until one is measured, §10.2 and §10.3 still describe a default that A1.1 and A1.2a refuted on macOS and must be read as provisional.
+**AD-18b — Multi-window presentation isolation.** *Open.* Two windows presented synchronously on the UI thread stall each other: window 2's interval during window 1's 100 ms hold is 100.86 ms p50 (A1-Dawn W3), i.e. the hold itself rather than GPU contention. **That result is close to a tautology** — any design that presents on the UI thread fails it by construction, so repeating the measurement proves nothing. The open question is narrower: can presentation be moved off the UI thread on macOS at all, given AppKit/QuartzCore main-thread affinity, which refuted "the render thread owns the surface" for Ganesh in A1.2a? **The mechanism question is now partly answered.** `CAMetalDisplayLink` (macOS 14+) was measured in the pacing triage: it delivers the drawable with the callback as advertised, but it **starves to 0.6 Hz whenever the window is not composited** — exactly 3 drawables vend and the pool never returns, with the run-loop heartbeat still ticking — and it throttles to 46–58 Hz even when it works. `CAMetalLayer.maximumDrawableCount` remains untested. A2 revision 2 sidesteps the question rather than answering it: `CVDisplayLink` is the only measured-uniform pacing source on this machine, and the prototype now encodes and presents from CoreVideo's thread, which is the arrangement AD-18b wants to test. **What is still unmeasured is the isolation itself** — no two-window hold experiment has been run against the new arrangement, so §10.2 and §10.3 continue to describe a default that A1.1 and A1.2a refuted on macOS and must be read as provisional.
 
 **AD-26 — Software/headless parity.** *Decided.* Required; software renderer is the screenshot reference (§25).
 
@@ -1176,7 +1176,7 @@ was declared only after the run.
 | Prototype | State | Tests and runs performed |
 | --- | --- | --- |
 | **D — property and binding engine** | complete | 33/33 gtest unit tests (`tests/d/`); benchmark at 100,000 properties and 11,032 bindings |
-| **A2 — platform presentation (macOS)** | complete | 200 steady frames, 60-step live resize, 500 ms nested modal session |
+| **A2 — platform presentation (macOS)** | complete (revision 2) | 200 steady frames, 60-step live resize, 500 ms nested modal session. Pacing now rides `CVDisplayLink`: 59.98–60.01 Hz p50, max interval 18.76 ms, zero stalls over five runs; T4.1 (p99 ≤ 16.7 ms) fails at 18.50–18.69 ms on a uniform phase overshoot, not a cadence defect |
 | **A2 — Windows and Wayland** | not run | plans and platform scaffolds committed; execution tables `PENDING_CI_MATRIX_RUN` |
 | **A1 — renderer (Skia)** | complete | A1.1, A1.2a, A1.3 workloads W1/W2/W3 (401, 401, deadline-limited frames), A1.4 offscreen (400/400) |
 | **A1-Dawn — renderer (WebGPU)** | complete, macOS only | workloads W1/W2/W3 (400, 400, 400/400 frames; 3,200 hover queries) |
@@ -1195,12 +1195,13 @@ material: six packages are outstanding and three of them gate decisions. Audited
 | --- | --- | --- |
 | A1-Parity completion | partial | parity verdict. Centroid offset, per-pixel delta histogram, the antialiasing audit and metric calibration are absent; the zoom-8 attribution is unresolved |
 | Dawn-vs-Skia re-measure | not started | AD-28. **No GPU-timestamp instrumentation exists in either renderer**, so every Dawn-vs-Skia cost figure rests on CPU-side recording time, and the W2 comparison is already recorded as "partly an artefact of unequal work" |
-| Pacing triage | **run and recorded** (`prototypes/a2_macos/PACING.md`) | all windowed timings, and AD-18b. The finding is reproduced and named (CVDisplayLink uniform; CAMetalDisplayLink starves without compositing; CADisplayLink stalls whole-process on no recorded correlate). The unverified markings on windowed figures **stand** until pacing rides a reliable mechanism |
+| Pacing triage | **run and recorded** (`prototypes/a2_macos/PACING.md`), and acted on by A2 revision 2 | all windowed timings, and AD-18b. The finding is reproduced and named (CVDisplayLink uniform; CAMetalDisplayLink starves without compositing; CADisplayLink stalls whole-process on no recorded correlate). A2 now paces from `CVDisplayLink` and holds 60 Hz with no stalls, so **the framework's macOS pacing rule is settled by measurement**; the unverified markings on the *earlier* windowed figures stand, because those runs still rode the stalling mechanism |
+| AD-18b off-UI-thread presentation | not started; **now unblocked** | AD-18b; W3 as written cannot fail. Revision 2 already presents off the UI thread on CoreVideo's thread but measures no isolation, so the experiment itself is still open |
 | Chunked append-only batches | not started | §11.3; append is O(n) at 94–120 ms against a 25 ms budget |
 | Graphite-on-Dawn spike | not started | the AD-28 gate, which is a human decision |
 | Prototype C (text, IME, accessibility) | not started | §21.2 text and i18n selection; the only Phase 0 prototype never begun |
 | A2 on Windows and Wayland | blocked on hardware | AD-16's evaluation; both tables remain `PENDING_CI_MATRIX_RUN` |
-| AD-18b off-UI-thread presentation | not started, blocked on pacing | AD-18b; W3 as written cannot fail |
+
 
 **Conclusions reached**
 
@@ -1241,8 +1242,17 @@ candidate visits and concluded a caching layer would not pay off, which holds fo
 node is reachable at two depths. AD-04d's stale-value question is answered — D's restore is not the defect, because D
 invalidates afterwards, but the invalidate is load-bearing and lives one layer above the shadow it protects.
 
-**A2 (macOS).** Platform presentation works on AppKit: steady cadence 16.67 ms p50, 60/60 frames presented through a
-live resize, 32 event dispatches inside a 500 ms nested modal loop. The frame tail that motivated the slice was attributed
+**A2 (macOS).** Platform presentation works on AppKit. **Revision 2 moves the pacing source from `CADisplayLink` to
+`CVDisplayLink`**, the mechanism the triage found uniformly reliable, and it achieves the acceptance band: steady p50
+16.66 ms = **59.98–60.01 Hz** in five runs, maximum interval **18.76 ms**, **zero intervals over two frames** and zero
+whole-process stalls. Two defects the change exposed are load-bearing for the platform contract: a pacing callback
+**may not reach AppKit** (CoreVideo delivers on its own thread; a programmatic resize from it aborts with AppKit's
+"Must only be used from the main thread"), and the hand-off **may not run inside a dispatch block** (a modal session
+entered from one never returns). Both are recorded in `prototypes/a2/RESULTS.md`. **T4.1 fails as written** — steady
+p99 18.50–18.69 ms against the 16.7 ms budget — and the run's own evidence says it is a clock artifact rather than a
+cadence defect: the overshoot is a uniform ~1.6 ms on 30–41 % of intervals with nothing near a dropped vsync, the poll
+deadline was tightened to 0.2 ms and changed nothing, and acquisition and submission are 0.13 ms and 0.20 ms p99. The
+threshold is not revised here; the correction goes to the human gate. The frame tail that motivated the slice was attributed
 to layer-recycling back-pressure rather than GPU submission (`t_acquire` p99 20.75 ms against 0.12 ms for encode and
 submit), which produced A2 Revision R1: the input-to-present budget is 25.0 ms, not 16.7 ms. Run-to-run p99 variance was
 17.7 to 45.4 ms across five runs of one binary, so a single tail sample is not a decision input on this machine. Window
