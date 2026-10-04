@@ -45,6 +45,7 @@ run_workload() {
     local cache="$roots/ccache"
     local buildtrees="$roots/buildtrees"
     local install="$roots/installed"
+    local scratch_cwd="$roots/manifest"
     local log="$OUT/$name.log"
 
     if [ "$mode" = "cold" ]; then
@@ -53,11 +54,29 @@ run_workload() {
         mkdir -p "$cache" "$buildtrees" "$install"
     fi
 
+    # vcpkg is in manifest mode here because the repository ships a vcpkg.json, and manifest mode refuses
+    # package arguments: asking for one port would silently install the whole manifest instead. Each workload
+    # therefore gets its own scratch directory holding a manifest naming exactly the spec under test, so the
+    # workload is the port and its closure and nothing else (§28.2)
+    mkdir -p "$scratch_cwd"
+    cat >"$scratch_cwd/vcpkg.json" <<MANIFEST
+{
+    "name": "albor-build-cost-$sub",
+    "version-string": "0.1.0",
+    "dependencies": [
+        {
+            "name": "$spec"
+        }
+    ]
+}
+MANIFEST
+
     {
         echo "WORKLOAD $name spec=$spec mode=$mode"
         echo "  ccache_dir=$cache"
         echo "  buildtrees_root=$buildtrees"
         echo "  install_root=$install"
+        echo "  manifest_dir=$scratch_cwd (isolated, so the port under test is the whole workload)"
         echo "  binary cache: cleared for this invocation"
     } >"$log"
 
@@ -73,14 +92,14 @@ run_workload() {
     start_cpu=$(python3 -c 'import time; print(time.process_time())')
 
     (
-        cd "$ROOT"
+        # the scratch manifest directory, so vcpkg resolves this workload's manifest rather than the
+        # repository's (which would install skia, dawn and every other pinned package) (§28.2)
+        cd "$scratch_cwd"
         # VCPKG_BINARY_SOURCES=clear is what stops a package being restored from ~/.cache/vcpkg/archives;
         # without it vcpkg would reinstall skia from its 205 cached archives in seconds (§28.4)
         CCACHE_DIR="$cache" \
         VCPKG_BINARY_SOURCES=clear \
-        VCPKG_FEATURE_FLAGS=manifests,versions \
-        CCACHE_DEBUGOFF=1 \
-        "$VCPKG" install "$spec" \
+        "$VCPKG" install \
             --triplet "$TRIPLET" \
             --x-buildtrees-root="$buildtrees" \
             --x-install-root="$install" \
