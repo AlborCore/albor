@@ -118,3 +118,153 @@ that a result contradicting an earlier claim corrects the doc.
 No timing, so none of D2's two failed thresholds is revisited (F2.3). No index measurement, so the combined memory
 question is untouched (F2.2). The erased slot's internal composition is reported as measured sizes rather than a
 hand-derived sum, because a hand-derived sum is what produced the original error.
+
+---
+
+## R2 — F2.2: combined memory of storage × index at scale
+
+### Question
+
+How much do the storage and the index **together** cost per property at a real application's scale, across the three
+index representations and both storage candidates? R1 measured storage alone; D2 measured index bytes alone; AD-04b's
+recommendation needs the sum, because a cheap store with an expensive index can lose to a uniform slot with a cheap one.
+
+### Method
+
+One committed scale, taken from the close-out brief: **100 000 live properties** (12 500 eight-property instances of the
+`mixed` schema) and **11 000 bindings with 2 dependencies each** (22 000 dependency entries), distributed uniformly over
+the property id space. A second scale of 10 000 properties / 1 100 bindings reports the shape at small scale.
+
+Index variants, all linked from Prototype D2's harness:
+
+| variant | definition |
+| --- | --- |
+| `sealed_csr` | D2's `SealedCsrIndex`: flat buckets built once at `finish()`, never changed |
+| `segmented` | D2's `SegmentedIndex`: one growable segment per property |
+| `hybrid` | new in D3: sealed CSR for every dependency declared before `finish()`, a segmented tail for `add_entry` after it; `dependents()` concatenates both halves |
+
+Each index is combined with each storage candidate (`TypedStore`, `ErasedStore`), each on its own region table. The
+hybrid's post-seal activity is 1 000 `add_entry` calls, which is what a live reload or a conditional row adds. Memory is
+deterministic, so R2 reports single figures with no spread and says so; there is no timing in R2.
+
+Per cell, report: value bytes, addressability bytes, slack bytes, region overhead, index bytes, **combined total**,
+combined B/property, and combined B/binding.
+
+### Thresholds (committed before the run)
+
+| # | Threshold | Rationale |
+| --- | --- | --- |
+| T3.2.1 | typed + sealed CSR ≤ erased + sealed CSR, combined total, at 100 000 properties | the combined question R1 could not answer; if the index's cost reverses R1's storage answer at scale, AD-04b's condition must say so |
+| T3.2.2 | typed + sealed CSR ≤ 36 B/property (`mixed`) | R1's asymptotic typed figure is ~27.5 B/property on this mix; 22 000 CSR entries plus 100 002 offsets add ~4.9 B/property. 36 B leaves headroom without accepting an unexplained jump |
+| T3.2.3 | the segmented index adds ≤ 12 B/property over sealed CSR on the same storage | segments buy mutation locality; above 12 B/property they cost more than the storage saving they protect |
+| T3.2.4 | the hybrid ≤ sealed CSR + 6 B/property on the same storage | the tail is 1 000 entries; anything above 6 B/property means the tail mechanism is priced like a full second index |
+| T3.2.5 | storage bytes + index bytes == reported combined total, 0.00 B error, every cell | arithmetic closure, the check that caught D2's bug |
+
+### Commands
+
+```sh
+cmake --build --preset release --target albor-prototype-d3-index
+./.build-release/prototypes/d3/albor-prototype-d3-index       # R2
+```
+
+---
+
+## R3 — F2.3: geometric slab growth, and D2's two failed timing thresholds as labelled variants
+
+### Question
+
+Part A: does growing the typed slab geometrically from a small first chunk move the crossover R1 measured at
+256 instances / 2 048 properties down to where every small application and test sits above it?
+
+Part B: do the two mitigations D2's own diagnosis named — reusing the settle's plan buffers, and sharing immutable
+payloads instead of allocating one per property — meet D2's **original** budgets (T1.5 ≤ 200 ns, T1.6 ≤ 250 ns)?
+The original thresholds stay failed; the variants are judged on the same budgets, not on new ones.
+
+### Method — Part A
+
+D2's `TypedStore` gains a clearly-named chunk-growth policy whose **default keeps the fixed 64 KB chunk**, so every
+figure D2 and R1 published stays reproducible; the geometric policy starts the first chunk at **1 KB and doubles up to
+the 64 KB cap** (the close-out brief's 1 KB → 64 KB policy). The crossover is re-swept over 1, 16, 32, 64, 128, 256,
+512, 1 024, 4 096 and 8 192 instances of the `mixed` schema against the erased store. Address stability is checked by
+sampling: write a sentinel through a value pointer taken before a growth event, read it back after every later growth,
+and report any address whose read disagrees.
+
+### Thresholds — Part A (committed before the run)
+
+| # | Threshold | Rationale |
+| --- | --- | --- |
+| T3.3.1 | typed total ≤ erased total at **1 instance** (`mixed`) | the 120× blowup R1 measured must be gone, not merely smaller |
+| T3.3.2 | crossover ≤ 64 instances (512 properties) | 4× better than R1's 256, and inside the "low hundreds of properties" expectation the recommendation needs |
+| T3.3.3 | slack ≤ 25 % of allocated slab bytes at 4 096 instances | the large-scale win T3.1.7 measured must survive the policy change |
+| T3.3.4 | address stability: 100 % of sampled sentinels read back correctly after every growth event | the mechanism exists to keep addresses stable; a policy that grows by reallocating is disqualified |
+| T3.3.5 | erased ÷ typed ratio at 1 instance | recorded, no threshold — the ratio is the finding |
+
+### Method — Part B, two labelled variants
+
+| variant | what changes | what is measured |
+| --- | --- | --- |
+| `settle-plan-reuse` | D2's `Graph` reuses the `candidates` and `planned` buffers across settles behind a clearly-named option, default off | single typed `Int` write + settle, p99, ≥ 5 runs |
+| `shared-immutable-payload` | the benchmark constructs one `String` payload and one `Snapshot` payload **once** and every property aliases them by `shared_ptr` copy — the §13.1 model, where translated strings and snapshots are immutable and shared | construct + destroy per non-trivial property, median and p99, ≥ 5 runs |
+
+### Thresholds — Part B (committed before the run)
+
+| # | Threshold | Rationale |
+| --- | --- | --- |
+| T3.3.6 | `settle-plan-reuse`: single typed `Int` write + settle, p99 ≤ **250 ns** | D2 T1.6's original budget, unmodified |
+| T3.3.7 | `shared-immutable-payload`: construct + destroy per non-trivial property ≤ **200 ns** | D2 T1.5's original budget, unmodified |
+| T3.3.8 | both variants also record the un-mitigated figure from the same binary in the same run | no threshold — the delta is the finding |
+
+### Commands
+
+```sh
+cmake --build --preset release --target albor-prototype-d3-slab
+./.build-release/prototypes/d3/albor-prototype-d3-slab        # R3
+./.build-release/tests/albor-tests --gtest_filter='D3*'       # T3.3.4 correctness
+```
+
+---
+
+## R7 — F2.7: animation shadow audit (eliminate the shadow side table)
+
+### Question
+
+D2 concluded "the shadow table is not load-bearing, since the re-evaluate mode reproduces every observable behaviour
+without restoring anything" — from reading D's code, not from measuring a build that lacks the table. Does an engine
+that **never allocates** the animation shadow side table and relies only on post-animation re-evaluation invalidation
+pass the animation correctness suite?
+
+### Method
+
+Two modes of the same graph and animation harness, over D2's animation observable checks — writes to an animated
+property are dropped while the animation owns it, `end_animation` hands the target back so the binding re-evaluates, a
+dependency that moves mid-animation is picked up after the animation ends, and an imperative override still wins:
+
+| mode | shadow side table | end_animation behaviour |
+| --- | --- | --- |
+| control | allocated, restore + invalidate (D2's `restore_no_invalidate=false` path) | restore, then invalidate |
+| `no-shadow` | **never allocated** | invalidate only; the binding re-evaluates and overwrites |
+
+Each observable check must pass in both modes, and the animation bookkeeping bytes at 1 024 animated properties are
+reported for both.
+
+### Thresholds (committed before the run)
+
+| # | Threshold | Rationale |
+| --- | --- | --- |
+| T3.7.1 | every animation observable check passes in the `no-shadow` mode | the audit itself; a single failure keeps the shadow table |
+| T3.7.2 | `no-shadow` animation bookkeeping ≤ 8 B/animated property at 1 024 animated properties | the attachment byte the slot already has; anything more means a table survived |
+| T3.7.3 | the `no-shadow` mode performs zero shadow allocations (allocation-count delta = 0) | "never allocated" must be observable, not asserted |
+
+### Commands
+
+```sh
+cmake --build --preset release --target albor-prototype-d3-shadow
+./.build-release/prototypes/d3/albor-prototype-d3-shadow      # R7
+./.build-release/tests/albor-tests --gtest_filter='D3*'       # correctness
+```
+
+### Pass/fail policy (all three revisions)
+
+Failures stay failures. A threshold that fails because the harness was narrower than its wording is reported as a
+failure with the diagnosis, as R1 did. No status of AD-04b, AD-04c or AD-04d changes by measurement alone; the human
+gate converts recommendations to decisions.
