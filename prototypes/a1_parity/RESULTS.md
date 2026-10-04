@@ -25,27 +25,47 @@ The sanity check asks Dawn to draw a frame with no geometry, so the target is no
 it back. **0 of 1,024,000 pixels match the clear colour** at a tolerance of one 8-bit step, and the first pixel reads
 `0 0 0 0` — including a zero alpha, which a cleared target cannot have.
 
-The readback path is sound and the render path is the failure. What was established, each by experiment:
+### Dawn itself is not at fault
+
+A standalone program, no albor code, linked against the same `libwebgpu_dawn.a`, clears a 1280x800 `RGBA8Unorm` texture
+and copies it back:
+
+```
+device ok, queue ok
+map state 3 (3 = mapped)
+GetMappedRange(0, total) = null
+ReadMappedRange ok = 1
+first pixel = 13 15 20 255, the clear should be about 13 15 20 255
+pixel at 400,400 = 13 15 20 255
+RESULT: a clear pass round trips
+```
+
+So the device, the queue, the copy, the map and the read all work in this Dawn build. It also confirms that
+`GetMappedRange` returning null is a property of this port rather than of this prototype, which is why the slice reads
+through `ReadMappedRange`.
+
+### What was established about this prototype
 
 | Question | Experiment | Result |
 | --- | --- | --- |
-| Does the map and read work? | `Queue::WriteBuffer` a `0xAB` pattern into the staging buffer, then map and read | **171,171,171,171** — works |
-| Does the copy run? | `Queue::WriteTexture` a `0xCD` fill into the target, then copy and read | **205,205,205,205** — the copy works |
-| Is a render pass issued? | instrumented `BeginRenderPass` and the vertex binding | pass handle valid, draws issued |
+| Does the map and read work? | `Queue::WriteBuffer` a `0xAB` pattern, then map and read | **171,171,171,171** — works |
+| Does the copy run? | `Queue::WriteTexture` a `0xCD` fill into the target, then copy and read | **205,205,205,205** — works |
+| Does the shader compile? | `ShaderModule::GetCompilationInfo` | **no messages at all** — the WGSL is valid |
+| Is a render pass issued? | instrumented `BeginRenderPass` | pass handle valid, draws issued |
 | Does the texture then hold the clear? | read it back | **0,0,0,0** |
 
-So map, read and `CopyTextureToBuffer` are all proven good, a render pass is provably issued, and the target still reads
-back empty. **Not fixed.**
+The one thing the standalone does that this prototype does not is **bind a render pipeline and a bind group**. That is
+now the whole of the remaining difference, and it is where the bug is. **Not fixed.**
 
-Two things were fixed on the way, both real:
+### Two corrections to earlier conclusions in this file
 
 - A geometry-free frame bound a vertex buffer that had never been created. Binding a null vertex buffer invalidates the
-  entire render pass, so the clear was silently discarded with it.
-- The first version of the prototype concluded "no validation errors" from Dawn error scopes. That conclusion was
-  **wrong and has been withdrawn**: a buffer created with `size = 0`, which is invalid by construction, was put through
-  the same scope and reported nothing. This build's error scopes are therefore not a usable signal, and every statement
-  above about what Dawn did or did not reject is qualified by that. `report_scoped_errors` carries the caveat in a
-  comment so the next person does not repeat the mistake.
+  entire render pass, so the clear was silently discarded with it. Fixed.
+- An earlier version concluded "Dawn reports no validation errors". **That was wrong and is withdrawn.** A buffer created
+  with `size = 0`, invalid by construction, was put through the same error scope and reported nothing either, so this
+  build's error scopes are not a usable signal. Every claim above about what Dawn did or did not reject is qualified by
+  that, which is why the shader is now checked through `GetCompilationInfo` instead. `report_scoped_errors` carries the
+  caveat in a comment.
 
 ## Thresholds not evaluated
 

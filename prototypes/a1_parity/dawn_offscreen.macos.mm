@@ -136,6 +136,7 @@ fn fs_main() -> @location(0) vec4<f32> {
 
             wgpu::Texture target;
             wgpu::TextureView target_view;
+            wgpu::ShaderModule shader;
             wgpu::RenderPipeline pipeline;
             wgpu::BindGroupLayout bind_layout;
             wgpu::BindGroup bind_group;
@@ -227,7 +228,29 @@ fn fs_main() -> @location(0) vec4<f32> {
         source.code = kShaderWgsl;
         wgpu::ShaderModuleDescriptor shader_desc{};
         shader_desc.nextInChain = &source;
-        const wgpu::ShaderModule shader = m_state->device.CreateShaderModule(&shader_desc);
+        m_state->shader = m_state->device.CreateShaderModule(&shader_desc);
+
+        // ask the shader what the compiler made of it, because this build's error scopes do not report and an invalid
+        // pipeline makes a render pass silently discard everything it is given
+        {
+            std::atomic<bool> done{false};
+            const auto on_info = [&](wgpu::CompilationInfoRequestStatus status, wgpu::CompilationInfo const* info) {
+                if (status == wgpu::CompilationInfoRequestStatus::Success && info != nullptr) {
+                    for (std::size_t i = 0; i < info->messageCount; i++) {
+                        const wgpu::CompilationMessage& message = info->messages[i];
+                        std::fprintf(stderr, "[dawn] shader line %llu:%llu type %u: %.*s\n", static_cast<unsigned long long>(message.lineNum), static_cast<unsigned long long>(message.linePos), static_cast<unsigned>(message.type), static_cast<int>(message.message.length), message.message.data);
+                    }
+                }
+                done.store(true, std::memory_order_release);
+            };
+            m_state->shader.GetCompilationInfo(wgpu::CallbackMode::AllowProcessEvents, on_info);
+            while (!done.load(std::memory_order_acquire)) {
+                m_state->instance.ProcessEvents();
+                std::this_thread::yield();
+            }
+        }
+
+        const wgpu::ShaderModule shader = m_state->shader;
 
         // four floats per instance: the two endpoints of the segment, drawn as one instanced quad
         wgpu::VertexAttribute attribute0{};
