@@ -118,6 +118,9 @@ namespace albor::prototype_d2
         [[nodiscard]] std::size_t property_id_count() const { return m_next_id; }
         [[nodiscard]] const ReuseReport& reuse() const { return m_reuse; }
 
+        // report the bytes the region table itself holds, which is a per-instance cost both candidates pay (§28.2)
+        [[nodiscard]] std::size_t region_table_bytes() const { return m_regions.capacity() * sizeof(Region) + m_free_regions.capacity() * sizeof(InstanceId); }
+
     private:
         std::vector<ComponentSchema> m_schemas;
         std::vector<Region> m_regions;

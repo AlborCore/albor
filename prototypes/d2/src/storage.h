@@ -73,6 +73,9 @@ namespace albor::prototype_d2
 
         // report the slot array and its vector header (§28.2)
         [[nodiscard]] std::size_t memory_bytes() const { return m_slots.size() * sizeof(ErasedSlot); }
+
+        // report the bytes the slot array's capacity holds, so D3 can separate live slots from reallocation slack
+        [[nodiscard]] std::size_t slot_capacity_bytes() const { return m_slots.capacity() * sizeof(ErasedSlot); }
         [[nodiscard]] std::size_t payload_bytes() const;
         [[nodiscard]] std::size_t allocation_count() const { return m_reallocations + 1; }
         [[nodiscard]] std::size_t property_count() const { return m_slots.size(); }
@@ -133,6 +136,15 @@ namespace albor::prototype_d2
         // report the region bytes, the addressability table and the write source bytes (§28.2)
         [[nodiscard]] std::size_t memory_bytes() const;
         [[nodiscard]] std::size_t value_bytes() const;
+
+        // report the bytes the slab chunks hold, so D3 can separate region bytes from the slack chunking leaves
+        [[nodiscard]] std::size_t slab_allocated_bytes() const { return m_chunks.size() * SLAB_CHUNK_BYTES; }
+
+        // report the bytes one region costs the region table, which is per instance rather than per property
+        [[nodiscard]] std::size_t region_table_bytes() const { return m_regions.region_table_bytes(); }
+
+        // report the per-instance base-offset entries the typed store keeps alongside the addressability table
+        [[nodiscard]] std::size_t region_base_bytes() const { return m_region_base.capacity() * sizeof(std::uint32_t); }
         [[nodiscard]] std::size_t address_bytes() const;
         [[nodiscard]] std::size_t payload_bytes() const;
 
