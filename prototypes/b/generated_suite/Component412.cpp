@@ -12,7 +12,8 @@ struct Component412::Impl
     Component411* m_child = nullptr;
 };
 
-Component412::Component412() : m_impl(new Impl) {}
+Component412::Component412() :
+    m_impl(new Impl) {}
 Component412::~Component412() { delete m_impl; }
 
 float Component412::color() const { return m_impl->m_color; }

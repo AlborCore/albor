@@ -11,7 +11,8 @@ struct Component000::Impl
     float m_height = 0;
 };
 
-Component000::Component000() : m_impl(new Impl) {}
+Component000::Component000() :
+    m_impl(new Impl) {}
 Component000::~Component000() { delete m_impl; }
 
 float Component000::color() const { return m_impl->m_color; }

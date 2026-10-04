@@ -22,9 +22,15 @@ target_compile_features(albor-prototype-e-devrt PUBLIC cxx_std_23)
 add_executable(albor-prototype-e-layout src/layout_check.cpp)
 target_link_libraries(albor-prototype-e-layout PRIVATE albor-prototype-e-nodes)
 
-# link devrt into the Debug build so the hook is non-null, proving the hook slot exists (T7)
+
+# link devrt into the Debug build so the hook is non-null, proving the hook slot exists (T7).
+# devrt is reached through --whole-archive because the installer that populates the hook is a static constructor
+# with internal linkage: nothing outside its translation unit references it, so the linker would otherwise discard
+# the object file and the Dev build would report a null hook, identical to Release, while proving nothing.
 if(ALBOR_DEV)
     target_link_libraries(albor-prototype-e-layout PRIVATE albor-prototype-e-devrt)
+    target_link_options(albor-prototype-e-layout PRIVATE
+        "-Wl,-force_load,$<TARGET_FILE:albor-prototype-e-devrt>")
 endif()
 
 # conformance: dual-engine conformance test (AD-25, plan.md T4-T5)

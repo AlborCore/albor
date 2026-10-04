@@ -12,7 +12,8 @@ namespace albor_proto_e
     // base class for all UI nodes; virtual interface is identical in Release and Dev (AD-02, §2.3)
     struct UiNode
     {
-        explicit UiNode(uint32_t id) noexcept : m_id(id) {}
+        explicit UiNode(uint32_t id) noexcept :
+            m_id(id) {}
         virtual ~UiNode() = default;
         virtual const char* type_name() const noexcept = 0;
         virtual float read_property(uint16_t local_offset) const noexcept = 0;

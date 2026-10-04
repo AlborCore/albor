@@ -26,6 +26,16 @@ namespace albor_proto_e
 
     } // namespace
 
+    // A linker only pulls an object file out of a static archive when something references a symbol in it. The
+    // installer above is deliberately in an anonymous namespace, so nothing outside this file can name it and the
+    // whole file would be dropped: the hook would silently stay null and the Dev build would prove nothing while
+    // still reporting a layout identical to Release. This externally visible anchor gives the archive a symbol to
+    // resolve, which is what makes the installer actually run.
+    extern "C" const void* albor_prototype_e_devrt_link_anchor = &g_dev_hook_installer;
+
+    // Accessor used by the layout check to prove the hook is installed in Dev and null in Release (T7).
+    DevExtensionHook dev_extension_hook() noexcept { return UiNode::s_dev_hook; }
+
     void DevSideTable::register_node(UiNode* /*node*/, uint32_t node_id) {
         // insert a default entry if the node has not been seen before
         m_entries.try_emplace(node_id, DevNodeEntry{});

@@ -8,8 +8,8 @@ struct Component264
 {
     Component264();
     ~Component264();
-    Component264(const Component264 &) = delete;
-    Component264 &operator=(const Component264 &) = delete;
+    Component264(const Component264&) = delete;
+    Component264& operator=(const Component264&) = delete;
     static constexpr uint16_t kPropColor = 0;
     static constexpr uint16_t kPropOpacity = 1;
     static constexpr uint16_t kPropWidth = 2;

@@ -12,7 +12,8 @@ struct Component320::Impl
     Component319* m_child = nullptr;
 };
 
-Component320::Component320() : m_impl(new Impl) {}
+Component320::Component320() :
+    m_impl(new Impl) {}
 Component320::~Component320() { delete m_impl; }
 
 float Component320::color() const { return m_impl->m_color; }

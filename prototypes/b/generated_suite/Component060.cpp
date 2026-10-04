@@ -12,7 +12,8 @@ struct Component060::Impl
     Component059* m_child = nullptr;
 };
 
-Component060::Component060() : m_impl(new Impl) {}
+Component060::Component060() :
+    m_impl(new Impl) {}
 Component060::~Component060() { delete m_impl; }
 
 float Component060::color() const { return m_impl->m_color; }

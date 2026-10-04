@@ -8,8 +8,8 @@ struct Component132
 {
     Component132();
     ~Component132();
-    Component132(const Component132 &) = delete;
-    Component132 &operator=(const Component132 &) = delete;
+    Component132(const Component132&) = delete;
+    Component132& operator=(const Component132&) = delete;
     static constexpr uint16_t kPropColor = 0;
     static constexpr uint16_t kPropOpacity = 1;
     static constexpr uint16_t kPropWidth = 2;

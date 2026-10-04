@@ -12,7 +12,8 @@ struct Component150::Impl
     Component149* m_child = nullptr;
 };
 
-Component150::Component150() : m_impl(new Impl) {}
+Component150::Component150() :
+    m_impl(new Impl) {}
 Component150::~Component150() { delete m_impl; }
 
 float Component150::color() const { return m_impl->m_color; }

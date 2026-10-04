@@ -38,4 +38,8 @@ namespace albor_proto_e
         std::unordered_map<uint32_t, DevNodeEntry> m_entries;
     };
 
+    // Defined only in the dev runtime translation unit. Returns the installed extension hook, which is non-null
+    // when devrt is linked and null in Release (AD-02, T7).
+    [[nodiscard]] DevExtensionHook dev_extension_hook() noexcept;
+
 } // namespace albor_proto_e

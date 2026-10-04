@@ -12,7 +12,8 @@ struct Component337::Impl
     Component336* m_child = nullptr;
 };
 
-Component337::Component337() : m_impl(new Impl) {}
+Component337::Component337() :
+    m_impl(new Impl) {}
 Component337::~Component337() { delete m_impl; }
 
 float Component337::color() const { return m_impl->m_color; }
