@@ -298,8 +298,10 @@ int main(int argc, char** argv) {
         for (const ViewCase& view_case : views) {
             std::printf("\n-- %s\n", view_case.label);
 
-            // draw every engine, keeping the first repeat's pixels to diff the later repeats against
-            static std::vector<std::pair<Engine, PixelBuffer>> reference;
+            // draw every engine, keeping the first repeat's pixels to diff the later repeats against; the view has to
+            // be part of the key, because one reference list holds every view and matching on the engine alone
+            // compares a zoomed frame against an unzoomed one
+            static std::vector<std::tuple<Engine, float, PixelBuffer>> reference;
             results.clear();
 
             for (auto& [engine, renderer] : engines) {
@@ -310,7 +312,7 @@ int main(int argc, char** argv) {
 
             if (repeat == 0) {
                 for (auto& [engine, result] : results) {
-                    reference.emplace_back(engine, result.pixels);
+                    reference.emplace_back(engine, view_case.view.scale, result.pixels);
                     if (engine == Engine::skia_raster && view_case.view.scale == 1.0F) {
                         lit_at_zoom_one = result.lit_pixels;
                     }
@@ -322,8 +324,8 @@ int main(int argc, char** argv) {
             else {
                 // T2: the same input twice must produce the same bytes, or a diff means nothing
                 for (auto& [engine, result] : results) {
-                    for (const auto& [ref_engine, ref_pixels] : reference) {
-                        if (ref_engine != engine) {
+                    for (const auto& [ref_engine, ref_scale, ref_pixels] : reference) {
+                        if (ref_engine != engine || ref_scale != view_case.view.scale) {
                             continue;
                         }
                         const PixelDiff same = diff_pixels(ref_pixels, result.pixels, 0);

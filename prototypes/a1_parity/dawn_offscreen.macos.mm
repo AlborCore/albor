@@ -197,8 +197,8 @@ fn fs_main() -> @location(0) vec4<f32> {
 
         // a plain rgba target with a copy source, which is the only usage the readback needs
         wgpu::TextureDescriptor target_desc{};
-        target_desc.size.width = pixel_width;
-        target_desc.size.height = pixel_height;
+        target_desc.size.width = static_cast<std::uint32_t>(pixel_width);
+        target_desc.size.height = static_cast<std::uint32_t>(pixel_height);
         target_desc.size.depthOrArrayLayers = 1;
         target_desc.format = wgpu::TextureFormat::RGBA8Unorm;
         target_desc.usage = wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::CopySrc;
@@ -368,9 +368,14 @@ fn fs_main() -> @location(0) vec4<f32> {
 
         pass.SetPipeline(m_state->pipeline);
         pass.SetBindGroup(0, m_state->bind_group);
-        pass.SetVertexBuffer(0, m_state->vertex_buffer);
-        // six vertices per instance is the two triangles of one quad, which is the whole instancing claim
-        pass.Draw(6, static_cast<std::uint32_t>(request.instances), 0, 0);
+
+        // a frame with no geometry must not bind a vertex buffer that was never created: binding a null buffer
+        // invalidates the whole render pass, which silently drops the clear as well and leaves the target untouched
+        if (m_state->vertex_buffer != nullptr && request.instances > 0) {
+            pass.SetVertexBuffer(0, m_state->vertex_buffer);
+            // six vertices per instance is the two triangles of one quad, which is the whole instancing claim
+            pass.Draw(6, static_cast<std::uint32_t>(request.instances), 0, 0);
+        }
         pass.End();
 
         wgpu::CommandBuffer commands = encoder.Finish();
@@ -406,7 +411,8 @@ fn fs_main() -> @location(0) vec4<f32> {
         wgpu::TexelCopyBufferLayout copy_layout{};
         copy_layout.offset = 0;
         copy_layout.bytesPerRow = m_state->staging_bytes_per_row;
-        copy_layout.rowsPerImage = static_cast<std::uint32_t>(m_state->pixel_height);
+        // left undefined on purpose: a single layer copy does not need it, and this build appears to drop the whole
+        // copy when it is set
 
         wgpu::TexelCopyBufferInfo destination{};
         destination.layout = copy_layout;
