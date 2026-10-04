@@ -1195,7 +1195,7 @@ material: six packages are outstanding and three of them gate decisions. Audited
 | --- | --- | --- |
 | A1-Parity completion | partial | parity verdict. Centroid offset, per-pixel delta histogram, the antialiasing audit and metric calibration are absent; the zoom-8 attribution is unresolved |
 | Dawn-vs-Skia re-measure | not started | AD-28. **No GPU-timestamp instrumentation exists in either renderer**, so every Dawn-vs-Skia cost figure rests on CPU-side recording time, and the W2 comparison is already recorded as "partly an artefact of unequal work" |
-| Pacing triage | not started | all windowed timings, and AD-18b. Until it closes, every windowed figure in A1, A1-Dawn and A2 stays **unverified** — that marking is current, not stale |
+| Pacing triage | **run and recorded** (`prototypes/a2_macos/PACING.md`) | all windowed timings, and AD-18b. The finding is reproduced and named (CVDisplayLink uniform; CAMetalDisplayLink starves without compositing; CADisplayLink stalls whole-process on no recorded correlate). The unverified markings on windowed figures **stand** until pacing rides a reliable mechanism |
 | Chunked append-only batches | not started | §11.3; append is O(n) at 94–120 ms against a 25 ms budget |
 | Graphite-on-Dawn spike | not started | the AD-28 gate, which is a human decision |
 | Prototype C (text, IME, accessibility) | not started | §21.2 text and i18n selection; the only Phase 0 prototype never begun |
@@ -1298,7 +1298,15 @@ to produce Skia's image; the swap question stays open.**
 code drives a `CADisplayLink` at 58 Hz or at exactly 0 Hz, apparently at random, whenever a `CAMetalLayer` is attached.
 A2's design sits in the failing configuration. **All windowed timings in Prototype A1 and Prototype A1-Dawn are therefore
 unverified and are not repaired by A1-Parity**, whose own frames are driven deterministically offscreen. The cadence
-question stays blocked on the platform.
+question stays blocked on the platform. **Triage result (`prototypes/a2_macos/PACING.md`): the finding is reproduced and
+named.** In a mechanism × condition matrix (12 cells, 5 runs each), `CVDisplayLink` delivered 58.8–60.0 Hz in 60 of 60
+runs under every automated condition, `CAMetalDisplayLink` starved to 0.6 Hz in all 20 matrix runs (exactly 3 drawables
+vended, pool never returned, run-loop heartbeat still ticking — the starvation is deterministic without compositing) and
+delivered 56.5–57.0 Hz as the only link in a fresh process with a composited window, while `CADisplayLink` stalled to
+exactly 0 Hz whole-process with no recorded correlate (occlusion, activation, bundle, caffeinate and window level all
+constant across dead and live batches). The "randomness" is a per-mechanism, per-process property, not machine noise.
+Framework direction recorded for revision, not settled: pace macOS on CVDisplayLink and gate CAMetalDisplayLink pacing
+on composited visibility. The unverified markings on windowed timings stand until pacing rides a reliable mechanism.
 
 **B — generated-code build performance.** The incremental half of AD-03 is confirmed and the clean-build half is not. A
 body edit rebuilds exactly one translation unit in 0.97 s against a 1.5 s budget; an interface change rebuilds the component
