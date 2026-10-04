@@ -212,6 +212,7 @@ namespace albor::a1_parity
             return result;
         }
 
+        // the mean stroke colour over the whole frame, which is a coverage proxy: two engines that lay down the same
         // check that an untouched dawn frame reads back as the clear colour everywhere, which is what makes a dawn
         // readback trustworthy enough to diff against another renderer
         bool dawn_readback_is_sane(OffscreenRenderer& dawn) {

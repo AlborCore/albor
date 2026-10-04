@@ -17,6 +17,7 @@
 #include <skia/core/SkPoint.h>
 #include <skia/core/SkSpan.h>
 #include <skia/core/SkSurface.h>
+#include <skia/core/SkVertices.h>
 
 #include <cmath>
 #include <cstring>
@@ -81,28 +82,52 @@ namespace albor::a1_parity
         // the same clear dawn clears to, so an empty frame compares equal and a diff only ever reports drawn geometry
         canvas->clear(SkColor4f{kClearRed, kClearGreen, kClearBlue, 1.0F});
 
-        // a stroke paint of the requested width is the honest comparison: dawn expands a quad per segment on the gpu,
-        // and this asks skia to lay down a stroke of the same width itself
+        // both engines expand a segment into a filled quad, so the comparison is two rasterisers over the same
+        // rendering style rather than a raster stroke against a quad strip; a native skia stroke is a different
+        // rendering style and comparing it to dawn's quad proves nothing about output parity
         SkPaint paint;
         paint.setColor(SkColor4f{kStrokeRed / 255.0F, kStrokeGreen / 255.0F, kStrokeBlue / 255.0F, 1.0F});
         paint.setAntiAlias(true);
-        paint.setStyle(SkPaint::kStroke_Style);
-        paint.setStrokeWidth(request.resources->stroke_width);
+        paint.setStyle(SkPaint::kFill_Style);
 
-        // one pass of the segments through the same view transform dawn applies in its shader
+        // the endpoints go through the view transform first and the perpendicular is taken afterwards, in pixel space,
+        // which is what makes the stroke cosmetic and matches what dawn's shader does per instance
+        const float half_width = request.resources->stroke_width * 0.5F;
         const std::size_t count = std::min(request.instances, request.resources->lines.size());
-        std::vector<SkPoint> points;
-        points.reserve(count * 2);
+        std::vector<SkPoint> corners;
+        std::vector<std::uint16_t> indices;
+        corners.reserve(count * 4U);
+        indices.reserve(count * 6U);
         for (std::size_t i = 0; i < count; i++) {
             const albor::a1_dawn::Segment& line = request.resources->lines[i];
-            points.push_back(SkPoint::Make(request.view.map_x(line.x0), request.view.map_y(line.y0)));
-            points.push_back(SkPoint::Make(request.view.map_x(line.x1), request.view.map_y(line.y1)));
+            const SkPoint start = SkPoint::Make(request.view.map_x(line.x0), request.view.map_y(line.y0));
+            const SkPoint end = SkPoint::Make(request.view.map_x(line.x1), request.view.map_y(line.y1));
+
+            const float dx = end.fX - start.fX;
+            const float dy = end.fY - start.fY;
+            const float length = std::sqrt(dx * dx + dy * dy);
+            const float nx = length > 0.0F ? -dy / length * half_width : 0.0F;
+            const float ny = length > 0.0F ? dx / length * half_width : 0.0F;
+
+            const auto base = static_cast<std::uint16_t>(i * 4U);
+            corners.push_back(SkPoint::Make(start.fX + nx, start.fY + ny));
+            corners.push_back(SkPoint::Make(start.fX - nx, start.fY - ny));
+            corners.push_back(SkPoint::Make(end.fX - nx, end.fY - ny));
+            corners.push_back(SkPoint::Make(end.fX + nx, end.fY + ny));
+            indices.push_back(base);
+            indices.push_back(static_cast<std::uint16_t>(base + 1U));
+            indices.push_back(static_cast<std::uint16_t>(base + 2U));
+            indices.push_back(base);
+            indices.push_back(static_cast<std::uint16_t>(base + 2U));
+            indices.push_back(static_cast<std::uint16_t>(base + 3U));
         }
-        if (points.empty()) {
+        if (corners.empty()) {
             return;
         }
 
-        canvas->drawPoints(SkCanvas::kLines_PointMode, SkSpan<const SkPoint>(points.data(), points.size()), paint);
+        // one vertex batch, drawn as triangles, which is the same geometry dawn's shader generates per instance
+        const sk_sp<SkVertices> vertices = SkVertices::MakeCopy(SkVertices::kTriangles_VertexMode, static_cast<int>(corners.size()), corners.data(), nullptr, nullptr, static_cast<int>(indices.size()), indices.data());
+        canvas->drawVertices(vertices, SkBlendMode::kSrc, paint);
     }
 
     bool SkiaRasterRenderer::read_back(PixelBuffer& out) const {

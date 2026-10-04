@@ -1236,14 +1236,17 @@ submit is asynchronous, so this slice measured no GPU throughput, and presenting
 These results make Dawn *Proposed* as candidate primary HAL (AD-28) with four blocking items: D3D12 and Vulkan
 unvalidated, no text pipeline, no software rasterizer against AD-26, and build cost unevaluated. Skia is **not** retired.
 
-**Pixel-parity findings (Prototype A1-Parity, `prototypes/a1_parity/RESULTS.md`).** Both engines render and are
-deterministic (T2: 0 differing bytes across repeats). Geometry placement agrees — 89.65% of differing pixels are within
-±4 — but the two do not draw the same stroke: Skia's native `drawPoints` stroke covers almost nothing at 1 px (29,593 lit
-pixels) while Dawn's quad expansion is a solid strip (722,671 lit). The recorded T3 (74.65% differ, ≤0.20%) and T6
-(98.37%, ≤1.00%) therefore fail for a comparison-artifact reason — two different stroke styles — not because the
-renderers disagree on where geometry lands. **The renderer-swap question is open; a renderer cannot yet be shown to
-produce the same image as Skia for the same rendering style.** The Ganesh-vs-Dawn GPU column (T5) is deferred, and T7's
-stroke-width measure was invalid (an overlapping batch is not a width) and needs redesign.
+**Pixel-parity findings (Prototype A1-Parity, `prototypes/a1_parity/RESULTS.md`).** Both engines render
+deterministically (T2: 0 differing bytes across repeats) and Dawn's offscreen readback is exact (T1: 1024000 of 1024000
+pixels). With **both engines drawing the same cosmetic filled quads**, the solid stroke interior is identical (the frame
+centre reads `255 64 32 255` in both) and zoom-1 disagreement is 15.41%. **Parity is still not established:** mean
+coverage differs by about 15% (Dawn 192.6 vs Skia 167.1 mean red) and the disagreeing band is up to 32 px wide along a
+row, far more than an antialiased edge — Skia rasterises the quad corners it is given while Dawn computes them in the
+vertex shader, and near-degenerate short segments amplify the float difference. Which engine is closer to the intended
+one-pixel cosmetic line is **not established**. Two committed instruments are recorded as unusable rather than passed:
+the share-of-differing-pixels-within-±4 threshold cannot measure antialiased agreement at all (0.00%), and the
+stroke-width ratio is invalid on an overlapping batch (0.07×). Zoom 8.0 is dominated by the recorded Skia stroke defect
+rather than by parity. **A renderer cannot yet be shown to produce Skia's image; the swap question stays open.**
 
 **Platform pacing finding.** Windowed frame pacing on this machine is not reproducible: a standalone program with no albor
 code drives a `CADisplayLink` at 58 Hz or at exactly 0 Hz, apparently at random, whenever a `CAMetalLayer` is attached.
@@ -1278,8 +1281,9 @@ After AD-28's candidate comparison. Links both Prototype A1 and Prototype A1-Daw
 are driven deterministically into offscreen targets — no window, swap chain or display link — because the recorded
 platform finding makes windowed pacing unreproducible here.
 Questions: do the two renderers produce the same image for the same input, and is the measurement itself repeatable?
-Status: run and recorded; both engines render deterministically, but output parity is **not** established — the committed
-pixel thresholds fail on a stroke-style artifact, and the GPU-vs-GPU column is deferred.
+Status: run and recorded; both engines render deterministically and Dawn renders offscreen exactly, but output parity is
+**not** established — interiors agree while coverage differs by about 15%, two committed instruments are recorded as
+unusable, and the GPU-vs-GPU column is deferred.
 
 ### Prototype A2 — Platform presentation
 
@@ -1546,7 +1550,7 @@ The next implementation work validates these boundaries through Prototypes D, A1
 | Dawn has no text or glyph pipeline; no first-party software rasterizer | §21.2, AD-26, AD-28 |
 | Replacing Skia means rebuilding the 2D feature surface: joins, caps, dashes, clips, gradients, layers, effects | §11.4, AD-06, AD-28 |
 | Skia Graphite on a Dawn backend as a middle option, untested | AD-28 |
-| Pixel parity Skia vs Dawn not established: geometry agrees, stroke style does not | AD-28 |
+| Pixel parity Skia vs Dawn not established: interiors agree, coverage differs ~15% | AD-28 |
 | Windowed frame pacing not reproducible on this platform; windowed timings unverified | AD-18, AD-28 |
 | Benchmark workload underspecified; no failure condition | §28.3, §28.4 |
 | Software/GPU parity | §11.7, §25, §27 |
