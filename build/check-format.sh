@@ -43,6 +43,12 @@ fi
 # generated sources that clang-format must not reformat
 EXCLUDED=()
 
+# the regex below matches every extension family in this repository:
+#   *.cpp   *.h            — core, tests
+#   *.mm    (e.g. *.macos.mm)   — Objective-C++
+#   *.c++   (e.g. *.linux.c++, *.win32.c++) — platform C++ extensions
+# adding a new extension family requires updating the grep pattern on line ~51
+
 # collect the tracked and the not yet committed C++ sources, dropping the generated files
 files=()
 while IFS= read -r file; do
