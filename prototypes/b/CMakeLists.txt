@@ -52,12 +52,9 @@ target_link_libraries(albor-prototype-b-bench-generated PRIVATE albor-prototype-
 add_executable(albor-prototype-b-bench-baseline bench_baseline.cpp)
 target_link_libraries(albor-prototype-b-bench-baseline PRIVATE albor-prototype-b-baseline)
 
-# both drivers linked together, which is what proves the two suites stay independent and both link
-add_executable(albor-prototype-b-bench
-    bench.cpp
-    bench_generated.cpp
-    bench_baseline.cpp
-)
-target_link_libraries(albor-prototype-b-bench PRIVATE albor-prototype-b-generated albor-prototype-b-baseline)
+# there is deliberately no combined target linking both drivers: each driver is its own executable with its
+# own main, because T1 has to time the two configurations independently. Linking them together could only ever
+# be timed as a whole, which is the measurement problem recorded in RESULTS.md. bench.cpp is retained as the
+# original combined driver for reference and is not built.
 # the root include_directories already covers the source root, which lets the bench TUs
 # use "prototypes/b/generated_suite/ComponentNNN.h" and "prototypes/b/baseline/ComponentNNN.h"
