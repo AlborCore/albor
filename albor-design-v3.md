@@ -1244,9 +1244,11 @@ horizontal line, Skia lays down the full requested ink (1.000 px at width 1.0, 2
 exactly half of it (0.500 and 1.000). **Dawn does draw** — the earlier "draws nothing" result was a harness artifact, an
 upload keyed on buffer existence rather than on the resource set, so a second set drew stale geometry. What remains is a
 sub-pixel placement difference between Skia's analytic rasterisation and Dawn's MSAA resolve, not attributed. Averaged
-over 4x4 blocks on the batch, 54.12% of blocks differ. Two committed instruments are recorded as unusable rather than passed:
-the share-of-differing-pixels-within-±4 threshold cannot measure antialiased agreement at all (0.00%), and the
-stroke-width ratio is invalid on an overlapping batch (0.07×). Zoom 8.0 is dominated by the recorded Skia stroke defect
+over 4x4 blocks on the batch, 54.12% of blocks differ. Two instruments were reviewed for correctness before their verdicts were relied on. The
+±4 per-pixel agreement threshold is sound and its 0.00% is real — delta bands show nothing in 1-4/5-16 and 116,763 pixels
+in 129-255, the half-pixel row signature. The stroke-width ratio was rebuilt on the isolated segment and now gives real
+verdicts: Skia 1.00× (cosmetic confirmed), Dawn 2.00×, inconclusive but diagnostic — full width once the stroke covers a
+pixel centre, so the half-ink at zoom 1 is a sub-pixel placement effect. Zoom 8.0 is dominated by the recorded Skia stroke defect
 rather than by parity. **A renderer cannot yet be shown to produce Skia's image; the swap question stays open.**
 
 **Platform pacing finding.** Windowed frame pacing on this machine is not reproducible: a standalone program with no albor

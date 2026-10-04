@@ -58,8 +58,11 @@ amplifies. **Which engine is closer to the intended one-pixel cosmetic line is n
 **Zoom 8.0 is dominated by the recorded Skia stroke defect**, not by parity: Skia lights 388,385 pixels where Dawn lights
 442,158, and the committed T6 threshold is not meaningful against a known geometry-space-stroke baseline.
 
-**T7 remains invalid.** At 0.07× it is neither cosmetic nor geometric, and lit-pixels-over-drawn-length is not a width
-measurement on an overlapping batch. It needs a single isolated segment and a direct run-length measurement.
+**T7 now has a valid instrument and a real verdict.** Measured on the isolated segment, ink width 1.000 px at zoom 1 and
+1.000 px at zoom 8 for Skia, ratio 1.00× → **cosmetic confirmed**: the parity renderer keeps its pixel width under zoom,
+as the workload specifies, and the recorded geometry-space defect does not apply to it. Dawn measures 0.500 px at zoom 1
+and 1.000 px at zoom 8, ratio 2.00× → **inconclusive**, and diagnostic with it: Dawn reaches full width once the stroke is
+wide enough to cover a pixel centre, so the half-ink at zoom 1 is a sub-pixel placement effect and not a shader math bug.
 
 ## Correction: Dawn does draw; the isolated-segment failure was a harness artifact
 
@@ -113,10 +116,11 @@ aggregate figures looked like a subtle mismatch rather than a total failure. Iso
 
 ## Next proofs, in order
 
-1. **Replace the T4 instrument with a coverage comparison**, so antialiased agreement is measured rather than declared
-   unmeasurable.
-2. **Isolate the coverage difference** to one clean segment, which separates antialiasing from the quad-corner
-   computation and says which engine is correct.
-3. **Redesign T7** on that same isolated segment, which also quantifies the recorded Skia stroke defect properly.
-4. **T5**, the Ganesh-against-Dawn GPU column, only after 1 to 3, since this Skia build exposes a Metal render target
-   through a narrower API than the raster backend needs.
+1. **Attribute the half-ink at zoom 1** — the isolated profile is already the instrument; what remains is to say whether
+   it is the y mapping's half-pixel convention or the MSAA sample positions, by printing the per row profile from the
+   standalone harness at width 2 with no blend.
+2. **Define the tolerance the plan's per-test clause asks for** once the placement difference is attributed, so the
+   committed pixel thresholds measure agreement between two legitimate rasterisation conventions rather than demanding
+   bit equality.
+3. **T5**, the Ganesh-against-Dawn GPU column, since this Skia build exposes a Metal render target through a narrower API
+   than the raster backend needs.

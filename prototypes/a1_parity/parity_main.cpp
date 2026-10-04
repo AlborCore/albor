@@ -80,6 +80,41 @@ namespace albor::a1_parity
         return true;
     }
 
+    // where the worst channel deltas of the differing pixels fall, in bands. this validates the per pixel instrument
+    // before its verdict is relied on: the bimodal distribution a half pixel placement difference produces is what the
+    // instrument should read, and any smearing across the middle bands would be a misreading
+    void report_delta_bands(const PixelBuffer& a, const PixelBuffer& b) {
+        std::size_t bands[5] = {};
+        const std::size_t total = a.width * a.height;
+        for (std::size_t pixel = 0; pixel < total; pixel++) {
+            const std::uint8_t* pa = a.rgba.data() + pixel * 4;
+            const std::uint8_t* pb = b.rgba.data() + pixel * 4;
+            std::size_t worst = 0;
+            for (std::size_t channel = 0; channel < 3; channel++) {
+                worst = std::max(worst, static_cast<std::size_t>(std::abs(pa[channel] - pb[channel])));
+            }
+            if (worst == 0) {
+                continue;
+            }
+            if (worst <= 4) {
+                bands[0]++;
+            }
+            else if (worst <= 16) {
+                bands[1]++;
+            }
+            else if (worst <= 64) {
+                bands[2]++;
+            }
+            else if (worst <= 128) {
+                bands[3]++;
+            }
+            else {
+                bands[4]++;
+            }
+        }
+        std::printf("    delta bands among differing pixels: 1-4: %zu, 5-16: %zu, 17-64: %zu, 65-128: %zu, 129-255: %zu\n", bands[0], bands[1], bands[2], bands[3], bands[4]);
+    }
+
     PixelDiff diff_pixels(const PixelBuffer& a, const PixelBuffer& b, std::size_t tolerance) {
         PixelDiff diff;
         if (a.width != b.width || a.height != b.height) {
@@ -349,8 +384,6 @@ int main(int argc, char** argv) {
     int failures = 0;
 
     // the skia lit counts the first repeat produces, which is what T7 measures rather than re-rendering for
-    double lit_at_zoom_one = 0.0;
-    double lit_at_zoom_eight = 0.0;
 
     // the per repeat measurements, kept out here because the threshold section reads the first repeat's numbers
     std::vector<std::pair<Engine, EngineResult>> results;
@@ -393,12 +426,6 @@ int main(int argc, char** argv) {
             if (repeat == 0) {
                 for (auto& [engine, result] : results) {
                     reference.emplace_back(engine, view_case.view.scale, result.pixels);
-                    if (engine == Engine::skia_raster && view_case.view.scale == 1.0F) {
-                        lit_at_zoom_one = result.lit_pixels;
-                    }
-                    if (engine == Engine::skia_raster && view_case.view.scale == 8.0F) {
-                        lit_at_zoom_eight = result.lit_pixels;
-                    }
                 }
             }
             else {
@@ -429,6 +456,10 @@ int main(int argc, char** argv) {
                     }
                     const PixelDiff diff = diff_pixels(ref_result.pixels, result.pixels, kChannelTolerance);
                     std::printf("  %-12s vs dawn: %.4f%% of pixels differ (%zu), worst channel %zu, %.2f%% within +-%zu\n", engine_name(engine), 100.0 * diff.differing_fraction(), diff.differing_pixels, diff.max_channel_delta, 100.0 * diff.within_tolerance_share(), kChannelTolerance);
+                    if (view_case.view.scale == 1.0F) {
+                        report_delta_bands(ref_result.pixels, result.pixels);
+                    }
+
                     // T3 at zoom 1.0, T4 at zoom 1.0 and T6 at zoom 8.0, exactly as the plan committed them
                     if (view_case.view.scale == 1.0F) {
                         if (diff.differing_fraction() > kMaxDifferingShare) {
@@ -540,33 +571,50 @@ int main(int argc, char** argv) {
         }
     }
 
-    // T7: the recorded skia stroke defect, settled by measurement rather than by assertion
-    std::printf("\n== T7, skia stroke width under zoom\n");
+    // T7, on the isolated segment rather than an overlapping batch: a cosmetic stroke keeps its pixel width when
+    // the scale changes and a geometry space stroke inflates with it, and this measures the width directly
+    std::printf("\n== T7, isolated segment at zoom 1 and zoom 8\n");
     {
-        // the buffers the first repeat already produced, so measuring the stroke width costs no further rendering
-        for (auto& [engine, result] : results) {
-            if (engine != Engine::skia_raster) {
-                continue;
+        albor::a1_dawn::ResourceSet single;
+        single.extent = 1000.0F;
+        single.stroke_width = 1.0F;
+        single.lines.push_back({400.0F, 400.0F, 600.0F, 400.0F});
+
+        albor::a1_dawn::ViewTransform view_one{};
+        view_one.scale = 1.0F;
+
+        // the same segment held on screen at eight times the scale: mapped = x * scale + offset
+        albor::a1_dawn::ViewTransform view_eight{};
+        view_eight.scale = 8.0F;
+        view_eight.offset_x = 400.0F - 8.0F * 400.0F;
+        view_eight.offset_y = 400.0F - 8.0F * 400.0F;
+
+        for (auto& [engine, renderer] : engines) {
+            const EngineResult result_one = run_view(*renderer, single, ViewCase{"zoom 1", view_one});
+            const EngineResult result_eight = run_view(*renderer, single, ViewCase{"zoom 8", view_eight});
+            double ink_one = 0.0;
+            double ink_eight = 0.0;
+            for (const double value : ink_profile(result_one.pixels, 500)) {
+                ink_one += value;
             }
-            const double at_one = lit_at_zoom_one;
-            const double at_eight = lit_at_zoom_eight;
-            if (at_one <= 0.0 || at_eight <= 0.0) {
-                std::printf("  %-12s could not be measured\n", engine_name(engine));
+            for (const double value : ink_profile(result_eight.pixels, 500)) {
+                ink_eight += value;
+            }
+            if (ink_one <= 0.0) {
+                std::printf("  %-12s could not be measured, no ink at zoom 1\n", engine_name(engine));
                 failures++;
                 continue;
             }
-            // the drawn length grows with the scale, so the mean width is lit pixels over length, and the ratio of the
-            // two is what a cosmetic stroke keeps at one and a geometric stroke inflates
-            const double length_one = static_cast<double>(resources->lines.size());
-            const double length_eight = length_one * 8.0;
-            const double width_one = at_one / length_one;
-            const double width_eight = at_eight / length_eight;
-            const double ratio = width_eight / width_one;
-            std::printf("  %-12s mean stroke %.3f px at zoom 1, %.3f px at zoom 8, ratio %.2fx (threshold: >= 3.0x "
-                        "geometric, <= 1.25x cosmetic)\n",
-                        engine_name(engine), width_one, width_eight, ratio);
-            if (ratio < 1.25 || ratio >= 3.0) {
-                std::printf("  T7 INCONCLUSIVE for %s, the ratio is neither cosmetic nor geometric\n", engine_name(engine));
+            const double ratio = ink_eight / ink_one;
+            std::printf("  %-12s ink width %.3f px at zoom 1, %.3f px at zoom 8, ratio %.2fx\n", engine_name(engine), ink_one, ink_eight, ratio);
+            if (ratio <= 1.25) {
+                std::printf("  T7 cosmetic for %s, the stroke keeps its pixel width under zoom\n", engine_name(engine));
+            }
+            else if (ratio >= 3.0) {
+                std::printf("  T7 geometric for %s, the stroke inflates with the view, which is the recorded skia defect\n", engine_name(engine));
+            }
+            else {
+                std::printf("  T7 INCONCLUSIVE for %s\n", engine_name(engine));
             }
         }
     }
