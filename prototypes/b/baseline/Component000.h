@@ -14,6 +14,8 @@ struct Component000
     float m_opacity = 1;
     float m_width = 0;
     float m_height = 0;
+    float color() const { return m_color; }
+    float width() const { return m_width; }
     void set_color(float v) { m_color = v; }
     void set_opacity(float v) { m_opacity = v; }
     void set_width(float v) { m_width = v; }

@@ -12,6 +12,11 @@ struct Component180::Impl
     Component179* m_child = nullptr;
 };
 
+Component180::Component180() : m_impl(new Impl) {}
+Component180::~Component180() { delete m_impl; }
+
+float Component180::color() const { return m_impl->m_color; }
+float Component180::width() const { return m_impl->m_width; }
 void Component180::set_color(float v) { m_impl->m_color = v; }
 void Component180::set_opacity(float v) { m_impl->m_opacity = v; }
 void Component180::set_width(float v) { m_impl->m_width = v; }

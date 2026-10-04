@@ -12,6 +12,11 @@ struct Component374::Impl
     Component373* m_child = nullptr;
 };
 
+Component374::Component374() : m_impl(new Impl) {}
+Component374::~Component374() { delete m_impl; }
+
+float Component374::color() const { return m_impl->m_color; }
+float Component374::width() const { return m_impl->m_width; }
 void Component374::set_color(float v) { m_impl->m_color = v; }
 void Component374::set_opacity(float v) { m_impl->m_opacity = v; }
 void Component374::set_width(float v) { m_impl->m_width = v; }

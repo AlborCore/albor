@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+template <typename Derived>
 struct Component350;
 
 static constexpr int kProp351_Color = 351 * 4 + 0;
@@ -16,12 +17,14 @@ struct Component351
     float m_opacity = 1;
     float m_width = 0;
     float m_height = 0;
-    Component350* m_child = nullptr;
+    Component350<Derived>* m_child = nullptr;
+    float color() const { return m_color; }
+    float width() const { return m_width; }
     void set_color(float v) { m_color = v; }
     void set_opacity(float v) { m_opacity = v; }
     void set_width(float v) { m_width = v; }
     void set_height(float v) { m_height = v; }
-    void set_child(Component350* child) { m_child = child; }
+    void set_child(Component350<Derived>* child) { m_child = child; }
     void on_click() {}
     void on_hover() {}
     void on_focus() {}

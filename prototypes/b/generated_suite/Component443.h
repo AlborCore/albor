@@ -6,10 +6,16 @@ struct Component442;
 
 struct Component443
 {
+    Component443();
+    ~Component443();
+    Component443(const Component443 &) = delete;
+    Component443 &operator=(const Component443 &) = delete;
     static constexpr uint16_t kPropColor = 0;
     static constexpr uint16_t kPropOpacity = 1;
     static constexpr uint16_t kPropWidth = 2;
     static constexpr uint16_t kPropHeight = 3;
+    float color() const;
+    float width() const;
     void set_color(float v);
     void set_opacity(float v);
     void set_width(float v);

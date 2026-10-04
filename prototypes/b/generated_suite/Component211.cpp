@@ -12,6 +12,11 @@ struct Component211::Impl
     Component210* m_child = nullptr;
 };
 
+Component211::Component211() : m_impl(new Impl) {}
+Component211::~Component211() { delete m_impl; }
+
+float Component211::color() const { return m_impl->m_color; }
+float Component211::width() const { return m_impl->m_width; }
 void Component211::set_color(float v) { m_impl->m_color = v; }
 void Component211::set_opacity(float v) { m_impl->m_opacity = v; }
 void Component211::set_width(float v) { m_impl->m_width = v; }

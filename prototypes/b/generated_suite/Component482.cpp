@@ -12,6 +12,11 @@ struct Component482::Impl
     Component481* m_child = nullptr;
 };
 
+Component482::Component482() : m_impl(new Impl) {}
+Component482::~Component482() { delete m_impl; }
+
+float Component482::color() const { return m_impl->m_color; }
+float Component482::width() const { return m_impl->m_width; }
 void Component482::set_color(float v) { m_impl->m_color = v; }
 void Component482::set_opacity(float v) { m_impl->m_opacity = v; }
 void Component482::set_width(float v) { m_impl->m_width = v; }

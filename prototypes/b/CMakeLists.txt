@@ -43,9 +43,16 @@ target_compile_features(albor-prototype-b-generated PUBLIC cxx_std_23)
 add_library(albor-prototype-b-baseline INTERFACE)
 target_include_directories(albor-prototype-b-baseline INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/baseline)
 
-# thin driver: three TUs — main, generated exerciser, baseline exerciser
-# the generated and baseline headers define the same struct names so they
-# must live in separate TUs to avoid redefinition errors
+# the generated and baseline headers define the same struct names, so each configuration gets its own driver
+# target. they are separate targets rather than one executable because T1 is a comparison of the two clean build
+# times, and a single target that links both could only ever be timed as a whole
+add_executable(albor-prototype-b-bench-generated bench_generated.cpp)
+target_link_libraries(albor-prototype-b-bench-generated PRIVATE albor-prototype-b-generated)
+
+add_executable(albor-prototype-b-bench-baseline bench_baseline.cpp)
+target_link_libraries(albor-prototype-b-bench-baseline PRIVATE albor-prototype-b-baseline)
+
+# both drivers linked together, which is what proves the two suites stay independent and both link
 add_executable(albor-prototype-b-bench
     bench.cpp
     bench_generated.cpp

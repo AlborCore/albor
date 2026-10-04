@@ -6,10 +6,16 @@ struct Component326;
 
 struct Component327
 {
+    Component327();
+    ~Component327();
+    Component327(const Component327 &) = delete;
+    Component327 &operator=(const Component327 &) = delete;
     static constexpr uint16_t kPropColor = 0;
     static constexpr uint16_t kPropOpacity = 1;
     static constexpr uint16_t kPropWidth = 2;
     static constexpr uint16_t kPropHeight = 3;
+    float color() const;
+    float width() const;
     void set_color(float v);
     void set_opacity(float v);
     void set_width(float v);
