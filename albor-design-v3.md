@@ -1082,11 +1082,11 @@ Acceptance thresholds are **set and recorded before a prototype runs**, based on
 
 **AD-01 — Production execution model.** *Decided.* `.ui` compiles to native C++. No compiler frontend, interpreter, registry or reflection in Release.
 
-**AD-02 — Dev runtime extension.** *Proposed.* A separate `albor-devrt` (registry, IR loader, restricted expression VM, reload adapter) is linked only in Dev. The compiler stays out of process. The layout-invariance rule (§2.3) keeps the runtime binary identical across configurations. Validated by Prototype E.
+**AD-02 — Dev runtime extension.** *Proposed.* A separate `albor-devrt` (registry, IR loader, restricted expression VM, reload adapter) is linked only in Dev. The compiler stays out of process. The layout-invariance rule (§2.3) keeps the runtime binary identical across configurations. Validated by Prototype E, which **supports** it on the layout-invariance point: class layout and virtual interfaces are byte-identical across configurations, the Dev-only hook lives in a slot declared in an un-`#ifdef`ed header and is null in Release, and the Release binary excludes devrt at link time. It stays *Proposed* because the slice covered neither binding replacement nor a genuinely independent second engine.
 
-**AD-03 — Generated public headers.** *Decided.* Concrete, non-virtual facade classes; interface-only; implementation private; write-if-changed generation.
+**AD-03 — Generated public headers.** *Decided.* Concrete, non-virtual facade classes; interface-only; implementation private; write-if-changed generation. Validated in part by Prototype B: the write-if-changed behaviour, the facade-with-private-implementation shape and the per-component rebuild scope all hold (body edit rebuilds exactly one translation unit). **The clean-build speed claim that accompanied this decision did not survive measurement** and is recorded as contradicted; see §30.
 
-**AD-04a — Invalidation index.** *Proposed.* Compact CSR (Compressed Sparse Row) index over declared dependencies with eager push evaluation and no per-binding allocation. Supported by Prototype D at 56 B per property and 39.3 B per binding. **Not covered:** the prototype's index is sealed, while §18 and §20 require runtime mutation — virtualized delegates, `if`/`for` constructs, popups, live-reload `ReplaceBinding`. Per-component or segmented indices are the likely answer and none was tested. `PropertyId` assignment is also unspecified: ids must be component-local with a runtime base offset, or any interface change cascades through every generated file and breaks §14.2/§14.3.
+**AD-04a — Invalidation index.** *Proposed.* Compact CSR (Compressed Sparse Row) index over declared dependencies with eager push evaluation and no per-binding allocation. Supported by Prototype D at 56 B per property and 39.3 B per binding. **Not covered:** the prototype's index is sealed, while §18 and §20 require runtime mutation — virtualized delegates, `if`/`for` constructs, popups, live-reload `ReplaceBinding`. Per-component or segmented indices are the likely answer and none was tested. `PropertyId` assignment is now **tested and supported**: Prototype B assigns ids as component-local `uint16_t` offsets over a runtime base offset and confirmed that editing a property in one component rebuilds only that component, leaving every other component's object untouched. The global-monomorphic scheme it replaces is what would cascade.
 
 **AD-04b — Storage layout.** *Open.* Prototype D measured a single uniform value slot. Typed per-component storage and the realistic value types (strings, translated strings, snapshots) were not measured, so the layout is not settled.
 
@@ -1179,9 +1179,9 @@ was declared only after the run.
 | **A1-Dawn — renderer (WebGPU)** | complete, macOS only | workloads W1/W2/W3 (400, 400, 400/400 frames; 3,200 hover queries) |
 | **A1-Parity — renderer output parity (Skia vs. Dawn)** | run | isolated-segment ink matched after corner-5 fix; batch parity not established (13.95% zoom 1, 63.68% zoom 8) |
 | **D2 — binding engine follow-up** | not started | none (follow-up to D for AD-04b/c: typed storage, diamond topologies, runtime mutation) |
-| **B — generated-code build performance** | not started | none |
+| **B — generated-code build performance** | run | 500 components per side, 5 clean builds per configuration, rebuild-scope and write-if-changed checks |
 | **C — text, IME and accessibility** | not started | none |
-| **E — dev runtime slice** | not started | none |
+| **E — dev runtime slice** | run | layout dump in Release and Dev, hook install check, 16-node conformance over 5 runs in both configurations |
 
 **Conclusions reached**
 
@@ -1263,6 +1263,36 @@ A2's design sits in the failing configuration. **All windowed timings in Prototy
 unverified and are not repaired by A1-Parity**, whose own frames are driven deterministically offscreen. The cadence
 question stays blocked on the platform.
 
+**B — generated-code build performance.** The incremental half of AD-03 is confirmed and the clean-build half is not. A
+body edit rebuilds exactly one translation unit in 0.97 s against a 1.5 s budget; an interface change rebuilds the component
+and its direct includer; an unrelated application edit rebuilds one; the generator restamps nothing on an unchanged run; and
+a property edit in one component leaves every other component's object untouched, which is AD-04a's component-local
+`PropertyId` scheme doing its job. **The clean-build threshold fails at 12.0× on wall clock and about 90× on CPU, against a
+≤ 0.50 criterion.** The two readings are both recorded because the configurations are not the same shape: the generated suite
+is 500 separate `.cpp` files compiled across 12 cores while the baseline is a single translation unit on one core, so wall
+clock substantially measures core count and CPU time is the honest measure of how much compiling the architecture costs. The
+cost is structural rather than incidental — the baseline pays for its templates once, the generated suite pays a fixed
+per-translation-unit cost 500 times over trivial component bodies — and every available mitigation (unity builds, LTO,
+merging components into fewer translation units) destroys the one-TU rebuild that the incremental thresholds confirm. So
+**AD-03's clean-build rationale is now contradicted at this workload size, while the §14.3 edit-scope invariant the
+decision depends on is supported.** The decision itself is unchanged and stays *Decided*; what changed is that one of the
+two claims it was justified by did not survive measurement. Whether the trade favours Albor depends on edit frequency against clean-build
+frequency in real use, which this prototype did not measure. Compiler memory and binary size were named in `plan.md` and
+are **not** measured, so neither is claimed.
+
+**E — dev runtime slice.** **AD-02's layout-invariance rule holds** for the classes under test: sizes, the identity field
+offset and every virtual slot are byte-identical between Release and Dev, and the measured sizes are `static_assert`s so a
+later change is a build failure rather than a diff someone has to notice. The Dev-only hook is non-null in Dev and null in
+Release from a slot declared in a header containing no `#ifdef` anywhere, and the Release binary carries zero devrt symbols,
+which is the AD-04 link-time exclusion §2.3 requires. Dual-engine conformance passes over 5 runs in both configurations,
+with two limits recorded rather than glossed: `ReplaceBinding` is applied as a `SetProperty` in this slice so binding
+replacement — the part that matters for live reload — remains unverified, and both sides of the comparison share one
+implementation, so this is not yet the agreement between two independently generated engines AD-25 requires. The transferable
+finding is a failure mode, not a number: **a dev-runtime extension can link, appear in the build and be entirely inert.**
+The installer that populated the hook sat in an anonymous namespace, so the linker discarded the object file and the Dev
+build silently matched Release — the first run of this prototype "passed" for exactly that reason. Any future check of this
+shape must assert the Dev side is *active*, not merely that both sides agree.
+
 ### Prototype D — Property and binding engine
 
 Scope: property storage, dependency tracking, dirty propagation and batched evaluation; ~10⁵ properties and ~10⁴ bindings; observable external state, environment properties (theme, locale) and animation-driven properties.
@@ -1313,6 +1343,7 @@ Questions: GPU backend viability per platform, Wayland roles/popups, and nested-
 Stub runtime + compiler + approximately 500 generated components, with the binding representation from Prototype D, minimal headers, generated implementation files and write-if-changed generation.
 Measures: clean build, local `.ui` change, interface change, unrelated application rebuild, generated file sizes, and translation units rebuilt.
 Requires a **baseline** (an equivalent UI in the current workflow) so "significantly faster" is checkable. Also assesses distribution cost (Skia and runtime build time, AD-19).
+Status: run and recorded (`prototypes/b/RESULTS.md`). 500 components per side, i7-9750H, 5 runs per configuration. **Six of seven thresholds pass; the clean-build claim fails.** A local `.ui` body edit rebuilds exactly 1 translation unit in 0.97 s, an interface change rebuilds 2, an unrelated edit rebuilds 1, the generator restamps 0 files, and changing a property in one component does not rebuild another — so the §14.3 incremental invariant and AD-04a component-local `PropertyId`s both hold. **Clean build does not:** generated 4.45 s wall / 34.90 s CPU against baseline 0.37 s / 0.39 s, a ratio of **12.0× on wall clock and about 90× on CPU** against a ≤ 0.50 threshold. Both readings are recorded because the configurations differ in shape — the generated suite is 500 separate `.cpp` files compiled across 12 cores, the baseline is one translation unit compiled on one — so wall clock largely measures core count, while CPU time answers the question actually being asked. The cost is structural: the baseline pays for its templates once, the generated suite pays a fixed per-translation-unit cost 500 times, and every mitigation (unity builds, LTO, merging components) destroys the one-TU rebuild that the incremental thresholds confirm. **AD-03's clean-build performance claim is therefore not established; its incremental claims are, and those are the ones §14.3 depends on.**
 
 ### Prototype C — Text, IME and accessibility
 
@@ -1322,6 +1353,7 @@ Minimal text control with keyboard editing, IME, selection, cursor, DPI changes 
 
 Reload adapter + IR loader + restricted expression VM + descriptor tables on the prototype runtime.
 Questions: does the layout-invariance rule hold (identical runtime binary, no Release cost beyond the null-checked hooks), what is the dual-engine conformance gap on a starter corpus, can nodes be created and patched by key, and what is the descriptor-table size.
+Status: run and recorded (`prototypes/e/RESULTS.md`). **The layout-invariance rule holds and AD-02 is supported for the classes under test.** Across Release and Dev the class sizes are byte-identical (`UiNode` 16, `TextNode` 32, `ContainerNode` 32), the identity field offset matches, and every virtual slot dispatches correctly through a base pointer in both, so no slot moved or vanished. The measured sizes are `static_assert`s, so a later layout change is a build failure rather than something only a diff would notice. The Dev-only hook is `non-null` in Dev and `null` in Release from a slot declared in a header with no `#ifdef` anywhere, and the Release binary contains zero devrt symbols, which is the AD-04 link-time exclusion §2.3 requires. Dual-engine conformance passes: a 16-node tree serialises, reloads and compares all 64 property slots with exact equality, and the same patch applied by explicit `id:` to both trees re-compares equal over 5 runs. **Two limits are recorded rather than glossed:** `ReplaceBinding` is applied as a `SetProperty` in this slice, so binding replacement — the part that matters for live reload — is unverified; and both sides of the comparison share one implementation, so this is not yet agreement between two independently generated engines as AD-25 requires. One defect is worth carrying forward as a class rather than a one-off: **a dev-runtime extension can link, appear in the build, and be entirely inert.** The installer that populated the hook sat in an anonymous namespace, so the linker discarded the whole object file and Dev silently matched Release. The first run of this prototype "passed" for exactly that reason.
 
 These prototypes address the highest-risk assumptions before full-scale implementation.
 
@@ -1453,7 +1485,10 @@ The `Column` has no explicit `id` and therefore only an implicit key (§18.1). `
 
 1. Exact `.ui` grammar, property and binding syntax (including expression purity and any two-way binding).
 2. Typed per-component property storage to replace the type-erased slot of AD-04, including the memory target that Phase 2 must reach.
-4. Generated C++ splitting strategy (Prototype B).
+4. Generated C++ splitting strategy (Prototype B). **Partly answered:** one translation unit per component is what makes the
+   one-TU body-edit rebuild work, and it is also what makes a clean build cost about 90× a single-TU baseline in CPU time.
+   The open part is whether a shared preamble, precompiled headers or a documented unity-build escape hatch can recover most of
+   that clean-build cost without giving up per-component rebuild scope.
 5. Manifest syntax details and the preview-plugin ABI.
 6. ABI and versioning beyond 1.0 (AD-19 covers pre-1.0).
 7. Skia backend strategy, including Ganesh versus Graphite and its threading consequences (Prototype A1).
@@ -1466,6 +1501,13 @@ The `Column` has no explicit `id` and therefore only an implicit key (§18.1). `
 15. Text implementation and library.
 16. Layout algorithm.
 17. Animation API details.
+18. Whether the AD-03 clean-build penalty is acceptable in practice. Prototype B measured the cost but not the trade: that
+    depends on edit frequency against clean-build frequency in real use, which no prototype has measured. Compiler peak
+    memory and binary size, both named in Prototype B's `plan.md`, were not measured at all.
+19. Binding replacement through `UiPatch`. Prototype E applies `ReplaceBinding` as a `SetProperty`, so the live-reload path
+    that motivates the dev runtime remains unverified.
+20. A genuinely independent second engine for AD-25. Prototype E's conformance comparison ran both sides through one shared
+    implementation, so it establishes that serialise, reload and patch preserve values — not agreement between two engines.
 18. Command history API.
 19. Automation transport and MCP schema.
 20. Live-reload wire protocol and state migration.
@@ -1570,6 +1612,9 @@ The next implementation work validates these boundaries through Prototypes D, A1
 | Skia Graphite on a Dawn backend as a middle option, untested | AD-28 |
 | Pixel parity Skia vs Dawn: Dawn half-ink defect resolved (WGSL quad vertex 5 side selector bug); edge antialiasing differences remain | AD-28 |
 | Windowed frame pacing not reproducible on this platform; windowed timings unverified | AD-18, AD-28 |
+| AD-03 clean-build cost ~90× a single-TU baseline in CPU time; incremental rebuild scope confirmed instead | AD-03, §14.3 |
+| Dev-only extension can link and still be inert (linker discards unreferenced static initialisers) — assert the Dev side is active, not just that both sides agree | AD-02, AD-04, §2.3 |
+| `UiPatch` binding replacement unverified; conformance comparison not yet between independent engines | AD-25, §17.2 |
 | Benchmark workload underspecified; no failure condition | §28.3, §28.4 |
 | Software/GPU parity | §11.7, §25, §27 |
 | Custom-canvas semantic children/automation regressed | §19.3 |
