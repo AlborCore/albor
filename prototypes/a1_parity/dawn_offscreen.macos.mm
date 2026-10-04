@@ -134,8 +134,12 @@ fn fs_main() -> @location(0) vec4<f32> {
             wgpu::Device device;
             wgpu::Queue queue;
 
+            // the target is resolved from a multisampled colour buffer, so what is read back is antialiased the way
+            // skia's cpu rasteriser is
             wgpu::Texture target;
             wgpu::TextureView target_view;
+            wgpu::Texture msaa_target;
+            wgpu::TextureView msaa_view;
             wgpu::ShaderModule shader;
             wgpu::RenderPipeline pipeline;
             wgpu::BindGroupLayout bind_layout;
@@ -206,6 +210,13 @@ fn fs_main() -> @location(0) vec4<f32> {
         m_state->target = m_state->device.CreateTexture(&target_desc);
         m_state->target_view = m_state->target.CreateView();
 
+        // the multisampled buffer the pass renders into, and the plain target it resolves into
+        wgpu::TextureDescriptor msaa_desc = target_desc;
+        msaa_desc.sampleCount = 4;
+        msaa_desc.usage = wgpu::TextureUsage::RenderAttachment;
+        m_state->msaa_target = m_state->device.CreateTexture(&msaa_desc);
+        m_state->msaa_view = m_state->msaa_target.CreateView();
+
         // bracket the pipeline build, so a rejected shader or descriptor is reported instead of drawing nothing
         m_state->device.PushErrorScope(wgpu::ErrorFilter::Validation);
         const bool built = build_pipeline();
@@ -253,19 +264,20 @@ fn fs_main() -> @location(0) vec4<f32> {
         const wgpu::ShaderModule shader = m_state->shader;
 
         // four floats per instance: the two endpoints of the segment, drawn as one instanced quad
-        wgpu::VertexAttribute attribute0{};
-        attribute0.format = wgpu::VertexFormat::Float32x2;
-        attribute0.offset = 0;
-        attribute0.shaderLocation = 0;
-        wgpu::VertexAttribute attribute1{};
-        attribute1.format = wgpu::VertexFormat::Float32x2;
-        attribute1.offset = 8;
-        attribute1.shaderLocation = 1;
+        // two vec2 endpoints per instance, described as one array, because a vertex layout reads its attributes
+        // through a single pointer and separately declared locals are not an array
+        wgpu::VertexAttribute attributes[2]{};
+        attributes[0].format = wgpu::VertexFormat::Float32x2;
+        attributes[0].offset = 0;
+        attributes[0].shaderLocation = 0;
+        attributes[1].format = wgpu::VertexFormat::Float32x2;
+        attributes[1].offset = 8;
+        attributes[1].shaderLocation = 1;
 
         wgpu::VertexBufferLayout buffer_layout{};
         buffer_layout.arrayStride = sizeof(float) * 4U;
         buffer_layout.stepMode = wgpu::VertexStepMode::Instance;
-        buffer_layout.attributes = &attribute0;
+        buffer_layout.attributes = attributes;
         buffer_layout.attributeCount = 2;
 
         wgpu::VertexState vertex_state{};
@@ -286,27 +298,42 @@ fn fs_main() -> @location(0) vec4<f32> {
         primitive_state.topology = wgpu::PrimitiveTopology::TriangleList;
         primitive_state.cullMode = wgpu::CullMode::None;
 
+        // four samples, which is what makes the stroke edge comparable to a rasteriser that antialiases
+        wgpu::MultisampleState multisample{};
+        multisample.count = 4;
+
         wgpu::PipelineLayoutDescriptor layout_desc{};
         layout_desc.bindGroupLayouts = &m_state->bind_layout;
         layout_desc.bindGroupLayoutCount = 1;
         const wgpu::PipelineLayout layout = m_state->device.CreatePipelineLayout(&layout_desc);
 
-        wgpu::BlendState blend{};
-        blend.color = {};
-        blend.color.operation = wgpu::BlendOperation::Add;
-        blend.color.srcFactor = wgpu::BlendFactor::SrcAlpha;
-        blend.color.dstFactor = wgpu::BlendFactor::OneMinusSrcAlpha;
-        blend.alpha = {};
-        blend.alpha.operation = wgpu::BlendOperation::Add;
-        blend.alpha.srcFactor = wgpu::BlendFactor::One;
-        blend.alpha.dstFactor = wgpu::BlendFactor::Zero;
-
+        // a fully opaque stroke needs no blend at all, and blending premultiplied alphas against the clear is what
+        // made the stroke come out at 73 27 23 instead of 255 64 32
         wgpu::RenderPipelineDescriptor pipeline_desc{};
         pipeline_desc.layout = layout;
         pipeline_desc.vertex = vertex_state;
         pipeline_desc.fragment = &fragment_state;
         pipeline_desc.primitive = primitive_state;
-        m_state->pipeline = m_state->device.CreateRenderPipeline(&pipeline_desc);
+        pipeline_desc.multisample = multisample;
+
+        // this build's error scopes are not a usable signal, so the pipeline is created through its async path and
+        // whatever dawn thinks of it is printed directly: an invalid pipeline makes a render pass discard everything
+        {
+            std::atomic<bool> done{false};
+            m_state->device.CreateRenderPipelineAsync(&pipeline_desc, wgpu::CallbackMode::AllowProcessEvents, [&](wgpu::CreatePipelineAsyncStatus status, wgpu::RenderPipeline pipeline, wgpu::StringView message) {
+                if (status == wgpu::CreatePipelineAsyncStatus::Success) {
+                    m_state->pipeline = std::move(pipeline);
+                }
+                else {
+                    std::fprintf(stderr, "[dawn] the render pipeline was rejected: %.*s\n", static_cast<int>(message.length), message.data);
+                }
+                done.store(true, std::memory_order_release);
+            });
+            while (!done.load(std::memory_order_acquire)) {
+                m_state->instance.ProcessEvents();
+                std::this_thread::yield();
+            }
+        }
 
         // the uniform buffer and the bind group that reads it
         wgpu::BufferDescriptor uniform_desc{};
@@ -379,7 +406,8 @@ fn fs_main() -> @location(0) vec4<f32> {
 
         // the clear is the same colour skia clears to, so an empty frame compares equal across renderers
         wgpu::RenderPassColorAttachment color{};
-        color.view = m_state->target_view;
+        color.view = m_state->msaa_view;
+        color.resolveTarget = m_state->target_view;
         color.loadOp = wgpu::LoadOp::Clear;
         color.storeOp = wgpu::StoreOp::Store;
         color.clearValue = {kClearRed, kClearGreen, kClearBlue, 1.0};

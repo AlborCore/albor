@@ -38,6 +38,11 @@ namespace albor::a1_parity
         constexpr std::size_t kFramesPerEngine = 10;
         constexpr std::size_t kChannelTolerance = 4;
 
+        // the committed thresholds, which the driver enforces rather than only printing
+        constexpr double kMaxDifferingShare = 0.002; // T3: raster against dawn at zoom 1.0
+        constexpr double kMinWithinToleranceShare = 0.99; // T4: differing pixels that are only edge antialiasing
+        constexpr double kMaxDifferingShareAtZoom8 = 0.01; // T6: raster against dawn at zoom 8.0
+
         double to_ms(Clock::time_point from, Clock::time_point to) { return std::chrono::duration<double, std::milli>(to - from).count(); }
 
     } // namespace
@@ -349,6 +354,21 @@ int main(int argc, char** argv) {
                     }
                     const PixelDiff diff = diff_pixels(ref_result.pixels, result.pixels, kChannelTolerance);
                     std::printf("  %-12s vs dawn: %.4f%% of pixels differ (%zu), worst channel %zu, %.2f%% within +-%zu\n", engine_name(engine), 100.0 * diff.differing_fraction(), diff.differing_pixels, diff.max_channel_delta, 100.0 * diff.within_tolerance_share(), kChannelTolerance);
+                    // T3 at zoom 1.0, T4 at zoom 1.0 and T6 at zoom 8.0, exactly as the plan committed them
+                    if (view_case.view.scale == 1.0F) {
+                        if (diff.differing_fraction() > kMaxDifferingShare) {
+                            std::printf("  T3 FAIL, %.4f%% of pixels differ against a threshold of %.2f%%\n", 100.0 * diff.differing_fraction(), 100.0 * kMaxDifferingShare);
+                            failures++;
+                        }
+                        if (diff.within_tolerance_share() < kMinWithinToleranceShare) {
+                            std::printf("  T4 FAIL, only %.2f%% of the differing pixels stayed within +-%zu\n", 100.0 * diff.within_tolerance_share(), kChannelTolerance);
+                            failures++;
+                        }
+                    }
+                    else if (diff.differing_fraction() > kMaxDifferingShareAtZoom8) {
+                        std::printf("  T6 FAIL, %.4f%% of pixels differ against a threshold of %.2f%%\n", 100.0 * diff.differing_fraction(), 100.0 * kMaxDifferingShareAtZoom8);
+                        failures++;
+                    }
                 }
             }
         }
