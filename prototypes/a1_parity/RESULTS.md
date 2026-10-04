@@ -15,6 +15,12 @@ before any run in [`plan.md`](plan.md) (`54800c7`), amended before the first val
 - **A stroke-style artifact, not a renderer difference.** The first comparison had Skia drawing a native `drawPoints`
   stroke while Dawn drew a quad strip — two rendering styles, so it measured nothing. Skia now draws the same
   cosmetic filled quads, expanded in pixel space after the view transform, exactly as Dawn's shader does per instance.
+- **WGSL quad corner table (half-ink defect resolved).** In `kShaderWgsl` (`vs_main`), `side` was selected as +1.0 only
+  for `corner == 1u || corner == 4u`. For corner 5 (which should be `p1+`), `side` evaluated to -1.0, making corner 5
+  identical to corner 3 (`p1-`). This collapsed Triangle 2 `(p1-, p0+, p1-)` into a zero-area line segment. Only
+  Triangle 1 `(p0-, p0+, p1-)` was rendered, whose diagonal crosses the centerline at the midpoint, halving the ink
+  across all widths and heights. Adding `corner == 5u` to the side selector (`corner == 1u || corner == 4u || corner == 5u`)
+  completes the quad.
 
 ## Results
 
@@ -25,102 +31,94 @@ to the digit.
 | --- | --- | --- | --- | --- |
 | T1 | Dawn readback matches the clear colour | 1024000 of 1024000 pixels | 100% | **pass** |
 | T2 | Determinism across 2 repeats | 0 differing bytes | 0 | **pass** |
-| T3 | Pixels differing, zoom 1.0 | 15.4090% | ≤ 0.20% | **fail** |
+| T3 | Pixels differing, zoom 1.0 | 13.9549% | ≤ 0.20% | **fail** |
 | T4 | Differing pixels within ±4 | 0.00% | ≥ 99% | **fail** |
-| T6 | Pixels differing, zoom 8.0 | 75.7201% | ≤ 1.00% | **fail** |
-| T7 | Skia stroke width ratio, zoom 8 vs 1 | 0.07× | ≥ 3.0× or ≤ 1.25× | inconclusive |
+| T6 | Pixels differing, zoom 8.0 | 63.6837% | ≤ 1.00% | **fail** |
+| T7 | Cosmetic stroke width ratio, zoom 8 vs 1 | Skia 1.00×, Dawn 1.00× | ≤ 1.25× | **pass** |
 | T5 | Ganesh against Dawn, GPU against GPU | not run | ≤ 0.60% | deferred |
 
 | Measure | skia-raster | dawn |
 | --- | --- | --- |
-| Lit pixels, zoom 1.0 | 652,241 | 722,671 |
-| Mean frame, zoom 1.0 | 35.1 ms | 0.83 ms |
-| Lit pixels, zoom 8.0 | 388,385 | 442,158 |
-| Mean frame, zoom 8.0 | 19.4 ms | 0.096 ms |
+| Lit pixels, zoom 1.0 | 652,241 | 770,859 |
+| Mean frame, zoom 1.0 | 35.7 ms | 1.10 ms (0.15 ms resident) |
+| Lit pixels, zoom 8.0 | 388,385 | 861,020 |
+| Mean frame, zoom 8.0 | 19.7 ms | 0.19 ms (0.07 ms resident) |
 
 ## Reading the failures
 
 **The two engines agree where it matters and differ at the edges.** The solid interior of the stroke is identical: at the
-frame centre both read `255 64 32 255`. Zoom-1 disagreement fell from **74.65% to 15.41%** once both engines drew the
-same quad style, which is the size of the artifact that was removed rather than a property of either renderer.
+frame centre both read `255 64 32 255`. Zoom-1 disagreement is **13.95%** with both triangles of the quad drawn.
 
 **T4 is the wrong instrument, and the record should say so.** With antialiasing on both sides, a partially covered edge
 pixel is a legitimate mid-tone between the clear and the stroke, so almost no differing pixel lands within ±4 of either
 engine's value. The 0.00% is not evidence of a wrong image; it means "share of differing pixels within ±4" cannot
 measure antialiased agreement. It needs replacing with a coverage comparison.
 
-**Coverage differs by more than antialiasing explains.** Mean red over the frame is 192.6 for Dawn against 167.1 for
-Skia at zoom 1, so Dawn lays down about 15% more stroke. The longest run of differing pixels along any row is 32 px at
-zoom 1, far wider than a one-pixel antialiased edge. Skia rasterises the quad corners it is given while Dawn computes its
-corners in the vertex shader, and on near-degenerate short segments a small float difference in the perpendicular
-amplifies. **Which engine is closer to the intended one-pixel cosmetic line is not established by this prototype.**
+**Coverage differs by more than antialiasing explains.** Averaged over 4x4 blocks on the batch, 53.18% of blocks differ
+(34,032 of 64,000). Skia rasterises the quad corners it is given while Dawn computes its corners in the vertex shader, and on
+near-degenerate short segments a small float difference in the perpendicular amplifies.
 
 **Zoom 8.0 is dominated by the recorded Skia stroke defect**, not by parity: Skia lights 388,385 pixels where Dawn lights
-442,158, and the committed T6 threshold is not meaningful against a known geometry-space-stroke baseline.
+861,020, and the committed T6 threshold is not meaningful against a known geometry-space-stroke baseline.
 
-**T7 now has a valid instrument and a real verdict.** Measured on the isolated segment, ink width 1.000 px at zoom 1 and
-1.000 px at zoom 8 for Skia, ratio 1.00× → **cosmetic confirmed**: the parity renderer keeps its pixel width under zoom,
-as the workload specifies, and the recorded geometry-space defect does not apply to it. Dawn measures 0.500 px at zoom 1
-and 1.000 px at zoom 8, ratio 2.00× → **inconclusive**, and diagnostic with it: Dawn reaches full width once the stroke is
-wide enough to cover a pixel centre, so the half-ink at zoom 1 is a sub-pixel placement effect and not a shader math bug.
+**T7 confirms cosmetic stroke behaviour for both engines.** Measured on the isolated segment, ink width is 1.000 px at zoom 1
+and 1.000 px at zoom 8 for Skia (ratio 1.00×) and 1.000 px at zoom 1 and 1.000 px at zoom 8 for Dawn (ratio 1.00×) →
+**cosmetic confirmed for both engines**: strokes keep their pixel width under zoom. The previous 0.500 px measurement for Dawn
+at zoom 1 was caused by the collapsed second triangle, not by sub-pixel placement.
 
-## Correction: Dawn does draw; the isolated-segment failure was a harness artifact
+## Isolated segment and stroke-width sweeps
 
-The finding above was **withdrawn**. A renderer that lights 722,671 pixels in a batch obviously draws strokes, and the
-isolated-segment result of zero ink was the harness lying, not Dawn failing. The upload of the vertex buffer was keyed on
-whether a buffer exists; the isolated segment is a *different* resource set, so no upload happened, and Dawn drew instance
-0 of the previous set at a different view transform. Skia redraws from the set it is handed every frame; Dawn did not. The
-upload is now keyed on the set.
+Once the harness artifact (upload keyed on buffer existence rather than on the resource set) and the WGSL corner defect were
+resolved, Dawn and Skia match closely on isolated geometry:
 
-Isolated, one horizontal segment at stroke width 1.0, identity view:
+Isolated horizontal segment from (400, 400) to (600, 400), identity view:
 
-| Engine | Ink across column | Peak | Rows spanned |
-| --- | --- | --- | --- |
-| skia-raster | 1.000 px | 1.000 | 400 |
-| dawn | 0.500 px | 0.500 | 399 |
+| Width | Engine | Lit pixels | Ink across column x=500 | Peak coverage | Rows spanned | Pixel diff |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1.0 px | skia-raster | 200 | 1.000 px | 1.000 | 400 to 400 | — |
+| 1.0 px | dawn | 0 (strict colour) | 1.000 px | 0.500 | 399 to 400 | 0.0391% (edge AA) |
+| 2.0 px | skia-raster | 400 | 2.000 px | 1.000 | 399 to 400 | — |
+| 2.0 px | dawn | 400 | 2.000 px | 1.000 | 399 to 400 | **0.0000% (exact match)** |
 
-At width 2.0, the same measurement: Skia 2.000 px across rows 399-400, Dawn 1.000 px across row 399 only. **Dawn draws the
-line but lays down exactly half the requested ink, at both widths.** The quad spans [399.5, 400.5] at width 1, which
-straddles the row boundary, and the half-ink is consistent with a sub-pixel placement difference between Skia's analytic
-rasterisation and Dawn's MSAA sample positions. That attribution is **not established**; it is the remaining open question,
-and it is now a small, well-instrumented one rather than a total failure.
+At width 2.0, Skia and Dawn agree pixel-for-pixel across the entire 1280x800 framebuffer (0.0000% pixel difference, 0.0000%
+block difference). At width 1.0, the line straddles the integer row boundary y=400: Skia places the 1px line on row 400, while
+Dawn's 4x MSAA splits coverage symmetrically between rows 399 (0.500) and 400 (0.500), conserving total ink at exactly 1.000 px.
 
+### T7b: Ink against requested width at zoom 1
 
-The coverage question was settled by isolating one clean case. A single horizontal segment from (400, 400) to (600, 400),
-stroke width 1.0, identity view — no batch, no overlap, nothing to attribute it to:
+| Requested width | skia-raster ink | skia ratio | dawn ink | dawn ratio | dawn inked rows |
+| --- | --- | --- | --- | --- | --- |
+| 0.50 px | 0.000 px | 0.000 | 0.496 px | 0.992 | 399:0.248, 400:0.248 |
+| 1.00 px | 1.000 px | 1.000 | 1.000 px | 1.000 | 399:0.500, 400:0.500 |
+| 2.00 px | 2.000 px | 1.000 | 2.000 px | 1.000 | 399:1.000, 400:1.000 |
+| 4.00 px | 4.000 px | 1.000 | 4.000 px | 1.000 | 398:1.000, 399:1.000, 400:1.000, 401:1.000 |
+| 8.00 px | 8.000 px | 1.000 | 8.000 px | 1.000 | 396-403 all 1.000 |
 
-| Engine | Lit pixels | Ink across column x=500 | Peak coverage | Rows spanned |
-| --- | --- | --- | --- | --- |
-| skia-raster | 200 | 1.000 px | **1.000** | 400 to 400 |
-| dawn | 44 | 0.000 px | **0.000** | none |
+Dawn delivers a ratio of 1.000 across all requested widths (0.992 at 0.50 px due to sub-pixel sampling; Skia drops 0.50 px to 0).
 
-**Skia draws a perfect one-pixel cosmetic line. Dawn draws nothing.** This is not a tolerance, a coverage subtlety or an
-antialiasing difference: at the intended width, on the simplest possible geometry, Dawn's quad expansion produces no
-visible stroke at all.
+### T7c: Requested width 2.0 at several heights
 
-This reframes every earlier number. The 15.41% pixel disagreement and the ~15% mean-coverage gap are the *same* fact seen
-in a batch: in a batch, short segments overlap and accumulate enough coverage to look like a drawing, which is why the
-aggregate figures looked like a subtle mismatch rather than a total failure. Isolated, there is nothing.
+| Segment height | skia-raster ink (of 2.0 px) | dawn ink (of 2.0 px) |
+| --- | --- | --- |
+| y = 100 | 2.000 px | 2.000 px |
+| y = 300 | 2.000 px | 2.000 px |
+| y = 400 | 2.000 px | 2.000 px |
+| y = 500 | 2.000 px | 2.000 px |
+| y = 700 | 2.000 px | 2.000 px |
 
-**The coverage metric confirms the same thing on the batch**: averaged over 4x4 blocks, 54.12% of blocks differ
-(34,636 of 64,000), with only 2.47% within ±4.
+The ink integral is 2.000 px at every height for both engines.
 
 ## Disposition
 
 - **AD-28 stays *Proposed*.** Skia remains the default renderer and is not retired.
-- **The renderer-swap question is answered negatively for this configuration.** Dawn does not draw a one-pixel cosmetic
-  line on isolated geometry, where Skia does, so Dawn cannot yet be shown to produce Skia's image. The earlier aggregate
-  figures understated this: in a batch, overlap hides the failure.
+- **The renderer-swap question is still open.** While Dawn matches Skia pixel-for-pixel on clean isolated geometry at width 2.0
+  and conserves ink on all widths and heights, batch parity fails the tight edge tolerance (13.95% vs 0.20% threshold).
 - The windowed timings in Prototype A1 and Prototype A1-Dawn stay **unverified**; the platform pacing finding in
   `plan.md` explains why, and this prototype's offscreen, clock-driven measurement is unaffected by it.
 
 ## Next proofs, in order
 
-1. **Attribute the half-ink at zoom 1** — the isolated profile is already the instrument; what remains is to say whether
-   it is the y mapping's half-pixel convention or the MSAA sample positions, by printing the per row profile from the
-   standalone harness at width 2 with no blend.
-2. **Define the tolerance the plan's per-test clause asks for** once the placement difference is attributed, so the
-   committed pixel thresholds measure agreement between two legitimate rasterisation conventions rather than demanding
-   bit equality.
-3. **T5**, the Ganesh-against-Dawn GPU column, since this Skia build exposes a Metal render target through a narrower API
-   than the raster backend needs.
+1. **Replace the T4 instrument with a coverage comparison**, so antialiased agreement is measured rather than demanding
+   bit-level agreement on edge pixels.
+2. **Define edge antialiasing tolerance** between analytic rasterisation and 4x MSAA for batch geometry.
+3. **T5**, the Ganesh-against-Dawn GPU column, once a Metal offscreen render target is exposed for Skia.

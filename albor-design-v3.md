@@ -1239,17 +1239,17 @@ unvalidated, no text pipeline, no software rasterizer against AD-26, and build c
 **Pixel-parity findings (Prototype A1-Parity, `prototypes/a1_parity/RESULTS.md`).** Both engines render
 deterministically (T2: 0 differing bytes across repeats) and Dawn's offscreen readback is exact (T1: 1024000 of 1024000
 pixels). With **both engines drawing the same cosmetic filled quads**, the solid stroke interior is identical (the frame
-centre reads `255 64 32 255` in both) and zoom-1 disagreement is 15.41%. **An isolated segment narrows it to a half-pixel:** on one clean
-horizontal line, Skia lays down the full requested ink (1.000 px at width 1.0, 2.000 px at width 2.0) while Dawn lays down
-exactly half of it (0.500 and 1.000). **Dawn does draw** — the earlier "draws nothing" result was a harness artifact, an
-upload keyed on buffer existence rather than on the resource set, so a second set drew stale geometry. What remains is a
-sub-pixel placement difference between Skia's analytic rasterisation and Dawn's MSAA resolve, not attributed. Averaged
-over 4x4 blocks on the batch, 54.12% of blocks differ. Two instruments were reviewed for correctness before their verdicts were relied on. The
-±4 per-pixel agreement threshold is sound and its 0.00% is real — delta bands show nothing in 1-4/5-16 and 116,763 pixels
-in 129-255, the half-pixel row signature. The stroke-width ratio was rebuilt on the isolated segment and now gives real
-verdicts: Skia 1.00× (cosmetic confirmed), Dawn 2.00×, inconclusive but diagnostic — full width once the stroke covers a
-pixel centre, so the half-ink at zoom 1 is a sub-pixel placement effect. Zoom-1 disagreement is 15.41% and zoom-8 is
-75.72%, the latter dominated by the recorded Skia stroke defect rather than by parity. **A renderer cannot yet be shown to produce Skia's image; the swap question stays open.**
+centre reads `255 64 32 255` in both) and zoom-1 disagreement is 13.95%. **The half-ink defect is resolved:** on an
+isolated horizontal line, Skia lays down the full requested ink (1.000 px at width 1.0, 2.000 px at width 2.0) and Dawn now
+lays down the exact same ink (1.000 and 2.000 px, 0.0000% difference at width 2.0). The root cause was an omitted corner in the
+WGSL vertex shader side selector (`corner == 1u || corner == 4u || corner == 5u`), which set corner 5's perpendicular offset
+to -1 instead of +1 and collapsed the second triangle (p1-, p0+, p1-) into a zero-area degenerate line. Dawn was therefore rasterising
+only triangle 1, halving the drawn ink at the segment midpoint across all widths and positions. With corner 5 corrected, the quad
+is complete, T7 confirms cosmetic stroke behaviour for both engines (1.00× ratio under zoom), and width sweeps (T7b) and height sweeps (T7c)
+both show 1.000 ratio across all tested widths (0.5 to 8.0 px) and heights (100 to 700). Averaged over 4x4 blocks on the batch, 53.18%
+of blocks differ. The ±4 per-pixel agreement threshold is sound (0.00% within ±4 due to edge antialiasing mid-tones). Zoom-1 disagreement is
+13.95% and zoom-8 is 63.68%, the latter dominated by the recorded Skia stroke defect rather than by parity. **A renderer cannot yet be shown
+to produce Skia's image; the swap question stays open.**
 
 **Platform pacing finding.** Windowed frame pacing on this machine is not reproducible: a standalone program with no albor
 code drives a `CADisplayLink` at 58 Hz or at exactly 0 Hz, apparently at random, whenever a `CAMetalLayer` is attached.
@@ -1285,10 +1285,11 @@ are driven deterministically into offscreen targets — no window, swap chain or
 platform finding makes windowed pacing unreproducible here.
 Questions: do the two renderers produce the same image for the same input, and is the measurement itself repeatable?
 Status: run and recorded; both engines render deterministically and Dawn renders offscreen exactly, but output parity is
-**not** established — interiors agree while coverage differs by about 15% at zoom 1 and 76% at zoom 8, and the half-ink on an
-isolated segment is not yet attributed. Both flagged instruments were checked and both now give real verdicts (the ±4
-per-pixel threshold is sound; the stroke-width ratio was rebuilt on the isolated segment). The GPU-vs-GPU column is
-deferred.
+**not** established — interiors agree while coverage differs by about 14% at zoom 1 and 64% at zoom 8. The half-ink defect
+on an isolated segment was resolved: an omitted corner in the WGSL shader's side selector collapsed the second triangle,
+halving the drawn quad; with both triangles drawn, Dawn and Skia match at 1.000 ratio across all widths and heights.
+Both flagged instruments were checked and both now give real verdicts (the ±4 per-pixel threshold is sound; the stroke-width
+ratio was rebuilt on the isolated segment and confirms cosmetic stroke behaviour at 1.00×). The GPU-vs-GPU column is deferred.
 
 ### Prototype A2 — Platform presentation
 
@@ -1555,7 +1556,7 @@ The next implementation work validates these boundaries through Prototypes D, A1
 | Dawn has no text or glyph pipeline; no first-party software rasterizer | §21.2, AD-26, AD-28 |
 | Replacing Skia means rebuilding the 2D feature surface: joins, caps, dashes, clips, gradients, layers, effects | §11.4, AD-06, AD-28 |
 | Skia Graphite on a Dawn backend as a middle option, untested | AD-28 |
-| Pixel parity Skia vs Dawn: Dawn lays down half the requested ink on an isolated line; sub-pixel placement not attributed | AD-28 |
+| Pixel parity Skia vs Dawn: Dawn half-ink defect resolved (WGSL quad vertex 5 side selector bug); edge antialiasing differences remain | AD-28 |
 | Windowed frame pacing not reproducible on this platform; windowed timings unverified | AD-18, AD-28 |
 | Benchmark workload underspecified; no failure condition | §28.3, §28.4 |
 | Software/GPU parity | §11.7, §25, §27 |

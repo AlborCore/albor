@@ -64,11 +64,12 @@ fn vs_main(@builtin(vertex_index) corner : u32,
     if (len > 1e-6) { dir = dir / len; } else { dir = vec2<f32>(1.0, 0.0); }
     let nrm = vec2<f32>(-dir.y, dir.x) * view.stroke_half_width;
 
-    // six corners make two triangles along the segment: 0,1,2 is one half and 3,4,5 is the other, so the corner table
-    // has to be 0,1,2,2,1,3 in (end, side) terms. the previous table made corners 2 and 3 the same point and 4 and 5
-    // the same point, which collapsed the second triangle and drew half of every stroke
+    // six corners make two triangles for the segment quad: T1 = (p0-, p0+, p1-) as corners 0, 1, 2, and
+    // T2 = (p1-, p0+, p1+) as corners 3, 4, 5. In (at_end, side) terms:
+    //   corner 0: (0, -1), corner 1: (0, +1), corner 2: (1, -1)
+    //   corner 3: (1, -1), corner 4: (0, +1), corner 5: (1, +1)
     let at_end = select(0.0, 1.0, corner == 2u || corner == 3u || corner == 5u);
-    let side = select(-1.0, 1.0, corner == 1u || corner == 4u);
+    let side = select(-1.0, 1.0, corner == 1u || corner == 4u || corner == 5u);
     let p = mix(p0, p1, at_end) + nrm * side;
 
     var out : VsOut;
@@ -361,23 +362,11 @@ fn fs_main() -> @location(0) vec4<f32> {
     }
 
     void DawnOffscreenRenderer::upload_segments(const albor::a1_dawn::ResourceSet& resources) {
-        // the draw issues six vertices per instance, so the buffer must carry six vertices per segment at the
-        // sixteen byte stride of two vec2 attributes. copying the segment list straight in left two vertices per
-        // segment, which made every instance read from the wrong offset and left the trailing instances reading past
-        // the end of the buffer. every vertex of an instance carries the same endpoint pair, because which of the six
-        // corners it is belongs to the vertex index the shader already takes as its corner selector.
-        constexpr std::size_t kVerticesPerSegment = 6;
-        constexpr std::size_t kBytesPerVertex = 16;
-        m_state->vertices.resize(resources.lines.size() * kVerticesPerSegment * kBytesPerVertex);
-        auto* out = reinterpret_cast<float*>(m_state->vertices.data());
-        for (const albor::a1_dawn::Segment& segment : resources.lines) {
-            for (std::size_t corner = 0; corner < kVerticesPerSegment; corner++) {
-                *out++ = segment.x0;
-                *out++ = segment.y0;
-                *out++ = segment.x1;
-                *out++ = segment.y1;
-            }
-        }
+        // the pipeline uses VertexStepMode::Instance at a 16-byte stride (two vec2 attributes), so the buffer
+        // advances once per instance and each instance supplies the endpoints of one segment. the draw call
+        // issues six vertices per instance, generating corner indices 0..5 in the shader.
+        m_state->vertices.resize(resources.lines.size() * 16);
+        std::memcpy(m_state->vertices.data(), resources.lines.data(), m_state->vertices.size());
 
         wgpu::BufferDescriptor vertex_desc{};
         vertex_desc.size = m_state->vertices.size();
