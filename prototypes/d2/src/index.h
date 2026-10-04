@@ -112,6 +112,10 @@ namespace albor::prototype_d2
         void grow_segment(PropertyId property, std::uint32_t needed);
         void reserve_arena();
 
+        // address one arena slot, splitting a global offset into its block and its index within that block (§4)
+        [[nodiscard]] BindingId* entry_at(std::uint32_t offset);
+        [[nodiscard]] const BindingId* entry_at(std::uint32_t offset) const;
+
         std::vector<Segment> m_segments;
         std::vector<std::unique_ptr<BindingId[]>> m_chunks;
         std::size_t m_bump = 0;

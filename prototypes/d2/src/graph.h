@@ -168,9 +168,7 @@ namespace albor::prototype_d2
         [[nodiscard]] std::span<const PropertyId> dependencies_of(BindingId binding) const { return m_bindings.at(binding).dependencies; }
 
         // report the binding that writes a property, which cycle detection resolves an edge through (§7)
-        [[nodiscard]] BindingId writer_of(PropertyId property) const {
-            return property < m_writer.size() ? m_writer.at(property) : INVALID_BINDING;
-        }
+        [[nodiscard]] BindingId writer_of(PropertyId property) const { return property < m_writer.size() ? m_writer.at(property) : INVALID_BINDING; }
 
         // report whether a binding still participates in evaluation (§4)
         [[nodiscard]] bool binding_alive(BindingId binding) const { return m_bindings.at(binding).alive; }

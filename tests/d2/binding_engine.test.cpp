@@ -17,9 +17,7 @@ namespace albor::prototype_d2
     {
 
         // build a sealed scene over the erased store, which is what most cases need (§13.3)
-        std::unique_ptr<Scene<ErasedStore>> make_scene(EvalModel model, bool mutable_index) {
-            return std::make_unique<Scene<ErasedStore>>(model, mutable_index);
-        }
+        std::unique_ptr<Scene<ErasedStore>> make_scene(EvalModel model, bool mutable_index) { return std::make_unique<Scene<ErasedStore>>(model, mutable_index); }
 
     } // namespace
 

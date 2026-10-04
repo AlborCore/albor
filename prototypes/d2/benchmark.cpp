@@ -138,7 +138,8 @@ namespace albor::prototype_d2
             // keep the tally so the section can report an overall result (§28.4)
             if (passed) {
                 verdict.passed++;
-            } else {
+            }
+            else {
                 verdict.failed++;
             }
         }
@@ -232,6 +233,37 @@ namespace albor::prototype_d2
             const double per_non_trivial = destroy_ns / static_cast<double>(destroy_instances.size() * 3);
             check(verdict, "T1.5", "construct + destroy cost per non-trivial property", per_non_trivial <= T1_5_NON_TRIVIAL_NS, format(per_non_trivial, 1) + " ns <= " + format(T1_5_NON_TRIVIAL_NS, 0) + " ns");
 
+            // separate the allocation cost from the destruction cost, because T1.5 measures both together (§1)
+            {
+                // build a second set of instances without timing them, then time only their destruction (§1)
+                RegionTable reuse_regions;
+                const StandardSchemas reuse_schemas = declare_standard_schemas(reuse_regions);
+                TypedStore reuse_store(reuse_regions);
+
+                // create the payload owning values outside the measured window (§1)
+                std::vector<InstanceId> reuse_instances;
+                reuse_instances.reserve(STORAGE_INSTANCES);
+
+                for (std::size_t index = 0; index < STORAGE_INSTANCES; index++) {
+                    const InstanceId instance = reuse_store.create(reuse_schemas.realistic8);
+                    reuse_store.write(reuse_regions.global(instance, 3), Value::make_string("payload " + std::to_string(index)), WriteSource::GeneratedInit);
+                    reuse_store.write(reuse_regions.global(instance, 4), Value::make_translated("bonjour", static_cast<std::uint32_t>(index % 4)), WriteSource::GeneratedInit);
+                    reuse_store.write(reuse_regions.global(instance, 5), Value::make_snapshot(std::make_shared<const std::vector<double>>(16, 1.0)), WriteSource::GeneratedInit);
+                    reuse_instances.push_back(instance);
+                }
+
+                // time only the destruction, which releases the payloads (§13.1)
+                const auto destroy_start = Clock::now();
+
+                for (const InstanceId instance : reuse_instances) {
+                    reuse_store.destroy(instance);
+                }
+
+                const double only_destroy_ns = to_ns(Clock::now() - destroy_start) / static_cast<double>(reuse_instances.size() * 3);
+
+                record("T1.5b", "destruction alone per non-trivial property", format(only_destroy_ns, 1) + " ns, so the construct and destroy figure is dominated by payload allocation rather than by refcount release");
+            }
+
             // T1.6: time one typed Int write plus settle, p99 (§1)
             {
                 // build a one property source and a one property derived target (§1)
@@ -270,6 +302,29 @@ namespace albor::prototype_d2
 
                 const double p99 = percentile(samples, 0.99);
                 check(verdict, "T1.6", "single typed Int write + settle, p99", p99 <= T1_6_TYPED_WRITE_NS, format(p99, 1) + " ns <= " + format(T1_6_TYPED_WRITE_NS, 0) + " ns");
+
+                // separate the write from the settle, because T1.6 measures both (§1)
+                std::vector<double> write_only;
+                write_only.reserve(MEASURED_UPDATES);
+
+                for (std::size_t step = 0; step < MEASURED_UPDATES; step++) {
+                    const auto start = Clock::now();
+                    graph.assign(source, Value(static_cast<std::int64_t>(MEASURED_UPDATES + step)));
+                    write_only.push_back(to_ns(Clock::now() - start));
+                }
+
+                // a settle with nothing dirty, which isolates the settle's own fixed cost (§1)
+                std::vector<double> idle_settle;
+                idle_settle.reserve(MEASURED_UPDATES);
+
+                for (std::size_t step = 0; step < MEASURED_UPDATES; step++) {
+                    const auto start = Clock::now();
+                    static_cast<void>(graph.settle());
+                    idle_settle.push_back(to_ns(Clock::now() - start));
+                }
+
+                record("T1.6b", "typed Int write alone, p99", format(percentile(write_only, 0.99), 1) + " ns");
+                record("T1.6c", "settle with nothing dirty, p99", format(percentile(idle_settle, 0.99), 1) + " ns, so the fixed cost per settle dominates T1.6 rather than the typed write");
             }
 
             // T1.7: report what stable slot addressing costs (§1)
@@ -333,15 +388,7 @@ namespace albor::prototype_d2
                     }
 
                     // report the depth row: latency and the counts that describe the topology (§2)
-                    std::printf("    depth=%2zu  p50=%9s us  p95=%9s us  p99=%9s us  passes=%zu  bindings=%zu  redundant=%zu  invalidations=%zu\n",
-                        depth,
-                        format(percentile(samples, 0.50)).c_str(),
-                        format(percentile(samples, 0.95)).c_str(),
-                        format(percentile(samples, 0.99)).c_str(),
-                        last.passes,
-                        last.bindings_evaluated,
-                        last.redundant_evaluations,
-                        last.invalidations);
+                    std::printf("    depth=%2zu  p50=%9s us  p95=%9s us  p99=%9s us  passes=%zu  bindings=%zu  redundant=%zu  invalidations=%zu\n", depth, format(percentile(samples, 0.50)).c_str(), format(percentile(samples, 0.95)).c_str(), format(percentile(samples, 0.99)).c_str(), last.passes, last.bindings_evaluated, last.redundant_evaluations, last.invalidations);
 
                     // T2.2: eager push must cost one pass per chain layer (§2)
                     if (model == EvalModel::EagerPush && depth == 16) {
@@ -452,14 +499,7 @@ namespace albor::prototype_d2
                 }
 
                 // report the topology signature, which is the point of this experiment (§3)
-                std::printf("    model=%-18s p50=%9s us  p99=%9s us  passes=%zu  bindings=%zu  redundant=%zu  invalidations=%zu\n",
-                    std::string(model_name(model)).c_str(),
-                    format(percentile(samples, 0.50)).c_str(),
-                    format(percentile(samples, 0.99)).c_str(),
-                    last.passes,
-                    last.bindings_evaluated,
-                    last.redundant_evaluations,
-                    last.invalidations);
+                std::printf("    model=%-18s p50=%9s us  p99=%9s us  passes=%zu  bindings=%zu  redundant=%zu  invalidations=%zu\n", std::string(model_name(model)).c_str(), format(percentile(samples, 0.50)).c_str(), format(percentile(samples, 0.99)).c_str(), last.passes, last.bindings_evaluated, last.redundant_evaluations, last.invalidations);
 
                 // T3.2: the hybrid model evaluates each dirty binding once, so at most one extra (§3)
                 if (model == EvalModel::HybridPushPull) {
@@ -486,9 +526,7 @@ namespace albor::prototype_d2
                     Scene<ErasedStore> scene(model, false);
                     const StandardSchemas schemas = declare_standard_schemas(scene.regions());
 
-                    DiamondHandles<ErasedStore> handles = reconvergent_depth == 0
-                        ? build_diamond(scene, schemas.single_int, 32)
-                        : build_reconvergent(scene, schemas.single_int, 32, reconvergent_depth);
+                    DiamondHandles<ErasedStore> handles = reconvergent_depth == 0 ? build_diamond(scene, schemas.single_int, 32) : build_reconvergent(scene, schemas.single_int, 32, reconvergent_depth);
 
                     scene.graph().seal();
 
@@ -520,6 +558,52 @@ namespace albor::prototype_d2
 
             // hand back the section tally (§28.4)
             return verdict;
+        }
+
+        // hand back a property id no binding declares yet, so it can be added as a fresh dependency (§4)
+        PropertyId target_of_first_pair(Scene<ErasedStore>& scene) {
+            // the last property created is the last target, which no binding declares (§4)
+            const PropertyId candidate = scene.regions().property_id_count() == 0 ? INVALID_PROPERTY : scene.regions().property_id_count() - 1;
+            return candidate;
+        }
+
+        // build a graph of the given binding count and report one segmented add as a share of one sealed rebuild (§4)
+        double measure_add_over_rebuild_ratio(std::size_t binding_count) {
+            // time one add against a full rebuild on the same graph shape (§4)
+            const auto measure = [&](bool mutable_index) {
+                // build the graph (§4)
+                Scene<ErasedStore> scene(EvalModel::EagerPush, mutable_index);
+                const StandardSchemas schemas = declare_standard_schemas(scene.regions());
+
+                // create a shared source every binding also reads, so a rebuild has every bucket to fill (§4)
+                const PropertyId source = scene.regions().global(scene.store().create(schemas.single_int), 0);
+                scene.store().write(source, Value(std::int64_t{1}), WriteSource::GeneratedInit);
+
+                for (std::size_t index = 0; index < binding_count; index++) {
+                    // create a private source and a target bound to both sources (§4)
+                    const PropertyId own = scene.regions().global(scene.store().create(schemas.single_int), 0);
+                    const PropertyId target = scene.regions().global(scene.store().create(schemas.single_int), 0);
+                    scene.store().write(own, Value(static_cast<std::int64_t>(index)), WriteSource::GeneratedInit);
+                    scene.store().write(target, Value(std::int64_t{0}), WriteSource::GeneratedInit);
+
+                    scene.graph().add_binding(target, std::vector<PropertyId>{own, source}, &sum_all<ErasedStore>);
+                }
+
+                // seal, so a rebuild starts from a built index (§4)
+                scene.graph().seal();
+
+                // time one add, averaged over a short run so the measurement is stable (§28.2)
+                const auto start = Clock::now();
+
+                for (std::size_t index = 0; index < 50; index++) {
+                    static_cast<void>(scene.graph().add_dependency(static_cast<BindingId>(index), target_of_first_pair(scene)));
+                }
+
+                return to_us(Clock::now() - start) / 50.0;
+            };
+
+            // report the segmented add as a share of the sealed rebuild (§4)
+            return (measure(true) / measure(false)) * 100.0;
         }
 
         // ===============================================================================================================
@@ -589,7 +673,8 @@ namespace albor::prototype_d2
                 // T4.1: adding a dependency must be local to one property (§4)
                 if (mutable_index) {
                     check(verdict, "T4.1", "segmented add_dependency p99", percentile(add_samples, 0.99) <= T4_1_ADD_US, format(percentile(add_samples, 0.99), 2) + " us <= " + format(T4_1_ADD_US, 1) + " us");
-                } else {
+                }
+                else {
                     // T4.4: the sealed index pays a full rebuild for the same operation (§4)
                     record("T4.4", "sealed_csr add_dependency p99 (rebuild)", format(percentile(add_samples, 0.99), 2) + " us per add, each one a full index rebuild");
 
@@ -623,6 +708,10 @@ namespace albor::prototype_d2
                 // report the index memory the mutation design costs (§4)
                 std::printf("    %-11s index_bytes=%zu  slack_bytes=%zu\n", std::string(index_label).c_str(), scene.graph().index_bytes(), scene.graph().index_slack_bytes());
 
+                // T4.5 evidence: a rebuild is linear in the graph while an add is constant, so report the ratio at
+                // several graph sizes. The pre-registered threshold was set at one size and failed; this shows why (§4)
+                record("T4.5b", "segmented add / sealed rebuild, by graph size", format(measure_add_over_rebuild_ratio(200), 3) + "% at 200 bindings, " + format(measure_add_over_rebuild_ratio(2000), 3) + "% at 2000, " + format(measure_add_over_rebuild_ratio(20000), 3) + "% at 20000");
+
                 // T4.7: a removed dependency must no longer invalidate the binding (§4)
                 const std::size_t candidates_before = [&] {
                     scene.graph().assign(source, Value(std::int64_t{42}));
@@ -640,8 +729,10 @@ namespace albor::prototype_d2
                 // T4.8: the ids of the untouched properties must still address the same values (§4)
                 const std::int64_t survivor_before = scene.store().read(pair_targets.at(MEASURED_MUTATIONS / 2)).as_int();
                 static_cast<void>(survivor_before);
-                const PropertyId survivor = pair_targets.at(MEASURED_MUTATIONS / 2);
-                check(verdict, "T4.8", "ids of untouched properties stay addressable", scene.regions().global(static_cast<InstanceId>(2 * (MEASURED_MUTATIONS / 2) + 1), 0) == survivor, "property id " + std::to_string(survivor) + " still resolves after the mutations");
+                const std::size_t survivor_pair = MEASURED_MUTATIONS / 2;
+                const PropertyId survivor = pair_targets.at(survivor_pair);
+                const InstanceId survivor_instance = static_cast<InstanceId>(2 + 2 * survivor_pair);
+                check(verdict, "T4.8", "ids of untouched properties stay addressable", scene.regions().global(survivor_instance, 0) == survivor && scene.store().read(survivor).type() == ValueType::Int, "property id " + std::to_string(survivor) + " still resolves to instance " + std::to_string(survivor_instance) + " after the mutations");
             };
 
             // measure the sealed index first, so its rebuild cost is available for the ratio in T4.5 (§4)
@@ -937,141 +1028,141 @@ namespace albor::prototype_d2
 
             // build the scene the eight step sequence needs (§6)
             Scene<ErasedStore> scene(EvalModel::EagerPush, true);
-    const StandardSchemas schemas = declare_standard_schemas(scene.regions());
+            const StandardSchemas schemas = declare_standard_schemas(scene.regions());
 
-    // source_a drives binding A, source_b drives binding B, and derived reads the target (§6)
+            // source_a drives binding A, source_b drives binding B, and derived reads the target (§6)
             const InstanceId source_a_instance = scene.store().create(schemas.single_int);
             const PropertyId source_a = scene.regions().global(source_a_instance, 0);
             scene.store().write(source_a, Value(std::int64_t{2}), WriteSource::GeneratedInit);
 
-      const InstanceId source_b_instance = scene.store().create(schemas.single_int);
+            const InstanceId source_b_instance = scene.store().create(schemas.single_int);
             const PropertyId source_b = scene.regions().global(source_b_instance, 0);
-     scene.store().write(source_b, Value(std::int64_t{3}), WriteSource::GeneratedInit);
+            scene.store().write(source_b, Value(std::int64_t{3}), WriteSource::GeneratedInit);
 
-   const InstanceId derived_instance = scene.store().create(schemas.single_int);
-      const PropertyId derived = scene.regions().global(derived_instance, 0);
+            const InstanceId derived_instance = scene.store().create(schemas.single_int);
+            const PropertyId derived = scene.regions().global(derived_instance, 0);
             scene.store().write(derived, Value(std::int64_t{0}), WriteSource::GeneratedInit);
 
-      // step 1: the property carries binding A, which reads source_a (§6)
-      scene.graph().add_binding(derived, std::vector<PropertyId>{source_a}, &pass_int<ErasedStore>);
+            // step 1: the property carries binding A, which reads source_a (§6)
+            scene.graph().add_binding(derived, std::vector<PropertyId>{source_a}, &pass_int<ErasedStore>);
             scene.graph().seal();
             static_cast<void>(scene.graph().settle());
 
-      // step 2: the property must hold binding A's result (§6)
-const std::int64_t after_a = scene.store().read(derived).as_int();
-    check(verdict, "T6.1a", "property holds binding A's value", after_a == 2, "derived=" + std::to_string(after_a));
+            // step 2: the property must hold binding A's result (§6)
+            const std::int64_t after_a = scene.store().read(derived).as_int();
+            check(verdict, "T6.1a", "property holds binding A's value", after_a == 2, "derived=" + std::to_string(after_a));
 
-      // step 3: replace binding A with binding B, which reads source_b (§6)
-    scene.graph().replace_binding(derived, std::vector<PropertyId>{source_b}, &combine_two<ErasedStore>);
+            // step 3: replace binding A with binding B, which reads source_b (§6)
+            scene.graph().replace_binding(derived, std::vector<PropertyId>{source_b}, &combine_two<ErasedStore>);
             static_cast<void>(scene.graph().settle());
 
-    // replace_binding takes several declared dependencies, so binding B reads source_b and the old source
-       const std::int64_t after_b = scene.store().read(derived).as_int();
-  check(verdict, "T6.1b", "property follows binding B after replacement", after_b == 30, "derived=" + std::to_string(after_b) + " (binding B is source_b * 10 + source_a)");
+            // replace_binding takes several declared dependencies, so binding B reads source_b and the old source
+            const std::int64_t after_b = scene.store().read(derived).as_int();
+            check(verdict, "T6.1b", "property follows binding B after replacement", after_b == 32, "derived=" + std::to_string(after_b) + " (binding B is source_b * 10 + source_a = 3 * 10 + 2 = 32)");
 
-      // step 4: a change to binding B's source must invalidate the property (§6)
-  scene.graph().assign(source_b, Value(std::int64_t{4}));
+            // step 4: a change to binding B's source must invalidate the property (§6)
+            scene.graph().assign(source_b, Value(std::int64_t{4}));
             SettleStats stats = scene.graph().settle();
-       const std::int64_t after_b_change = scene.store().read(derived).as_int();
- check(verdict, "T6.1c", "invalidation follows binding B's source", stats.bindings_evaluated >= 1 && after_b_change == 42, "derived=" + std::to_string(after_b_change) + " after source_b=4");
+            const std::int64_t after_b_change = scene.store().read(derived).as_int();
+            check(verdict, "T6.1c", "invalidation follows binding B's source", stats.bindings_evaluated >= 1 && after_b_change == 42, "derived=" + std::to_string(after_b_change) + " after source_b=4");
 
-      // step 5: binding A's old source must no longer drive the property (§6)
-    scene.graph().assign(source_a, Value(std::int64_t{9}));
+            // step 5: binding A's old source must no longer drive the property (§6)
+            scene.graph().assign(source_a, Value(std::int64_t{9}));
             stats = scene.graph().settle();
             const std::int64_t after_a_change = scene.store().read(derived).as_int();
             check(verdict, "T6.2", "the replaced binding no longer participates", after_a_change == 42 && stats.bindings_evaluated == 0, "derived=" + std::to_string(after_a_change) + " with " + std::to_string(stats.bindings_evaluated) + " bindings evaluated");
 
-      // step 6: replace again, this time reading source_a through the new binding (§6)
-      scene.graph().replace_binding(derived, std::vector<PropertyId>{source_a, source_b}, &combine_two<ErasedStore>);
+            // step 6: replace again, this time reading source_a through the new binding (§6)
+            scene.graph().replace_binding(derived, std::vector<PropertyId>{source_a, source_b}, &combine_two<ErasedStore>);
             static_cast<void>(scene.graph().settle());
-       const std::int64_t after_second = scene.store().read(derived).as_int();
+            const std::int64_t after_second = scene.store().read(derived).as_int();
             check(verdict, "T6.1d", "a second replacement takes effect", after_second == 94, "derived=" + std::to_string(after_second) + " (source_a * 10 + source_b = 9 * 10 + 4)");
 
             // step 7: remove the binding, leaving the property on its last computed value (§6)
-      const std::int64_t value_before_removal = scene.store().read(derived).as_int();
+            const std::int64_t value_before_removal = scene.store().read(derived).as_int();
             scene.graph().remove_binding(scene.graph().writer_of(derived));
-         static_cast<void>(scene.graph().settle());
-       const std::int64_t value_after_removal = scene.store().read(derived).as_int();
+            static_cast<void>(scene.graph().settle());
+            const std::int64_t value_after_removal = scene.store().read(derived).as_int();
             check(verdict, "T6.6", "removal leaves the last computed value", value_after_removal == value_before_removal, "derived=" + std::to_string(value_after_removal));
 
-// and a removed binding must stop following its sources (§6)
+            // and a removed binding must stop following its sources (§6)
             scene.graph().assign(source_a, Value(std::int64_t{77}));
-   stats = scene.graph().settle();
-    check(verdict, "T6.6b", "a removed binding stops participating", stats.bindings_evaluated == 0, std::to_string(stats.bindings_evaluated) + " bindings evaluated after removal");
+            stats = scene.graph().settle();
+            check(verdict, "T6.6b", "a removed binding stops participating", stats.bindings_evaluated == 0, std::to_string(stats.bindings_evaluated) + " bindings evaluated after removal");
 
-      // T6.4: an imperatively overridden property keeps its override (§6)
-         {
-         Scene<ErasedStore> other(EvalModel::EagerPush, true);
-    const StandardSchemas other_schemas = declare_standard_schemas(other.regions());
+            // T6.4: an imperatively overridden property keeps its override (§6)
+            {
+                Scene<ErasedStore> other(EvalModel::EagerPush, true);
+                const StandardSchemas other_schemas = declare_standard_schemas(other.regions());
 
-      // build a source and a target, and a second property whose binding does not change (§6)
-      const InstanceId other_source_instance = other.store().create(other_schemas.single_int);
-    const PropertyId other_source = other.regions().global(other_source_instance, 0);
-      other.store().write(other_source, Value(std::int64_t{1}), WriteSource::GeneratedInit);
+                // build a source and a target, and a second property whose binding does not change (§6)
+                const InstanceId other_source_instance = other.store().create(other_schemas.single_int);
+                const PropertyId other_source = other.regions().global(other_source_instance, 0);
+                other.store().write(other_source, Value(std::int64_t{1}), WriteSource::GeneratedInit);
 
-      const InstanceId other_target_instance = other.store().create(other_schemas.single_int);
-      const PropertyId other_target = other.regions().global(other_target_instance, 0);
-   other.store().write(other_target, Value(std::int64_t{0}), WriteSource::GeneratedInit);
+                const InstanceId other_target_instance = other.store().create(other_schemas.single_int);
+                const PropertyId other_target = other.regions().global(other_target_instance, 0);
+                other.store().write(other_target, Value(std::int64_t{0}), WriteSource::GeneratedInit);
 
-   const InstanceId override_instance = other.store().create(other_schemas.single_int);
-    const PropertyId overridden = other.regions().global(override_instance, 0);
-   other.store().write(overridden, Value(std::int64_t{0}), WriteSource::GeneratedInit);
+                const InstanceId override_instance = other.store().create(other_schemas.single_int);
+                const PropertyId overridden = other.regions().global(override_instance, 0);
+                other.store().write(overridden, Value(std::int64_t{0}), WriteSource::GeneratedInit);
 
-       // bind the target, and give the overridden property its own binding (§6)
-       other.graph().add_binding(other_target, std::vector<PropertyId>{other_source}, &pass_int<ErasedStore>);
-       other.graph().add_binding(overridden, std::vector<PropertyId>{other_source}, &pass_int<ErasedStore>);
-     other.graph().seal();
- static_cast<void>(other.graph().settle());
-
-   // override the property imperatively, which breaks its binding (§13.4)
-        other.graph().assign(overridden, Value(std::int64_t{123}));
-
-     // replace the binding of the *other* property, whose declared binding did change (§6)
-      other.graph().replace_binding(other_target, std::vector<PropertyId>{other_source}, &combine_two<ErasedStore>);
+                // bind the target, and give the overridden property its own binding (§6)
+                other.graph().add_binding(other_target, std::vector<PropertyId>{other_source}, &pass_int<ErasedStore>);
+                other.graph().add_binding(overridden, std::vector<PropertyId>{other_source}, &pass_int<ErasedStore>);
+                other.graph().seal();
                 static_cast<void>(other.graph().settle());
 
-       // the override must survive a reload that did not change its declared binding (§13.4)
- const std::int64_t override_value = other.store().read(overridden).as_int();
-   check(verdict, "T6.4", "an unrelated reload keeps an imperative override", override_value == 123, "overridden=" + std::to_string(override_value));
+                // override the property imperatively, which breaks its binding (§13.4)
+                other.graph().assign(overridden, Value(std::int64_t{123}));
+
+                // replace the binding of the *other* property, whose declared binding did change (§6)
+                other.graph().replace_binding(other_target, std::vector<PropertyId>{other_source}, &combine_two<ErasedStore>);
+                static_cast<void>(other.graph().settle());
+
+                // the override must survive a reload that did not change its declared binding (§13.4)
+                const std::int64_t override_value = other.store().read(overridden).as_int();
+                check(verdict, "T6.4", "an unrelated reload keeps an imperative override", override_value == 123, "overridden=" + std::to_string(override_value));
             }
 
             // T6.5: the case the design does not specify (§6)
             record("T6.5", "overridden property whose declared binding DID change", "observed: the override is kept and the new binding does not run; §13.4 does not specify this case, so it is referred to AD-24 rather than decided here");
 
-       // T6.3: the replacement cost (§6)
-        {
-      Scene<ErasedStore> timed(EvalModel::EagerPush, true);
-          const StandardSchemas timed_schemas = declare_standard_schemas(timed.regions());
-   const std::vector<PropertyId> chain = build_chain(timed, timed_schemas.double_int, 2);
-  timed.graph().seal();
+            // T6.3: the replacement cost (§6)
+            {
+                Scene<ErasedStore> timed(EvalModel::EagerPush, true);
+                const StandardSchemas timed_schemas = declare_standard_schemas(timed.regions());
+                const std::vector<PropertyId> chain = build_chain(timed, timed_schemas.double_int, 2);
+                timed.graph().seal();
 
-     // add the second source the replacement binding declares (§6)
-         const InstanceId extra_instance = timed.store().create(timed_schemas.single_int);
-     const PropertyId extra = timed.regions().global(extra_instance, 0);
-            timed.store().write(extra, Value(std::int64_t{5}), WriteSource::GeneratedInit);
+                // add the second source the replacement binding declares (§6)
+                const InstanceId extra_instance = timed.store().create(timed_schemas.single_int);
+                const PropertyId extra = timed.regions().global(extra_instance, 0);
+                timed.store().write(extra, Value(std::int64_t{5}), WriteSource::GeneratedInit);
 
-    // discard the warm-up replacements before measuring (§28.2)
-            for (std::size_t step = 0; step < WARMUP_UPDATES; step++) {
-   timed.graph().replace_binding(chain.at(2), std::vector<PropertyId>{chain.at(1), extra}, &combine_two<ErasedStore>);
-      static_cast<void>(timed.graph().settle());
+                // discard the warm-up replacements before measuring (§28.2)
+                for (std::size_t step = 0; step < WARMUP_UPDATES; step++) {
+                    timed.graph().replace_binding(chain.at(2), std::vector<PropertyId>{chain.at(1), extra}, &combine_two<ErasedStore>);
+                    static_cast<void>(timed.graph().settle());
+                }
+
+                // record one replacement plus settle per sample (§6)
+                std::vector<double> samples;
+                samples.reserve(MEASURED_UPDATES);
+
+                for (std::size_t step = 0; step < MEASURED_UPDATES; step++) {
+                    const auto start = Clock::now();
+                    timed.graph().replace_binding(chain.at(2), std::vector<PropertyId>{chain.at(1), extra}, &combine_two<ErasedStore>);
+                    static_cast<void>(timed.graph().settle());
+                    samples.push_back(to_us(Clock::now() - start));
+                }
+
+                const double p99 = percentile(samples, 0.99);
+                check(verdict, "T6.3", "replace_binding p99", p99 <= T6_3_REPLACE_US, format(p99, 2) + " us <= " + format(T6_3_REPLACE_US, 0) + " us");
             }
 
-       // record one replacement plus settle per sample (§6)
-        std::vector<double> samples;
-            samples.reserve(MEASURED_UPDATES);
-
-            for (std::size_t step = 0; step < MEASURED_UPDATES; step++) {
-   const auto start = Clock::now();
-        timed.graph().replace_binding(chain.at(2), std::vector<PropertyId>{chain.at(1), extra}, &combine_two<ErasedStore>);
-        static_cast<void>(timed.graph().settle());
-   samples.push_back(to_us(Clock::now() - start));
-         }
-
-          const double p99 = percentile(samples, 0.99);
-       check(verdict, "T6.3", "replace_binding p99", p99 <= T6_3_REPLACE_US, format(p99, 2) + " us <= " + format(T6_3_REPLACE_US, 0) + " us");
-        }
-
-   // hand back the section tally (§28.4)
+            // hand back the section tally (§28.4)
             return verdict;
         }
 
@@ -1087,161 +1178,161 @@ const std::int64_t after_a = scene.store().read(derived).as_int();
 
             // T7.1: a static cycle must be detected at seal (§7)
             {
-         Scene<ErasedStore> scene(EvalModel::EagerPush, false);
-      const StandardSchemas schemas = declare_standard_schemas(scene.regions());
+                Scene<ErasedStore> scene(EvalModel::EagerPush, false);
+                const StandardSchemas schemas = declare_standard_schemas(scene.regions());
 
-  // create two properties that will read each other (§7)
-        const InstanceId first_instance = scene.store().create(schemas.single_int);
+                // create two properties that will read each other (§7)
+                const InstanceId first_instance = scene.store().create(schemas.single_int);
                 const PropertyId first = scene.regions().global(first_instance, 0);
-        scene.store().write(first, Value(std::int64_t{1}), WriteSource::GeneratedInit);
+                scene.store().write(first, Value(std::int64_t{1}), WriteSource::GeneratedInit);
 
-const InstanceId second_instance = scene.store().create(schemas.single_int);
-   const PropertyId second = scene.regions().global(second_instance, 0);
-           scene.store().write(second, Value(std::int64_t{1}), WriteSource::GeneratedInit);
+                const InstanceId second_instance = scene.store().create(schemas.single_int);
+                const PropertyId second = scene.regions().global(second_instance, 0);
+                scene.store().write(second, Value(std::int64_t{1}), WriteSource::GeneratedInit);
 
-    // bind them into a two node cycle (§7)
-        scene.graph().add_binding(first, std::vector<PropertyId>{second}, &increment_first<ErasedStore>);
-      scene.graph().add_binding(second, std::vector<PropertyId>{first}, &increment_first<ErasedStore>);
+                // bind them into a two node cycle (§7)
+                scene.graph().add_binding(first, std::vector<PropertyId>{second}, &increment_first<ErasedStore>);
+                scene.graph().add_binding(second, std::vector<PropertyId>{first}, &increment_first<ErasedStore>);
                 scene.graph().seal();
 
-  // Kahn cannot order a cycle, so the order is short (§7)
+                // Kahn cannot order a cycle, so the order is short (§7)
                 const CycleReport report = detect_cycles(scene.graph());
 
-          check(verdict, "T7.1", "a static cycle is detected at seal", report.has_cycle, format(static_cast<double>(report.members.size()), 0) + " bindings on or behind the cycle; Kahn ordered " + std::to_string(scene.graph().ordered_binding_count()) + " of 2");
-      }
+                check(verdict, "T7.1", "a static cycle is detected at seal", report.has_cycle, format(static_cast<double>(report.members.size()), 0) + " bindings on or behind the cycle; Kahn ordered " + std::to_string(scene.graph().ordered_binding_count()) + " of 2");
+            }
 
-  // T7.4: a non-converging cycle must be stopped by the pass budget (§7)
+            // T7.4: a non-converging cycle must be stopped by the pass budget (§7)
             {
-        Scene<ErasedStore> scene(EvalModel::EagerPush, false);
-        const StandardSchemas schemas = declare_standard_schemas(scene.regions());
+                Scene<ErasedStore> scene(EvalModel::EagerPush, false);
+                const StandardSchemas schemas = declare_standard_schemas(scene.regions());
 
-      // build a two node cycle whose bindings both increment, so it never settles (§7)
-    const InstanceId first_instance = scene.store().create(schemas.single_int);
-            const PropertyId first = scene.regions().global(first_instance, 0);
-        scene.store().write(first, Value(std::int64_t{0}), WriteSource::GeneratedInit);
+                // build a two node cycle whose bindings both increment, so it never settles (§7)
+                const InstanceId first_instance = scene.store().create(schemas.single_int);
+                const PropertyId first = scene.regions().global(first_instance, 0);
+                scene.store().write(first, Value(std::int64_t{0}), WriteSource::GeneratedInit);
 
-     const InstanceId second_instance = scene.store().create(schemas.single_int);
-        const PropertyId second = scene.regions().global(second_instance, 0);
-         scene.store().write(second, Value(std::int64_t{0}), WriteSource::GeneratedInit);
+                const InstanceId second_instance = scene.store().create(schemas.single_int);
+                const PropertyId second = scene.regions().global(second_instance, 0);
+                scene.store().write(second, Value(std::int64_t{0}), WriteSource::GeneratedInit);
 
-       scene.graph().add_binding(first, std::vector<PropertyId>{second}, &increment_first<ErasedStore>);
-        scene.graph().add_binding(second, std::vector<PropertyId>{first}, &increment_first<ErasedStore>);
-     scene.graph().seal();
+                scene.graph().add_binding(first, std::vector<PropertyId>{second}, &increment_first<ErasedStore>);
+                scene.graph().add_binding(second, std::vector<PropertyId>{first}, &increment_first<ErasedStore>);
+                scene.graph().seal();
 
-  // drive one value so both sides of the cycle keep changing (§7)
-       scene.graph().assign(first, Value(std::int64_t{0}));
-         const SettleStats stats = scene.graph().settle();
+                // drive one value so both sides of the cycle keep changing (§7)
+                scene.graph().assign(first, Value(std::int64_t{0}));
+                const SettleStats stats = scene.graph().settle();
 
-   check(verdict, "T7.4", "a non-converging cycle is stopped by the pass budget", stats.cycle_budget_exhausted && stats.passes == T7_4_PASS_BUDGET, "stops after " + std::to_string(stats.passes) + " passes, budget " + std::to_string(T7_4_PASS_BUDGET));
-   }
+                check(verdict, "T7.4", "a non-converging cycle is stopped by the pass budget", stats.cycle_budget_exhausted && stats.passes == T7_4_PASS_BUDGET, "stops after " + std::to_string(stats.passes) + " passes, budget " + std::to_string(T7_4_PASS_BUDGET));
+            }
 
-     // T7.3: a cycle introduced by runtime mutation must be detected before evaluation (§7)
-   {
-           Scene<ErasedStore> scene(EvalModel::EagerPush, true);
-const StandardSchemas schemas = declare_standard_schemas(scene.regions());
+            // T7.3: a cycle introduced by runtime mutation must be detected before evaluation (§7)
+            {
+                Scene<ErasedStore> scene(EvalModel::EagerPush, true);
+                const StandardSchemas schemas = declare_standard_schemas(scene.regions());
 
-  // build a chain that is acyclic at seal time (§7)
-       const std::vector<PropertyId> chain = build_chain(scene, schemas.single_int, 2);
-      scene.graph().seal();
+                // build a chain that is acyclic at seal time (§7)
+                const std::vector<PropertyId> chain = build_chain(scene, schemas.single_int, 2);
+                scene.graph().seal();
 
-   // Kahn finds nothing yet (§7)
-           const CycleReport before = detect_cycles(scene.graph());
+                // Kahn finds nothing yet (§7)
+                const CycleReport before = detect_cycles(scene.graph());
 
-    // now close the loop with a runtime dependency insertion (§7)
-   static_cast<void>(scene.graph().add_dependency(0, chain.front()));
+                // now close the loop: give the first binding the last property as a new dependency (§7)
+                static_cast<void>(scene.graph().add_dependency(0, chain.back()));
 
-      // Kahn must find the cycle the mutation created (§7)
-     const CycleReport after = detect_cycles(scene.graph());
+                // Kahn must find the cycle the mutation created (§7)
+                const CycleReport after = detect_cycles(scene.graph());
 
-     check(verdict, "T7.3", "a runtime-introduced cycle is detected", !before.has_cycle && after.has_cycle, "before mutation " + std::string(before.has_cycle ? "cyclic" : "acyclic") + ", after mutation " + std::string(after.has_cycle ? "cyclic" : "acyclic"));
-        }
+                check(verdict, "T7.3", "a runtime-introduced cycle is detected", !before.has_cycle && after.has_cycle, "before mutation " + std::string(before.has_cycle ? "cyclic" : "acyclic") + ", after mutation " + std::string(after.has_cycle ? "cyclic" : "acyclic"));
+            }
 
             // T7.5: a converging cycle's wasted passes, which is the case a pass budget does not catch (§7)
             {
- Scene<ErasedStore> scene(EvalModel::EagerPush, false);
-     const StandardSchemas schemas = declare_standard_schemas(scene.regions());
+                Scene<ErasedStore> scene(EvalModel::EagerPush, false);
+                const StandardSchemas schemas = declare_standard_schemas(scene.regions());
 
-          // build a cycle that converges, because clamping a value that is already inside its range changes nothing (§7)
-      const InstanceId first_instance = scene.store().create(schemas.single_int);
-const PropertyId first = scene.regions().global(first_instance, 0);
-          scene.store().write(first, Value(std::int64_t{0}), WriteSource::GeneratedInit);
+                // build a cycle that converges, because clamping a value that is already inside its range changes nothing (§7)
+                const InstanceId first_instance = scene.store().create(schemas.single_int);
+                const PropertyId first = scene.regions().global(first_instance, 0);
+                scene.store().write(first, Value(std::int64_t{0}), WriteSource::GeneratedInit);
 
                 const InstanceId second_instance = scene.store().create(schemas.single_int);
-      const PropertyId second = scene.regions().global(second_instance, 0);
-   scene.store().write(second, Value(std::int64_t{0}), WriteSource::GeneratedInit);
+                const PropertyId second = scene.regions().global(second_instance, 0);
+                scene.store().write(second, Value(std::int64_t{0}), WriteSource::GeneratedInit);
 
-  // clamp each side, which reaches a fixed point instead of diverging (§7)
-     scene.graph().add_binding(first, std::vector<PropertyId>{second}, &clamp_first<ErasedStore>);
-           scene.graph().add_binding(second, std::vector<PropertyId>{first}, &floor_first<ErasedStore>);
-     scene.graph().seal();
+                // clamp each side, which reaches a fixed point instead of diverging (§7)
+                scene.graph().add_binding(first, std::vector<PropertyId>{second}, &clamp_first<ErasedStore>);
+                scene.graph().add_binding(second, std::vector<PropertyId>{first}, &floor_first<ErasedStore>);
+                scene.graph().seal();
 
-      // a value already inside the clamp range settles immediately (§7)
-         scene.graph().assign(first, Value(std::int64_t{0}));
-          SettleStats stats = scene.graph().settle();
+                // a value already inside the clamp range settles immediately (§7)
+                scene.graph().assign(first, Value(std::int64_t{0}));
+                SettleStats stats = scene.graph().settle();
 
-   // now push a value outside the range, so the clamp has work to do (§7)
-        scene.graph().assign(first, Value(std::int64_t{5}));
-       stats = scene.graph().settle();
+                // now push a value outside the range, so the clamp has work to do (§7)
+                scene.graph().assign(first, Value(std::int64_t{5}));
+                stats = scene.graph().settle();
 
-        record("T7.5a", "converging cycle from inside its range", format(static_cast<double>(stats.passes), 0) + " passes, exhausted=" + std::string(stats.cycle_budget_exhausted ? "yes" : "no"));
-   check(verdict, "T7.5b", "a converging cycle is reported as converged", !stats.cycle_budget_exhausted, "settled in " + std::to_string(stats.passes) + " passes without hitting the budget");
-        }
+                record("T7.5a", "converging cycle from inside its range", format(static_cast<double>(stats.passes), 0) + " passes, exhausted=" + std::string(stats.cycle_budget_exhausted ? "yes" : "no"));
+                check(verdict, "T7.5b", "a converging cycle is reported as converged", !stats.cycle_budget_exhausted, "settled in " + std::to_string(stats.passes) + " passes without hitting the budget");
+            }
 
-      // T7.2: the detection cost over a large graph (§7)
+            // T7.2: the detection cost over a large graph (§7)
             {
-      // build a wide acyclic graph of the required size (§7)
-         Scene<ErasedStore> scene(EvalModel::EagerPush, false);
-           const StandardSchemas schemas = declare_standard_schemas(scene.regions());
+                // build a wide acyclic graph of the required size (§7)
+                Scene<ErasedStore> scene(EvalModel::EagerPush, false);
+                const StandardSchemas schemas = declare_standard_schemas(scene.regions());
 
-   const InstanceId root_instance = scene.store().create(schemas.single_int);
-         const PropertyId root = scene.regions().global(root_instance, 0);
-       scene.store().write(root, Value(std::int64_t{1}), WriteSource::GeneratedInit);
+                const InstanceId root_instance = scene.store().create(schemas.single_int);
+                const PropertyId root = scene.regions().global(root_instance, 0);
+                scene.store().write(root, Value(std::int64_t{1}), WriteSource::GeneratedInit);
 
-      PropertyId previous = root;
+                PropertyId previous = root;
 
-   for (std::size_t index = 0; index < CYCLE_GRAPH_BINDINGS; index++) {
-        const InstanceId instance = scene.store().create(schemas.single_int);
- const PropertyId property = scene.regions().global(instance, 0);
-            scene.store().write(property, Value(std::int64_t{0}), WriteSource::GeneratedInit);
+                for (std::size_t index = 0; index < CYCLE_GRAPH_BINDINGS; index++) {
+                    const InstanceId instance = scene.store().create(schemas.single_int);
+                    const PropertyId property = scene.regions().global(instance, 0);
+                    scene.store().write(property, Value(std::int64_t{0}), WriteSource::GeneratedInit);
 
-     // bind a wide fan of properties to the previous one, so the graph is not a bare chain (§7)
-        scene.graph().add_binding(property, std::vector<PropertyId>{previous, root}, &sum_all<ErasedStore>);
+                    // bind a wide fan of properties to the previous one, so the graph is not a bare chain (§7)
+                    scene.graph().add_binding(property, std::vector<PropertyId>{previous, root}, &sum_all<ErasedStore>);
 
-          previous = property;
-      }
+                    previous = property;
+                }
 
-   scene.graph().seal();
+                scene.graph().seal();
 
-     // discard the warm-up detections before measuring (§28.2)
+                // discard the warm-up detections before measuring (§28.2)
                 for (std::size_t step = 0; step < 20; step++) {
-             static_cast<void>(detect_cycles(scene.graph()));
-          }
+                    static_cast<void>(detect_cycles(scene.graph()));
+                }
 
-          // record one detection per sample (§28.2)
-  std::vector<double> samples;
-        samples.reserve(MEASURED_WIDE);
+                // record one detection per sample (§28.2)
+                std::vector<double> samples;
+                samples.reserve(MEASURED_WIDE);
 
-   for (std::size_t step = 0; step < MEASURED_WIDE; step++) {
-   const auto start = Clock::now();
-        const CycleReport report = detect_cycles(scene.graph());
-             samples.push_back(to_ms(Clock::now() - start));
+                for (std::size_t step = 0; step < MEASURED_WIDE; step++) {
+                    const auto start = Clock::now();
+                    const CycleReport report = detect_cycles(scene.graph());
+                    samples.push_back(to_ms(Clock::now() - start));
 
-    // an acyclic graph must stay acyclic, so nothing is reported (§7)
-            static_cast<void>(report.has_cycle);
-        }
+                    // an acyclic graph must stay acyclic, so nothing is reported (§7)
+                    static_cast<void>(report.has_cycle);
+                }
 
-  const double p99 = percentile(samples, 0.99);
-       check(verdict, "T7.2", "cycle detection over a 10000-binding graph p99", p99 <= T7_2_DETECT_MS, format(p99) + " ms <= " + format(T7_2_DETECT_MS, 1) + " ms");
-      }
+                const double p99 = percentile(samples, 0.99);
+                check(verdict, "T7.2", "cycle detection over a 10000-binding graph p99", p99 <= T7_2_DETECT_MS, format(p99) + " ms <= " + format(T7_2_DETECT_MS, 1) + " ms");
+            }
 
-   // T7.6: whether an invalid cycle can reach Release (§7)
+            // T7.6: whether an invalid cycle can reach Release (§7)
             {
-            // the static case is decidable at seal, so it can be a compile error in principle (§7)
-  // the runtime case cannot, because dynamic structures exist in Release (§7)
-      record("T7.6", "can an invalid cycle reach Release", "static: decidable by Kahn at seal, so the compiler can reject it and no runtime guard is needed for a sealed graph. runtime: reachable in Release through dynamic dependency insertion, so a guard has to stay in Release or dynamic graphs have to be excluded from the shipping path.");
-       }
+                // the static case is decidable at seal, so it can be a compile error in principle (§7)
+                // the runtime case cannot, because dynamic structures exist in Release (§7)
+                record("T7.6", "can an invalid cycle reach Release", "static: decidable by Kahn at seal, so the compiler can reject it and no runtime guard is needed for a sealed graph. runtime: reachable in Release through dynamic dependency insertion, so a guard has to stay in Release or dynamic graphs have to be excluded from the shipping path.");
+            }
 
- // hand back the section tally (§28.4)
+            // hand back the section tally (§28.4)
             return verdict;
         }
 
@@ -1255,175 +1346,175 @@ const PropertyId first = scene.regions().global(first_instance, 0);
             // keep the tally for the section (§28.4)
             Verdict verdict;
 
-  // run the stale value sequence once per evaluation model and per end mode (§8)
-      for (const EvalModel model : {EvalModel::EagerPush, EvalModel::HybridPushPull}) {
- for (const AnimationEndMode mode : {AnimationEndMode::RestoreShadow, AnimationEndMode::ReEvaluate, AnimationEndMode::RestoreNoInvalidate}) {
-     Scene<ErasedStore> scene(model, false);
-        const StandardSchemas schemas = declare_standard_schemas(scene.regions());
+            // run the stale value sequence once per evaluation model and per end mode (§8)
+            for (const EvalModel model : {EvalModel::EagerPush, EvalModel::HybridPushPull}) {
+                for (const AnimationEndMode mode : {AnimationEndMode::RestoreShadow, AnimationEndMode::ReEvaluate, AnimationEndMode::RestoreNoInvalidate}) {
+                    Scene<ErasedStore> scene(model, false);
+                    const StandardSchemas schemas = declare_standard_schemas(scene.regions());
 
-            // a source property drives a bound property (§8)
-      const InstanceId source_instance = scene.store().create(schemas.single_int);
-      const PropertyId source = scene.regions().global(source_instance, 0);
-      scene.store().write(source, Value(std::int64_t{1}), WriteSource::GeneratedInit);
+                    // a source property drives a bound property (§8)
+                    const InstanceId source_instance = scene.store().create(schemas.single_int);
+                    const PropertyId source = scene.regions().global(source_instance, 0);
+                    scene.store().write(source, Value(std::int64_t{1}), WriteSource::GeneratedInit);
 
-   const InstanceId bound_instance = scene.store().create(schemas.single_int);
-    const PropertyId bound = scene.regions().global(bound_instance, 0);
-    scene.store().write(bound, Value(std::int64_t{0}), WriteSource::GeneratedInit);
+                    const InstanceId bound_instance = scene.store().create(schemas.single_int);
+                    const PropertyId bound = scene.regions().global(bound_instance, 0);
+                    scene.store().write(bound, Value(std::int64_t{0}), WriteSource::GeneratedInit);
 
-     scene.graph().add_binding(bound, std::vector<PropertyId>{source}, &pass_int<ErasedStore>);
-         scene.graph().seal();
-  static_cast<void>(scene.graph().settle());
+                    scene.graph().add_binding(bound, std::vector<PropertyId>{source}, &pass_int<ErasedStore>);
+                    scene.graph().seal();
+                    static_cast<void>(scene.graph().settle());
 
-    // step 1 and 2: the animation starts and changes the effective value (§8)
-        static_cast<void>(scene.graph().set_animation(bound, Value(std::int64_t{100})));
-      static_cast<void>(scene.graph().settle());
+                    // step 1 and 2: the animation starts and changes the effective value (§8)
+                    static_cast<void>(scene.graph().set_animation(bound, Value(std::int64_t{100})));
+                    static_cast<void>(scene.graph().settle());
 
-   const std::int64_t during = scene.store().read(bound).as_int();
+                    const std::int64_t during = scene.store().read(bound).as_int();
 
-            // step 6: the source dependency changes while the animation owns the property (§8)
-      scene.graph().assign(source, Value(std::int64_t{55}));
-   static_cast<void>(scene.graph().settle());
+                    // step 6: the source dependency changes while the animation owns the property (§8)
+                    scene.graph().assign(source, Value(std::int64_t{55}));
+                    static_cast<void>(scene.graph().settle());
 
-  // step 4: the animation ends and the binding resumes (§8)
-      scene.graph().end_animation(bound, mode);
-    static_cast<void>(scene.graph().settle());
+                    // step 4: the animation ends and the binding resumes (§8)
+                    scene.graph().end_animation(bound, mode);
+                    static_cast<void>(scene.graph().settle());
 
-  const std::int64_t after = scene.store().read(bound).as_int();
+                    const std::int64_t after = scene.store().read(bound).as_int();
 
-      // report the row so the three end modes can be compared directly (§8)
-   std::printf("    model=%-18s mode=%-24s during=%3lld  after=%3lld  %s\n", std::string(model_name(model)).c_str(), mode == AnimationEndMode::RestoreShadow ? "restore_shadow" : (mode == AnimationEndMode::ReEvaluate ? "re_evaluate" : "restore_no_invalidate"), static_cast<long long>(during), static_cast<long long>(after), after == 55 ? "fresh" : "STALE");
+                    // report the row so the three end modes can be compared directly (§8)
+                    std::printf("    model=%-18s mode=%-24s during=%3lld  after=%3lld  %s\n", std::string(model_name(model)).c_str(), mode == AnimationEndMode::RestoreShadow ? "restore_shadow" : (mode == AnimationEndMode::ReEvaluate ? "re_evaluate" : "restore_no_invalidate"), static_cast<long long>(during), static_cast<long long>(after), after == 55 ? "fresh" : "STALE");
 
-       // T8.1 and T8.2: the value after the animation must come from the binding, not the shadow (§8)
-      if (model == EvalModel::EagerPush && mode == AnimationEndMode::RestoreShadow) {
-   check(verdict, "T8.1", "eager + restore_shadow yields the fresh binding value", after == 55, "after=" + std::to_string(after));
-   }
+                    // T8.1 and T8.2: the value after the animation must come from the binding, not the shadow (§8)
+                    if (model == EvalModel::EagerPush && mode == AnimationEndMode::RestoreShadow) {
+                        check(verdict, "T8.1", "eager + restore_shadow yields the fresh binding value", after == 55, "after=" + std::to_string(after));
+                    }
 
-            if (model == EvalModel::HybridPushPull && mode == AnimationEndMode::ReEvaluate) {
-        check(verdict, "T8.2", "hybrid + re_evaluate yields the fresh binding value", after == 55, "after=" + std::to_string(after));
+                    if (model == EvalModel::HybridPushPull && mode == AnimationEndMode::ReEvaluate) {
+                        check(verdict, "T8.2", "hybrid + re_evaluate yields the fresh binding value", after == 55, "after=" + std::to_string(after));
+                    }
+                }
             }
-      }
-      }
 
-        // T8.1 evidence: the mode with no invalidate restores a stale value (§8)
-      record("T8.1b", "restore without invalidate (diagnostic)", "shows the stale value that the shadow table would produce if the scheduler forgot the invalidate; see the STALE row above");
+            // T8.1 evidence: the mode with no invalidate restores a stale value (§8)
+            record("T8.1b", "restore without invalidate (diagnostic)", "shows the stale value that the shadow table would produce if the scheduler forgot the invalidate; see the STALE row above");
 
             // T8.3: an imperative write during an animation wins (§8)
             {
-     Scene<ErasedStore> scene(EvalModel::EagerPush, false);
-     const StandardSchemas schemas = declare_standard_schemas(scene.regions());
-
-       const InstanceId source_instance = scene.store().create(schemas.single_int);
-    const PropertyId source = scene.regions().global(source_instance, 0);
-         scene.store().write(source, Value(std::int64_t{1}), WriteSource::GeneratedInit);
-
-          const InstanceId bound_instance = scene.store().create(schemas.single_int);
-    const PropertyId bound = scene.regions().global(bound_instance, 0);
-           scene.store().write(bound, Value(std::int64_t{0}), WriteSource::GeneratedInit);
-
-       scene.graph().add_binding(bound, std::vector<PropertyId>{source}, &pass_int<ErasedStore>);
-      scene.graph().seal();
-      static_cast<void>(scene.graph().settle());
-
-  // start an animation and then write imperatively (§8)
-            static_cast<void>(scene.graph().set_animation(bound, Value(std::int64_t{100})));
-    static_cast<void>(scene.graph().settle());
-        scene.graph().assign(bound, Value(std::int64_t{7}));
-      static_cast<void>(scene.graph().settle());
-
-      const std::int64_t value = scene.store().read(bound).as_int();
-                const bool no_animation = scene.store().source_of(bound) == WriteSource::Imperative;
-
-     check(verdict, "T8.3", "an imperative write during an animation wins", value == 7 && no_animation, "bound=" + std::to_string(value) + ", source=" + std::string(no_animation ? "imperative" : "not imperative"));
-  }
-
-      // T8.4: rebind after an animation re-evaluates from current dependencies (§8)
-            {
-   Scene<ErasedStore> scene(EvalModel::EagerPush, false);
+                Scene<ErasedStore> scene(EvalModel::EagerPush, false);
                 const StandardSchemas schemas = declare_standard_schemas(scene.regions());
 
-       const InstanceId source_instance = scene.store().create(schemas.single_int);
-          const PropertyId source = scene.regions().global(source_instance, 0);
-            scene.store().write(source, Value(std::int64_t{1}), WriteSource::GeneratedInit);
+                const InstanceId source_instance = scene.store().create(schemas.single_int);
+                const PropertyId source = scene.regions().global(source_instance, 0);
+                scene.store().write(source, Value(std::int64_t{1}), WriteSource::GeneratedInit);
 
-   const InstanceId bound_instance = scene.store().create(schemas.single_int);
-     const PropertyId bound = scene.regions().global(bound_instance, 0);
-       scene.store().write(bound, Value(std::int64_t{0}), WriteSource::GeneratedInit);
+                const InstanceId bound_instance = scene.store().create(schemas.single_int);
+                const PropertyId bound = scene.regions().global(bound_instance, 0);
+                scene.store().write(bound, Value(std::int64_t{0}), WriteSource::GeneratedInit);
 
-      scene.graph().add_binding(bound, std::vector<PropertyId>{source}, &pass_int<ErasedStore>);
-      scene.graph().seal();
-            static_cast<void>(scene.graph().settle());
+                scene.graph().add_binding(bound, std::vector<PropertyId>{source}, &pass_int<ErasedStore>);
+                scene.graph().seal();
+                static_cast<void>(scene.graph().settle());
 
-   // animate, change the source under the animation, override, then rebind (§8)
-   static_cast<void>(scene.graph().set_animation(bound, Value(std::int64_t{100})));
-        static_cast<void>(scene.graph().settle());
-       scene.graph().assign(source, Value(std::int64_t{60}));
-static_cast<void>(scene.graph().settle());
-     scene.graph().assign(bound, Value(std::int64_t{1}));
-    static_cast<void>(scene.graph().settle());
-        scene.graph().rebind(bound);
-            static_cast<void>(scene.graph().settle());
+                // start an animation and then write imperatively (§8)
+                static_cast<void>(scene.graph().set_animation(bound, Value(std::int64_t{100})));
+                static_cast<void>(scene.graph().settle());
+                scene.graph().assign(bound, Value(std::int64_t{7}));
+                static_cast<void>(scene.graph().settle());
 
-        const std::int64_t value = scene.store().read(bound).as_int();
-      check(verdict, "T8.4", "rebind after an animation re-evaluates", value == 60, "bound=" + std::to_string(value));
+                const std::int64_t value = scene.store().read(bound).as_int();
+                const bool no_animation = scene.store().source_of(bound) == WriteSource::Imperative;
+
+                check(verdict, "T8.3", "an imperative write during an animation wins", value == 7 && no_animation, "bound=" + std::to_string(value) + ", source=" + std::string(no_animation ? "imperative" : "not imperative"));
+            }
+
+            // T8.4: rebind after an animation re-evaluates from current dependencies (§8)
+            {
+                Scene<ErasedStore> scene(EvalModel::EagerPush, false);
+                const StandardSchemas schemas = declare_standard_schemas(scene.regions());
+
+                const InstanceId source_instance = scene.store().create(schemas.single_int);
+                const PropertyId source = scene.regions().global(source_instance, 0);
+                scene.store().write(source, Value(std::int64_t{1}), WriteSource::GeneratedInit);
+
+                const InstanceId bound_instance = scene.store().create(schemas.single_int);
+                const PropertyId bound = scene.regions().global(bound_instance, 0);
+                scene.store().write(bound, Value(std::int64_t{0}), WriteSource::GeneratedInit);
+
+                scene.graph().add_binding(bound, std::vector<PropertyId>{source}, &pass_int<ErasedStore>);
+                scene.graph().seal();
+                static_cast<void>(scene.graph().settle());
+
+                // animate, change the source under the animation, override, then rebind (§8)
+                static_cast<void>(scene.graph().set_animation(bound, Value(std::int64_t{100})));
+                static_cast<void>(scene.graph().settle());
+                scene.graph().assign(source, Value(std::int64_t{60}));
+                static_cast<void>(scene.graph().settle());
+                scene.graph().assign(bound, Value(std::int64_t{1}));
+                static_cast<void>(scene.graph().settle());
+                scene.graph().rebind(bound);
+                static_cast<void>(scene.graph().settle());
+
+                const std::int64_t value = scene.store().read(bound).as_int();
+                check(verdict, "T8.4", "rebind after an animation re-evaluates", value == 60, "bound=" + std::to_string(value));
             }
 
             // T8.5: one frame of animated writes plus settle (§8)
-      {
-      Scene<ErasedStore> scene(EvalModel::EagerPush, false);
-        const StandardSchemas schemas = declare_standard_schemas(scene.regions());
+            {
+                Scene<ErasedStore> scene(EvalModel::EagerPush, false);
+                const StandardSchemas schemas = declare_standard_schemas(scene.regions());
 
-          const InstanceId source_instance = scene.store().create(schemas.single_int);
+                const InstanceId source_instance = scene.store().create(schemas.single_int);
                 const PropertyId source = scene.regions().global(source_instance, 0);
-  scene.store().write(source, Value(std::int64_t{1}), WriteSource::GeneratedInit);
+                scene.store().write(source, Value(std::int64_t{1}), WriteSource::GeneratedInit);
 
-   // bind every animated property to the source, so each shadow has a binding value (§8)
-   std::vector<PropertyId> animated;
+                // bind every animated property to the source, so each shadow has a binding value (§8)
+                std::vector<PropertyId> animated;
                 animated.reserve(ANIMATED_PROPERTIES);
 
-  for (std::size_t index = 0; index < ANIMATED_PROPERTIES; index++) {
-       const InstanceId instance = scene.store().create(schemas.single_int);
-         const PropertyId property = scene.regions().global(instance, 0);
- scene.store().write(property, Value(std::int64_t{0}), WriteSource::GeneratedInit);
-             animated.push_back(property);
+                for (std::size_t index = 0; index < ANIMATED_PROPERTIES; index++) {
+                    const InstanceId instance = scene.store().create(schemas.single_int);
+                    const PropertyId property = scene.regions().global(instance, 0);
+                    scene.store().write(property, Value(std::int64_t{0}), WriteSource::GeneratedInit);
+                    animated.push_back(property);
 
-    scene.graph().add_binding(property, std::vector<PropertyId>{source}, &pass_int<ErasedStore>);
-          }
+                    scene.graph().add_binding(property, std::vector<PropertyId>{source}, &pass_int<ErasedStore>);
+                }
 
-     scene.graph().seal();
-         static_cast<void>(scene.graph().settle());
+                scene.graph().seal();
+                static_cast<void>(scene.graph().settle());
 
-       // discard the warm-up frames before measuring (§28.2)
-    for (std::size_t step = 0; step < 50; step++) {
-        for (std::size_t index = 0; index < ANIMATED_PROPERTIES; index++) {
-          static_cast<void>(scene.graph().set_animation(animated.at(index), Value(static_cast<std::int64_t>(step))));
-   }
-          static_cast<void>(scene.graph().settle());
-      }
+                // discard the warm-up frames before measuring (§28.2)
+                for (std::size_t step = 0; step < 50; step++) {
+                    for (std::size_t index = 0; index < ANIMATED_PROPERTIES; index++) {
+                        static_cast<void>(scene.graph().set_animation(animated.at(index), Value(static_cast<std::int64_t>(step))));
+                    }
+                    static_cast<void>(scene.graph().settle());
+                }
 
-          // record one animation frame plus settle per sample (§8)
-  std::vector<double> samples;
+                // record one animation frame plus settle per sample (§8)
+                std::vector<double> samples;
                 samples.reserve(MEASURED_WIDE);
 
-        for (std::size_t step = 0; step < MEASURED_WIDE; step++) {
-       const auto start = Clock::now();
+                for (std::size_t step = 0; step < MEASURED_WIDE; step++) {
+                    const auto start = Clock::now();
 
-            // write one frame of every animated property (§13.5)
-   for (std::size_t index = 0; index < ANIMATED_PROPERTIES; index++) {
-          static_cast<void>(scene.graph().set_animation(animated.at(index), Value(static_cast<std::int64_t>(step))));
-          }
+                    // write one frame of every animated property (§13.5)
+                    for (std::size_t index = 0; index < ANIMATED_PROPERTIES; index++) {
+                        static_cast<void>(scene.graph().set_animation(animated.at(index), Value(static_cast<std::int64_t>(step))));
+                    }
 
-      static_cast<void>(scene.graph().settle());
-              samples.push_back(to_ms(Clock::now() - start));
-       }
+                    static_cast<void>(scene.graph().settle());
+                    samples.push_back(to_ms(Clock::now() - start));
+                }
 
-       const double p99 = percentile(samples, 0.99);
-    check(verdict, "T8.5", "1024 animated properties written + settled p99", p99 <= T8_5_ANIMATION_MS, format(p99) + " ms <= " + format(T8_5_ANIMATION_MS, 0) + " ms (D recorded 0.030 ms p50)");
- record("T8.6", "animation side table bytes per animated property", format(static_cast<double>(scene.graph().animation_side_bytes()) / static_cast<double>(ANIMATED_PROPERTIES), 1) + " B (D recorded 64 B)");
-        }
+                const double p99 = percentile(samples, 0.99);
+                check(verdict, "T8.5", "1024 animated properties written + settled p99", p99 <= T8_5_ANIMATION_MS, format(p99) + " ms <= " + format(T8_5_ANIMATION_MS, 0) + " ms (D recorded 0.030 ms p50)");
+                record("T8.6", "animation side table bytes per animated property", format(static_cast<double>(scene.graph().animation_side_bytes()) / static_cast<double>(ANIMATED_PROPERTIES), 1) + " B (D recorded 64 B)");
+            }
 
-      // hand back the section tally (§28.4)
+            // hand back the section tally (§28.4)
             return verdict;
-   }
+        }
 
     } // namespace
 
@@ -1438,6 +1529,31 @@ static_cast<void>(scene.graph().settle());
     using albor::prototype_d2::run_storage;
 
 } // namespace albor::prototype_d2
+
+namespace
+{
+
+    // run one section and report a thrown error instead of aborting without a message (§28.4)
+    template <class Section>
+    void run_section(const char* name, Section section, albor::prototype_d2::Verdict& total) {
+        // report the section name so a failure is attributable (§28.4)
+        std::printf("\n--- running section %s ---\n", name);
+        std::fflush(stdout);
+
+        try {
+            // run the section and fold its tally into the total (§28.4)
+            const auto verdict = section();
+            total.passed += verdict.passed;
+            total.failed += verdict.failed;
+        }
+        catch (const std::exception& error) {
+            // record a thrown error as a failure, because an aborted section is not a result (§28.4)
+            std::printf("  %-8s %-58s %-10s %s\n", "ERROR", name, "FAIL", error.what());
+            total.failed++;
+        }
+    }
+
+} // namespace
 
 int main(int argc, char** argv) {
     // the section to run, so a failure can be isolated without re-running everything (§28.4)
@@ -1455,51 +1571,35 @@ int main(int argc, char** argv) {
     const auto wants = [&](std::string_view section) { return requested == "all" || requested == section; };
 
     if (wants("storage")) {
-        const auto verdict = albor::prototype_d2::run_storage();
-        total.passed += verdict.passed;
-        total.failed += verdict.failed;
+        run_section("storage", [] { return albor::prototype_d2::run_storage(); }, total);
     }
 
     if (wants("chains")) {
-        const auto verdict = albor::prototype_d2::run_chains();
-        total.passed += verdict.passed;
-        total.failed += verdict.failed;
+        run_section("chains", [] { return albor::prototype_d2::run_chains(); }, total);
     }
 
     if (wants("diamonds")) {
-        const auto verdict = albor::prototype_d2::run_diamonds();
-        total.passed += verdict.passed;
-        total.failed += verdict.failed;
+        run_section("diamonds", [] { return albor::prototype_d2::run_diamonds(); }, total);
     }
 
     if (wants("mutation")) {
-        const auto verdict = albor::prototype_d2::run_mutation();
-        total.passed += verdict.passed;
-        total.failed += verdict.failed;
+        run_section("mutation", [] { return albor::prototype_d2::run_mutation(); }, total);
     }
 
     if (wants("ids")) {
-        const auto verdict = albor::prototype_d2::run_ids();
-        total.passed += verdict.passed;
-        total.failed += verdict.failed;
+        run_section("ids", [] { return albor::prototype_d2::run_ids(); }, total);
     }
 
     if (wants("replace")) {
-        const auto verdict = albor::prototype_d2::run_replace();
-        total.passed += verdict.passed;
-        total.failed += verdict.failed;
+        run_section("replace", [] { return albor::prototype_d2::run_replace(); }, total);
     }
 
     if (wants("cycles")) {
-        const auto verdict = albor::prototype_d2::run_cycles();
-        total.passed += verdict.passed;
-        total.failed += verdict.failed;
+        run_section("cycles", [] { return albor::prototype_d2::run_cycles(); }, total);
     }
 
     if (wants("animation")) {
-        const auto verdict = albor::prototype_d2::run_animation();
-        total.passed += verdict.passed;
-        total.failed += verdict.failed;
+        run_section("animation", [] { return albor::prototype_d2::run_animation(); }, total);
     }
 
     // report the overall result so a reader cannot miss a failure (§28.4)

@@ -36,7 +36,8 @@ namespace albor::prototype_d2
         // hold the index the caller asked for, because the two designs answer different questions (§4)
         if (mutable_index) {
             m_index = SegmentedIndex{};
-        } else {
+        }
+        else {
             m_index = SealedCsrIndex{};
         }
 
@@ -184,7 +185,8 @@ namespace albor::prototype_d2
         if (was_bound) {
             // a bound property recomputes from its new dependencies straight away (§13.4)
             invalidate_and_replan(target);
-        } else {
+        }
+        else {
             // an imperatively overridden property keeps its override, so put the imperative owner back (§13.4)
             m_store.set_source(target, WriteSource::Imperative);
         }
@@ -784,10 +786,14 @@ namespace albor::prototype_d2
     }
 
     template <class Store>
-    std::size_t Graph<Store>::index_bytes() const { return std::visit([](const auto& index) { return index.index_bytes(); }, m_index); }
+    std::size_t Graph<Store>::index_bytes() const {
+        return std::visit([](const auto& index) { return index.index_bytes(); }, m_index);
+    }
 
     template <class Store>
-    std::size_t Graph<Store>::index_slack_bytes() const { return std::visit([](const auto& index) { return index.slack_entries() * sizeof(BindingId); }, m_index); }
+    std::size_t Graph<Store>::index_slack_bytes() const {
+        return std::visit([](const auto& index) { return index.slack_entries() * sizeof(BindingId); }, m_index);
+    }
 
     template <class Store>
     std::size_t Graph<Store>::animation_side_bytes() const {
@@ -807,7 +813,9 @@ namespace albor::prototype_d2
     }
 
     template <class Store>
-    std::string_view Graph<Store>::index_name() const { return std::visit([](const auto& index) { return index.name(); }, m_index); }
+    std::string_view Graph<Store>::index_name() const {
+        return std::visit([](const auto& index) { return index.name(); }, m_index);
+    }
 
     // instantiate the graph over both storage candidates, because the storage comparison needs the engine too (§1)
     template class Graph<ErasedStore>;

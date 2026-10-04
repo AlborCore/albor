@@ -136,14 +136,7 @@ namespace albor::prototype_d2
     inline std::vector<ValueType> realistic_types() {
         // one of each value category, with the scalars repeated to eight properties (§13.1)
         return std::vector<ValueType>{
-            ValueType::Int,
-            ValueType::Double,
-            ValueType::Bool,
-            ValueType::String,
-            ValueType::TranslatedString,
-            ValueType::Snapshot,
-            ValueType::Int,
-            ValueType::Double,
+            ValueType::Int, ValueType::Double, ValueType::Bool, ValueType::String, ValueType::TranslatedString, ValueType::Snapshot, ValueType::Int, ValueType::Double,
         };
     }
 

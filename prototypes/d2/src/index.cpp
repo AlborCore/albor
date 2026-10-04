@@ -145,6 +145,16 @@ namespace albor::prototype_d2
         // nothing else is built, because segments were filled while the bindings were declared (§4)
     }
 
+    BindingId* SegmentedIndex::entry_at(std::uint32_t offset) {
+        // the arena is a list of fixed size blocks, so a global offset addresses a block and an index within it (§4)
+        return m_chunks.at(offset / SEGMENT_BLOCK_ENTRIES).get() + (offset % SEGMENT_BLOCK_ENTRIES);
+    }
+
+    const BindingId* SegmentedIndex::entry_at(std::uint32_t offset) const {
+        // the const form of the same addressing (§4)
+        return m_chunks.at(offset / SEGMENT_BLOCK_ENTRIES).get() + (offset % SEGMENT_BLOCK_ENTRIES);
+    }
+
     void SegmentedIndex::reserve_arena() {
         // allocate another block of segment entries so growth does not move other segments (§4)
         m_chunks.push_back(std::make_unique<BindingId[]>(SEGMENT_BLOCK_ENTRIES));
@@ -174,7 +184,7 @@ namespace albor::prototype_d2
 
         // copy the live entries into the larger run (§4)
         for (std::uint32_t index = 0; index < segment.count; index++) {
-            m_chunks.at(start / SEGMENT_BLOCK_ENTRIES)[start + index] = m_chunks.at(segment.start / SEGMENT_BLOCK_ENTRIES)[segment.start + index];
+            *entry_at(start + index) = *entry_at(segment.start + index);
         }
 
         // count the relocation so growth is separable from the entry cost (§28.2)
@@ -200,7 +210,7 @@ namespace albor::prototype_d2
         }
 
         // append the binding at the end of the segment (§13.3)
-        m_chunks.at(segment.start / SEGMENT_BLOCK_ENTRIES)[segment.start + segment.count] = binding;
+        *entry_at(segment.start + segment.count) = binding;
 
         // count the entry that is now live (§4)
         segment.count++;
@@ -223,7 +233,7 @@ namespace albor::prototype_d2
         Segment& segment = m_segments.at(property);
 
         // find the entry inside the segment (§4)
-        BindingId* const base = m_chunks.at(segment.start / SEGMENT_BLOCK_ENTRIES).get() + segment.start;
+        BindingId* const base = entry_at(segment.start);
 
         for (std::uint32_t index = 0; index < segment.count; index++) {
             // skip the entries that name a different binding (§4)
@@ -266,7 +276,7 @@ namespace albor::prototype_d2
         }
 
         // return the contiguous run of binding ids (§13.3)
-        return std::span<const BindingId>(m_chunks.at(segment.start / SEGMENT_BLOCK_ENTRIES).get() + segment.start, segment.count);
+        return std::span<const BindingId>(entry_at(segment.start), segment.count);
     }
 
     std::size_t SegmentedIndex::slack_entries() const {
