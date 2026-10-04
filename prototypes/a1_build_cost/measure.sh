@@ -59,16 +59,29 @@ run_workload() {
     # therefore gets its own scratch directory holding a manifest naming exactly the spec under test, so the
     # workload is the port and its closure and nothing else (§28.2)
     mkdir -p "$scratch_cwd"
-    cat >"$scratch_cwd/vcpkg.json" <<MANIFEST
-{
-    "name": "albor-build-cost-$sub",
+
+    # the port name and its features are separate manifest keys, because "skia[graphite,metal]" is not a valid
+    # package name; python writes the manifest so the feature list is real json rather than shell string surgery,
+    # which produced a single joined string and a repeated key on the first attempt (§28.4)
+    python3 - "$scratch_cwd/vcpkg.json" "albor-build-cost-$sub" "$spec" <<'MANIFEST'
+import json
+import sys
+
+path, name, spec = sys.argv[1], sys.argv[2], sys.argv[3]
+
+# split "port[feature,feature]" the way vcpkg's own syntax does
+port, _, feature_text = spec.partition("[")
+features = [feature for feature in feature_text.rstrip("]").split(",") if feature]
+
+manifest = {
+    "name": name,
     "version-string": "0.1.0",
-    "dependencies": [
-        {
-            "name": "$spec"
-        }
-    ]
+    "dependencies": [{"name": port, "features": features}],
 }
+
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(manifest, handle, indent=4)
+    handle.write("\n")
 MANIFEST
 
     {
