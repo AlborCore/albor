@@ -86,8 +86,8 @@ fn fs_main() -> @location(0) vec4<f32> {
     namespace
     {
 
-        // print whatever dawn rejected inside the scope, because an invalid pipeline draws nothing at all and this
-        // build has no uncaptured error callback to say so
+        // print whatever dawn rejected inside the scope. this is best effort only: a deliberately invalid buffer was
+        // put through this scope and nothing was reported, so the absence of a message is not evidence of absence
         void report_scoped_errors(wgpu::Instance instance, wgpu::Device device, const char* what) {
             std::atomic<bool> done{false};
             const auto on_error = [&](wgpu::PopErrorScopeStatus status, wgpu::ErrorType, wgpu::StringView message) {
@@ -347,7 +347,7 @@ fn fs_main() -> @location(0) vec4<f32> {
 
         // only the first frame is bracketed by an error scope, because a rejected draw call draws nothing and this
         // build cannot otherwise say so
-        const bool first_frame = m_state->frames_drawn == 0;
+        const bool first_frame = m_state->frames_drawn < 3;
         if (first_frame) {
             m_state->device.PushErrorScope(wgpu::ErrorFilter::Validation);
         }
@@ -382,7 +382,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         m_state->queue.Submit(1, &commands);
 
         if (first_frame) {
-            report_scoped_errors(m_state->instance, m_state->device, "first frame");
+            report_scoped_errors(m_state->instance, m_state->device, "frame");
         }
         m_state->frames_drawn++;
     }

@@ -19,27 +19,33 @@ engine alone, so a repeat at zoom 8.0 was being compared against a repeat at zoo
 (engine, scale). A1-Dawn's identical 99.41% hover hit ratio was never affected by this, because it came from a different
 mechanism.
 
-## T1 fails: `CopyTextureToBuffer` is a silent no-op in this Dawn build
+## T1 fails: dawn's render pass leaves the target empty
 
-The sanity check asks Dawn to draw a frame with no geometry, so the target is nothing but the clear colour, then reads it
-back. **0 of 1,024,000 pixels match the clear colour** at a tolerance of one 8-bit step, and the first pixel reads
+The sanity check asks Dawn to draw a frame with no geometry, so the target is nothing but the clear colour, then reads
+it back. **0 of 1,024,000 pixels match the clear colour** at a tolerance of one 8-bit step, and the first pixel reads
 `0 0 0 0` — including a zero alpha, which a cleared target cannot have.
 
-Four hypotheses were tested and eliminated, in this order:
+The readback path is sound and the render path is the failure. What was established, each by experiment:
 
-| Test | Result | Conclusion |
+| Question | Experiment | Result |
 | --- | --- | --- |
-| Is the draw issued? | a geometry-free frame returned before issuing any work | fixed; the clear is now issued unconditionally |
-| Is the pipeline or draw rejected? | validation error scopes bracket the pipeline build and the first frame | nothing reported |
-| Is the copy rejected? | a validation error scope brackets the first copy | nothing reported |
-| Does the map complete and read? | `Queue::WriteBuffer` of a `0xAB` pattern, then map and read | **171,171,171,171** — map and read work |
-| Does the copy run at all? | `Queue::WriteTexture` of a `0xCD` fill into the target, then copy and read | still `0 0 0 0` — **the copy never writes** |
+| Does the map and read work? | `Queue::WriteBuffer` a `0xAB` pattern into the staging buffer, then map and read | **171,171,171,171** — works |
+| Does the copy run? | `Queue::WriteTexture` a `0xCD` fill into the target, then copy and read | **205,205,205,205** — the copy works |
+| Is a render pass issued? | instrumented `BeginRenderPass` and the vertex binding | pass handle valid, draws issued |
+| Does the texture then hold the clear? | read it back | **0,0,0,0** |
 
-So the texture is provably written and the readback path is provably working, and `CopyTextureToBuffer` still returns
-zeros with no validation error. Leaving `rowsPerImage` undefined changes nothing. **Not fixed.**
+So map, read and `CopyTextureToBuffer` are all proven good, a render pass is provably issued, and the target still reads
+back empty. **Not fixed.**
 
-One real Dawn bug was found and fixed on the way: a geometry-free frame bound a vertex buffer that had never been
-created, and binding a null buffer invalidates the entire render pass, which silently discarded the clear as well.
+Two things were fixed on the way, both real:
+
+- A geometry-free frame bound a vertex buffer that had never been created. Binding a null vertex buffer invalidates the
+  entire render pass, so the clear was silently discarded with it.
+- The first version of the prototype concluded "no validation errors" from Dawn error scopes. That conclusion was
+  **wrong and has been withdrawn**: a buffer created with `size = 0`, which is invalid by construction, was put through
+  the same scope and reported nothing. This build's error scopes are therefore not a usable signal, and every statement
+  above about what Dawn did or did not reject is qualified by that. `report_scoped_errors` carries the caveat in a
+  comment so the next person does not repeat the mistake.
 
 ## Thresholds not evaluated
 
