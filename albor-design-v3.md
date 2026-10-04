@@ -1086,19 +1086,19 @@ Acceptance thresholds are **set and recorded before a prototype runs**, based on
 
 **AD-03 — Generated public headers.** *Decided.* Concrete, non-virtual facade classes; interface-only; implementation private; write-if-changed generation. Validated in part by Prototype B: the write-if-changed behaviour, the facade-with-private-implementation shape and the per-component rebuild scope all hold (body edit rebuilds exactly one translation unit). **The clean-build speed claim that accompanied this decision did not survive measurement** and is recorded as contradicted; see §30.
 
-**AD-04a — Invalidation index.** *Proposed.* Compact CSR (Compressed Sparse Row) index over declared dependencies with eager push evaluation and no per-binding allocation. Supported by Prototype D at 56 B per property and 39.3 B per binding. **Not covered:** the prototype's index is sealed, while §18 and §20 require runtime mutation — virtualized delegates, `if`/`for` constructs, popups, live-reload `ReplaceBinding`. Per-component or segmented indices are the likely answer and none was tested. `PropertyId` assignment is now **tested and supported**: Prototype B assigns ids as component-local `uint16_t` offsets over a runtime base offset and confirmed that editing a property in one component rebuilds only that component, leaving every other component's object untouched. The global-monomorphic scheme it replaces is what would cascade.
+**AD-04a — Invalidation index.** *Proposed.* Compact CSR (Compressed Sparse Row) index over declared dependencies with eager push evaluation and no per-binding allocation. Supported by Prototype D at 56 B per property and 39.3 B per binding. **The sealed-index gap is now closed by Prototype D2**, which built both designs and measured them: a **segmented index** with one growable segment per property makes a dependency insertion local (0.20 µs p99) and a removal local (0.14 µs p99), where the sealed CSR rebuilds every bucket (31.10 µs p99) because it cannot answer a local edit any other way. The price is memory and slack: **21 196 B against 2 408 B for the same graph, about 8.8×, plus 1 824 B of growth slack the index never returns**, and removal shifts a segment tail rather than writing a tombstone, so a query never filters. Steady-state evaluation does not degrade after a run of 1 000 mutations (0.044 ms p99). The insertion-to-rebuild ratio is **not** uniformly small: it is 3.87 % at 200 bindings, 0.53 % at 2 000 and 0.04 % at 20 000, because a rebuild is O(V+E) while an insertion is O(1) — so the win is a function of graph size and **any threshold on it must state the graph size it was measured at**. `PropertyId` assignment is **tested and supported**: Prototype B assigns ids as component-local `uint16_t` offsets over a runtime base offset, and Prototype D2 confirmed the base-offset indirection costs **2.3 % at the read path** (44 ns against 43 ns), so component locality is close to free. `PropertyId` assignment is now **tested and supported**: Prototype B assigns ids as component-local `uint16_t` offsets over a runtime base offset and confirmed that editing a property in one component rebuilds only that component, leaving every other component's object untouched. The global-monomorphic scheme it replaces is what would cascade.
 
-**AD-04b — Storage layout.** *Open.* Prototype D measured a single uniform value slot. Typed per-component storage and the realistic value types (strings, translated strings, snapshots) were not measured, so the layout is not settled.
+**AD-04b — Storage layout.** *Open, with a recommendation.* Prototype D measured a single uniform value slot and left this open. Prototype D2 measured typed per-component storage against that slot over the realistic value types (§30 Prototype D2, `prototypes/d2/RESULTS.md`): **8.00 B per property for an all-scalar component and 14.00 B for the realistic mix, against 64.00 B for the type-erased slot on the same mix.** Typed storage wins on every mix measured, and it needs no per-property generation counter, because a write compares the value it replaces instead. Three measured costs travel with the recommendation and none is optional: **7.00 B per property of addressability** (4 B location, 1 B type, 1 B source, 1 B binding attachment) for a dense id space, which nearly doubles the cost of an 8 B scalar and shrinks the win to about 2.3× for scalars; **region reuse only within one property count**, because a dense id space hands out contiguous ranges and reusing a differently sized region would shift every id above it; and **chunked allocation**, or a reallocating slab invalidates every region pointer. The erased slot measures 8 B *larger* than D's recorded 56.00 B because D2's value set adds `TranslatedString` and a binding-attachment byte, so the comparison is not like-for-like with D. **Recommendation: MODIFY — typed per-component storage as the shipping default for static graphs, keeping the erased representation as the fallback.** Not *Decided*: no `.ui` corpus confirms the property mix, and typed storage was never combined with the hybrid evaluation model, so the recommendation assumes the two are independent.
 
-**AD-04c — Evaluation model.** *Open.* Eager push is implemented and meets its budget, but the prototype also measured one pass per chain layer (depth 8 → 8 passes) and flagged it as a Phase 2 risk; a pull or hybrid model would remove the per-layer passes and is unmeasured. Kahn ordering is a Dev/Test aid only, so tests exercise a different evaluation order from Release, which conflicts with §2.4 unless cycle detection becomes a compile-time error on the static graph. The prototype's 64-pass budget is a guard that should stay in Release, which this entry does not otherwise provide.
+**AD-04c — Evaluation model.** *Open, with a recommendation.* Prototype D2 measured all three models this entry left unmeasured (`prototypes/d2/RESULTS.md`). Eager push **reproduces D exactly**: one pass per chain layer, confirmed at depth 16 (16 passes) and by D's own recorded 8 passes for a depth-8 scene coming out again as 8. Both alternatives work as advertised — `pull_topo` and a hybrid push-then-memoised-pull settle a depth-16 chain in **1** pass with **0** redundant evaluations, where eager takes 16. **The pass-count saving does not buy latency at the sizes measured: eager push is faster than both alternatives at every depth from 4 upward and on both diamond topologies**, because the pull models walk the whole binding order or a stamped dirty set on every settle, and that fixed cost exceeds the price of a few extra passes at these sizes. Recommending a replacement on pass counts alone would read the wrong number. Where eager push genuinely loses is **reconvergence and mutation locality**: on a layered reconvergent graph reachable at two depths it evaluates 18 bindings where 17 suffice, while the hybrid evaluates 17 with **0** redundant; and a sealed CSR index answers a single dependency insertion by rebuilding every bucket (31.10 µs p99) where a segmented index answers it locally (0.20 µs p99). **The hybrid is the only model that is both redundancy-free and mutation-local, and that is the argument, not the chain depth.** Kahn's recorded conflict with §2.4 also resolves: Kahn detects a static cycle by failing to order it (it ordered 0 of 2 cyclic bindings), so **static cycles can be a compile-time rejection** and the evaluation order need not differ between test and Release. Dynamic cycles remain reachable in Release, so **the 64-pass budget stays in Release** — and because a *converging* cycle settles while still consuming passes, a slowly converging cycle can look healthy, which means **detection rather than the budget is what should alert**. **Recommendation: MODIFY — keep eager push for the shipping path, adopt the hybrid pull for mutated or reconvergent graphs, and promote Kahn from a Dev/Test aid to a compile-time rejection for static graphs.** Not *Decided*: the crossover between eager and pull is not measured, and no `.ui` corpus was run.
 
-**AD-04d — Animation shadowing.** *Proposed.* 64 B per animation slot, matching the measured budget. Its interaction with AD-24 (imperative writes breaking bindings) is unspecified, and whether ending an animation re-evaluates the shadowed binding rather than restoring a stale value was not verified.
+**AD-04d — Animation shadowing.** *Proposed.* 64 B per animation slot, confirmed independently by Prototype D2 at 64.0 B and 0.046 ms p99 for 1 024 animated properties. **The stale-value question this entry recorded as unverified is now answered, and the answer is not the one the question assumed.** Prototype D's `end_animation` restores the shadowed snapshot, and while an animation owns the target a binding write is dropped, so the shadow can only hold the value from animation start — but **D also invalidates the target afterwards, so the binding recomputes and the restored value is overwritten immediately and no stale value survives.** The stale value is real one layer further out: dropping that invalidate returns the animation-start value under both the eager and the hybrid model. So D's correctness rests on an invalidate that lives in the *engine*, one layer above the *store* that owns the shadow, and nothing in the type system or in a test of `end_animation` alone would notice its absence. **Both the restore and the invalidate are load-bearing; the shadow table is not**, since a mode that re-evaluates without restoring anything reproduces every observable behaviour. AD-04d's interaction with AD-24 is otherwise settled: an imperative write during an animation wins and ends it, and `rebind` after an animation re-evaluates from current dependencies rather than from the override.
 
 **AD-04 prototype caveats.** The workload gave every category a 16 ms p99 budget — a whole frame, shared with layout and scene build — so no category could fail. It contained no reconvergent (diamond) dependencies, since redundant visits were zero, while real UIs have many. It was one run on one machine and there is no `plan.md`, so the thresholds cannot be shown to have been pre-recorded and the reference hardware was declared only afterwards (§28.4). Follow-up is Prototype D2, not a re-reading of this run.
 
 **AD-17 — Native component manifest.** *Proposed.* The manifest is the source of truth; glue is generated; the compiler never parses C++ (§15).
 
-**AD-24 — Binding write precedence.** *Proposed.* Imperative assignment breaks bindings; `rebind` restores; reload does not override unchanged-binding overrides (§13.4).
+**AD-24 — Binding write precedence.** *Proposed.* Imperative assignment breaks bindings; `rebind` restores; reload does not override unchanged-binding overrides (§13.4). **Prototype D2 confirmed the §13.4 rule as specified** — an imperatively overridden property keeps its override across a reload that did not change its declared binding — **and named the case §13.4 does not cover:** an imperatively overridden property whose declared binding *did* change. The observed behaviour is that the override is kept and the new binding does not run. That is defensible but is not derived from the spec, so it is **referred here rather than decided by a prototype.** Binding removal is likewise unspecified: the observed behaviour is that the property keeps its last computed value and stops participating, recorded as a proposal.
 
 **AD-25 — Dual-engine semantic equivalence.** *Decided.* Compiled and dev paths share one semantic definition and a conformance corpus (§2.4).
 
@@ -1178,7 +1178,7 @@ was declared only after the run.
 | **A1 — renderer (Skia)** | complete | A1.1, A1.2a, A1.3 workloads W1/W2/W3 (401, 401, deadline-limited frames), A1.4 offscreen (400/400) |
 | **A1-Dawn — renderer (WebGPU)** | complete, macOS only | workloads W1/W2/W3 (400, 400, 400/400 frames; 3,200 hover queries) |
 | **A1-Parity — renderer output parity (Skia vs. Dawn)** | run | isolated-segment ink matched after corner-5 fix; batch parity not established (13.95% zoom 1, 63.68% zoom 8) |
-| **D2 — binding engine follow-up** | not started | none (follow-up to D for AD-04b/c: typed storage, diamond topologies, runtime mutation) |
+| **D2 — binding engine follow-up** | run | 8 experiments, 57 pre-registered thresholds, 55 pass / 2 fail; typed vs erased storage, chains to depth 16, diamonds and reconvergent graphs, mutation, component-local ids, `ReplaceBinding`, cycles, animation |
 | **B — generated-code build performance** | run | 500 components per side, 5 clean builds per configuration, rebuild-scope and write-if-changed checks |
 | **C — text, IME and accessibility** | not started | none |
 | **E — dev runtime slice** | run | layout dump in Release and Dev, hook install check, 16-node conformance over 5 runs in both configurations |
@@ -1192,6 +1192,22 @@ eager-push evaluation, Kahn ordering kept out of Release and excluded at link ti
 evaluation model (AD-04c) stay **Open**, because the prototype tested neither runtime index mutation nor
 diamond dependencies nor the per-chain-layer passes it itself flagged. This unblocks the Phase 2 property layout and the
 binding representation Prototype B depends on.
+
+**D2.** AD-04b and AD-04c both move from *Open* to *Open with a recommendation*, and AD-04a, AD-04d and AD-24 gain
+measured answers. Typed per-component storage wins decisively on memory (**8.00 B** per property scalar, **14.00 B**
+mixed, against **64.00 B** for the erased slot) and the recommendation is to make it the default for static graphs,
+carrying three measured costs: **7.00 B** per property of addressability, region reuse restricted to one property count,
+and chunked allocation. For evaluation, eager push is **confirmed** rather than replaced — it reproduces D's recorded
+pass counts exactly, and it is **faster** than both pull alternatives at every depth measured, so the case for the hybrid
+rests on reconvergence and mutation locality rather than on pass counts. `ReplaceBinding` is now a real binding
+replacement rather than a property assignment, which closes the item Prototype E recorded as unverified: after a
+replacement, changing the old binding's source evaluates **0** bindings. Two pre-registered thresholds **failed** and
+stay failed — construct-plus-destroy of a non-trivial property, and a typed write plus settle — both diagnosed in
+`RESULTS.md` without re-running to make them pass, and one further pass is recorded as **not robust** because two
+statistics on the same comparison disagree. The prototype also contradicts one of D's findings: D recorded 0 redundant
+candidate visits and concluded a caching layer would not pay off, which holds for D's topology and fails as soon as a
+node is reachable at two depths. AD-04d's stale-value question is answered — D's restore is not the defect, because D
+invalidates afterwards, but the invalidate is load-bearing and lives one layer above the shadow it protects.
 
 **A2 (macOS).** Platform presentation works on AppKit: steady cadence 16.67 ms p50, 60/60 frames presented through a
 live resize, 32 event dispatches inside a 500 ms nested modal loop. The frame tail that motivated the slice was attributed
@@ -1305,6 +1321,7 @@ Outputs: input to AD-04 (recorded in `prototypes/d/RESULTS.md`), to the property
 Scope: follow-up to Prototype D for settling AD-04b (typed storage layout) and AD-04c (evaluation model: push vs. hybrid pull).
 Variants: typed per-component storage vs. 40 B variant (including `std::string`, translated strings, snapshot shared pointers); deep chains (depth up to 16) and diamond (reconvergent) topologies; runtime graph mutation (delegate subtrees, live-reload `ReplaceBinding`, popups); component-local `PropertyId`s with runtime base offsets; cycle detection and animation interplay (AD-04d, AD-24).
 Outputs: input to AD-04b/c and the Phase 2 property layout.
+Status: run and recorded (`prototypes/d2/RESULTS.md`, plan in `plan.md` committed before the benchmark existed). Eight experiments, **57 pre-registered thresholds, 55 pass and 2 fail**. Typed storage 8.00 B/property scalar and 14.00 B mixed against 64.00 B erased; the base offset costs 2.3 % at the read path; eager push reproduces D's 8 passes for a depth-8 scene and settles depth 16 in 16 passes where both pull models take 1; the layered reconvergent graph shows eager push evaluating 18 bindings where 17 suffice and the hybrid 17; a segmented index answers a dependency insertion in 0.20 µs where the sealed CSR rebuilds in 31.10 µs, at 8.8× the index memory; `ReplaceBinding` replaces a binding function and dependency set for real; Kahn detects a static cycle by ordering 0 of 2 bindings. **Two thresholds failed and stay failed**, and one pass is recorded as not robust because p99 and mean disagree on the same ratio. Neither AD-04b nor AD-04c is marked *Decided*: no `.ui` corpus confirms the property mix, and typed storage was not combined with the hybrid model.
 
 ### Prototype A1 — Renderer (single platform)
 
@@ -1484,7 +1501,10 @@ The `Column` has no explicit `id` and therefore only an implicit key (§18.1). `
 ## 35. Remaining Open Questions
 
 1. Exact `.ui` grammar, property and binding syntax (including expression purity and any two-way binding).
-2. Typed per-component property storage to replace the type-erased slot of AD-04, including the memory target that Phase 2 must reach.
+2. Typed per-component property storage: **measured and recommended** (AD-04b, Prototype D2), but the memory target
+   Phase 2 must hit still depends on the property mix of a real `.ui` corpus, which no prototype has run. Two open
+   sub-questions ride on it: whether an `(instance, local)`-addressed dependency index can remove the 4 B per-property
+   location entry, and what the typed/erased choice costs when combined with the hybrid evaluation model.
 4. Generated C++ splitting strategy (Prototype B). **Partly answered:** one translation unit per component is what makes the
    one-TU body-edit rebuild work, and it is also what makes a clean build cost about 90× a single-TU baseline in CPU time.
    The open part is whether a shared preamble, precompiled headers or a documented unity-build escape hatch can recover most of
@@ -1504,10 +1524,17 @@ The `Column` has no explicit `id` and therefore only an implicit key (§18.1). `
 18. Whether the AD-03 clean-build penalty is acceptable in practice. Prototype B measured the cost but not the trade: that
     depends on edit frequency against clean-build frequency in real use, which no prototype has measured. Compiler peak
     memory and binary size, both named in Prototype B's `plan.md`, were not measured at all.
-19. Binding replacement through `UiPatch`. Prototype E applies `ReplaceBinding` as a `SetProperty`, so the live-reload path
-    that motivates the dev runtime remains unverified.
+19. Binding replacement through `UiPatch`: **now measured** (Prototype D2 implements a real replacement and confirms the
+    old binding stops participating), but §13.4 does not say whether a reload may take back a property the
+    application overrode. Referred to AD-24.
 20. A genuinely independent second engine for AD-25. Prototype E's conformance comparison ran both sides through one shared
     implementation, so it establishes that serialise, reload and patch preserve values — not agreement between two engines.
+21. Where the eager-versus-pull crossover lies for chain depth. Prototype D2 confirmed the pass-count difference and also
+    measured eager push as the faster model at every depth up to 16, so no recommendation threshold can be set without a
+    workload deep enough for the pull models' fixed per-settle cost to be repaid.
+22. Whether the animation shadow table is needed at all. Prototype D2 reproduced every observable animation behaviour by
+    re-evaluating on end without restoring the shadow, so the table may be removable — which would change AD-04d's 64 B
+    budget to zero, and that decision belongs with the animation core in Phase 3.
 18. Command history API.
 19. Automation transport and MCP schema.
 20. Live-reload wire protocol and state migration.
@@ -1515,7 +1542,7 @@ The `Column` has no explicit `id` and therefore only an implicit key (§18.1). `
 22. Platform accessibility details.
 23. Initial widget set.
 
-Resolved in v3 (no longer open): window role/modality model, single source for scale factor, custom-canvas semantics, MCP routing, identity policy, automation build exclusion, compiler language (Proposed), X11 tier (Proposed), manifest authoring model (Proposed), property invalidation index and animation shadowing (AD-04a/d Proposed; storage layout AD-04b and evaluation model AD-04c remain Open, follow-up in Prototype D2), platform implementation strategy (AD-16).
+Resolved in v3 (no longer open): window role/modality model, single source for scale factor, custom-canvas semantics, MCP routing, identity policy, automation build exclusion, compiler language (Proposed), X11 tier (Proposed), manifest authoring model (Proposed), property invalidation index and animation shadowing (AD-04a/d Proposed, both now supported by Prototype D2 on the sealed-index, component-local id and stale-value questions; storage layout AD-04b and evaluation model AD-04c remain Open with a measured MODIFY recommendation each, pending a `.ui` corpus), platform implementation strategy (AD-16).
 
 ---
 
@@ -1613,6 +1640,9 @@ The next implementation work validates these boundaries through Prototypes D, A1
 | Pixel parity Skia vs Dawn: Dawn half-ink defect resolved (WGSL quad vertex 5 side selector bug); edge antialiasing differences remain | AD-28 |
 | Windowed frame pacing not reproducible on this platform; windowed timings unverified | AD-18, AD-28 |
 | AD-03 clean-build cost ~90× a single-TU baseline in CPU time; incremental rebuild scope confirmed instead | AD-03, §14.3 |
+| Dense property ids only reusable within one property count; reusing a differently sized region silently invalidates every binding above it | AD-04a, §13.3 |
+| A dependency-insertion-to-rebuild ratio is a function of graph size (3.87 % at 200 bindings, 0.04 % at 20 000), so no threshold on it is meaningful without the size | AD-04a |
+| Animation correctness depends on an invalidate one layer above the shadow it protects; removing it restores the animation-start value | AD-04d, §13.5 |
 | Dev-only extension can link and still be inert (linker discards unreferenced static initialisers) — assert the Dev side is active, not just that both sides agree | AD-02, AD-04, §2.3 |
 | `UiPatch` binding replacement unverified; conformance comparison not yet between independent engines | AD-25, §17.2 |
 | Benchmark workload underspecified; no failure condition | §28.3, §28.4 |
