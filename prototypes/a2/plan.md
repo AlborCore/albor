@@ -62,3 +62,69 @@ The macOS slice is the only one that can run on the current host. The other two 
 | **A2-L** | `prototypes/a2/linux/` | `linux/plan.md` | `PENDING_CI_MATRIX_RUN (Requires Wayland Host)` |
 
 Both record the same R1 budgets (≤ 25.0 ms input-to-present, ≤ 8.33 ms processing, ≤ 1.0 ms UI thread block) plus the platform-specific questions: `WM_ENTERSIZEMOVE` and `WM_DPICHANGED` for Win32, `wl_frame` throttling and `xdg_positioner` for Wayland. Both leave the reference machine table empty on purpose: §28.4 forbids starting a run before the hardware is named.
+
+---
+
+## Revision 2 — the pacing source moves to CoreVideo (plan.md, AD-18b)
+
+**thresholds below are committed before the revision's run (§28.4)**
+
+### What changed, and why
+
+Prototype A2's pacing triage (`prototypes/a2_macos/PACING.md`) measured three display-link mechanisms on this machine
+with a complete condition table and five runs per cell:
+
+| mechanism | committed cells |
+| --- | --- |
+| `NSScreen.displayLinkWithTarget:selector:` (`CADisplayLink`) | 0.0 Hz in 20 of 20 runs — whole-process stalls with no recorded correlate |
+| `CAMetalDisplayLink` | 0.6 Hz in 20 of 20 matrix runs; 46–58 Hz when it is the first link in a fresh process with a composited window |
+| `CVDisplayLink` | 58.8–60.0 Hz in 60 of 60 runs under every condition |
+
+Revision 1 drove pacing from `CADisplayLink`. This revision drives it from `CVDisplayLink`, which is the only mechanism
+the triage found uniformly reliable. Because `CVDisplayLink` delivers its callback on **its own thread**, two things
+follow, and both are part of this revision rather than deferrals:
+
+1. **The frame body may not read AppKit.** An `NSWindow`/`NSView` property read is not safe from CoreVideo's thread, so
+   the window's bounds and backing scale are **mirrored into the platform state by the main queue** (the resize and
+   backing-change observers refresh them) and the pacing thread reads only the mirrored facts.
+2. **Presentation now happens off the UI thread** for this prototype's measured path, which is the mechanism AD-18b's
+   open question asks about. The isolation measurement itself remains a separate package; this revision only records
+   what the mechanism change does to A2's own thresholds.
+
+### Method
+
+Revision 1's workload is unchanged, so its figures remain comparable: 200 steady frames, a 60-step programmatic live
+resize (320×240 → 1280×720), then a 500 ms nested modal session, all inside the same process and run. Five independent
+runs of the same binary. Every run reports the steady interval p50/p99, the presented-frame count, the resize latency,
+the nested-loop tick count, and **whether any run reported a whole-process stall** (a steady-phase callback gap
+≥ 250 ms, five times the display interval).
+
+### Thresholds (committed before the run)
+
+| # | Threshold | Rationale |
+| --- | --- | --- |
+| T4.1 | steady interval p99 ≤ 16.7 ms, every run | Revision 1's committed budget, unchanged; the mechanism change must not degrade it |
+| T4.2 | steady-state refresh **58.8–60.0 Hz** in every run, i.e. median interval 16.67–17.01 ms | the brief's acceptance band; 60 Hz display, so anything below 58.8 Hz is a dropped tick and anything above 60 is a double-count |
+| T4.3 | **no whole-process stall in any run**: no steady-phase callback gap ≥ 250 ms | the finding Revision 2 exists to remove; recorded per run, because one stall in a whole run is the finding returning |
+| T4.4 | 60 resize steps present ≥ 95 % within the 25.0 ms input-to-present budget | Revision 1's committed resize ratio, unchanged |
+| T4.5 | nested modal session ticks ≥ the 60 Hz expectation for its duration | the re-entrancy result Revision 1 recorded, now measured with a source that needs no run loop registration |
+| T4.6 | the mirrored-facts path introduces no AppKit access from the pacing thread | a thread-safety gate, verified by inspection of the revision's diff rather than by timing |
+
+### Commands
+
+```sh
+cmake --preset release
+cmake --build --preset release --target albor-prototype-a2
+./.build-release/prototypes/a2/albor-prototype-a2          # one run
+```
+
+### Pass/fail policy
+
+Failures stay failures. A run that stalls in the first seconds only — before `finishLaunching` has connected the
+process to the window server — is recorded with its position in the run rather than discarded, because the triage
+showed that bring-up order is exactly what distinguishes a working link from a dead one.
+
+### Out of scope
+
+No `CAMetalDisplayLink` fallback, no `maximumDrawableCount` tuning, and no AD-18b isolation measurement. Those remain
+separate packages.
