@@ -23,6 +23,10 @@ namespace albor::prototype_d2
     // give every slab this many bytes so that region addresses survive further allocation (§13.3)
     constexpr std::size_t SLAB_CHUNK_BYTES = 64 * 1024;
 
+    // the first chunk and the cap of the geometric growth policy D3 measures (plan.md R3): a small first chunk
+    // keeps one-instance stores from paying a whole 64 KB, doubling until the cap restores the amortisation
+    constexpr std::size_t SLAB_FIRST_CHUNK_BYTES = 1024;
+
     // hold the value, its write source and the change counter of one type-erased slot (AD-04b Candidate B)
     struct ErasedSlot
     {
@@ -100,6 +104,15 @@ namespace albor::prototype_d2
     class TypedStore
     {
     public:
+        // choose how the slab grows (plan.md R3): the fixed 64 KB chunk is D2's recorded behaviour and the
+        // default, so every figure D2 published stays reproducible; the geometric policy starts small and
+        // doubles up to the fixed cap
+        enum class SlabGrowth : std::uint8_t
+        {
+            Fixed64K,
+            Geometric
+        };
+
         explicit TypedStore(RegionTable& regions) :
             m_regions(regions) {}
 
@@ -107,6 +120,9 @@ namespace albor::prototype_d2
         TypedStore& operator=(const TypedStore&) = delete;
         TypedStore(TypedStore&&) = delete;
         TypedStore& operator=(TypedStore&&) = delete;
+
+        // set the growth policy once, before the first region is placed (§28.2)
+        void set_slab_growth(SlabGrowth growth) { m_growth = growth; }
 
         InstanceId create(SchemaId schema);
         void destroy(InstanceId instance);
@@ -138,18 +154,23 @@ namespace albor::prototype_d2
         [[nodiscard]] std::size_t value_bytes() const;
 
         // report the bytes the slab chunks hold, so D3 can separate region bytes from the slack chunking leaves
-        [[nodiscard]] std::size_t slab_allocated_bytes() const { return m_chunks.size() * SLAB_CHUNK_BYTES; }
+        [[nodiscard]] std::size_t slab_allocated_bytes() const;
+
+        // report how many slab chunks were allocated, so one chunk per many instances is visible (§1 T1.4)
+        [[nodiscard]] std::size_t allocation_count() const { return m_chunks.size(); }
 
         // report the bytes one region costs the region table, which is per instance rather than per property
         [[nodiscard]] std::size_t region_table_bytes() const { return m_regions.region_table_bytes(); }
+
+        // report the storage address of one property's value, so the addressability and stability measurements
+        // can observe it rather than infer it (plan.md R3)
+        [[nodiscard]] void* storage_address_of(PropertyId id) const { return address_of(id); }
 
         // report the per-instance base-offset entries the typed store keeps alongside the addressability table
         [[nodiscard]] std::size_t region_base_bytes() const { return m_region_base.capacity() * sizeof(std::uint32_t); }
         [[nodiscard]] std::size_t address_bytes() const;
         [[nodiscard]] std::size_t payload_bytes() const;
 
-        // report how many slab chunks were allocated, so one chunk per many instances is visible (§1 T1.4)
-        [[nodiscard]] std::size_t allocation_count() const { return m_chunks.size(); }
         [[nodiscard]] std::size_t property_count() const { return m_regions.property_id_count(); }
 
     private:
@@ -162,6 +183,12 @@ namespace albor::prototype_d2
 
         // hold the slab as fixed size chunks so a region address never moves (§13.3)
         std::vector<std::unique_ptr<std::byte[]>> m_chunks;
+
+        // carry each chunk's size, so a variable growth policy can still account its bytes and split offsets
+        std::vector<std::size_t> m_chunk_sizes;
+
+        // the growth policy, which defaults to D2's recorded fixed 64 KB chunk (§28.4)
+        SlabGrowth m_growth = SlabGrowth::Fixed64K;
 
         // map a dense property id to the byte offset of its value inside the slab (§5 T5.6)
         std::vector<std::uint32_t> m_location;

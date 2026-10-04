@@ -1,5 +1,6 @@
 #include "prototypes/d2/src/storage.h"
 
+#include <algorithm>
 #include <cstring>
 #include <new>
 #include <utility>
@@ -194,11 +195,35 @@ namespace albor::prototype_d2
     }
 
     void TypedStore::reserve_chunk() {
-        // allocate one fixed size chunk so earlier region addresses stay valid (§13.3)
-        m_chunks.push_back(std::make_unique<std::byte[]>(SLAB_CHUNK_BYTES));
+        // the geometric policy doubles the previous chunk from 1 KB up to the 64 KB cap, and the fixed policy
+        // keeps D2's uniform 64 KB chunk; either way an earlier region address stays valid (§13.3)
+        const std::size_t previous = m_chunk_sizes.empty() ? 0 : m_chunk_sizes.back();
+        const std::size_t size = m_growth == SlabGrowth::Fixed64K ? SLAB_CHUNK_BYTES : (previous == 0 ? SLAB_FIRST_CHUNK_BYTES : std::min(previous * 2, SLAB_CHUNK_BYTES));
+
+        m_chunks.push_back(std::make_unique<std::byte[]>(size));
+        m_chunk_sizes.push_back(size);
 
         // start the new chunk at its first byte
         m_bump = 0;
+    }
+
+    // the offset the addressability table records is split into a chunk and a byte inside it; the fixed
+    // policy divides by the uniform chunk size, the geometric policy walks the chunk sizes (§28.2)
+    [[nodiscard]] static std::pair<std::size_t, std::size_t> split_offset(const std::vector<std::size_t>& sizes, const std::size_t offset, const TypedStore::SlabGrowth growth) {
+        if (growth == TypedStore::SlabGrowth::Fixed64K) {
+            return {offset / SLAB_CHUNK_BYTES, offset % SLAB_CHUNK_BYTES};
+        }
+
+        std::size_t start = 0;
+        for (std::size_t index = 0; index < sizes.size(); index++) {
+            if (offset < start + sizes.at(index)) {
+                return {index, offset - start};
+            }
+            start += sizes.at(index);
+        }
+
+        // an offset past every chunk has no address; the caller only reaches this with an empty slab
+        return {0, 0};
     }
 
     InstanceId TypedStore::create(SchemaId schema) {
@@ -219,13 +244,18 @@ namespace albor::prototype_d2
         m_region_base.resize(m_regions.region_count(), 0);
 
         // allocate a chunk when the region does not fit in what the last chunk has left (§13.3)
-        if (m_chunks.empty() || (m_bump + declared.region_bytes) > SLAB_CHUNK_BYTES) {
+        const std::size_t last_chunk = m_chunks.empty() ? 0 : m_chunk_sizes.back();
+        if (m_chunks.empty() || (m_bump + declared.region_bytes) > last_chunk) {
             reserve_chunk();
         }
 
         // remember where this region starts so it can be destroyed later (§5)
         const std::size_t chunk_index = m_chunks.size() - 1;
-        m_region_base.at(instance) = static_cast<std::uint32_t>(chunk_index * SLAB_CHUNK_BYTES + m_bump);
+        std::size_t chunk_start = 0;
+        for (std::size_t index = 0; index < chunk_index; index++) {
+            chunk_start += m_chunk_sizes.at(index);
+        }
+        m_region_base.at(instance) = static_cast<std::uint32_t>(chunk_start + m_bump);
 
         // record the base address of every property of this region (§5 T5.6)
         for (std::size_t local = 0; local < declared.property_count(); local++) {
@@ -281,7 +311,17 @@ namespace albor::prototype_d2
         const std::uint32_t offset = m_location.at(id);
 
         // split the offset into the chunk that holds it and the byte inside that chunk (§13.3)
-        return m_chunks.at(offset / SLAB_CHUNK_BYTES).get() + (offset % SLAB_CHUNK_BYTES);
+        const auto [chunk, inside] = split_offset(m_chunk_sizes, offset, m_growth);
+        return m_chunks.at(chunk).get() + inside;
+    }
+
+    std::size_t TypedStore::slab_allocated_bytes() const {
+        // sum the sizes the policy produced, so a variable policy is accounted exactly (§28.4)
+        std::size_t total = 0;
+        for (const std::size_t size : m_chunk_sizes) {
+            total += size;
+        }
+        return total;
     }
 
     void TypedStore::place(PropertyId id, const Value& value, WriteSource source) {
@@ -306,9 +346,6 @@ namespace albor::prototype_d2
     }
 
     bool TypedStore::write(PropertyId id, Value value, WriteSource source) {
-        // resolve the declared type of the property (§13.3)
-        const ValueType type = type_of(id);
-
         // compare against the value that is already in the slot, which is what replaces the generation counter (§13.3)
         const Value current = read(id);
 

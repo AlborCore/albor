@@ -521,6 +521,10 @@ namespace albor::prototype_d2
         for (const auto& [property, value] : m_inbox) {
             // an explicit write wins over an active animation, so the animation is dropped (§13.4, §13.5)
             m_shadowed.erase(property);
+            const auto record = std::find(m_animated_records.begin(), m_animated_records.end(), property);
+            if (record != m_animated_records.end()) {
+                m_animated_records.erase(record);
+            }
 
             // treat a queued worker write as imperative and break the binding (§13.2, §13.4)
             if (m_store.write(property, value, WriteSource::Imperative)) {
@@ -551,7 +555,13 @@ namespace albor::prototype_d2
         }
 
         // dedup the dirty set once for the whole settle, whichever model runs (§13.3)
-        std::vector<BindingId> candidates;
+        //
+        // the labelled variant reuses member buffers across settles, so a settle allocates nothing per pass
+        // (plan.md R3); the default keeps D2's per-settle locals, which is what D2 recorded (§28.4)
+        std::vector<BindingId> local_candidates;
+        std::vector<BindingId> local_planned;
+        std::vector<BindingId>& candidates = m_reuse_settle_buffers ? m_settle_candidates : local_candidates;
+        std::vector<BindingId>& planned = m_reuse_settle_buffers ? m_settle_planned : local_planned;
         collect_dirty(candidates);
 
         // count the candidates the index produced, including the duplicates (§28.2)
@@ -560,10 +570,6 @@ namespace albor::prototype_d2
         // run the model the graph was configured with (§13.3)
         switch (m_model) {
         case EvalModel::EagerPush: {
-            // plan from the candidates this pass produced, not from the settle-level dirty set: the dirty set still
-            // holds the bindings earlier passes planned, and re-planning them would never reach a fixpoint (§13.3)
-            std::vector<BindingId> planned;
-
             // the full evaluation seeds from the dirty set, because no candidate reaches a binding nothing reads (§13.4)
             bool seeding_from_dirty_set = m_full_evaluation;
 
@@ -691,6 +697,10 @@ namespace albor::prototype_d2
     void Graph<Store>::assign(PropertyId property, Value value) {
         // an explicit write wins over an active animation, so the animation is dropped (§13.4, §13.5)
         m_shadowed.erase(property);
+        const auto record = std::find(m_animated_records.begin(), m_animated_records.end(), property);
+        if (record != m_animated_records.end()) {
+            m_animated_records.erase(record);
+        }
 
         // take ownership of the property and break its binding (§13.4)
         if (m_store.write(property, std::move(value), WriteSource::Imperative)) {
@@ -707,8 +717,18 @@ namespace albor::prototype_d2
     template <class Store>
     bool Graph<Store>::set_animation(PropertyId property, Value value) {
         // remember the binding value once, so the animation can be undone (§13.5)
+        //
+        // the active-set mode records only that an animation owns the target (plan.md R7); the none mode
+        // records nothing, which is the naive elimination the audit disqualifies or keeps (§28.4)
         if (m_store.source_of(property) != WriteSource::Animation) {
-            m_shadowed.insert_or_assign(property, m_store.read(property));
+            if (m_animation_shadowing == AnimationShadowing::Full) {
+                m_shadowed.insert_or_assign(property, m_store.read(property));
+            }
+            else if (m_animation_shadowing == AnimationShadowing::ActiveSet) {
+                if (std::find(m_animated_records.begin(), m_animated_records.end(), property) == m_animated_records.end()) {
+                    m_animated_records.push_back(property);
+                }
+            }
         }
 
         // publish the animated value without breaking the binding (§13.5)
@@ -725,6 +745,34 @@ namespace albor::prototype_d2
 
     template <class Store>
     void Graph<Store>::end_animation(PropertyId property, AnimationEndMode mode) {
+        // the naive elimination has no record to consult, so it hands the target back and lets the binding
+        // re-evaluate from its current dependencies, whatever mode was requested (plan.md R7)
+        if (m_animation_shadowing == AnimationShadowing::None) {
+            m_store.rebind(property);
+            invalidate_and_replan(property);
+            return;
+        }
+
+        // the active-set mode's record is presence alone, so there is no value to put back (plan.md R7)
+        if (m_animation_shadowing == AnimationShadowing::ActiveSet) {
+            const auto record = std::find(m_animated_records.begin(), m_animated_records.end(), property);
+
+            // an animation that never ran owns nothing to undo (§13.5)
+            if (record == m_animated_records.end()) {
+                return;
+            }
+
+            // forget the record, because after this point the binding owns the value again (§13.5)
+            m_animated_records.erase(record);
+
+            // hand the property back to its binding owner, so a binding write is no longer dropped (§13.5)
+            m_store.rebind(property);
+
+            // schedule the binding so it recomputes from its current dependencies (§13.5)
+            invalidate_and_replan(property);
+            return;
+        }
+
         // do nothing when no animation owned the property (§13.5)
         const auto shadow = m_shadowed.find(property);
 
@@ -760,6 +808,10 @@ namespace albor::prototype_d2
     void Graph<Store>::rebind(PropertyId property) {
         // an explicit rebind also ends the animation (§13.5)
         m_shadowed.erase(property);
+        const auto record = std::find(m_animated_records.begin(), m_animated_records.end(), property);
+        if (record != m_animated_records.end()) {
+            m_animated_records.erase(record);
+        }
 
         // hand the property back to its declarative binding (§13.4)
         m_store.rebind(property);
@@ -799,6 +851,9 @@ namespace albor::prototype_d2
     std::size_t Graph<Store>::animation_side_bytes() const {
         // charge the side table entry of every animated property (§28.2)
         std::size_t total = m_shadowed.size() * (sizeof(std::pair<const PropertyId, Value>) + sizeof(Value*) * 2);
+
+        // charge the presence record the active-set mode keeps (plan.md R7)
+        total += m_animated_records.capacity() * sizeof(PropertyId);
 
         // add the payload bytes of every shadowed value (§13.5)
         for (const auto& [property, value] : m_shadowed) {

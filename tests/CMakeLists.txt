@@ -6,6 +6,7 @@ add_executable(albor-tests
     d/strategies.test.cpp
     d2/binding_engine.test.cpp
     d2/storage.test.cpp
+    d3/binding_engine.test.cpp
 )
 
 find_package(GTest CONFIG REQUIRED)

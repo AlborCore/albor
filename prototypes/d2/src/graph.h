@@ -34,6 +34,14 @@ namespace albor::prototype_d2
         RestoreNoInvalidate // diagnostic: put the shadow back and invalidate nothing, to isolate what protects D (§13.5)
     };
 
+    // choose how the animation layer records the binding value an animation shadows (plan.md R7)
+    enum class AnimationShadowing : std::uint8_t
+    {
+        Full, // D2's recorded path: an entry per animated property carrying the binding value (§13.5)
+        ActiveSet, // the audit's proposed minimal mechanism: a record that an animation owns the target, no value (§28.4)
+        None // the naive elimination: no record at all, invalidation only (§28.4)
+    };
+
     // report what one settle did, so a topology can be characterised rather than only timed (§28.2)
     struct SettleStats
     {
@@ -193,6 +201,19 @@ namespace albor::prototype_d2
         // count how many times a binding ran during the last settle, to measure redundancy (§28.2)
         [[nodiscard]] std::vector<std::size_t> last_run_counts() const { return m_run_counts; }
 
+        // reuse the settle's two plan buffers across settles, which is D2's named mitigation for the fixed
+        // per-settle allocation cost (plan.md R3); the default keeps D2's recorded behaviour (§28.4)
+        void set_reuse_settle_buffers(bool reuse) { m_reuse_settle_buffers = reuse; }
+
+        // run the animation layer with a chosen shadow record (plan.md R7): Full is D2's recorded behaviour;
+        // ActiveSet keeps only the record that an animation owns the target; None keeps nothing and relies
+        // on invalidation alone (§28.4)
+        void set_animation_shadowing(AnimationShadowing mode) { m_animation_shadowing = mode; }
+
+        // report how many entries the shadow record holds, so a mode that claims to allocate none is
+        // observable rather than asserted (§28.2)
+        [[nodiscard]] std::size_t shadow_entry_count() const { return m_shadowed.size() + m_animated_records.size(); }
+
     private:
         struct BindingRecord
         {
@@ -266,6 +287,18 @@ namespace albor::prototype_d2
         // remember the per-pass dedup stamps, so a binding planned in one pass is not dropped in the next (§28.2)
         std::vector<std::uint64_t> m_plan_stamp;
         std::uint64_t m_pass_epoch = 1;
+
+        // the settle's plan buffers, reused across settles only when the option is set (plan.md R3)
+        bool m_reuse_settle_buffers = false;
+        std::vector<BindingId> m_settle_candidates;
+        std::vector<BindingId> m_settle_planned;
+
+        // the animation shadow record, which defaults to D2's recorded full shadow (§28.4)
+        AnimationShadowing m_animation_shadowing = AnimationShadowing::Full;
+
+        // the active-set mode's record that an animation owns a target, kept as a sorted small vector so the
+        // audit can charge its real bytes (plan.md R7)
+        std::vector<PropertyId> m_animated_records;
 
         // hold the worker writes until the UI thread applies them (§13.2)
         std::vector<std::pair<PropertyId, Value>> m_inbox;
