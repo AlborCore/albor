@@ -1223,7 +1223,7 @@ roles, popups and modality remain unimplemented.
    inside `skcpu::Draw::drawDevicePoints` → `StrokeTessellateOp`. The same geometry as pre-tessellated filled quads
    costs 0.18 ms, roughly 55,000× less. A §11.2 line batch must be filled quads or the O(1) promise is meaningless.
 2. *Ganesh cannot present this workload at 60 Hz.* Present interval p50 was 149.7 ms with the GPU saturated, while the
-   scheduling itself was sound: recording p50 0.18 ms, 0.219 ns per segment, O(1) pan/zoom ratio 0.976×, zero frames
+   scheduling itself was sound: recording p50 0.18 ms and p99 0.394 ms, the p99 being 0.219 ns per segment against the 1.8 × 10⁶ segments in the final retained set, O(1) pan/zoom ratio 0.976×, zero frames
    dropped.
 3. *The frame window is layer-bound, not thread-bound.* A1.1's render-thread ownership was refuted for Ganesh on macOS
    because `nextDrawable` blocks about one display cycle; A1.2a restored a 16.68 ms p50 cadence by presenting on the UI
