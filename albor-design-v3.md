@@ -37,7 +37,7 @@ Body text uses "must" and "should" accordingly: a "must" backed only by a Propos
 | Native components | The manifest is the single source of truth; C++ glue is generated from it. The compiler never parses C++ (§15). |
 | Phasing and prototypes | The semantic tree and an automation core move to Phase 2. Resources, animation and i18n core move earlier. A binding-engine prototype (D) and a dev-runtime prototype (E) are added. Prototype A is split. Prototype B gains a baseline (§30, §31). |
 | Decision register | Expanded from 16 to 32 entries (28 original numbers with AD-04 and AD-18 split into sub-decisions), including ABI and distribution, render threading, MCP routing, X11 tier, compiler language, and unit naming (§29). |
-| Property system | Prototypes B, D2 and E give AD-04a, AD-04b, AD-04c, AD-04d and AD-24 measured answers: typed per-component storage replaces the type-erased slot as the recommended default, eager push is confirmed rather than replaced, Kahn cycle detection becomes a compile-time rejection, and `ReplaceBinding` is implemented as a real binding replacement (§13, §30). |
+| Property system | Prototypes B, D2 and E give AD-04a, AD-04b, AD-04c, AD-04d and AD-24 measured answers: typed per-component storage is the *recommended* default over the type-erased slot, eager push is confirmed rather than replaced, Kahn cycle detection is *proposed* to become a compile-time rejection, and `ReplaceBinding` is implemented as a real binding replacement. All are recommendations pending Prototype D3; none is a settled decision, and AD-04b/AD-04c stay Open (§13, §30). |
 
 Appendix A maps each review finding to the section that addresses it.
 
@@ -399,7 +399,7 @@ Stage 2 — Render execution (render executor)
 ```
 
 - `CustomRenderNode::render()` runs in **Stage 1 on the UI thread** and records draw commands that reference retained resources. It must be cheap; expensive preparation (tessellation, decimation, spatial indexing, simplification) happens on workers and produces immutable resources (§11.3).
-- The **render executor** is the thread or threads that run Stage 2 (AD-18, Proposed). The default is a dedicated render thread that owns the GPU context. A single-thread mode, in which Stage 2 runs on the UI thread, must also be supported for backends or platforms where that is required, and for debugging.
+- The **render executor** is the thread or threads that run Stage 2 (AD-18a, *Decided*). The default is a dedicated render thread that owns the GPU context. A single-thread mode, in which Stage 2 runs on the UI thread, must also be supported for backends or platforms where that is required, and for debugging.
 - Stage 2 never calls application code. This is what makes a dedicated render thread safe.
 
 ### 10.3 Frame scheduling and pacing
@@ -414,7 +414,9 @@ The scheduler:
 - respects per-monitor refresh rates;
 - handles occluded or throttled windows without stalling others.
 
-**Multi-window rule:** presentation back-pressure on one window (a vsync wait or driver throttle) must not block input handling, layout or scene build for any other window. Prototype A validates this explicitly (workload W3, §28).
+**Multi-window rule:** presentation back-pressure on one window (a vsync wait or driver throttle) must not block input handling, layout or scene build for any other window.
+
+**Workload W3 does not validate this rule.** As written, W3 throttles a window by holding it on the UI thread, so a design that presents on the UI thread stalls the other window *by construction* — Prototype A1-Dawn measured exactly that (window 2's interval during window 1's hold was 100.86 ms p50, which is the hold itself) and the design doc records the result as true for any UI-thread-presenting design. That is evidence about the question, not an answer to it: W3 cannot fail, and no prototype has yet shown a design where presentation is off the UI thread. **AD-18b is Open for this reason**, and the experiment that would settle it is the W3 redefinition in the off-UI-thread presentation package, which must throttle by a real condition — heavy GPU load or a deliberately delayed drawable release — rather than by keeping work on the UI thread.
 
 ### 10.4 Retained UI tree, display structures and cached layers
 
@@ -1083,11 +1085,11 @@ Acceptance thresholds are **set and recorded before a prototype runs**, based on
 
 **AD-01 — Production execution model.** *Decided.* `.ui` compiles to native C++. No compiler frontend, interpreter, registry or reflection in Release.
 
-**AD-02 — Dev runtime extension.** *Proposed.* A separate `albor-devrt` (registry, IR loader, restricted expression VM, reload adapter) is linked only in Dev. The compiler stays out of process. The layout-invariance rule (§2.3) keeps the runtime binary identical across configurations. Validated by Prototype E, which **supports** it on the layout-invariance point: class layout and virtual interfaces are byte-identical across configurations, the Dev-only hook lives in a slot declared in an un-`#ifdef`ed header and is null in Release, and the Release binary excludes devrt at link time. It stays *Proposed* because the slice covered neither binding replacement nor a genuinely independent second engine.
+**AD-02 — Dev runtime extension.** *Proposed.* A separate `albor-devrt` (registry, IR loader, restricted expression VM, reload adapter) is linked only in Dev. The compiler stays out of process. The layout-invariance rule (§2.3) keeps the runtime binary identical across configurations. Validated by Prototype E, which **supports** it on the layout-invariance point: class layout and virtual interfaces are byte-identical across configurations, the Dev-only hook lives in a slot declared in an un-`#ifdef`ed header and is null in Release, and the Release binary excludes devrt at link time. It stays *Proposed* for two reasons, and the first has changed since Prototype E ran. Binding replacement is now **no longer missing from the property system**: Prototype D2 implemented `ReplaceBinding` as a real replacement of a binding function and dependency set, and confirmed that after a replacement the old binding's source drives **0** further evaluations. **The remaining gap is narrower and belongs to devrt rather than to the engine** — E's reload adapter still applies `ReplaceBinding` as a `SetProperty`, so the adapter that actually performs a live reload has not been shown to use the real operation; that is Prototype E2's first task. Second, the slice still covered no genuinely independent second engine, so it cannot yet show that two engines agree, only that one engine preserves values across a patch.
 
 **AD-03 — Generated public headers.** *Decided.* Concrete, non-virtual facade classes; interface-only; implementation private; write-if-changed generation. Validated in part by Prototype B: the write-if-changed behaviour, the facade-with-private-implementation shape and the per-component rebuild scope all hold (body edit rebuilds exactly one translation unit). **The clean-build speed claim that accompanied this decision did not survive measurement** and is recorded as contradicted; see §30.
 
-**AD-04a — Invalidation index.** *Proposed.* Compact CSR (Compressed Sparse Row) index over declared dependencies with eager push evaluation and no per-binding allocation. Supported by Prototype D at 56 B per property and 39.3 B per binding. **The sealed-index gap is now closed by Prototype D2**, which built both designs and measured them: a **segmented index** with one growable segment per property makes a dependency insertion local (0.20 µs p99) and a removal local (0.14 µs p99), where the sealed CSR rebuilds every bucket (31.10 µs p99) because it cannot answer a local edit any other way. The price is memory and slack: **21 196 B against 2 408 B for the same graph, about 8.8×, plus 1 824 B of growth slack the index never returns**, and removal shifts a segment tail rather than writing a tombstone, so a query never filters. Steady-state evaluation does not degrade after a run of 1 000 mutations (0.044 ms p99). The insertion-to-rebuild ratio is **not** uniformly small: it is 3.87 % at 200 bindings, 0.53 % at 2 000 and 0.04 % at 20 000, because a rebuild is O(V+E) while an insertion is O(1) — so the win is a function of graph size and **any threshold on it must state the graph size it was measured at**. `PropertyId` assignment is **tested and supported**: Prototype B assigns ids as component-local `uint16_t` offsets over a runtime base offset, and Prototype D2 confirmed the base-offset indirection costs **2.3 % at the read path** (44 ns against 43 ns), so component locality is close to free. `PropertyId` assignment is now **tested and supported**: Prototype B assigns ids as component-local `uint16_t` offsets over a runtime base offset and confirmed that editing a property in one component rebuilds only that component, leaving every other component's object untouched. The global-monomorphic scheme it replaces is what would cascade.
+**AD-04a — Invalidation index.** *Proposed, with the index structure itself still Open.* The proposal is the **eager-push evaluation over declared dependencies with no per-binding allocation**, which Prototype D supported at 56 B per property and 39.3 B per binding. **Which index structure realises it is a separate, unresolved choice**, and this entry deliberately does not settle it. Three positions are on the table: **sealed CSR everywhere**, which is cheapest to query and cheapest in memory; **segmented everywhere**, which Prototype D2 measured as the only design that answers a dependency insertion locally (0.20 µs p99 against 31.10 µs for a full CSR rebuild) at **21 196 B against 2 408 B for the same graph, about 8.8×, plus 1 824 B of growth slack the index never returns**; or **segmented only where a subgraph mutates**, sealed elsewhere. D2's evidence does not choose between them, because its 8.8× figure comes from a graph of a couple of hundred bindings and the ratio is a function of graph size (an insertion is 3.87 % of a rebuild at 200 bindings and 0.04 % at 20 000), while at Prototype D's scale of 100 000 properties and 11 032 bindings an 8.8× index could exceed the entire saving that typed storage offers. **Prototype D3 F2.2 measures the combined memory of all three at D's scale** and is the prototype that would settle this entry. What is settled either way: steady-state evaluation does not degrade after 1 000 mutations (0.044 ms p99), and `PropertyId` assignment is **tested and supported** — Prototype B assigns ids as component-local `uint16_t` offsets over a runtime base offset and confirmed that editing a property in one component rebuilds only that component, while Prototype D2 measured the base-offset indirection at **2.3 % of the read path** (44 ns against 43 ns).
 
 **AD-04b — Storage layout.** *Open, with a recommendation.* Prototype D measured a single uniform value slot and left this open. Prototype D2 measured typed per-component storage against that slot over the realistic value types (§30 Prototype D2, `prototypes/d2/RESULTS.md`): **8.00 B per property for an all-scalar component and 14.00 B for the realistic mix, against 64.00 B for the type-erased slot on the same mix.** Typed storage wins on every mix measured, and it needs no per-property generation counter, because a write compares the value it replaces instead. Three measured costs travel with the recommendation and none is optional: **7.00 B per property of addressability** (4 B location, 1 B type, 1 B source, 1 B binding attachment) for a dense id space, which nearly doubles the cost of an 8 B scalar and shrinks the win to about 2.3× for scalars; **region reuse only within one property count**, because a dense id space hands out contiguous ranges and reusing a differently sized region would shift every id above it; and **chunked allocation**, or a reallocating slab invalidates every region pointer. The erased slot measures 8 B *larger* than D's recorded 56.00 B because D2's value set adds `TranslatedString` and a binding-attachment byte, so the comparison is not like-for-like with D. **Recommendation: MODIFY — typed per-component storage as the shipping default for static graphs, keeping the erased representation as the fallback.** Not *Decided*: no `.ui` corpus confirms the property mix, and typed storage was never combined with the hybrid evaluation model, so the recommendation assumes the two are independent.
 
@@ -1183,6 +1185,20 @@ was declared only after the run.
 | **B — generated-code build performance** | run | 500 components per side, 5 clean builds per configuration, rebuild-scope and write-if-changed checks |
 | **C — text, IME and accessibility** | not started | none |
 | **E — dev runtime slice** | run | layout dump in Release and Dev, hook install check, 16-node conformance over 5 runs in both configurations |
+
+**Still open in Phase 0.** The table above records what has been *run*, not what is *finished*, and the difference is
+material: six packages are outstanding and three of them gate decisions. Audited in `docs/STATUS_AUDIT.md`.
+
+| Package | State | What it gates |
+| --- | --- | --- |
+| A1-Parity completion | partial | parity verdict. Centroid offset, per-pixel delta histogram, the antialiasing audit and metric calibration are absent; the zoom-8 attribution is unresolved |
+| Dawn-vs-Skia re-measure | not started | AD-28. **No GPU-timestamp instrumentation exists in either renderer**, so every Dawn-vs-Skia cost figure rests on CPU-side recording time, and the W2 comparison is already recorded as "partly an artefact of unequal work" |
+| Pacing triage | not started | all windowed timings, and AD-18b. Until it closes, every windowed figure in A1, A1-Dawn and A2 stays **unverified** — that marking is current, not stale |
+| Chunked append-only batches | not started | §11.3; append is O(n) at 94–120 ms against a 25 ms budget |
+| Graphite-on-Dawn spike | not started | the AD-28 gate, which is a human decision |
+| Prototype C (text, IME, accessibility) | not started | §21.2 text and i18n selection; the only Phase 0 prototype never begun |
+| A2 on Windows and Wayland | blocked on hardware | AD-16's evaluation; both tables remain `PENDING_CI_MATRIX_RUN` |
+| AD-18b off-UI-thread presentation | not started, blocked on pacing | AD-18b; W3 as written cannot fail |
 
 **Conclusions reached**
 
@@ -1335,7 +1351,7 @@ A1 may use a convenience windowing library; it must not decide AD-16.
 After AD-06. Dawn (WebGPU C++) through the A2 platform window, with the same retained resources, seeds and workloads
 W1, W2 and W3 as Prototype A1, so the two renderers are comparable line for line. macOS only; no Skia dependency at all.
 Questions: does instancing remove Skia's draw-call cap, and does a renderer that is not CPU-bound change the
-multi-window result? Status: run and recorded; feeds AD-28 (*Proposed*) and AD-18's open presentation question.
+multi-window result? Status: run and recorded; feeds AD-28 (*Proposed*) and AD-18b's open presentation question.
 
 ### Prototype A1-Parity — Renderer output parity (Skia against Dawn)
 
@@ -1383,9 +1399,13 @@ These prototypes address the highest-risk assumptions before full-scale implemen
 A1-Dawn, A1-Parity, B, E and C (parallelizable); then A2. D, D2, B and E are complete; A1 and A1-Dawn are complete on
 macOS; A1-Parity has run and pixel parity is **not** established; A2 is complete on macOS with Windows and Wayland
 `PENDING_CI_MATRIX_RUN`. **Only C (text, IME and accessibility) has not started.** D2 leaves AD-04b and AD-04c *Open*
-with a measured recommendation each, so Phase 2's property storage and Phase 3's binding system are ready to begin on a
-*Modified* direction rather than a settled one, and Phase 3 additionally inherits AD-04d's open question of whether the
-animation shadow table is needed at all.
+with a measured recommendation each, so Phase 2's property storage and Phase 3's binding system are **not** unblocked: both AD-04b and AD-04c carry a measured *Modified* recommendation rather
+than a settled decision, so the recommendation is conditional on Prototype D3 reporting the combined memory of storage
+and index at Prototype D's scale (D3 F2.2), a factorial measurement that keeps the index choice and the evaluation
+choice apart (D3 F2.4), and a proxy property mix standing in for the `.ui` corpus that does not exist until Phase 5
+(D3 F2.11). Phase 3 additionally inherits AD-04d's open question of whether the animation shadow table is needed at all,
+which D3 F2.7 tests. **Until D3 reports and the human decides, Phase 2 should build against a swappable storage
+interface rather than committing to either representation.**
 
 **Phase 1:** Application, EventLoop, tasks/timers, Window and `WindowHandle`, platform abstraction (including the **headless backend**), renderer, software renderer, frame scheduler and two-stage pipeline.
 
@@ -1526,26 +1546,32 @@ The `Column` has no explicit `id` and therefore only an implicit key (§18.1). `
 15. Text implementation and library.
 16. Layout algorithm.
 17. Animation API details.
-18. Whether the AD-03 clean-build penalty is acceptable in practice. Prototype B measured the cost but not the trade: that
-    depends on edit frequency against clean-build frequency in real use, which no prototype has measured. Compiler peak
-    memory and binary size, both named in Prototype B's `plan.md`, were not measured at all.
-19. Binding replacement through `UiPatch`: **now measured** (Prototype D2 implements a real replacement and confirms the
-    old binding stops participating), but §13.4 does not say whether a reload may take back a property the
-    application overrode. Referred to AD-24.
-20. A genuinely independent second engine for AD-25. Prototype E's conformance comparison ran both sides through one shared
-    implementation, so it establishes that serialise, reload and patch preserve values — not agreement between two engines.
-21. Where the eager-versus-pull crossover lies for chain depth. Prototype D2 confirmed the pass-count difference and also
-    measured eager push as the faster model at every depth up to 16, so no recommendation threshold can be set without a
-    workload deep enough for the pull models' fixed per-settle cost to be repaid.
-22. Whether the animation shadow table is needed at all. Prototype D2 reproduced every observable animation behaviour by
-    re-evaluating on end without restoring the shadow, so the table may be removable — which would change AD-04d's 64 B
-    budget to zero, and that decision belongs with the animation core in Phase 3.
 18. Command history API.
 19. Automation transport and MCP schema.
 20. Live-reload wire protocol and state migration.
 21. Resource build pipeline.
 22. Platform accessibility details.
 23. Initial widget set.
+24. Whether the AD-03 clean-build penalty is acceptable in practice. Prototype B measured the cost but not the trade: that
+    depends on edit frequency against clean-build frequency in real use, which no prototype has measured. Compiler peak
+    memory and binary size, both named in Prototype B's `plan.md`, were not measured at all, and Prototype B2 must measure
+    them against a named real baseline rather than a synthetic one.
+25. Binding replacement through `UiPatch`: **replacement measured** (Prototype D2 implements a real replacement and confirms
+    the old binding stops participating), but §13.4 does not say whether a reload may take back a property the application
+    overrode, nor what removing a binding should leave behind. Both are referred to AD-24 and both will surprise
+    developers during live reload as currently observed.
+26. A genuinely independent second engine for AD-25. Prototype E's conformance comparison ran both sides through one shared
+    implementation, so it establishes that serialise, reload and patch preserve values — not agreement between two engines.
+    Prototype E2 is the prototype that would settle it.
+27. Where the eager-versus-pull crossover lies for chain depth. Prototype D2 confirmed the pass-count difference and also
+    measured eager push as the faster model at every depth up to 16, so no recommendation threshold can be set without a
+    workload deep enough for the pull models' fixed per-settle cost to be repaid.
+28. Whether the animation shadow table is needed at all. Prototype D2 reproduced every observable animation behaviour by
+    re-evaluating on end without restoring the shadow, so the table may be removable — which would change AD-04d's 64 B
+    budget to zero. Prototype D3 F2.7 tests the matrix that decides it, and the decision belongs with the animation core in
+    Phase 3.
+29. Which index structure realises AD-04a, and whether the segmented index's memory cost survives at Prototype D's scale
+    (100 000 properties, 11 032 bindings) rather than the few hundred bindings D2 measured it on. Prototype D3 F2.2.
 
 Resolved in v3 (no longer open): window role/modality model, single source for scale factor, custom-canvas semantics, MCP routing, identity policy, automation build exclusion, compiler language (Proposed), X11 tier (Proposed), manifest authoring model (Proposed), property invalidation index and animation shadowing (AD-04a/d Proposed, both now supported by Prototype D2 on the sealed-index, component-local id and stale-value questions; storage layout AD-04b and evaluation model AD-04c remain Open with a measured MODIFY recommendation each, pending a `.ui` corpus), platform implementation strategy (AD-16).
 
@@ -1621,7 +1647,7 @@ Albor's architecture rests on explicit boundaries:
 - generated implementation is not the public C++ interface;
 - the manifest, not C++ source, defines native component interfaces.
 
-The next implementation work validates these boundaries through Prototypes D, A1, B, E and C, then A2 after the platform decision, before expanding the framework surface.
+Of those boundaries, the property and build-generation ones have been exercised: Prototype D and D2 for the property and binding system, Prototype B for generated code, Prototype E for the dev runtime extension, and Prototypes A1, A1-Dawn and A1-Parity for rendering. **The validation work that remains is therefore not the list this paragraph used to carry.** Open: **Prototype C** for text, IME and accessibility, which is the only Phase 0 prototype never started; **Prototype D3** to settle the two property decisions that D2 could only recommend; **Prototype B2** for a build baseline that reflects a real workflow rather than a synthetic one; **Prototype E2** for an independent second engine under AD-25; and the **A1-Parity, Dawn-re-measure, pacing, chunked-batch and Graphite-on-Dawn** packages, which close or gate the renderer decision. **A2 is complete on macOS only**; Windows and Wayland remain `PENDING_CI_MATRIX_RUN`. Phase 1 begins only after a human gate, and the renderer half of AD-28 stays open until the Graphite-on-Dawn spike reports.
 
 ---
 
@@ -1636,14 +1662,14 @@ The next implementation work validates these boundaries through Prototypes D, A1
 | Compiled vs. dev semantic divergence | §2.4, AD-25, §27 |
 | Level 2 vs. Level 3 incoherent ("GPU resources") | §11.1, §11.3 |
 | No retained geometry; per-segment cost | §11.2, §11.3 |
-| Render threading and worker-data ownership undefined | §10.2, §10.5, AD-18 |
+| Render threading and worker-data ownership undefined | §10.2, §10.5, AD-18a |
 | Multi-window presentation stalls (second review) | §10.3, workload W3 |
 | Primary renderer HAL undecided; Dawn is a candidate, Skia retained | §11, AD-05, AD-06, AD-28 |
 | Dawn has no text or glyph pipeline; no first-party software rasterizer | §21.2, AD-26, AD-28 |
 | Replacing Skia means rebuilding the 2D feature surface: joins, caps, dashes, clips, gradients, layers, effects | §11.1, §11.2, AD-06, AD-28 |
 | Skia Graphite on a Dawn backend as a middle option, untested | AD-28 |
 | Pixel parity Skia vs Dawn: Dawn half-ink defect resolved (WGSL quad vertex 5 side selector bug); edge antialiasing differences remain | AD-28 |
-| Windowed frame pacing not reproducible on this platform; windowed timings unverified | AD-18, AD-28 |
+| Windowed frame pacing not reproducible on this platform; windowed timings unverified | AD-18b, AD-28 |
 | AD-03 clean-build cost ~90× a single-TU baseline in CPU time; incremental rebuild scope confirmed instead | AD-03, §14.3 |
 | Dense property ids only reusable within one property count; reusing a differently sized region silently invalidates every binding above it | AD-04a, §13.3 |
 | A dependency-insertion-to-rebuild ratio is a function of graph size (3.87 % at 200 bindings, 0.04 % at 20 000), so no threshold on it is meaningful without the size | AD-04a |
