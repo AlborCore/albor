@@ -478,11 +478,12 @@ int main(int argc, char** argv) {
 
     // the isolated segment: one clean horizontal line, which separates the quad corner computation from the aggregate
     // behaviour of a batch of twenty thousand overlapping strokes
-    std::printf("\n== isolated segment, one horizontal line at y=400\n");
-    {
+    std::printf("\n== isolated segment, one horizontal line at y=400, at two widths\n");
+    for (const float width : {1.0F, 2.0F}) {
+        std::printf(" -- stroke width %.1f px\n", static_cast<double>(width));
         albor::a1_dawn::ResourceSet single;
         single.extent = 1000.0F;
-        single.stroke_width = 1.0F;
+        single.stroke_width = width;
         single.lines.push_back({400.0F, 400.0F, 600.0F, 400.0F});
 
         albor::a1_dawn::ViewTransform view{};

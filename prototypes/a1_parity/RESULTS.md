@@ -61,7 +61,27 @@ amplifies. **Which engine is closer to the intended one-pixel cosmetic line is n
 **T7 remains invalid.** At 0.07× it is neither cosmetic nor geometric, and lit-pixels-over-drawn-length is not a width
 measurement on an overlapping batch. It needs a single isolated segment and a direct run-length measurement.
 
-## The decisive result: Dawn does not draw an isolated one-pixel segment
+## Correction: Dawn does draw; the isolated-segment failure was a harness artifact
+
+The finding above was **withdrawn**. A renderer that lights 722,671 pixels in a batch obviously draws strokes, and the
+isolated-segment result of zero ink was the harness lying, not Dawn failing. The upload of the vertex buffer was keyed on
+whether a buffer exists; the isolated segment is a *different* resource set, so no upload happened, and Dawn drew instance
+0 of the previous set at a different view transform. Skia redraws from the set it is handed every frame; Dawn did not. The
+upload is now keyed on the set.
+
+Isolated, one horizontal segment at stroke width 1.0, identity view:
+
+| Engine | Ink across column | Peak | Rows spanned |
+| --- | --- | --- | --- |
+| skia-raster | 1.000 px | 1.000 | 400 |
+| dawn | 0.500 px | 0.500 | 399 |
+
+At width 2.0, the same measurement: Skia 2.000 px across rows 399-400, Dawn 1.000 px across row 399 only. **Dawn draws the
+line but lays down exactly half the requested ink, at both widths.** The quad spans [399.5, 400.5] at width 1, which
+straddles the row boundary, and the half-ink is consistent with a sub-pixel placement difference between Skia's analytic
+rasterisation and Dawn's MSAA sample positions. That attribution is **not established**; it is the remaining open question,
+and it is now a small, well-instrumented one rather than a total failure.
+
 
 The coverage question was settled by isolating one clean case. A single horizontal segment from (400, 400) to (600, 400),
 stroke width 1.0, identity view — no batch, no overlap, nothing to attribute it to:

@@ -64,9 +64,11 @@ fn vs_main(@builtin(vertex_index) corner : u32,
     if (len > 1e-6) { dir = dir / len; } else { dir = vec2<f32>(1.0, 0.0); }
     let nrm = vec2<f32>(-dir.y, dir.x) * view.stroke_half_width;
 
-    // six corners make two triangles along the segment: p0 both sides, then p1 both sides
-    let at_end = select(0.0, 1.0, corner >= 2u);
-    let side = select(-1.0, 1.0, corner == 1u || corner == 4u || corner == 5u);
+    // six corners make two triangles along the segment: 0,1,2 is one half and 3,4,5 is the other, so the corner table
+    // has to be 0,1,2,2,1,3 in (end, side) terms. the previous table made corners 2 and 3 the same point and 4 and 5
+    // the same point, which collapsed the second triangle and drew half of every stroke
+    let at_end = select(0.0, 1.0, corner == 2u || corner == 3u || corner == 5u);
+    let side = select(-1.0, 1.0, corner == 1u || corner == 4u);
     let p = mix(p0, p1, at_end) + nrm * side;
 
     var out : VsOut;
@@ -145,6 +147,9 @@ fn fs_main() -> @location(0) vec4<f32> {
             wgpu::BindGroupLayout bind_layout;
             wgpu::BindGroup bind_group;
             wgpu::Buffer vertex_buffer;
+
+            // the set the resident buffer holds, because one renderer is handed more than one set in its lifetime
+            const albor::a1_dawn::ResourceSet* uploaded_set = nullptr;
             wgpu::Buffer uniform_buffer;
 
             std::size_t pixel_width = 0;
@@ -374,8 +379,12 @@ fn fs_main() -> @location(0) vec4<f32> {
         }
 
         // upload once, then reuse: a repeat has to cost the same as the first frame, or the comparison is unfair
-        if (request.resources != nullptr && m_state->vertex_buffer == nullptr && !request.resources->lines.empty()) {
+        // the upload is keyed on the set, not on whether a buffer exists: the isolated segment of this prototype is a
+        // different set from the generated batch, and drawing instance 0 of the previous set at a different view
+        // transform is exactly the artifact that made dawn look like it could not draw a one-pixel line
+        if (request.resources != nullptr && m_state->uploaded_set != request.resources && !request.resources->lines.empty()) {
             upload_segments(*request.resources);
+            m_state->uploaded_set = request.resources;
             if (m_state->vertex_buffer == nullptr) {
                 std::fprintf(stderr, "[dawn] render: the vertex buffer could not be created\n");
                 return;
