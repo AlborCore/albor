@@ -1248,8 +1248,8 @@ over 4x4 blocks on the batch, 54.12% of blocks differ. Two instruments were revi
 ±4 per-pixel agreement threshold is sound and its 0.00% is real — delta bands show nothing in 1-4/5-16 and 116,763 pixels
 in 129-255, the half-pixel row signature. The stroke-width ratio was rebuilt on the isolated segment and now gives real
 verdicts: Skia 1.00× (cosmetic confirmed), Dawn 2.00×, inconclusive but diagnostic — full width once the stroke covers a
-pixel centre, so the half-ink at zoom 1 is a sub-pixel placement effect. Zoom 8.0 is dominated by the recorded Skia stroke defect
-rather than by parity. **A renderer cannot yet be shown to produce Skia's image; the swap question stays open.**
+pixel centre, so the half-ink at zoom 1 is a sub-pixel placement effect. Zoom-1 disagreement is 15.41% and zoom-8 is
+75.72%, the latter dominated by the recorded Skia stroke defect rather than by parity. **A renderer cannot yet be shown to produce Skia's image; the swap question stays open.**
 
 **Platform pacing finding.** Windowed frame pacing on this machine is not reproducible: a standalone program with no albor
 code drives a `CADisplayLink` at 58 Hz or at exactly 0 Hz, apparently at random, whenever a `CAMetalLayer` is attached.
@@ -1285,8 +1285,10 @@ are driven deterministically into offscreen targets — no window, swap chain or
 platform finding makes windowed pacing unreproducible here.
 Questions: do the two renderers produce the same image for the same input, and is the measurement itself repeatable?
 Status: run and recorded; both engines render deterministically and Dawn renders offscreen exactly, but output parity is
-**not** established — interiors agree while coverage differs by about 15%, two committed instruments are recorded as
-unusable, and the GPU-vs-GPU column is deferred.
+**not** established — interiors agree while coverage differs by about 15% at zoom 1 and 76% at zoom 8, and the half-ink on an
+isolated segment is not yet attributed. Both flagged instruments were checked and both now give real verdicts (the ±4
+per-pixel threshold is sound; the stroke-width ratio was rebuilt on the isolated segment). The GPU-vs-GPU column is
+deferred.
 
 ### Prototype A2 — Platform presentation
 
