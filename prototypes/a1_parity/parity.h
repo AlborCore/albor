@@ -91,6 +91,14 @@ namespace albor::a1_parity
     // compare two buffers channel by channel, counting a pixel as differing when any channel moved at all
     [[nodiscard]] PixelDiff diff_pixels(const PixelBuffer& a, const PixelBuffer& b, std::size_t tolerance);
 
+    // compare two buffers after averaging each block of pixels down to one colour, which is the instrument that can
+    // actually measure agreement between two antialiasing rasterisers: a partially covered edge is a legitimate
+    // mid-tone, so comparing pixels one at a time cannot separate a different edge from a different image
+    [[nodiscard]] PixelDiff diff_coverage(const PixelBuffer& a, const PixelBuffer& b, std::size_t block, std::size_t tolerance);
+
+    // the ink profile down one column, which is what says how wide a stroke a renderer actually laid down
+    [[nodiscard]] std::vector<double> ink_profile(const PixelBuffer& buffer, std::size_t column);
+
     // the measured width in pixels of the stroke a renderer laid down, which is how the cosmetic versus geometry
     // space question is settled by measurement instead of by assertion
     [[nodiscard]] double measure_stroke_width(const PixelBuffer& buffer, std::uint8_t red, std::uint8_t green, std::uint8_t blue);

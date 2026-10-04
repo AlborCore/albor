@@ -28,6 +28,9 @@ namespace albor::a1_parity
 
         using Clock = std::chrono::steady_clock;
 
+        // the clear colour as the readback carries it, which is what an ink measurement integrates from
+        std::uint8_t to_channel(float value) { return static_cast<std::uint8_t>(std::lround(value * 255.0F)); }
+
         // the workload the recorded thresholds were committed against, which must not drift without a new plan
         constexpr std::size_t kSegmentCount = 20000;
         constexpr float kExtent = 1000.0F;
@@ -103,6 +106,77 @@ namespace albor::a1_parity
             }
         }
         return diff;
+    }
+
+    PixelDiff diff_coverage(const PixelBuffer& a, const PixelBuffer& b, std::size_t block, std::size_t tolerance) {
+        PixelDiff diff;
+        if (a.width != b.width || a.height != b.height || block == 0) {
+            return diff;
+        }
+
+        // each block is averaged to one colour per channel, so an antialiased edge contributes its coverage rather than
+        // landing on one side or the other of a per pixel comparison
+        const std::size_t blocks_x = a.width / block;
+        const std::size_t blocks_y = a.height / block;
+        diff.total_pixels = blocks_x * blocks_y;
+        if (diff.total_pixels == 0) {
+            return diff;
+        }
+
+        for (std::size_t by = 0; by < blocks_y; by++) {
+            for (std::size_t bx = 0; bx < blocks_x; bx++) {
+                double sum_a[3] = {0.0, 0.0, 0.0};
+                double sum_b[3] = {0.0, 0.0, 0.0};
+                const std::size_t samples = block * block;
+                for (std::size_t y = 0; y < block; y++) {
+                    for (std::size_t x = 0; x < block; x++) {
+                        const std::size_t pixel = (by * block + y) * a.width + (bx * block + x);
+                        const std::uint8_t* pa = a.rgba.data() + pixel * 4;
+                        const std::uint8_t* pb = b.rgba.data() + pixel * 4;
+                        for (std::size_t channel = 0; channel < 3; channel++) {
+                            sum_a[channel] += pa[channel];
+                            sum_b[channel] += pb[channel];
+                        }
+                    }
+                }
+
+                std::size_t worst = 0;
+                for (std::size_t channel = 0; channel < 3; channel++) {
+                    const double mean_a = sum_a[channel] / static_cast<double>(samples);
+                    const double mean_b = sum_b[channel] / static_cast<double>(samples);
+                    const auto delta = static_cast<std::size_t>(std::lround(std::abs(mean_a - mean_b)));
+                    worst = std::max(worst, delta);
+                }
+                if (worst == 0) {
+                    continue;
+                }
+                diff.differing_pixels++;
+                diff.max_channel_delta = std::max(diff.max_channel_delta, worst);
+                if (worst <= tolerance) {
+                    diff.within_tolerance_pixels++;
+                }
+            }
+        }
+        return diff;
+    }
+
+    std::vector<double> ink_profile(const PixelBuffer& buffer, std::size_t column) {
+        // how far each pixel of one column leans toward the stroke rather than the clear, which integrates to the
+        // stroke's coverage and shows its width without depending on any single pixel landing exactly on the colour
+        std::vector<double> profile;
+        if (column >= buffer.width) {
+            return profile;
+        }
+        profile.reserve(buffer.height);
+        const double clear = static_cast<double>(to_channel(kClearRed));
+        const double stroke = static_cast<double>(kStrokeRed);
+        const double span = stroke - clear;
+        for (std::size_t y = 0; y < buffer.height; y++) {
+            const std::uint8_t* p = buffer.rgba.data() + (y * buffer.width + column) * 4;
+            const double coverage = span > 0.0 ? (static_cast<double>(p[0]) - clear) / span : 0.0;
+            profile.push_back(std::clamp(coverage, 0.0, 1.0));
+        }
+        return profile;
     }
 
     double measure_stroke_width(const PixelBuffer& buffer, std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
@@ -371,6 +445,96 @@ int main(int argc, char** argv) {
                         failures++;
                     }
                 }
+            }
+        }
+    }
+
+    // the coverage comparison, which is the instrument that can measure antialiased agreement at all
+    std::printf("\n== coverage, both engines averaged over 4x4 blocks\n");
+    {
+        const ViewCase one = view_zoom_one();
+        static std::vector<std::pair<Engine, PixelBuffer>> covered;
+        covered.clear();
+        for (auto& [engine, renderer] : engines) {
+            const EngineResult result = run_view(*renderer, *resources, one);
+            covered.emplace_back(engine, result.pixels);
+        }
+        for (auto& [engine, result] : covered) {
+            if (engine == Engine::dawn) {
+                continue;
+            }
+            for (auto& [ref_engine, ref_pixels] : covered) {
+                if (ref_engine != Engine::dawn) {
+                    continue;
+                }
+                // a tolerance of four 8-bit steps over a sixteen pixel average is about one step of coverage per block
+                const PixelDiff cover = diff_coverage(ref_pixels, result, 4, 4);
+                std::printf("  %-12s vs dawn: %.4f%% of 4x4 blocks differ (%zu of %zu), worst channel %zu, %.2f%% within "
+                            "+-4\n",
+                            engine_name(engine), 100.0 * cover.differing_fraction(), cover.differing_pixels, cover.total_pixels, cover.max_channel_delta, 100.0 * cover.within_tolerance_share());
+            }
+        }
+    }
+
+    // the isolated segment: one clean horizontal line, which separates the quad corner computation from the aggregate
+    // behaviour of a batch of twenty thousand overlapping strokes
+    std::printf("\n== isolated segment, one horizontal line at y=400\n");
+    {
+        albor::a1_dawn::ResourceSet single;
+        single.extent = 1000.0F;
+        single.stroke_width = 1.0F;
+        single.lines.push_back({400.0F, 400.0F, 600.0F, 400.0F});
+
+        albor::a1_dawn::ViewTransform view{};
+        view.scale = 1.0F;
+        view.offset_x = 0.0F;
+        view.offset_y = 0.0F;
+        const ViewCase case_view{"single", view};
+
+        std::vector<std::pair<Engine, PixelBuffer>> singles;
+        for (auto& [engine, renderer] : engines) {
+            const EngineResult result = run_view(*renderer, single, case_view);
+            std::printf("  %-12s drew, %zu lit pixels\n", engine_name(engine), static_cast<std::size_t>(result.lit_pixels));
+            singles.emplace_back(engine, result.pixels);
+        }
+
+        // the ink profile down the middle of the line says how wide each engine made it
+        for (auto& [engine, pixels] : singles) {
+            const std::vector<double> profile = ink_profile(pixels, 500);
+            double covered_rows = 0.0;
+            std::size_t first_row = 0;
+            std::size_t last_row = 0;
+            bool found = false;
+            for (std::size_t row = 0; row < profile.size(); row++) {
+                covered_rows += profile[row];
+                if (profile[row] > 0.01) {
+                    if (!found) {
+                        first_row = row;
+                        found = true;
+                    }
+                    last_row = row;
+                }
+            }
+            double peak = 0.0;
+            for (const double value : profile) {
+                peak = std::max(peak, value);
+            }
+            std::printf("  %-12s ink across the column: %.3f px of coverage, peak %.3f, spanning rows %zu to %zu\n", engine_name(engine), covered_rows, peak, first_row, last_row);
+        }
+
+        for (auto& [engine, pixels] : singles) {
+            if (engine == Engine::dawn) {
+                continue;
+            }
+            for (auto& [ref_engine, ref_pixels] : singles) {
+                if (ref_engine != Engine::dawn) {
+                    continue;
+                }
+                const PixelDiff exact = diff_pixels(ref_pixels, pixels, kChannelTolerance);
+                const PixelDiff cover = diff_coverage(ref_pixels, pixels, 4, 4);
+                std::printf("  %-12s vs dawn on the isolated segment: %.4f%% of pixels differ, and %.4f%% of 4x4 "
+                            "blocks differ\n",
+                            engine_name(engine), 100.0 * exact.differing_fraction(), 100.0 * cover.differing_fraction());
             }
         }
     }

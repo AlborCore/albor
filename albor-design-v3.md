@@ -1239,11 +1239,11 @@ unvalidated, no text pipeline, no software rasterizer against AD-26, and build c
 **Pixel-parity findings (Prototype A1-Parity, `prototypes/a1_parity/RESULTS.md`).** Both engines render
 deterministically (T2: 0 differing bytes across repeats) and Dawn's offscreen readback is exact (T1: 1024000 of 1024000
 pixels). With **both engines drawing the same cosmetic filled quads**, the solid stroke interior is identical (the frame
-centre reads `255 64 32 255` in both) and zoom-1 disagreement is 15.41%. **Parity is still not established:** mean
-coverage differs by about 15% (Dawn 192.6 vs Skia 167.1 mean red) and the disagreeing band is up to 32 px wide along a
-row, far more than an antialiased edge — Skia rasterises the quad corners it is given while Dawn computes them in the
-vertex shader, and near-degenerate short segments amplify the float difference. Which engine is closer to the intended
-one-pixel cosmetic line is **not established**. Two committed instruments are recorded as unusable rather than passed:
+centre reads `255 64 32 255` in both) and zoom-1 disagreement is 15.41%. **An isolated segment settles it negatively:** on one clean
+horizontal line at stroke width 1.0, **Skia draws a perfect one-pixel line (peak coverage 1.000) and Dawn draws nothing
+at all (peak coverage 0.000)**. The aggregate figures understated this — in a batch, overlapping short segments
+accumulate enough coverage to look like a drawing. Averaged over 4x4 blocks, 54.12% of blocks differ. **Dawn's quad
+expansion does not produce a visible one-pixel cosmetic line, so it cannot yet be shown to produce Skia's image.** Two committed instruments are recorded as unusable rather than passed:
 the share-of-differing-pixels-within-±4 threshold cannot measure antialiased agreement at all (0.00%), and the
 stroke-width ratio is invalid on an overlapping batch (0.07×). Zoom 8.0 is dominated by the recorded Skia stroke defect
 rather than by parity. **A renderer cannot yet be shown to produce Skia's image; the swap question stays open.**
@@ -1550,7 +1550,7 @@ The next implementation work validates these boundaries through Prototypes D, A1
 | Dawn has no text or glyph pipeline; no first-party software rasterizer | §21.2, AD-26, AD-28 |
 | Replacing Skia means rebuilding the 2D feature surface: joins, caps, dashes, clips, gradients, layers, effects | §11.4, AD-06, AD-28 |
 | Skia Graphite on a Dawn backend as a middle option, untested | AD-28 |
-| Pixel parity Skia vs Dawn not established: interiors agree, coverage differs ~15% | AD-28 |
+| Pixel parity Skia vs Dawn fails: Dawn draws no one-pixel line on isolated geometry where Skia does | AD-28 |
 | Windowed frame pacing not reproducible on this platform; windowed timings unverified | AD-18, AD-28 |
 | Benchmark workload underspecified; no failure condition | §28.3, §28.4 |
 | Software/GPU parity | §11.7, §25, §27 |

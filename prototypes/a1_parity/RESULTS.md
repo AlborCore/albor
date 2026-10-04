@@ -61,12 +61,33 @@ amplifies. **Which engine is closer to the intended one-pixel cosmetic line is n
 **T7 remains invalid.** At 0.07× it is neither cosmetic nor geometric, and lit-pixels-over-drawn-length is not a width
 measurement on an overlapping batch. It needs a single isolated segment and a direct run-length measurement.
 
+## The decisive result: Dawn does not draw an isolated one-pixel segment
+
+The coverage question was settled by isolating one clean case. A single horizontal segment from (400, 400) to (600, 400),
+stroke width 1.0, identity view — no batch, no overlap, nothing to attribute it to:
+
+| Engine | Lit pixels | Ink across column x=500 | Peak coverage | Rows spanned |
+| --- | --- | --- | --- | --- |
+| skia-raster | 200 | 1.000 px | **1.000** | 400 to 400 |
+| dawn | 44 | 0.000 px | **0.000** | none |
+
+**Skia draws a perfect one-pixel cosmetic line. Dawn draws nothing.** This is not a tolerance, a coverage subtlety or an
+antialiasing difference: at the intended width, on the simplest possible geometry, Dawn's quad expansion produces no
+visible stroke at all.
+
+This reframes every earlier number. The 15.41% pixel disagreement and the ~15% mean-coverage gap are the *same* fact seen
+in a batch: in a batch, short segments overlap and accumulate enough coverage to look like a drawing, which is why the
+aggregate figures looked like a subtle mismatch rather than a total failure. Isolated, there is nothing.
+
+**The coverage metric confirms the same thing on the batch**: averaged over 4x4 blocks, 54.12% of blocks differ
+(34,636 of 64,000), with only 2.47% within ±4.
+
 ## Disposition
 
 - **AD-28 stays *Proposed*.** Skia remains the default renderer and is not retired.
-- **The renderer-swap question is still open.** A renderer cannot yet be shown to produce the same image as Skia for the
-  same rendering style: interiors agree, coverage differs by ~15%, and the disagreeing band is wider than an antialiased
-  edge.
+- **The renderer-swap question is answered negatively for this configuration.** Dawn does not draw a one-pixel cosmetic
+  line on isolated geometry, where Skia does, so Dawn cannot yet be shown to produce Skia's image. The earlier aggregate
+  figures understated this: in a batch, overlap hides the failure.
 - The windowed timings in Prototype A1 and Prototype A1-Dawn stay **unverified**; the platform pacing finding in
   `plan.md` explains why, and this prototype's offscreen, clock-driven measurement is unaffected by it.
 
