@@ -1,5 +1,22 @@
 # Prototype D2 — Binding Engine Follow-up
 
+> **CORRECTED by Prototype D3 R1 (`prototypes/d3/RESULTS.md`).** Four figures in this file were wrong. They are
+> listed in D3's "Corrections applied to earlier claims" table and marked inline below. D2's thresholds, pass/fail
+> classifications and conclusions are otherwise left exactly as recorded: **a failure stays a failure**, and T1.3 in
+> particular still reads PASS even though the measurement behind it was unsound.
+>
+> | Claim here | Was | Corrected to |
+> | --- | --- | --- |
+> | erased bytes/property, realistic mix | 128.00 B | **68.00 B**, identical for every mix (spread 0.0000 B) |
+> | typed bytes/property, all-scalar | 8.00 B, value bytes only | 8.00 B value **+ 7.00 B addressability + 8 184.00 B slab slack** = 8 203.50 B at one instance |
+> | "the win shrinks to ~2.3x for scalars" | 2.3x | **no valid scalar figure exists**; the asymptotic *mixed* ratio is **2.47x**, and typed storage is **120x worse** below ~2 048 properties |
+> | erased slot "8 B larger than D's 56.00 B" | 64.00 B | **68.00 B** including the region table; 64.00 B for the slot itself |
+>
+> The 128.00 B came from a measurement bug: the experiment gave the typed store and the erased store **the same
+> `RegionTable`**, so the erased store grew to 16 slots and was then divided by 8 properties. The missing slack came from
+> D2's accounting reporting `value_bytes()` and `address_bytes()` but never the 64 KB chunk the slab allocates, so the
+> chunk was invisible in every figure below.
+
 Recorded result for AD-04b and AD-04c (§30 Prototype D2, §28.4 pass/fail, §29 AD-04).
 This is measurement code. It is not a runtime module and must not be linked by one (AGENTS.md).
 
@@ -23,9 +40,9 @@ diagnosis, without re-running to make them pass.
 
 | Threshold | Result | Verdict |
 | --- | --- | --- |
-| T1.1 typed bytes/property, all-scalar component | 8.00 B ≤ 16 B | **PASS** |
+| T1.1 typed bytes/property, all-scalar component | 8.00 B ≤ 16 B | **PASS** — *superseded: value bytes only; D3 measures 8 203.50 B/property at one instance* |
 | T1.2 typed bytes/property, realistic mixed component | 14.00 B ≤ 48 B | **PASS** |
-| T1.3 typed ≤ erased on the same mix | 14.00 B ≤ 128.00 B | **PASS** |
+| T1.3 typed ≤ erased on the same mix | 14.00 B ≤ 128.00 B | **PASS** — *unsound: the 128.00 B baseline was inflated by a shared `RegionTable`; at the correct 68.00 B typed loses at one instance* |
 | T1.4 allocations to create one 8-property component | 1 ≤ 1 | **PASS** |
 | T1.5 construct + destroy per non-trivial property | **325.1 ns** ≤ 200 ns | **FAIL** |
 | T1.6 single typed `Int` write + settle, p99 | **278.0 ns** ≤ 250 ns | **FAIL** |

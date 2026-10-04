@@ -38,6 +38,7 @@ add_compile_options(-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conver
 if(ALBOR_PROTOTYPES)
     add_subdirectory(prototypes/d)
     add_subdirectory(prototypes/d2)
+    add_subdirectory(prototypes/d3)
     add_subdirectory(prototypes/a2)
     add_subdirectory(prototypes/a1)
     add_subdirectory(prototypes/a1_dawn)
