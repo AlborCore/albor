@@ -1,0 +1,12 @@
+# Prototype D3 R11 corpus — the modal dialog session (F2.11)
+#
+# one modal dialog over a dimmed frame: a message, a detail line, three actions and a dismiss affordance.
+# A dialog is a window role of its own (§8.1), so it is counted as a screen rather than as part of the
+# window that opened it.
+
+screen dialog
+  use Frame 1
+  use Label 2
+  use Dialog 1
+  use Button 3
+end

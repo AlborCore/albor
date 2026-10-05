@@ -19,3 +19,7 @@ target_link_libraries(albor-prototype-d3-slab PRIVATE albor-prototype-d2)
 # R7: the animation shadow audit (§28.4)
 add_executable(albor-prototype-d3-shadow animation_shadow.cpp)
 target_link_libraries(albor-prototype-d3-shadow PRIVATE albor-prototype-d2)
+
+# R11: the property mix of a real UI, and the combined memory on that mix (F2.11, §28.4)
+add_executable(albor-prototype-d3-corpus corpus_mix.cpp)
+target_link_libraries(albor-prototype-d3-corpus PRIVATE albor-prototype-d2)

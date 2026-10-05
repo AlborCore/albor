@@ -1,0 +1,16 @@
+# Prototype D3 R11 corpus — the live dashboard window (F2.11)
+#
+# one dashboard: KPI tiles, three custom render nodes fed by snapshots a worker publishes (§10.5, §13.2), a
+# live waveform, and the controls that pause the stream.
+
+screen dashboard
+  use Frame 2
+  use Label 6
+  use KpiTile 4
+  use Chart 3
+  use Waveform 2
+  use Spinner 2
+  use Button 4
+  use StatusBar 1
+  use Toggle 2
+end
