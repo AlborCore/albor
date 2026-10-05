@@ -343,7 +343,9 @@ int main() {
     using namespace albor::a1_graphite_dawn;
 
     std::printf("Prototype A1-Graphite-Dawn: one Dawn device for custom geometry and Skia text (AD-28)\n");
-    std::printf("hardware: i7-9750H macOS with the AMD Radeon Pro 5300M, recorded in plan.md\n");
+    // the adapter line below is what dawn reports. this used to claim an AMD Radeon Pro 5300M from a hardcoded
+    // string, which no run ever verified and which the adapter contradicts: it is an integrated intel gpu
+    std::printf("hardware: i7-9750H macOS; the adapter is reported below as dawn sees it\n");
     std::printf("thresholds: prototypes/a1_graphite_dawn/plan.md, committed before this program existed\n");
     std::printf("timing: %zu warm-up frames, then %zu repetitions of %zu frames\n\n", WARMUP_FRAMES, REPETITIONS, FRAMES_PER_REPETITION);
 
