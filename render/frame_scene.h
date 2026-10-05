@@ -56,6 +56,18 @@ namespace albor
         // hand out the text runs the scene draws
         [[nodiscard]] const std::vector<TextLayout>& texts() const;
 
+        // add a text run at a baseline origin, which a ui node records during scene build (§6.1)
+        void add_text(TextLayout layout, Point origin);
+
+        // hand out the baseline origin of every text run, parallel to the runs themselves (§6.1)
+        [[nodiscard]] const std::vector<Point>& text_origins() const;
+
+        // replace the fill colour of every recorded rectangle, which travels in the same order as the rectangles (§6.1, AD-18)
+        void set_rect_colors(std::vector<Color> colors);
+
+        // hand out the fill colour of every recorded rectangle, parallel to the rectangles themselves (§6.1)
+        [[nodiscard]] const std::vector<Color>& rect_colors() const;
+
     private:
         // the metrics the scene was built for, which the render thread presents into
         WindowMetrics m_metrics;
@@ -68,5 +80,11 @@ namespace albor
 
         // the text runs the scene draws
         std::vector<TextLayout> m_texts;
+
+        // the baseline origin of every text run, which the thread hand off must carry as well (§6.1)
+        std::vector<Point> m_text_origins;
+
+        // the fill colour of every recorded rectangle, which stage two needs because it owns the canvas (§6.1, AD-18)
+        std::vector<Color> m_rect_colors;
     };
 } // namespace albor

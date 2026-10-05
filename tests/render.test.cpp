@@ -1,5 +1,6 @@
-#include <atomic>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -133,6 +134,62 @@ namespace
             surface.end_frame();
             executed_rect_counts.push_back(scene.rects().size());
         }
+    };
+
+    // the backend double that parks inside execute_frame until the test releases it, which pins the render thread inside one frame (§6.1)
+    class GatedRendererBackend final : public RendererBackend
+    {
+    public:
+        // the logical widths of every scene that reached the backend, which identifies which frame survived (§6.1)
+        std::vector<float> executed_widths;
+
+        [[nodiscard]] bool ready() const override { return true; }
+
+        [[nodiscard]] std::unique_ptr<RenderSurface> create_surface(NativeWindowHandle, const WindowMetrics&) override { return std::make_unique<TestRenderSurface>(); }
+
+        void resize_surface(RenderSurface&, const WindowMetrics&) override {}
+
+        void execute_frame(RenderSurface&, const FrameScene& scene) override {
+            std::unique_lock<std::mutex> lock(m_mutex);
+            // the render thread parks here, so the ui thread submits into a known in flight state (§6.1)
+            m_arrived++;
+            m_arrived_condition.notify_all();
+            m_gate.wait(lock, [this] { return m_released; });
+            executed_widths.push_back(scene.metrics().logical_size.width);
+        }
+
+        // wait until the render thread is parked inside a frame, which makes the following submit deterministic (§6.1)
+        void wait_until_arrived() {
+            std::unique_lock<std::mutex> lock(m_mutex);
+            m_arrived_condition.wait(lock, [this] { return m_arrived > 0; });
+        }
+
+        // let the parked render thread finish its frame (§6.1)
+        void release() {
+            {
+                const std::lock_guard<std::mutex> lock(m_mutex);
+                m_released = true;
+            }
+            m_gate.notify_all();
+        }
+
+        ~GatedRendererBackend() override { release(); }
+
+    private:
+        // the lock the gate and the record share
+        std::mutex m_mutex;
+
+        // the condition the parked render thread waits on (§6.1)
+        std::condition_variable m_gate;
+
+        // the condition the test waits on until the render thread parked (§6.1)
+        std::condition_variable m_arrived_condition;
+
+        // how many frames reached the gate, which tells the test the render thread is parked (§6.1)
+        std::size_t m_arrived = 0;
+
+        // whether the test released the parked render thread (§6.1)
+        bool m_released = false;
     };
 } // namespace
 
@@ -495,15 +552,23 @@ TEST(RenderExecutor, SubmittingANullSceneIsRefused) {
 
 TEST(RenderExecutor, AnOlderPendingFrameIsDropped) {
     // arrange
-    TestRendererBackend backend;
+    GatedRendererBackend backend;
     RenderExecutor executor(&backend);
     TestRenderSurface surface;
-    // act
+    // the render thread parks inside the first frame, so the second submit lands on a known in flight state (§6.1)
     executor.submit(surface, std::make_shared<const FrameScene>(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f)));
+    backend.wait_until_arrived();
+    // act
     executor.submit(surface, std::make_shared<const FrameScene>(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f)));
+    executor.submit(surface, std::make_shared<const FrameScene>(WindowMetrics::from_logical(Size{1024.0f, 768.0f}, 1.0f)));
+    backend.release();
     executor.flush();
     // assert
-    EXPECT_EQ(executor.executed_count(), 1u);
+    EXPECT_EQ(executor.executed_count(), 2u);
+    // the middle frame is dropped, so the render thread drew the first and the newest (§6.1)
+    ASSERT_EQ(backend.executed_widths.size(), 2u);
+    EXPECT_FLOAT_EQ(backend.executed_widths[0], 640.0f);
+    EXPECT_FLOAT_EQ(backend.executed_widths[1], 1024.0f);
 }
 
 TEST(RenderExecutor, FlushReturnsOnlyOnceNothingIsPending) {

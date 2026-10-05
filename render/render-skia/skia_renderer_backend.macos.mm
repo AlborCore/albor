@@ -82,6 +82,7 @@ namespace albor
         layer.device = m_state->device;
         layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
         layer.framebufferOnly = YES;
+        // the surface wraps the skia context and the metal layer together, because one drawable spans both (§6.3)
         return skia::SkiaRenderSurface::create(m_state->context.get(), handle, metrics);
     }
 
@@ -105,19 +106,20 @@ namespace albor
         // stage two acquires the drawable and draws the immutable scene into it (§6.1, AD-18)
         RenderContext& context = surface.begin_frame();
         // the background is a full surface rectangle, which is the clear of phase 1 (§6.1)
-        Paint background;
-        background.fill = scene.background();
         const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, scene.metrics().logical_size);
-        context.draw_rect(full, background);
+        context.draw_rect(full, {.fill = scene.background()});
         // the solid rectangles of the scene are drawn in the order the ui thread built them (§6.1)
-        for (const Rect& rect : scene.rects()) {
+        for (std::size_t index = 0; index < scene.rects().size(); index++) {
+            const Rect& rect = scene.rects()[index];
             // a rectangle with no area contributes nothing, so it is skipped rather than drawn degenerate (§6.2)
             if (rect.empty())
                 continue;
-            Paint paint;
-            paint.fill = Color::rgb(0.20f, 0.55f, 0.90f);
-            context.draw_rect(rect, paint);
+            // the colour stage one recorded is used, because a ui node may bind its own colour (§6.1, AD-18)
+            context.draw_rect(rect, {.fill = index < scene.rect_colors().size() ? scene.rect_colors()[index] : Color::rgb(0.20f, 0.55f, 0.90f)});
         }
+        // the text runs of the scene are drawn at the origins the ui thread recorded, which keeps stage two free of ui state (§6.1, AD-18)
+        for (std::size_t index = 0; index < scene.texts().size(); index++)
+            context.draw_text(scene.texts()[index], scene.text_origins()[index], {.fill = Color::rgb(0.90f, 0.92f, 0.95f)});
         // the frame is presented once the immutable scene is fully recorded (§6.1)
         surface.end_frame();
     }

@@ -1,0 +1,138 @@
+#pragma once
+
+#include <cstddef>
+#include <functional>
+#include <memory>
+#include <vector>
+
+#include "core/constraints.h"
+#include "core/geometry.h"
+#include "render/render_context.h"
+#include "ui/ui_event.h"
+
+namespace albor
+{
+    // the node of the UI tree, which owns its children and the two pass layout contract (§8.1, §8.2)
+    class UiNode
+    {
+    public:
+        // build a root node, which every other node is added to
+        UiNode();
+
+        virtual ~UiNode();
+
+        UiNode(const UiNode&) = delete;
+        UiNode& operator=(const UiNode&) = delete;
+        UiNode(UiNode&&) = delete;
+        UiNode& operator=(UiNode&&) = delete;
+
+        // hand out the parent, which is null for a root node
+        [[nodiscard]] UiNode* parent() const;
+
+        // hand out the children, in the order they were added (§8.1)
+        [[nodiscard]] const std::vector<std::unique_ptr<UiNode>>& children() const;
+
+        // hand out how many children the node has
+        [[nodiscard]] std::size_t child_count() const;
+
+        // hand out the child at an index, returning null when the index is past the end (§8.1)
+        [[nodiscard]] UiNode* child_at(std::size_t index) const;
+
+        // adopt a child and append it, which takes ownership (§8.1)
+        UiNode& add_child(std::unique_ptr<UiNode> child);
+
+        // adopt a child at an index, which clamps a past the end index to the end (§8.1)
+        UiNode& insert_child(std::size_t index, std::unique_ptr<UiNode> child);
+
+        // remove a child and hand it back to the caller, returning null when the node is not a child (§8.1)
+        [[nodiscard]] std::unique_ptr<UiNode> remove_child(UiNode* child);
+
+        // measure the node against the constraints a parent offers it (§8.2)
+        virtual void measure(const SizeConstraints& constraints, Size& out_size);
+
+        // assign the final bounds of the node, which a parent does after measuring (§8.2)
+        virtual void arrange(const Rect& bounds);
+
+        // record the drawing commands of the node into the context, which stage one replays (§6.1)
+        virtual void render(RenderContext& context);
+
+        // report whether the point lands on this node or on one of its descendants (§8.3)
+        [[nodiscard]] virtual bool hit_test(Point logical_point) const;
+
+        // offer the event to this node and then to its children until one claims it (§8.3)
+        virtual void dispatch_event(Event& event);
+
+        // hand out the bounds a parent arranged this node to (§8.2)
+        [[nodiscard]] const Rect& bounds() const;
+
+        // hand out the size the node measured itself to (§8.2)
+        [[nodiscard]] const Size& measured_size() const;
+
+        // request a redraw of this node and of everything above it (§6.1)
+        void invalidate();
+
+        // mark the layout dirty and request the measure and arrange passes (§8.2)
+        void invalidate_layout();
+
+        // report whether the node asked for a redraw since the last frame (§6.1)
+        [[nodiscard]] bool render_dirty() const;
+
+        // report whether the node asked for a layout pass since the last frame (§8.2)
+        [[nodiscard]] bool layout_dirty() const;
+
+        // clear both dirty flags, which the scene builder does after it built a frame (§6.1)
+        void clear_dirty();
+
+        // report whether the node draws at all, because an invisible node is skipped by stage one (§6.1)
+        [[nodiscard]] bool visible() const;
+
+        // show or hide the node, which invalidates it so the change reaches the screen (§6.1)
+        void set_visible(bool visible);
+
+        // install the callback an invalidation reaches, which the frame pipeline turns into a frame request (§6.1)
+        void set_invalidation_handler(std::function<void()> handler);
+
+        // hand out the identity the author assigned, which automation and semantics key on (AD-11)
+        [[nodiscard]] const NodeIdentity& identity() const;
+
+        // assign the author identity, which is what makes a node addressable by id (AD-11, §18.1)
+        void set_explicit_id(std::string id);
+
+        // assign the in tree identifier, which the scene builder hands out once
+        void set_node_id(NodeId node);
+
+        // walk the node and its descendants depth first, which the semantic tree and the builder share (§8.1)
+        void visit(const std::function<void(UiNode&)>& visitor);
+
+        // walk this node and its descendants depth first for reading, which the tests assert on
+        void visit(const std::function<void(const UiNode&)>& visitor) const;
+
+    protected:
+        // the final bounds a parent arranged this node to (§8.2)
+        Rect m_bounds;
+
+        // the size the node measured itself to, which arrange falls back on (§8.2)
+        Size m_measured_size;
+
+        // the owning parent, which is null for a root node (§8.1)
+        UiNode* m_parent = nullptr;
+
+        // the owned children, in the order they were added (§8.1)
+        std::vector<std::unique_ptr<UiNode>> m_children;
+
+        // the identity of the node, whose explicit id is the authoritative one (AD-11)
+        NodeIdentity m_identity;
+
+        // the callback an invalidation reaches, which the frame pipeline installs on the root (§6.1)
+        std::function<void()> m_invalidation_handler;
+
+        // whether the node asked for a redraw since the last frame (§6.1)
+        bool m_render_dirty = true;
+
+        // whether the node asked for a layout pass since the last frame (§8.2)
+        bool m_layout_dirty = true;
+
+        // whether the node draws at all (§6.1)
+        bool m_visible = true;
+    };
+} // namespace albor

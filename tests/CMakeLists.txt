@@ -19,7 +19,7 @@ target_include_directories(albor-tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_features(albor-tests PRIVATE cxx_std_23)
 
 # the tests link the framework modules and nothing platform specific, so they run without a window server (§3.2)
-target_link_libraries(albor-tests PRIVATE albor-core albor-window albor-render albor-application GTest::gtest GTest::gtest_main)
+target_link_libraries(albor-tests PRIVATE albor-core albor-window albor-runtime albor-semantics albor-render albor-application albor-ui GTest::gtest GTest::gtest_main)
 
 # the coverage build of the same binary produces the profile the coverage report is generated from
 if(ALBOR_COVERAGE)

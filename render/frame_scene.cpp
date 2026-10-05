@@ -49,4 +49,31 @@ namespace albor
         // the text runs are replayed in the order the ui thread built them (§6.1)
         return m_texts;
     }
+
+    void FrameScene::add_text(TextLayout layout, Point origin) {
+        // a run with no glyphs contributes nothing, so it is not recorded (§6.2)
+        if (layout.empty())
+            return;
+        // the origin travels beside the run, because the render thread cannot ask the ui thread where it was (§6.1)
+        m_text_origins.push_back(origin);
+        m_texts.push_back(std::move(layout));
+    }
+
+    const std::vector<Point>& FrameScene::text_origins() const {
+        // the origins are parallel to the runs, so index one lookup finds both (§6.1)
+        return m_text_origins;
+    }
+
+    void FrameScene::set_rect_colors(std::vector<Color> colors) {
+        // the colour list must stay parallel to the rectangle list, so a mismatched length is refused (§6.1)
+        if (colors.size() != m_rects.size())
+            return;
+        // the colours travel with the rectangles, because the render thread cannot ask the ui thread (§6.1, AD-18)
+        m_rect_colors = std::move(colors);
+    }
+
+    const std::vector<Color>& FrameScene::rect_colors() const {
+        // the colours are parallel to the rectangles, so index one lookup finds both (§6.1)
+        return m_rect_colors;
+    }
 } // namespace albor

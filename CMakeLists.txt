@@ -58,11 +58,20 @@ add_subdirectory(core)
 # window roles, modality, handles and the window registry (§3.2)
 add_subdirectory(window)
 
+# the reactive properties, the eager push engine and the immutable snapshots (§3.2, §7)
+add_subdirectory(runtime)
+
+# the semantic tree that accessibility and automation consume (§3.2, §10.1)
+add_subdirectory(semantics)
+
 # the rendering hal, the frame scene and the two stage pipeline (§3.2)
 add_subdirectory(render)
 
 # application lifecycle, tasks, timers and lifetime tokens (§3.2)
 add_subdirectory(application)
+
+# the ui tree, the component facade and the scene build stage (§3.2, §8.1)
+add_subdirectory(ui)
 
 # the skia metal backend that implements the rendering hal (§3.2, AD-05)
 add_subdirectory(render/render-skia)

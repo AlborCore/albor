@@ -1,0 +1,193 @@
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "core/geometry.h"
+
+namespace albor
+{
+    // the accessible role of a semantic node, which screen readers announce (§10.1, AD-09)
+    enum class SemanticRole
+    {
+        // a node that carries no meaning to assistive technology
+        None,
+
+        // a push control that performs an action
+        Button,
+
+        // a toggle that carries an on and off state
+        Checkbox,
+
+        // a title of a section of the interface
+        Heading,
+
+        // static descriptive text
+        Label,
+
+        // a continuous value the user drags
+        Slider,
+
+        // a drawing surface, which the user may interact with directly
+        Canvas,
+
+        // a single line editable field
+        TextField,
+
+        // an image that carries an accessible name
+        Image,
+
+        // a row of a list, which repeats the role of its owning list
+        ListItem,
+
+        // a container that groups other semantic nodes
+        Group,
+
+        // a native window of the application
+        Window
+    };
+
+    // the tri state of a checkable semantic node, which a checkbox and a toggle share (§10.1)
+    enum class CheckState
+    {
+        // the node is not checkable, which is what a button reports
+        NotCheckable,
+
+        // the node is checked
+        Checked,
+
+        // the node is not checked
+        Unchecked,
+
+        // the node is checkable and its state is indeterminate
+        Indeterminate
+    };
+
+    // the current states of a semantic node, which assistive technology reads (§10.1)
+    struct SemanticStates
+    {
+        // whether the node refuses input, which is the disabled state
+        bool disabled = false;
+
+        // whether the node holds keyboard focus
+        bool focused = false;
+
+        // the check state of the node, which a non checkable node reports as not checkable
+        CheckState check = CheckState::NotCheckable;
+
+        // compare two state sets field by field
+        friend bool operator==(const SemanticStates& lhs, const SemanticStates& rhs) = default;
+    };
+
+    // the identifier of a registered semantic action, where zero names no action
+    using SemanticActionId = std::uint64_t;
+
+    // the work a semantic action performs, which automation and accessibility both invoke (§10.1)
+    using SemanticAction = std::function<void()>;
+
+    // one node of the unified semantic tree, which is what assistive technology consumes (§10.1, AD-09)
+    class SemanticNode
+    {
+    public:
+        // build a semantic node with the given role, which is the minimum an adapter can announce (§10.1)
+        explicit SemanticNode(SemanticRole role);
+
+        // hand out the role the node announces (§10.1)
+        [[nodiscard]] SemanticRole role() const;
+
+        // replace the role the node announces (§10.1)
+        void set_role(SemanticRole role);
+
+        // hand out the accessible name, which is what a screen reader speaks (§10.1)
+        [[nodiscard]] const std::string& name() const;
+
+        // replace the accessible name (§10.1)
+        void set_name(std::string name);
+
+        // hand out the states the node is in (§10.1)
+        [[nodiscard]] const SemanticStates& states() const;
+
+        // hand out the states for writing, which an adapter updates (§10.1)
+        [[nodiscard]] SemanticStates& mutable_states();
+
+        // report whether the node refuses input (§10.1)
+        [[nodiscard]] bool disabled() const;
+
+        // set or clear the disabled state (§10.1)
+        void set_disabled(bool disabled);
+
+        // report whether the node holds keyboard focus (§10.1)
+        [[nodiscard]] bool focused() const;
+
+        // set or clear the focused state (§10.1)
+        void set_focused(bool focused);
+
+        // hand out the check state of the node (§10.1)
+        [[nodiscard]] CheckState check() const;
+
+        // set the check state of the node (§10.1)
+        void set_check(CheckState check);
+
+        // report whether the node is currently checked (§10.1)
+        [[nodiscard]] bool checked() const;
+
+        // hand out the bounds the node occupies in logical pixels (§10.1)
+        [[nodiscard]] const Rect& bounds() const;
+
+        // replace the bounds the node occupies (§10.1)
+        void set_bounds(Rect bounds);
+
+        // register an action the node exposes, which assistive technology and automation both invoke (§10.1)
+        [[nodiscard]] SemanticActionId add_action(std::string name, SemanticAction action);
+
+        // invoke a registered action, which reports whether the action existed (§10.1)
+        //
+        // invoking is const because running an action does not change the node it is declared on (§10.1)
+        bool invoke(SemanticActionId action) const;
+
+        // invoke the action registered under a name, which automation selects by label (§10.1)
+        bool invoke(std::string_view name) const;
+
+        // report whether the node exposes an action under a name (§10.1)
+        [[nodiscard]] bool has_action(std::string_view name) const;
+
+        // hand out how many actions the node exposes (§10.1)
+        [[nodiscard]] std::size_t action_count() const;
+
+        // hand out the name of an action by its index (§10.1)
+        [[nodiscard]] const std::string& action_name(SemanticActionId action) const;
+
+        // compare two semantic nodes by role, name and state, which the tests assert on
+        friend bool operator==(const SemanticNode& lhs, const SemanticNode& rhs);
+
+    private:
+        // the role the node announces (§10.1)
+        SemanticRole m_role;
+
+        // the accessible name a screen reader speaks (§10.1)
+        std::string m_name;
+
+        // the current states of the node (§10.1)
+        SemanticStates m_states;
+
+        // the bounds the node occupies in logical pixels (§10.1)
+        Rect m_bounds;
+
+        // one registered action, with the name assistive technology and automation select it by (§10.1)
+        struct Action
+        {
+            // the name the action is selected by (§10.1)
+            std::string name;
+
+            // the work the action performs (§10.1)
+            SemanticAction action;
+        };
+
+        // the registered actions, in registration order (§10.1)
+        std::vector<Action> m_actions;
+    };
+} // namespace albor
