@@ -23,3 +23,7 @@ target_link_libraries(albor-prototype-d3-shadow PRIVATE albor-prototype-d2)
 # R11: the property mix of a real UI, and the combined memory on that mix (F2.11, §28.4)
 add_executable(albor-prototype-d3-corpus corpus_mix.cpp)
 target_link_libraries(albor-prototype-d3-corpus PRIVATE albor-prototype-d2)
+
+# R10: the read path, interleaved A/B with spread (F2.10, §28.4)
+add_executable(albor-prototype-d3-readpath read_path.cpp)
+target_link_libraries(albor-prototype-d3-readpath PRIVATE albor-prototype-d2)

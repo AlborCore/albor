@@ -61,6 +61,18 @@ namespace albor::prototype_d2
         bool write(PropertyId id, Value value, WriteSource source);
 
         [[nodiscard]] Value read(PropertyId id) const;
+
+        // read a scalar property without building the 40 B variant a Value carries (plan.md R10)
+        //
+        // generated bindings know the declared type of every property they read (§14.1), so the fast path is the
+        // one the compiler would emit; BindingContext::read_int keeps D2's recorded path, which builds the Value
+        std::int64_t read_int(PropertyId id) const { return m_slots.at(id).value.as_int(); }
+        double read_double(PropertyId id) const { return m_slots.at(id).value.as_double(); }
+        bool read_bool(PropertyId id) const { return m_slots.at(id).value.as_bool(); }
+
+        // read a payload owning property through the same path a Value read would take (plan.md R10)
+        [[nodiscard]] std::shared_ptr<const std::string> read_string(PropertyId id) const { return m_slots.at(id).value.as_string(); }
+
         [[nodiscard]] ValueType type_of(PropertyId id) const;
         [[nodiscard]] WriteSource source_of(PropertyId id) const;
         [[nodiscard]] std::uint64_t generation_of(PropertyId id) const;
@@ -139,6 +151,18 @@ namespace albor::prototype_d2
         bool write(PropertyId id, Value value, WriteSource source);
 
         [[nodiscard]] Value read(PropertyId id) const;
+
+        // read a scalar property without building the 40 B variant a Value carries (plan.md R10)
+        //
+        // the declared type comes from the schema, so the fast path reads the alternative the offset already selects;
+        // BindingContext::read_int keeps D2's recorded path, which goes through read() and builds the Value
+        std::int64_t read_int(PropertyId id) const { return *static_cast<const std::int64_t*>(address_of(id)); }
+        double read_double(PropertyId id) const { return *static_cast<const double*>(address_of(id)); }
+        bool read_bool(PropertyId id) const { return *static_cast<const bool*>(address_of(id)); }
+
+        // read a payload owning property through the same path a Value read would take (plan.md R10)
+        [[nodiscard]] std::shared_ptr<const std::string> read_string(PropertyId id) const { return *static_cast<const std::shared_ptr<const std::string>*>(address_of(id)); }
+
         [[nodiscard]] ValueType type_of(PropertyId id) const;
         [[nodiscard]] WriteSource source_of(PropertyId id) const;
 
