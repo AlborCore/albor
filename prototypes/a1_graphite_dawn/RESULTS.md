@@ -6,15 +6,26 @@ than a missing capability.
 
 ## Executive result
 
-**WORKS — shared-device Graphite+Dawn is operational.**
+**WORKS WITH LIMITATIONS — and the limitations are large enough to answer the renderer question.**
 
 A `skgpu::graphite::Context` was created on a `wgpu::Device` this process created, reported
-`backend() == skgpu::BackendApi::kDawn`, recorded Skia drawing into an offscreen surface, executed on that device,
-and read its pixels back through Graphite's own async read. That is the architecture AD-28 was blocked on, and it
-is the answer to the task's central question: **Graphite can run on the same Dawn device Albor's renderer uses.**
+`context->backend() == skgpu::BackendApi::kDawn`, rendered retained geometry **and** Skia text into that device,
+and read the pixels back. The architecture is real: one instance, one adapter, one device, one queue, handed to
+Graphite unchanged. Configuration B cannot exist, because `DawnBackendContext` has no constructor that does not take
+the client's device.
 
-This is a feasibility result, not a shipping recommendation, and two things it does *not* establish are recorded
-below: the text workload could not be measured, and the W1/W2 timings did not complete in the time available.
+What the measurements then show is that routing Albor's geometry and text through Graphite costs far more than either
+alternative:
+
+- **1.8 M segments record in 7.679 ms p50** against Dawn-only's **0.085 ms** for a single
+  `Draw(6, 1 800 000)` — **90x more CPU**, and Graphite gives up the batching advantage that motivated the whole
+  idea.
+- **4 000 text labels record in 127.3 ms p50**, ~31.8 µs each, dominating everything else by more than 10x. The
+  combined CAD scene records in **112.7 ms p50**, a ~8.9 fps ceiling from CPU recording alone, against Ganesh's
+  5.92–47.48 ms on the same scene.
+- **No composition path exists** without an upstream Skia patch, which is off the table by decision.
+
+So: it works, it is not the primary renderer.
 
 ## Environment
 
@@ -145,48 +156,110 @@ is untestable in this configuration.** The driver reports every route it tried (
 This must be resolved before any W2 figure, any text claim, or any AD-28 conclusion about Skia's 2D surface is
 worth anything.
 
-## Workload measurements — NOT obtained
+## Workload measurements
 
-**No W1, W2 or W3 timing is reported here.** The driver
-(`graphite_dawn_bench.cpp`) implements them — 1.8 × 10⁶ segments on A1's `0xA11F5EED` seed, 100 000 symbols with
-**4 000 labels** on `0xCAD0FFEE`, A1's label paint and draw loop, with recording, enqueue, GPU fence and readback on
-separate clocks — but a full run did not complete in the time available and was stopped rather than reported
-partially.
+One process, verified single-instance (`--smoke` also available for correctness runs; the driver refuses to start
+when another instance holds `/tmp/albor-graphite-dawn-bench.lock`). **A1's workloads, seeds, label paint and draw
+loop unchanged; the same 8 warm-up frames and 5 x 20 timed frames as every other slice.** Median of 100 frames,
+p99 over the same 100.
 
-Why it is slow, measured rather than guessed: each frame fences on the GPU, every frame rasterises 1.8 × 10⁶ filled
-quads, and the adapter is an **integrated** GPU. A1.4's Graphite-on-Metal recording figure (1.521 ms p99) is
-CPU-side only, so it is no guide to the fenced per-frame cost. The obvious lever is fewer frames per repetition, but
-that changes the timing policy the other slices used, so it is a decision rather than a tweak.
-
-| metric | Ganesh (A1.3) | Graphite/Metal (A1.4) | Dawn-only (A1-Dawn) | Graphite+Dawn |
+| workload | record p50 | enqueue p50 | GPU fence p50 | record p99 |
 | --- | ---: | ---: | ---: | ---: |
-| W1 recording | 0.394 ms p99 | 1.521 ms p99 | **0.085 ms p50** | not measured |
+| **W1** geometry, 1 800 000 segments | **7.679 ms** | 3.159 ms | 623.120 ms | 11.163 ms |
+| **W2** geometry only, 100 000 symbols | **4.394 ms** | 1.839 ms | 91.977 ms | 7.398 ms |
+| **W2** text only, 4 000 labels | **127.321 ms** | 0.473 ms | 1.555 ms | 181.173 ms |
+| **W2** geometry + text | **112.686 ms** | 2.044 ms | 92.846 ms | 177.579 ms |
+
+Text is 127.3 ms of the combined 112.7 ms — i.e. **the labels dominate everything else by more than an order of
+magnitude**, at ~31.8 µs per label of CPU recording. The GPU fence for the text pass is 1.555 ms, so this is
+entirely CPU-side. Geometry is the opposite: a 1.555 ms fence against 623 ms for W1 means W1 is GPU-bound on this
+adapter.
+
+**W3, update half.** Rebuilding the 1.8 M-segment retained set costs **1 151.3 ms p50** on the CPU (A1 already
+recorded that an append copies every point again); re-recording the mutated set costs **6.738 ms p50**.
+
+**Memory.** Graphite reports 5 599 232 bytes budgeted and 5 595 136 purgeable, against a 256 MiB budget ceiling.
+
+### Two anomalies, reported rather than smoothed
+
+- **Text-only (127.3 ms) is slower than geometry+text (112.7 ms).** That is not physically meaningful; it is
+  run-to-run variance, and A1.3 recorded the same instability on this machine (W2 recording p50 across four runs was
+  5.92, 6.16, 47.13 and 47.48 ms). Treat the text figure as *order of magnitude*, not as a precise ratio.
+- **Graphite-on-Dawn records 35x slower than Graphite-on-Metal** for the same 1.8 M-segment replay (7.679 ms p50
+  against 0.220 ms). Both are Graphite replaying identical `drawVertices` calls, so the difference is not the
+  recording API. It is unexplained, and until it is, the two Graphite rows should not be treated as measuring the
+  same thing.
+
+## Comparison
+
+Every row is CPU-side unless labelled otherwise. A1.3's Ganesh and A1.4's Graphite rows are **W1**; A1-Dawn is W1.
+
+| metric | Ganesh (A1.3) | Graphite/Metal (A1.4) | Dawn-only (A1-Dawn) | **Graphite+Dawn** |
+| --- | ---: | ---: | ---: | ---: |
+| W1 recording p50 | 0.177 ms | 0.220 ms | **0.085 ms** | 7.679 ms |
+| W1 recording p99 | 0.394 ms | 1.521 ms | not recorded | 11.163 ms |
+| W1 recording p99 per segment | 0.219 ns | 0.845 ns | — | 6.20 ns |
 | W1 draw calls | 220 | not recorded | **1 `Draw(6, 1 800 000)`** | not observable |
-| W1 GPU execution | N/A | N/A (A1.4 had no fence) | N/A | not measured |
+| W1 GPU execution | N/A | **void, see below** | N/A | 623.1 ms fence, integrated GPU |
 | W1 present interval | N/A | N/A | 16.62 ms p50 | not measured |
-| W2 recording (geometry) | recorded | not run | recorded | not measured |
-| W2 text recording | recorded (4 000 labels) | not run | **never drew glyphs** | not measured |
-| W3 | two windows + 100 ms hold | not run | not run | **not reproducible offscreen** |
-| pixel parity | — | — | T2 deterministic, batch parity 13.95%/63.68% unfixed | not measured |
-| 2D feature matrix | — | — | N/A | **not run** |
+| W2 recording p50 | 5.92–47.48 ms (4 runs) | not run | recorded, no glyphs | 112.686 ms |
+| W2 text recording | recorded (4 000 labels) | not run | **never drew glyphs** | 127.321 ms |
+| W3 | two windows + 100 ms hold | not run | not run | update half only |
+| pixel validation | — | **none** | T2 deterministic; batch parity 13.95%/63.68% unfixed | 0/921 600 differ, bit-identical |
+| memory | — | — | — | 5.6 MB budgeted |
 
-Draw-call counts are reported as *not observable* rather than guessed: Graphite issues its own Dawn passes and
-WebGPU exposes no counter, so counting them needs a Dawn interception build or Skia instrumentation.
+**Draw-call counts for Graphite are reported as not observable, not guessed.** Graphite issues its own Dawn passes
+and WebGPU exposes no counter, so counting them needs a Dawn interception build or Skia instrumentation.
 
-## Pixel validation, features, headless, cross-platform — NOT done
+**A1.4's submit and frame columns are void.** That driver never called `Recorder::snap()` /
+`Context::insertRecording()`, so its `submit()` had no command buffer, its 0.0016 ms submit and 0.333 ms frame
+figures describe work that never reached the GPU, and it had no pixel check to notice. Its *recording* figures are
+CPU-side and remain meaningful. This prototype found the same bug in its own first run.
 
-- **Pixel validation**: the driver has the machinery (repeat capture, exact per-channel diff, ink bounding box) and
-  asserts that a drawn 80 × 40 rect lights exactly 3 200 pixels in exactly the requested box. It has not completed a
-  run, so **no repeatability or parity figure is claimed.**
-- **2D feature matrix**: not run. This is the largest remaining gap, since paths, joins, caps, dashes, clipping,
-  transforms, opacity and gradients are the capabilities that motivated keeping Skia.
-- **Software/headless (AD-26)**: unresolved. Dawn's CPU adapter is the only software path visible in this build, and
-  Graphite's Dawn backend on it is untested. Nothing here shows a software rasterizer exists for Graphite+Dawn, and
-  AD-26 must not be read as satisfied.
-- **Cross-platform**: nothing verified. Dawn advertises D3D12 and Vulkan and Skia's Dawn backend is backend-agnostic
-  in principle, but **no claim is made** — only macOS/Metal was run. Note that the vcpkg skia port's `dawn`
-  feature is `"!android & !uwp"` with `x11` pulled in on Linux, which is the manifest-level starting point, not
-  evidence.
+**Ganesh's 10 470 ms stroked-segment figure is still excluded** as CPU tessellation, and it is still not a
+renderer-recording comparison.
+
+**Comparability caveat that applies to every GPU column:** this adapter is `metal/integrated "Intel(R) UHD
+Graphics 630"`. A1-Dawn's 16.62 ms present figure and A1.3's present intervals were taken on an adapter this
+investigation never verified. The fence column is an integrated-GPU number and says nothing about discrete hardware.
+
+## Pixel validation
+
+Verified, with the same assertions the smoke test uses:
+
+| check | result |
+| --- | --- |
+| primitive placed exactly | **3 200 lit pixels in exactly the requested 80x40 box at 600,340** — not "looks right" |
+| text rasterised | **5 572 lit pixels from 17 glyphs at 48 px**, box 41,84 to 405,130 |
+| geometry + text, run twice | **0 of 921 600 pixels differ**, max channel delta 0, mean error 0.000000 |
+| mixed scene ink | 921 039 lit pixels, box 0,0 to 1279,719 |
+| W2's 4 000 labels | **151 102 lit pixels**, box 5,0 to 1279,719 |
+
+**Repeatability is exact and content-bearing.** The earlier version of this check reported "0 pixels differ" on two
+all-black images; both checks now require ink, so an empty frame cannot pass again.
+
+**This is repeatability, not parity.** No cross-renderer pixel comparison was run, so A1-Parity's unresolved batch
+mismatch (13.95% at zoom 1, 63.68% at zoom 8) is untouched, and Graphite+Dawn has not been compared against either
+Ganesh or Dawn pixel-for-pixel.
+
+## Feature coverage — NOT run
+
+The 2D feature matrix (paths, joins, caps, dashes, clipping, transforms, opacity, gradients, images) was **not
+executed**. The driver has the primitives and the ink-bounding-box analysis to do it, and text plus retained
+geometry are proven, but the matrix itself is missing. This is the largest remaining gap, because those features
+are the reason Skia is in the tree.
+
+## Software/headless (AD-26) — unresolved
+
+Nothing was tested. Dawn's CPU adapter is the only software path visible in this build and Graphite's Dawn backend
+on it is unverified. **AD-26 must not be read as satisfied by this prototype**, and no software rasterizer for
+Graphite+Dawn has been shown to exist.
+
+## Cross-platform — nothing verified
+
+Only macOS/Metal ran. Dawn advertises D3D12 and Vulkan and Skia's Dawn backend is backend-agnostic in principle,
+but no claim is made. The vcpkg skia port's `dawn` feature is `"!android & !uwp"` with `x11` pulled on Linux, which
+is a manifest-level starting point, not evidence.
 
 ## What this says about AD-28 — and what it does not
 
@@ -206,7 +279,29 @@ It does **not** make Graphite+Dawn the primary renderer, for reasons that are in
    the only GPU-paced figure A1-Dawn has (16.62 ms present) is a presentation number that §14 says must not be used
    as renderer evidence on this machine.
 
-**Recommendation: keep as experimental, and do not freeze AD-28.** Configuration A is real and the port change was
+### Recommendation: **No** — do not adopt Graphite+Dawn as Albor's primary renderer
+
+The task asks explicitly whether it should be. On this evidence it should not:
+
+1. **It is 90x slower than Dawn-only on the workload Dawn is for.** 7.679 ms p50 against 0.085 ms, because Graphite
+   re-records the retained geometry instead of letting one indexed draw carry it.
+2. **It is slower than the Ganesh baseline it was meant to replace.** 112.686 ms p50 against A1.3's 5.92–47.48 ms on
+   the same CAD scene, and 7.679 ms against 0.177 ms on W1.
+3. **Text, the reason to keep Skia, costs 127 ms per frame** at 4 000 labels — ~31.8 µs a label of CPU recording, with
+   the GPU idle (1.555 ms fence).
+4. **It cannot be composed into Albor's frame** without an upstream Skia patch, which is excluded by decision. Graphite
+   allocates its own surfaces; Albor's geometry and presentation live in Dawn.
+5. **The GPU columns cannot rescue it either**, but they also cannot be trusted here: the adapter is an integrated
+   Intel UHD 630, and A1's and A1-Dawn's present figures were taken on an adapter this investigation never verified.
+
+**Keep it as a documented, reproducible capability, not a shipping path.** The one-line manifest feature is worth
+retaining because it costs nothing when unused, and because "we measured it" is worth more than "we assumed it".
+**AD-28 should not be decided by this prototype** — the blocker it was recorded against is resolved, but the
+candidate it was blocking has now been measured and found wanting on both axes. The open question AD-28 still has is
+whether Dawn *without* Skia can carry the text pipeline, and that is a separate investigation.
+
+**What would change this answer:** a Skia whose Graphite records retained geometry as a single pass, and a text
+recording cost an order of magnitude lower. Neither is a configuration change; both are Skia work. Configuration A is real and the port change was
 one line, so the option stays open cheaply. But the two questions that would justify it — does Graphite keep Dawn's
 batched-geometry advantage, and can its output be composited into a Dawn frame — are both still open, and the second
 needs an upstream Skia change rather than a measurement.

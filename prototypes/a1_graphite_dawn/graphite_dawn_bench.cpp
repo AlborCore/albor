@@ -44,10 +44,15 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <fcntl.h>
+#include <signal.h>
+#include <unistd.h>
+
 #include <functional>
 #include <memory>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 namespace albor::a1_graphite_dawn
@@ -502,12 +507,59 @@ namespace albor::a1_graphite_dawn
             std::printf("  %-26s %-9s %-9s %-9s %-9s %-6s\n", "workload", "record50", "enqueue50", "fence50", "record99", "frames");
         }
 
+        // releases the single-instance lock however the driver leaves, including an early return
+        class InstanceLock
+        {
+        public:
+            explicit InstanceLock(const char* path)
+                : m_path(path) {}
+            ~InstanceLock() { std::remove(m_path); }
+
+            InstanceLock(const InstanceLock&) = delete;
+            InstanceLock& operator=(const InstanceLock&) = delete;
+
+        private:
+            const char* m_path;
+        };
+
     } // namespace
 
 } // namespace albor::a1_graphite_dawn
 
 int main(int argc, char** argv) {
     using namespace albor::a1_graphite_dawn;
+
+    // one instance at a time, enforced rather than remembered. two of these share the cpu and the single gpu and
+    // every timing either of them reports is then meaningless, which is not a theoretical risk: an earlier run of
+    // this driver overlapped with a second one and its numbers had to be discarded
+    const char* lock_path = "/tmp/albor-graphite-dawn-bench.lock";
+    const int lock_fd = ::open(lock_path, O_CREAT | O_EXCL | O_WRONLY, 0600);
+    if (lock_fd < 0) {
+        // a lock left by a crashed run must not block forever, so it is reclaimed only when its pid is gone
+        int owner = 0;
+        if (FILE* existing = std::fopen(lock_path, "r")) {
+            static_cast<void>(std::fscanf(existing, "%d", &owner));
+            std::fclose(existing);
+        }
+
+        if (owner > 0 && ::kill(owner, 0) == 0) {
+            std::fprintf(stderr, "another instance is running as pid %d; refusing to share the gpu with it\n", owner);
+            return 2;
+        }
+
+        std::remove(lock_path);
+        if (::open(lock_path, O_CREAT | O_EXCL | O_WRONLY, 0600) < 0) {
+            std::fprintf(stderr, "could not claim %s\n", lock_path);
+            return 2;
+        }
+    }
+    const int lock = lock_fd >= 0 ? lock_fd : 0;
+    {
+        char pid_text[32];
+        const int length = std::snprintf(pid_text, sizeof(pid_text), "%d", static_cast<int>(::getpid()));
+        static_cast<void>(::write(lock, pid_text, static_cast<size_t>(length)));
+    }
+    const InstanceLock lock_guard{lock_path};
 
     // --smoke stops after the pixel validation, so a correctness iteration does not pay for the workloads
     const bool smoke_only = argc > 1 && std::string(argv[1]) == "--smoke";
