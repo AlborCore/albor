@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <ranges>
+#include <type_traits>
 #include <utility>
 
 namespace albor::prototype_d2
@@ -66,6 +67,36 @@ namespace albor::prototype_d2
         record.dependencies.assign(dependencies.begin(), dependencies.end());
 
         // append the record and hand back the dense binding id (§13.3)
+        //
+        // with id reuse on, a freed id is taken from the free list instead of growing the table (plan.md R8)
+        if (m_binding_reuse && !m_free_bindings.empty()) {
+            // take the most recently freed id, so a reload reuses the same slot (§28.2)
+            const BindingId reused = m_free_bindings.back();
+            m_free_bindings.pop_back();
+
+            // overwrite the dead record with the new one, keeping the id (§28.2)
+            m_bindings.at(reused) = std::move(record);
+
+            // attach the binding to its property so an assignment breaks it (§13.4)
+            m_store.attach_binding(target);
+
+            // remember the binding that writes the property for the pull models (§13.3)
+            if (target >= m_writer.size()) {
+                m_writer.resize(static_cast<std::size_t>(target) + 1, INVALID_BINDING);
+            }
+
+            m_writer.at(target) = reused;
+
+            // declare the dependencies with the index (§13.3)
+            std::visit([reused, &dependencies](auto& index) { index.declare(reused, dependencies); }, m_index);
+
+            // rebuild the sealed half when the caller asked for it, so the new edges are queryable (plan.md R8)
+            rebuild_sealed_index();
+
+            // report the reused id
+            return reused;
+        }
+
         m_bindings.push_back(std::move(record));
         const BindingId binding = static_cast<BindingId>(m_bindings.size() - 1);
 
@@ -81,6 +112,9 @@ namespace albor::prototype_d2
 
         // declare the dependencies with the index (§13.3)
         std::visit([binding, &dependencies](auto& index) { index.declare(binding, dependencies); }, m_index);
+
+        // rebuild the sealed half when the caller asked for it, so the new edges are queryable (plan.md R8)
+        rebuild_sealed_index();
 
         // grow the per-binding bookkeeping the settle uses (§28.2)
         m_dirty_stamp.resize(m_bindings.size(), 0);
@@ -165,8 +199,162 @@ namespace albor::prototype_d2
         // the order no longer matches the graph, so the pull models have to rebuild it (§4)
         m_order.clear();
 
+        // with id reuse on, hand the id to the free list so the next addition can take it (plan.md R8)
+        if (m_binding_reuse) {
+            m_free_bindings.push_back(binding);
+        }
+
         // report that the binding is gone
         return true;
+    }
+
+    template <class Store>
+    BindingId Graph<Store>::replace_binding_in_place(PropertyId target, std::span<const PropertyId> dependencies, BindingFn<Store> fn) {
+        // remember whether the property still followed its binding, because §13.4 makes that decide the outcome
+        const bool was_bound = m_store.has_binding(target);
+
+        // without a binding to replace, this is an addition rather than a replacement (§13.4)
+        if (target >= m_writer.size() || m_writer.at(target) == INVALID_BINDING) {
+            const BindingId added = add_binding(target, dependencies, fn);
+
+            // an imperatively overridden property keeps its override, so put the imperative owner back (§13.4)
+            if (!was_bound) {
+                m_store.set_source(target, WriteSource::Imperative);
+            }
+
+            return added;
+        }
+
+        // resolve the binding that keeps its id and swaps its body (plan.md R8)
+        const BindingId binding = m_writer.at(target);
+        BindingRecord& record = m_bindings.at(binding);
+
+        // drop the index entries the old dependency set declared, which is one removal per dependency (§4)
+        for (const PropertyId dependency : record.dependencies) {
+            std::visit([binding, dependency](auto& index) { static_cast<void>(index.remove_entry(binding, dependency)); }, m_index);
+        }
+
+        // swap the function pointer and the declared dependency set in place (§13.3)
+        record.fn = fn;
+        record.dependencies.assign(dependencies.begin(), dependencies.end());
+        record.alive = true;
+
+        // declare the new dependency set with the index (§13.3)
+        std::visit([binding, &dependencies](auto& index) { index.declare(binding, dependencies); }, m_index);
+
+        // rebuild the sealed half when the caller asked for it, so the new edges are queryable (plan.md R8)
+        rebuild_sealed_index();
+
+        // the order no longer matches the graph, so the pull models have to rebuild it (§4)
+        m_order.clear();
+
+        if (was_bound) {
+            // a bound property recomputes from its new dependencies straight away (§13.4)
+            invalidate_and_replan(target);
+        }
+        else {
+            // an imperatively overridden property keeps its override, so put the imperative owner back (§13.4)
+            m_store.set_source(target, WriteSource::Imperative);
+        }
+
+        // report the id the replacement kept (§28.2)
+        return binding;
+    }
+
+    template <class Store>
+    bool Graph<Store>::index_stale() const {
+        // only the sealed design has buckets that can fall behind the declared pairs (§4)
+        return std::visit(
+            [](const auto& index) {
+                if constexpr (std::is_same_v<std::decay_t<decltype(index)>, SealedCsrIndex>) {
+                    return index.stale();
+                }
+                else {
+                    // the segmented index fills every segment as it is declared, so it is never stale (§4)
+                    return false;
+                }
+            },
+            m_index);
+    }
+
+    template <class Store>
+    void Graph<Store>::rebuild_sealed_index() {
+        // report nothing to do when the caller left the option off (plan.md R8)
+        if (!m_rebuild_sealed) {
+            return;
+        }
+
+        // report nothing to do before seal, because the sealed index has no property count to bucket over until
+        // finish() has run, and a pre-seal addition is bucketed by the finish() that follows it anyway (§4 T4.4)
+        if (!m_sealed) {
+            return;
+        }
+
+        // rebuild the sealed half, which is the only way it can see a dependency declared after seal (§4 T4.4)
+        std::visit(
+            [](auto& index) {
+                if constexpr (std::is_same_v<std::decay_t<decltype(index)>, SealedCsrIndex>) {
+                    static_cast<void>(index.rebuild());
+                }
+            },
+            m_index);
+    }
+
+    template <class Store>
+    std::size_t Graph<Store>::live_binding_count() const {
+        // count the records that still participate in evaluation (§4)
+        std::size_t live = 0;
+
+        for (const BindingRecord& record : m_bindings) {
+            if (record.alive) {
+                live++;
+            }
+        }
+
+        // report the live count
+        return live;
+    }
+
+    template <class Store>
+    std::size_t Graph<Store>::engine_state_bytes() const {
+        // charge every per-binding array the settle uses, whatever model this graph runs (plan.md R5)
+        std::size_t total = m_dirty_stamp.capacity() * sizeof(std::uint64_t);
+        total += m_plan_stamp.capacity() * sizeof(std::uint64_t);
+        total += m_run_counts.capacity() * sizeof(std::size_t);
+        total += m_memo_stamp.capacity() * sizeof(std::uint64_t);
+        total += m_in_progress.capacity() * sizeof(std::uint8_t);
+        total += m_order.capacity() * sizeof(BindingId);
+        total += m_rank.capacity() * sizeof(std::size_t);
+        total += m_dirty.capacity() * sizeof(BindingId);
+        total += m_direct_dirty.capacity() * sizeof(BindingId);
+
+        // charge the per-property machinery every model shares (§13.3)
+        total += m_writer.capacity() * sizeof(BindingId);
+        total += m_pending_stamp.capacity() * sizeof(std::uint64_t);
+        total += m_pending.capacity() * sizeof(PropertyId);
+
+        // report the union the graph allocates (plan.md R5)
+        return total;
+    }
+
+    template <class Store>
+    std::size_t Graph<Store>::model_state_bytes(EvalModel model, std::size_t binding_count, std::size_t property_count) {
+        // every model shares the dirty set, the per-pass plan stamps, the run counts and the writer table (§13.3)
+        std::size_t total = binding_count * (sizeof(std::uint64_t) * 2 + sizeof(std::size_t));
+        total += property_count * (sizeof(BindingId) + sizeof(std::uint64_t) + sizeof(PropertyId));
+
+        // the hybrid model adds the memo epoch and the in-progress marks the recursive pull needs (§13.3)
+        if (model == EvalModel::HybridPushPull) {
+            total += binding_count * (sizeof(std::uint64_t) + sizeof(std::uint8_t));
+        }
+
+        // the pull models add the Kahn order and its rank, which only a sealed order needs (§13.3)
+        if (model == EvalModel::PullTopo) {
+            total += binding_count * (sizeof(BindingId) + sizeof(std::size_t));
+        }
+
+        // report the model's own subset of the machinery (plan.md R5)
+        return total;
     }
 
     template <class Store>

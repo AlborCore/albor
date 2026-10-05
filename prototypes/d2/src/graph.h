@@ -138,6 +138,44 @@ namespace albor::prototype_d2
         // replace the binding of a property with a new function and dependency set (§13.4, §18.1)
         BindingId replace_binding(PropertyId target, std::span<const PropertyId> dependencies, BindingFn<Store> fn);
 
+        // replace a binding's function and dependency set while keeping its id (plan.md R8)
+        //
+        // D2's recorded mechanism is remove_binding followed by add_binding, which retains a tombstone and issues a
+        // fresh id; this variant swaps the record in place, so the choice of mechanism is a measured option rather
+        // than an assumption. The default is off, so every figure D2 published stays reproducible (§28.4)
+        BindingId replace_binding_in_place(PropertyId target, std::span<const PropertyId> dependencies, BindingFn<Store> fn);
+
+        // reuse the id of a removed binding for the next addition, from a free list (plan.md R8)
+        //
+        // default off, which keeps D2's recorded tombstone-per-removal behaviour (§28.4)
+        void set_binding_reuse(bool reuse) { m_binding_reuse = reuse; }
+
+        // rebuild the sealed half of the index after a change declared after seal (plan.md R8)
+        //
+        // the sealed index buckets the declared pairs once, so a dependency declared after seal is invisible to a
+        // query until every bucket is rebuilt; the segmented index needs no such step. Default off, so D2's recorded
+        // behaviour is unchanged and the staleness is measured rather than assumed (§28.4)
+        void set_rebuild_sealed_after_mutation(bool rebuild) { m_rebuild_sealed = rebuild; }
+
+        // report whether the index buckets still match the declared pairs (plan.md R8)
+        [[nodiscard]] bool index_stale() const;
+
+        // report how many binding records the table holds, including the dead ones (plan.md R8)
+        [[nodiscard]] std::size_t binding_record_count() const { return m_bindings.size(); }
+
+        // report how many binding records a removal cycle leaves behind (plan.md R8)
+        [[nodiscard]] std::size_t live_binding_count() const;
+
+        // report the bytes the engine's own per-binding and per-property machinery holds (plan.md R5)
+        //
+        // the graph allocates every model's machinery whatever model it runs, so the accessor reports the whole
+        // allocation and the caller separates the model's own subset from the union (§28.2)
+        [[nodiscard]] std::size_t engine_state_bytes() const;
+
+        // report the bytes one model's own machinery holds at the current sizes, which is what carrying a second
+        // engine would add (plan.md R5)
+        [[nodiscard]] static std::size_t model_state_bytes(EvalModel model, std::size_t binding_count, std::size_t property_count);
+
         // build the topological order the pull model needs and replay deferred invalidations (§13.4)
         void seal();
 
@@ -231,6 +269,9 @@ namespace albor::prototype_d2
 
         // invalidate a property and schedule the binding that writes it, which is what replacement and rebind need (§13.4)
         void invalidate_and_replan(PropertyId property);
+
+        // rebuild the sealed half of the index when the caller asked for it (plan.md R8)
+        void rebuild_sealed_index();
         void run_binding(BindingId binding);
 
         // build the Kahn order the pull model evaluates in (§13.3)
@@ -251,7 +292,15 @@ namespace albor::prototype_d2
         bool m_mutable_index;
         bool m_sealed = false;
 
+        // hold the binding table, the dependency index and the evaluation model (§13.3)
         std::vector<BindingRecord> m_bindings;
+
+        // reuse a removed binding's id for the next addition, which is off by default (plan.md R8)
+        bool m_binding_reuse = false;
+        std::vector<BindingId> m_free_bindings;
+
+        // rebuild the sealed half of the index after a post-seal change, which is off by default (plan.md R8)
+        bool m_rebuild_sealed = false;
 
         // hold either the sealed CSR or the mutable segmented index (§4)
         std::variant<SealedCsrIndex, SegmentedIndex> m_index;

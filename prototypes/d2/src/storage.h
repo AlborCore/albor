@@ -54,10 +54,25 @@ namespace albor::prototype_d2
         InstanceId create(SchemaId schema);
         void destroy(InstanceId instance);
 
+        // choose what an equal write means, which defaults to the comparison D2 recorded (plan.md R6)
+        void set_equality_policy(EqualityPolicy policy) { m_equality = policy; }
+
         // write and report the change that justifies invalidating a dependent (§13.3)
         bool write(PropertyId id, Value value, WriteSource source);
 
         [[nodiscard]] Value read(PropertyId id) const;
+
+        // read a scalar property without building the 40 B variant a Value carries (plan.md R10)
+        //
+        // generated bindings know the declared type of every property they read (§14.1), so the fast path is the
+        // one the compiler would emit; BindingContext::read_int keeps D2's recorded path, which builds the Value
+        std::int64_t read_int(PropertyId id) const { return m_slots.at(id).value.as_int(); }
+        double read_double(PropertyId id) const { return m_slots.at(id).value.as_double(); }
+        bool read_bool(PropertyId id) const { return m_slots.at(id).value.as_bool(); }
+
+        // read a payload owning property through the same path a Value read would take (plan.md R10)
+        [[nodiscard]] std::shared_ptr<const std::string> read_string(PropertyId id) const { return m_slots.at(id).value.as_string(); }
+
         [[nodiscard]] ValueType type_of(PropertyId id) const;
         [[nodiscard]] WriteSource source_of(PropertyId id) const;
         [[nodiscard]] std::uint64_t generation_of(PropertyId id) const;
@@ -93,6 +108,9 @@ namespace albor::prototype_d2
         RegionTable& m_regions;
         std::vector<ErasedSlot> m_slots;
         std::size_t m_reallocations = 0;
+
+        // the write-compare rule, which defaults to D2's recorded comparison (plan.md R6)
+        EqualityPolicy m_equality = EqualityPolicy::Exact;
     };
 
     // store property values inline at the offsets the component schema computed (AD-04b Candidate A)
@@ -124,12 +142,27 @@ namespace albor::prototype_d2
         // set the growth policy once, before the first region is placed (§28.2)
         void set_slab_growth(SlabGrowth growth) { m_growth = growth; }
 
+        // choose what an equal write means, which defaults to the comparison D2 recorded (plan.md R6)
+        void set_equality_policy(EqualityPolicy policy) { m_equality = policy; }
+
         InstanceId create(SchemaId schema);
         void destroy(InstanceId instance);
 
         bool write(PropertyId id, Value value, WriteSource source);
 
         [[nodiscard]] Value read(PropertyId id) const;
+
+        // read a scalar property without building the 40 B variant a Value carries (plan.md R10)
+        //
+        // the declared type comes from the schema, so the fast path reads the alternative the offset already selects;
+        // BindingContext::read_int keeps D2's recorded path, which goes through read() and builds the Value
+        std::int64_t read_int(PropertyId id) const { return *static_cast<const std::int64_t*>(address_of(id)); }
+        double read_double(PropertyId id) const { return *static_cast<const double*>(address_of(id)); }
+        bool read_bool(PropertyId id) const { return *static_cast<const bool*>(address_of(id)); }
+
+        // read a payload owning property through the same path a Value read would take (plan.md R10)
+        [[nodiscard]] std::shared_ptr<const std::string> read_string(PropertyId id) const { return *static_cast<const std::shared_ptr<const std::string>*>(address_of(id)); }
+
         [[nodiscard]] ValueType type_of(PropertyId id) const;
         [[nodiscard]] WriteSource source_of(PropertyId id) const;
 
@@ -189,6 +222,9 @@ namespace albor::prototype_d2
 
         // the growth policy, which defaults to D2's recorded fixed 64 KB chunk (§28.4)
         SlabGrowth m_growth = SlabGrowth::Fixed64K;
+
+        // the write-compare rule, which defaults to D2's recorded comparison (plan.md R6)
+        EqualityPolicy m_equality = EqualityPolicy::Exact;
 
         // map a dense property id to the byte offset of its value inside the slab (§5 T5.6)
         std::vector<std::uint32_t> m_location;

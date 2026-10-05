@@ -1,0 +1,20 @@
+# Prototype D3 R11 corpus — the settings window (F2.11)
+#
+# one settings window: a navigation list on the left, three setting panes on the right, and a status row
+# form:
+#   screen <Name>
+#     use <Component> <multiplicity>
+#   end
+
+screen settings
+  use Frame 4
+  use Label 4
+  use Toggle 6
+  use Slider 4
+  use Spinner 2
+  use Button 6
+  use ListView 1
+  use Row 8
+  use StatusBar 1
+  use Toolbar 1
+end

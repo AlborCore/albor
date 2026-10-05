@@ -19,3 +19,31 @@ target_link_libraries(albor-prototype-d3-slab PRIVATE albor-prototype-d2)
 # R7: the animation shadow audit (§28.4)
 add_executable(albor-prototype-d3-shadow animation_shadow.cpp)
 target_link_libraries(albor-prototype-d3-shadow PRIVATE albor-prototype-d2)
+
+# R11: the property mix of a real UI, and the combined memory on that mix (F2.11, §28.4)
+add_executable(albor-prototype-d3-corpus corpus_mix.cpp)
+target_link_libraries(albor-prototype-d3-corpus PRIVATE albor-prototype-d2)
+
+# R10: the read path, interleaved A/B with spread (F2.10, §28.4)
+add_executable(albor-prototype-d3-readpath read_path.cpp)
+target_link_libraries(albor-prototype-d3-readpath PRIVATE albor-prototype-d2)
+
+# R6: equality semantics for the write-compare (F2.6, §28.4)
+add_executable(albor-prototype-d3-equality equality.cpp)
+target_link_libraries(albor-prototype-d3-equality PRIVATE albor-prototype-d2)
+
+# R8: binding replacement and removal semantics, as variants (F2.8, §28.4)
+add_executable(albor-prototype-d3-mutate mutate.cpp)
+target_link_libraries(albor-prototype-d3-mutate PRIVATE albor-prototype-d2)
+
+# R9: static cycle rejection with conditional dependencies (F2.9, §28.4)
+add_executable(albor-prototype-d3-cycles cycles_conditional.cpp)
+target_link_libraries(albor-prototype-d3-cycles PRIVATE albor-prototype-d2)
+
+# R4: the index x evaluation factorial (F2.4, §28.4)
+add_executable(albor-prototype-d3-factorial factorial.cpp)
+target_link_libraries(albor-prototype-d3-factorial PRIVATE albor-prototype-d2)
+
+# R5: the cost of carrying two evaluation engines (F2.5, §28.4)
+add_executable(albor-prototype-d3-dual dual_engine.cpp)
+target_link_libraries(albor-prototype-d3-dual PRIVATE albor-prototype-d2)
