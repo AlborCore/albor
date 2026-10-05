@@ -9,6 +9,29 @@ This document is the agent contract for this repository. Everything here is mand
 - Preserve existing architecture unless explicitly requested
 - Headers use the `.h` extension, sources use `.cpp`; do not introduce another extension
 
+## File Naming Convention
+
+The extension of a source file states the platform it is written against, so a build system can exclude a
+platform without inspecting the file. The infix goes between the base name and the extension.
+
+- A portable source is `<name>.cpp` and a portable header is `<name>.h`, for example `application/application.cpp` and `window/window.h`
+- A macOS source is `<name>.macos.mm`, for example `platform/macos/platform_window.macos.mm`
+- A Linux source is `<name>.linux.c++`, for example `platform/linux/wayland/window.linux.c++`
+- A Windows source is `<name>.win32.c++`, for example `platform/windows/window.win32.c++`
+
+Mandatory rules for a source that reaches a platform API (`AppKit`, `Metal`, `CoreVideo`, `Win32`, `xcb`, `wayland`):
+
+- The file carries the infix of the platform it targets, so `render/render-skia/skia_renderer_backend.macos.mm` is correct and `skia_renderer_backend.mm` is not
+- The base name never repeats the platform, so the file is `platform_window.macos.mm` and not `macos_platform_window.mm`; the platform is already carried by the infix and by the directory
+- A source that reaches no platform API stays portable, even inside a platform module, so `skia_render_context.cpp` stays `.cpp` because it only calls skia
+- A header stays portable whenever it can: the module's public header carries no platform type (§3.5, AD-05), so it is `platform/macos/platform_window.h` and not `platform_window.macos.h`
+- A header that cannot be portable, because it declares platform types or imports platform headers, carries the infix as well, for example `native_surface.macos.h`
+- The infix is part of the file's identity: renaming a file is a build change, so the module `CMakeLists.txt` and every `#include` are updated in the same change
+
+Never introduce an extension outside this list. Adding a platform extension family means updating the
+pattern in `build/check-format.sh` in the same change.
+
+
 ## Source of Truth
 
 - `albor-design-v4.md` is the architecture specification. It outranks any implementation habit.
@@ -31,6 +54,15 @@ Violating any of these is a defect, not a style issue.
 - **The manifest is the single source of truth for native components** (AD-17, §15.1): C++ glue is generated from the manifest, and the compiler never parses C++ headers.
 - **No platform or Skia types in public headers** (§3.5, AD-05, AD-19).
 - **The compiler is not the runtime, and development tooling is not the production application** (§2).
+
+## Recovery Points
+
+- **Treat failure as a possible outcome, and snapshot before an operation that can fail.** A scripted rewrite, a bulk rename, a `git reset`, a `rm -rf`, or an agent pass over many files can all destroy work. `bash build/snapshot.sh <label>` first, then perform the operation.
+- Snapshots live **outside** the repository, in `$ALBOR_SNAPSHOT_DIR` (default `~/albor-snapshots`). A recovery point must not live inside the thing it protects, because the same operation that damages the tree can damage a snapshot stored beside it.
+- Recover with `bash build/restore.sh LATEST` or `bash build/restore.sh <label>`, which unpacks over the working tree without touching git history. Verify the archive before unpacking, so a corrupt snapshot fails while the tree is still intact.
+- After a recovery, always confirm with `git status --short` and `git diff` before continuing.
+- A commit is **not** a substitute for a snapshot: it records what the tree should be, while a snapshot records what it is. Commit only when the user asks.
+- Take a snapshot before any non-trivial change, so the recovery point is cheap and unconditional rather than something to remember under pressure.
 
 ## Build & Unit Tests
 

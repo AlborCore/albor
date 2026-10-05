@@ -1,0 +1,257 @@
+#include "platform/macos/platform_window.h"
+
+#import <AppKit/AppKit.h>
+#import <QuartzCore/CAMetalLayer.h>
+
+#include <memory>
+
+// the delegate the native window consults before it closes, which is the veto point of §5.2
+@interface AlborWindowDelegate : NSObject <NSWindowDelegate>
+
+// the framework listener the close request is forwarded to, which is null once the framework window is gone (§4.2)
+@property(nonatomic, assign) albor::PlatformWindowListener* listener;
+
+@end
+
+@implementation AlborWindowDelegate
+
+// the native close request asks the framework first, which may veto it (§5.2)
+- (BOOL)windowShouldClose:(NSWindow*)sender {
+    // a listener that is gone means the framework window is already destroyed, so the close proceeds (§4.2)
+    if (self.listener == nullptr)
+        return YES;
+
+    return self.listener->on_platform_close_request() ? YES : NO;
+}
+
+@end
+
+namespace albor
+{
+    // the opaque appkit state, defined here so that no appkit type reaches a public header (§3.5, AD-05)
+    struct MacosWindowState
+    {
+        // the framework listener the native window raises events into (§5.3)
+        PlatformWindowListener* listener = nullptr;
+
+        // the native window itself, which is nil until the window is created
+        NSWindow* window = nil;
+
+        // the metal layer the renderer backend attaches to, which is the macos presentation path of AD-16
+        CAMetalLayer* layer = nil;
+
+        // the delegate that turns a native close request into a framework close request (§5.2)
+        id window_delegate = nil;
+
+        // the resize observer, which is removed before the state is released (§4.2)
+        id resize_observer = nil;
+
+        // the backing scale observer, which is removed before the state is released (§4.2)
+        id backing_observer = nil;
+
+        // whether a frame was requested and not yet drawn, which is per window pacing (AD-18b)
+        bool frame_requested = false;
+
+        // whether the window is currently on screen, which appkit does not report directly
+        bool visible = false;
+    };
+
+    namespace
+    {
+        NSWindowStyleMask style_mask_for(const WindowOptions& options) {
+            // every albor window is titled and closable, which is what the documented role mask asks for (§5.3)
+            NSWindowStyleMask mask = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable;
+            // a window the user may not resize simply omits the resizable bit (§5.1)
+            if (options.resizable)
+                mask |= NSWindowStyleMaskResizable;
+            // a dialog is a secondary window, which appkit marks as miniaturizable (§5.1)
+            if (options.role == WindowRole::Dialog)
+                mask |= NSWindowStyleMaskMiniaturizable;
+            return mask;
+        }
+
+        WindowMetrics metrics_of(NSWindow* window) {
+            // the window a resize arrived on is what is measured, so the metrics always match its current bounds (§5.3)
+            // a window with no content view has no area to measure (§5.3)
+            NSView* content = window.contentView;
+            if (content == nil)
+                return WindowMetrics{};
+            // the content view bounds are in logical points, while the drawable is in physical pixels (AD-27)
+            const NSRect bounds = content.bounds;
+            // the backing scale factor is what separates the logical size from the pixel size (AD-27)
+            const CGFloat scale = window.backingScaleFactor;
+            return WindowMetrics::from_logical(Size{static_cast<float>(bounds.size.width), static_cast<float>(bounds.size.height)}, static_cast<float>(scale));
+        }
+    } // namespace
+
+    std::unique_ptr<MacosPlatformWindow> MacosPlatformWindow::create(const WindowOptions& options) {
+        // an option set the framework refuses is never handed to appkit (§5.1)
+        if (!options.valid())
+            return nullptr;
+        // the shared application has to exist before a window can be ordered front (§4.1, §5.3)
+        NSApplication* application = [NSApplication sharedApplication];
+        // a regular policy is what gives the window a menu bar and a dock tile (§4.1)
+        [application setActivationPolicy:NSApplicationActivationPolicyRegular];
+        // the cascade offset keeps a second window from hiding behind the first one (§5.3)
+        static std::size_t window_ordinal = 0;
+        const double origin_x = 120.0 + 80.0 * static_cast<double>(window_ordinal);
+        const double origin_y = 120.0 + 60.0 * static_cast<double>(window_ordinal);
+        const NSRect frame = NSMakeRect(origin_x, origin_y, static_cast<double>(options.size.width), static_cast<double>(options.size.height));
+        // the native window is created with the documented titled, closable and resizable mask (§5.3)
+        NSWindow* window = [[NSWindow alloc] initWithContentRect:frame styleMask:style_mask_for(options) backing:NSBackingStoreBuffered defer:NO];
+        if (window == nil)
+            return nullptr;
+        window.title = [NSString stringWithUTF8String:options.title.c_str()];
+        // the content view carries the metal layer, which is the presentation path of AD-16
+        window.contentView.wantsLayer = YES;
+        window.contentView.layer = [CAMetalLayer layer];
+        // the state is shared because the notification blocks outlive this function and capture it (§4.2)
+        std::shared_ptr<MacosWindowState> state = std::make_shared<MacosWindowState>();
+        state->window = window;
+        state->layer = static_cast<CAMetalLayer*>(window.contentView.layer);
+        // the delegate is the veto point of a native close request, which the framework answers (§5.2)
+        AlborWindowDelegate* delegate = [[AlborWindowDelegate alloc] init];
+        state->window_delegate = delegate;
+        window.delegate = delegate;
+        // the notifications arrive on the main queue, so a resize or a scale change is observed on the ui thread (§4.1)
+        NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
+        NSOperationQueue* main_queue = [NSOperationQueue mainQueue];
+        // a resize reaches the framework as new metrics, because the platform is their authority (§9.1)
+        state->resize_observer = [center addObserverForName:NSWindowDidResizeNotification
+                                                     object:window
+                                                      queue:main_queue
+                                                 usingBlock:^(NSNotification*) {
+                                                   // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
+                                                   if (state->listener == nullptr)
+                                                       return;
+                                                   // the framework receives the metrics the platform now reports (§9.1)
+                                                   state->listener->on_platform_resize(metrics_of(state->window));
+                                                 }];
+        // a backing scale change is a metrics change as well, because the pixel size moves with it (AD-27)
+        state->backing_observer = [center addObserverForName:NSWindowDidChangeBackingPropertiesNotification
+                                                      object:window
+                                                       queue:main_queue
+                                                  usingBlock:^(NSNotification*) {
+                                                    // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
+                                                    if (state->listener == nullptr)
+                                                        return;
+                                                    // the framework receives the metrics the platform now reports (§9.1)
+                                                    state->listener->on_platform_resize(metrics_of(state->window));
+                                                  }];
+        // a new window moves the cascade along, so a later window does not stack on this one (§5.3)
+        window_ordinal++;
+        // the framework window keeps the shared state alive, because the observers reference it (§4.2)
+        return std::unique_ptr<MacosPlatformWindow>(new MacosPlatformWindow(std::move(state)));
+    }
+
+    MacosPlatformWindow::~MacosPlatformWindow() {
+        // the listeners are detached first, because a teardown notification would otherwise reach a half dead object (§4.2)
+        m_state->listener = nullptr;
+        m_state->window.delegate = nil;
+        // the observers are removed before the state is released, because their blocks captured it (§4.2)
+        NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
+        if (m_state->resize_observer != nil) {
+            [center removeObserver:m_state->resize_observer];
+            m_state->resize_observer = nil;
+        }
+        if (m_state->backing_observer != nil) {
+            [center removeObserver:m_state->backing_observer];
+            m_state->backing_observer = nil;
+        }
+        // the native window is closed last, so the layer and its drawables die with it (§6.3)
+        [m_state->window close];
+        // the native objects are dropped with the state, which releases them under arc (§5.3)
+        m_state->window = nil;
+        m_state->window_delegate = nil;
+        m_state->layer = nil;
+    }
+
+    void MacosPlatformWindow::set_listener(PlatformWindowListener* listener) {
+        m_state->listener = listener;
+        // the delegate holds the same listener, because the close veto travels through it (§5.2)
+        AlborWindowDelegate* delegate = static_cast<AlborWindowDelegate*>(m_state->window_delegate);
+        if (delegate != nil)
+            delegate.listener = listener;
+    }
+
+    void MacosPlatformWindow::show() {
+        // a window with no native window cannot be shown (§5.3)
+        if (m_state->window == nil)
+            return;
+        [m_state->window makeKeyAndOrderFront:nil];
+        // the application is activated so that the window takes focus and the pacing source ticks (§4.1)
+        [[NSApplication sharedApplication] activateIgnoringOtherApps:YES];
+        m_state->visible = true;
+    }
+
+    void MacosPlatformWindow::hide() {
+        // a window with no native window was never on screen (§5.3)
+        if (m_state->window == nil)
+            return;
+        [m_state->window orderOut:nil];
+        m_state->visible = false;
+    }
+
+    void MacosPlatformWindow::set_title(std::string_view title) {
+        // a window with no native window has no title bar to write into (§5.3)
+        if (m_state->window == nil)
+            return;
+        m_state->window.title = [[NSString alloc] initWithBytes:title.data() length:title.size() encoding:NSUTF8StringEncoding];
+    }
+
+    void MacosPlatformWindow::set_size(Size size) {
+        // a window with no native window cannot be resized (§5.3)
+        if (m_state->window == nil)
+            return;
+        // the origin is kept, so the window grows from the corner the user placed it at (§7.4)
+        const NSRect frame = m_state->window.frame;
+        [m_state->window setFrame:NSMakeRect(frame.origin.x, frame.origin.y, static_cast<double>(size.width), static_cast<double>(size.height)) display:YES];
+    }
+
+    WindowMetrics MacosPlatformWindow::metrics() const {
+        // a window with no native window has no metrics to report (§5.3)
+        if (m_state->window == nil)
+            return WindowMetrics{};
+        return metrics_of(m_state->window);
+    }
+
+    NativeWindowHandle MacosPlatformWindow::native_handle() const {
+        // a window with no layer hands out the invalid handle, which a backend refuses (§3.5)
+        if (m_state->layer == nil)
+            return NativeWindowHandle{};
+        // the layer crosses into the framework as an opaque pointer, which no appkit type may name (§3.5, AD-05)
+        return NativeWindowHandle::from_object((__bridge const void*)m_state->layer);
+    }
+
+    void MacosPlatformWindow::request_frame() {
+        // the pacing source is owned by the event loop, so a window only records that it wants a frame (§4.3)
+        m_state->frame_requested = true;
+    }
+
+    bool MacosPlatformWindow::frame_requested() const {
+        // the flag is what the next pacing tick consults to decide whether to draw (§4.3)
+        return m_state->frame_requested;
+    }
+
+    bool MacosPlatformWindow::visible() const {
+        // the flag is the framework's record of what it asked appkit to do (§5.1)
+        return m_state->visible;
+    }
+
+    void MacosPlatformWindow::close() {
+        // a window that was never created has nothing to close (§5.2)
+        if (m_state->window == nil)
+            return;
+        // the listener is detached first, because closing raises notifications the framework is already past (§4.2)
+        m_state->listener = nullptr;
+        m_state->window.delegate = nil;
+        // the native window is closed without asking the framework, because the framework initiated this (§5.2)
+        [m_state->window close];
+        // a closed window has nothing left to draw (§4.3)
+        m_state->frame_requested = false;
+        m_state->visible = false;
+    }
+
+    MacosPlatformWindow::MacosPlatformWindow(std::shared_ptr<MacosWindowState> state) :
+        m_state(std::move(state)) {}
+} // namespace albor

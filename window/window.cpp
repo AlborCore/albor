@@ -1,0 +1,150 @@
+#include "window/window.h"
+
+namespace albor
+{
+    Window::Window(WindowHandle handle, WindowOptions options, std::unique_ptr<PlatformWindow> platform) :
+        m_handle(handle), m_options(std::move(options)), m_platform(std::move(platform)) {
+        // a window without a native window is still a valid framework window, but it has no metrics yet (§5.1)
+        if (m_platform) {
+            // the listener has to point at this window before any native event can arrive (§5.3)
+            m_platform->set_listener(this);
+            // the metrics start from what the native window already reports (§9.1)
+            m_metrics = m_platform->metrics();
+        }
+    }
+
+    Window::~Window() {
+        // the native window holds a raw pointer to this listener, so it must stop raising events first (§4.2)
+        if (m_platform)
+            m_platform->set_listener(nullptr);
+    }
+
+    bool Window::alive() const {
+        // a window is alive exactly while it owns a native window (§5.2)
+        return m_platform != nullptr;
+    }
+
+    WindowHandle Window::handle() const {
+        // the handle names this window for the rest of its life (§5.2)
+        return m_handle;
+    }
+
+    const WindowOptions& Window::options() const {
+        // the options are kept whole, because a role is immutable after creation (§5.1)
+        return m_options;
+    }
+
+    WindowMetrics Window::metrics() const {
+        // the platform is the authority on metrics, so the window only caches what it last reported (§9.1)
+        return m_metrics;
+    }
+
+    void Window::show() {
+        // a window without a native window has nothing to put on screen (§5.1)
+        if (!m_platform)
+            return;
+        m_platform->show();
+        m_visible = true;
+    }
+
+    void Window::hide() {
+        // a window without a native window was never on screen (§5.1)
+        if (!m_platform)
+            return;
+        m_platform->hide();
+        m_visible = false;
+    }
+
+    void Window::set_title(std::string_view title) {
+        // a window without a native window has no title bar to write into (§5.1)
+        if (!m_platform)
+            return;
+        m_platform->set_title(title);
+    }
+
+    void Window::set_size(Size size) {
+        // a window without a native window cannot be resized (§5.1)
+        if (!m_platform)
+            return;
+        m_platform->set_size(size);
+    }
+
+    void Window::request_frame() {
+        // a window without a native window presents nothing (§4.3)
+        if (!m_platform)
+            return;
+        // the native window records the request and answers it on the next pacing tick (§4.3, AD-18b)
+        m_platform->request_frame();
+    }
+
+    NativeWindowHandle Window::native_handle() const {
+        // a window without a native window hands out the invalid handle, which a backend refuses (§3.5)
+        if (!m_platform)
+            return NativeWindowHandle{};
+        return m_platform->native_handle();
+    }
+
+    void Window::set_close_handler(std::function<bool()> handler) {
+        // the handler is consulted on every close request, so replacing it changes the next verdict (§5.2)
+        m_close_handler = std::move(handler);
+    }
+
+    void Window::set_resize_handler(std::function<void(const WindowMetrics&)> handler) {
+        // the handler receives the metrics the platform just reported (§9.1)
+        m_resize_handler = std::move(handler);
+    }
+
+    void Window::set_frame_handler(std::function<void()> handler) {
+        // the handler receives every pacing tick the platform raises (§4.3)
+        m_frame_handler = std::move(handler);
+    }
+
+    void Window::close() {
+        // closing a window that never existed is a no operation rather than an error (§5.2)
+        if (!m_platform) {
+            m_close_pending = false;
+            return;
+        }
+        // the native window goes away first, so that no event reaches a half torn down object (§4.2)
+        m_platform->close();
+        // the framework window is no longer on screen once its native window is gone
+        m_visible = false;
+        // a granted close leaves nothing pending behind (§5.2)
+        m_close_pending = false;
+    }
+
+    bool Window::close_pending() const {
+        // a pending close is the record of a veto, which the next request may retry (§5.2)
+        return m_close_pending;
+    }
+
+    bool Window::visible() const {
+        // visibility is the framework's record of what it asked the native window to do (§5.1)
+        return m_visible;
+    }
+
+    void Window::on_platform_resize(const WindowMetrics& metrics) {
+        // the platform is the authority on metrics, so the cached copy follows it (§9.1)
+        m_metrics = metrics;
+        // an application that listens for resizes sees the new metrics (§6.1)
+        if (m_resize_handler)
+            m_resize_handler(m_metrics);
+    }
+
+    bool Window::on_platform_close_request() {
+        // without a handler the framework grants the close, which is what a plain window wants (§5.2)
+        if (!m_close_handler)
+            return true;
+        // a vetoing handler leaves the close pending so that the next request may retry (§5.2)
+        m_close_pending = !m_close_handler();
+        // the platform may only close the native window when the application granted it (§5.2)
+        return !m_close_pending;
+    }
+
+    void Window::on_platform_frame() {
+        // a window without a frame handler presents nothing (§4.3)
+        if (!m_frame_handler)
+            return;
+        m_frame_handler();
+    }
+} // namespace albor

@@ -1,0 +1,32 @@
+# the unit tests of the phase 1 modules, which mirror the source tree layout (STYLE-GUIDE.md)
+
+# gather cpp sources (all platforms)
+file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
+
+# a tree without a single suite has nothing to build, which is reported rather than silently ignored
+if(NOT CPP_SOURCES)
+    message(STATUS "albor-tests: no unit suite is present in this tree")
+    return()
+endif()
+
+find_package(GTest CONFIG REQUIRED)
+
+# create the test binary from the gathered suites, which link into one executable (STYLE-GUIDE.md)
+add_executable(albor-tests ${CPP_SOURCES})
+
+# the tests reach the framework through the project root, which is where the module includes point (§3.5)
+target_include_directories(albor-tests PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_features(albor-tests PRIVATE cxx_std_23)
+
+# the tests link the framework modules and nothing platform specific, so they run without a window server (§3.2)
+target_link_libraries(albor-tests PRIVATE albor-core albor-window albor-render albor-application GTest::gtest GTest::gtest_main)
+
+# the coverage build of the same binary produces the profile the coverage report is generated from
+if(ALBOR_COVERAGE)
+    target_compile_options(albor-tests PRIVATE -fprofile-instr-generate -fcoverage-mapping)
+    target_link_options(albor-tests PRIVATE -fprofile-instr-generate)
+endif()
+
+# the test binary is executed directly rather than through ctest, so it never needs a display (§2.2)
+include(GoogleTest)
+gtest_discover_tests(albor-tests DISCOVERY_TIMEOUT 60)
