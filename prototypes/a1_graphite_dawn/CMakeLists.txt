@@ -23,12 +23,10 @@ else()
     string(REGEX REPLACE "/skia$" "" ALBOR_SPIKE_SKIA_INCLUDE_ROOT "${ALBOR_SPIKE_SKIA_INCLUDE_ROOT}")
 endif()
 
-# this target is excluded from the default build on purpose: skia's dawn backend is not compiled into the
-# pinned manifest's skia, so ContextFactory::MakeDawn is absent and the link fails. Excluding it keeps the
-# default build green and makes the spike's missing capability an explicit, named link failure on request
-# rather than a broken tree (prototypes/a1_graphite_dawn/RESULTS.md, T5.1)
-message(STATUS "prototype a1-graphite-dawn: excluded from the default build; skia's dawn backend is not in the pinned manifest")
-add_executable(albor-prototype-a1-graphite-dawn EXCLUDE_FROM_ALL graphite_dawn_main.cpp)
+# the feasibility spike, which keeps its pre-registered T5.1-T5.6 thresholds. it was excluded from the default
+# build while the manifest lacked skia's dawn feature and ContextFactory::MakeDawn did not link; the feature is
+# enabled now (vcpkg.json), so both drivers build normally
+add_executable(albor-prototype-a1-graphite-dawn graphite_dawn_main.cpp)
 
 target_include_directories(albor-prototype-a1-graphite-dawn PRIVATE ${CMAKE_SOURCE_DIR})
 target_include_directories(albor-prototype-a1-graphite-dawn SYSTEM PRIVATE ${ALBOR_SPIKE_SKIA_INCLUDE_ROOT} ${ALBOR_SPIKE_SKIA_INCLUDE_ROOT}/skia)
@@ -37,3 +35,13 @@ target_compile_features(albor-prototype-a1-graphite-dawn PRIVATE cxx_std_23)
 # the spike reads a1's resource factory for its geometry and typeface, and drives dawn's webgpu directly:
 # the feasibility claim is that one device serves both, so the spike links no a1 renderer of its own (AD-06)
 target_link_libraries(albor-prototype-a1-graphite-dawn PRIVATE albor-prototype-a1 dawn::webgpu_dawn)
+
+# phase two: the measurement driver. it prices a1's w1 and w2 workloads on the shared device, reads the pixels
+# back, and keeps recording, enqueue, gpu fence and readback on separate clocks (§13)
+add_executable(albor-prototype-a1-graphite-dawn-bench graphite_dawn_bench.cpp)
+
+target_include_directories(albor-prototype-a1-graphite-dawn-bench PRIVATE ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-prototype-a1-graphite-dawn-bench SYSTEM PRIVATE ${ALBOR_SPIKE_SKIA_INCLUDE_ROOT} ${ALBOR_SPIKE_SKIA_INCLUDE_ROOT}/skia)
+target_compile_features(albor-prototype-a1-graphite-dawn-bench PRIVATE cxx_std_23)
+
+target_link_libraries(albor-prototype-a1-graphite-dawn-bench PRIVATE albor-prototype-a1 dawn::webgpu_dawn)
