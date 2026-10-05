@@ -35,3 +35,7 @@ target_link_libraries(albor-prototype-d3-equality PRIVATE albor-prototype-d2)
 # R8: binding replacement and removal semantics, as variants (F2.8, §28.4)
 add_executable(albor-prototype-d3-mutate mutate.cpp)
 target_link_libraries(albor-prototype-d3-mutate PRIVATE albor-prototype-d2)
+
+# R9: static cycle rejection with conditional dependencies (F2.9, §28.4)
+add_executable(albor-prototype-d3-cycles cycles_conditional.cpp)
+target_link_libraries(albor-prototype-d3-cycles PRIVATE albor-prototype-d2)
