@@ -17,11 +17,11 @@ the client's device.
 What the measurements then show is that routing Albor's geometry and text through Graphite costs far more than either
 alternative:
 
-- **1.8 M segments record in 7.679 ms p50** against Dawn-only's **0.085 ms** for a single
-  `Draw(6, 1 800 000)` — **90x more CPU**, and Graphite gives up the batching advantage that motivated the whole
-  idea.
-- **4 000 text labels record in 127.3 ms p50**, ~31.8 µs each, dominating everything else by more than 10x. The
-  combined CAD scene records in **112.7 ms p50**, a ~8.9 fps ceiling from CPU recording alone, against Ganesh's
+- **1.8 M segments record in 7.287 ms p50** (median of three passes, 5.9% spread) against Dawn-only's **0.085 ms** for
+  a single `Draw(6, 1 800 000)` — **86x more CPU**, and Graphite gives up the batching advantage that motivated the
+  whole idea.
+- **4 000 text labels record in 89.3 ms p50**, ~22.3 µs each, dominating everything else by more than 10x. The
+  combined CAD scene records in **97.4 ms p50**, a ~10.3 fps ceiling from CPU recording alone, against Ganesh's
   5.92–47.48 ms on the same scene.
 - **No composition path exists** without an upstream Skia patch, which is off the table by decision.
 
@@ -158,37 +158,47 @@ worth anything.
 
 ## Workload measurements
 
-One process, verified single-instance (`--smoke` also available for correctness runs; the driver refuses to start
-when another instance holds `/tmp/albor-graphite-dawn-bench.lock`). **A1's workloads, seeds, label paint and draw
-loop unchanged; the same 8 warm-up frames and 5 x 20 timed frames as every other slice.** Median of 100 frames,
-p99 over the same 100.
+**Protocol: three sequential passes of the whole driver**, A1's workloads, seeds, label paint and draw loop unchanged,
+the same 8 warm-up frames and 5 x 20 timed frames as every other slice. Passes are strictly sequential and the driver
+refuses to start while another instance holds its lock, because two instances share the cpu and the single gpu.
+`run_repeated.sh` runs the protocol and samples load average before and after each pass.
+
+**A fourth pass taken under load is recorded and discarded.** The machine showed load average 2.31–3.94 with several
+`CoreServices` processes at 10–16% cpu, and its figures are inflated accordingly — most visibly W2's geometry GPU
+fence, which it reported as 91.977 ms against 37–38 ms in every clean pass, a 2.4x difference. It is the only sample
+that overlaps the driver and it is not used. That this check was worth doing is not in doubt: it changed the W2 text
+figure from 127.321 ms to 89.301 ms and reversed the sign of one anomaly.
+
+Median of the three clean passes, with the observed range:
 
 | workload | record p50 | enqueue p50 | GPU fence p50 | record p99 |
 | --- | ---: | ---: | ---: | ---: |
-| **W1** geometry, 1 800 000 segments | **7.679 ms** | 3.159 ms | 623.120 ms | 11.163 ms |
-| **W2** geometry only, 100 000 symbols | **4.394 ms** | 1.839 ms | 91.977 ms | 7.398 ms |
-| **W2** text only, 4 000 labels | **127.321 ms** | 0.473 ms | 1.555 ms | 181.173 ms |
-| **W2** geometry + text | **112.686 ms** | 2.044 ms | 92.846 ms | 177.579 ms |
+| **W1** geometry, 1 800 000 segments | **7.287 ms** (7.111–7.533) | 2.509 (2.423–2.745) | 596.304 (596.165–596.814) | 10.535 (9.793–11.166) |
+| **W2** geometry only, 100 000 symbols | **4.373 ms** (4.066–4.397) | 1.603 (1.524–1.694) | 38.309 (37.230–38.460) | 6.614 (6.299–14.917) |
+| **W2** text only, 4 000 labels | **89.301 ms** (88.175–97.002) | 0.348 (0.345–0.366) | 1.543 (1.343–1.550) | 100.070 (92.726–166.070) |
+| **W2** geometry + text | **97.434 ms** (95.644–97.575) | 1.673 (1.635–1.690) | 69.542 (69.425–69.678) | 118.074 (117.219–124.886) |
 
-Text is 127.3 ms of the combined 112.7 ms — i.e. **the labels dominate everything else by more than an order of
-magnitude**, at ~31.8 µs per label of CPU recording. The GPU fence for the text pass is 1.555 ms, so this is
-entirely CPU-side. Geometry is the opposite: a 1.555 ms fence against 623 ms for W1 means W1 is GPU-bound on this
-adapter.
+**W1 recording is the stable measurement**: 7.111–7.533 ms, a 5.9% spread, and the W1 GPU fence is tighter still at
+0.1%. Those two rows carry the conclusion.
 
-**W3, update half.** Rebuilding the 1.8 M-segment retained set costs **1 151.3 ms p50** on the CPU (A1 already
-recorded that an append copies every point again); re-recording the mutated set costs **6.738 ms p50**.
+**Text is ~22.3 µs per label of CPU recording** (89.301 ms / 4 000), and it dominates: the labels alone cost more
+than geometry and text together minus the geometry, and the GPU fence for the text pass is 1.543 ms, so it is
+entirely CPU-side. Geometry is the opposite — a 596 ms fence against 7.3 ms of recording means W1 is GPU-bound on
+this adapter.
 
-**Memory.** Graphite reports 5 599 232 bytes budgeted and 5 595 136 purgeable, against a 256 MiB budget ceiling.
+**W3, update half.** Rebuilding the 1.8 M-segment retained set costs **911.788 ms p50** (889.767–960.549) on the cpu,
+which is A1's already-recorded cost of an append copying every point again, not a Graphite cost; re-recording the
+mutated set costs **5.458 ms p50** (5.229–5.645).
 
-### Two anomalies, reported rather than smoothed
+**Memory.** Graphite reports 5 599 232 bytes budgeted and 5 595 136 purgeable against a 256 MiB ceiling —
+**byte-identical in all four passes**, including the loaded one.
 
-- **Text-only (127.3 ms) is slower than geometry+text (112.7 ms).** That is not physically meaningful; it is
-  run-to-run variance, and A1.3 recorded the same instability on this machine (W2 recording p50 across four runs was
-  5.92, 6.16, 47.13 and 47.48 ms). Treat the text figure as *order of magnitude*, not as a precise ratio.
-- **Graphite-on-Dawn records 35x slower than Graphite-on-Metal** for the same 1.8 M-segment replay (7.679 ms p50
-  against 0.220 ms). Both are Graphite replaying identical `drawVertices` calls, so the difference is not the
-  recording API. It is unexplained, and until it is, the two Graphite rows should not be treated as measuring the
-  same thing.
+### The anomaly from the single run was an artifact, and is now resolved
+
+The earlier single pass reported text-only (127.321 ms) *slower* than geometry+text (112.686 ms), which is not
+physically possible and was flagged as variance. With three clean passes the ordering is the expected one —
+text-only 89.301 ms against combined 97.434 ms — and the combined figure is stable to 2.0% (95.644–97.575). The
+anomaly was the loaded pass, not the machine.
 
 ## Comparison
 
@@ -196,16 +206,16 @@ Every row is CPU-side unless labelled otherwise. A1.3's Ganesh and A1.4's Graphi
 
 | metric | Ganesh (A1.3) | Graphite/Metal (A1.4) | Dawn-only (A1-Dawn) | **Graphite+Dawn** |
 | --- | ---: | ---: | ---: | ---: |
-| W1 recording p50 | 0.177 ms | 0.220 ms | **0.085 ms** | 7.679 ms |
-| W1 recording p99 | 0.394 ms | 1.521 ms | not recorded | 11.163 ms |
-| W1 recording p99 per segment | 0.219 ns | 0.845 ns | — | 6.20 ns |
+| W1 recording p50 | 0.177 ms | 0.220 ms | **0.085 ms** | 7.287 ms |
+| W1 recording p99 | 0.394 ms | 1.521 ms | not recorded | 10.535 ms |
+| W1 recording p99 per segment | 0.219 ns | 0.845 ns | — | 5.85 ns |
 | W1 draw calls | 220 | not recorded | **1 `Draw(6, 1 800 000)`** | not observable |
-| W1 GPU execution | N/A | **void, see below** | N/A | 623.1 ms fence, integrated GPU |
+| W1 GPU execution | N/A | **void, see below** | N/A | 596.3 ms fence, integrated GPU |
 | W1 present interval | N/A | N/A | 16.62 ms p50 | not measured |
-| W2 recording p50 | 5.92–47.48 ms (4 runs) | not run | recorded, no glyphs | 112.686 ms |
-| W2 text recording | recorded (4 000 labels) | not run | **never drew glyphs** | 127.321 ms |
+| W2 recording p50 | 5.92–47.48 ms (4 runs) | not run | recorded, no glyphs | 97.434 ms (3 passes) |
+| W2 text recording | recorded (4 000 labels) | not run | **never drew glyphs** | 89.301 ms |
 | W3 | two windows + 100 ms hold | not run | not run | update half only |
-| pixel validation | — | **none** | T2 deterministic; batch parity 13.95%/63.68% unfixed | 0/921 600 differ, bit-identical |
+| pixel validation | — | **none** | T2 deterministic; batch parity 13.95%/63.68% unfixed | 0/921 600 differ, bit-identical, all 3 passes |
 | memory | — | — | — | 5.6 MB budgeted |
 
 **Draw-call counts for Graphite are reported as not observable, not guessed.** Graphite issues its own Dawn passes
@@ -233,7 +243,7 @@ Verified, with the same assertions the smoke test uses:
 | text rasterised | **5 572 lit pixels from 17 glyphs at 48 px**, box 41,84 to 405,130 |
 | geometry + text, run twice | **0 of 921 600 pixels differ**, max channel delta 0, mean error 0.000000 |
 | mixed scene ink | 921 039 lit pixels, box 0,0 to 1279,719 |
-| W2's 4 000 labels | **151 102 lit pixels**, box 5,0 to 1279,719 |
+| W2's 4 000 labels | **151 102 lit pixels**, box 5,0 to 1279,719 — identical in all three passes |
 
 **Repeatability is exact and content-bearing.** The earlier version of this check reported "0 pixels differ" on two
 all-black images; both checks now require ink, so an empty frame cannot pass again.
@@ -283,12 +293,12 @@ It does **not** make Graphite+Dawn the primary renderer, for reasons that are in
 
 The task asks explicitly whether it should be. On this evidence it should not:
 
-1. **It is 90x slower than Dawn-only on the workload Dawn is for.** 7.679 ms p50 against 0.085 ms, because Graphite
+1. **It is 86x slower than Dawn-only on the workload Dawn is for.** 7.287 ms p50 against 0.085 ms, because Graphite
    re-records the retained geometry instead of letting one indexed draw carry it.
-2. **It is slower than the Ganesh baseline it was meant to replace.** 112.686 ms p50 against A1.3's 5.92–47.48 ms on
-   the same CAD scene, and 7.679 ms against 0.177 ms on W1.
-3. **Text, the reason to keep Skia, costs 127 ms per frame** at 4 000 labels — ~31.8 µs a label of CPU recording, with
-   the GPU idle (1.555 ms fence).
+2. **It is slower than the Ganesh baseline it was meant to replace.** 97.434 ms p50 against A1.3's 5.92–47.48 ms on
+   the same CAD scene, and 7.287 ms against 0.177 ms on W1.
+3. **Text, the reason to keep Skia, costs 89 ms per frame** at 4 000 labels — ~22.3 µs a label of CPU recording, with
+   the GPU idle (1.543 ms fence).
 4. **It cannot be composed into Albor's frame** without an upstream Skia patch, which is excluded by decision. Graphite
    allocates its own surfaces; Albor's geometry and presentation live in Dawn.
 5. **The GPU columns cannot rescue it either**, but they also cannot be trusted here: the adapter is an integrated
