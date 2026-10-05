@@ -264,15 +264,16 @@ namespace albor::prototype_d2
     template <class Store>
     bool Graph<Store>::index_stale() const {
         // only the sealed design has buckets that can fall behind the declared pairs (§4)
-        return std::visit([](const auto& index) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(index)>, SealedCsrIndex>) {
-                return index.stale();
-            }
-            else {
-                // the segmented index fills every segment as it is declared, so it is never stale (§4)
-                return false;
-            }
-        },
+        return std::visit(
+            [](const auto& index) {
+                if constexpr (std::is_same_v<std::decay_t<decltype(index)>, SealedCsrIndex>) {
+                    return index.stale();
+                }
+                else {
+                    // the segmented index fills every segment as it is declared, so it is never stale (§4)
+                    return false;
+                }
+            },
             m_index);
     }
 
@@ -290,11 +291,12 @@ namespace albor::prototype_d2
         }
 
         // rebuild the sealed half, which is the only way it can see a dependency declared after seal (§4 T4.4)
-        std::visit([](auto& index) {
-            if constexpr (std::is_same_v<std::decay_t<decltype(index)>, SealedCsrIndex>) {
-                static_cast<void>(index.rebuild());
-            }
-        },
+        std::visit(
+            [](auto& index) {
+                if constexpr (std::is_same_v<std::decay_t<decltype(index)>, SealedCsrIndex>) {
+                    static_cast<void>(index.rebuild());
+                }
+            },
             m_index);
     }
 

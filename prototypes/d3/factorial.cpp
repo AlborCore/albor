@@ -205,7 +205,9 @@ namespace albor::prototype_d3
 
         // the plain pass-through, which is what the timed cells use so the log costs them nothing (§28.2)
         template <class Store>
-        void plain_pass(BindingContext<Store>& context) { context.write_int(context.read_int(context.declared().front())); }
+        void plain_pass(BindingContext<Store>& context) {
+            context.write_int(context.read_int(context.declared().front()));
+        }
 
         // the plain sum, which is the wide diamond's sink (§28.2)
         template <class Store>
@@ -483,9 +485,7 @@ namespace albor::prototype_d3
         }
 
         // report one cell's row, in the units every cell shares (§28.2)
-        void report_cell(const Cell& cell) {
-            std::printf("  %-12s %-18s %-14s %6zu %8s %8s %8s %10s %10s %8s\n", cell.index.c_str(), cell.model.c_str(), shape_name(cell.shape).c_str(), cell.bindings, format(median_of(cell.samples), 2).c_str(), format(p99_of(cell.samples), 2).c_str(), format(static_cast<double>(cell.passes) / static_cast<double>(MEASURED_SETTLES), 1).c_str(), format(static_cast<double>(cell.bindings_evaluated) / static_cast<double>(MEASURED_SETTLES), 1).c_str(), format(static_cast<double>(cell.redundant_evaluations) / static_cast<double>(MEASURED_SETTLES), 1).c_str(), format(static_cast<double>(cell.glitches) / static_cast<double>(MEASURED_SETTLES), 2).c_str());
-        }
+        void report_cell(const Cell& cell) { std::printf("  %-12s %-18s %-14s %6zu %8s %8s %8s %10s %10s %8s\n", cell.index.c_str(), cell.model.c_str(), shape_name(cell.shape).c_str(), cell.bindings, format(median_of(cell.samples), 2).c_str(), format(p99_of(cell.samples), 2).c_str(), format(static_cast<double>(cell.passes) / static_cast<double>(MEASURED_SETTLES), 1).c_str(), format(static_cast<double>(cell.bindings_evaluated) / static_cast<double>(MEASURED_SETTLES), 1).c_str(), format(static_cast<double>(cell.redundant_evaluations) / static_cast<double>(MEASURED_SETTLES), 1).c_str(), format(static_cast<double>(cell.glitches) / static_cast<double>(MEASURED_SETTLES), 2).c_str()); }
 
         // hold one mutation measurement, which is the index's own axis (§28.2)
         struct MutationCell

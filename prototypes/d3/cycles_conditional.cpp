@@ -25,8 +25,8 @@ namespace albor::prototype_d3
     namespace
     {
 
-        using albor::prototype_d2::BindingId;
         using albor::prototype_d2::BindingFn;
+        using albor::prototype_d2::BindingId;
         using albor::prototype_d2::InstanceId;
         using albor::prototype_d2::PropertyId;
         using albor::prototype_d2::Scene;

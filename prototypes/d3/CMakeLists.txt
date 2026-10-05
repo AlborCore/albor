@@ -43,3 +43,7 @@ target_link_libraries(albor-prototype-d3-cycles PRIVATE albor-prototype-d2)
 # R4: the index x evaluation factorial (F2.4, §28.4)
 add_executable(albor-prototype-d3-factorial factorial.cpp)
 target_link_libraries(albor-prototype-d3-factorial PRIVATE albor-prototype-d2)
+
+# R5: the cost of carrying two evaluation engines (F2.5, §28.4)
+add_executable(albor-prototype-d3-dual dual_engine.cpp)
+target_link_libraries(albor-prototype-d3-dual PRIVATE albor-prototype-d2)
