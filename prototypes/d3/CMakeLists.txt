@@ -27,3 +27,7 @@ target_link_libraries(albor-prototype-d3-corpus PRIVATE albor-prototype-d2)
 # R10: the read path, interleaved A/B with spread (F2.10, §28.4)
 add_executable(albor-prototype-d3-readpath read_path.cpp)
 target_link_libraries(albor-prototype-d3-readpath PRIVATE albor-prototype-d2)
+
+# R6: equality semantics for the write-compare (F2.6, §28.4)
+add_executable(albor-prototype-d3-equality equality.cpp)
+target_link_libraries(albor-prototype-d3-equality PRIVATE albor-prototype-d2)
