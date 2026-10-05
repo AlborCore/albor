@@ -39,3 +39,7 @@ target_link_libraries(albor-prototype-d3-mutate PRIVATE albor-prototype-d2)
 # R9: static cycle rejection with conditional dependencies (F2.9, §28.4)
 add_executable(albor-prototype-d3-cycles cycles_conditional.cpp)
 target_link_libraries(albor-prototype-d3-cycles PRIVATE albor-prototype-d2)
+
+# R4: the index x evaluation factorial (F2.4, §28.4)
+add_executable(albor-prototype-d3-factorial factorial.cpp)
+target_link_libraries(albor-prototype-d3-factorial PRIVATE albor-prototype-d2)
