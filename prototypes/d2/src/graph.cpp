@@ -283,6 +283,12 @@ namespace albor::prototype_d2
             return;
         }
 
+        // report nothing to do before seal, because the sealed index has no property count to bucket over until
+        // finish() has run, and a pre-seal addition is bucketed by the finish() that follows it anyway (§4 T4.4)
+        if (!m_sealed) {
+            return;
+        }
+
         // rebuild the sealed half, which is the only way it can see a dependency declared after seal (§4 T4.4)
         std::visit([](auto& index) {
             if constexpr (std::is_same_v<std::decay_t<decltype(index)>, SealedCsrIndex>) {

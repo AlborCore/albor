@@ -31,3 +31,7 @@ target_link_libraries(albor-prototype-d3-readpath PRIVATE albor-prototype-d2)
 # R6: equality semantics for the write-compare (F2.6, §28.4)
 add_executable(albor-prototype-d3-equality equality.cpp)
 target_link_libraries(albor-prototype-d3-equality PRIVATE albor-prototype-d2)
+
+# R8: binding replacement and removal semantics, as variants (F2.8, §28.4)
+add_executable(albor-prototype-d3-mutate mutate.cpp)
+target_link_libraries(albor-prototype-d3-mutate PRIVATE albor-prototype-d2)
