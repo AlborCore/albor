@@ -23,7 +23,6 @@
 #include <skia/core/SkColorSpace.h>
 #include <skia/core/SkFont.h>
 #include <skia/core/SkFontMgr.h>
-#include <skia/ports/SkFontMgr_mac_ct.h>
 #include <skia/core/SkImage.h>
 #include <skia/core/SkImageInfo.h>
 #include <skia/core/SkPaint.h>
@@ -37,6 +36,7 @@
 #include <skia/gpu/graphite/Recorder.h>
 #include <skia/gpu/graphite/Surface.h>
 #include <skia/gpu/graphite/dawn/DawnBackendContext.h>
+#include <skia/ports/SkFontMgr_mac_ct.h>
 
 #include <algorithm>
 #include <atomic>
@@ -499,20 +499,16 @@ namespace albor::a1_graphite_dawn
             return readback.ok;
         }
 
-        void print_timing(const char* label, const FrameTiming& timing) {
-            std::printf("  %-26s %-9s %-9s %-9s %-9s %-6s\n", label, format(median_of(timing.record_ms)).c_str(), format(median_of(timing.enqueue_ms)).c_str(), format(median_of(timing.fence_ms)).c_str(), format(percentile_of(timing.record_ms, 0.99)).c_str(), format(static_cast<double>(timing.record_ms.size()), 0).c_str());
-        }
+        void print_timing(const char* label, const FrameTiming& timing) { std::printf("  %-26s %-9s %-9s %-9s %-9s %-6s\n", label, format(median_of(timing.record_ms)).c_str(), format(median_of(timing.enqueue_ms)).c_str(), format(median_of(timing.fence_ms)).c_str(), format(percentile_of(timing.record_ms, 0.99)).c_str(), format(static_cast<double>(timing.record_ms.size()), 0).c_str()); }
 
-        void print_timing_header() {
-            std::printf("  %-26s %-9s %-9s %-9s %-9s %-6s\n", "workload", "record50", "enqueue50", "fence50", "record99", "frames");
-        }
+        void print_timing_header() { std::printf("  %-26s %-9s %-9s %-9s %-9s %-6s\n", "workload", "record50", "enqueue50", "fence50", "record99", "frames"); }
 
         // releases the single-instance lock however the driver leaves, including an early return
         class InstanceLock
         {
         public:
-            explicit InstanceLock(const char* path)
-                : m_path(path) {}
+            explicit InstanceLock(const char* path) :
+                m_path(path) {}
             ~InstanceLock() { std::remove(m_path); }
 
             InstanceLock(const InstanceLock&) = delete;
@@ -616,13 +612,15 @@ int main(int argc, char** argv) {
 
     Readback primitive_pixels;
     InkBox primitive_box;
-    const bool primitive_ok = capture(state, FrameContent{nullptr, false, false, [](SkCanvas& canvas) {
-                                        SkPaint paint;
-                                        paint.setColor(SK_ColorWHITE);
-                                        paint.setAntiAlias(false);
-                                        canvas.drawRect(SkRect::MakeXYWH(600.0F, 340.0F, 80.0F, 40.0F), paint);
-                                    }},
-                                     primitive_pixels, primitive_box);
+    const bool primitive_ok = capture(state,
+                                      FrameContent{nullptr, false, false,
+                                                   [](SkCanvas& canvas) {
+                                                       SkPaint paint;
+                                                       paint.setColor(SK_ColorWHITE);
+                                                       paint.setAntiAlias(false);
+                                                       canvas.drawRect(SkRect::MakeXYWH(600.0F, 340.0F, 80.0F, 40.0F), paint);
+                                                   }},
+                                      primitive_pixels, primitive_box);
 
     check(verdict, "S1", "surface created and read back", primitive_ok, primitive_ok ? "SkSurfaces::RenderTarget returned a surface and the async read delivered pixels" : "no pixels came back");
 
@@ -664,9 +662,7 @@ int main(int argc, char** argv) {
             const sk_sp<SkTypeface> by_null = manager->matchFamilyStyle(nullptr, SkFontStyle());
             const sk_sp<SkTypeface> by_helvetica = manager->matchFamilyStyle("Helvetica", SkFontStyle());
             const sk_sp<SkTypeface> by_legacy = manager->legacyMakeTypeface(nullptr, SkFontStyle());
-            font_probe = "coretext manager present, " + std::to_string(families) + " families; matchFamilyStyle(null)="
-                + (by_null != nullptr ? "ok" : "null") + ", matchFamilyStyle(Helvetica)=" + (by_helvetica != nullptr ? "ok" : "null")
-                + ", legacyMakeTypeface(null)=" + (by_legacy != nullptr ? "ok" : "null") + ", factory typeface=" + (typeface != nullptr ? "ok" : "null");
+            font_probe = "coretext manager present, " + std::to_string(families) + " families; matchFamilyStyle(null)=" + (by_null != nullptr ? "ok" : "null") + ", matchFamilyStyle(Helvetica)=" + (by_helvetica != nullptr ? "ok" : "null") + ", legacyMakeTypeface(null)=" + (by_legacy != nullptr ? "ok" : "null") + ", factory typeface=" + (typeface != nullptr ? "ok" : "null");
 
             // if the factory's route failed but a named family resolved, the text workload still runs on a real
             // face, and which route worked is recorded rather than papered over
@@ -694,13 +690,15 @@ int main(int argc, char** argv) {
 
         Readback glyph_pixels;
         constexpr char label[] = "graphite on dawn";
-        glyph_ok = capture(state, FrameContent{nullptr, false, false, [&font, label](SkCanvas& canvas) {
-                          SkPaint paint;
-                          paint.setColor(SK_ColorWHITE);
-                          paint.setAntiAlias(true);
-                          canvas.drawSimpleText(label, sizeof(label) - 1, SkTextEncoding::kUTF8, 40.0F, 120.0F, font, paint);
-                      }},
-                          glyph_pixels, glyph_box);
+        glyph_ok = capture(state,
+                           FrameContent{nullptr, false, false,
+                                        [&font, label](SkCanvas& canvas) {
+                                            SkPaint paint;
+                                            paint.setColor(SK_ColorWHITE);
+                                            paint.setAntiAlias(true);
+                                            canvas.drawSimpleText(label, sizeof(label) - 1, SkTextEncoding::kUTF8, 40.0F, 120.0F, font, paint);
+                                        }},
+                           glyph_pixels, glyph_box);
 
         glyph_detail = glyph_ok ? format(static_cast<double>(glyph_box.count), 0) + " lit pixels from 17 glyphs at 48 px, box " + std::to_string(glyph_box.min_x) + "," + std::to_string(glyph_box.min_y) + " to " + std::to_string(glyph_box.max_x) + "," + std::to_string(glyph_box.max_y) : "the async read delivered nothing";
     }
