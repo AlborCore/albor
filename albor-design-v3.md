@@ -1176,6 +1176,7 @@ was declared only after the run.
 | Prototype | State | Tests and runs performed |
 | --- | --- | --- |
 | **D — property and binding engine** | complete | 33/33 gtest unit tests (`tests/d/`); benchmark at 100,000 properties and 11,032 bindings |
+| **A1-Build-Cost — dependency build cost** | characterisation, **verdict not robust** | cold `skia[graphite,metal]` 22.6–34.3 min over two identical runs, cold `dawn[metal]` 16.6 min; 45 vs 6 packages; 1.4–2.1× ratio; the repository's ccache never reaches vcpkg builds, so cold figures apply only without the binary cache |
 | **A2 — platform presentation (macOS)** | complete (revision 2) | 200 steady frames, 60-step live resize, 500 ms nested modal session. Pacing now rides `CVDisplayLink`: 59.98–60.01 Hz p50, max interval 18.76 ms, zero stalls over five runs; T4.1 (p99 ≤ 16.7 ms) fails at 18.50–18.69 ms on a uniform phase overshoot, not a cadence defect |
 | **A2 — Windows and Wayland** | not run | plans and platform scaffolds committed; execution tables `PENDING_CI_MATRIX_RUN` |
 | **A1 — renderer (Skia)** | complete | A1.1, A1.2a, A1.3 workloads W1/W2/W3 (401, 401, deadline-limited frames), A1.4 offscreen (400/400) |
@@ -1258,6 +1259,22 @@ submit), which produced A2 Revision R1: the input-to-present budget is 25.0 ms, 
 17.7 to 45.4 ms across five runs of one binary, so a single tail sample is not a decision input on this machine. Window
 roles, popups and modality remain unimplemented.
 
+**A1-Build-Cost (characterisation).** AD-28 recorded its build-cost blocker as *"unevaluated; no cold Skia build was
+measured"*, and a renderer decision had been argued from performance while one of its two candidate dependencies had never
+had its build cost measured. Measured now, with the caches defeated by isolation rather than deletion: **a cold
+`skia[graphite,metal]` build takes 22.6–34.3 minutes across two runs of the identical workload, against 16.6 minutes cold
+for `dawn[metal]`** — Skia's closure is **45 packages and roughly 2 660 translation units** against Dawn's 6. **The verdict
+is not robust and that is the finding:** the two samples spread 52% and straddle the pre-registered 30-minute clause, so
+the band reads *material* on one and *not material* on the other. Any single-sample build time from this machine is not a
+decision input, which is the same lesson B2 drew about tail latencies here. **What both samples agree on is the ratio:
+1.4–2.1×, not an order of magnitude** — so the "huge dependency" framing does not survive measurement. Two further
+results matter more than the timings. **The repository's ccache never reaches vcpkg builds** (`CMakePresets.json` sets
+`CMAKE_C_COMPILER_LAUNCHER` for *our* CMake; vcpkg drives its own, and neither the dedicated `CCACHE_DIR` nor vcpkg's own
+`VCPKG_C/CXX_COMPILER_LAUNCHER` produced a single cache statistic across two full builds), so the cold figures describe a
+machine or CI job with **neither** cache — and on this machine nobody pays 34 minutes, because the 205-archive vcpkg
+binary cache prevents the build entirely. And **Dawn's own cold cost is ~1.3× its recorded figure**, since AD-28's 757 s
+was explicitly warm-ccache, so earlier Skia-versus-Dawn comparisons overstated the gap.
+
 **A1-Graphite-Dawn (spike).** The spike that would decide whether one Dawn device can serve both Albor's custom geometry and Skia text **did not measure its question**: Skia's public headers declare `ContextFactory::MakeDawn` and ship `DawnBackendContext` carrying a `wgpu::Instance`/`Device`/`Queue` — exactly the shared-device shape the spike needed — but the compiled library exports only `MakeMetal` and `MakeVulkan`, because the pinned manifest never requested the port's `dawn` feature. **A header that exists is not evidence that the backend was built**, since Skia's headers are not feature-gated; the failure surfaces only at link time. So AD-28's gate gains a dependency decision rather than a performance verdict, and A1.4's note that Graphite "cannot point at a drawable" is now better read as *the Dawn path was never built*, not *the API forbids it*.
 
 **A1 — renderer (Skia).** Three findings stand out:
@@ -1300,7 +1317,13 @@ submit is asynchronous, so this slice measured no GPU throughput, and presenting
 
 These results make Dawn *Proposed* as candidate primary HAL (AD-28) with six blocking items: (1) platform parity (D3D12 and
 Vulkan unvalidated), (2) no text pipeline, (3) 2D feature surface rebuild, (4) no first-party software rasterizer against AD-26,
-(5) build cost unevaluated, and (6) Skia Graphite on a Dawn backend untested. Skia is **not** retired.
+(5) build cost, and (6) Skia Graphite on a Dawn backend. **Items 5 and 6 have since been probed and neither retires Skia.**
+On build cost (`prototypes/a1_build_cost/RESULTS.md`): a cold `skia[graphite,metal]` build is **22.6–34.3 minutes** across
+two runs of the identical workload against **16.6 minutes** cold for `dawn[metal]`, so the dependency is dearer by
+**1.4–2.1×** rather than by an order of magnitude, and the difference vanishes on any machine with a populated vcpkg binary
+cache — which is every machine here. On Graphite (`prototypes/a1_graphite_dawn/RESULTS.md`): the capability exists in Skia's
+source but **is not in the pinned build**, so the shared-device question is still unmeasured. Skia is **not** retired, and
+the renderer decision is still not ready to freeze.
 
 **Pixel-parity findings (Prototype A1-Parity, `prototypes/a1_parity/RESULTS.md`).** Both engines render
 deterministically (T2: 0 differing bytes across repeats) and Dawn's offscreen readback is exact (T1: 1024000 of 1024000
@@ -1387,6 +1410,18 @@ After AD-06. Dawn (WebGPU C++) through the A2 platform window, with the same ret
 W1, W2 and W3 as Prototype A1, so the two renderers are comparable line for line. macOS only; no Skia dependency at all.
 Questions: does instancing remove Skia's draw-call cap, and does a renderer that is not CPU-bound change the
 multi-window result? Status: run and recorded; feeds AD-28 (*Proposed*) and AD-18b's open presentation question.
+
+### Prototype A1-Build-Cost — Dependency build cost
+
+After AD-28 and Prototype A1-Graphite-Dawn. One characterisation, on the axis the renderer decision turns on and which
+AD-28 recorded as *"unevaluated; no cold Skia build was measured"*. Not a pass/fail gate: a build time is not a
+requirement, so what is committed in advance is the workload and the **bands the number is read against**, not a
+threshold. Cold-ness is defeated by isolation rather than deletion — a dedicated `CCACHE_DIR`, the vcpkg binary cache
+cleared, and fresh build-tree and install roots — and then verified from ccache's own statistics. macOS only; the pinned
+feature sets are measured unchanged. Questions: what does Skia cost to build from nothing, and does that cost decide AD-28?
+Status: **run; the verdict is not robust.** Two samples of the identical cold workload spread 52% and straddle the
+pre-registered 30-minute clause, so the band resolves differently on each; the robust finding is the 1.4–2.1× ratio
+against Dawn's 6-package closure. Results in `prototypes/a1_build_cost/RESULTS.md`.
 
 ### Prototype A1-Graphite-Dawn — Graphite on a shared Dawn device
 

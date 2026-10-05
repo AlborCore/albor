@@ -169,6 +169,12 @@ Prototype C have not started.
 | E2 | **not started** | no `prototypes/e2/` |
 | Prototype C | **not started** | no `prototypes/c/`; the only Phase 0 prototype never begun |
 
+A fourth package reported after this section was written: **A1-Build-Cost**, a characterisation of the renderer
+dependency's cold build cost (`prototypes/a1_build_cost/plan.md`, `RESULTS.md`). Its verdict is **not robust** — two samples
+of the identical cold Skia workload spread 52% and straddle the pre-registered band — so it is recorded as evidence, not as
+a decision input. The robust part is the ratio (1.4–2.1× Dawn) and the finding that the repository's ccache never reaches
+vcpkg builds.
+
 ## Blockers requiring the human
 
 Three placeholders in the brief are unfilled, and each gates a package:
