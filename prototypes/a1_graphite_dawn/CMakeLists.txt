@@ -45,3 +45,18 @@ target_include_directories(albor-prototype-a1-graphite-dawn-bench SYSTEM PRIVATE
 target_compile_features(albor-prototype-a1-graphite-dawn-bench PRIVATE cxx_std_23)
 
 target_link_libraries(albor-prototype-a1-graphite-dawn-bench PRIVATE albor-prototype-a1 dawn::webgpu_dawn)
+
+# the font probe: this build's only font manager is SkFontMgr_New_CoreText, and a1's route returns nothing in a
+# command-line process. the probe isolates that question from the workloads, which take minutes to build (§21.2)
+# it is objective c++ because route B asks whether [NSApplication sharedApplication] is what coretext needs, and
+# the a1 and a2 slices enable objcxx the same way
+enable_language(OBJCXX)
+set(CMAKE_OBJCXX_STANDARD 20)
+set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
+
+add_executable(albor-prototype-a1-graphite-dawn-font-probe font_probe.mm)
+
+target_include_directories(albor-prototype-a1-graphite-dawn-font-probe SYSTEM PRIVATE ${ALBOR_SPIKE_SKIA_INCLUDE_ROOT} ${ALBOR_SPIKE_SKIA_INCLUDE_ROOT}/skia)
+target_compile_features(albor-prototype-a1-graphite-dawn-font-probe PRIVATE cxx_std_23)
+
+target_link_libraries(albor-prototype-a1-graphite-dawn-font-probe PRIVATE unofficial::skia::skia "-framework CoreFoundation" "-framework CoreText" "-framework AppKit")

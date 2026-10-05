@@ -434,6 +434,20 @@ namespace albor::a1_graphite_dawn
 
             timing.record_ms.push_back(now_ms() - record_start);
 
+            // a graphite recorder is not submitted by context->submit(). in milestone 148 the recording has to be
+            // snapped off the recorder and inserted into the context explicitly, and without this the submit has
+            // no command buffer at all: skia logs "Submit called with no active command buffer!", nothing reaches
+            // the gpu, and the readback comes back black. a1.4's graphite-on-metal path omits it, so its submit
+            // and frame figures describe a pipeline that never ran
+            std::unique_ptr<skgpu::graphite::Recording> recording = state.recorder->snap();
+            if (recording == nullptr) {
+                return;
+            }
+
+            skgpu::graphite::InsertRecordingInfo insert;
+            insert.fRecording = recording.release();
+            state.context->insertRecording(insert);
+
             // the enqueue submit returns once the recording is handed to dawn, with the gpu not yet started
             const double enqueue_start = now_ms();
             state.context->submit();
@@ -492,8 +506,11 @@ namespace albor::a1_graphite_dawn
 
 } // namespace albor::a1_graphite_dawn
 
-int main() {
+int main(int argc, char** argv) {
     using namespace albor::a1_graphite_dawn;
+
+    // --smoke stops after the pixel validation, so a correctness iteration does not pay for the workloads
+    const bool smoke_only = argc > 1 && std::string(argv[1]) == "--smoke";
 
     std::printf("Prototype A1-Graphite-Dawn phase two: one Dawn device for geometry and text (AD-28)\n");
     std::printf("workloads: a1's w1 1.8e6 segments and w2 4000 labels, a1's seeds, from prototypes/a1\n");
@@ -565,13 +582,19 @@ int main() {
     check(verdict, "S3", "gpu work drained after the fenced submit", drained, drained ? "hasUnfinishedGpuWork() is false" : "work still outstanding");
 
     // text on the same context and the same device, through the typeface a1's own factory resolved
+    // the typeface comes from a symbol set, not a line batch: resource_factory.macos.mm resolves the platform face
+    // only in create_symbol_set, because a line batch carries no labels and so needs no face. asking a line batch
+    // for one returns null by design, which is what made an earlier run report "no typeface" and time an empty
+    // text pass. a symbol set is also the route a1's own w2 labels are drawn with
     albor::a1::ResourceFactory factory;
-    albor::a1::LineBatchSpec probe_spec;
-    probe_spec.segment_count = 16;
+    albor::a1::SymbolSetSpec probe_spec;
+    probe_spec.symbol_count = 8;
+    probe_spec.segments_per_symbol = 4;
+    probe_spec.label_count = 1;
     probe_spec.extent = WORKLOAD_EXTENT;
-    probe_spec.stroke_width = STROKE_WIDTH;
+    probe_spec.label_size = 16.0F;
     probe_spec.seed = W1_SEED;
-    const albor::a1::ResourceSetPtr probe = factory.create_line_batch(probe_spec);
+    const albor::a1::ResourceSetPtr probe = factory.create_symbol_set(probe_spec);
     SkTypeface* typeface = probe != nullptr ? probe->typeface.get() : nullptr;
 
     // the factory's own route is SkFontMgr_New_CoreText(nullptr)->matchFamilyStyle(nullptr, {}), and it returned
@@ -610,6 +633,7 @@ int main() {
     report("F1", "typeface routes", font_probe);
 
     bool glyph_ok = false;
+    InkBox glyph_box;
     std::string glyph_detail = typeface != nullptr ? "the async read delivered nothing" : "no typeface resolved on any route, and milestone 148 has no default font manager";
     if (typeface != nullptr) {
         SkFont font;
@@ -617,7 +641,6 @@ int main() {
         font.setSize(48.0F);
 
         Readback glyph_pixels;
-        InkBox glyph_box;
         constexpr char label[] = "graphite on dawn";
         glyph_ok = capture(state, FrameContent{nullptr, false, false, [&font, label](SkCanvas& canvas) {
                           SkPaint paint;
@@ -629,7 +652,7 @@ int main() {
 
         glyph_detail = glyph_ok ? format(static_cast<double>(glyph_box.count), 0) + " lit pixels from 17 glyphs at 48 px, box " + std::to_string(glyph_box.min_x) + "," + std::to_string(glyph_box.min_y) + " to " + std::to_string(glyph_box.max_x) + "," + std::to_string(glyph_box.max_y) : "the async read delivered nothing";
     }
-    check(verdict, "S4", "graphite text recorded and read back", glyph_ok, glyph_detail);
+    check(verdict, "S4", "graphite text recorded and read back", glyph_ok && glyph_box.count > 0, glyph_detail);
 
     // -----------------------------------------------------------------------------------------------------------
     // the retained sets, built through a1's own factory with a1's seeds
@@ -678,7 +701,8 @@ int main() {
     static_cast<void>(capture(state, FrameContent{w1_resources.get(), true, true, nullptr}, run_b, box_b));
 
     const Diff repeat = compare(run_a, run_b);
-    check(verdict, "P1", "geometry + text identical across two runs", repeat.differing == 0, format(static_cast<double>(repeat.differing), 0) + " of " + format(static_cast<double>(repeat.total), 0) + " pixels differ; max channel delta " + std::to_string(repeat.max_channel_delta) + ", mean error " + format(repeat.mean_error, 6));
+    // a diff of two identical all-black images is zero differences and means nothing, so ink is required too
+    check(verdict, "P1", "geometry + text identical across two runs", repeat.differing == 0 && box_a.count > 0, format(static_cast<double>(repeat.differing), 0) + " of " + format(static_cast<double>(repeat.total), 0) + " pixels differ; max channel delta " + std::to_string(repeat.max_channel_delta) + ", mean error " + format(repeat.mean_error, 6));
     std::printf("  mixed scene: %s lit pixels, box %d,%d to %d,%d\n", format(static_cast<double>(box_a.count), 0).c_str(), box_a.min_x, box_a.min_y, box_a.max_x, box_a.max_y);
 
     // w2's labels on their own, which is the figure the dawn slice never had and the reason its w2 was not
@@ -687,6 +711,12 @@ int main() {
     InkBox labels_box;
     static_cast<void>(capture(state, FrameContent{w2_resources.get(), false, true, nullptr}, labels_pixels, labels_box));
     check(verdict, "P2", "w2 draws its 4000 labels", labels_box.count > 0, format(static_cast<double>(labels_box.count), 0) + " lit pixels from " + format(static_cast<double>(w2_info.labels), 0) + " labels, box " + std::to_string(labels_box.min_x) + "," + std::to_string(labels_box.min_y) + " to " + std::to_string(labels_box.max_x) + "," + std::to_string(labels_box.max_y));
+
+    if (smoke_only) {
+        std::printf("\n=== smoke run: stopping before the workloads, which take minutes at 1.8e6 segments ===\n");
+        std::printf("=== total: %zu passed, %zu failed, %zu not verifiable ===\n", verdict.passed, verdict.failed, verdict.not_verifiable);
+        return verdict.failed == 0 ? 0 : 1;
+    }
 
     // -----------------------------------------------------------------------------------------------------------
     // §7: the a1 workloads
