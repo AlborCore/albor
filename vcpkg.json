@@ -14,7 +14,6 @@
       "platform": "osx",
       "default-features": false,
       "features": [
-        "dawn",
         "graphite",
         "metal"
       ]
@@ -25,6 +24,7 @@
       "platform": "windows",
       "default-features": false,
       "features": [
+        "graphite",
         "direct3d"
       ]
     },
@@ -34,17 +34,8 @@
       "platform": "linux",
       "default-features": false,
       "features": [
-        "freetype",
-        "fontconfig",
+        "graphite",
         "vulkan"
-      ]
-    },
-    {
-      "name": "dawn",
-      "platform": "osx",
-      "default-features": false,
-      "features": [
-        "metal"
       ]
     }
   ]
