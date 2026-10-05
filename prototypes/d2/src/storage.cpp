@@ -117,8 +117,8 @@ namespace albor::prototype_d2
         // resolve the slot that receives the write (§13.3)
         ErasedSlot& target = m_slots.at(id);
 
-        // keep the generation when a write leaves the value unchanged (§13.3)
-        if (target.value.same_as(value)) {
+        // keep the generation when a write leaves the value unchanged, under the chosen equality policy (§13.3, plan.md R6)
+        if (target.value.equal_under(value, m_equality)) {
             return false;
         }
 
@@ -349,8 +349,8 @@ namespace albor::prototype_d2
         // compare against the value that is already in the slot, which is what replaces the generation counter (§13.3)
         const Value current = read(id);
 
-        // a payload owning type reads back through a copy, so compare the payloads by value
-        if (current.same_as(value)) {
+        // a payload owning type reads back through a copy, so compare the payloads by value under the chosen policy (§13.3, plan.md R6)
+        if (current.equal_under(value, m_equality)) {
             return false;
         }
 

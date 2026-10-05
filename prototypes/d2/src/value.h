@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -83,6 +84,21 @@ namespace albor::prototype_d2
         std::shared_ptr<const std::string> m_text;
     };
 
+    // choose what "the write left the value equal" means, which §13.3 requires and does not define (plan.md R6)
+    //
+    // the default, EqualityPolicy::Exact, is the comparison this harness has always used, so every figure
+    // Prototype D2 and Prototype D3 published before R6 stays reproducible with the defaults (§28.4)
+    enum class EqualityPolicy : std::uint8_t
+    {
+        Exact, // D2's recorded comparison: == for scalars, payload identity for strings, identity then content for snapshots (§13.3)
+        Ieee, // == for scalars under its own name, recorded separately so the naming is not mistaken for the difference (§13.3)
+        BitPattern, // an 8-byte compare, so a NaN equals itself and -0.0 differs from 0.0 (§13.1)
+        Tolerant, // a relative epsilon for Double, which suppresses invalidations a developer expects (§13.3)
+        StringContent // content comparison for strings and translated strings, which detects a change behind a fresh payload (§13.1)
+    };
+
+    [[nodiscard]] std::string_view policy_name(EqualityPolicy policy);
+
     // hold one property value in a fixed size variant so the erased candidate stays comparable (§13.3)
     class Value
     {
@@ -113,6 +129,9 @@ namespace albor::prototype_d2
 
         // compare values so an equal write never invalidates a dependent (§13.3)
         [[nodiscard]] bool same_as(const Value& other) const;
+
+        // compare values under a chosen equality policy, which is what the write-compare uses (plan.md R6)
+        [[nodiscard]] bool equal_under(const Value& other, EqualityPolicy policy) const;
 
         // count only the heap bytes whose size is known exactly (§28.2)
         [[nodiscard]] std::size_t known_heap_bytes() const;

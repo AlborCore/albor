@@ -54,6 +54,9 @@ namespace albor::prototype_d2
         InstanceId create(SchemaId schema);
         void destroy(InstanceId instance);
 
+        // choose what an equal write means, which defaults to the comparison D2 recorded (plan.md R6)
+        void set_equality_policy(EqualityPolicy policy) { m_equality = policy; }
+
         // write and report the change that justifies invalidating a dependent (§13.3)
         bool write(PropertyId id, Value value, WriteSource source);
 
@@ -93,6 +96,9 @@ namespace albor::prototype_d2
         RegionTable& m_regions;
         std::vector<ErasedSlot> m_slots;
         std::size_t m_reallocations = 0;
+
+        // the write-compare rule, which defaults to D2's recorded comparison (plan.md R6)
+        EqualityPolicy m_equality = EqualityPolicy::Exact;
     };
 
     // store property values inline at the offsets the component schema computed (AD-04b Candidate A)
@@ -123,6 +129,9 @@ namespace albor::prototype_d2
 
         // set the growth policy once, before the first region is placed (§28.2)
         void set_slab_growth(SlabGrowth growth) { m_growth = growth; }
+
+        // choose what an equal write means, which defaults to the comparison D2 recorded (plan.md R6)
+        void set_equality_policy(EqualityPolicy policy) { m_equality = policy; }
 
         InstanceId create(SchemaId schema);
         void destroy(InstanceId instance);
@@ -189,6 +198,9 @@ namespace albor::prototype_d2
 
         // the growth policy, which defaults to D2's recorded fixed 64 KB chunk (§28.4)
         SlabGrowth m_growth = SlabGrowth::Fixed64K;
+
+        // the write-compare rule, which defaults to D2's recorded comparison (plan.md R6)
+        EqualityPolicy m_equality = EqualityPolicy::Exact;
 
         // map a dense property id to the byte offset of its value inside the slab (§5 T5.6)
         std::vector<std::uint32_t> m_location;

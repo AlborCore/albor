@@ -88,6 +88,25 @@ namespace albor::prototype_d2
 
     std::size_t TranslatedString::payload_bytes() const { return string_payload_bytes(m_text); }
 
+    std::string_view policy_name(EqualityPolicy policy) {
+        // name the policy so a measurement row is unambiguous (§28.2)
+        switch (policy) {
+        case EqualityPolicy::Exact:
+            return "exact";
+        case EqualityPolicy::Ieee:
+            return "ieee";
+        case EqualityPolicy::BitPattern:
+            return "bit_pattern";
+        case EqualityPolicy::Tolerant:
+            return "tolerant";
+        case EqualityPolicy::StringContent:
+            return "string_content";
+        }
+
+        // fall back to a name that cannot be mistaken for a known policy
+        return "unknown";
+    }
+
     Value::Value(bool value) :
         m_storage(value) {}
 
@@ -192,6 +211,140 @@ namespace albor::prototype_d2
             }
 
             // compare every sample so an equal publish does not invalidate readers (§13.2)
+            for (std::size_t index = 0; index < left.count(); index++) {
+                if (sample_at(left_samples, index) != sample_at(right_samples, index)) {
+                    return false;
+                }
+            }
+
+            // report the equal payload
+            return true;
+        }
+        }
+
+        // report an unknown discriminant as changed so it is never silently treated as equal
+        return false;
+    }
+
+    bool Value::equal_under(const Value& other, const EqualityPolicy policy) const {
+        // compare the discriminant first so a mismatched pair never reads the wrong alternative
+        if (type() != other.type()) {
+            return false;
+        }
+
+        // compare the alternative that the discriminant selected, under the chosen rule (§13.3)
+        switch (type()) {
+        case ValueType::None:
+            return true;
+        case ValueType::Bool:
+            return as_bool() == other.as_bool();
+        case ValueType::Int:
+            return as_int() == other.as_int();
+        case ValueType::Double: {
+            // read both doubles once, because every double policy reads them (§13.1)
+            const double left = as_double();
+            const double right = other.as_double();
+
+            // the exact and ieee policies are the same comparison under two names, and are measured separately so the
+            // report can show that the naming is not the difference (plan.md R6)
+            if (policy == EqualityPolicy::Exact || policy == EqualityPolicy::Ieee || policy == EqualityPolicy::StringContent) {
+                return left == right;
+            }
+
+            // the bit-pattern policy compares the representation, so a NaN equals itself and -0.0 differs from 0.0 (§13.1)
+            if (policy == EqualityPolicy::BitPattern) {
+                std::uint64_t left_bits = 0;
+                std::uint64_t right_bits = 0;
+                static_assert(sizeof(left_bits) == sizeof(left));
+                __builtin_memcpy(&left_bits, &left, sizeof(left_bits));
+                __builtin_memcpy(&right_bits, &right, sizeof(right_bits));
+                return left_bits == right_bits;
+            }
+
+            // the tolerant policy suppresses an invalidation inside a relative epsilon, which is what a developer
+            // reading a rounded value expects not to happen (§13.3)
+            const double difference = std::abs(left - right);
+            const double scale = std::max(1.0, std::max(std::abs(left), std::abs(right)));
+            return difference <= 1e-9 * scale;
+        }
+        case ValueType::String: {
+            // the exact policies compare the payload pointer, so an equal string behind a fresh allocation reads as a change (§13.1)
+            if (policy != EqualityPolicy::StringContent) {
+                return as_string() == other.as_string();
+            }
+
+            // the content policy compares the characters, which is what detects a change behind a fresh payload (§13.1)
+            const std::shared_ptr<const std::string> left = as_string();
+            const std::shared_ptr<const std::string> right = other.as_string();
+
+            // a payload both sides hold is the common case and needs no character read (§28.2)
+            if (left == right) {
+                return true;
+            }
+
+            // a missing payload equals another missing payload, and differs from a present one (§13.1)
+            if (!left || !right) {
+                return false;
+            }
+
+            // compare the characters (§13.1)
+            return *left == *right;
+        }
+        case ValueType::TranslatedString: {
+            // a locale change is always a change, because the value depends on the locale (§13.1)
+            const TranslatedString left = as_translated();
+            const TranslatedString right = other.as_translated();
+
+            if (left.locale_id() != right.locale_id()) {
+                return false;
+            }
+
+            // the exact policies compare the payload pointer (§13.1)
+            if (policy != EqualityPolicy::StringContent) {
+                return left.same_as(right);
+            }
+
+            // a payload both sides hold needs no character read (§28.2)
+            if (left.text() == right.text()) {
+                return true;
+            }
+
+            // a missing payload equals another missing payload, and differs from a present one (§13.1)
+            if (!left.text() || !right.text()) {
+                return false;
+            }
+
+            // compare the characters of both locales' text (§13.1)
+            return *left.text() == *right.text();
+        }
+        case ValueType::Snapshot: {
+            const SnapshotBox left = as_snapshot();
+            const SnapshotBox right = other.as_snapshot();
+
+            // an identical payload pointer is the common case and needs no content read (§10.5)
+            if (left.same_as(right)) {
+                return true;
+            }
+
+            // the bit-pattern policy stops at identity, so a fresh equal payload reads as a change (§10.5)
+            if (policy == EqualityPolicy::BitPattern) {
+                return false;
+            }
+
+            // a different sample count means the payloads differ (§10.5)
+            if (left.count() != right.count()) {
+                return false;
+            }
+
+            // an element type the samples cannot be read as means the payloads differ (§10.5)
+            if (left.element_type() != right.element_type()) {
+                return false;
+            }
+
+            // compare every sample so an equal publish does not invalidate readers (§13.2)
+            const double* left_samples = left.data() == nullptr ? nullptr : left.samples();
+            const double* right_samples = right.data() == nullptr ? nullptr : right.samples();
+
             for (std::size_t index = 0; index < left.count(); index++) {
                 if (sample_at(left_samples, index) != sample_at(right_samples, index)) {
                     return false;
