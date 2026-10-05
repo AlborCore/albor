@@ -58,10 +58,8 @@ namespace albor::a1
         m_state(new State()) {}
 
     GraphiteContext::~GraphiteContext() {
-        // submit whatever the recorder still holds before the context goes away
-        if (m_state->context) {
-            m_state->context->submit();
-        }
+        // the last frame's recording was already inserted and submitted by end_frame, so there is nothing to
+        // submit here. an empty submit would only make skia log 'no active command buffer'
 
         // release the renderer state
         delete m_state;
@@ -161,10 +159,28 @@ namespace albor::a1
             return;
         }
 
+        // a graphite recorder is not submitted by context->submit(). the recording has to be snapped off the
+        // recorder and inserted into the context, or the submit has no command buffer and nothing reaches the gpu.
+        // this omission is why a1.4's submit and frame figures described work that never ran, and why the corrected
+        // graphite+dawn prototype logs 'Submit called with no active command buffer!' per frame without it
+        std::unique_ptr<skgpu::graphite::Recording> recording = m_state->recorder->snap();
+        if (recording != nullptr) {
+            skgpu::graphite::InsertRecordingInfo insert;
+            insert.fRecording = recording.release();
+            m_state->context->insertRecording(insert);
+        }
+
         // start the submit clock, which is what a1.4 compares against ganesh
         const double submit_start = now_ms();
         m_state->context->submit();
         m_state->timing.submit_ms = now_ms() - submit_start;
+
+        // the gpu work has to be waited on before the surface goes away, or the recorded ops lose their target. this
+        // is a cpu wait for gpu completion, not a gpu timestamp, and it is why a1.4's submit figure was meaningless:
+        // an enqueue that was never waited on
+        const double fence_start = now_ms();
+        m_state->context->submit(skgpu::graphite::SubmitInfo{skgpu::graphite::SyncToCpu::kYes});
+        m_state->timing.fence_ms = now_ms() - fence_start;
 
         // the whole frame is what the throughput claim rests on
         m_state->timing.frame_ms = m_state->timing.surface_ms + m_state->timing.record_ms + m_state->timing.submit_ms;

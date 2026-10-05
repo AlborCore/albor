@@ -15,7 +15,8 @@ namespace albor::a1
         double surface_ms = 0.0; // allocating the offscreen surface for this frame
         double record_ms = 0.0; // replaying the retained resources into the canvas
         double submit_ms = 0.0; // handing the recorded work to the gpu
-        double frame_ms = 0.0; // the whole frame, which is what the throughput claim rests on
+        double fence_ms = 0.0; // the cpu wait for gpu completion, which is not a gpu timestamp
+        double frame_ms = 0.0; // surface + record + enqueue, the cpu-side whole frame
     };
 
     // the offscreen graphite context: it owns a graphite context, a recorder and one reusable surface (§11.7)

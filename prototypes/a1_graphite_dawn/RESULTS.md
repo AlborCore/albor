@@ -200,38 +200,104 @@ physically possible and was flagged as variance. With three clean passes the ord
 text-only 89.301 ms against combined 97.434 ms — and the combined figure is stable to 2.0% (95.644–97.575). The
 anomaly was the loaded pass, not the machine.
 
-## Comparison
+## Same-session measurement of every configuration
 
-Every row is CPU-side unless labelled otherwise. A1.3's Ganesh and A1.4's Graphite rows are **W1**; A1-Dawn is W1.
+Every configuration below was re-run on this machine in one session, so the comparison no longer mixes a fresh
+candidate against baselines of unknown age. **Two historical figures did not reproduce and are corrected here**, and
+one earlier conclusion of this document is withdrawn.
 
-| metric | Ganesh (A1.3) | Graphite/Metal (A1.4) | Dawn-only (A1-Dawn) | **Graphite+Dawn** |
-| --- | ---: | ---: | ---: | ---: |
-| W1 recording p50 | 0.177 ms | 0.220 ms | **0.085 ms** | 7.287 ms |
-| W1 recording p99 | 0.394 ms | 1.521 ms | not recorded | 10.535 ms |
-| W1 recording p99 per segment | 0.219 ns | 0.845 ns | — | 5.85 ns |
-| W1 draw calls | 220 | not recorded | **1 `Draw(6, 1 800 000)`** | not observable |
-| W1 GPU execution | N/A | **void, see below** | N/A | 596.3 ms fence, integrated GPU |
-| W1 present interval | N/A | N/A | 16.62 ms p50 | not measured |
-| W2 recording p50 | 5.92–47.48 ms (4 runs) | not run | recorded, no glyphs | 97.434 ms (3 passes) |
-| W2 text recording | recorded (4 000 labels) | not run | **never drew glyphs** | 89.301 ms |
-| W3 | two windows + 100 ms hold | not run | not run | update half only |
-| pixel validation | — | **none** | T2 deterministic; batch parity 13.95%/63.68% unfixed | 0/921 600 differ, bit-identical, all 3 passes |
-| memory | — | — | — | 5.6 MB budgeted |
+### W1 — 1 800 000 retained segments
 
-**Draw-call counts for Graphite are reported as not observable, not guessed.** Graphite issues its own Dawn passes
-and WebGPU exposes no counter, so counting them needs a Dawn interception build or Skia instrumentation.
+| configuration | record p50 | record p99 | draw calls/frame | present p50 | gate |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Ganesh (A1.3) | 2.541 ms | 3.729 ms | 220 | **547.19 ms** | 13 failures |
+| Graphite/Metal (A1.4, **submission bug fixed**) | 6.367 ms | **10.602 ms** | not recorded | offscreen | 1 failure: p99 over the 8.33 ms deadline |
+| Dawn-only (A1-Dawn, 2 samples) | **0.298 / 0.308 ms** | 0.681 / 0.720 ms | **1** | **16.66 ms** | 6 failures, all presentation |
+| **Graphite+Dawn** (3 passes) | 7.287 ms | 10.535 ms | not observable | offscreen (fence 596 ms) | — |
 
-**A1.4's submit and frame columns are void.** That driver never called `Recorder::snap()` /
-`Context::insertRecording()`, so its `submit()` had no command buffer, its 0.0016 ms submit and 0.333 ms frame
-figures describe work that never reached the GPU, and it had no pixel check to notice. Its *recording* figures are
-CPU-side and remain meaningful. This prototype found the same bug in its own first run.
+### W2 — CAD canvas, 4 000 labels
 
-**Ganesh's 10 470 ms stroked-segment figure is still excluded** as CPU tessellation, and it is still not a
-renderer-recording comparison.
+| configuration | record p50 | what it drew |
+| --- | ---: | --- |
+| Ganesh (A1.3) | **160.254 ms** | geometry + 4 000 labels, 100 000 segments, 47.8 MB retained |
+| Dawn-only (A1-Dawn) | 0.361 ms | geometry only — **no glyphs**, and 1 000 000 segments in a 19.8 MB Dawn-native set |
+| **Graphite+Dawn** | **97.434 ms** (geometry 4.373, text 89.301) | geometry + 4 000 labels, 100 000 segments, 47.8 MB retained |
 
-**Comparability caveat that applies to every GPU column:** this adapter is `metal/integrated "Intel(R) UHD
-Graphics 630"`. A1-Dawn's 16.62 ms present figure and A1.3's present intervals were taken on an adapter this
-investigation never verified. The fence column is an integrated-GPU number and says nothing about discrete hardware.
+**W2 is only comparable between Ganesh and Graphite+Dawn**, which share A1's factory and report identical retained
+bytes. A1-Dawn's W2 is a different retained representation with a different segment count, so its 0.361 ms is not
+the same workload.
+
+### W3 — multi-window isolation with a 100 ms hold on window 1
+
+| configuration | window 2 frames presented during the hold | window 2 present p50 |
+| --- | ---: | ---: |
+| budget | ≥ 95% | ≤ 16.7 ms |
+| Ganesh (A1.3) | **2.39%** | 696.71 ms |
+| Dawn-only (A1-Dawn) | **16.39%** | 16.82 ms |
+| Graphite+Dawn | not reproducible offscreen | not measured |
+
+## Three corrections to the existing record
+
+**1. A1.4's published comparison was wrong, and the cause was the submission bug.** It reported Ganesh 0.177 ms
+against Graphite 0.220 ms — a 1.24x ratio — with Ganesh's figure hardcoded from A1.3's results rather than measured.
+With the recording actually inserted, Graphite records 6.367 ms against a freshly measured Ganesh 2.541 ms: **2.5x at
+p50 and 2.8x at p99, not 1.24x.** Graphite still loses to Ganesh on recording, by more than A1.4 concluded, and it
+**misses the 8.33 ms R1 processing deadline that Ganesh meets with 4.5x margin**.
+
+**2. The "Graphite+Dawn records 35x slower than Graphite-on-Metal" anomaly is withdrawn.** It was entirely an
+artifact of the same missing insert. Corrected: 7.287 ms against 6.367 ms is **1.14x** — the Dawn backend costs about
+14% more recording than the Metal backend for the same 1.8 M-segment replay. The two rows are now measuring the same
+thing, and they agree, which is the cross-check that both pipelines are real.
+
+**3. Neither headline baseline number reproduced.** A1.3's recorded Ganesh W1 recording p50 of 0.177 ms measured
+**2.541 ms** today, 14x higher. A1-Dawn's recorded 0.085 ms measured **0.298–0.308 ms** across two samples, 3.6x
+higher. The relative ordering is unchanged and the ratios that matter are large enough to survive, but the absolute
+figures in the older documents should not be quoted without this caveat.
+
+## What the corrected numbers change about the conclusion
+
+**Graphite+Dawn is not uniformly worse than Ganesh — it depends on the workload, and the reason is text.**
+
+| comparison | Graphite+Dawn vs Ganesh |
+| --- | --- |
+| W1 geometry, 1.8 M segments | **2.9x worse** (7.287 vs 2.541 ms) |
+| W2 CAD with 4 000 labels | **1.6x better** (97.434 vs 160.254 ms) |
+
+W2 is where Ganesh pays for CPU-side stroking and tessellation of 100 000 symbol outlines, work Graphite does on the
+gpu. So Graphite's case is narrower than "it loses": it loses on large retained geometry and wins on many small
+stroked paths.
+
+**But that does not rescue it, because of the third column.** Dawn-only records W1 in 0.298 ms — **24x faster than
+Graphite+Dawn and 8.5x faster than Ganesh** — with one draw call and a healthy 16.66 ms present interval, and its W2
+geometry is 0.361 ms against Graphite+Dawn's 4.373 ms. The gap is not an artifact of presentation or of Ganesh's
+tessellation; it is what re-recording every retained vertex on the cpu costs.
+
+**The finding that matters most for AD-28 is the text column, and it indicts Skia rather than Graphite.** Rendering
+4 000 labels costs 160 ms on Ganesh and 89 ms on Graphite+Dawn. Text is expensive on *both* Skia backends, by 20x and
+100x their respective geometry costs. That is why Dawn-only looks unbeatable here: **it does not draw the text at
+all.** Its 0.361 ms W2 is not a win over Graphite+Dawn's 97 ms — it is a win at omitting the only expensive part of
+the scene. So the real conclusion is not "Graphite is slow" but:
+
+> **Skia's text is the bottleneck on every Skia backend, and that — not the renderer — is what a Dawn primary would
+> have to replace.**
+
+That reframes AD-28's blocker (2) "no text pipeline" from a missing feature into the central open problem, and it is
+the one worth the next investigation.
+
+## Problems encountered in this session
+
+| problem | status |
+| --- | --- |
+| A1.4 had no `snap()`/`insertRecording()`, so its submit and frame figures were void | **fixed**; the corrected numbers are above |
+| A1.3 aborts at teardown with `GrManagedResource.h:61: check(0 == fHashSet.count())` after printing all rows | **not fixed**; a Ganesh resource-leak assertion |
+| A1.3's present interval is 547 ms and its submit 544 ms, matching the CAMetalLayer starvation A2 documented | **not fixed**; its windowed columns are unusable as renderer evidence per §14 |
+| A1-Dawn leaves no Dawn uncaptured-error or device-lost callback set, and Dawn warns about it | **not fixed** |
+| **A1-Parity aborts** at `SkTo.h:17: check(SkTFitsIn<D>(s))` on "repeat 1 of 2, zoom 1.0", before any pixel comparison | **not fixed; no parity numbers exist.** T1 still passes (Dawn readback exact at 1024000/1024000 pixels) |
+| A1.3 reports W2 as 100 000 segments / 47.8 MB while A1-Dawn reports 1 000 000 / 19.8 MB for the same nominal scene | **not resolved**; W2 is compared only between the two slices that share A1's factory |
+
+**A1-Parity is the significant one.** It cannot run at all, so the unresolved Skia-versus-Dawn pixel mismatch
+(13.95% at zoom 1, 63.68% at zoom 8) has no current measurement and no current attribution. Any claim about pixel
+agreement between the backends is currently unsupported.
 
 ## Pixel validation
 
