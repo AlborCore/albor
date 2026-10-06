@@ -281,14 +281,34 @@ TEST(Color, RgbaKeepsItsAlpha) {
     EXPECT_FLOAT_EQ(color.blue, 0.3f);
 }
 
-TEST(Color, CarriesComponentsOutsideTheRangeUnchanged) {
+TEST(Color, ClampsComponentsOutsideTheRange) {
     // arrange, act
     const Color color = Color::rgba(1.5f, -0.5f, 2.0f, 3.0f);
     // assert
-    EXPECT_FLOAT_EQ(color.red, 1.5f);
-    EXPECT_FLOAT_EQ(color.green, -0.5f);
-    EXPECT_FLOAT_EQ(color.blue, 2.0f);
-    EXPECT_FLOAT_EQ(color.alpha, 3.0f);
+    EXPECT_FLOAT_EQ(color.red, 1.0f);
+    EXPECT_FLOAT_EQ(color.green, 0.0f);
+    EXPECT_FLOAT_EQ(color.blue, 1.0f);
+    EXPECT_FLOAT_EQ(color.alpha, 1.0f);
+}
+
+TEST(Color, ClampsAnOversizedChannel) {
+    // arrange, act
+    const Color color = Color::rgb(-3.0f, 0.5f, 9.0f);
+    // assert
+    EXPECT_FLOAT_EQ(color.red, 0.0f);
+    EXPECT_FLOAT_EQ(color.green, 0.5f);
+    EXPECT_FLOAT_EQ(color.blue, 1.0f);
+    EXPECT_FLOAT_EQ(color.alpha, 1.0f);
+}
+
+TEST(Color, KeepsComponentsInsideTheRange) {
+    // arrange, act
+    const Color color = Color::rgba(0.25f, 0.5f, 0.75f, 0.5f);
+    // assert
+    EXPECT_FLOAT_EQ(color.red, 0.25f);
+    EXPECT_FLOAT_EQ(color.green, 0.5f);
+    EXPECT_FLOAT_EQ(color.blue, 0.75f);
+    EXPECT_FLOAT_EQ(color.alpha, 0.5f);
 }
 
 TEST(Color, EqualityComparesEveryComponent) {

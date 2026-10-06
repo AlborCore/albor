@@ -1,5 +1,7 @@
 #include "core/paint.h"
 
+#include <algorithm>
+
 namespace albor
 {
     Color Color::rgb(float red, float green, float blue) {
@@ -8,8 +10,8 @@ namespace albor
     }
 
     Color Color::rgba(float red, float green, float blue, float alpha) {
-        // every channel is carried through unchanged, because the range is the caller's contract (§6.3)
-        return {.red = red, .green = green, .blue = blue, .alpha = alpha};
+        // every channel is clamped into the srgb range, because a binding computed from data can land outside it (§6.3)
+        return {.red = std::clamp(red, 0.0f, 1.0f), .green = std::clamp(green, 0.0f, 1.0f), .blue = std::clamp(blue, 0.0f, 1.0f), .alpha = std::clamp(alpha, 0.0f, 1.0f)};
     }
 
     bool Paint::fills() const {

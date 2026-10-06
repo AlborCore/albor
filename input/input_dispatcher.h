@@ -5,9 +5,7 @@
 
 namespace albor
 {
-    // the router that hands a normalized event to the node under it, which is the input half of §8.3
-    //
-    // the dispatcher is stateless, because the routing rules live in the tree and the focus manager holds the state (§8.3)
+    // the stateless router that hands a normalized event to the node under it, which is the input half of §8.3
     class InputDispatcher
     {
     public:

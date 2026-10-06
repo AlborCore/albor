@@ -40,8 +40,7 @@ namespace
         }
     };
 
-    // the text engine test double, which measures with a fixed advance so a widget test asserts on the
-    // widget rather than on whatever shaping backend the platform happens to provide (§9.1)
+    // the text engine test double, which measures with a fixed advance so a widget test asserts on the widget rather than on whatever shaping backend the platform happens to provide (§9.1)
     class StubTextEngine final : public TextEngine
     {
     public:
@@ -51,8 +50,7 @@ namespace
         // the height the double reports for any run, in logical pixels (§9.1)
         static constexpr float HEIGHT = 16.0f;
 
-        // how many measurements the widget asked for, which a test asserts on, and which has to be
-        // mutable because the measurement contract is const (§9.1)
+        // how many measurements the widget asked for, which a test asserts on, and which has to be mutable because the measurement contract is const (§9.1)
         mutable std::size_t measurements = 0;
 
         // whether the double reports itself as able to measure (§9.1)
@@ -182,8 +180,7 @@ TEST(LabelChecks, TheRunIsDrawnInTheForegroundColour) {
     label.measure(SizeConstraints::unconstrained(), ignored);
     label.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 20.0f}));
     EXPECT_EQ(label.foreground(), Color::rgb(1.0f, 0.0f, 0.0f));
-    // act / assert
-    // the colour is read back, because the run colour itself lives in the recorded scene (§6.1)
+    // act / assert the colour is read back, because the run colour itself lives in the recorded scene (§6.1)
     SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
     label.render(recorder);
     EXPECT_EQ(recorder.scene()->texts().size(), 1u);
@@ -250,8 +247,7 @@ TEST(LabelChecks, TheForegroundDefaultsToWhite) {
     BindingEngine engine;
     StubTextEngine text_engine;
     Label label(&engine, &text_engine, "Albor");
-    // act
-    // assert
+    // act assert
     EXPECT_EQ(label.foreground(), Color::rgb(1.0f, 1.0f, 1.0f));
 }
 
@@ -260,8 +256,7 @@ TEST(LabelChecks, TheFontSizeDefaultsToTheEngineDefault) {
     BindingEngine engine;
     StubTextEngine text_engine;
     Label label(&engine, &text_engine, "Albor");
-    // act
-    // assert
+    // act assert
     EXPECT_FLOAT_EQ(label.font_size(), TextEngine::DEFAULT_FONT_SIZE);
 }
 
@@ -335,8 +330,7 @@ TEST(LabelChecks, ExposesNoSemanticChildren) {
     BindingEngine engine;
     StubTextEngine text_engine;
     Label label(&engine, &text_engine, "Albor");
-    // act
-    // assert
+    // act assert
     EXPECT_EQ(label.semantic_child_count(), 0u);
     EXPECT_EQ(label.semantic_child(0), nullptr);
 }
@@ -376,8 +370,7 @@ TEST(LabelChecks, AChildWithoutSemanticsAnnouncesNothing) {
     button.add_child(std::make_unique<RowLayout>());
     // act
     std::unique_ptr<SemanticProvider> child = button.semantic_child(0);
-    // assert
-    // a plain layout carries no meaning, so the walk reaches a node that announces nothing (§10.1)
+    // assert a plain layout carries no meaning, so the walk reaches a node that announces nothing (§10.1)
     ASSERT_NE(child, nullptr);
     EXPECT_EQ(child->semantic_node().role(), SemanticRole::None);
     EXPECT_EQ(child->semantic_child_count(), 0u);
@@ -391,8 +384,7 @@ TEST(ButtonChecks, MeasuresToAtLeastTheControlSize) {
     Size measured{};
     // act
     button.measure(SizeConstraints::unconstrained(), measured);
-    // assert
-    // an unlabelled button must stay grabbable (§8.2)
+    // assert an unlabelled button must stay grabbable (§8.2)
     EXPECT_GT(measured.width, 0.0f);
     EXPECT_GT(measured.height, 0.0f);
 }
@@ -439,8 +431,7 @@ TEST(ButtonChecks, RendersThePlateAndTheLabel) {
     SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
     // act
     button.render(recorder);
-    // assert
-    // the plate is recorded by the background hook and the run by the label (§6.1)
+    // assert the plate is recorded by the background hook and the run by the label (§6.1)
     EXPECT_EQ(recorder.scene()->rects().size(), 1u);
     EXPECT_EQ(recorder.scene()->texts().size(), 1u);
     EXPECT_EQ(recorder.scene()->texts().front().text, "Press");
@@ -466,8 +457,7 @@ TEST(ButtonChecks, AnUnarrangedButtonDrawsNothing) {
     SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
     // act
     button.render(recorder);
-    // assert
-    // a button with no bounds has no plate, so nothing is recorded (§6.2)
+    // assert a button with no bounds has no plate, so nothing is recorded (§6.2)
     EXPECT_TRUE(recorder.scene()->rects().empty());
 }
 
@@ -500,8 +490,7 @@ TEST(ButtonChecks, DoesNotHitOnTheFarEdge) {
     button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
     // act
     const bool on_edge = button.hit_test(Point{50.0f, 10.0f});
-    // assert
-    // the far edge belongs to the next control, so the hit test excludes it (§8.3)
+    // assert the far edge belongs to the next control, so the hit test excludes it (§8.3)
     EXPECT_FALSE(on_edge);
 }
 
@@ -594,8 +583,7 @@ TEST(ButtonChecks, APressWithNoHandlerIsStillClaimed) {
     Event event{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
     // act
     button.dispatch_event(event);
-    // assert
-    // the button swallowed the press, so nothing behind it reacts (§8.3)
+    // assert the button swallowed the press, so nothing behind it reacts (§8.3)
     EXPECT_TRUE(event.handled);
 }
 
@@ -724,8 +712,7 @@ TEST(ButtonChecks, ADisabledButtonRefusesTheActivateAction) {
     // act
     const SemanticNode node = button.semantic_node();
     const bool invoked = node.invoke("activate");
-    // assert
-    // the disabled state refuses the action before the widget body runs, which is what §10.1 requires
+    // assert the disabled state refuses the action before the widget body runs, which is what §10.1 requires
     EXPECT_FALSE(invoked);
     EXPECT_EQ(clicks, 0u);
     EXPECT_TRUE(node.disabled());
@@ -775,8 +762,7 @@ TEST(CheckBoxChecks, RendersTheOutline) {
     SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
     // act
     box.render(recorder);
-    // assert
-    // an unchecked box strokes only, so nothing is filled (§6.1)
+    // assert an unchecked box strokes only, so nothing is filled (§6.1)
     EXPECT_EQ(recorder.scene()->rects().size(), 1u);
     EXPECT_FALSE(box.checked());
 }
@@ -790,8 +776,7 @@ TEST(CheckBoxChecks, ACheckedBoxAlsoFills) {
     SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
     // act
     box.render(recorder);
-    // assert
-    // the fill sits under the outline, so two rectangles are recorded (§6.1)
+    // assert the fill sits under the outline, so two rectangles are recorded (§6.1)
     EXPECT_EQ(recorder.scene()->rects().size(), 2u);
 }
 
@@ -1068,8 +1053,7 @@ TEST(CheckBoxChecks, ADisabledBoxRefusesTheToggleAction) {
     // act
     const SemanticNode node = box.semantic_node();
     const bool invoked = node.invoke("toggle");
-    // assert
-    // the disabled state refuses the action, so the stored state never moves (§10.1)
+    // assert the disabled state refuses the action, so the stored state never moves (§10.1)
     EXPECT_FALSE(invoked);
     EXPECT_FALSE(box.checked());
     EXPECT_TRUE(node.disabled());
@@ -1085,8 +1069,7 @@ TEST(CheckBoxChecks, TheToggleActionReportsTheUncheckedState) {
     // act
     const SemanticNode node = box.semantic_node();
     (void)node.invoke("toggle");
-    // assert
-    // invoking the action takes the same path a press does, so the handler hears the new state (§10.1)
+    // assert invoking the action takes the same path a press does, so the handler hears the new state (§10.1)
     EXPECT_TRUE(reported);
     EXPECT_TRUE(box.checked());
 }
@@ -1106,8 +1089,7 @@ TEST(SliderChecks, StartsAtZeroInTheDefaultRange) {
     // arrange
     BindingEngine engine;
     Slider slider(&engine);
-    // act
-    // assert
+    // act assert
     EXPECT_FLOAT_EQ(slider.value(), 0.0f);
     EXPECT_FLOAT_EQ(slider.minimum(), 0.0f);
     EXPECT_FLOAT_EQ(slider.maximum(), 1.0f);
@@ -1144,8 +1126,7 @@ TEST(SliderChecks, RendersTheTrackAndTheThumb) {
     SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
     // act
     slider.render(recorder);
-    // assert
-    // the track and the thumb are two rectangles (§6.1)
+    // assert the track and the thumb are two rectangles (§6.1)
     EXPECT_EQ(recorder.scene()->rects().size(), 2u);
 }
 
@@ -1160,8 +1141,7 @@ TEST(SliderChecks, TheThumbMovesWithTheValue) {
     SceneRecorder high_recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
     // act
     slider.render(high_recorder);
-    // assert
-    // the thumb is the second rectangle, so its x has to differ between the two values (§6.1)
+    // assert the thumb is the second rectangle, so its x has to differ between the two values (§6.1)
     ASSERT_EQ(high_recorder.scene()->rects().size(), 2u);
     ASSERT_EQ(low_recorder.scene()->rects().size(), 2u);
     EXPECT_GT(high_recorder.scene()->rects()[1].x, low_recorder.scene()->rects()[1].x);
@@ -1186,8 +1166,7 @@ TEST(SliderChecks, ATrackWithNoLengthDrawsOnlyTheTrack) {
     SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
     // act
     slider.render(recorder);
-    // assert
-    // a track shorter than the thumb has no reachable position, so no thumb is drawn (§6.2)
+    // assert a track shorter than the thumb has no reachable position, so no thumb is drawn (§6.2)
     EXPECT_EQ(recorder.scene()->rects().size(), 1u);
 }
 
@@ -1312,8 +1291,7 @@ TEST(SliderChecks, AShortTrackDoesNotMove) {
     Event event{.kind = EventKind::PointerDown, .position = Point{2.0f, 8.0f}};
     // act
     slider.dispatch_event(event);
-    // assert
-    // the press is claimed but the track has no travel, so the value stays (§8)
+    // assert the press is claimed but the track has no travel, so the value stays (§8)
     EXPECT_TRUE(event.handled);
     EXPECT_FLOAT_EQ(slider.value(), 0.0f);
 }
@@ -1349,8 +1327,7 @@ TEST(SliderChecks, SetRangeReclampsTheValue) {
     slider.clear_dirty();
     // act
     slider.set_range(0.0f, 0.5f);
-    // assert
-    // a new range can exclude the value the slider had (§8)
+    // assert a new range can exclude the value the slider had (§8)
     EXPECT_FLOAT_EQ(slider.value(), 0.5f);
     EXPECT_FLOAT_EQ(slider.minimum(), 0.0f);
     EXPECT_FLOAT_EQ(slider.maximum(), 0.5f);
@@ -1363,8 +1340,7 @@ TEST(SliderChecks, ADescendingRangeIsRefused) {
     Slider slider(&engine);
     // act
     slider.set_range(1.0f, 0.0f);
-    // assert
-    // a range that does not ascend has no valid positions (§8)
+    // assert a range that does not ascend has no valid positions (§8)
     EXPECT_FLOAT_EQ(slider.minimum(), 0.0f);
     EXPECT_FLOAT_EQ(slider.maximum(), 1.0f);
 }
@@ -1434,8 +1410,7 @@ TEST(SliderChecks, StepPastTheEndReportsNothing) {
     slider.set_on_change([&changes](float) { changes++; });
     // act
     slider.step(0.5f);
-    // assert
-    // the value is already at the top, so nothing moved (§8.3)
+    // assert the value is already at the top, so nothing moved (§8.3)
     EXPECT_EQ(changes, 0u);
 }
 
@@ -1493,8 +1468,7 @@ TEST(SliderChecks, TheAnnouncedNameFollowsTheValue) {
     slider.set_value(0.5f);
     // act
     const SemanticNode node = slider.semantic_node();
-    // assert
-    // a screen reader has to hear the number, so the name carries it (§10.1)
+    // assert a screen reader has to hear the number, so the name carries it (§10.1)
     EXPECT_EQ(node.name(), "volume 0.500000");
 }
 
@@ -1531,8 +1505,7 @@ TEST(SliderChecks, TheStepActionsOfADisabledSliderDoNothing) {
     // act
     const SemanticNode node = slider.semantic_node();
     const bool invoked = node.invoke("increment");
-    // assert
-    // the disabled state refuses the action, so the value never moves (§10.1)
+    // assert the disabled state refuses the action, so the value never moves (§10.1)
     EXPECT_FALSE(invoked);
     EXPECT_FLOAT_EQ(slider.value(), 0.0f);
     EXPECT_TRUE(node.disabled());
@@ -1544,8 +1517,7 @@ TEST(CanvasChecks, StartsWithNothingToDraw) {
     // arrange
     BindingEngine engine;
     Canvas canvas(&engine);
-    // act
-    // assert
+    // act assert
     EXPECT_FALSE(canvas.draws());
     EXPECT_EQ(canvas.draw_count(), 0u);
 }
@@ -1611,8 +1583,7 @@ TEST(CanvasChecks, AnEmptyCanvasRecordsNothing) {
     SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
     // act
     canvas.render(recorder);
-    // assert
-    // the pass is counted even with no callback, so a test can tell it was offered (§6.4)
+    // assert the pass is counted even with no callback, so a test can tell it was offered (§6.4)
     EXPECT_EQ(canvas.draw_count(), 1u);
     EXPECT_TRUE(recorder.scene()->rects().empty());
 }
@@ -1686,8 +1657,7 @@ TEST(CanvasChecks, AnEmptyCanvasAnnouncesAsDisabled) {
     Canvas canvas(&engine, "chart");
     // act
     const SemanticNode node = canvas.semantic_node();
-    // assert
-    // there is nothing to interact with, so the canvas reports itself unavailable (§10.1)
+    // assert there is nothing to interact with, so the canvas reports itself unavailable (§10.1)
     EXPECT_TRUE(node.disabled());
 }
 
@@ -1708,8 +1678,7 @@ TEST(CanvasChecks, AWidgetTreeWalksIntoTheSemanticTree) {
     SemanticNodeProvider root_provider(button_ptr->semantic_node());
     // act
     tree.build_from(root_provider);
-    // assert
-    // the walk reaches the widgets by way of the host child, which announces nothing (§10.1, AD-09)
+    // assert the walk reaches the widgets by way of the host child, which announces nothing (§10.1, AD-09)
     EXPECT_EQ(tree.size(), 1u);
     EXPECT_EQ(tree.count_role(SemanticRole::Button), 1u);
     ASSERT_NE(tree.find("Press"), nullptr);
@@ -1723,8 +1692,7 @@ TEST(LabelChecks, HandsBackTheMeasuredRun) {
     Label label(&engine, &text_engine, "Albor");
     // act
     const TextLayout run = label.layout();
-    // assert
-    // the render pass draws exactly the run the measure pass produced (§9.1)
+    // assert the render pass draws exactly the run the measure pass produced (§9.1)
     EXPECT_EQ(run.text, "Albor");
     EXPECT_GT(run.size.width, 0.0f);
 }
@@ -1738,8 +1706,7 @@ TEST(LabelChecks, TheMeasuredRunFollowsAFontSizeChange) {
     label.measure(SizeConstraints::unconstrained(), measured);
     // act
     label.set_font_size(48.0f);
-    // assert
-    // the run is remeasured eagerly, so the layout the render pass draws is already current (§9.1)
+    // assert the run is remeasured eagerly, so the layout the render pass draws is already current (§9.1)
     EXPECT_EQ(label.layout().text, "Albor");
     EXPECT_GT(label.layout().size.height, 0.0f);
 }
@@ -1756,8 +1723,7 @@ TEST(LabelChecks, AHiddenLabelStopsRecording) {
     SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
     // act
     label.render(recorder);
-    // assert
-    // a hidden node is skipped by stage one, so the scene builder never reaches its render (§6.1)
+    // assert a hidden node is skipped by stage one, so the scene builder never reaches its render (§6.1)
     EXPECT_EQ(recorder.scene()->texts().size(), 1u);
 }
 
@@ -1769,8 +1735,7 @@ TEST(LabelChecks, AWidgetChildIsWrappedInANonOwningView) {
     button.add_child(std::make_unique<Label>(&engine, &stub_text, "inner"));
     // act
     std::unique_ptr<SemanticProvider> child = button.semantic_child(0);
-    // assert
-    // the view keeps the ui tree the only owner, so no subtree is copied for the walk (§10.1, AD-09)
+    // assert the view keeps the ui tree the only owner, so no subtree is copied for the walk (§10.1, AD-09)
     ASSERT_NE(child, nullptr);
     EXPECT_EQ(child->semantic_node().role(), SemanticRole::Label);
     EXPECT_EQ(child->semantic_node().name(), "inner");
@@ -1783,8 +1748,7 @@ TEST(LabelChecks, AViewWithoutAProviderAnnouncesNothing) {
     const SemanticNode node = view.semantic_node();
     const std::size_t count = view.semantic_child_count();
     std::unique_ptr<SemanticProvider> child = view.semantic_child(0);
-    // assert
-    // a view with no provider must not dereference null, so it answers as an empty leaf (§10.1)
+    // assert a view with no provider must not dereference null, so it answers as an empty leaf (§10.1)
     EXPECT_EQ(node.role(), SemanticRole::None);
     EXPECT_EQ(count, 0u);
     EXPECT_EQ(child, nullptr);
@@ -1798,8 +1762,7 @@ TEST(LabelChecks, AViewForwardsToTheProviderItWatches) {
     // act
     const SemanticNode node = view.semantic_node();
     const std::size_t count = view.semantic_child_count();
-    // assert
-    // the watched provider answers for itself, because a view carries no state (§10.1)
+    // assert the watched provider answers for itself, because a view carries no state (§10.1)
     EXPECT_EQ(node.role(), SemanticRole::Button);
     EXPECT_EQ(count, 0u);
 }
@@ -1811,8 +1774,7 @@ TEST(LabelChecks, AViewReportsNoChildPastTheEnd) {
     SemanticProviderView view(&button);
     // act
     std::unique_ptr<SemanticProvider> child = view.semantic_child(3);
-    // assert
-    // the watched provider has no such child, so the view reports none (§10.1, AD-09)
+    // assert the watched provider has no such child, so the view reports none (§10.1, AD-09)
     EXPECT_EQ(child, nullptr);
 }
 
@@ -1853,8 +1815,7 @@ TEST(SliderChecks, APressOutsideTheTrackIsNotClaimed) {
     Event event{.kind = EventKind::PointerDown, .position = Point{400.0f, 8.0f}};
     // act
     slider.dispatch_event(event);
-    // assert
-    // a press beyond the track belongs to whatever is behind the slider (§8.3)
+    // assert a press beyond the track belongs to whatever is behind the slider (§8.3)
     EXPECT_FALSE(event.handled);
     EXPECT_EQ(changes, 0u);
     EXPECT_FLOAT_EQ(slider.value(), 0.0f);
@@ -1886,8 +1847,7 @@ TEST(CheckBoxChecks, APressOutsideTheBoxIsNotClaimed) {
     Event event{.kind = EventKind::PointerDown, .position = Point{200.0f, 200.0f}};
     // act
     box.dispatch_event(event);
-    // assert
-    // a press beyond the box belongs to whatever is behind it (§8.3)
+    // assert a press beyond the box belongs to whatever is behind it (§8.3)
     EXPECT_FALSE(event.handled);
     EXPECT_FALSE(box.checked());
     EXPECT_EQ(toggles, 0u);
@@ -1938,8 +1898,7 @@ TEST(ButtonChecks, ADisabledButtonStillDrawsItsPlateAndLabel) {
     SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
     // act
     button.render(recorder);
-    // assert
-    // a disabled control stays on screen, only faded, so it still records both commands (§6.1)
+    // assert a disabled control stays on screen, only faded, so it still records both commands (§6.1)
     EXPECT_EQ(recorder.scene()->rects().size(), 1u);
     EXPECT_EQ(recorder.scene()->texts().size(), 1u);
 }
@@ -1953,8 +1912,7 @@ TEST(ButtonChecks, ADisabledAndUnlabelledButtonStillDrawsItsPlate) {
     SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
     // act
     button.render(recorder);
-    // assert
-    // the plate is recorded before the empty run is skipped (§6.1)
+    // assert the plate is recorded before the empty run is skipped (§6.1)
     EXPECT_EQ(recorder.scene()->rects().size(), 1u);
     EXPECT_TRUE(recorder.scene()->texts().empty());
 }
@@ -1983,8 +1941,7 @@ TEST(LabelChecks, ALabelWithNoEngineStaysEmpty) {
     Size measured{};
     // act
     label.measure(SizeConstraints::unconstrained(), measured);
-    // assert
-    // with nothing to measure through, the label invents no extent (§9.1)
+    // assert with nothing to measure through, the label invents no extent (§9.1)
     EXPECT_TRUE(label.layout().empty());
     EXPECT_FLOAT_EQ(measured.width, 0.0f);
     EXPECT_FLOAT_EQ(measured.height, 0.0f);
@@ -1997,8 +1954,7 @@ TEST(LabelChecks, ALabelWithNoEngineSurvivesATextChange) {
     label.clear_dirty();
     // act
     label.set_text("a much longer run of text");
-    // assert
-    // the change is still announced, because the accessible name changed even without a measurement (§10.1)
+    // assert the change is still announced, because the accessible name changed even without a measurement (§10.1)
     EXPECT_EQ(label.text(), "a much longer run of text");
     EXPECT_TRUE(label.layout().empty());
     EXPECT_TRUE(label.layout_dirty());
@@ -2011,8 +1967,7 @@ TEST(LabelChecks, ALabelWithNoEngineSurvivesAFontSizeChange) {
     label.clear_dirty();
     // act
     label.set_font_size(32.0f);
-    // assert
-    // the requested size is remembered, so a later install would measure against it (§9.1)
+    // assert the requested size is remembered, so a later install would measure against it (§9.1)
     EXPECT_FLOAT_EQ(label.font_size(), 32.0f);
     EXPECT_TRUE(label.layout().empty());
 }
@@ -2025,8 +1980,7 @@ TEST(LabelChecks, ALabelWithNoEngineDrawsNothing) {
     SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
     // act
     label.render(recorder);
-    // assert
-    // an empty run records nothing, so nothing reaches the render stage (§6.2)
+    // assert an empty run records nothing, so nothing reaches the render stage (§6.2)
     EXPECT_TRUE(recorder.scene()->texts().empty());
 }
 
@@ -2039,7 +1993,6 @@ TEST(LabelChecks, TheLabelAsksTheEngineToMeasure) {
     Size measured{};
     // act
     label.measure(SizeConstraints::unconstrained(), measured);
-    // assert
-    // the label measures through the engine it was given rather than computing an extent itself (§9.1)
+    // assert the label measures through the engine it was given rather than computing an extent itself (§9.1)
     EXPECT_GT(text_engine.measurements, before);
 }

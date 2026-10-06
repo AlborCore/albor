@@ -63,8 +63,7 @@ namespace albor
             running.elapsed += delta_seconds;
             // the duration is read per entry because each animation may have its own (§7.3)
             const float span = static_cast<float>(std::chrono::duration<float>(running.duration).count());
-            // schedule refused a non positive duration, so the divisor is always usable and the clamp
-            // is what keeps a frame that outran the animation from reporting past the end (§7.3)
+            // schedule refused a non positive duration, so the divisor is always usable and the clamp is what keeps a frame that outran the animation from reporting past the end (§7.3)
             const float normalized = std::clamp(running.elapsed / span, 0.0f, 1.0f);
             // the work runs, which is what writes through the animation channel of §7.3 (AD-04d)
             const bool continues = running.tick(normalized);
@@ -92,8 +91,7 @@ namespace albor
         // a handle that names no animation reports no progress (§7.3)
         if (running == nullptr)
             return 0.0f;
-        // the duration is read as seconds, because the elapsed time is kept in seconds, and schedule
-        // already refused a non positive one, so the divisor is always usable (§7.3)
+        // the duration is read as seconds, because the elapsed time is kept in seconds, and schedule already refused a non positive one, so the divisor is always usable (§7.3)
         const float span = static_cast<float>(std::chrono::duration<float>(running->duration).count());
         // the running animation has not finished, so the ratio is inside the unit interval without a clamp (§7.3)
         return running->elapsed / span;

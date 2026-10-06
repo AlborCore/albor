@@ -38,7 +38,7 @@ namespace albor
     // the creation time description of a window, which the platform turns into a native window (§5.1)
     struct WindowOptions
     {
-        // the window title
+        // the window title, which must not be empty because both the window manager and assistive technology announce it (§5.1)
         std::string title = "Albor Application";
 
         // the logical size the window opens at

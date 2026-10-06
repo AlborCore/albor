@@ -8,10 +8,7 @@
 
 namespace albor
 {
-    // the text half of the framework, which every shaping backend implements (§9.1, AD-05)
-    //
-    // the interface carries no shaping, font or platform type, because the contract is what the rest of
-    // the framework depends on and the backend is what may be replaced (§3.5, AD-05, AD-19)
+    // the text half of the framework, which every shaping backend implements and which names no shaping or platform type (§9.1, §3.5, AD-19)
     class TextEngine
     {
     public:

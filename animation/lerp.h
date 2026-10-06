@@ -22,7 +22,7 @@ namespace albor
 
     // interpolate between two colours component wise, which is what a colour animation needs (§7.3)
     [[nodiscard]] inline Color lerp(Color a, Color b, float t) {
-        // every channel is blended on its own, because a colour has no single natural ordering (§6.2, §7.3)
-        return Color{.red = lerp(a.red, b.red, t), .green = lerp(a.green, b.green, t), .blue = lerp(a.blue, b.blue, t), .alpha = lerp(a.alpha, b.alpha, t)};
+        // the blend goes through the factory rather than the aggregate, because a t outside the unit range blends past an end and the factory is what keeps the result inside the srgb range (§6.3, §7.3)
+        return Color::rgba(lerp(a.red, b.red, t), lerp(a.green, b.green, t), lerp(a.blue, b.blue, t), lerp(a.alpha, b.alpha, t));
     }
 } // namespace albor

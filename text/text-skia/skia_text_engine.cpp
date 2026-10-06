@@ -21,21 +21,29 @@ namespace albor
         skia::textlayout::FontCollection collection;
         // the unicode implementation, which the paragraph builder borrows for line breaking and bidi (§9.1)
         sk_sp<SkUnicode> unicode;
+
+        // the services this engine was built over, kept so the state and the constructor cannot disagree (§9.1)
+        TextServices services;
     };
 
     SkiaTextEngine::SkiaTextEngine() :
+        SkiaTextEngine(platform_text_services()) {}
+
+    SkiaTextEngine::SkiaTextEngine(TextServices services) :
         m_state(std::make_unique<State>()) {
-        // the system font manager resolves the families, because a collection with none resolves nothing (§9.1)
-        m_state->collection.setDefaultFontManager(skia_text_font_manager());
-        // the icu implementation supplies line breaking and bidi, which is what skparagraph needs to run (§9.1)
-        m_state->unicode = skia_text_unicode();
+        // the services are recorded first, because the state resolves from them and must not diverge (§9.1)
+        m_state->services = services;
+        // the font manager resolves the families, because a collection with none resolves nothing (§9.1)
+        if (m_state->services.font_manager)
+            m_state->collection.setDefaultFontManager(m_state->services.font_manager);
+        // the unicode is taken as given, so a caller that supplied none leaves the engine refusing (§9.1)
+        m_state->unicode = m_state->services.unicode;
     }
 
     SkiaTextEngine::~SkiaTextEngine() = default;
 
     bool SkiaTextEngine::ready() const {
-        // the constructor always allocates the state, so the unicode is the only thing that can be absent,
-        // and an engine without it cannot break a line, so it is not usable (§9.1)
+        // the constructor always allocates the state, so the unicode is the only thing that can be absent, and an engine without it cannot break a line, so it is not usable (§9.1)
         return static_cast<bool>(m_state->unicode);
     }
 
@@ -45,9 +53,7 @@ namespace albor
     }
 
     TextLayout SkiaTextEngine::measure(std::string_view text, float max_width, float font_size) const {
-        // an engine without unicode cannot shape, because skparagraph dereferences it without checking, so it
-        // refuses rather than passing a null through; an empty run has no glyphs to shape at all, and an
-        // unmeasured run reports nothing because a fabricated extent would size a layout wrongly (§9.1)
+        // an engine without unicode cannot shape, because skparagraph dereferences it without checking, so it refuses rather than passing a null through; an empty run has no glyphs to shape at all, and an unmeasured run reports nothing because a fabricated extent would size a layout wrongly (§9.1)
         if (!ready() || text.empty())
             return {.ascent = 0.0f, .descent = 0.0f};
         // the text style carries the requested font size, which is what the paragraph lays out against (§9.1)

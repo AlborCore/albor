@@ -3,13 +3,11 @@
 namespace albor
 {
     TaskHandle TaskQueue::post(Task task) {
-        // an unguarded task is queued directly rather than through post_guarded, because a default
-        // token is expired and would make the drain drop the task before it ever runs (§4.2)
+        // an unguarded task is queued directly rather than through post_guarded, because a default token is expired and would make the drain drop the task before it ever runs (§4.2)
         const std::lock_guard<std::mutex> lock(m_mutex);
-        Entry entry;
-        entry.handle = m_next_handle++;
-        entry.task = std::move(task);
-        entry.guarded = false;
+        // create a new entry for the task (§4.1)
+        Entry entry = {.handle = m_next_handle++, .task = std::move(task), .guarded = false};
+        // append to the queue (§4.1)
         m_entries.push_back(std::move(entry));
         // the waiting event loop is woken so that a posted task runs promptly rather than at the next native event (§4.1)
         m_woken = true;
@@ -21,11 +19,9 @@ namespace albor
     TaskHandle TaskQueue::post_guarded(Task task, const LifetimeToken& guard) {
         // the lock is taken before the queue is touched, because any thread may post (§4.1)
         const std::lock_guard<std::mutex> lock(m_mutex);
-        Entry entry;
-        entry.handle = m_next_handle++;
-        entry.task = std::move(task);
-        entry.guard = guard;
-        entry.guarded = true;
+        // create a new entry for the guarded task (§4.1)
+        Entry entry = {.handle = m_next_handle++, .task = std::move(task), .guard = guard, .guarded = true};
+        // append to the queue (§4.1)
         m_entries.push_back(std::move(entry));
         // the waiting event loop is woken so that a posted task runs promptly rather than at the next native event (§4.1)
         m_woken = true;
@@ -39,6 +35,7 @@ namespace albor
         const std::lock_guard<std::mutex> lock(m_mutex);
         // every queued entry is inspected, because a cancelled task keeps its slot until it is drained (§4.1)
         for (const Entry& entry : m_entries) {
+            // check same handle
             if (entry.handle == handle)
                 return true;
         }
@@ -50,6 +47,7 @@ namespace albor
         const std::lock_guard<std::mutex> lock(m_mutex);
         // a cancelled task is marked rather than erased, because drain holds an index into the queue (§4.1)
         for (Entry& entry : m_entries) {
+            // check if the entry matches the handle and is not already cancelled (§4.1)
             if (entry.handle == handle && !entry.cancelled) {
                 entry.cancelled = true;
                 return true;
@@ -75,8 +73,7 @@ namespace albor
                 // a cancelled task is dropped without running its work (§4.1)
                 if (entry.cancelled)
                     continue;
-                // only a guarded task is dropped on an expired token, because an unguarded task has no token
-                // to expire and would otherwise never run (§4.2)
+                // only a guarded task is dropped on an expired token, because an unguarded task has no token (§4.2)
                 if (entry.guarded && entry.guard.expired())
                     continue;
                 entry.task();
@@ -89,6 +86,7 @@ namespace albor
     std::size_t TaskQueue::pending() const {
         // the lock is taken because a poster may be appending while the ui thread counts (§4.1)
         const std::lock_guard<std::mutex> lock(m_mutex);
+        // read the number of pending entries (§4.1)
         return m_entries.size();
     }
 
@@ -102,12 +100,14 @@ namespace albor
     bool TaskQueue::woken() const {
         // the lock is taken because a poster may raise the flag while the event loop reads it (§4.1)
         const std::lock_guard<std::mutex> lock(m_mutex);
+        // read flag
         return m_woken;
     }
 
     void TaskQueue::acknowledge_wake() {
         // the lock is taken so that a poster cannot raise the flag between the read and the clear (§4.1)
         const std::lock_guard<std::mutex> lock(m_mutex);
+        // update flag
         m_woken = false;
     }
 } // namespace albor

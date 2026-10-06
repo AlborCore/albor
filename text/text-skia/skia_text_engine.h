@@ -7,12 +7,18 @@
 
 namespace albor
 {
+    // the platform services the constructor accepts, declared here so the header needs no skia type (§9.1)
+    struct TextServices;
+
     // the skia text engine, which shapes and measures through skparagraph and is the phase 3 backend of §9.1
     class SkiaTextEngine final : public TextEngine
     {
     public:
-        // build the engine and resolve its font collection, which is what makes it usable (§9.1)
+        // build the engine over the platform services, which is what an application uses (§9.1)
         SkiaTextEngine();
+
+        // build the engine over services the caller supplies, which is how a test reaches the state an engine is in when the platform did not hand it a usable unicode (§9.1)
+        explicit SkiaTextEngine(TextServices services);
 
         ~SkiaTextEngine() override;
 
@@ -37,7 +43,7 @@ namespace albor
         // the shaping state, which holds the font collection and the unicode behind an incomplete type (§9.1)
         struct State;
 
-        // the owned shaping state, which the destructor needs the complete type for (§9.1)
+        // the owned shaping state, which holds the services as well and needs the complete type to destruct (§9.1)
         std::unique_ptr<State> m_state;
     };
 } // namespace albor

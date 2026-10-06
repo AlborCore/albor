@@ -101,11 +101,7 @@ namespace albor
         node.set_disabled(m_disabled);
         // a button is not checkable, so the check state stays not checkable (§10.1)
         node.set_check(CheckState::NotCheckable);
-        // the activate action runs the same handler the click path runs, so automation and the user agree (§10.1)
-        //
-        // the returned identifier is discarded, because a widget names its action by label rather than by number (§10.1)
-        // the action body carries no disabled guard, because SemanticNode::invoke refuses every action
-        // while the node it belongs to is disabled, which is where that rule belongs (§10.1)
+        // the activate action runs the same handler a press does, and its identifier is discarded because a widget names actions by label (§10.1) the action body carries no disabled guard, because SemanticNode::invoke refuses every action while the node it belongs to is disabled, which is where that rule belongs (§10.1)
         (void)node.add_action("activate", [this] {
             // a button with no handler exposes the action but does nothing, because there is no work (§10.1)
             if (!m_on_click)

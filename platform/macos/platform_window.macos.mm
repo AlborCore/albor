@@ -71,8 +71,7 @@ namespace albor
         }
 
         WindowMetrics metrics_of(NSWindow* window) {
-            // the window a resize arrived on is what is measured, so the metrics always match its current bounds (§5.3)
-            // a window with no content view has no area to measure (§5.3)
+            // the window a resize arrived on is measured, and one with no content view has no area to report (§5.3)
             NSView* content = window.contentView;
             if (content == nil)
                 return WindowMetrics{};

@@ -6,9 +6,7 @@
 
 namespace albor
 {
-    // the per window focus manager of §8.3, which owns which node holds the caret
-    //
-    // the manager stores a non owning pointer, because the ui tree owns the nodes and outlives any focus state (§8.3)
+    // the per window focus manager, which holds a non owning pointer because the tree owns the nodes (§8.3)
     class FocusManager
     {
     public:

@@ -72,9 +72,7 @@ namespace albor
             // the guard the task observes, which only post_guarded ever sets (§4.2)
             LifetimeToken guard;
 
-            // whether the task carries a guard at all, because an unguarded task must not be
-            // mistaken for one whose token expired: a default LifetimeToken is expired, so the
-            // presence of a guard cannot be inferred from whether the token still guards (§4.2)
+            // whether the task carries a guard, because a default token is expired and cannot signal presence (§4.2)
             bool guarded = false;
 
             // whether the task was cancelled before it ran

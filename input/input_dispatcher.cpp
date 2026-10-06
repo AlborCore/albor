@@ -11,8 +11,7 @@ namespace albor
     }
 
     void InputDispatcher::route_down(UiNode& node, Event& event) {
-        // every caller reaches this with an unclaimed event, and the loop re-checks before each child (§8.3)
-        // the children are offered the event in reverse order, matching the hit test order of §8.3
+        // every caller arrives with an unclaimed event, and the loop re-checks before each child (§8.3)
         for (auto position = node.child_count(); position > 0; position--) {
             // a claimed event stops the walk, so no sibling reacts to the same event (§8.3)
             if (event.handled)

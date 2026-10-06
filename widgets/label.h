@@ -11,10 +11,7 @@ namespace albor
     class Label final : public Widget
     {
     public:
-        // build a label over the engines it reads, with the default white foreground (§8)
-        //
-        // the text engine is borrowed rather than owned, because a scene measures every label through the
-        // one engine the application installed, and a second one would shape differently (§9.1)
+        // build a label over the engines it reads, with the default white foreground (§8) the text engine is borrowed rather than owned, because a scene measures every label through the one engine the application installed, and a second one would shape differently (§9.1)
         Label(BindingEngine* engine, TextEngine* text_engine, std::string text = {}, std::string explicit_id = {});
 
         // measure through the text engine, because a label takes the extent of the run it draws (§8.2, §9.1)

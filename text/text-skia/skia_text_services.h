@@ -6,9 +6,16 @@
 
 namespace albor
 {
-    // the system font collection the shaper resolves families against, which is the platform half of §9.1
-    [[nodiscard]] sk_sp<SkFontMgr> skia_text_font_manager();
+    // the platform services a text engine shapes with, which is everything it cannot own a second way (§9.1)
+    struct TextServices
+    {
+        // the system font collection the shaper resolves families against, which is the platform half of §9.1
+        sk_sp<SkFontMgr> font_manager;
 
-    // the icu unicode implementation, which supplies the line breaking and bidi skparagraph needs (§9.1)
-    [[nodiscard]] sk_sp<SkUnicode> skia_text_unicode();
+        // the unicode implementation, which supplies the line breaking and bidi skparagraph needs (§9.1)
+        sk_sp<SkUnicode> unicode;
+    };
+
+    // the platform services the process resolves once, which is what an application engine builds over (§9.1)
+    [[nodiscard]] TextServices platform_text_services();
 } // namespace albor

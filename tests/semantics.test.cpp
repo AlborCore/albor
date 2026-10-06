@@ -506,8 +506,7 @@ TEST(SemanticTree, BuildingFromAProviderBuildsItsChildrenLazily) {
     TestSemanticProvider provider(SemanticRole::Group, "Rows", 3);
     // act
     tree.build_from(provider);
-    // assert
-    // the provider only ever built the children the walk asked for, one at a time (§10.1, AD-09)
+    // assert the provider only ever built the children the walk asked for, one at a time (§10.1, AD-09)
     EXPECT_EQ(provider.built, 3u);
 }
 
@@ -645,8 +644,7 @@ TEST(SemanticTree, ADeepProviderChainFlattensEveryLevel) {
     TestSemanticProvider provider(SemanticRole::Group, "Rows", 1);
     // act
     tree.build_from(provider);
-    // assert
-    // the list has one item, and the item exposes none, so the walk stops there (§10.1, AD-09)
+    // assert the list has one item, and the item exposes none, so the walk stops there (§10.1, AD-09)
     EXPECT_EQ(tree.size(), 2u);
 }
 

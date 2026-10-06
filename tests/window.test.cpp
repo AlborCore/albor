@@ -22,13 +22,11 @@ namespace
         // the default double counts nothing, which is what a test that only forwards calls needs
         TestPlatformWindow() = default;
 
-        // the double counts its closes into a counter the test also holds, because the double is
-        // destroyed together with the window and its own flag would not survive to be read
+        // the double counts its closes into a counter the test also holds, because the double is destroyed together with the window and its own flag would not survive to be read
         explicit TestPlatformWindow(std::shared_ptr<int> close_counter) :
             m_close_counter(std::move(close_counter)) {}
 
-        // the double reports that its listener was detached through a flag the test also holds,
-        // because the double dies with the window and its own member would not survive to be read
+        // the double reports that its listener was detached through a flag the test also holds, because the double dies with the window and its own member would not survive to be read
         explicit TestPlatformWindow(std::shared_ptr<bool> detached_flag) :
             m_detached_flag(std::move(detached_flag)) {}
 
@@ -144,6 +142,44 @@ TEST(WindowOptions, TheDefaultOptionsAreValid) {
     // assert
     EXPECT_TRUE(options.valid());
     EXPECT_EQ(options.validation_error(), nullptr);
+}
+
+TEST(WindowOptions, AnEmptyTitleIsRefused) {
+    // arrange
+    WindowOptions options;
+    options.title.clear();
+    // act, assert
+    EXPECT_FALSE(options.valid());
+}
+
+TEST(WindowOptions, TheEmptyTitleErrorNamesTheTitle) {
+    // arrange
+    WindowOptions options;
+    options.title.clear();
+    // act
+    const char* error = options.validation_error();
+    // assert
+    EXPECT_NE(error, nullptr);
+    EXPECT_STREQ(error, "window title must not be empty");
+}
+
+TEST(WindowOptions, ANonEmptyTitleIsAccepted) {
+    // arrange
+    WindowOptions options;
+    options.title = "Albor";
+    // act, assert
+    EXPECT_TRUE(options.valid());
+}
+
+TEST(WindowOptions, TheEmptyTitleIsRefusedBeforeTheSize) {
+    // arrange
+    WindowOptions options;
+    options.title.clear();
+    options.size.width = 0.0f;
+    // act
+    const char* error = options.validation_error();
+    // assert the title is checked first, so an option set with two faults names the one that blocks creation (§5.1)
+    EXPECT_STREQ(error, "window title must not be empty");
 }
 
 TEST(WindowOptions, AnEmptyWidthIsRefused) {
@@ -638,8 +674,7 @@ TEST(Window, ConstructionKeepsTheOptionsItWasGiven) {
 }
 
 TEST(Window, DestructionDetachesTheListener) {
-    // arrange
-    // the double dies with the window, so it reports the detach through a flag this test holds
+    // arrange the double dies with the window, so it reports the detach through a flag this test holds
     auto detached = std::make_shared<bool>(false);
     std::shared_ptr<bool> observed = detached;
     {

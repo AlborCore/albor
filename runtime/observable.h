@@ -10,10 +10,7 @@ namespace albor
     // the unit of work a poster carries onto the UI thread, which is the task signature of §4.1
     using PostedWork = std::function<void()>;
 
-    // the callback a background worker hands its mutation to, which posts onto the UI thread (§4.1, §10.5)
-    //
-    // the signature is spelled with a plain std::function rather than the application Task alias so that the
-    // reactive runtime never includes the application module, which keeps the §7 layer below the §4 layer
+    // the callback a worker hands its mutation to, spelled with a plain std::function so §7 stays below §4 (§4.1, §10.5)
     using TaskPoster = std::function<void(PostedWork)>;
 
     // the thread safe value a worker thread mutates and the UI thread reads (§7.1, §10.5, §13.2)

@@ -52,56 +52,49 @@ namespace
 TEST(EventFilterChecks, PointerDownIsAPointerEvent) {
     // arrange
     Event event{.kind = EventKind::PointerDown};
-    // act
-    // assert
+    // act assert
     EXPECT_TRUE(EventFilter::is_pointer(event));
 }
 
 TEST(EventFilterChecks, PointerUpIsAPointerEvent) {
     // arrange
     Event event{.kind = EventKind::PointerUp};
-    // act
-    // assert
+    // act assert
     EXPECT_TRUE(EventFilter::is_pointer(event));
 }
 
 TEST(EventFilterChecks, PointerMoveIsAPointerEvent) {
     // arrange
     Event event{.kind = EventKind::PointerMove};
-    // act
-    // assert
+    // act assert
     EXPECT_TRUE(EventFilter::is_pointer(event));
 }
 
 TEST(EventFilterChecks, WheelIsNotAPointerEvent) {
     // arrange
     Event event{.kind = EventKind::Wheel};
-    // act
-    // assert
+    // act assert
     EXPECT_FALSE(EventFilter::is_pointer(event));
 }
 
 TEST(EventFilterChecks, KeyDownIsAKeyboardEvent) {
     // arrange
     Event event{.kind = EventKind::KeyDown};
-    // act
-    // assert
+    // act assert
     EXPECT_TRUE(EventFilter::is_keyboard(event));
 }
 
 TEST(EventFilterChecks, KeyUpIsAKeyboardEvent) {
     // arrange
     Event event{.kind = EventKind::KeyUp};
-    // act
-    // assert
+    // act assert
     EXPECT_TRUE(EventFilter::is_keyboard(event));
 }
 
 TEST(EventFilterChecks, PointerDownIsNotAKeyboardEvent) {
     // arrange
     Event event{.kind = EventKind::PointerDown};
-    // act
-    // assert
+    // act assert
     EXPECT_FALSE(EventFilter::is_keyboard(event));
 }
 
@@ -111,8 +104,7 @@ TEST(EventFilterChecks, WheelIsTheOnlyScrollEvent) {
     Event move{.kind = EventKind::PointerMove};
     Event key{.kind = EventKind::KeyDown};
     Event text{.kind = EventKind::TextInput};
-    // act
-    // assert
+    // act assert
     EXPECT_TRUE(EventFilter::is_scroll(wheel));
     EXPECT_FALSE(EventFilter::is_scroll(move));
     EXPECT_FALSE(EventFilter::is_scroll(key));
@@ -125,8 +117,7 @@ TEST(EventFilterChecks, TextInputIsTheOnlyTextEvent) {
     Event move{.kind = EventKind::PointerMove};
     Event key{.kind = EventKind::KeyUp};
     Event wheel{.kind = EventKind::Wheel};
-    // act
-    // assert
+    // act assert
     EXPECT_TRUE(EventFilter::is_text(text));
     EXPECT_FALSE(EventFilter::is_text(move));
     EXPECT_FALSE(EventFilter::is_text(key));
@@ -139,8 +130,7 @@ TEST(EventFilterChecks, PointerAndWheelEventsCarryAPosition) {
     Event up{.kind = EventKind::PointerUp};
     Event move{.kind = EventKind::PointerMove};
     Event wheel{.kind = EventKind::Wheel};
-    // act
-    // assert
+    // act assert
     EXPECT_TRUE(EventFilter::positioned(down));
     EXPECT_TRUE(EventFilter::positioned(up));
     EXPECT_TRUE(EventFilter::positioned(move));
@@ -152,8 +142,7 @@ TEST(EventFilterChecks, KeyAndTextEventsCarryNoPosition) {
     Event key_down{.kind = EventKind::KeyDown};
     Event key_up{.kind = EventKind::KeyUp};
     Event text{.kind = EventKind::TextInput};
-    // act
-    // assert
+    // act assert
     EXPECT_FALSE(EventFilter::positioned(key_down));
     EXPECT_FALSE(EventFilter::positioned(key_up));
     EXPECT_FALSE(EventFilter::positioned(text));
@@ -180,8 +169,7 @@ TEST(InputDispatcherChecks, RoutesToTheDeepestChildFirst) {
     Event event{.kind = EventKind::PointerDown};
     // act
     InputDispatcher::dispatch(root, event);
-    // assert
-    // the child is offered before the root, which is what makes the deepest handler win (§8.3)
+    // assert the child is offered before the root, which is what makes the deepest handler win (§8.3)
     EXPECT_EQ(child_ptr->deliveries, 1u);
     EXPECT_EQ(root.deliveries, 1u);
 }
@@ -212,8 +200,7 @@ TEST(InputDispatcherChecks, OffersTheLastChildFirst) {
     Event event{.kind = EventKind::PointerDown};
     // act
     InputDispatcher::dispatch(root, event);
-    // assert
-    // the later sibling is on top, so it is offered first (§8.3)
+    // assert the later sibling is on top, so it is offered first (§8.3)
     EXPECT_EQ(second_ptr->deliveries, 1u);
     EXPECT_EQ(first_ptr->deliveries, 1u);
 }
@@ -230,8 +217,7 @@ TEST(InputDispatcherChecks, TheTopmostChildStopsTheWalk) {
     Event event{.kind = EventKind::PointerDown};
     // act
     InputDispatcher::dispatch(root, event);
-    // assert
-    // the topmost sibling swallowed the event, so the one below never saw it (§8.3)
+    // assert the topmost sibling swallowed the event, so the one below never saw it (§8.3)
     EXPECT_EQ(below_ptr->deliveries, 0u);
 }
 
@@ -247,8 +233,7 @@ TEST(InputDispatcherChecks, DescendsThroughNestedLevels) {
     Event event{.kind = EventKind::PointerDown};
     // act
     InputDispatcher::dispatch(root, event);
-    // assert
-    // the leaf claimed it, so no ancestor of it acts (§8.3)
+    // assert the leaf claimed it, so no ancestor of it acts (§8.3)
     EXPECT_EQ(branch_ptr->deliveries, 0u);
     EXPECT_EQ(root.deliveries, 0u);
 }
@@ -298,8 +283,7 @@ TEST(InputDispatcherChecks, RoutesToTheFocusedNodeFirst) {
     Event event{.kind = EventKind::KeyDown};
     // act
     InputDispatcher::dispatch_to_focused(root, event, child_ptr);
-    // assert
-    // the focused node gets the key first, and the root only sees it if the child refused (§8.3)
+    // assert the focused node gets the key first, and the root only sees it if the child refused (§8.3)
     EXPECT_EQ(child_ptr->deliveries, 1u);
     EXPECT_EQ(root.deliveries, 1u);
 }
@@ -330,8 +314,7 @@ TEST(InputDispatcherChecks, BubblesFromTheFocusedNodeToTheRoot) {
     Event event{.kind = EventKind::KeyDown};
     // act
     InputDispatcher::dispatch_to_focused(root, event, leaf.get());
-    // assert
-    // each ancestor is offered in turn until one claims the event (§8.3)
+    // assert each ancestor is offered in turn until one claims the event (§8.3)
     EXPECT_EQ(branch_ptr->deliveries, 1u);
     EXPECT_EQ(root.deliveries, 1u);
 }
@@ -357,8 +340,7 @@ TEST(InputDispatcherChecks, TheRootClaimStopsAtTheRoot) {
     Event event{.kind = EventKind::KeyDown};
     // act
     InputDispatcher::dispatch_to_focused(root, event, &root);
-    // assert
-    // the root has no parent, so the bubble ends there without walking off the tree (§8.3)
+    // assert the root has no parent, so the bubble ends there without walking off the tree (§8.3)
     EXPECT_EQ(root.deliveries, 1u);
     EXPECT_TRUE(event.handled);
 }
@@ -370,8 +352,7 @@ TEST(InputDispatcherChecks, ANullFocusFallsBackToTheWholeTree) {
     Event event{.kind = EventKind::KeyDown};
     // act
     InputDispatcher::dispatch_to_focused(root, event, nullptr);
-    // assert
-    // a key press must reach something, so the tree walk stands in for the missing focus (§8.3)
+    // assert a key press must reach something, so the tree walk stands in for the missing focus (§8.3)
     EXPECT_EQ(root.deliveries, 1u);
     EXPECT_TRUE(event.handled);
 }
@@ -384,8 +365,7 @@ TEST(InputDispatcherChecks, AFocusFromAnotherTreeFallsBack) {
     Event event{.kind = EventKind::KeyDown};
     // act
     InputDispatcher::dispatch_to_focused(root, event, &stranger);
-    // assert
-    // a stale pointer that no longer belongs to the tree is not routed to (§8.3)
+    // assert a stale pointer that no longer belongs to the tree is not routed to (§8.3)
     EXPECT_EQ(stranger.deliveries, 0u);
     EXPECT_EQ(root.deliveries, 1u);
 }
@@ -404,8 +384,7 @@ TEST(InputDispatcherChecks, AnAlreadyClaimedEventIsNotRoutedToFocus) {
 TEST(FocusManagerChecks, StartsWithNothingFocused) {
     // arrange
     FocusManager manager;
-    // act
-    // assert
+    // act assert
     EXPECT_EQ(manager.focused(), nullptr);
     EXPECT_EQ(manager.change_count(), 0u);
 }
@@ -439,8 +418,7 @@ TEST(FocusManagerChecks, RequestFocusRefusesAnUnarrangedNode) {
     RecordingNode node;
     // act
     manager.request_focus(&node);
-    // assert
-    // a node with no area has nothing to point at (§8.3)
+    // assert a node with no area has nothing to point at (§8.3)
     EXPECT_EQ(manager.focused(), nullptr);
 }
 
@@ -480,8 +458,7 @@ TEST(FocusManagerChecks, MovingFocusInvalidatesBothNodes) {
     second.clear_dirty();
     // act
     manager.request_focus(&second);
-    // assert
-    // the focus ring moves, so both nodes must redraw (§8.3)
+    // assert the focus ring moves, so both nodes must redraw (§8.3)
     EXPECT_TRUE(first.render_dirty());
     EXPECT_TRUE(second.render_dirty());
 }
@@ -572,8 +549,7 @@ TEST(FocusManagerChecks, FocusNextWalksTheTreeDepthFirst) {
     second_ptr->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
     // act
     manager.focus_next(root);
-    // assert
-    // the root is first in depth first order, so tab lands on it (§8.3)
+    // assert the root is first in depth first order, so tab lands on it (§8.3)
     EXPECT_EQ(manager.focused(), &root);
 }
 
@@ -605,8 +581,7 @@ TEST(FocusManagerChecks, FocusNextWrapsAroundTheEnd) {
     manager.request_focus(child_ptr);
     // act
     manager.focus_next(root);
-    // assert
-    // the ring wraps, so tab past the last node returns to the first (§8.3)
+    // assert the ring wraps, so tab past the last node returns to the first (§8.3)
     EXPECT_EQ(manager.focused(), &root);
 }
 
@@ -621,8 +596,7 @@ TEST(FocusManagerChecks, FocusPreviousStartsAtTheLastNode) {
     child_ptr->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
     // act
     manager.focus_previous(root);
-    // assert
-    // going backward from nothing lands on the last node of the ring (§8.3)
+    // assert going backward from nothing lands on the last node of the ring (§8.3)
     EXPECT_EQ(manager.focused(), child_ptr);
 }
 
@@ -654,8 +628,7 @@ TEST(FocusManagerChecks, FocusPreviousWrapsAroundTheStart) {
     manager.request_focus(&root);
     // act
     manager.focus_previous(root);
-    // assert
-    // going backward past the first node returns to the last (§8.3)
+    // assert going backward past the first node returns to the last (§8.3)
     EXPECT_EQ(manager.focused(), child_ptr);
 }
 
@@ -674,8 +647,7 @@ TEST(FocusManagerChecks, TraversalSkipsUnfocusableNodes) {
     manager.request_focus(&root);
     // act
     manager.focus_next(root);
-    // assert
-    // the hidden node never enters the ring, so tab lands on the visible one (§8.3)
+    // assert the hidden node never enters the ring, so tab lands on the visible one (§8.3)
     EXPECT_EQ(manager.focused(), visible_ptr);
 }
 
@@ -685,8 +657,7 @@ TEST(FocusManagerChecks, TraversalOnATreeWithNothingFocusableDoesNothing) {
     RecordingNode root;
     // act
     manager.focus_next(root);
-    // assert
-    // an empty ring has no node to land on, so the focus stays where it was (§8.3)
+    // assert an empty ring has no node to land on, so the focus stays where it was (§8.3)
     EXPECT_EQ(manager.focused(), nullptr);
     EXPECT_EQ(manager.change_count(), 0u);
 }

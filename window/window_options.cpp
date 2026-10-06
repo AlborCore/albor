@@ -8,6 +8,9 @@ namespace albor
     }
 
     const char* WindowOptions::validation_error() const {
+        // a window with no title is unnamed in the window list and to assistive technology (§5.1)
+        if (title.empty())
+            return "window title must not be empty";
         // a window with no area cannot be laid out or presented
         if (size.width <= 0.0f || size.height <= 0.0f)
             return "window size must be positive";

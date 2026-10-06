@@ -6,8 +6,7 @@
 #include "platform/macos/platform_window.h"
 #include "window/platform_window_factory.h"
 
-// the display link is deprecated in macOS 15 in favour of the appkit display links, but prototype A2 recorded whole
-// process stalls for those, so the deprecation is expected rather than a defect (prototypes/a2_macos/PACING.md)
+// the display link is deprecated in macOS 15, but prototype A2 recorded whole process stalls for the replacement (prototypes/a2_macos/PACING.md)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 

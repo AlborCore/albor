@@ -14,9 +14,7 @@ namespace albor
     // how long an animation runs, which the frame delta accumulates against (§7.3)
     using AnimationDuration = std::chrono::milliseconds;
 
-    // the work one animation performs, which receives the normalized progress and reports whether it continues (§7.3)
-    //
-    // the progress runs from zero to one, and returning false ends the animation early (§7.3)
+    // the work one animation performs, which receives the progress from zero to one and reports whether it continues (§7.3)
     using AnimationTick = std::function<bool(float)>;
 
     // the engine that advances every running animation from the frame scheduler (§7.3, AD-04d)

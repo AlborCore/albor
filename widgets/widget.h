@@ -8,12 +8,7 @@
 
 namespace albor
 {
-    // hand back the mutable owner a const provider reads through, which is what a semantic action needs (§10.1)
-    //
-    // the semantic provider contract is const because it describes the shape of a tree rather than changing it, but an
-    // action an adapter or automation invokes performs a real change on the control it was declared on, exactly as a
-    // pointer press does. the reclaim is therefore confined to this one named function rather than scattered as
-    // const_cast through every widget action, so the cast is auditable in one place (§10.1)
+    // hand back the mutable owner a const provider reads through, which an invoked action needs because it changes the control as a press does (§10.1)
     template <typename T>
     [[nodiscard]] T* mutable_owner(const T* provider) {
         return const_cast<T*>(provider);
@@ -63,10 +58,7 @@ namespace albor
         const SemanticProvider* m_provider;
     };
 
-    // the base every standard widget derives from, which is a ui component that also exposes semantics (§8, §10.1)
-    //
-    // the two bases are separate concerns rather than one class, because the semantic contract is what
-    // accessibility and automation consume and the component contract is what layout and rendering consume (§10.1, AD-09)
+    // the base every standard widget derives from, which is a component for layout and a provider for semantics (§8, §10.1)
     class Widget : public Component, public SemanticProvider
     {
     public:

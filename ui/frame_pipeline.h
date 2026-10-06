@@ -71,17 +71,13 @@ namespace albor
         // set the surface the attached executor presents into, which the window owns (§6.1)
         void set_surface(RenderSurface* surface);
 
-        // attach the animation engine the pipeline advances on every frame, which is what drives properties (§7.3, AD-04d)
-        //
-        // the pointer stays a pointer, so a pipeline built before the animation module exists still links (§7.3)
+        // attach the animation engine the pipeline advances on every frame, which drives properties (§7.3, AD-04d)
         void set_animation_engine(AnimationEngine* engine);
 
         // hand out the attached animation engine, which a test asserts on (§7.3)
         [[nodiscard]] AnimationEngine* animation_engine() const;
 
-        // advance the attached animations by a frame delta before the graph settles, which is the ordering of §7.3
-        //
-        // an animation write marks its dependents dirty, so the settle that follows must see it (§7.3, AD-04d)
+        // advance the animations by a frame delta before the settle, because an animation write marks its dependents dirty (§7.3, AD-04d)
         void advance_animations(float delta_seconds);
 
     private:

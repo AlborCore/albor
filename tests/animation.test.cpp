@@ -28,8 +28,7 @@ namespace
 } // namespace
 
 TEST(LerpChecks, LinearAtTheEnds) {
-    // arrange
-    // act
+    // arrange act
     const float at_start = lerp(2.0f, 8.0f, 0.0f);
     const float at_end = lerp(2.0f, 8.0f, 1.0f);
     // assert
@@ -38,24 +37,21 @@ TEST(LerpChecks, LinearAtTheEnds) {
 }
 
 TEST(LerpChecks, LinearAtTheMidpoint) {
-    // arrange
-    // act
+    // arrange act
     const float middle = lerp(0.0f, 10.0f, 0.5f);
     // assert
     EXPECT_FLOAT_EQ(middle, 5.0f);
 }
 
 TEST(LerpChecks, ExtrapolatesBeyondTheUnitInterval) {
-    // arrange
-    // act
+    // arrange act
     const float past = lerp(0.0f, 10.0f, 2.0f);
     // assert
     EXPECT_FLOAT_EQ(past, 20.0f);
 }
 
 TEST(LerpChecks, SmoothStepIsFlatAtTheEnds) {
-    // arrange
-    // act
+    // arrange act
     const float at_start = ease_in_out(0.0f);
     const float at_end = ease_in_out(1.0f);
     const float middle = ease_in_out(0.5f);
@@ -66,8 +62,7 @@ TEST(LerpChecks, SmoothStepIsFlatAtTheEnds) {
 }
 
 TEST(LerpChecks, SmoothStepClampsOutsideTheUnitInterval) {
-    // arrange
-    // act
+    // arrange act
     const float below = ease_in_out(-1.0f);
     const float above = ease_in_out(2.0f);
     // assert
@@ -103,8 +98,7 @@ TEST(LerpChecks, ColourAtTheEndsReturnsTheInputs) {
 TEST(AnimationEngineChecks, StartsWithNothingRunning) {
     // arrange
     AnimationEngine engine;
-    // act
-    // assert
+    // act assert
     EXPECT_EQ(engine.active_count(), 0u);
 }
 
@@ -188,8 +182,7 @@ TEST(AnimationEngineChecks, TheTickSeesOneWhenAFrameOvershoots) {
         std::chrono::milliseconds(100));
     // act
     engine.advance(10.0f);
-    // assert
-    // a frame longer than the whole animation lands the tick on one rather than past it (§7.3)
+    // assert a frame longer than the whole animation lands the tick on one rather than past it (§7.3)
     EXPECT_FLOAT_EQ(seen, 1.0f);
 }
 
@@ -228,8 +221,7 @@ TEST(AnimationEngineChecks, FinishesWhenTheDurationElapses) {
     const AnimationHandle handle = engine.schedule([](float) { return true; }, std::chrono::milliseconds(100));
     // act
     engine.advance(0.2f);
-    // assert
-    // the entry is dropped, so the handle no longer names a running animation (§7.3)
+    // assert the entry is dropped, so the handle no longer names a running animation (§7.3)
     EXPECT_EQ(engine.active_count(), 0u);
     EXPECT_FALSE(engine.running(handle));
 }
@@ -423,8 +415,7 @@ TEST(FramePipelineAnimationChecks, StartsWithoutAnEngine) {
     // arrange
     BindingEngine engine;
     FramePipeline pipeline(engine, std::make_unique<AnimationTestNode>());
-    // act
-    // assert
+    // act assert
     EXPECT_EQ(pipeline.animation_engine(), nullptr);
 }
 
@@ -465,8 +456,7 @@ TEST(FramePipelineAnimationChecks, AdvancesWithoutAnEngine) {
     FramePipeline pipeline(engine, std::make_unique<AnimationTestNode>());
     // act
     pipeline.advance_animations(0.25f);
-    // assert
-    // the pipeline without an engine simply does nothing, which is the phase 2 shape (§7.3)
+    // assert the pipeline without an engine simply does nothing, which is the phase 2 shape (§7.3)
     EXPECT_EQ(pipeline.animation_engine(), nullptr);
 }
 

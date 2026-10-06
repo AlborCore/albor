@@ -33,6 +33,7 @@ target_compile_features(albor-tests PRIVATE cxx_std_23)
 # well would hand the linker the same archive twice. Naming only the entry point keeps one copy (§2.2)
 target_link_libraries(albor-tests PRIVATE albor-layout albor-focus albor-widgets albor-input albor-text-skia albor-application GTest::gtest_main)
 
+
 # the test binary is executed directly rather than through ctest, so it never needs a display (§2.2)
 include(GoogleTest)
 gtest_discover_tests(albor-tests DISCOVERY_TIMEOUT 60)

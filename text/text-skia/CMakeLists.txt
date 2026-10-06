@@ -14,13 +14,14 @@ if(NOT TARGET unofficial::skia::modules::skparagraph)
     message(FATAL_ERROR "albor-text-skia requires skparagraph, so the skia dependency needs its harfbuzz and icu features (§9.1)")
 endif()
 
-# the skia headers self include as "skia/...", so the port needs the directory above include/skia as an include root
-if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
-    set(ALBOR_SKIA_INCLUDE_ROOT "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include")
-else()
-    get_target_property(ALBOR_SKIA_TARGET_INCLUDES unofficial::skia::skia INTERFACE_INCLUDE_DIRECTORIES)
-    list(GET ALBOR_SKIA_TARGET_INCLUDES 0 ALBOR_SKIA_INCLUDE_ROOT)
-    string(REGEX REPLACE "/skia$" "" ALBOR_SKIA_INCLUDE_ROOT "${ALBOR_SKIA_INCLUDE_ROOT}")
+# the skia headers self include as "skia/...", so the directory above include/skia has to be a root, and
+# the skia headers themselves include "include/...", so include/skia has to be a root as well (§3.5)
+get_target_property(ALBOR_SKIA_TARGET_INCLUDES unofficial::skia::skia INTERFACE_INCLUDE_DIRECTORIES)
+list(GET ALBOR_SKIA_TARGET_INCLUDES 0 ALBOR_SKIA_INCLUDE_ROOT)
+string(REGEX REPLACE "/skia$" "" ALBOR_SKIA_INCLUDE_ROOT "${ALBOR_SKIA_INCLUDE_ROOT}")
+set(ALBOR_SKIA_INCLUDE_DIRS "${ALBOR_SKIA_INCLUDE_ROOT}")
+if(IS_DIRECTORY "${ALBOR_SKIA_INCLUDE_ROOT}/skia")
+    list(APPEND ALBOR_SKIA_INCLUDE_DIRS "${ALBOR_SKIA_INCLUDE_ROOT}/skia")
 endif()
 
 # gather cpp sources (all platforms)
@@ -38,7 +39,7 @@ target_compile_features(albor-text-skia PUBLIC cxx_std_23)
 
 # the backend public header names skia types, so anything that includes it needs the skia root, and the
 # headers are consumed as system ones because their own warnings are not the framework's (§3.5, AD-05)
-target_include_directories(albor-text-skia SYSTEM PUBLIC ${ALBOR_SKIA_INCLUDE_ROOT})
+target_include_directories(albor-text-skia SYSTEM PUBLIC ${ALBOR_SKIA_INCLUDE_DIRS})
 
 # the backend implements the text contract and reaches skparagraph, which carries the shaper and the icu unicode (§9.1)
 target_link_libraries(albor-text-skia PUBLIC albor-text PRIVATE unofficial::skia::modules::skparagraph)

@@ -144,9 +144,7 @@ namespace albor
         // register an action the node exposes, which assistive technology and automation both invoke (§10.1)
         [[nodiscard]] SemanticActionId add_action(std::string name, SemanticAction action);
 
-        // invoke a registered action, which reports whether the action existed (§10.1)
-        //
-        // invoking is const because running an action does not change the node it is declared on (§10.1)
+        // invoke a registered action, which is const because running one does not change the node (§10.1)
         bool invoke(SemanticActionId action) const;
 
         // invoke the action registered under a name, which automation selects by label (§10.1)

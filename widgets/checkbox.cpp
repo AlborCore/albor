@@ -94,11 +94,7 @@ namespace albor
         node.set_disabled(m_disabled);
         // the check state mirrors the stored boolean, which is what a screen reader announces (§10.1)
         node.set_check(m_checked ? CheckState::Checked : CheckState::Unchecked);
-        // the toggle action runs the same path a press runs, so automation and the user agree (§10.1)
-        //
-        // the returned identifier is discarded, because a widget names its action by label rather than by number (§10.1)
-        // the action body carries no disabled guard, because SemanticNode::invoke refuses every action
-        // while the node it belongs to is disabled, which is where that rule belongs (§10.1)
+        // the toggle action runs the same path a press does, and its identifier is discarded because a widget names actions by label (§10.1) the action body carries no disabled guard, because SemanticNode::invoke refuses every action while the node it belongs to is disabled, which is where that rule belongs (§10.1)
         (void)node.add_action("toggle", [control = mutable_owner(this)] {
             // the state flips before the handler runs, so the callback sees the state the box moved to (§8.3)
             control->m_checked = !control->m_checked;

@@ -124,11 +124,7 @@ namespace albor
         node.set_check(CheckState::NotCheckable);
         // the name carries the value, because the numeric value is what a screen reader must speak (§10.1)
         node.set_name(identity().explicit_id + " " + std::to_string(m_value));
-        // a step action moves by one step, because a semantic action carries no argument to set an exact value (§10.1)
-        //
-        // the returned identifiers are discarded, because a widget names its actions by label rather than by number (§10.1)
-        // the action bodies carry no disabled guard, because SemanticNode::invoke refuses every action
-        // while the node it belongs to is disabled, which is where that rule belongs (§10.1)
+        // the step actions move by one step because a semantic action carries no value, and their identifiers are discarded (§10.1) the action bodies carry no disabled guard, because SemanticNode::invoke refuses every action while the node it belongs to is disabled, which is where that rule belongs (§10.1)
         (void)node.add_action("increment", [control = mutable_owner(this)] {
             // the value moves up by one step, which is what a key press on a focused slider does (§8.3)
             control->step(STEP);

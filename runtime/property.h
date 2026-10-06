@@ -107,9 +107,7 @@ namespace albor
         // hand out the value the three channels resolve to (§7.3, AD-24, AD-04d)
         [[nodiscard]] const T& resolved() const;
 
-        // write a value produced by a declarative binding, which only the evaluator installed by bind calls (§7.3)
-        //
-        // this is private because it bypasses the write precedence rules, so no caller outside the binding may use it (§7.3, AD-24)
+        // write a value produced by a declarative binding, which is private because it bypasses the precedence rules (§7.3, AD-24)
         void write_bound(T value);
 
         // the value the property presents when no binding and no override apply (§7.1)

@@ -21,8 +21,7 @@ namespace
         // the default double reports nothing, which is what a test that only drives the pump needs
         TestEventLoop() = default;
 
-        // the double reports its stop through a flag the test also holds, because the double is
-        // destroyed with the application and its own member would not survive to be read
+        // the double reports its stop through a flag the test also holds, because the double is destroyed with the application and its own member would not survive to be read
         explicit TestEventLoop(std::shared_ptr<bool> stop_flag) :
             m_stop_flag(std::move(stop_flag)) {}
 
@@ -75,8 +74,7 @@ namespace
         // the default double counts nothing, which is what a test that only forwards calls needs
         TestPlatformWindow() = default;
 
-        // the double counts its closes into a counter the test also holds, because the double is
-        // destroyed together with the window and its flag would not survive to be read
+        // the double counts its closes into a counter the test also holds, because the double is destroyed together with the window and its flag would not survive to be read
         explicit TestPlatformWindow(std::shared_ptr<int> close_counter) :
             m_close_counter(std::move(close_counter)) {}
 
@@ -794,8 +792,7 @@ TEST(Timer, ARepeatingTimerFiresUntilItIsCancelled) {
     EXPECT_EQ(fires, 2);
     EXPECT_EQ(timer.fire_count(), 2u);
     timer.cancel();
-    // assert
-    // a cancelled timer forgets its registration, so it reports no further firings
+    // assert a cancelled timer forgets its registration, so it reports no further firings
     EXPECT_EQ(timer.fire_count(), 0u);
     EXPECT_FALSE(timer.active());
 }
@@ -854,8 +851,7 @@ TEST(Application, RunReturnsTheDefaultExitCode) {
 }
 
 TEST(Application, DestructionStopsThePacingSource) {
-    // arrange
-    // the loop dies with the application, so it reports through a counter this test also holds
+    // arrange the loop dies with the application, so it reports through a counter this test also holds
     auto pacing_stopped = std::make_shared<bool>(false);
     std::shared_ptr<bool> observed = pacing_stopped;
     {

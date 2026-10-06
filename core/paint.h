@@ -17,10 +17,10 @@ namespace albor
         // the alpha component, where one is fully opaque
         float alpha = 1.0f;
 
-        // build an opaque colour
+        // build an opaque colour, with every channel clamped into the unit range (§6.3)
         [[nodiscard]] static Color rgb(float red, float green, float blue);
 
-        // build a colour with an explicit alpha
+        // build a colour with an explicit alpha, with every channel clamped into the unit range (§6.3)
         [[nodiscard]] static Color rgba(float red, float green, float blue, float alpha);
 
         // compare two colours component wise
