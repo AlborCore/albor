@@ -31,7 +31,12 @@ target_compile_features(albor-tests PRIVATE cxx_std_23)
 #
 # GTest::gtest_main already publishes GTest::gtest as part of its interface, so naming gtest here as
 # well would hand the linker the same archive twice. Naming only the entry point keeps one copy (§2.2)
-target_link_libraries(albor-tests PRIVATE albor-layout albor-focus albor-widgets albor-input albor-text-skia albor-application GTest::gtest_main)
+#
+# albor-manifest is named explicitly because it is a tool the framework itself never includes:
+# nothing inside core, ui or render may reach it, because a production build links no parser and
+# no interpreter (AD-01, §2.1). It publishes albor-compiler publicly, so the suites reach the
+# frontend through it and naming albor-compiler as well would hand the linker the same archive twice (§11.2)
+target_link_libraries(albor-tests PRIVATE albor-layout albor-focus albor-widgets albor-input albor-text-skia albor-application albor-manifest GTest::gtest_main)
 
 
 # the test binary is executed directly rather than through ctest, so it never needs a display (§2.2)
