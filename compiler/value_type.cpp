@@ -1,5 +1,7 @@
 #include "compiler/value_type.h"
 
+#include <algorithm>
+
 #include <utility>
 
 namespace albor::compiler
@@ -192,8 +194,8 @@ namespace albor::compiler
         // a container groups children in a column, which is the default vertical stack (§8.2)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Column",
-                                              // the gap between children is the only property the language exposes (§8.2)
-                                              .properties = {ElementProperty{.name = "spacing", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = true}},
+                                              // the gap and the inset are what §11.1 writes on a column, and both scale with the surface (§8.2, AD-27)
+                                              .properties = {ElementProperty{.name = "spacing", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = true}, ElementProperty{.name = "padding", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = true}},
                                               // a column raises no signal of its own (§8.2)
                                               .signals = {},
                                               // a column is a container, so it accepts children (§8.2)
@@ -283,16 +285,33 @@ namespace albor::compiler
     }
 
     void ElementCatalog::add_native(const ElementType& type) {
+        // a name the catalog already holds is not redefined, because a ui file would resolve two shapes (§11.2, AD-17)
+        if (find(type.name) != nullptr)
+            return;
         // a native type is appended, because the manifest is the single source of truth for it (§11.2, AD-17)
         m_types.push_back(type);
     }
 
+    void ElementCatalog::add_native_data(std::string name) {
+        // a name the catalog already holds is not redefined, because a ui file would resolve two shapes (§11.2, AD-17)
+        if (holds_native(name))
+            return;
+        // the name is appended, because the manifest is the single source of truth for it (§11.2, AD-17)
+        m_native_data.push_back(std::move(name));
+    }
+
+    bool ElementCatalog::holds_native(std::string_view name) const {
+        // a data type is not an element, so the element lookup does not find it (§11.2, AD-17)
+        return std::find(m_native_data.begin(), m_native_data.end(), name) != m_native_data.end();
+    }
+
     const ElementType* ElementCatalog::find(std::string_view name) const {
         // the types are scanned, because a component names only a handful of them (§11.1)
-        for (const ElementType& type : m_types)
+        for (const ElementType& type : m_types) {
             // the name decides, so an element keyword resolves to exactly one type (§11.1)
             if (type.name == name)
                 return &type;
+        }
         // a name the catalog does not hold is an error the checker reports (§11.1)
         return nullptr;
     }

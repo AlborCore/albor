@@ -169,6 +169,12 @@ namespace albor::compiler
         // add a native component from a manifest, which is the single source of truth for its types (§11.2, AD-17)
         void add_native(const ElementType& type);
 
+        // add a native data type from a manifest, which a snapshot may carry but which is never an element (§11.2, AD-17)
+        void add_native_data(std::string name);
+
+        // report whether the catalog holds a native type of either form, which is what a type name resolves (§11.2, AD-17)
+        [[nodiscard]] bool holds_native(std::string_view name) const;
+
         // find an element type by name, which is what an element keyword resolves against (§11.1)
         [[nodiscard]] const ElementType* find(std::string_view name) const;
 
@@ -176,7 +182,10 @@ namespace albor::compiler
         [[nodiscard]] const std::vector<ElementType>& types() const;
 
     private:
-        // the known types, which are looked up by name (§11.1)
+        // the known element types, which are looked up by name (§11.1)
         std::vector<ElementType> m_types;
+
+        // the known native data types, which a snapshot may carry but which is never an element (§11.2, AD-17)
+        std::vector<std::string> m_native_data;
     };
 } // namespace albor::compiler

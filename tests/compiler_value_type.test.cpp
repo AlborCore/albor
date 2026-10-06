@@ -355,3 +355,26 @@ TEST(ElementCatalog, StartsWithNothingBeyondTheBuiltins) {
     // assert
     EXPECT_EQ(catalog.types().size(), 10U);
 }
+
+TEST(ElementCatalog, RefusesToShadowABuiltinWithAManifest) {
+    // arrange
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act
+    // a manifest declaring a builtin name would give a ui file two shapes for one keyword (§11.2, AD-17)
+    catalog.add_native(ElementType{.name = "Label", .properties = {}, .signals = {}, .accepts_children = true});
+    // assert
+    // the builtin is still the one that resolves, because the manifest could not redefine it (§11.2, AD-17)
+    EXPECT_FALSE(catalog.find("Label")->accepts_children);
+    EXPECT_EQ(catalog.types().size(), 10U);
+}
+
+TEST(ElementCatalog, RefusesToRedefineANativeDataType) {
+    // arrange
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act
+    catalog.add_native_data("WaveformData");
+    catalog.add_native_data("WaveformData");
+    // assert
+    // a repeated declaration resolves to one shape, so the second is ignored (§11.2, AD-17)
+    EXPECT_TRUE(catalog.holds_native("WaveformData"));
+}

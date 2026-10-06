@@ -130,9 +130,10 @@ TEST(BinaryExpression, CarriesEveryOperatorTheLanguageDefines) {
     const std::vector<BinaryOperator> operators = {BinaryOperator::Add, BinaryOperator::Subtract, BinaryOperator::Multiply, BinaryOperator::Divide, BinaryOperator::Modulo, BinaryOperator::Equal, BinaryOperator::NotEqual, BinaryOperator::Less, BinaryOperator::LessEqual, BinaryOperator::Greater, BinaryOperator::GreaterEqual, BinaryOperator::And, BinaryOperator::Or};
     // act
     std::size_t count = 0;
-    for (BinaryOperator op : operators)
+    for (BinaryOperator op : operators) {
         if (as_binary(BinaryExpression::make(op, nullptr, nullptr, whole_span())).op == op)
             count++;
+    }
     // assert
     // every operator the grammar accepts is represented, because the parser maps a token straight onto one (§11.1)
     EXPECT_EQ(count, operators.size());

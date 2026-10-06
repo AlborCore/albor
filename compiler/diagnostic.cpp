@@ -35,9 +35,11 @@ namespace albor::compiler
 
     bool DiagnosticList::has_errors() const {
         // one error is enough to block codegen, so the scan stops at the first (§11.1)
-        for (const Diagnostic& diagnostic : m_diagnostics)
+        for (const Diagnostic& diagnostic : m_diagnostics) {
+            // check severity
             if (diagnostic.severity == Diagnostic::Severity::Error)
                 return true;
+        }
         return false;
     }
 
@@ -50,9 +52,11 @@ namespace albor::compiler
         // the filtered problems are collected, because a caller cannot hold views into the list (§11.1)
         std::vector<Diagnostic> filtered;
         // every problem is checked, because both severities may be present at once (§11.1)
-        for (const Diagnostic& diagnostic : m_diagnostics)
+        for (const Diagnostic& diagnostic : m_diagnostics) {
+            // check severity
             if (diagnostic.severity == severity)
                 filtered.push_back(diagnostic);
+        }
         return filtered;
     }
 
