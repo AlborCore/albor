@@ -41,6 +41,13 @@ endif()
 # the phase 1 modules are warning free, so the checks the prototype tree already ran stay in force
 add_compile_options(-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion)
 
+# the coverage build instruments every module, because a profile that only covers the test sources
+# cannot report on the module code the suites exercise (§2.2)
+if(ALBOR_COVERAGE)
+    add_compile_options(-fprofile-instr-generate -fcoverage-mapping)
+    add_link_options(-fprofile-instr-generate)
+endif()
+
 # the platform adapters are written against the os directly, which is what AD-16 decides
 if(APPLE)
     enable_language(OBJCXX)
@@ -72,6 +79,24 @@ add_subdirectory(application)
 
 # the ui tree, the component facade and the scene build stage (§3.2, §8.1)
 add_subdirectory(ui)
+
+# the two pass layout containers of §8.2, which measure and arrange the ui tree (§3.2)
+add_subdirectory(layout)
+
+# the text engine of §9.1, which measures a run so containers adapt to their content (§3.2)
+add_subdirectory(text)
+
+# the frame scheduler integrated animation core of §7.3, which drives properties through their presence channel (§3.2)
+add_subdirectory(animation)
+
+# the standard widgets of §8, which are ui components that also expose semantics (§3.2)
+add_subdirectory(widgets)
+
+# the input normalization and routing of §8.3, which turns platform events into tree deliveries (§3.2)
+add_subdirectory(input)
+
+# the per window focus manager of §8.3, which owns which node holds the caret (§3.2)
+add_subdirectory(focus)
 
 # the skia metal backend that implements the rendering hal (§3.2, AD-05)
 add_subdirectory(render/render-skia)

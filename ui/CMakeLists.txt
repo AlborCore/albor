@@ -10,5 +10,6 @@ add_library(albor-ui STATIC ${CPP_SOURCES})
 target_include_directories(albor-ui PUBLIC ${CMAKE_SOURCE_DIR})
 target_compile_features(albor-ui PUBLIC cxx_std_23)
 
-# the ui module needs the reactive engine, the render hal and the window metrics it presents into (§3.2)
-target_link_libraries(albor-ui PUBLIC albor-core albor-runtime albor-window albor-render)
+# the ui module needs the reactive engine, the render hal, the window metrics it presents into and the animation
+# engine the frame pipeline advances on every frame (§3.2, §7.3)
+target_link_libraries(albor-ui PUBLIC albor-core albor-runtime albor-window albor-render albor-animation)

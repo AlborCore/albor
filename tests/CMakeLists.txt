@@ -20,20 +20,18 @@ target_compile_features(albor-tests PRIVATE cxx_std_23)
 
 # the tests link the framework modules and nothing platform specific, so they run without a window server (§3.2)
 #
-# only the modules that are not already re-exported are named here. albor-ui and albor-application both
-# publish their own dependencies publicly, because their public headers name them, so naming the leaves
-# again would reach the linker twice and produce a duplicate library warning. Their closure already
-# carries albor-core, albor-window, albor-runtime and albor-render (§3.2)
+# only the modules that are not already re-exported are named here. albor-widgets, albor-input and
+# albor-application publish their own dependencies publicly, because their public headers name them, so
+# naming the leaves again would reach the linker twice and produce a duplicate library warning. Their
+# closure already carries albor-core, albor-window, albor-runtime, albor-render, albor-animation,
+# albor-text and albor-ui (§3.2)
+#
+# albor-layout and albor-focus are named explicitly because nothing else re-exports them: a tree is built
+# out of the containers, but no module header names one, so the tests must reach for them (§8.2, §8.3)
 #
 # GTest::gtest_main already publishes GTest::gtest as part of its interface, so naming gtest here as
 # well would hand the linker the same archive twice. Naming only the entry point keeps one copy (§2.2)
-target_link_libraries(albor-tests PRIVATE albor-ui albor-application albor-semantics GTest::gtest_main)
-
-# the coverage build of the same binary produces the profile the coverage report is generated from
-if(ALBOR_COVERAGE)
-    target_compile_options(albor-tests PRIVATE -fprofile-instr-generate -fcoverage-mapping)
-    target_link_options(albor-tests PRIVATE -fprofile-instr-generate)
-endif()
+target_link_libraries(albor-tests PRIVATE albor-layout albor-focus albor-widgets albor-input albor-text-skia albor-application GTest::gtest_main)
 
 # the test binary is executed directly rather than through ctest, so it never needs a display (§2.2)
 include(GoogleTest)

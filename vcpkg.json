@@ -15,7 +15,9 @@
       "default-features": false,
       "features": [
         "graphite",
-        "metal"
+        "metal",
+        "harfbuzz",
+        "icu"
       ]
     },
     {
@@ -25,7 +27,9 @@
       "default-features": false,
       "features": [
         "graphite",
-        "direct3d"
+        "direct3d",
+        "harfbuzz",
+        "icu"
       ]
     },
     {
@@ -35,7 +39,9 @@
       "default-features": false,
       "features": [
         "graphite",
-        "vulkan"
+        "vulkan",
+        "harfbuzz",
+        "icu"
       ]
     }
   ]

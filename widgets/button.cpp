@@ -1,0 +1,170 @@
+#include "widgets/button.h"
+
+#include <algorithm>
+#include <utility>
+
+#include "text/text_engine.h"
+
+namespace albor
+{
+    // the extent a push control never shrinks below, because an unlabelled button must stay grabbable (§8.2)
+    constexpr float MINIMUM_WIDTH = 24.0f;
+
+    // the vertical extent a push control never shrinks below, for the same reason (§8.2)
+    constexpr float MINIMUM_HEIGHT = 16.0f;
+    Button::Button(BindingEngine* engine, std::string label, std::string explicit_id) :
+        Widget(engine, std::move(explicit_id)), m_label(std::move(label)) {
+        // the label is measured once up front, so the plate is sized before the first layout pass reaches it (§9.1)
+        m_label_layout = TextLayout::from_text(m_label, TextEngine::DEFAULT_FONT_SIZE);
+    }
+
+    void Button::measure(const SizeConstraints& constraints, Size& out_size) {
+        // a push control must stay grabbable, so the label drives the plate and a default covers an empty label (§8.2)
+        const Size content{.width = std::max(m_label_layout.size.width, MINIMUM_WIDTH), .height = std::max(m_label_layout.size.height, MINIMUM_HEIGHT)};
+        // the result is clamped into the offered constraints, because a parent decision is final (§8.2)
+        m_measured_size = constraints.constrain(content);
+        // the preferred size follows the measured one, so a parent can query it without a second measure (§8.2)
+        m_preferred_size = m_measured_size;
+        out_size = m_measured_size;
+    }
+
+    void Button::arrange(const Rect& bounds) {
+        // the assigned bounds replace the previous ones (§8.2)
+        m_bounds = bounds;
+        // the measured size follows the assigned one, so a later measure starts from the truth (§8.2)
+        m_measured_size = Size{.width = bounds.width, .height = bounds.height};
+        // the preferred size follows the arranged one, because the parent has now decided (§8.2)
+        m_preferred_size = m_measured_size;
+    }
+
+    void Button::render(RenderContext& context) {
+        // a button with no area has no plate, so nothing is recorded (§6.2)
+        if (bounds().empty())
+            return;
+        // a disabled button draws its plate faded, which is the only way the state reads without a style system (§6.1)
+        const Color plate = m_disabled ? Color::rgba(m_background.red * 0.5f, m_background.green * 0.5f, m_background.blue * 0.5f, m_background.alpha) : m_background;
+        // the plate is recorded first, because the label has to land on top of it (§6.1)
+        context.draw_rect(bounds(), {.fill = plate});
+        // an empty label draws no run, because a button may carry no text at all (§6.2)
+        if (m_label_layout.empty())
+            return;
+        // the run is centred on the plate, because a push control centres its label (§6.1)
+        const Point origin{.x = bounds().x + (bounds().width - m_label_layout.size.width) * 0.5f, .y = bounds().y + (bounds().height - m_label_layout.size.height) * 0.5f + m_label_layout.ascent};
+        // the run is recorded over the plate, which is the last thing the frame draws for this button (§6.1)
+        context.draw_text(m_label_layout, origin, {.fill = Color::rgba(1.0f, 1.0f, 1.0f, m_disabled ? 0.5f : 1.0f)});
+    }
+
+    bool Button::hit_test(Point logical_point) const {
+        // a hidden button is not a hit, because it draws nothing (§8.3)
+        if (!visible())
+            return false;
+        // a disabled button is not a hit, because it refuses input (§8.3)
+        if (m_disabled)
+            return false;
+        // bounds
+        const Rect& b = bounds();
+        // the press must land inside the arranged bounds, with the far edge excluded so neighbours stay separate (§8.3)
+        const bool inside = logical_point.x >= b.x && logical_point.x < b.x + b.width && logical_point.y >= b.y && logical_point.y < b.y + b.height;
+        // a press outside the plate falls through to whatever is behind the button (§8.3)
+        return inside && !b.empty();
+    }
+
+    void Button::dispatch_event(Event& event) {
+        // a press is the only event that activates a button (§8.3)
+        if (event.kind != EventKind::PointerDown) {
+            // any other event belongs to a parent, so the button does not claim it (§8.3)
+            return;
+        }
+        // a disabled button does not claim a press, because it refuses input (§8.3)
+        if (m_disabled)
+            return;
+        // a press outside the plate belongs to whatever is behind the button (§8.3)
+        if (!hit_test(event.position))
+            return;
+        // the event is claimed, so no ancestor reacts to the same press (§8.3)
+        event.handled = true;
+        // a button with no handler still claims the press, because it swallowed it (§8.3)
+        if (!m_on_click)
+            return;
+        // the handler runs once, which is what a press means (§8.3)
+        m_on_click();
+    }
+
+    SemanticNode Button::semantic_node() const {
+        // the role is a button, because a press performs an action (§10.1)
+        SemanticNode node{SemanticRole::Button};
+        // the accessible name is the label, because that is what a screen reader must speak (§10.1)
+        node.set_name(m_label);
+        // the bounds travel with the node, because an adapter places the announcement where it was drawn (§10.1)
+        node.set_bounds(bounds());
+        // a disabled button reports the disabled state, which is what refuses activation (§10.1)
+        node.set_disabled(m_disabled);
+        // a button is not checkable, so the check state stays not checkable (§10.1)
+        node.set_check(CheckState::NotCheckable);
+        // the activate action runs the same handler the click path runs, so automation and the user agree (§10.1)
+        //
+        // the returned identifier is discarded, because a widget names its action by label rather than by number (§10.1)
+        // the action body carries no disabled guard, because SemanticNode::invoke refuses every action
+        // while the node it belongs to is disabled, which is where that rule belongs (§10.1)
+        (void)node.add_action("activate", [this] {
+            // a button with no handler exposes the action but does nothing, because there is no work (§10.1)
+            if (!m_on_click)
+                return;
+            // the handler runs, which is what invoking an action means (§10.1)
+            m_on_click();
+        });
+        return node;
+    }
+
+    void Button::set_label(std::string label) {
+        // an unchanged label redraws nothing, because the button looks the same (§6.1)
+        if (m_label == label)
+            return;
+        // the label is stored first, so the invalidation walks a button that already carries the new text (§6.1)
+        m_label = std::move(label);
+        // the run is measured eagerly, because the plate is as wide as the text it carries (§9.1)
+        m_label_layout = TextLayout::from_text(m_label, TextEngine::DEFAULT_FONT_SIZE);
+        // a new label resizes the plate, so the layout passes must run again (§8.2)
+        invalidate_layout();
+    }
+
+    const std::string& Button::label() const {
+        // the label is what the semantic node announces as the name (§10.1)
+        return m_label;
+    }
+
+    void Button::set_on_click(std::function<void()> handler) {
+        // the handler is swapped in place, because a press after this point must run the new work (§8.3)
+        m_on_click = std::move(handler);
+    }
+
+    void Button::set_disabled(bool disabled) {
+        // an unchanged state redraws nothing, because the button looks the same (§6.1)
+        if (m_disabled == disabled)
+            return;
+        // the state is stored first, so the invalidation walks a button that already refuses input (§8.3)
+        m_disabled = disabled;
+        // a disabled button fades and stops accepting presses, so the frame changes (§6.1)
+        invalidate();
+    }
+
+    bool Button::disabled() const {
+        // the state is what the hit test and the dispatch both refuse on (§8.3)
+        return m_disabled;
+    }
+
+    void Button::set_background(Color background) {
+        // an unchanged colour redraws nothing, because the button looks the same (§6.1)
+        if (m_background == background)
+            return;
+        // the colour is stored first, so the invalidation walks a button that already paints the new plate (§6.1)
+        m_background = background;
+        // a plate colour change is visual only, so the layout passes are left alone (§6.1)
+        invalidate();
+    }
+
+    Color Button::background() const {
+        // the plate fill is what the base records before the label (§6.2)
+        return m_background;
+    }
+} // namespace albor

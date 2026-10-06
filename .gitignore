@@ -5,3 +5,4 @@ build/vcpkg_installed/
 .DS_Store
 .build-cost/
 worktrees
+*.profraw

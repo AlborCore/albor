@@ -90,6 +90,26 @@ namespace albor
 
     std::uint64_t FramePipeline::request_count() const { return m_requests; }
 
+    void FramePipeline::set_animation_engine(AnimationEngine* engine) {
+        // the engine is owned by the caller, because an application may outlive or outlive its window either way (§7.3)
+        m_animations = engine;
+    }
+
+    AnimationEngine* FramePipeline::animation_engine() const {
+        // the engine is the one the caller attached, which is null when no animation is driven (§7.3)
+        return m_animations;
+    }
+
+    void FramePipeline::advance_animations(float delta_seconds) {
+        // a pipeline without an engine has nothing to advance, which is the phase 2 shape (§7.3)
+        if (m_animations == nullptr)
+            return;
+        // the animations run first, because an animation write marks its dependents dirty (§7.3, AD-04d)
+        m_animations->advance(delta_seconds);
+        // the graph settles immediately after, so the frame records the animated values and not the previous ones (§7.3, §6.1)
+        m_engine.settle();
+    }
+
     void FramePipeline::set_background(Color background) {
         // the background change reaches the next frame, because the tree is already scheduled (§6.1)
         m_background = background;
