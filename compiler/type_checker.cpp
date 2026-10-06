@@ -68,12 +68,7 @@ namespace albor::compiler
             if (name == repeat->repeat_index_name)
                 return scalar(TypeKind::Int);
         }
-        // the component properties are scanned for the declared type (§11.1)
-        //
-        // the pointer is never null: resolve_tree and resolve_repeat always pass the declaration list they
-        // are working inside, so the only way to reach the return below is a name that is not declared (§11.1).
-        //
-        // the declarations are scanned, because a component declares a handful of them (§11.1)
+        // the declarations are scanned, because every scope is built from a resolved component (§11.1)
         for (const CheckedProperty& property : *properties) {
             // the name decides, so a reference resolves to exactly one declaration (§11.1)
             if (property.name == name)
@@ -295,9 +290,9 @@ namespace albor::compiler
         out->repeat_item_name = node.repeat_item_name;
         out->repeat_index_name = node.repeat_index_name;
         // the source is shared rather than re-owned, because the tree owns the expression (§11.1)
-        out->repeat_source = node.repeat_source == nullptr ? nullptr : std::shared_ptr<const Expression>(node.repeat_source.get(), [](const Expression*) {});
+        out->repeat_source = std::shared_ptr<const Expression>(node.repeat_source.get(), [](const Expression*) {});
         // the source is typed in the enclosing scope, because it does not see the item (§11.1)
-        out->repeat_source_type = out->repeat_source == nullptr ? error_type() : type_expression(*out->repeat_source, scope, out->repeat_dependencies);
+        out->repeat_source_type = type_expression(*out->repeat_source, scope, out->repeat_dependencies);
         // the source must be a vector or a native type, because a repeat walks something (§11.1)
         if (!out->repeat_source_type.is_error() && !out->repeat_source_type.is(TypeKind::Vector) && !out->repeat_source_type.is(TypeKind::Native)) {
             // the problem points at the source, because that is what the author must change (§11.1)
@@ -384,9 +379,9 @@ namespace albor::compiler
         // an assignment is checked against the property it fills (§11.1)
         if (statement.kind == HandlerStatementKind::Assignment) {
             // the assigned value shares the parsed expression, because the tree owns it (§11.1)
-            out_statement.value = statement.value == nullptr ? nullptr : std::shared_ptr<const Expression>(statement.value.get(), [](const Expression*) {});
+            out_statement.value = std::shared_ptr<const Expression>(statement.value.get(), [](const Expression*) {});
             // the scope is the component's own, because a handler may reach any declared property (§11.1)
-            const ValueType value_type = out_statement.value == nullptr ? error_type() : type_expression(*out_statement.value, scope, out_statement.dependencies);
+            const ValueType value_type = type_expression(*out_statement.value, scope, out_statement.dependencies);
             // the target must be a declared property of the component (§11.1)
             const CheckedProperty* target = nullptr;
             // the declarations are scanned, because only they can be the target (§11.1)
@@ -417,8 +412,6 @@ namespace albor::compiler
             // the invoked signal must be one the component declares (§11.1)
             const CheckedSignal* declared = nullptr;
             // the signals of the component are scanned, because only they can be invoked (§11.1)
-            //
-            // the pointer is never null, because check publishes the signals before the tree pass runs (§11.1).
             for (const CheckedSignal& candidate : *m_signals) {
                 // the name decides, so the invocation resolves to exactly one declaration (§11.1)
                 if (candidate.name == statement.target)
@@ -537,9 +530,6 @@ namespace albor::compiler
         // a repeat binding is not a component property, so it registers no dependency (§7.3, AD-04a)
         bool is_component_property = false;
         // the declarations are scanned, because only they are component properties (§7.3, AD-04a)
-        //
-        // the pointer is never null, because every scope belongs to a component that resolved its
-        // declarations before the tree pass runs (§11.1).
         for (const CheckedProperty& property : *scope.properties) {
             // the name decides, so the dependency belongs to exactly one property (§7.3, AD-04a)
             if (property.name == reference.name)
@@ -722,14 +712,12 @@ namespace albor::compiler
             // the fresh entry is the one the writer joins (§7.3, AD-04a)
             existing = edges.end() - 1;
         }
-        // a repeated edge adds nothing, because the graph is a set (§7.3, AD-04a)
-        if (std::find(existing->second.begin(), existing->second.end(), writer) == existing->second.end())
-            existing->second.emplace_back(writer);
+        // the writer joins directly, because dependencies are deduped while they are collected (§7.3, AD-04a)
+        existing->second.emplace_back(writer);
     }
 
     void TypeChecker::collect_edges(const CheckedNode& node, std::vector<std::pair<std::string, std::vector<std::string>>>& edges) const {
-        // a repeat source and a handler body both write imperatively rather than feeding a binding, so neither
-        // joins this graph: a handler write breaks its binding (AD-24) and a repeat rebuilds the tree (§7.3, AD-04a)
+        // a handler write breaks its binding and a repeat rebuilds the tree, so neither feeds this graph (AD-24)
         static_cast<void>(node);
         static_cast<void>(edges);
     }
@@ -767,9 +755,8 @@ namespace albor::compiler
         finished.push_back(start);
     }
 
+    // the walk marks finished properties, so a loop is reported from only one of its members (§7.3, AD-04a)
     void TypeChecker::report_cycle(std::string_view reader, const std::vector<std::string>& path) {
-        // one loop is reported exactly once, because the walk marks every property it finishes and the walk
-        // starts at each declared property, so a loop is entered from only one of its members (§7.3, AD-04a)
         // the path is rendered as a chain, because a cycle has no single point to blame (§7.3, AD-04a)
         std::string chain;
         // every property on the path contributes its name, in the order the walk found them (§7.3, AD-04a)
@@ -794,11 +781,7 @@ namespace albor::compiler
     }
 
     void TypeChecker::detect_cycles(const CheckedComponent& component) {
-        // the edges come from the declared defaults alone, because only a default is a binding the engine orders (§7.3, AD-04a)
-        //
-        // a handler assignment is an imperative write that breaks its binding (§7.3, AD-24), and a repeat
-        // rebuilds the tree rather than feeding one, so neither contributes an edge here. Counting them made
-        // every self assignment, such as count = count + 1, look like a cycle.
+        // only defaults become edges, because a handler write is imperative and a repeat rebuilds the tree (§7.3, AD-04a)
         std::vector<std::pair<std::string, std::vector<std::string>>> edges;
         // every declared property is read, because a cycle is reachable from one of them (§7.3, AD-04a)
         for (const CheckedProperty& property : component.properties) {

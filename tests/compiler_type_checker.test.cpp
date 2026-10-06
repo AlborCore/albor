@@ -1178,3 +1178,201 @@ TEST(TypeChecker, RecordsOneDependencyPerReaderAcrossSeveralBindings) {
     EXPECT_EQ(column.children.at(0)->assignments.at(0).dependencies.size(), 1U);
     EXPECT_EQ(column.children.at(1)->assignments.at(0).dependencies.size(), 1U);
 }
+
+TEST(TypeChecker, ChecksASnapshotTypeNameThatIsTooShortToNest) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    // the angle is never closed, so the name stops at the prefix (§11.1)
+    check("component C { in property<Snapshot<", diagnostics);
+    // assert
+    // a prefix without a body resolves to nothing, because Snapshot<T> needs its T (§10.5)
+    EXPECT_TRUE(has_code(diagnostics, "E0400"));
+}
+
+TEST(TypeChecker, ChecksAVectorTypeNameThatIsTooShortToNest) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    // the angle is never closed, so the name stops at the prefix (§11.1)
+    check("component C { in property<vector<", diagnostics);
+    // assert
+    // a prefix without a body resolves to nothing, because vector<T> needs its T (§8.1)
+    EXPECT_TRUE(has_code(diagnostics, "E0400"));
+}
+
+TEST(TypeChecker, SkipsAnAssignmentWhoseValueDidNotParse) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    // the value is missing, so the parser reports and the checker must not type what is not there (§11.1)
+    check("component C { inout property<int> count: 0; Button { on_clicked: { count = ; } } }", diagnostics);
+    // assert
+    // the parser owns the message and no second complaint follows a value that does not exist (§11.1)
+    EXPECT_TRUE(has_code(diagnostics, "E0203"));
+    EXPECT_FALSE(has_code(diagnostics, "E0410"));
+    EXPECT_FALSE(has_code(diagnostics, "E0414"));
+}
+
+TEST(TypeChecker, ReportsADuplicateSignalNameAmongThreeSignals) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    // the second name differs from the first, so only the third collides (§11.1)
+    check("component C { signal a(); signal b(); signal b(); Column {} }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0401");
+}
+
+TEST(TypeChecker, InvokesTheSecondOfTwoSignals) {
+    // arrange, act
+    const CheckedFile file = check("component C { signal ping(); signal pong(); Button { on_clicked: { pong(); } } }");
+    // assert
+    // the first declaration does not match, so the scan keeps looking before it resolves (§11.1)
+    const CheckedStatement& statement = only(file).root->handlers.at(0).body.at(0);
+    EXPECT_EQ(statement.kind, HandlerStatementKind::SignalInvocation);
+    EXPECT_EQ(statement.target, "pong");
+}
+
+TEST(TypeChecker, ReportsARepeatSourceThatDoesNotResolve) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("component C { Column { Repeat(item in missing) { Label {} } } }", diagnostics);
+    // assert
+    // the source failed, so the collection rule stays silent rather than reporting twice (§11.1)
+    EXPECT_TRUE(has_code(diagnostics, "E0409"));
+    EXPECT_FALSE(has_code(diagnostics, "E0410"));
+}
+
+TEST(TypeChecker, SuppressesTheOperatorWhenAnOperandFailed) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("component C { in property<int> a: 1; in property<int> c: a + missing; Column {} }", diagnostics);
+    // assert
+    // an operand with no type suppresses the rule, because its type is not known (§11.1)
+    EXPECT_TRUE(has_code(diagnostics, "E0409"));
+    EXPECT_FALSE(has_code(diagnostics, "E0410"));
+}
+
+TEST(TypeChecker, RefusesAnAdditionOfAnIntAndABool) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("component C { in property<int> a: 1; in property<bool> b: true; in property<int> c: a + b; Column {} }", diagnostics);
+    // assert
+    // a bool is not a number, so the addition has no rule (§11.1)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0410");
+}
+
+TEST(TypeChecker, AddsAFloatOnTheLeft) {
+    // arrange, act
+    const CheckedFile file = check("component C { in property<float> f: 1.5; in property<int> a: 1; in property<float> c: f + a; Column {} }");
+    // assert
+    // a float on either side decides, so the left position is enough (§11.1)
+    EXPECT_TRUE(only(file).properties.at(2).type.is(TypeKind::Float));
+}
+
+TEST(TypeChecker, SubtractsAFloatOnTheLeft) {
+    // arrange, act
+    const CheckedFile file = check("component C { in property<float> f: 1.5; in property<int> a: 1; in property<float> c: f - a; Column {} }");
+    // assert
+    // the subtraction follows the same widening rule as the addition (§11.1)
+    EXPECT_TRUE(only(file).properties.at(2).type.is(TypeKind::Float));
+}
+
+TEST(TypeChecker, RefusesARemainderWithAFloatOperand) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("component C { in property<int> a: 4; in property<float> f: 1.5; in property<int> c: a % f; Column {} }", diagnostics);
+    // assert
+    // a float has no defined remainder rounding, so the operator is refused (§11.1)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0410");
+}
+
+TEST(TypeChecker, RefusesAnEqualityBetweenAnIntAndAString) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("component C { in property<int> a: 1; in property<string> s: \"x\"; in property<bool> c: a == s; Column {} }", diagnostics);
+    // assert
+    // the two sides are not the same kind, so comparing them is meaningless (§11.1)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0410");
+}
+
+TEST(TypeChecker, ComparesWithGreaterEqual) {
+    // arrange, act
+    const CheckedFile file = check("component C { in property<int> a: 1; in property<int> b: 2; in property<bool> c: a >= b; Column {} }");
+    // assert
+    // the ordering operators all answer the same question (§11.1)
+    EXPECT_TRUE(only(file).properties.at(2).type.is(TypeKind::Bool));
+}
+
+TEST(TypeChecker, RefusesAnOrderingOfAnIntAndAString) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("component C { in property<int> a: 1; in property<string> s: \"x\"; in property<bool> c: a < s; Column {} }", diagnostics);
+    // assert
+    // text has no order, so an ordering against it is refused (§11.1)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0410");
+}
+
+TEST(TypeChecker, RefusesAConjunctionWithAnIntOnTheRight) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("component C { in property<bool> b: true; in property<int> a: 1; in property<bool> c: b && a; Column {} }", diagnostics);
+    // assert
+    // a conjunction combines questions, and a number is not one (§11.1)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0410");
+}
+
+TEST(TypeChecker, ReportsACycleThatDoesNotTouchTheFirstProperty) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    // the first property is an ordinary value, so the loop lives among the later two (§7.3, AD-04a)
+    check("component C { in property<int> a: 1; in property<int> b: c; in property<int> c: b; Column {} }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0414");
+}
+
+TEST(TypeChecker, ChecksASnapshotTypeNameThatNeverCloses) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    // the name reaches the end of the file with no closing angle, so it is one long word (§10.5)
+    check("component C { in property<Snapshot<int", diagnostics);
+    // assert
+    // the prefix matches but the body is unwritten, so the type resolves to nothing (§11.1)
+    EXPECT_TRUE(has_code(diagnostics, "E0400"));
+}
+
+TEST(TypeChecker, SuppressesTheOperatorWhenTheLeftOperandFailed) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("component C { in property<int> a: 1; in property<int> c: missing + a; Column {} }", diagnostics);
+    // assert
+    // the left operand carries the failure, so the rule stays silent for both sides (§11.1)
+    EXPECT_TRUE(has_code(diagnostics, "E0409"));
+    EXPECT_FALSE(has_code(diagnostics, "E0410"));
+}
+
+TEST(TypeChecker, ComparesWithGreater) {
+    // arrange, act
+    const CheckedFile file = check("component C { in property<int> a: 1; in property<int> b: 2; in property<bool> c: a > b; Column {} }");
+    // assert
+    // the strict ordering answers the same question as the others (§11.1)
+    EXPECT_TRUE(only(file).properties.at(2).type.is(TypeKind::Bool));
+}
