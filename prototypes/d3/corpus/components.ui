@@ -1,0 +1,455 @@
+# Prototype D3 R11 corpus — component type declarations (F2.11)
+#
+# This is CORPUS DATA for a measurement, not the shipping .ui grammar: the compiler is Phase 5 (§31) and
+# no .ui file exists in this repository, so this corpus is authored and every conclusion drawn from it is
+# conditional on it being representative (plan.md R11, T3.11.2).
+#
+# form:
+#   component <Name>
+#     prop <name> <type>
+#     bind <target> <- <dependency>[,<dependency>...]
+#   end
+#
+# types are the §13.1 value categories: int, double, bool, string, translated, snapshot
+# a dependency is <scope>.<name>, where scope is self, app, row, model or env (§13.1 categories 8 and 9)
+
+component Frame
+  prop width double
+  prop height double
+  prop min_width double
+  prop min_height double
+  prop max_width double
+  prop max_height double
+  prop padding_left double
+  prop padding_top double
+  prop padding_right double
+  prop padding_bottom double
+  prop spacing double
+  prop align string
+  prop justify string
+  prop direction string
+  prop grow double
+  prop shrink double
+  prop visible bool
+  prop opacity double
+  prop clip bool
+  prop background string
+  prop border_color string
+  prop border_width double
+  prop border_radius double
+  prop elevation double
+  prop shadow bool
+  bind background <- env.theme.surface
+  bind border_color <- env.theme.outline
+  bind opacity <- self.visible
+  bind visible <- app.state.chrome
+end
+
+component Label
+  prop text translated
+  prop color string
+  prop font_family string
+  prop font_size double
+  prop font_weight int
+  prop line_height double
+  prop letter_spacing double
+  prop alignment string
+  prop max_lines int
+  prop ellipsis bool
+  prop opacity double
+  prop visible bool
+  prop accessible_name translated
+  prop tooltip translated
+  bind text <- app.state.title
+  bind color <- env.theme.on_surface
+  bind font_size <- env.scale
+  bind accessible_name <- self.text
+end
+
+component Button
+  prop text translated
+  prop enabled bool
+  prop hovered bool
+  prop pressed bool
+  prop focused bool
+  prop visible bool
+  prop width double
+  prop height double
+  prop padding_left double
+  prop padding_right double
+  prop spacing double
+  prop background string
+  prop foreground string
+  prop border_radius double
+  prop font_size double
+  prop font_weight int
+  prop opacity double
+  prop disabled_opacity double
+  prop transition_duration double
+  prop command_id string
+  bind background <- self.hovered,self.pressed,env.theme.accent
+  bind foreground <- env.theme.on_accent
+  bind enabled <- app.state.can_submit
+  bind opacity <- self.enabled
+  bind font_size <- env.scale
+end
+
+component Toggle
+  prop checked bool
+  prop enabled bool
+  prop visible bool
+  prop width double
+  prop height double
+  prop label translated
+  prop on_color string
+  prop off_color string
+  prop thumb_color string
+  prop transition_duration double
+  prop focused bool
+  prop hovered bool
+  prop setting_key string
+  bind on_color <- env.theme.accent
+  bind off_color <- env.theme.outline_variant
+  bind label <- app.state.settings_label
+  bind enabled <- app.state.chrome
+end
+
+component Slider
+  prop value double
+  prop min_value double
+  prop max_value double
+  prop step double
+  prop enabled bool
+  prop visible bool
+  prop width double
+  prop height double
+  prop track_color string
+  prop thumb_color string
+  prop label translated
+  prop format translated
+  prop focused bool
+  prop dragging bool
+  prop setting_key string
+  bind thumb_color <- env.theme.accent
+  bind track_color <- env.theme.outline_variant
+  bind label <- app.state.settings_label
+  bind value <- app.state.slider_value
+  bind format <- env.locale
+end
+
+component Spinner
+  prop value double
+  prop min_value double
+  prop max_value double
+  prop visible bool
+  prop width double
+  prop height double
+  prop progress double
+  prop color string
+  prop track_color string
+  prop enabled bool
+  bind color <- env.theme.accent
+  bind track_color <- env.theme.outline_variant
+  bind progress <- self.value,self.max_value
+end
+
+component TextInput
+  prop text string
+  prop placeholder translated
+  prop caret int
+  prop selection_start int
+  prop selection_end int
+  prop composing bool
+  prop composition_text string
+  prop max_length int
+  prop enabled bool
+  prop visible bool
+  prop focused bool
+  prop width double
+  prop height double
+  prop font_size double
+  prop font_family string
+  prop color string
+  prop background string
+  prop border_color string
+  prop border_radius double
+  prop padding_left double
+  prop padding_right double
+  prop scroll_offset double
+  prop is_multiline bool
+  prop read_only bool
+  prop text_direction string
+  bind placeholder <- env.locale
+  bind color <- env.theme.on_surface
+  bind background <- env.theme.surface
+  bind font_size <- env.scale
+  bind text_direction <- env.direction
+end
+
+component ListView
+  prop row_count int
+  prop selected_index int
+  prop scroll_x double
+  prop scroll_y double
+  prop content_width double
+  prop content_height double
+  prop overscan int
+  prop visible bool
+  prop width double
+  prop height double
+  prop background string
+  prop border_color string
+  prop show_header bool
+  prop header_height double
+  prop empty_message translated
+  prop loading bool
+  prop items snapshot
+  prop selection snapshot
+  bind row_count <- model.row_count
+  bind selected_index <- app.state.selection_index
+  bind background <- env.theme.surface
+  bind empty_message <- env.locale
+  bind content_height <- self.row_count,self.height
+end
+
+component Row
+  prop index int
+  prop selected bool
+  prop hovered bool
+  prop focused bool
+  prop pinned bool
+  prop label translated
+  prop secondary_text translated
+  prop icon snapshot
+  prop width double
+  prop height double
+  prop opacity double
+  prop accent string
+  prop checkmark_visible bool
+  bind opacity <- self.selected,env.theme.on_surface
+  bind checkmark_visible <- self.selected
+  bind label <- row.label
+  bind secondary_text <- row.secondary
+  bind accent <- env.theme.accent
+end
+
+component TreeView
+  prop row_count int
+  prop expanded snapshot
+  prop selected_index int
+  prop scroll_y double
+  prop width double
+  prop height double
+  prop visible bool
+  prop background string
+  prop indent_width double
+  prop row_height double
+  prop show_root bool
+  prop search_query string
+  bind row_count <- model.row_count
+  bind selected_index <- app.state.selection_index
+  bind background <- env.theme.surface
+  bind search_query <- app.state.search_query
+end
+
+component Chart
+  prop samples snapshot
+  prop series_count int
+  prop sample_rate double
+  prop window_size int
+  prop min_value double
+  prop max_value double
+  prop line_color string
+  prop fill_color string
+  prop grid_color string
+  prop axis_color string
+  prop width double
+  prop height double
+  prop visible bool
+  prop thickness double
+  prop opacity double
+  prop paused bool
+  prop smoothing double
+  bind samples <- app.data.samples
+  bind line_color <- env.theme.accent
+  bind grid_color <- env.theme.outline_variant
+  bind visible <- app.state.live
+  bind paused <- app.state.paused
+end
+
+component KpiTile
+  prop label translated
+  prop value translated
+  prop delta double
+  prop trend snapshot
+  prop positive bool
+  prop color string
+  prop width double
+  prop height double
+  prop visible bool
+  prop font_size double
+  bind label <- app.state.kpi_label
+  bind value <- app.state.kpi_value,env.locale
+  bind delta <- app.data.delta
+  bind color <- env.theme.on_surface
+  bind font_size <- env.scale
+end
+
+component Waveform
+  prop samples snapshot
+  prop sample_count int
+  prop decimation int
+  prop min_value double
+  prop max_value double
+  prop color string
+  prop background string
+  prop width double
+  prop height double
+  prop visible bool
+  prop thickness double
+  bind samples <- app.data.waveform
+  bind color <- env.theme.accent
+  bind background <- env.theme.surface
+  bind visible <- app.state.live
+end
+
+component TabStrip
+  prop selected_tab int
+  prop tab_count int
+  prop tabs snapshot
+  prop width double
+  prop height double
+  prop visible bool
+  prop underline_color string
+  prop font_size double
+  bind selected_tab <- app.state.selected_tab
+  bind underline_color <- env.theme.accent
+  bind font_size <- env.scale
+end
+
+component StatusBar
+  prop message translated
+  prop cursor_position translated
+  prop modified bool
+  prop selection_info translated
+  prop width double
+  prop height double
+  prop visible bool
+  prop background string
+  prop font_size double
+  bind message <- app.state.status_message,env.locale
+  bind background <- env.theme.surface_variant
+  bind visible <- app.state.chrome
+  bind font_size <- env.scale
+end
+
+component Toolbar
+  prop visible bool
+  prop width double
+  prop height double
+  prop spacing double
+  prop padding_left double
+  prop background string
+  prop button_size double
+  prop icon_size double
+  prop opacity double
+  bind visible <- app.state.chrome
+  bind background <- env.theme.surface_variant
+  bind opacity <- self.visible
+end
+
+component MenuBar
+  prop items snapshot
+  prop open_menu int
+  prop visible bool
+  prop width double
+  prop height double
+  prop font_size double
+  prop background string
+  prop foreground string
+  bind items <- app.state.menu_items,env.locale
+  bind background <- env.theme.surface_variant
+  bind foreground <- env.theme.on_surface
+  bind visible <- app.state.chrome
+end
+
+component Dialog
+  prop message translated
+  prop detail translated
+  prop icon snapshot
+  prop button_labels snapshot
+  prop width double
+  prop height double
+  prop visible bool
+  prop modal bool
+  prop dim_opacity double
+  prop primary_action string
+  prop can_dismiss bool
+  bind message <- app.state.dialog_message,env.locale
+  bind button_labels <- app.state.dialog_actions,env.locale
+  bind dim_opacity <- self.visible
+  bind icon <- app.state.dialog_icon
+end
+
+component PropertyGrid
+  prop row_count int
+  prop selected_row int
+  prop scroll_y double
+  prop values snapshot
+  prop names snapshot
+  prop editable bool
+  prop visible bool
+  prop width double
+  prop height double
+  prop row_height double
+  prop filter string
+  bind row_count <- model.row_count
+  bind values <- app.state.inspector_values
+  bind names <- app.state.inspector_names
+  bind filter <- app.state.search_query
+end
+
+component ScrollBar
+  prop value double
+  prop min_value double
+  prop max_value double
+  prop orientation string
+  prop visible bool
+  prop thickness double
+  prop track_color string
+  prop thumb_color string
+  prop opacity double
+  bind thumb_color <- env.theme.outline
+  bind track_color <- env.theme.surface_variant
+  bind visible <- app.state.chrome
+end
+
+component Find
+  prop query string
+  prop visible bool
+  prop match_count int
+  prop current_match int
+  prop case_sensitive bool
+  prop whole_word bool
+  prop regex bool
+  prop width double
+  prop height double
+  prop focused bool
+  bind query <- app.state.search_query
+  bind match_count <- app.state.match_count
+  bind visible <- app.state.find_open
+end
+
+component Gutter
+  prop line_count int
+  prop line_height double
+  prop font_size double
+  prop width double
+  prop visible bool
+  prop background string
+  prop current_line int
+  prop indent_width double
+  bind line_count <- app.state.line_count
+  bind font_size <- env.scale
+  bind background <- env.theme.surface_variant
+end

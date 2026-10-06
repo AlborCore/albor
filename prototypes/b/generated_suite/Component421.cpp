@@ -1,0 +1,28 @@
+#include "Component421.h"
+
+#include <cstdint>
+
+struct Component421::Impl
+{
+    uint32_t m_base_offset = 0;
+    float m_color = 0;
+    float m_opacity = 1;
+    float m_width = 0;
+    float m_height = 0;
+    Component420* m_child = nullptr;
+};
+
+Component421::Component421() :
+    m_impl(new Impl) {}
+Component421::~Component421() { delete m_impl; }
+
+float Component421::color() const { return m_impl->m_color; }
+float Component421::width() const { return m_impl->m_width; }
+void Component421::set_color(float v) { m_impl->m_color = v; }
+void Component421::set_opacity(float v) { m_impl->m_opacity = v; }
+void Component421::set_width(float v) { m_impl->m_width = v; }
+void Component421::set_height(float v) { m_impl->m_height = v; }
+void Component421::set_child(Component420* child) { m_impl->m_child = child; }
+void Component421::on_click() {}
+void Component421::on_hover() {}
+void Component421::on_focus() {}

@@ -1,0 +1,17 @@
+# Prototype D3 R11 corpus — the inspector panel (F2.11)
+#
+# the inspector: two trees, the selected node's property grid whose visible rows are repeated instances, a
+# filter box and the edit actions.
+
+screen inspector
+  use Frame 2
+  use TreeView 2
+  use Row 16
+  use PropertyGrid 1
+  use Row 24
+  use Find 1
+  use Button 6
+  use Label 3
+  use StatusBar 1
+  use ScrollBar 2
+end

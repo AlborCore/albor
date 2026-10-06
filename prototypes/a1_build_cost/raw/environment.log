@@ -1,0 +1,20 @@
+host: 26.6.2 x86_64
+cpu: Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz
+cores: 12 logical / 6 physical
+ccache: ccache version 4.14
+vcpkg: vcpkg package management program version 2026-07-13-bf04c909169fdbb30821c02c6eb01f1cd1295d05
+
+See LICENSE.txt for license information.
+user ccache dir: ~/.cache/ccache (left untouched)
+user ccache stats before:
+  Cacheable calls:    35062 / 35315 (99.28%)
+    Hits:             26031 / 35062 (74.24%)
+      Direct:         25683 / 26031 (98.66%)
+      Preprocessed:     348 / 26031 ( 1.34%)
+    Misses:            9031 / 35062 (25.76%)
+  Uncacheable calls:    249 / 35315 ( 0.71%)
+  Errors:                 4 / 35315 ( 0.01%)
+  Local storage:
+    Cache size (GiB):   2.8 /   5.0 (55.47%)
+    Hits:             26031 / 35062 (74.24%)
+    Misses:            9031 / 35062 (25.76%)

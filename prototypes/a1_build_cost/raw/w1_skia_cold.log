@@ -1,0 +1,1024 @@
+WORKLOAD w1_skia_cold spec=skia[graphite,metal] mode=cold
+  ccache_dir=/Users/rogelio/Projects/albor/.build-cost/skia-cold/ccache
+  buildtrees_root=/Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees
+  install_root=/Users/rogelio/Projects/albor/.build-cost/skia-cold/installed
+  manifest_dir=/Users/rogelio/Projects/albor/.build-cost/skia-cold/manifest (isolated, so the port under test is the whole workload)
+  binary cache: cleared for this invocation
+Detecting compiler hash for triplet x64-osx...
+Compiler found: /usr/bin/c++
+The following packages will be built and installed:
+  * abseil:x64-osx@20260107.1#3
+  * brotli:x64-osx@1.2.0
+  * bzip2[core,tool]:x64-osx@1.0.8#6
+  * egl-registry:x64-osx@2025-05-27
+  * expat:x64-osx@2.8.2
+  * freetype[brotli,bzip2,core,png,zlib]:x64-osx@2.14.3
+  * harfbuzz[core,freetype]:x64-osx@14.2.1#1
+  * icu[core,tools]:x64-osx@78.3#1
+  * libjpeg-turbo:x64-osx@3.2.0
+  * libpng:x64-osx@1.6.58
+  * libwebp[core,libwebpmux,nearlossless,simd]:x64-osx@1.6.0#2
+  * opengl-registry:x64-osx@2026-01-26
+  * pkgconf:x64-osx@3.0.3
+    skia[core,dng,gl,graphite,harfbuzz,icu,jpeg,metal,png,vulkan,webp]:x64-osx@148
+  * vcpkg-cmake:x64-osx@2024-04-23
+  * vcpkg-cmake-config:x64-osx@2024-05-23
+  * vcpkg-cmake-get-vars:x64-osx@2025-05-29
+  * vcpkg-gn:x64-osx@2025-08-05
+  * vcpkg-make:x64-osx@2026-07-09
+  * vcpkg-pkgconfig-get-modules:x64-osx@2024-04-03
+  * vcpkg-tool-gn:x64-osx@2025-08-05#1
+  * vcpkg-tool-meson:x64-osx@1.9.0#10
+  * vulkan-headers:x64-osx@1.4.350.1
+  * vulkan-memory-allocator:x64-osx@3.4.0
+  * zlib:x64-osx@1.3.2#1
+Additional packages (*) will be modified to complete this operation.
+Installing 1/25 vcpkg-cmake-config:x64-osx@2024-05-23...
+vcpkg-cmake-config:x64-osx@2024-05-23 package ABI: 06d70a96777c8f85d075eaf152571a67890a3b60e7b0b988e0b6bf5b292b2b7e
+Building vcpkg-cmake-config:x64-osx@2024-05-23...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-cmake-config_x64-osx/share/vcpkg-cmake-config/vcpkg_cmake_config_fixup.cmake
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-cmake-config_x64-osx/share/vcpkg-cmake-config/vcpkg-port-config.cmake
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-cmake-config_x64-osx/share/vcpkg-cmake-config/copyright
+-- Skipping post-build validation due to VCPKG_POLICY_EMPTY_PACKAGE
+Elapsed time to handle vcpkg-cmake-config:x64-osx: 55.5 ms
+Installing 2/25 vcpkg-cmake:x64-osx@2024-04-23...
+vcpkg-cmake:x64-osx@2024-04-23 package ABI: 53a6aef13c704539d053f43cc97b7af4a58100cadd4ae26be49576c13352bb86
+Building vcpkg-cmake:x64-osx@2024-04-23...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-cmake_x64-osx/share/vcpkg-cmake/vcpkg_cmake_configure.cmake
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-cmake_x64-osx/share/vcpkg-cmake/vcpkg_cmake_build.cmake
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-cmake_x64-osx/share/vcpkg-cmake/vcpkg_cmake_install.cmake
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-cmake_x64-osx/share/vcpkg-cmake/vcpkg-port-config.cmake
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-cmake_x64-osx/share/vcpkg-cmake/copyright
+-- Performing post-build validation
+Elapsed time to handle vcpkg-cmake:x64-osx: 57 ms
+Installing 3/25 libwebp[core,libwebpmux,nearlossless,simd]:x64-osx@1.6.0#2...
+libwebp[core,libwebpmux,nearlossless,simd]:x64-osx@1.6.0#2 package ABI: 418d4c420130312d3c43cab7c03bddbba39ba9cbe0a18b303a96d0d29c63543f
+Building libwebp[core,libwebpmux,nearlossless,simd]:x64-osx@1.6.0#2...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Using cached webmproject-libwebp-v1.6.0.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/webmproject-libwebp-v1.6.0.tar.gz
+-- Applying patch 0002-cmake-config.patch
+-- Applying patch 0003-simd.patch
+-- Applying patch 0008-sdl.patch
+-- Applying patch 0009-cpufeatures-android.patch
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/libwebp/src/v1.6.0-bbdfbfe91d.clean
+-- Configuring x64-osx
+-- Building x64-osx-dbg
+-- Building x64-osx-rel
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libwebp_x64-osx/lib/pkgconfig/libsharpyuv.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libwebp_x64-osx/lib/pkgconfig/libwebp.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libwebp_x64-osx/lib/pkgconfig/libwebpdecoder.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libwebp_x64-osx/lib/pkgconfig/libwebpdemux.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libwebp_x64-osx/lib/pkgconfig/libwebpmux.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libwebp_x64-osx/debug/lib/pkgconfig/libsharpyuv.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libwebp_x64-osx/debug/lib/pkgconfig/libwebp.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libwebp_x64-osx/debug/lib/pkgconfig/libwebpdecoder.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libwebp_x64-osx/debug/lib/pkgconfig/libwebpdemux.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libwebp_x64-osx/debug/lib/pkgconfig/libwebpmux.pc
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/libwebp_x64-osx/share/libwebp/usage
+-- Performing post-build validation
+Elapsed time to handle libwebp:x64-osx: 17 s
+Installing 4/25 vulkan-memory-allocator:x64-osx@3.4.0...
+vulkan-memory-allocator:x64-osx@3.4.0 package ABI: 158f02e49bafc3796f07fdc22a9366e558cc2144f94198097ac09a2423810096
+Building vulkan-memory-allocator:x64-osx@3.4.0...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Using cached GPUOpen-LibrariesAndSDKs-VulkanMemoryAllocator-v3.4.0.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/GPUOpen-LibrariesAndSDKs-VulkanMemoryAllocator-v3.4.0.tar.gz
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/vulkan-memory-allocator/src/v3.4.0-141324f130.clean
+-- Configuring x64-osx
+-- Building x64-osx-rel
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vulkan-memory-allocator_x64-osx/share/vulkan-memory-allocator/copyright
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vulkan-memory-allocator_x64-osx/share/vulkan-memory-allocator/usage
+-- Performing post-build validation
+Elapsed time to handle vulkan-memory-allocator:x64-osx: 1.1 s
+Installing 5/25 vulkan-headers:x64-osx@1.4.350.1...
+vulkan-headers:x64-osx@1.4.350.1 package ABI: 10eee942414c23f9ab42e1a7b0457252c18f31bb76e7a3d85688a0db0acbabf9
+Building vulkan-headers:x64-osx@1.4.350.1...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Using cached KhronosGroup-Vulkan-Headers-vulkan-sdk-1.4.350.1.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/KhronosGroup-Vulkan-Headers-vulkan-sdk-1.4.350.1.tar.gz
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/vulkan-headers/src/-1.4.350.1-9c7e87a66b.clean
+-- Configuring x64-osx
+-- Building x64-osx-rel
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vulkan-headers_x64-osx/share/vulkan-headers/copyright
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vulkan-headers_x64-osx/share/vulkan-headers/usage
+-- Performing post-build validation
+Elapsed time to handle vulkan-headers:x64-osx: 1.9 s
+Installing 6/25 zlib:x64-osx@1.3.2#1...
+zlib:x64-osx@1.3.2#1 package ABI: 1f9129edd7d7880150bab21dde6f6e3d3d81013a4add2dd7b76f7234a4de90a2
+Building zlib:x64-osx@1.3.2#1...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Using cached madler-zlib-v1.3.2.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/madler-zlib-v1.3.2.tar.gz
+-- Applying patch 0001-no-version-script-on-ohos.patch
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/zlib/src/v1.3.2-c19a0bfd23.clean
+-- Configuring x64-osx
+-- Building x64-osx-dbg
+-- Building x64-osx-rel
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/zlib_x64-osx/lib/pkgconfig/zlib.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/zlib_x64-osx/debug/lib/pkgconfig/zlib.pc
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/zlib_x64-osx/share/zlib/vcpkg-cmake-wrapper.cmake
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/zlib_x64-osx/share/zlib/copyright
+-- Performing post-build validation
+Elapsed time to handle zlib:x64-osx: 5.1 s
+Installing 7/25 libpng:x64-osx@1.6.58...
+libpng:x64-osx@1.6.58 package ABI: 1522ac1ba42f4609fcd94025011cf78d96ac0a3234a629df1f0896f379fcbd2d
+Building libpng:x64-osx@1.6.58...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Using cached pnggroup-libpng-v1.6.58.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/pnggroup-libpng-v1.6.58.tar.gz
+-- Applying patch cmake.patch
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/libpng/src/v1.6.58-b91136795d.clean
+-- Configuring x64-osx
+-- Building x64-osx-dbg
+-- Building x64-osx-rel
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/libpng_x64-osx/share/png/vcpkg-cmake-wrapper.cmake
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/libpng_x64-osx/share/libpng/libpng-config.cmake
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libpng_x64-osx/lib/pkgconfig/libpng16.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libpng_x64-osx/debug/lib/pkgconfig/libpng16.pc
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/libpng_x64-osx/debug/lib/pkgconfig/libpng.pc
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/libpng_x64-osx/lib/pkgconfig/libpng.pc
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/libpng_x64-osx/share/libpng/usage
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/libpng_x64-osx/share/libpng/copyright
+-- Performing post-build validation
+Elapsed time to handle libpng:x64-osx: 5.3 s
+Installing 8/25 libjpeg-turbo:x64-osx@3.2.0...
+libjpeg-turbo:x64-osx@3.2.0 package ABI: 49a81eaa422452ded3fb286c3b0798d0721924d2fa4d895b549c1dde7ad993c6
+Building libjpeg-turbo:x64-osx@3.2.0...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Using cached libjpeg-turbo-libjpeg-turbo-3.2.0.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/libjpeg-turbo-libjpeg-turbo-3.2.0.tar.gz
+-- Applying patch add-options-for-docs-headers.patch
+-- Applying patch workaround_cmake_system_processor.patch
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/libjpeg-turbo/src/3.2.0-3cdbbb0a83.clean
+-- Configuring x64-osx
+CMake Warning at /Users/rogelio/Projects/albor/.build-cost/skia-cold/installed/x64-osx/share/vcpkg-cmake/vcpkg_cmake_configure.cmake:344 (message):
+  The following variables are not used in CMakeLists.txt:
+
+      NEON_INTRINSICS
+
+  Please recheck them and remove the unnecessary options from the
+  `vcpkg_cmake_configure` call.
+
+  If these options should still be passed for whatever reason, please use the
+  `MAYBE_UNUSED_VARIABLES` argument.
+Call Stack (most recent call first):
+  ports/libjpeg-turbo/portfile.cmake:45 (vcpkg_cmake_configure)
+  scripts/ports.cmake:206 (include)
+
+
+-- Building x64-osx-dbg
+-- Building x64-osx-rel
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libjpeg-turbo_x64-osx/lib/pkgconfig/libjpeg.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libjpeg-turbo_x64-osx/lib/pkgconfig/libturbojpeg.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libjpeg-turbo_x64-osx/debug/lib/pkgconfig/libjpeg.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/libjpeg-turbo_x64-osx/debug/lib/pkgconfig/libturbojpeg.pc
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/libjpeg-turbo_x64-osx/share/libjpeg-turbo/copyright
+-- Performing post-build validation
+Elapsed time to handle libjpeg-turbo:x64-osx: 23 s
+Installing 9/25 vcpkg-cmake-get-vars:x64-osx@2025-05-29...
+vcpkg-cmake-get-vars:x64-osx@2025-05-29 package ABI: a91c115402c6a0e6767590668a28a10d8a945f46d2fe64442ae736b06044cb6a
+Building vcpkg-cmake-get-vars:x64-osx@2025-05-29...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-cmake-get-vars_x64-osx/share/vcpkg-cmake-get-vars/vcpkg_cmake_get_vars.cmake
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-cmake-get-vars_x64-osx/share/vcpkg-cmake-get-vars/cmake_get_vars
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-cmake-get-vars_x64-osx/share/vcpkg-cmake-get-vars/cmake_get_vars/CMakeLists.txt
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-cmake-get-vars_x64-osx/share/vcpkg-cmake-get-vars/cmake-get-vars.cmake.in
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-cmake-get-vars_x64-osx/share/vcpkg-cmake-get-vars/vcpkg-port-config.cmake
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-cmake-get-vars_x64-osx/share/vcpkg-cmake-get-vars/copyright
+-- Performing post-build validation
+Elapsed time to handle vcpkg-cmake-get-vars:x64-osx: 84.3 ms
+Installing 10/25 vcpkg-make:x64-osx@2026-07-09...
+vcpkg-make:x64-osx@2026-07-09 package ABI: a5a07aaf747987c6f36100468af148219a08454ee4cd4983419dbd3549c77a55
+Building vcpkg-make:x64-osx@2026-07-09...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Using cached automake-1.17.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/automake-1.17.tar.gz
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/vcpkg-make/src/automake-1-c362683103.clean
+-- Getting CMake variables for x64-osx
+-- Loading CMake variables from /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/vcpkg-make/cmake-get-vars_C_CXX-x64-osx.cmake.log
+-- x64-osx autotools triplet: x86_64-apple-darwin (from vcpkg)
+-- Performing post-build validation
+Elapsed time to handle vcpkg-make:x64-osx: 2.2 s
+Installing 11/25 icu[core,tools]:x64-osx@78.3#1...
+icu[core,tools]:x64-osx@78.3#1 package ABI: 4ce5353c85a94e857c4b012444b50284e18fa7660dfe8c93b7da90bf6aca1fc0
+Building icu[core,tools]:x64-osx@78.3#1...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Using cached icu4c-78.3-sources.tgz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/icu4c-78.3-sources.tgz
+-- Applying patch disable-static-prefix.patch
+-- Applying patch fix_bsd_and_solaris.patch
+-- Applying patch fix_parallel_build_on_windows.patch
+-- Applying patch fix-python-path-with-spaces.patch
+-- Applying patch mh-darwin.patch
+-- Applying patch mh-mingw.patch
+-- Applying patch mh-msys-msvc.patch
+-- Applying patch subdirs.patch
+-- Applying patch vcpkg-cross-data.patch
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/icu/src/icu4c-78-34dc699e15.clean
+-- Getting CMake variables for x64-osx
+-- Loading CMake variables from /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/icu/cmake-get-vars_C_CXX-x64-osx.cmake.log
+-- Configuring x64-osx-dbg
+-- Configuring x64-osx-rel
+-- Building/Installing x64-osx-dbg
+-- Making target 'all' for x64-osx-dbg
+-- Making target 'install' for x64-osx-dbg
+-- Building/Installing x64-osx-rel
+-- Making target 'all' for x64-osx-rel
+-- Making target 'install' for x64-osx-rel
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/tools/icu/config/icucross.inc
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/tools/icu/config/icucross.mk
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/lib/pkgconfig/icu-i18n.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/lib/pkgconfig/icu-io.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/lib/pkgconfig/icu-uc.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/debug/lib/pkgconfig/icu-i18n.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/debug/lib/pkgconfig/icu-io.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/debug/lib/pkgconfig/icu-uc.pc
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/share/icu/copyright
+-- Adjusted RPATH of '/Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/tools/icu/bin/derb' to '@loader_path/../../../lib'
+-- Adjusted RPATH of '/Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/tools/icu/bin/genbrk' to '@loader_path/../../../lib'
+-- Adjusted RPATH of '/Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/tools/icu/bin/genccode' to '@loader_path/../../../lib'
+-- Adjusted RPATH of '/Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/tools/icu/bin/gencfu' to '@loader_path/../../../lib'
+-- Adjusted RPATH of '/Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/tools/icu/bin/gencmn' to '@loader_path/../../../lib'
+-- Adjusted RPATH of '/Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/tools/icu/bin/gencnval' to '@loader_path/../../../lib'
+-- Adjusted RPATH of '/Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/tools/icu/bin/gendict' to '@loader_path/../../../lib'
+-- Adjusted RPATH of '/Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/tools/icu/bin/gennorm2' to '@loader_path/../../../lib'
+-- Adjusted RPATH of '/Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/tools/icu/bin/genrb' to '@loader_path/../../../lib'
+-- Adjusted RPATH of '/Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/tools/icu/bin/gensprep' to '@loader_path/../../../lib'
+-- Adjusted RPATH of '/Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/tools/icu/bin/icuexportdata' to '@loader_path/../../../lib'
+-- Adjusted RPATH of '/Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/tools/icu/bin/icuinfo' to '@loader_path/../../../lib'
+-- Adjusted RPATH of '/Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/tools/icu/bin/icupkg' to '@loader_path/../../../lib'
+-- Adjusted RPATH of '/Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/tools/icu/bin/makeconv' to '@loader_path/../../../lib'
+-- Adjusted RPATH of '/Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/tools/icu/bin/pkgdata' to '@loader_path/../../../lib'
+-- Adjusted RPATH of '/Users/rogelio/Projects/vcpkg/packages/icu_x64-osx/tools/icu/bin/uconv' to '@loader_path/../../../lib'
+-- Performing post-build validation
+Elapsed time to handle icu:x64-osx: 4.2 min
+Installing 12/25 bzip2[core,tool]:x64-osx@1.0.8#6...
+bzip2[core,tool]:x64-osx@1.0.8#6 package ABI: 36cd64f9572df1fc7fb9e3c95969e4d563bb5b2b736437ace4c2be5b914f0be7
+Building bzip2[core,tool]:x64-osx@1.0.8#6...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Using cached bzip2-1.0.8.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/bzip2-1.0.8.tar.gz
+-- Applying patch fix-import-export-macros.patch
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/bzip2/src/bzip2-1-336d4794a3.clean
+-- Configuring x64-osx
+-- Building x64-osx-dbg
+-- Building x64-osx-rel
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/bzip2_x64-osx/lib/pkgconfig/bzip2.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/bzip2_x64-osx/debug/lib/pkgconfig/bzip2.pc
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/bzip2_x64-osx/share/bzip2/copyright
+-- Adjusted RPATH of '/Users/rogelio/Projects/vcpkg/packages/bzip2_x64-osx/tools/bzip2/bzip2' to '@loader_path/../../lib'
+-- Adjusted RPATH of '/Users/rogelio/Projects/vcpkg/packages/bzip2_x64-osx/tools/bzip2/bzip2recover' to '@loader_path/../../lib'
+-- Performing post-build validation
+Elapsed time to handle bzip2:x64-osx: 3.7 s
+Installing 13/25 brotli:x64-osx@1.2.0...
+brotli:x64-osx@1.2.0 package ABI: 1805fd549b5b3e8b965b77528eb7b708f943aef91f2afe58cb7e79e0890291b5
+Building brotli:x64-osx@1.2.0...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Using cached google-brotli-v1.2.0.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/google-brotli-v1.2.0.tar.gz
+-- Applying patch install.patch
+-- Applying patch pkgconfig.patch
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/brotli/src/v1.2.0-7af7ca71ad.clean
+-- Configuring x64-osx
+-- Building x64-osx-dbg
+-- Building x64-osx-rel
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/brotli_x64-osx/lib/pkgconfig/libbrotlicommon.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/brotli_x64-osx/lib/pkgconfig/libbrotlidec.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/brotli_x64-osx/lib/pkgconfig/libbrotlienc.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/brotli_x64-osx/debug/lib/pkgconfig/libbrotlicommon.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/brotli_x64-osx/debug/lib/pkgconfig/libbrotlidec.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/brotli_x64-osx/debug/lib/pkgconfig/libbrotlienc.pc
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/brotli_x64-osx/share/brotli/usage
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/brotli_x64-osx/share/brotli/copyright
+-- Adjusted RPATH of '/Users/rogelio/Projects/vcpkg/packages/brotli_x64-osx/tools/brotli/brotli' to '@loader_path/../../lib'
+-- Performing post-build validation
+Elapsed time to handle brotli:x64-osx: 11 s
+Installing 14/25 freetype[brotli,bzip2,core,png,zlib]:x64-osx@2.14.3...
+freetype[brotli,bzip2,core,png,zlib]:x64-osx@2.14.3 package ABI: a9cac0ec3a49c00a87238a68c7a4cd82dbac9ea3ca9987024ae1a2b8398464af
+Building freetype[brotli,bzip2,core,png,zlib]:x64-osx@2.14.3...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Using cached freetype-freetype-VER-2-14-3.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/freetype-freetype-VER-2-14-3.tar.gz
+-- Applying patch 0003-Fix-UWP.patch
+-- Applying patch brotli-static.patch
+-- Applying patch bzip2.patch
+-- Applying patch fix-exports.patch
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/freetype/src/VER-2-14-3-46d5ca34ec.clean
+-- Configuring x64-osx
+-- Building x64-osx-dbg
+-- Building x64-osx-rel
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/freetype_x64-osx/lib/pkgconfig/freetype2.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/freetype_x64-osx/debug/lib/pkgconfig/freetype2.pc
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/freetype_x64-osx/share/freetype/usage
+-- Performing post-build validation
+Elapsed time to handle freetype:x64-osx: 9.3 s
+Installing 15/25 vcpkg-tool-meson:x64-osx@1.9.0#10...
+vcpkg-tool-meson:x64-osx@1.9.0#10 package ABI: f2d6b227a9096b17d40f780c180e530bf657324b8e87a41a00937ae72263529e
+Building vcpkg-tool-meson:x64-osx@1.9.0#10...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-tool-meson_x64-osx/share/vcpkg-tool-meson/copyright
+-- Found Python version '3.14.7 at /usr/local/bin/python3'
+-- Using meson: /Users/rogelio/Projects/vcpkg/downloads/tools/meson-1.9.0-633807/meson.py
+-- Performing post-build validation
+Elapsed time to handle vcpkg-tool-meson:x64-osx: 168 ms
+Installing 16/25 harfbuzz[core,freetype]:x64-osx@14.2.1#1...
+harfbuzz[core,freetype]:x64-osx@14.2.1#1 package ABI: a73361b86d90eac52753e44704491d87a48c0e8a43e54bae6f2ff4d6d34cdef4
+Building harfbuzz[core,freetype]:x64-osx@14.2.1#1...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Found Python version '3.14.7 at /usr/local/bin/python3'
+-- Using meson: /Users/rogelio/Projects/vcpkg/downloads/tools/meson-1.9.0-633807/meson.py
+-- Using cached harfbuzz-harfbuzz-14.2.1.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/harfbuzz-harfbuzz-14.2.1.tar.gz
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/harfbuzz/src/14.2.1-f76ca539fc.clean
+-- Getting CMake variables for x64-osx
+-- Loading CMake variables from /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/harfbuzz/cmake-get-vars_C_CXX-x64-osx.cmake.log
+-- Configuring x64-osx-dbg
+-- Getting CMake variables for x64-osx
+-- Loading CMake variables from /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/harfbuzz/cmake-get-vars_C_CXX_OBJC_OBJCXX-x64-osx.cmake.log
+-- Configuring x64-osx-dbg done
+-- Configuring x64-osx-rel
+-- Configuring x64-osx-rel done
+-- Package x64-osx-dbg
+-- Package x64-osx-rel
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/harfbuzz_x64-osx/lib/pkgconfig/harfbuzz-gpu.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/harfbuzz_x64-osx/lib/pkgconfig/harfbuzz-raster.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/harfbuzz_x64-osx/lib/pkgconfig/harfbuzz-subset.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/harfbuzz_x64-osx/lib/pkgconfig/harfbuzz-vector.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/harfbuzz_x64-osx/lib/pkgconfig/harfbuzz.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/harfbuzz_x64-osx/debug/lib/pkgconfig/harfbuzz-gpu.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/harfbuzz_x64-osx/debug/lib/pkgconfig/harfbuzz-raster.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/harfbuzz_x64-osx/debug/lib/pkgconfig/harfbuzz-subset.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/harfbuzz_x64-osx/debug/lib/pkgconfig/harfbuzz-vector.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/harfbuzz_x64-osx/debug/lib/pkgconfig/harfbuzz.pc
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/harfbuzz_x64-osx/share/harfbuzz/copyright
+-- Performing post-build validation
+Elapsed time to handle harfbuzz:x64-osx: 2.9 min
+Installing 17/25 egl-registry:x64-osx@2025-05-27...
+egl-registry:x64-osx@2025-05-27 package ABI: 2c3bfb8b316a25fd20c75a862f0f9ba95af4e3554be7364437071be291d14914
+Building egl-registry:x64-osx@2025-05-27...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Using cached KhronosGroup-EGL-Registry-3ae2b7c48690d2ce13cc6db3db02dfc0572be65e.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/KhronosGroup-EGL-Registry-3ae2b7c48690d2ce13cc6db3db02dfc0572be65e.tar.gz
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/egl-registry/src/c0572be65e-4257a9ad9b.clean
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/egl-registry_x64-osx/share/egl-registry/copyright
+-- Performing post-build validation
+Elapsed time to handle egl-registry:x64-osx: 359 ms
+Installing 18/25 opengl-registry:x64-osx@2026-01-26...
+opengl-registry:x64-osx@2026-01-26 package ABI: 634eadcb46d71db493ada6a9c59ffe70b39b354e5c46ea9b8e17757c00511925
+Building opengl-registry:x64-osx@2026-01-26...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Using cached KhronosGroup-OpenGL-Registry-0b449b97cdf1043eef5e1f0e235cbbab6ec10c86.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/KhronosGroup-OpenGL-Registry-0b449b97cdf1043eef5e1f0e235cbbab6ec10c86.tar.gz
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/opengl-registry/src/ab6ec10c86-88344330ab.clean
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/opengl-registry_x64-osx/share/opengl-registry/copyright
+-- Performing post-build validation
+Elapsed time to handle opengl-registry:x64-osx: 2.8 s
+Installing 19/25 vcpkg-tool-gn:x64-osx@2025-08-05#1...
+vcpkg-tool-gn:x64-osx@2025-08-05#1 package ABI: 69623e6ab56870fc5239627260e649dcadc19b6100afb6d6fe071e9572294b8b
+Building vcpkg-tool-gn:x64-osx@2025-08-05#1...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+CMake Warning (policy) at ports/vcpkg-tool-gn/portfile.cmake:25 (EXEC_PROGRAM):
+  Policy CMP0153 is not set: The exec_program command should not be called.
+  Run "cmake --help-policy CMP0153" for policy details.  Use the cmake_policy
+  command to set the policy and suppress this warning.
+
+  Use execute_process() instead.
+Call Stack (most recent call first):
+  scripts/ports.cmake:206 (include)
+This warning is for project developers.  Use -Wno-author or -Wno-policy to
+suppress it.
+
+-- Using cached gn-mac-amd64.zip
+-- Using gn: /Users/rogelio/Projects/vcpkg/packages/vcpkg-tool-gn_x64-osx/tools/gn/gn
+CMake Warning at scripts/cmake/z_vcpkg_fixup_rpath_macho.cmake:194 (message):
+  Couldn't adjust RPATH of
+  '/Users/rogelio/Projects/vcpkg/packages/vcpkg-tool-gn_x64-osx/tools/gn/gn':
+  error:
+  /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/install_name_tool:
+  changing install names or rpaths can't be redone for:
+  /Users/rogelio/Projects/vcpkg/packages/vcpkg-tool-gn_x64-osx/tools/gn/gn
+  (for architecture x86_64) because larger updated load commands do not fit
+  (the program must be relinked, and you may need to use -headerpad or
+  -headerpad_max_install_names)
+
+Call Stack (most recent call first):
+  scripts/ports.cmake:219 (z_vcpkg_fixup_macho_rpath_in_dir)
+
+
+-- Skipping post-build validation due to VCPKG_POLICY_EMPTY_PACKAGE
+Elapsed time to handle vcpkg-tool-gn:x64-osx: 235 ms
+Installing 20/25 pkgconf:x64-osx@3.0.3...
+pkgconf:x64-osx@3.0.3 package ABI: f54de0cb29a72586784b3878d6538730d8df6aa01fd42fc33458e66c3df1aa72
+Building pkgconf:x64-osx@3.0.3...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Found Python version '3.14.7 at /usr/local/bin/python3'
+-- Using meson: /Users/rogelio/Projects/vcpkg/downloads/tools/meson-1.9.0-633807/meson.py
+-- Using cached pkgconf-pkgconf-pkgconf-3.0.3.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/pkgconf-pkgconf-pkgconf-3.0.3.tar.gz
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/pkgconf/src/conf-3.0.3-bff6744efe.clean
+-- Configuring x64-osx-dbg
+-- Getting CMake variables for x64-osx
+-- Loading CMake variables from /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/pkgconf/cmake-get-vars_C_CXX-x64-osx.cmake.log
+-- Configuring x64-osx-dbg done
+-- Configuring x64-osx-rel
+-- Configuring x64-osx-rel done
+-- Package x64-osx-dbg
+-- Package x64-osx-rel
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/pkgconf_x64-osx/lib/pkgconfig/libpkgconf.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/pkgconf_x64-osx/debug/lib/pkgconfig/libpkgconf.pc
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/pkgconf_x64-osx/share/pkgconf/copyright
+-- Adjusted RPATH of '/Users/rogelio/Projects/vcpkg/packages/pkgconf_x64-osx/tools/pkgconf/bomtool' to '@loader_path/../../lib'
+-- Adjusted RPATH of '/Users/rogelio/Projects/vcpkg/packages/pkgconf_x64-osx/tools/pkgconf/pccritic' to '@loader_path/../../lib'
+-- Adjusted RPATH of '/Users/rogelio/Projects/vcpkg/packages/pkgconf_x64-osx/tools/pkgconf/pkgconf' to '@loader_path/../../lib'
+-- Adjusted RPATH of '/Users/rogelio/Projects/vcpkg/packages/pkgconf_x64-osx/tools/pkgconf/spdxtool' to '@loader_path/../../lib'
+-- Performing post-build validation
+Elapsed time to handle pkgconf:x64-osx: 16 s
+Installing 21/25 vcpkg-pkgconfig-get-modules:x64-osx@2024-04-03...
+vcpkg-pkgconfig-get-modules:x64-osx@2024-04-03 package ABI: a49f3bb57f45bec284c2dd48b39814140c1d2e2515863a75c83325b71d6ce4c9
+Building vcpkg-pkgconfig-get-modules:x64-osx@2024-04-03...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-pkgconfig-get-modules_x64-osx/share/vcpkg-pkgconfig-get-modules/copyright
+-- Performing post-build validation
+Elapsed time to handle vcpkg-pkgconfig-get-modules:x64-osx: 73.2 ms
+Installing 22/25 vcpkg-gn:x64-osx@2025-08-05...
+vcpkg-gn:x64-osx@2025-08-05 package ABI: b23f4939eae1b66a0eea92aab2121af0095addb073e990fe2db0edd39f9c67b1
+Building vcpkg-gn:x64-osx@2025-08-05...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-gn_x64-osx/share/vcpkg-gn/vcpkg-port-config.cmake
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-gn_x64-osx/share/vcpkg-gn/vcpkg_gn_configure.cmake
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/vcpkg-gn_x64-osx/share/vcpkg-gn/vcpkg_gn_install.cmake
+-- Skipping post-build validation due to VCPKG_POLICY_EMPTY_PACKAGE
+Elapsed time to handle vcpkg-gn:x64-osx: 72.6 ms
+Installing 23/25 expat:x64-osx@2.8.2...
+expat:x64-osx@2.8.2 package ABI: 405fb20dc27bc5505ce275ad0aca35af485d7d81975472e083338cf20c5e3a62
+Building expat:x64-osx@2.8.2...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Using cached libexpat-libexpat-R_2_8_2.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/libexpat-libexpat-R_2_8_2.tar.gz
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/expat/src/R_2_8_2-303f035c99.clean
+-- Configuring x64-osx
+-- Building x64-osx-dbg
+-- Building x64-osx-rel
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/expat_x64-osx/lib/pkgconfig/expat.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/expat_x64-osx/debug/lib/pkgconfig/expat.pc
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/expat_x64-osx/share/expat/copyright
+-- Performing post-build validation
+Elapsed time to handle expat:x64-osx: 14 s
+Installing 24/25 abseil:x64-osx@20260107.1#3...
+abseil:x64-osx@20260107.1#3 package ABI: ae8710c0e05e7879405aba4f19c2348fae134b8f0bd5d2645ac62af034029feb
+Building abseil:x64-osx@20260107.1#3...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Using cached abseil-abseil-cpp-20260107.1.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/abseil-abseil-cpp-20260107.1.tar.gz
+-- Applying patch 003-force-cxx-17.patch
+-- Applying patch fix-heterogeneous_lookup_testing-target.patch
+-- Applying patch fix-mingw-dll.patch
+-- Applying patch fix-gcc13-constexpr-function-pointer.patch
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/abseil/src/20260107.1-b1a4a53e9a.clean
+-- Configuring x64-osx
+-- Building x64-osx-dbg
+-- Building x64-osx-rel
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_absl_check.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_absl_log.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_absl_vlog_is_on.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_algorithm.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_algorithm_container.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_any.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_any_invocable.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_atomic_hook.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_bad_any_cast.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_bad_optional_access.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_bad_variant_access.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_base.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_base_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_bind_front.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_bits.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_borrowed_fixup_buffer.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_bounded_utf8_length_sequence.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_btree.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_charset.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_check.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_chunked_queue.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_city.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_civil_time.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_cleanup.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_cleanup_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_common_policy_traits.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_compare.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_compressed_tuple.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_config.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_constexpr_testing_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_container_common.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_container_memory.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_cord.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_cord_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_cordz_functions.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_cordz_handle.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_cordz_info.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_cordz_sample_token.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_cordz_statistics.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_cordz_update_scope.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_cordz_update_tracker.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_core_headers.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_crc32c.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_crc_cord_state.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_crc_cpu_detect.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_crc_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_debugging.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_debugging_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_decode_rust_punycode.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_demangle_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_demangle_rust.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_die_if_null.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_dynamic_annotations.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_endian.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_errno_saver.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_examine_stack.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_exponential_biased.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_failure_signal_handler.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_fast_type_id.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_fixed_array.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_flags.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_flags_commandlineflag.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_flags_commandlineflag_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_flags_config.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_flags_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_flags_marshalling.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_flags_parse.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_flags_path_util.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_flags_private_handle_accessor.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_flags_program_name.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_flags_reflection.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_flags_usage.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_flags_usage_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_flat_hash_map.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_flat_hash_set.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_function_ref.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_generic_printer_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_graphcycles_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_has_ostream_operator.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_hash.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_hash_container_defaults.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_hash_function_defaults.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_hash_policy_traits.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_hashtable_control_bytes.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_hashtable_debug.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_hashtable_debug_hooks.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_hashtable_profiler.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_hashtablez_sampler.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_inlined_vector.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_inlined_vector_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_int128.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_iterator_traits_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_iterator_traits_test_helper_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_kernel_timeout_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_layout.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_leak_check.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_linked_hash_map.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_linked_hash_set.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_entry.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_flags.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_globals.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_initialize.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_internal_append_truncated.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_internal_check_impl.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_internal_check_op.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_internal_conditions.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_internal_config.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_internal_container.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_internal_flags.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_internal_fnmatch.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_internal_format.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_internal_globals.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_internal_log_impl.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_internal_log_sink_set.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_internal_message.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_internal_nullguard.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_internal_nullstream.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_internal_proto.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_internal_strip.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_internal_structured.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_internal_structured_proto.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_internal_voidify.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_severity.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_sink.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_sink_registry.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_streamer.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_log_structured.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_malloc_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_memory.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_meta.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_no_destructor.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_node_hash_map.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_node_hash_set.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_node_slot_policy.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_non_temporal_arm_intrinsics.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_non_temporal_memcpy.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_nullability.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_nullability_traits_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_numeric.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_numeric_representation.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_optional.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_overload.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_periodic_sampler.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_poison.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_prefetch.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_pretty_function.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_profile_builder.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_bit_gen_ref.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_distributions.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_internal_distribution_caller.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_internal_distribution_test_util.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_internal_entropy_pool.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_internal_fast_uniform_bits.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_internal_fastmath.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_internal_generate_real.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_internal_iostream_state_saver.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_internal_mock_helpers.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_internal_nonsecure_base.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_internal_pcg_engine.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_internal_platform.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_internal_randen.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_internal_randen_engine.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_internal_randen_hwaes.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_internal_randen_hwaes_impl.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_internal_randen_slow.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_internal_salted_seed_seq.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_internal_seed_material.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_internal_traits.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_internal_uniform_helper.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_internal_wide_multiply.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_random.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_seed_gen_exception.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_random_seed_sequences.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_raw_hash_map.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_raw_hash_set.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_raw_hash_set_resize_impl.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_raw_logging_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_requires_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_sample_recorder.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_scoped_set_env.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_span.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_spinlock_wait.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_stacktrace.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_status.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_statusor.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_str_format.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_str_format_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_strerror.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_string_view.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_strings.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_strings_append_and_overwrite.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_strings_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_strings_resize_and_overwrite.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_symbolize.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_synchronization.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_throw_delegate.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_time.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_time_zone.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_tracing_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_type_traits.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_utf8_for_code_point.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_utility.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_variant.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_vlog_config_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_vlog_is_on.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/lib/pkgconfig/absl_weakly_mixed_integer.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_absl_check.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_absl_log.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_absl_vlog_is_on.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_algorithm.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_algorithm_container.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_any.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_any_invocable.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_atomic_hook.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_bad_any_cast.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_bad_optional_access.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_bad_variant_access.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_base.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_base_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_bind_front.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_bits.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_borrowed_fixup_buffer.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_bounded_utf8_length_sequence.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_btree.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_charset.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_check.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_chunked_queue.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_city.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_civil_time.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_cleanup.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_cleanup_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_common_policy_traits.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_compare.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_compressed_tuple.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_config.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_constexpr_testing_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_container_common.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_container_memory.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_cord.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_cord_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_cordz_functions.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_cordz_handle.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_cordz_info.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_cordz_sample_token.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_cordz_statistics.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_cordz_update_scope.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_cordz_update_tracker.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_core_headers.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_crc32c.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_crc_cord_state.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_crc_cpu_detect.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_crc_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_debugging.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_debugging_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_decode_rust_punycode.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_demangle_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_demangle_rust.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_die_if_null.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_dynamic_annotations.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_endian.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_errno_saver.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_examine_stack.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_exponential_biased.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_failure_signal_handler.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_fast_type_id.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_fixed_array.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_flags.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_flags_commandlineflag.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_flags_commandlineflag_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_flags_config.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_flags_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_flags_marshalling.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_flags_parse.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_flags_path_util.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_flags_private_handle_accessor.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_flags_program_name.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_flags_reflection.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_flags_usage.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_flags_usage_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_flat_hash_map.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_flat_hash_set.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_function_ref.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_generic_printer_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_graphcycles_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_has_ostream_operator.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_hash.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_hash_container_defaults.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_hash_function_defaults.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_hash_policy_traits.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_hashtable_control_bytes.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_hashtable_debug.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_hashtable_debug_hooks.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_hashtable_profiler.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_hashtablez_sampler.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_inlined_vector.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_inlined_vector_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_int128.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_iterator_traits_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_iterator_traits_test_helper_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_kernel_timeout_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_layout.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_leak_check.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_linked_hash_map.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_linked_hash_set.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_entry.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_flags.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_globals.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_initialize.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_internal_append_truncated.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_internal_check_impl.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_internal_check_op.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_internal_conditions.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_internal_config.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_internal_container.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_internal_flags.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_internal_fnmatch.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_internal_format.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_internal_globals.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_internal_log_impl.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_internal_log_sink_set.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_internal_message.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_internal_nullguard.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_internal_nullstream.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_internal_proto.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_internal_strip.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_internal_structured.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_internal_structured_proto.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_internal_voidify.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_severity.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_sink.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_sink_registry.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_streamer.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_log_structured.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_malloc_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_memory.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_meta.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_no_destructor.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_node_hash_map.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_node_hash_set.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_node_slot_policy.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_non_temporal_arm_intrinsics.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_non_temporal_memcpy.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_nullability.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_nullability_traits_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_numeric.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_numeric_representation.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_optional.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_overload.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_periodic_sampler.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_poison.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_prefetch.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_pretty_function.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_profile_builder.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_bit_gen_ref.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_distributions.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_internal_distribution_caller.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_internal_distribution_test_util.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_internal_entropy_pool.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_internal_fast_uniform_bits.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_internal_fastmath.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_internal_generate_real.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_internal_iostream_state_saver.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_internal_mock_helpers.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_internal_nonsecure_base.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_internal_pcg_engine.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_internal_platform.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_internal_randen.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_internal_randen_engine.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_internal_randen_hwaes.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_internal_randen_hwaes_impl.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_internal_randen_slow.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_internal_salted_seed_seq.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_internal_seed_material.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_internal_traits.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_internal_uniform_helper.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_internal_wide_multiply.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_random.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_seed_gen_exception.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_random_seed_sequences.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_raw_hash_map.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_raw_hash_set.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_raw_hash_set_resize_impl.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_raw_logging_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_requires_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_sample_recorder.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_scoped_set_env.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_span.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_spinlock_wait.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_stacktrace.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_status.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_statusor.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_str_format.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_str_format_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_strerror.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_string_view.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_strings.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_strings_append_and_overwrite.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_strings_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_strings_resize_and_overwrite.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_symbolize.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_synchronization.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_throw_delegate.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_time.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_time_zone.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_tracing_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_type_traits.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_utf8_for_code_point.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_utility.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_variant.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_vlog_config_internal.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_vlog_is_on.pc
+-- Fixing pkgconfig file: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/debug/lib/pkgconfig/absl_weakly_mixed_integer.pc
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/abseil_x64-osx/share/abseil/copyright
+-- Performing post-build validation
+Elapsed time to handle abseil:x64-osx: 2 min
+Installing 25/25 skia[core,dng,gl,graphite,harfbuzz,icu,jpeg,metal,png,vulkan,webp]:x64-osx@148...
+skia[core,dng,gl,graphite,harfbuzz,icu,jpeg,metal,png,vulkan,webp]:x64-osx@148 package ABI: 8d550bd6dc362a9c635becf6293b36cf9bef68736165209157ff1411d71fda2a
+Building skia[core,dng,gl,graphite,harfbuzz,icu,jpeg,metal,png,vulkan,webp]:x64-osx@148...
+/Users/rogelio/Projects/vcpkg/triplets/community/x64-osx.cmake: info: loaded community triplet from here. Community triplets are not built in the curated registry and are thus less likely to succeed.
+-- Using cached google-skia-e7c90ecca9444fe09598f1630ab7cee2c0ee027a.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/google-skia-e7c90ecca9444fe09598f1630ab7cee2c0ee027a.tar.gz
+-- Applying patch 001-bentleyottmann-build.patch
+-- Applying patch 002-graphite.patch
+-- Applying patch 003-vulkan-headers.patch
+-- Applying patch 004-pdfsubsetfont-uwp.patch
+-- Applying patch 005-skparagraph-dllexport.patch
+-- Applying patch 006-use-pkgconfig-to-find-gl.patch
+-- Applying patch 007-dont-use-response-file.patch
+-- Applying patch 008-fix-bsd.patch
+-- Applying patch 009-allow-disabling-lib-dl.patch
+-- Applying patch 010-always-build-pathops.patch
+-- Applying patch 011-skstrendswith-dllexport.patch
+-- Applying patch 012-dawn.patch
+-- Applying patch 013-skcms-dllexport.patch
+-- Applying patch 014-fix-direct3d.patch
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/skia/src/e2c0ee027a-00e631f3cc.clean
+-- Creating third_party/externals/piex
+-- Using cached /Users/rogelio/Projects/vcpkg/downloads/skia-bb217acdca1cc0c16b704669dd6f91a1b509c406.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/skia-bb217acdca1cc0c16b704669dd6f91a1b509c406.tar.gz
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/skia/src/a1b509c406-84c7e7ac21.clean
+-- Creating third_party/externals/wuffs
+-- Using cached /Users/rogelio/Projects/vcpkg/downloads/skia-e3f919ccfe3ef542cfc983a82146070258fb57f8.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/skia-e3f919ccfe3ef542cfc983a82146070258fb57f8.tar.gz
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/skia/src/0258fb57f8-69c6ce6bfb.clean
+-- Creating third_party/externals/dng_sdk
+-- Using cached /Users/rogelio/Projects/vcpkg/downloads/skia-dbe0a676450d9b8c71bf00688bb306409b779e90.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/skia-dbe0a676450d9b8c71bf00688bb306409b779e90.tar.gz
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/skia/src/409b779e90-454ef6ca32.clean
+-- Creating third_party/externals/spirv-tools
+-- Using cached /Users/rogelio/Projects/vcpkg/downloads/skia-2d14d2e76aa7de72404b17078eda15c20a6a0389.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/skia-2d14d2e76aa7de72404b17078eda15c20a6a0389.tar.gz
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/skia/src/c20a6a0389-bd5031079c.clean
+-- Creating third_party/externals/spirv-headers
+-- Using cached /Users/rogelio/Projects/vcpkg/downloads/skia-6dd7ba990830f7c15ac1345ff3b43ef6ffdad216.tar.gz
+-- Extracting source /Users/rogelio/Projects/vcpkg/downloads/skia-6dd7ba990830f7c15ac1345ff3b43ef6ffdad216.tar.gz
+-- Using source at /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/skia/src/f6ffdad216-2b0e8af95a.clean
+-- Getting CMake variables for x64-osx
+-- Loading CMake variables from /Users/rogelio/Projects/albor/.build-cost/skia-cold/buildtrees/skia/cmake-get-vars_C_CXX-x64-osx.cmake.log
+-- Generating build (x64-osx-dbg)...
+-- Generating build (x64-osx-rel)...
+-- Building (x64-osx-dbg)...
+-- Installing (x64-osx-dbg)...
+-- Building (x64-osx-rel)...
+-- Installing (x64-osx-rel)...
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/skia_x64-osx/share/skia/skiaConfig.cmake
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/skia_x64-osx/share/skia/example/CMakeLists.txt
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/skia_x64-osx/share/skia/example/skcms.cpp
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/skia_x64-osx/share/skia/example/skpathediting.cpp
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/skia_x64-osx/share/skia/example/convert-to-nia.cpp
+-- Installing: /Users/rogelio/Projects/vcpkg/packages/skia_x64-osx/share/skia/usage
+-- Performing post-build validation
+Elapsed time to handle skia:x64-osx: 23 min
+Installed contents are licensed to you by owners. Microsoft is not responsible for, nor does it grant any licenses to, third-party packages.
+Some packages did not declare an SPDX license. Check the `copyright` file for each package for more information about their licensing.
+Packages installed in this vcpkg installation declare the following licenses:
+(Apache-2.0 OR MIT)
+(FTL OR GPL-2.0-or-later)
+Apache-2.0
+BSD-3-Clause
+ICU
+MIT
+MIT-Modern-Variant
+Zlib
+bzip2-1.0.6
+libpng-2.0
+skia provides CMake targets:
+
+    find_package(unofficial-skia CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE unofficial::skia::skia)
+
+    # Similar for optional components, e.g. unofficial::skia::modules::skparagraph
+
+All requested installations completed successfully in: 34 min
+RESULT w1_skia_cold status=0 wall_s=2058.8 cpu_s=0.0 ccache_hits=0
+  packages installed:
+    45
+    vcpkg-cmake-config
+    vcpkg-cmake
+    libwebp
+    libwebp
+    libwebp
+    libwebp
+    vulkan-memory-allocator
+    vulkan-headers
+    zlib
+    libpng
+    libjpeg-turbo
+    vcpkg-cmake-get-vars
+    vcpkg-make
+    icu
+    icu
+    bzip2
+    bzip2
+    brotli
+    freetype
+    freetype
+    freetype
+    freetype
+    freetype
+    vcpkg-tool-meson
+    harfbuzz
+    harfbuzz
+    egl-registry
+    opengl-registry
+    vcpkg-tool-gn
+    pkgconf
+    vcpkg-pkgconfig-get-modules
+    vcpkg-gn
+    expat
+    abseil
+    skia
+    skia
+    skia
+    skia
+    skia
+    skia
+  ccache stats after:
+  Local storage:
+    Cache size (GiB): 0.0 / 5.0 ( 0.00%)

@@ -1,0 +1,1887 @@
+# Albor — C++ Declarative UI Framework
+
+## Architecture and Design Specification — Version 3
+
+**Status:** Architecture draft
+**Version:** 3.0
+**Date:** 2026-10-02
+**Project:** AlborCore / Albor
+**Supersedes:** v2.0
+
+---
+
+## 0. Document Status and Changes from v2
+
+v3 incorporates two reviews of v2. Its goals are to remove contradictions, to define the load-bearing mechanisms that v2 left open, and to make the prototype plan able to fail.
+
+### 0.1 Status legend
+
+Every architectural decision in §29 carries one of three statuses:
+
+- **Decided** — settled for this architecture; changing it requires a documented revision.
+- **Proposed** — a concrete recommendation made in v3 that must be validated by the named prototype or review before it is treated as decided.
+- **Open** — no recommendation yet; the decision criteria are stated.
+
+Body text uses "must" and "should" accordingly: a "must" backed only by a Proposed decision is a requirement of the proposal, not yet a commitment.
+
+### 0.2 Summary of major changes
+
+| Area | Change in v3 |
+| --- | --- |
+| Core constraint | The "no interpreter / no reflection" rule is made precise. A separate **dev runtime extension** is introduced for the reload adapter, expression evaluator and type registry. A **layout-invariance rule** keeps runtime ABI identical across build configurations (§2, §17). |
+| Custom rendering | Level 2 is defined concretely: retained, immutable, thread-safely created render resources plus batched immediate primitives. Level 3 is the deferred app-defined buffer/shader tier. Render threading and data ownership are specified (§10, §11). |
+| Frame pipeline | Frames are split into a UI-thread **scene build** stage and a **render execution** stage with per-window pacing, addressing multi-window presentation stalls (§10). |
+| Semantics and automation | Custom render nodes can expose virtualized semantic children. Automation is excluded from Release builds at compile time. MCP routes only through the automation layer. The reference test is restored as a compatibility target (§19, App. B). |
+| Identity | Explicit keys are *identity*; compiler-generated implicit keys are *correlation hints* only. Models provide item keys (§18, §20). |
+| Windows | Role and modality are separated. `WindowHandle` replaces raw references. Option structures are completed. Nested native loops are specified (§7, §8). |
+| Native components | The manifest is the single source of truth; C++ glue is generated from it. The compiler never parses C++ (§15). |
+| Phasing and prototypes | The semantic tree and an automation core move to Phase 2. Resources, animation and i18n core move earlier. A binding-engine prototype (D) and a dev-runtime prototype (E) are added. Prototype A is split. Prototype B gains a baseline (§30, §31). |
+| Decision register | Expanded from 16 to 32 entries (28 original numbers with AD-04 and AD-18 split into sub-decisions), including ABI and distribution, render threading, MCP routing, X11 tier, compiler language, and unit naming (§29). |
+| Property system | Prototypes B, D2, D3 and E give AD-04a, AD-04b, AD-04c, AD-04d and AD-24 measured answers: typed per-component storage is the default **with the geometric slab policy D3 measured**, eager push is confirmed rather than replaced, Kahn cycle detection is *proposed* to become a compile-time rejection **but D3 measured a self-edge blind spot that blocks it**, and `ReplaceBinding` is implemented as a real binding replacement **whose mechanism D3 measured against three variants**. None is a settled decision — AD-04b/AD-04c stay Open and the conversion is the human gate's — and **no package remains pending**: D3 has reported **all eleven** of its sub-experiments (F2.1–F2.11), the last seven in `prototypes/d3/RESULTS.md`. That last batch **overturns one recorded recommendation** (the hybrid pull is *incorrect* on reconvergent graphs, not merely redundant) and **records six engine defects that no design choice fixes**, so the property system is measured and still not unblocked (§13, §30). |
+
+Appendix A maps each review finding to the section that addresses it.
+
+---
+
+## 1. Purpose
+
+Albor is a cross-platform C++ declarative UI framework for desktop applications that need:
+
+- native C++ production builds;
+- a compact declarative `.ui` language;
+- fast incremental builds;
+- GPU rendering and first-class custom rendering;
+- multi-window behavior;
+- serious text, input and accessibility support;
+- modern tooling.
+
+Albor is inspired by declarative systems such as Slint but is an independent architecture. Rust is not part of the production runtime.
+
+The framework is particularly suited to applications that combine conventional desktop UI with high-performance custom views: schematic and CAD editors, waveform and plot viewers, scientific visualization, and simulation front ends.
+
+---
+
+## 2. Core Constraint and Build Configurations
+
+### 2.1 Core constraint
+
+Production `.ui` code is compiled to native C++. A production (Release) application does **not** contain:
+
+- a `.ui` parser or compiler frontend;
+- an IR evaluator or expression interpreter;
+- a type registry or property-by-name reflection facility;
+- an automation or inspection control channel.
+
+Development tooling may use richer representations and dynamic mechanisms. Those mechanisms live in separate libraries that are linked only in Dev and Test configurations (§2.2).
+
+### 2.2 Build configurations
+
+| Configuration | Contents |
+| --- | --- |
+| **Release** | Albor runtime, generated application code, semantic tree and platform accessibility adapters. No dev runtime, no automation core, no inspector, no descriptor tables. |
+| **Dev** | Release plus the **dev runtime extension** (`albor-devrt`): type registry, IR loader, restricted expression VM, reload adapter, inspector hooks, generated descriptor tables, and optional automation core. |
+| **Test** | Release plus the **automation core**, descriptor tables (type names for selectors), the headless platform backend and the software renderer. |
+
+The automation core and descriptor tables are excluded from Release **at compile/link time**, not by a runtime flag.
+
+### 2.3 Layout-invariance rule
+
+The memory layout and virtual interface of runtime classes must be identical in all configurations. Dev and Test features attach through:
+
+- registration hooks that exist in every build (a null-checked extension point whose cost in Release is a pointer test);
+- side tables keyed by node identity;
+- separately linked libraries and separately generated translation units.
+
+They must never attach by changing class layout or inline code under a `#ifdef`. This lets one prebuilt runtime serve all configurations and prevents "works in Dev, differs in Release" ABI divergence.
+
+### 2.4 Semantic equivalence rule
+
+The compiled path (generated C++) and the dev path (IR evaluator) implement the same language semantics, defined once by the typed IR specification. Equivalence is enforced by a shared **conformance corpus**, a set of `.ui` programs with expected observable behavior (property values after event sequences, invalidation counts). The corpus runs through both engines in CI (§27, AD-25).
+
+---
+
+## 3. Design Principles
+
+1. **Native C++ production.** No required Rust runtime, scripting engine, or `.ui` interpreter in Release.
+2. **Declarative language first.** `.ui` provides components, properties, bindings, events, composition, layout, styling, resources, commands and semantic metadata.
+3. **Build performance is a product requirement.** Generated code must be incremental-build friendly; generated files are written only when their content changes.
+4. **Prebuilt runtime.** Framework implementation belongs in runtime libraries; one runtime binary serves all build configurations (layout invariance, §2.3).
+5. **Renderer independence.** Windowing, platform integration and rendering are separate abstractions. Skia is the initial implementation, not the framework API; no Skia or platform types appear in public headers.
+6. **Custom rendering is first-class.** Schematic, CAD, plot, waveform and scientific content render through the same GPU architecture and are never forced through bitmap/image conversion.
+7. **One semantic model.** Accessibility and automation consume one semantic tree through separate adapters. The tree exists in Release; the automation channel does not.
+8. **Development tooling is separate.** Preview, LSP, inspection and live reload do not define the production architecture.
+9. **Simple UI ownership.** UI state is owned by the UI thread. Workers communicate through explicit, lifetime-safe mechanisms and immutable snapshots.
+10. **Platform isolation.** Public APIs describe behavior rather than platform implementation.
+11. **Explicit identity.** Anything that tests, automation or state preservation relies on must have an explicit, author-controlled identity.
+12. **One source of truth per interface.** Native component interfaces are declared once (manifest); everything else is generated from it.
+
+---
+
+## 4. Scope, Platform Tiers and Non-Goals
+
+### 4.1 Platform tiers
+
+| Tier | Platforms | Meaning |
+| --- | --- | --- |
+| **Tier 1** | macOS, Windows, Linux Wayland | Full feature set; all prototypes and CI gates apply. |
+| **Tier 2** | Linux X11 | Supported and tested via automation/headless conformance. Platform limitations (global DPI, IME stack variation) are documented rather than papered over. It is not a blocker for architectural prototypes (AD-22, Proposed). |
+
+### 4.2 Included capabilities
+
+GPU rendering, normal/dialog/tool/popup windows, modality, overlays, menus, dialogs, drag/drop, clipboard, file and folder dialogs, text editing and IME, accessibility, automation, models and virtualization, animation, and internationalization.
+
+### 4.3 Non-goals
+
+- Required Rust in production.
+- An embedded production scripting runtime.
+- OpenGL as a mandatory API.
+- Native child surfaces as the custom-rendering mechanism.
+- Requiring application custom content to become an image first.
+
+Internal offscreen GPU targets are allowed and expected for caching, opacity, effects and composition (§10.4). The non-goal prohibits *requiring* applications to rasterize their content into images, not framework-internal layering.
+
+---
+
+## 5. High-Level Architecture
+
+```text
+.ui + native manifests
+ |
+ +-- Parser / Semantic Analysis / Typed IR
+ |       +-- C++ Code Generator  (+ manifest glue generator)
+ |       +-- LSP
+ |       +-- Preview / Dev Service (out of process)
+ |
+ +-- Albor Runtime  (production)
+ |       +-- Application / EventLoop / Tasks
+ |       +-- Window / Platform
+ |       +-- UI Tree / Properties / Bindings
+ |       +-- Layout / Text / Input / Focus
+ |       +-- Commands / Models
+ |       +-- Semantic Tree  -> Accessibility adapters
+ |       +-- Rendering
+ |             +-- Scene build (UI thread) -> FrameScene
+ |             +-- Render execution -> RenderSurface -> Skia / software
+ |
+ +-- Dev / Test additions  (not in Release)
+         +-- albor-devrt: type registry, IR loader, expression VM, reload adapter
+         +-- Automation core -> Python / MCP adapters
+         +-- Inspector, headless platform, software renderer
+```
+
+The compiler frontend is shared by code generation and development tooling. The production runtime does not depend on the compiler frontend. The dev runtime extension consumes **serialized IR** and does not link the frontend.
+
+---
+
+## 6. Runtime Modules
+
+Provisional modules:
+
+```text
+core application ui layout input focus commands model text style animation
+window platform render render-skia render-software widgets semantics
+accessibility resources i18n services
+compiler manifest language-server preview dev-service
+devrt automation inspector headless tools
+tests (not a runtime module)
+```
+
+- `devrt` holds the type registry, IR loader, restricted expression VM and reload adapter. It is linked only in Dev configuration (§2.2).
+- `automation` is the automation core and transport adapters. It is linked only in Dev and Test configurations.
+- `headless` is a platform backend with no native window and no GPU requirement.
+- `services` provides clipboard, dialogs, notifications and drag/drop behind abstract interfaces.
+- `manifest` covers the manifest parser, validator and glue generator, shared with `compiler`.
+
+The repository structure (§32) and public module names must remain synchronized.
+
+---
+
+## 7. Application, Event Loop and Threading
+
+### 7.1 Ownership model
+
+`Application` owns the framework lifetime, event loop, window manager, renderer and platform services. There is exactly one public run loop entry point.
+
+```cpp
+class Application {
+public:
+    int run();
+    void quit();                                          // thread-safe
+
+    // Thread-safe task posting.
+    void post(std::function<void()> task);
+    TaskHandle post(std::function<void()> task,
+                    const LifetimeToken& guard);          // dropped if guard expired
+
+    WindowHandle create_window(const WindowOptions&);     // UI thread only
+};
+
+class Timer {                                             // UI thread only
+public:
+    explicit Timer(Application&);
+    void start(Duration interval, Callback cb, TimerMode = TimerMode::Repeating);
+    void stop();                                          // also invoked by destructor
+};
+```
+
+### 7.2 Thread-safety table
+
+| Operation | Thread |
+| --- | --- |
+| `Application::post`, `Application::quit` | any thread |
+| `ResourceFactory::create_*` (§11) | any thread |
+| `Observable<T>::post_set` (§13) | any thread |
+| Property mutation, `Timer`, `WindowHandle` use, layout, focus, input dispatch, `CustomRenderNode::render`, `hit_test`, `SemanticProvider` | UI thread only |
+
+The UI thread owns UI objects, layout, focus, input dispatch, property mutation and **scene build** (§10). Workers perform simulation, I/O, networking and computation and hand results back as immutable snapshots (§10.5).
+
+### 7.3 Lifetime safety
+
+- Every UI object that can be a callback target exposes a `LifetimeToken`. A posted task with a guard is dropped if the guard has expired when the task runs.
+- Posting with a guard is the supported pattern for worker-to-UI communication. An unguarded `post` documents that the callback must not capture UI object references.
+- `Timer` is RAII; destroying it cancels it.
+- Cancellation and re-entrancy semantics of `TaskHandle` are explicit: cancel is idempotent, is only effective before the task starts, and never blocks.
+
+### 7.4 Nested native loops and re-entrancy
+
+Several platforms run nested native loops that bypass the application's run loop: Win32 modal move/size loops, macOS menu tracking and modal panels, and blocking native dialogs. Albor handles them as follows (AD-21, Decided as a principle; mechanisms per platform are implementation work):
+
+- The platform layer registers framework event sources (timers, posted tasks, frame scheduling) so that they continue to run during nested loops (for example by registering in all relevant run-loop modes, or by using platform timers armed on nested-loop entry).
+- Dispatch during a nested loop goes through a re-entrancy guard. A **nested-loop scope** marks the application state so that code can tell when callbacks arrive during native tracking.
+- Application callbacks may be invoked during a nested loop. Framework APIs that are unsafe to call re-entrantly are documented, and violations are diagnosed in Dev/Test builds.
+- Blocking native dialogs are avoided in favor of asynchronous APIs wherever the platform provides them (for example portals on Linux). Where only a blocking API exists, it runs inside a nested-loop scope.
+- Live resize must present frames during the resize loop so that content tracks the window size.
+
+---
+
+## 8. Window Architecture
+
+```text
+Application -> WindowManager -> Window
+                              +-- NativeWindow
+                              +-- RenderSurface -> Renderer
+```
+
+### 8.1 Role and modality are separate
+
+Role is a **platform-visible creation-time property**; platform roles may be fixed at surface creation. Modality is a **framework-enforced behavior** that is independent of role.
+
+```cpp
+enum class WindowRole { Normal, Dialog, Tool, Popup };
+enum class Modality   { None, Window, Application };
+
+struct PopupOptions {
+    Rect                    anchor;            // in parent logical coordinates
+    Placement               preferred;
+    std::vector<Placement>  fallbacks;
+    PlacementConstraints    constraints;       // keep-on-screen, min/max size
+    DismissBehavior         dismissal;         // outside-click, focus-loss, escape
+    bool                    grab_input = false;
+};
+
+struct WindowOptions {
+    WindowRole              role     = WindowRole::Normal;
+    Modality                modality = Modality::None;
+    WindowHandle            parent;            // required for Dialog/Popup
+    std::optional<PopupOptions> popup;         // required iff role == Popup
+};
+```
+
+Validation rules, enforced at `create_window` and diagnosed in all configurations:
+
+- Popup requires a parent and `PopupOptions`.
+- A modal Normal or Tool window requires a parent.
+- Popup windows cannot be modal.
+
+### 8.2 Platform mapping notes
+
+- Wayland has no true tool-window or always-on-top concept. `Tool` is mapped to the closest behavior available (a transient toplevel) and documented as non-portable.
+- Wayland modality is only a hint to the compositor; Albor enforces modality in the framework regardless of the platform.
+- Popup placement uses the platform positioner where one exists (for example `xdg_positioner`) and framework computation elsewhere.
+
+### 8.3 Overlays versus popup surfaces
+
+Albor distinguishes **in-window overlays** from separate popup surfaces. Overlays are the default for menus, combo drop-downs and tooltips that fit within the window bounds; they are part of the UI tree, automatable and accessible with no extra work. A separate popup surface is used when content must extend beyond the window. Both are described by the same popup model so that application code does not choose.
+
+### 8.4 Handles and lifetime
+
+`create_window` returns a `WindowHandle`, a lightweight non-owning handle.
+
+```cpp
+class WindowHandle {
+public:
+    bool alive() const;
+    Window* get() const;      // nullptr after the window is destroyed; UI thread only
+};
+```
+
+- A `Window&` obtained from a handle is valid only until control returns to the event loop.
+- Closing is a two-step protocol: a **close request** event (the application may veto, for example to prompt about unsaved changes), then destruction. `on_closed` is delivered after destruction.
+- `Window` exposes metrics (§9), position where the platform supports it (otherwise an explicit "unsupported" result, never a silent default), activation and focus behavior, and decoration strategy.
+
+### 8.5 Decorations
+
+On platforms and compositors that do not provide server-side decorations (notably GNOME on Wayland), Albor draws client-side decorations (via a library such as libdecor or framework-drawn; AD-16 decides). Decoration strategy is part of the window creation contract.
+
+---
+
+## 9. Render Surface, Metrics and DPI
+
+### 9.1 Window metrics are the single source of truth
+
+```cpp
+struct WindowMetrics {
+    Size      logical_size;
+    Size      pixel_size;
+    float     scale_factor;     // fractional scale supported
+    DisplayId display;
+};
+
+class Window {
+public:
+    WindowMetrics metrics() const;      // authoritative
+    // ... role, title, visibility, activation, etc.
+};
+```
+
+The scale factor lives in `WindowMetrics` and nowhere else. `RenderSurface` exposes a read-only copy that the renderer updates when the window reports a metrics change.
+
+### 9.2 Surface creation and presentation
+
+`RenderSurface` is created by the **Renderer** from platform window information together with renderer-owned GPU resources (device, queue, context). It is not purely a platform object.
+
+```cpp
+class Renderer {
+public:
+    std::unique_ptr<RenderSurface> create_surface(NativeWindowHandle,
+                                                 const WindowMetrics&);
+    void resize_surface(RenderSurface&, const WindowMetrics&);
+    FrameTicket execute(RenderSurface&, const FrameScene&);   // flush, submit; queues present
+};
+```
+
+Applications do not call `present()`. Presentation is queued by the renderer after flush/submit and the required synchronization, and is paced per window by the frame scheduler (§10.3).
+
+### 9.3 Units
+
+- Layout uses **logical** units.
+- In `.ui`, `px` means logical pixels; `phx` means physical (device) pixels (AD-27, Proposed).
+- Rendering uses device pixels where appropriate.
+- Scale pipeline: logical coordinates → scale factor → device pixels.
+- Rounding rules for fractional scales (which edges snap, how sizes round) are part of the renderer contract and are tested.
+
+---
+
+## 10. Rendering Architecture and Frame Pipeline
+
+### 10.1 Layers
+
+Rendering is divided into four layers:
+
+1. framework UI drawing (widgets, layout);
+2. the Albor **renderer abstraction** (`RenderContext`, resources, `FrameScene`);
+3. a Skia-based implementation (and a software implementation);
+4. a platform GPU backend.
+
+The UI tree is retained. The renderer may use cached layers, dirty regions and offscreen GPU targets internally (AD-07, Proposed).
+
+### 10.2 Two-stage frame
+
+```text
+Stage 1 — Scene build (UI thread)
+  input / timers / posted tasks
+    -> binding evaluation -> layout -> semantic updates
+    -> build FrameScene (framework nodes + CustomRenderNode::render())
+    -> immutable FrameScene handed off
+
+Stage 2 — Render execution (render executor)
+  FrameScene -> GPU/software execution -> flush/submit -> queued present
+```
+
+- `CustomRenderNode::render()` runs in **Stage 1 on the UI thread** and records draw commands that reference retained resources. It must be cheap; expensive preparation (tessellation, decimation, spatial indexing, simplification) happens on workers and produces immutable resources (§11.3).
+- The **render executor** is the thread or threads that run Stage 2 (AD-18a, *Decided*). The default is a dedicated render thread that owns the GPU context. A single-thread mode, in which Stage 2 runs on the UI thread, must also be supported for backends or platforms where that is required, and for debugging.
+- Stage 2 never calls application code. This is what makes a dedicated render thread safe.
+
+### 10.3 Frame scheduling and pacing
+
+The framework does not continuously render idle windows. A frame is requested by invalidation, layout change, animation, input or state change, explicit redraw, or external data update.
+
+The scheduler:
+
+- tracks per-window in-flight frames with a bounded queue;
+- coalesces requests while a frame is in flight instead of blocking the UI thread;
+- integrates platform display timing (Wayland frame callbacks, display-link on macOS, waitable swapchains or equivalent on Windows);
+- respects per-monitor refresh rates;
+- handles occluded or throttled windows without stalling others.
+
+**Multi-window rule:** presentation back-pressure on one window (a vsync wait or driver throttle) must not block input handling, layout or scene build for any other window.
+
+**Workload W3 does not validate this rule.** As written, W3 throttles a window by holding it on the UI thread, so a design that presents on the UI thread stalls the other window *by construction* — Prototype A1-Dawn measured exactly that (window 2's interval during window 1's hold was 100.86 ms p50, which is the hold itself) and the design doc records the result as true for any UI-thread-presenting design. That is evidence about the question, not an answer to it: W3 cannot fail, and no prototype has yet shown a design where presentation is off the UI thread. **AD-18b is Open for this reason**, and the experiment that would settle it is the W3 redefinition in the off-UI-thread presentation package, which must throttle by a real condition — heavy GPU load or a deliberately delayed drawable release — rather than by keeping work on the UI thread.
+
+### 10.4 Retained UI tree, display structures and cached layers
+
+- Cached layers (offscreen GPU targets) may be used for effects, opacity groups, scroll caching and application-declared cacheable custom nodes (§11.6).
+- Dirty-region tracking is renderer-internal and optional per backend. Where a platform presentation path supports partial updates, the renderer may use them; correctness never depends on it.
+- The inspector's render tree and dirty-region views (§26) are views of `FrameScene` and layer caches.
+
+### 10.5 Data ownership between workers and custom nodes
+
+The rule is **immutable snapshots**:
+
+- Application data read by a custom node (for example, simulation results) is exposed as `std::shared_ptr<const T>` held in an observable `Snapshot<T>` property.
+- A worker builds a new snapshot and publishes it with a guarded `post`. The UI thread swaps the property, which invalidates dependent nodes.
+- Custom nodes and bindings never read mutable worker-owned state.
+- For large incremental data (appended waveform samples), applications use a snapshot type that supports structural sharing or append-only views. This is an application concern; the framework guarantees only the swap semantics.
+
+---
+
+## 11. Custom Rendering Contract
+
+Custom rendering is a foundational API, not an image workaround.
+
+### 11.1 Level definitions
+
+| Level | Scope | Status |
+| --- | --- | --- |
+| **Level 1** | Framework UI drawing | In scope |
+| **Level 2** | Application 2D custom rendering for CAD, schematics, plots, waveforms: **batched immediate primitives plus retained, immutable, Albor-managed render resources** | In scope; this section |
+| **Level 3** | Application-defined GPU buffers, instancing, shaders, compute, native GPU interop | Deferred |
+
+**What "GPU resources" means at Level 2:** opaque, immutable, Albor-managed resources created through a thread-safe factory — line and polyline batches, path resources, recorded pictures, images and glyph resources. Applications never see GPU buffers, pipelines or shaders at Level 2.
+
+Level 2 must not make Level 3 impossible. Resource kinds and render passes are extensible, and `RenderContext` is designed to accept future custom-pass objects. Applications must not issue native GPU commands into renderer-owned state. Any future native GPU interop must define ownership, synchronization, state transitions, lifetime, device loss and command submission boundaries (AD-06, AD-19).
+
+### 11.2 Node and context (conceptual)
+
+```cpp
+class CustomRenderNode {
+public:
+    virtual void render(RenderContext&) = 0;                // UI thread; must be cheap
+    virtual HitTestResult hit_test(const HitQuery&) = 0;    // UI thread
+    virtual SemanticProvider* semantics() { return nullptr; }
+};
+
+struct HitQuery {
+    Point point;           // logical
+    float tolerance;       // logical px
+    float scale_factor;
+};
+
+class RenderContext {
+public:
+    StateScope save();                                  // scoped state isolation
+    void set_transform(const Transform&);
+    void clip_rect(const Rect&);
+    void clip_path(const PathResource&);
+
+    // Retained draws: O(1) command each
+    void draw(const LineBatch&,  const Transform&, const PaintOverrides&);
+    void draw(const PathResource&, const Transform&, const PaintOverrides&);
+    void draw(const Picture&,    const Transform&, const PaintOverrides&);
+    void draw(const ImageResource&, const Rect& dst, const PaintOverrides&);
+
+    // Immediate, batch-oriented: no per-segment calls
+    void draw_segments(std::span<const Segment>, const StrokeStyle&);
+    void draw_polyline(std::span<const Point>,   const StrokeStyle&);
+    void draw_points(std::span<const Point>,     const PointStyle&);
+    void draw_text(const TextLayout&, Point origin, const Paint&);
+
+    float pixel_scale() const;                          // device-pixel awareness
+};
+```
+
+`StrokeStyle` supports width in logical or device pixels, so that "cosmetic" (hairline) strokes remain one device pixel at any zoom or DPI.
+
+### 11.3 Retained resources and the factory
+
+```cpp
+class ResourceFactory {                                  // thread-safe
+public:
+    LineBatch     create_line_batch(std::span<const Segment>, const StrokeStyle&, ResourceFlags);
+    PolylineSet   create_polylines(std::span<const Polyline>, const StrokeStyle&, ResourceFlags);
+    PathResource  create_path(const Path&);
+    Picture       record_picture(const std::function<void(RecordingContext&)>&);
+    ImageResource create_image(const ImageData&);
+};
+```
+
+- Resources are immutable and shared; creation may occur on any thread; GPU upload is scheduled by the renderer.
+- A retained draw is a single command regardless of segment count, so pan and zoom re-use geometry through the transform.
+- Applications are expected to rebuild resources on workers when data changes, not to mutate them.
+
+### 11.4 Device loss and lifetime
+
+- Resources keep a CPU-side source representation unless created with `ResourceFlags::DiscardSource`. After device loss the renderer recreates them transparently.
+- Resources created with `DiscardSource` deliver an `on_device_reset` callback so the application can rebuild them.
+- Resource lifetime is tied to the renderer, not to a window, so that multi-window applications can share them.
+
+### 11.5 Hit testing
+
+`hit_test` receives a tolerance in logical pixels and the scale factor. Scene-scale spatial indexing is the application's responsibility; the framework may later ship an optional spatial index helper. A hit result may carry a semantic key (§19.3) so that the hit maps directly to a semantic child.
+
+### 11.6 Caching and invalidation
+
+- `invalidate()` and `invalidate(Rect)` request redraw.
+- A custom node may declare `CachePolicy::CachedLayer`; the renderer may render it into an offscreen layer and re-use it until invalidated. This is the sanctioned use of offscreen targets for custom content (§4.3).
+
+### 11.7 Software parity
+
+Every Level 2 resource kind and primitive must have a software-renderer implementation (§25). Functional parity is checked by a conformance suite; pixel-exactness is not required, but tolerances are defined per test.
+
+---
+
+## 12. Input and Focus
+
+Native input is normalized by platform adapters:
+
+```text
+Native Event -> Platform Adapter -> Framework Event -> Window
+            -> Hit Test / Capture / Focus -> Event Routing
+            -> Component / Command / Model
+```
+
+The event model includes:
+
+- pointer movement, press and release (mouse, touch, pen, with pressure where available);
+- pointer capture;
+- wheel/scroll and high-resolution trackpad scrolling, including momentum phases;
+- gestures (pinch, pan, rotate where the platform provides them);
+- keyboard (physical and logical keys, modifiers, repeat);
+- text input and **IME preedit/composition**, as events separate from key events;
+- focus, activation, resize, display and DPI changes;
+- drag and drop;
+- cursor changes.
+
+**Coalescing policy:** high-frequency pointer and pen events are coalesced to at most one dispatched move event per frame by default. The coalesced intermediate samples remain accessible on the event for applications that need them, such as freehand drawing.
+
+A central `FocusManager` owns focus scopes, traversal, keyboard navigation, modal focus trapping, focus restoration and mnemonics. Custom render nodes provide hit testing (§11.5) and may expose focusable semantic children (§19.3).
+
+---
+
+## 13. Reactive Properties and Bindings
+
+The property/binding system is a load-bearing architecture decision, addressed by the AD-04 series (AD-04a, AD-04d and AD-24 *Proposed*; AD-04b storage layout and AD-04c evaluation model remain *Open* but each now carries a **measured** MODIFY recommendation — AD-04b's from Prototype D3, which has now reported **all eleven** of its sub-experiments, including the property mix of an authored real-UI corpus (F2.11)). Prototype D3's last seven revisions also produced **six defects in the engine itself** — two of them correctness defects in evaluation and three of them in mutation, replacement and cycle rejection — which are recorded in `prototypes/d3/RESULTS.md` and which no choice of index, model or storage can fix. Phase 2 and Phase 3 inherit them as work, not as decisions.
+
+### 13.1 Expression categories
+
+1. compile-time constants;
+2. static expressions;
+3. property-dependent expressions;
+4. observable external state;
+5. event-driven state;
+6. animation-driven state;
+7. layout-dependent values;
+8. theme-dependent values;
+9. locale-dependent values (including translated strings and text direction).
+
+Categories 8 and 9 are implemented as **environment properties** (theme, locale, direction, scale) that bindings depend on like any other property. A translated string is therefore never folded as a constant.
+
+### 13.2 Observable external state
+
+Arbitrary C++ variables are not observable. State exposed to `.ui` must use `Observable<T>`, `Snapshot<T>` or a model interface.
+
+- All property mutation occurs on the UI thread.
+- `Observable<T>::set` is UI-thread only; `post_set` is thread-safe and applies the change on the UI thread.
+- Snapshot properties follow §10.5.
+
+### 13.3 Dependency and invalidation mechanism
+
+The implementation must provide a compact dependency/invalidation mechanism that does not turn thousands of properties into memory-heavy listener objects. Candidate strategies include compact dependency records, dirty bitsets, property IDs, shared dependency nodes and batched push/pull evaluation. Prototype D (§30) measures them. Compiled bindings are plain generated functions (static function pointers) with declared dependencies as property IDs; no per-binding `std::function` allocation.
+
+### 13.4 Write precedence (AD-24, Proposed)
+
+Three write sources exist: generated initialization, declarative binding, and imperative C++ assignment.
+
+- **Imperative assignment breaks the binding** on that property. An explicit `rebind` operation restores it.
+- Generated initialization uses an internal path that does not break bindings, so initialization order never changes semantics.
+- The `.ui` language does not provide two-way bindings in the initial version. This is a language-grammar decision (open question 1), but the precedence rule must remain well-defined if they are added.
+- **Live reload interaction:** `ReplaceBinding` applies only to properties whose declared binding changed in source. An imperatively overridden property whose declared binding did not change keeps its override.
+
+### 13.5 Animation integration
+
+Animation-driven state (category 6) is a first-class binding source. The animation system (§21.4) integrates with the frame scheduler and with property precedence: an active animation writes through a defined animation layer that yields to explicit writes according to rules fixed in the animation API. The animation core arrives in Phase 3, alongside bindings (§31).
+
+---
+
+## 14. Generated C++ and Incremental Builds
+
+### 14.1 Public interface only
+
+Generated public headers expose **stable component interfaces** only, as concrete, non-virtual facade classes holding an opaque implementation:
+
+```text
+MainWindow.hpp -> stable public interface (properties, callbacks, ids, commands)
+MainWindow.cpp -> generated tree + bindings + private implementation
+```
+
+"Stable interface" does **not** mean an abstract base class with virtual dispatch. It means a facade whose layout and declarations change only when the component's declared interface changes (AD-03).
+
+### 14.2 Build invariants
+
+- Changing a `.ui` body must not force recompilation of unrelated application translation units.
+- **Write-if-changed:** the generator rewrites a generated file only when its content changes, so timestamps do not cascade through Make/Ninja builds.
+- Generated headers include only declared interface dependencies (child component headers they need, never their implementations).
+- Large components and large applications are splittable into multiple generated compilation units, by component and, for very large components, by node subtree.
+- Generated code avoids giant headers, excessive templates and duplicated runtime code.
+
+### 14.3 Interface versus body changes
+
+| Change | Rebuild scope |
+| --- | --- |
+| Edit within a `.ui` component body (property values, bindings, layout, styles, resources) | that component's generated `.cpp` only |
+| Change to a component's declared interface | generated `.hpp` and all includers |
+| Change to a native manifest | regenerated glue and its includers |
+
+Prototype B measures these scopes against the baseline (§30).
+
+---
+
+## 15. Native Component Contract (Manifest)
+
+### 15.1 Manifest is the single source of truth (AD-17, Proposed)
+
+Application-defined components, objects, models and services (a `ChartView`, a schematic view, a `simulation` object) are declared once in a machine-readable **manifest**, written in a native-interface declaration syntax that is part of the `.ui` language family. The compiler **never parses application C++ headers**. C++ glue (property storage, signal plumbing, registration) is **generated from the manifest**, and the application's C++ implements or derives from the generated glue.
+
+Header scanners and C++ annotation macros are rejected as sources of truth: both require parsing C++ and create a second declaration to keep in sync. Tooling that helps *write* manifests (for example, from existing C++ types) is allowed, but its output is a manifest that is then reviewed and owned like source.
+
+### 15.2 Declaration kinds
+
+| Kind | Purpose |
+| --- | --- |
+| `native component` | A visual component (properties, signals, commands, semantic role, children capability) |
+| `native object` | A non-visual object exposed to `.ui` (for example `simulation`) |
+| `native model` | A model type (row type, roles, key policy) |
+| `native global` | A named singleton service or namespace exposed to `.ui` (for example `commands`) |
+
+Each declaration lists names and types, read/write capability, signals, commands/actions, semantic role, thread-affinity (always UI thread for the property surface), and a **preview block**.
+
+### 15.3 Preview block
+
+The preview block provides sample values and stub behavior so that preview and the LSP can function without the application's C++:
+
+- sample property values and sample model rows;
+- visual placeholder, or a reference to an optional **preview plugin** (a shared library the application chooses to build against the real implementation);
+- signals that the preview inspector can trigger.
+
+Without a plugin, the preview instantiates a generic stub visual from the manifest (AD-02).
+
+---
+
+## 16. Compiler
+
+```text
+.ui + manifests -> Lexer -> Parser -> Syntax Model -> Semantic Analysis
+                                          -> Typed UI IR
+                                               +-- C++ Codegen (+ manifest glue)
+                                               +-- LSP
+                                               +-- Preview / Dev Service
+```
+
+- The compiler supports incremental parsing and semantic analysis and tracks dependencies at component and interface level, using a query-based architecture suited to LSP use.
+- The typed IR is versioned and serializable. Serialization is how the compiler talks to the dev service and the reload adapter.
+- The compiler's implementation language is **C++** (AD-23, Proposed): one toolchain for contributors and the ability to share IR definitions with `devrt`. Rust remains excluded from the production runtime; whether it is excluded from development tooling is not an architectural requirement.
+- Diagnostics are produced by the compiler library, and the LSP surfaces the same diagnostics. "LSP diagnostics agree with compiler diagnostics" is tested by running both over the same corpus.
+- Expression purity rules (what `.ui` expressions may call) are part of the grammar decision. Calls to native functions in bindings are permitted only if declared pure in the manifest; impure native calls are event-handler-only.
+
+---
+
+## 17. Production, Dev Runtime, Preview and Live Reload
+
+### 17.1 Production
+
+```text
+.ui -> compiler -> generated C++ -> native application -> Albor runtime
+```
+
+No compiler frontend, interpreter, registry or reflection is present (§2.1).
+
+### 17.2 Dev runtime extension (AD-02, Proposed)
+
+`albor-devrt` is a separate library linked only in Dev configuration. It contains:
+
+- **Type and property registry** built from generated descriptor tables (separate generated translation units, present only in Dev/Test);
+- **IR loader** for serialized IR;
+- **Restricted expression VM**: pure expressions over property reads, arithmetic, strings, conditionals and manifest-declared pure functions; event handlers dispatch to commands and native signals through the descriptor tables. It is **not** a general-purpose interpreter;
+- **Reload adapter** applying `UiPatch` operations to the live tree;
+- **Inspector hooks**.
+
+It attaches through the registration hooks of the layout-invariance rule (§2.3). Compiled and dev paths are kept equivalent by the conformance corpus (§2.4, AD-25).
+
+### 17.3 Preview
+
+```text
+.ui + manifests -> shared frontend -> serialized IR
+               -> preview host (Albor runtime + devrt) -> actual renderer
+```
+
+- Preview exercises the real runtime and renderer.
+- Native components are provided by manifest stubs or optional preview plugins (§15.3).
+- Preview inherits the same limitation as any IR-driven mode: application-specific logic that is not described in the manifest is not available. This limitation is documented, not hidden.
+
+### 17.4 Live reload
+
+```text
+Editor -> Compiler/Dev Service -> serialized IR / UiPatch -> running application
+                                                          -> reload adapter -> UI tree
+```
+
+- The compiler and semantic analyzer remain out of the application process.
+- The in-app side is the reload adapter in `devrt` (§17.2).
+- Invalid source leaves the last valid UI active and reports diagnostics.
+- Transport for the dev service is local-only and authenticated (§19.6).
+
+---
+
+## 18. Identity and Live Reload Patching
+
+### 18.1 Key classes (AD-11, Decided)
+
+| Key class | Origin | Use |
+| --- | --- | --- |
+| **Explicit key** | The `id:` of a node (scoped by component) | **Identity.** Used by automation selectors, semantic keys, focus and state preservation. |
+| **Implicit key** | Compiler-generated from component, parent key, node type and ordinal among same-type siblings | **Correlation hint** only. Used for best-effort live-reload alignment. Never used by automation. |
+
+- Identity is never derived from tree position alone: explicit keys are author-controlled and survive any structural edit.
+- Implicit keys are marked as such. Tooling lints automation selectors that resolve to implicit keys, and the LSP offers a code action to add an explicit `id`.
+- Interactive and semantically significant nodes should have explicit ids; a configurable compile diagnostic can require this.
+
+### 18.2 Instance paths
+
+Repeated instances and model delegates are identified by an **instance path** that combines source keys and item keys:
+
+```text
+MainWindow::charts
+ResultsList::row[<item-key>]::name_label
+```
+
+Item keys come from models (§20). A model without keys falls back to row indices with a diagnostic stating that identity is unstable.
+
+### 18.3 Patch operations
+
+```text
+CreateNode  DeleteNode  MoveNode  ReorderChildren  ChangeNodeType
+SetProperty  ReplaceBinding  ReplaceEventHandler
+UpdateStyle  UpdateTheme  UpdateResource  UpdateTransition
+```
+
+- Diffing aligns siblings using explicit keys first, then type and implicit keys, so that moves are distinguishable from delete+create wherever explicit keys exist.
+- Reloadable edits: property, binding, event, style, resource, transition and compatible structural changes.
+- **Rebuild required:** changes to a component's declared public interface, to a native manifest, or to anything that changes generated public C++.
+
+### 18.4 State preservation
+
+Reload preserves UI-owned state where keys allow: scroll offsets, focus, cursor/selection, expanded state and item selection. Application/domain state remains outside the reload system. Imperative property overrides follow §13.4.
+
+---
+
+## 19. Semantic Tree, Accessibility and Automation
+
+### 19.1 One semantic tree
+
+```text
+Semantic Tree (Release)
+   +-- Accessibility adapters (Release)
+   +-- Automation core + adapters (Dev/Test only)
+```
+
+Nodes expose stable keys, role, accessible name and description, state and value, bounds, actions, relationships and children. The `type` name used by automation selectors (`ToolbarButton`) comes from descriptor tables and exists only in Dev/Test builds; the Release semantic tree carries role, name and state.
+
+Accessibility and automation share this tree; automation additionally needs synthetic input, raw property access, screenshots and waits, which are outside the semantic tree and exist only in the automation core.
+
+### 19.2 Accessibility adapters
+
+Adapters map the tree to macOS accessibility, Windows UI Automation and Linux AT-SPI. They support active OS-driven callbacks and notifications for focus, value, name, selection, structure, bounds and state changes. Text controls expose text semantics (ranges, selection, caret, attributes) per platform text-accessibility model.
+
+### 19.3 Custom render nodes: semantic providers
+
+A custom-rendered canvas is a semantic node whose children are provided by the application:
+
+```cpp
+class SemanticProvider {
+public:
+    virtual size_t child_count() = 0;                        // logical count
+    virtual SemanticNodeInfo child_info(size_t index) = 0;
+    virtual std::optional<size_t> find_child(const SemanticKey&) = 0;
+    virtual ActionResult perform(const SemanticKey&, Action, const Arguments&) = 0;
+};
+```
+
+- Children use the same virtualization contract as model views (§20): **logical count versus materialized nodes**. A schematic with thousands of components exposes only viewport-relevant children to accessibility, while automation can look up any child by key (`component:R1`, `net:VCC`) even when it is not materialized.
+- `perform` can include a request to bring a child into view.
+- Semantic keys on children are application-defined and stable across frames and sessions where the domain permits.
+
+### 19.4 Automation operations and results
+
+Representative operations: connect/launch, get_root, find/query, `get_by_id`, `get_by_type`, `get_by_role`, `get_by_text`, `get_by_property`, `nth`, click/double_click, type/key, hover, focus, `wait_for`/`wait_for_exists`, count, get_property, get_bounds, screenshot.
+
+Every action returns a result with status and message:
+
+```cpp
+struct ActionResult {
+    enum class Status { Ok, NotFound, Disabled, NotSupported, Failed, Timeout };
+    Status      status;
+    std::string message;
+    Value       value;
+};
+```
+
+- Stable ids are preferred over positional selectors. `nth()` is permitted for intentionally repeated elements but is not identity.
+- **Input injection happens at the framework level.** Platform-level injection is not portable (it is unavailable on Wayland, for example). Injected events pass through the same routing as native input from the Window downward.
+- `screenshot` uses a renderer readback API available in Test builds (and the software renderer in headless mode).
+
+### 19.5 Settled condition
+
+`wait_for` and implicit waits use a defined **settled** condition. The UI is settled when all of the following hold:
+
+- no posted tasks are pending in the automation epoch;
+- no binding, layout or semantic invalidations are pending;
+- no frame is requested or in flight;
+- no animations are active;
+- no application-registered "busy" operations are outstanding (applications may register async work such as a running simulation, so tests can wait on it explicitly).
+
+### 19.6 Automation security (AD-10, Decided)
+
+- The automation core is excluded from Release **at compile/link time**.
+- In Dev/Test builds, the control channel is local-only (loopback or a user-private socket/pipe), requires a per-session token, and is off unless explicitly enabled by launch configuration.
+- Command invocation through automation is subject to an allow-list declared by the application.
+
+### 19.7 MCP routing (AD-20, Decided)
+
+MCP is an adapter over the automation layer. It does not call commands or runtime internals directly, and so inherits automation's enablement, authentication and allow-list. MCP is not a core runtime subsystem.
+
+---
+
+## 20. Models and Virtualization
+
+Initial model-driven views: ListView, TableView, TreeView. Virtualization is architectural, not a later optimization.
+
+### 20.1 Model interface requirements (AD-13)
+
+- Models are UI-thread objects. Workers publish changes via batched, guarded posts (`ModelUpdateBatch`), not by mutating models directly.
+- A model provides row count, row data by role, change notifications (insert, remove, move, update, reset) and an **optional item key**: `ItemKey item_key(row)`. Keys are the basis for delegate identity, focus retention, selection stability, live-reload reconciliation and automation lookup.
+- Selection models are separate from data models.
+
+### 20.2 Required handling
+
+The design must handle explicitly:
+
+| Concern | Mechanism |
+| --- | --- |
+| Logical count vs. materialized nodes | Views and `SemanticProvider` expose logical count; only visible and pinned rows materialize. |
+| Accessibility set-size / position-in-set | Reported from logical count and row index. |
+| Focus on recycled items | The focused row is **pinned** and not recycled until focus leaves. |
+| Text editing/IME in recycled items | Rows with active text editing or composition are pinned. |
+| Automation lookup | By item key, with an explicit `scroll_into_view` request. |
+| Stable delegate identity | Instance paths with item keys (§18.2). |
+| Live reload of delegates | Delegate components reconcile by item key; state (scroll, selection) is preserved. |
+
+---
+
+## 21. Layout, Text, Styling and Animation
+
+### 21.1 Layout
+
+Layout uses logical coordinates. The layout contract:
+
+- two-phase measure/arrange with intrinsic minimum, preferred and maximum sizes;
+- constraints, alignment, spacing, min/max dimensions;
+- text-dependent sizing through the text-measurement contract (§21.2);
+- RTL and incremental relayout;
+- DPI changes trigger relayout and re-rounding.
+
+The concrete layout algorithm remains open (open question 16). The contract above is fixed so that the algorithm choice does not affect text, virtualization or custom nodes.
+
+### 21.2 Text
+
+Text is foundational. Required capabilities: font selection and fallback, Unicode shaping, bidi, line breaking, measurement, ellipsis, selection, cursor/editing, IME and accessibility text semantics.
+
+- Text measurement is a prerequisite contract for layout (AD-14). Text and fonts arrive in Phase 4 together with the resource system (fonts are resources, §23).
+- Text library selection (open question 15) is judged against: shaping and bidi quality, IME integration, accessibility text-range support, editing primitives, binary size and licensing, and fit with Skia/software rendering.
+
+### 21.3 Styling
+
+Theme defaults, state-dependent styling, light/dark themes and application overrides. Theme-dependent properties are runtime dependencies (environment properties, §13.1). State-dependent transitions (hover, pressed) use the animation core.
+
+### 21.4 Animation
+
+Animation integrates with the frame scheduler: animated properties invalidate affected UI and request frames only while animation is active. Timing, easing, interruption, reduced-motion behavior and interaction with bindings and write precedence (§13.5) must be defined in the animation API. The animation core (property animation and scheduler integration) is built in Phase 3. Reduced-motion support and polish follow in Phase 11.
+
+---
+
+## 22. Commands, Menus, Dialogs and Platform Services
+
+### 22.1 Commands
+
+A `Command` is an object, not a callback:
+
+```text
+Command: id, label, icon, shortcut, enabled (observable), checked (observable),
+         semantic role/description, execute()
+```
+
+Commands are shared by buttons, menus, shortcuts, automation (through the allow-list) and, indirectly, MCP (via automation):
+
+```text
+Button / Menu / Shortcut / Automation (+MCP via Automation)
+                  |
+               Command
+                  |
+           Application Action
+```
+
+Widgets accept a `command:` property that supplies label, enabled state, shortcut and semantics. Undo/redo integrates at the command/action layer (AD-15, Decided); the detailed history API remains open.
+
+### 22.2 Menus and dialogs
+
+The framework provides abstract menu and dialog models. Platform presentation may be native or framework-rendered, because macOS, Windows, Wayland and X11 do not share one native menu/dialog model.
+
+- **The menu model is always represented in the semantic tree**, regardless of presentation. Automation and preview interact with the model and commands, not with OS menu objects.
+- macOS requires a native menu bar. Linux generally uses framework-drawn popups or overlays. Both implement the same menu model.
+- File and folder dialogs are asynchronous (portals on Linux) and return results through the event loop (§7.4).
+
+### 22.3 Platform services
+
+Clipboard (multiple formats), drag/drop, cursor, tooltips, notifications, native file/folder dialogs. Services are abstract interfaces implemented per platform. Platform prerequisites (bundle identity for macOS notifications, AUMID registration on Windows, D-Bus and portals on Linux) are documented per platform.
+
+---
+
+## 23. DPI, Resources and Internationalization
+
+### 23.1 DPI
+
+Multiple monitors and dynamic scale/display changes are supported where the platform exposes them. X11 limitations (global DPI, no reliable per-monitor change notification) are explicitly acknowledged and documented as Tier 2 behavior (§4.1).
+
+### 23.2 Resources
+
+- Resources include images, fonts, icons, translations and application assets.
+- A resource pipeline exists from Phase 4 because text needs fonts. Resource dependencies participate in incremental builds, and resource changes trigger only the necessary compilation or reload (`UpdateResource`).
+
+### 23.3 Internationalization
+
+- Locale changes, pluralization, locale-aware formatting, translated strings, RTL.
+- Translatable strings use a dedicated syntax in `.ui` (an illustrative `@tr("...")`), extracted at compile time into catalogs. Translated strings are locale-dependent bindings, never constants (§13.1).
+- The locale and text direction are environment properties. A locale change re-evaluates dependent bindings and triggers relayout.
+- i18n core (environment properties, catalogs, direction) is built in Phase 4. Full formatting and pluralization libraries are selected by Phase 11; the *architecture* does not wait for them.
+
+---
+
+## 24. Platform Architecture
+
+```text
+Albor Runtime -> Platform Abstraction
+                 +-- macOS
+                 +-- Windows
+                 +-- Linux/Wayland
+                 +-- Linux/X11
+                 +-- Headless
+```
+
+- **macOS:** AppKit/native windows and a Metal-compatible presentation path. Framework timers and posted tasks register in `NSRunLoopCommonModes`, and the display link must keep framework task scheduling alive across window occlusion and application deactivation, because a nested modal session services the modal run-loop mode only (AD-21, validated by Prototype A2 on macOS).
+- **Windows:** Win32 and a validated Skia GPU backend (open question 8).
+- **Wayland:** explicit surface roles; positioner-based popups; client-side decoration strategy; frame callbacks (and throttling for occluded windows); text-input protocol and IME; portal integration for dialogs and notifications; GPU presentation through the platform's EGL or Vulkan window-system integration, with a shared-memory software fallback. Wayland clients cannot position windows or read global coordinates, so the window API reports "unsupported" for those queries (§8.4).
+- **X11:** its own input, clipboard, IME (IBus or XIM), DPI and presentation handling (Tier 2).
+- **Headless:** no native window, no GPU requirement (§25).
+
+### 24.1 Platform implementation strategy (AD-16, Decided)
+
+AD-16 settles the ownership boundary: Albor implements its own lightweight Window, EventLoop and Platform abstractions per OS and reuses low-level standard C libraries only for specialized protocol tasks. A general-purpose windowing library is not used as the platform layer. The criteria that produced the decision were:
+
+- ability to express window roles, popups, modality and client-side decorations (Wayland positioner/popup behavior is the key test);
+- ability to run custom nested-loop handling and register event sources in all run-loop modes (§7.4);
+- IME and text-input integration depth;
+- accessibility hooks;
+- ability to create surfaces from renderer-owned GPU devices (§9.2);
+- licensing, binary size and maintenance burden.
+
+A library that cannot express Wayland popup placement or surface roles is acceptable for the renderer-only prototype A1 but disqualifying as the final platform layer; that is why A1 may use a convenience library while the platform layer is written directly.
+
+| Platform | Direct layer | Reused libraries |
+| --- | --- | --- |
+| macOS | AppKit plus an Objective-C runtime bridge | CAMetalLayer for presentation |
+| Windows | Win32 | DirectComposition, DXGI, TSF |
+| Linux Wayland | Wayland client | libdecor, xkbcommon, libwayland-egl |
+| Linux X11 (Tier 2) | X11 client | xcb, xkbcommon |
+
+---
+
+## 25. Headless, Software Rendering and GPU Lifetime
+
+- A headless platform backend and a software/raster renderer are **required** for CI, screenshot testing, automation, VMs, remote desktops and systems without usable GPU presentation.
+- Functional parity between GPU and software renderers is required for all Level 2 primitives and resources (§11.7). The software renderer is the **reference path for screenshot tests**; GPU output is compared against it with per-test tolerances.
+- The renderer owns GPU device and context lifetime. Resource lifetime is defined relative to renderer, surface, window and custom node (§11.4).
+- Device reset or loss is handled explicitly: renderer-owned resources are recreated; application-owned resources use `on_device_reset`.
+
+---
+
+## 26. Diagnostics and Inspector
+
+Development diagnostics include UI tree and semantic tree inspection, layout bounds, hit-test visualization, dirty regions, frame timing and FPS, GPU resources, memory, and binding/dependency inspection. The inspector's render-tree and dirty-region views are views over `FrameScene` and layer caches (§10.4).
+
+These facilities exist only in Dev and Test builds (§2.2).
+
+---
+
+## 27. Testing
+
+Testing covers runtime, compiler, UI, tooling, accessibility/semantics, automation, rendering, live reload and all supported platform layers. Headless execution is required for substantial CI coverage.
+
+Cross-cutting conformance suites:
+
+| Suite | Purpose |
+| --- | --- |
+| **Dual-engine conformance** | The same `.ui` corpus runs through compiled output and the dev IR evaluator and must produce the same observable behavior (AD-25). |
+| **GPU/software parity** | Level 2 primitives and resources compared across renderers within tolerance. |
+| **LSP/compiler agreement** | Diagnostics from both over the same corpus. |
+| **Manifest consistency** | Generated glue, descriptor tables and preview stubs agree with the manifest. |
+| **Semantic tree tests** | Roles, names, states and actions of every widget (a widget's definition of done includes its semantic tests). |
+| **Automation compatibility** | The reference test (Appendix B) running against a sample application. |
+| **Build-scope tests** | A scripted check that a `.ui` body edit rebuilds only the expected translation units (§14.3). |
+
+---
+
+## 28. Measurable Performance Targets and Benchmark Workloads
+
+Performance requirements are numerical. Initial **measurements**:
+
+### 28.1 Build
+
+- clean build time;
+- incremental `.ui` compilation time;
+- incremental C++ build time;
+- generated header and source size;
+- number of translation units rebuilt after a local `.ui` body change, after an interface change, and after an unrelated application change;
+- the same set measured on a **baseline**: an equivalent UI built in the current workflow that motivated this project (§30, Prototype B).
+
+### 28.2 Runtime
+
+- startup time;
+- memory footprint;
+- UI node and property counts, and memory per property and per binding;
+- frame time distribution;
+- input-to-frame latency;
+- idle CPU usage.
+
+### 28.3 Rendering workloads
+
+Workloads are fixed so that prototypes have a failure condition:
+
+| Workload | Scene | Interaction |
+| --- | --- | --- |
+| **W1 — Waveform** | Multiple polylines totaling ~10⁶ segments; antialiased cosmetic (1 device pixel) strokes | (a) continuous pan/zoom of a static scene; (b) data appended at a fixed rate with resource rebuild on a worker |
+| **W2 — CAD-like** | ~10⁵ symbols of roughly ten segments each (~10⁶ segments total) plus several thousand text labels | continuous pan/zoom plus hover hit testing against the full scene |
+| **W3 — Multi-window pacing** | Two windows, each running W1(a); presentation of one artificially throttled | input handling and frame pacing in the unthrottled window must be unaffected |
+
+Metrics recorded per workload: frame-time percentiles (p50/p95/p99), input-to-frame latency, CPU and GPU memory, resource upload time, idle CPU after the interaction stops.
+
+### 28.4 Pass/fail criteria
+
+Acceptance thresholds are **set and recorded before a prototype runs**, based on the intended application class and reference hardware, and written into the prototype plan. They are not derived from the measured results. A natural default for interactive workloads is sustaining the display refresh rate during interaction on the declared reference hardware; the numbers themselves are chosen when the prototype is scheduled.
+
+---
+
+## 29. Architectural Decision Register
+
+### Core model and build
+
+**AD-01 — Production execution model.** *Decided.* `.ui` compiles to native C++. No compiler frontend, interpreter, registry or reflection in Release.
+
+**AD-02 — Dev runtime extension.** *Proposed.* A separate `albor-devrt` (registry, IR loader, restricted expression VM, reload adapter) is linked only in Dev. The compiler stays out of process. The layout-invariance rule (§2.3) keeps the runtime binary identical across configurations. Validated by Prototype E, which **supports** it on the layout-invariance point: class layout and virtual interfaces are byte-identical across configurations, the Dev-only hook lives in a slot declared in an un-`#ifdef`ed header and is null in Release, and the Release binary excludes devrt at link time. It stays *Proposed* for two reasons, and the first has changed since Prototype E ran. Binding replacement is now **no longer missing from the property system**: Prototype D2 implemented `ReplaceBinding` as a real replacement of a binding function and dependency set, and confirmed that after a replacement the old binding's source drives **0** further evaluations. **The remaining gap is narrower and belongs to devrt rather than to the engine** — E's reload adapter still applies `ReplaceBinding` as a `SetProperty`, so the adapter that actually performs a live reload has not been shown to use the real operation; that is Prototype E2's first task. Second, the slice still covered no genuinely independent second engine, so it cannot yet show that two engines agree, only that one engine preserves values across a patch.
+
+**AD-03 — Generated public headers.** *Decided*, with its rationale now partly refuted and its performance half proposed for split. Concrete, non-virtual facade classes; interface-only; implementation private; write-if-changed generation. Prototype B validated the shape and Prototype B2 validated the incremental behaviour: write-if-changed restamps 0 files, and a body edit rebuilds exactly one translation unit. **What B2 refuted is the explanation, not the decision.** B attributed about 70 ms CPU per translation unit to "typical header-parse overhead"; decomposition shows **48.6 ms of the 71.5 ms is the fixed per-translation-unit cost of invoking the compiler at all** — 500 translation units that include a header and define nothing cost 24.30 s CPU. The two standard remedies for slow generated C++ **both fail**: a precompiled header of the runtime headers buys **3.00 %**, which is inside the floor's own 3.83 % spread and therefore not distinguishable from noise, and forward-declaring instead of including `<cstdint>` made the build **28.85 % slower**. **The cost is the compiler being invoked 500 times, so the only lever is fewer translation units.** Unity chunking at N=25 cuts clean CPU to **11.2 %** of one-per-component while a body edit costs **2.1×**; at N=50 it is 9.2 % against 3.3×. Two further measurements change how the incremental number should be read: **the link, not the compile, dominates a one-TU edit** (0.138 s link against 0.103 s compile, **57.26 %**), which B's single 0.97 s figure concealed and which caps what any compile-side optimisation can be worth; and peak compiler RSS (**16.6 MB**) and binary size (**4 272 B**) do not constrain the choice at all. **Proposed split, for the human:** **AD-03a** keeps the facade/interface-only/write-if-changed rules and stays *Decided*; **AD-03b** covers translation-unit granularity, stays *Open*, and would record a documented chunk size of 25. **AD-03's clean-build performance claim remains contradicted** by Prototype B against its synthetic baseline, and B2 shows what would have to change for it to hold: not smaller headers, but fewer translation units. B2 ran **without a named baseline**, so it does not itself compare against the workflow that motivated the project.
+
+**AD-04a — Invalidation index.** *Proposed, with the index structure itself still Open.* The proposal is the **eager-push evaluation over declared dependencies with no per-binding allocation**, which Prototype D supported at 56 B per property and 39.3 B per binding. **Which index structure realises it is a separate, unresolved choice**, and this entry deliberately does not settle it. Three positions are on the table: **sealed CSR everywhere**, which is cheapest to query and cheapest in memory; **segmented everywhere**, which Prototype D2 measured as the only design that answers a dependency insertion locally (0.20 µs p99 against 31.10 µs for a full CSR rebuild) at **21 196 B against 2 408 B for the same graph, about 8.8×, plus 1 824 B of growth slack the index never returns**; or **segmented only where a subgraph mutates**, sealed elsewhere. D2's evidence does not choose between them, because its 8.8× figure comes from a graph of a couple of hundred bindings and the ratio is a function of graph size (an insertion is 3.87 % of a rebuild at 200 bindings and 0.04 % at 20 000), while at Prototype D's scale of 100 000 properties and 11 032 bindings an 8.8× index could exceed the entire saving that typed storage offers. **Prototype D3 F2.2 measures the combined memory of all three at D's scale** and is the prototype that would settle this entry. What is settled either way: steady-state evaluation does not degrade after 1 000 mutations (0.044 ms p99), and `PropertyId` assignment is **tested and supported** — Prototype B assigns ids as component-local `uint16_t` offsets over a runtime base offset and confirmed that editing a property in one component rebuilds only that component.
+
+**Prototype D3 has now measured the missing factorial (F2.4), and it settles how this entry is decided rather than which structure wins.** Across 2 indexes × 3 models × 4 topologies the **index axis moves settle p50 by 1.18 %** and the **interaction term is 6.96 %** of the larger main effect, both inside the pre-registered 10 % bound: **the two axes are separable**, so the index can be chosen on memory and mutation locality alone and AD-04c's model on evaluation behaviour alone. **The mutation-locality argument also strengthens with scale rather than weakening**: D2's 155× insertion-to-rebuild ratio at a couple of hundred bindings is **744× at 11 000 bindings** (segmented 0.120 µs p99, sealed 89.23 µs), because a local add is O(1) and a rebuild is O(entries). R2 already priced the memory (sealed 5.32 B/property on a real corpus mix against a segmented premium of 9.3 B), and R8 measured the consequence for reloads: **an in-place binding replacement on the sealed index costs 143 µs at 11 000 bindings against 0.40 µs on the segmented one**, because every post-seal edit on a sealed index is a full rebuild. One further constraint is measured and structural rather than a matter of degree: **a sealed index cannot absorb a property created after `finish()`**, because its rebuild indexes by a property count fixed at seal — so a virtualized list that materialises a row after seal cannot use it at all. **Recommendation unchanged in substance, now measured: sealed CSR where the graph is fixed, segmented where a subgraph mutates, with the crossover chosen per component subtree rather than globally.** Not *Decided*: the per-subtree boundary is a design choice and Prototype D2's base-offset figure was superseded (see F2.10 below). Detail and thresholds: `prototypes/d3/RESULTS.md`, R4 and R8.
+
+**AD-04b — Storage layout.** *Open. Prototype D3 R1 found the recommendation unsafe as stated and it has been downgraded from a default to a conditional.* The representation itself is not in doubt: typed per-component storage costs **8.00 B per property for an all-scalar component, 14.00 B for one of every §13.1 category, and 20.00 B for a string-heavy mix**, each confirmed to 0.0000 B against the schema table's own prediction, against an erased slot of **68.00 B that is identical for every mix** (spread 0.0000 B) and of which **80 % is `SnapshotBox` alone** — the erased representation pays for its largest alternative on every property whatever that property holds. **What D3 found is that the slab policy inverts the answer at small scale.** Typed storage allocates a fixed 64 KB chunk so that region addresses stay stable; at one live instance that chunk holds 64 B of values, so a single eight-property component costs **65 628 B against the erased store's 544 B — 120× worse.** The measured crossover was **256 instances, or 2 048 properties**: below it typed storage costs more, above it it is **2.47× cheaper** (68 ÷ 27.5 B/property), and that asymptotic ratio is set by the flat **7.00 B per property of addressability** (4 B location, 1 B type, 1 B source, 1 B attachment) rather than by the value column. Two of Prototype D2's published figures are therefore **corrected**: its erased slot was reported as 128.00 B, which came from giving both candidates one `RegionTable` and dividing a 16-slot store by 8 properties; and its "2.3× for scalars" does not correspond to the scalar mix at all — 2.3× is close to the asymptotic *mixed* figure of 2.47×. **D2's T1.3 ("typed ≤ erased") passed only because its erased baseline was inflated by that bug**; at the correct 68.00 B the comparison at one instance is 8 203.50 against 68.00 and typed storage **loses**. Slack itself is not the problem: at 4 096 instances it is **12.50 %** of allocated, so chunking amortises correctly and the **64 KB quantum is a tunable constant, not a design constraint**. **D3 R3 measured the mitigation: geometric growth from a 1 KB first chunk, doubling to the 64 KB cap, moves the crossover to 16 instances = 128 properties** (a 16× reduction), keeps slack at **12.3 %** at 4 096 instances, and passes 100 % of a sampled address-stability gate (`D3Engine.GeometricSlabKeepsAddressesStableAcrossGrowth`). One threshold still fails as worded: at exactly one instance the 1 KB first chunk overshoots (~139.5 vs 68.0 B/property, a 2× loss), bounded by the first-chunk size rather than the design; a ~256 B start would fit one instance, tunable against a real corpus (F2.11). **D3 R2 then measured the index at the brief's scale — 100 000 properties, 11 000 bindings × 2 dependencies: typed storage plus the sealed CSR index costs 32.2 B/property against the erased store's 94.0 B/property on the same index, inside the 36 B budget**, and the index preserves rather than inverts the storage answer. The hybrid (CSR prefix + segmented tail) failed its ≤ 6 B/property premium at 11.8 B: the reused segmented tail charges a dense segment table for all 100 000 properties to serve 1 000 entries, so the minimal tail needs a sparse record. **D3 R7 answered the invalidation question: invalidation alone clobbers an imperative override** — end_animation resurrects a broken binding when no record exists; the minimal necessary mechanism is presence without a value, a sorted record of animated targets at **4.0 B/animated property** against the full map's 64.0 B, passing every animation observable check. **D3 R11 then supplied the corpus that was the last outstanding condition (F2.11), and it confirms the representation rather than qualifying it — with one caveat that is a property of the corpus's authorship, not of the answer.** Six screens and 22 component types were authored under `prototypes/d3/corpus/` and parsed; the corpus is **71.8 % scalar, 28.2 % payload-owning, 1.19 dependencies per binding (85.1 % of bindings read exactly one property) and 40.5 % of dependency entries are environment properties**. Its value column is **9.75 B per property against `mixed`'s 14.00 B**, and with the sealed CSR index at the corpus's own fan-in the combined figure is **25.3 B/property at a hundred screens against the erased store's 84.3** — inside the 36 B budget with 30 % headroom, and cheaper than R2's 32.2 because the corpus declares fewer dependencies per binding than R2's uniform plan assumed. Two measured details matter for the design: **the CSR offsets table is a per-property tax the corpus does not escape** (one screen's combined figure is 36.2 B/property, above the budget, falling to 28.0 at ten screens and 25.3 at a hundred), and **a modal dialog declares 124 live properties against the 128-property crossover**, so a dialog-only application still pays the geometric slab's first-chunk overshoot while every other screen is 2.9× to 6.5× above it — R3's tunable first-chunk size, now with a number to tune against. **Recommendation: MODIFY, condition now measured and met.** Adopt typed per-component storage as the default with the geometric slab policy and a first chunk small enough to fit a dialog; Phase 2 still builds against a swappable storage interface, because the corpus that confirmed the mix is **authored** — no `.ui` file exists in this repository until Phase 5 (§31) — and its representativeness is *tested* against three pre-registered bounds rather than established; the tail index must be sparse; and the per-property CSR offsets remain the strongest measured argument for an `(instance, local)`-addressed index. Not *Decided*. Detail and thresholds: `prototypes/d3/RESULTS.md`, R11.
+
+**AD-04c — Evaluation model.** *Open, with a recommendation.* Prototype D2 measured all three models this entry left unmeasured (`prototypes/d2/RESULTS.md`). Eager push **reproduces D exactly**: one pass per chain layer, confirmed at depth 16 (16 passes) and by D's own recorded 8 passes for a depth-8 scene coming out again as 8. Both alternatives work as advertised — `pull_topo` and a hybrid push-then-memoised-pull settle a depth-16 chain in **1** pass with **0** redundant evaluations, where eager takes 16. **The pass-count saving does not buy latency at the sizes measured: eager push is faster than both alternatives at every depth from 4 upward and on both diamond topologies**, because the pull models walk the whole binding order or a stamped dirty set on every settle, and that fixed cost exceeds the price of a few extra passes at these sizes. Recommending a replacement on pass counts alone would read the wrong number. Where eager push genuinely loses is **reconvergence and mutation locality**: on a layered reconvergent graph reachable at two depths it evaluates 18 bindings where 17 suffice, while the hybrid evaluates 17 with **0** redundant; and a sealed CSR index answers a single dependency insertion by rebuilding every bucket (31.10 µs p99) where a segmented index answers it locally (0.20 µs p99). **The hybrid is the only model that is both redundancy-free and mutation-local, and that is the argument, not the chain depth.** Kahn's recorded conflict with §2.4 also resolves: Kahn detects a static cycle by failing to order it (it ordered 0 of 2 cyclic bindings), so **static cycles can be a compile-time rejection** and the evaluation order need not differ between test and Release. Dynamic cycles remain reachable in Release, so **the 64-pass budget stays in Release** — and because a *converging* cycle settles while still consuming passes, a slowly converging cycle can look healthy, which means **detection rather than the budget is what should alert**. **Prototype D3's factorial (F2.4) confirms the first half of that recommendation and refutes the second.** The separability result belongs to AD-04a and is recorded there; what belongs here is what the factorial did to the model comparison. **Eager push publishes one superseded value per settle on a layered reconvergent graph** — a transient inconsistency a reader inside the settle can observe, measured as 1.00 glitches per settle at `reconvergent` and 0.00 at one-hop fan-in, which is the price of the pass-per-layer model. **The hybrid publishes no transient value and is instead wrong**: its sink settles on a value computed from a dependency that had not yet been recomputed in that settle, because the recursive pull consults only dependencies that are *already* dirty, and the memo epoch then forbids the correction. Measured divergence at `reconvergent`: the sink holds **3609 under eager push and 3608 under the hybrid** — one propagation step apart, with the hybrid holding the wrong one. **This inverts the recorded argument for the hybrid.** It was adopted on redundancy (17 evaluations against 18) and mutation locality (0.20 µs against 31.10 µs); the redundancy figure is real and the mutation-locality figure belongs to the *index*, not the model (R4 measures the index axis at 1.18 % of settle cost, and the 744× ratio at 11 000 bindings is a property of the index). So the hybrid's case reduces to a 6 % evaluation saving it delivers incorrectly, and **it cannot be adopted as the reconvergent-path model until the pull is fixed or the memo epoch is replaced with a per-pass one.**
+
+**Two further measurements change the shape of this entry.** First, **the two engines are not observationally equivalent today** (F2.5): over 204 legitimate DAGs — the four committed topologies plus 200 pseudo-random shapes — **only 140 reach the same final values under both engines**, 137 of the 200 random ones, so AD-25's dual-engine conformance does not hold and a conformance suite would fail on the property system before it reached anything else. Second, **carrying both engines inside one runtime module is not free**: the graph allocates every model's stamps, its Kahn order and its rank whatever model it runs, so **45.3 % of engine state (34.39 of 75.85 B/binding at 11 000 bindings) pays for engines that never run**, against D's recorded 39.3 B/binding for the entire binding. Two engines over one store do share no mutable state (0 divergences between interleaved and sequential settles over 192 properties and 8 rounds), so link-time exclusion is viable — but only if the per-model state is split too, not just the code.
+
+**The compile-time-rejection half is blocked by a measured defect (F2.9).** Kahn over the declared graph is exact in both directions on the committed 12-topology corpus — 5/5 cyclic rejected, 7/7 acyclic accepted — with one exception that matters more than the eleven that passed: **`detect_cycles` skips self-edges**, so a self-referential binding is not a cycle to it, the sealed order reports the graph acyclic, and only the runtime pass guard catches it. A compile-time rejection built on that check would accept a self-referential binding. Conditional dependencies are otherwise handled: a runtime guard is affordable at **0.961 ms p99 after one conditional edge at 11 000 bindings**, and clearing the sealed order on mutation prevents a false acyclic claim — but **static soundness cannot be bought by declaring the union of possible dependencies**, which costs **7.71× the invalidations** of the exact declaration (50 100 against 6 500 over 100 source writes) because the unused dependency is a state property the whole subtree also reads. The cycle check therefore has to run on the **declared** graph at build time and guard the **conditional** graph at run time, and the self-edge case has to be fixed first.
+
+**Recommendation: MODIFY, revised by measurement — keep eager push as the shipping model, and treat its reconvergent glitch as the accepted cost until a third model is measured; do not adopt the hybrid pull until its stale-reconvergence defect is fixed; fix the self-edge blind spot, then promote Kahn to a compile-time rejection for declared graphs with a runtime guard for conditional ones.** Not *Decided*: the eager/pull crossover is still unmeasured, the eager model's per-settle glitch has no measured mitigation, and no `.ui` corpus has been run through either engine. Detail and thresholds: `prototypes/d3/RESULTS.md`, R4, R5, R8 and R9.
+
+**AD-04d — Animation shadowing.** *Proposed.* 64 B per animation slot, confirmed independently by Prototype D2 at 64.0 B and 0.046 ms p99 for 1 024 animated properties. **The stale-value question this entry recorded as unverified is now answered, and the answer is not the one the question assumed.** Prototype D's `end_animation` restores the shadowed snapshot, and while an animation owns the target a binding write is dropped, so the shadow can only hold the value from animation start — but **D also invalidates the target afterwards, so the binding recomputes and the restored value is overwritten immediately and no stale value survives.** The stale value is real one layer further out: dropping that invalidate returns the animation-start value under both the eager and the hybrid model. So D's correctness rests on an invalidate that lives in the *engine*, one layer above the *store* that owns the shadow, and nothing in the type system or in a test of `end_animation` alone would notice its absence. **Both the restore and the invalidate are load-bearing; the shadow *value* is not**, since a mode that re-evaluates without restoring anything reproduces most observable behaviour. **Prototype D3 R7 then measured the remaining half, and the naive elimination is disqualified**: with no record at all, `end_animation` cannot tell whether an animation ever owned the target, so it always rebinds and replans — **resurrecting a binding that an imperative write had broken and overwriting the user's override** (measured: the override came back as the bound value with the attachment restored). The minimal necessary mechanism is therefore **presence without a value**: a sorted record of animated targets at **4.0 B per animated property** against the full map's 64.0 B, which passes every animation observable check including the override the naive elimination clobbers. **AD-04d's 64 B budget is therefore wrong and the recorded mechanism should carry a 4 B presence record instead** — the same 16× reduction D3 measured, with the shadow's *value* deleted and its *presence* kept. AD-04d's interaction with AD-24 is otherwise settled: an imperative write during an animation wins and ends it, and `rebind` after an animation re-evaluates from current dependencies rather than from the override.
+
+**Prototype D3 R8 then measured the one interaction this entry had not: `ReplaceBinding` on a property an animation owns, and it is broken.** The store's "may a binding write this right now" test is true only for `WriteSource::Binding`, so under an active animation it reports false — which §13.4 reads as *overridden*. Every replacement mechanism therefore takes the §13.4 override branch and stamps `Imperative` over the animation, **ending it and converting the animation into a user override**, measured identically across all three mechanisms R8 compared (remove-then-add, in-place, in-place with id reuse). The rule §13.4 states is about an *imperative* override; an animation is a distinct source (§13.1 category 6, §13.5), so the precedence test conflates two sources that §13.4 and §13.5 keep separate everywhere else. The fix is a precedence test that asks *who owns this property* rather than *is the source exactly Binding*, and it belongs with the 4 B presence record this entry already adopted: with a presence record, "an animation owns this" is answerable without inferring it from the write source. Detail and thresholds: `prototypes/d3/RESULTS.md`, R8.
+
+**Prototype D3's own caveats** are the ones its last seven revisions added, and they bound every figure they produced
+(`prototypes/d3/RESULTS.md`, R10 and R11): **the reference machine's load average was 2.0–3.6 throughout, and the
+run-to-run spread of a measured median reached 72 %**, so no sub-percent claim about the read path is measurable there —
+which is why D2's 2.3 % base-offset figure could not be reproduced and had to be replaced. **The `.ui` corpus is
+authored, not shipped**: no `.ui` file exists until Phase 5, so the property mix that confirms AD-04b is tested against
+three pre-registered representativeness bounds rather than established by a real application. **The conformance corpus is
+204 small DAGs of at most 24 nodes**, which bounds what the 31 % divergence rate says about real applications. And **the
+batch added no unit tests for the six defects it diagnosed**: each is recorded as a measured observation with its threshold
+verdict, and turning them into regression tests is Phase 2's work, not this prototype's.
+
+**AD-04 prototype caveats.** The workload gave every category a 16 ms p99 budget — a whole frame, shared with layout and scene build — so no category could fail. It contained no reconvergent (diamond) dependencies, since redundant visits were zero, while real UIs have many. It was one run on one machine and there is no `plan.md`, so the thresholds cannot be shown to have been pre-recorded and the reference hardware was declared only afterwards (§28.4). Prototype D2 is that follow-up, and it was run rather than a re-reading of this one: **it corrected the reconvergence caveat** by measuring a layered reconvergent graph where eager push evaluates 18 bindings where 17 suffice, which D's topology could not produce, and it **reproduced D's other numbers** — the 8 passes for a depth-8 scene and the 64 B animation slot — which is what makes D's record usable as a baseline. It **inherited D's threshold discipline problem and fixed it for itself**: D2's `plan.md` was committed before the benchmark existed, so unlike D's, its thresholds are provably pre-recorded. Two of D2's own 57 thresholds failed, which is the point of recording them.
+
+**AD-17 — Native component manifest.** *Proposed.* The manifest is the source of truth; glue is generated; the compiler never parses C++ (§15).
+
+**AD-24 — Binding write precedence.** *Proposed.* Imperative assignment breaks bindings; `rebind` restores; reload does not override unchanged-binding overrides (§13.4). **Prototype D2 confirmed the §13.4 rule as specified** — an imperatively overridden property keeps its override across a reload that did not change its declared binding — **and named the case §13.4 does not cover:** an imperatively overridden property whose declared binding *did* change. The observed behaviour is that the override is kept and the new binding does not run. That is defensible but is not derived from the spec, so it is **referred here rather than decided by a prototype.** Binding removal is likewise unspecified: the observed behaviour is that the property keeps its last computed value and stops participating, recorded as a proposal.
+
+**AD-25 — Dual-engine semantic equivalence.** *Decided.* Compiled and dev paths share one semantic definition and a conformance corpus (§2.4).
+
+**AD-23 — Compiler implementation language.** *Proposed.* C++ (§16).
+
+**AD-27 — Units.** *Proposed.* `px` = logical pixels; `phx` = physical pixels.
+
+### Rendering
+
+**AD-05 — Renderer architecture.** *Decided.* Renderer separated from windowing/platform APIs; Skia is the initial implementation.
+
+**AD-06 — Custom rendering API.** *Proposed.* Albor `RenderContext` with batched immediate primitives and retained immutable resources; Level 3 deferred; no native GPU commands into renderer state (§11). Validated by Prototype A1.
+
+**AD-07 — Render scene model.** *Proposed.* Retained UI tree; UI-thread scene build produces an immutable `FrameScene`; renderer-internal caching and layers.
+
+**AD-18a — Render execution and stage division.** *Decided.* Stage 1 (scene build and application callbacks) on the UI thread; stage 2 (render execution and GPU encoding) decoupled from application code; immutable snapshots for worker data (§10.5). Supported by A1: recording a frame on a worker costs 0.46 ms p99 against an 8.33 ms processing deadline, and recording on the UI thread is equivalent within noise, so the division is close to free.
+
+**AD-18b — Multi-window presentation isolation.** *Open.* Two windows presented synchronously on the UI thread stall each other: window 2's interval during window 1's 100 ms hold is 100.86 ms p50 (A1-Dawn W3), i.e. the hold itself rather than GPU contention. **That result is close to a tautology** — any design that presents on the UI thread fails it by construction, so repeating the measurement proves nothing. The open question is narrower: can presentation be moved off the UI thread on macOS at all, given AppKit/QuartzCore main-thread affinity, which refuted "the render thread owns the surface" for Ganesh in A1.2a? **The mechanism question is now partly answered.** `CAMetalDisplayLink` (macOS 14+) was measured in the pacing triage: it delivers the drawable with the callback as advertised, but it **starves to 0.6 Hz whenever the window is not composited** — exactly 3 drawables vend and the pool never returns, with the run-loop heartbeat still ticking — and it throttles to 46–58 Hz even when it works. `CAMetalLayer.maximumDrawableCount` remains untested. A2 revision 2 sidesteps the question rather than answering it: `CVDisplayLink` is the only measured-uniform pacing source on this machine, and the prototype now encodes and presents from CoreVideo's thread, which is the arrangement AD-18b wants to test. **What is still unmeasured is the isolation itself** — no two-window hold experiment has been run against the new arrangement, so §10.2 and §10.3 continue to describe a default that A1.1 and A1.2a refuted on macOS and must be read as provisional.
+
+**AD-26 — Software/headless parity.** *Decided.* Required; software renderer is the screenshot reference (§25).
+
+**AD-28 — Candidate primary HAL (Google Dawn / WebGPU C++).** *Proposed (in active evaluation).* **Candidate backend:** Google Dawn (WebGPU C++) is the primary candidate HAL for `albor::Renderer` over Metal on macOS. **Measured on A1-Dawn (macOS/Metal, single run per workload, 2019 Intel laptop):** 1.8 × 10⁶ line segments in a single `Draw(6, 1800000)` instanced call against 220 draw calls under Ganesh; frame recording 0.085 ms p50 against 0.177 ms; present interval p50 16.62 ms against 149.7 ms. **How far that evidence goes, stated narrowly:** the 99.41% hover hit ratio common to both renderers shows only that both received *identical input geometry* — hit testing is CPU-side and the renderer takes no part in it — so it is a fixture check, not a rendering-parity check; pixel-level output parity and GPU timestamp queries are still outstanding. The headline conflates two effects: Ganesh's 10,470 ms stroke figure is CPU tessellation that the pre-tessellated quad path already avoids, so the like-for-like recording gap is about 2×, and the present-interval gap is GPU-bound, so a 60 Hz lock demonstrates no missed vsync but no headroom either. The Skia baseline has a known defect of its own: its pre-tessellated quads fix stroke width in geometry space, so strokes scale under zoom and are not the cosmetic device-pixel lines the workload specifies. **Blocking items:** (1) *Platform parity* — D3D12 and Vulkan unvalidated; only the `metal` feature was enabled. (2) *Text* — Dawn has no glyph stack, and the Skia W2 run drew its 4000 labels while the Dawn run drew none, so the "30× cheaper W2" figure is partly an artefact of unequal work. (3) *2D feature surface* — replacing Skia means rebuilding paths with joins, caps and dashes, clip paths, gradients, opacity layers and effects; this is the largest unlisted cost. (4) *Software and headless parity (AD-26)* — Dawn has no first-party CPU rasterizer, though software adapters (SwiftShader, lavapipe, WARP) are candidates and are slow and non-deterministic. (5) *Build cost* — **now measured** (`prototypes/a1_build_cost/RESULTS.md`). A cold `skia[graphite,metal]` build is **22.6–34.3 minutes** across two runs of the identical workload, against **16.6 minutes** cold for `dawn[metal]`; Skia's closure is **45 packages against Dawn's 6**. So the dependency is genuinely dearer to build cold but by **1.4–2.1×, not an order of magnitude**, and the pre-registered band verdict is **not robust** — the two samples straddle the 30-minute clause. Two corrections follow. Dawn's own recorded 757 s was *warm ccache*, so cold Dawn is ~1.3× dearer than the figure this entry used, and any Skia-versus-Dawn comparison quoting it overstated the gap. And **the repository's ccache never reaches vcpkg builds at all** — the preset sets `CMAKE_C_COMPILER_LAUNCHER` for our CMake while vcpkg drives its own — so on a machine or CI job with neither cache the cold figures apply, while on this machine the 205-archive vcpkg binary cache already removes the cost entirely. Blocked, but no longer unknown. (6) *A middle option exists and was probed* — the same vcpkg `skia` port offers a `dawn` feature that pulls in `skia[graphite]`, so Skia Graphite on a Dawn backend could let Skia's text, paths and effects share one device with custom Level 2/3 passes, which would remove blockers 2 and 3. **Prototype A1-Graphite-Dawn tested the entry point and found it absent from the build**: the spike compiles against `DawnBackendContext` and `ContextFactory::MakeDawn` — the shared-device shape blocker 6 needs — and fails to link, because `nm` shows Graphite exporting only `MakeMetal` and `MakeVulkan`. The pinned manifest requests `skia` with `["graphite", "metal"]` and never the port's `dawn` feature, and **Skia's headers are not feature-gated, so the header's presence is not evidence the backend was built**. **Blocker 6 is therefore a build decision before it is a performance question**: one manifest line and a full Skia rebuild would make it measurable, and that change is the human gate's to make (§29). Nothing about shared-device feasibility or combined geometry-and-text cost has been measured either way. **Skia is not retired** and remains the default renderer until these close. Evidence standard: single runs, and A2 established that tail figures on this hardware vary several-fold between runs, so no p99 here is a decision input on its own.
+
+### Windows and platform
+
+**AD-08 — Window roles and modality.** *Decided.* Role (Normal/Dialog/Tool/Popup) at creation; modality is a separate framework-enforced property; popup carries parent/anchor/placement.
+
+**AD-16 — Platform Implementation Strategy.** *Decided.* 1. **Ownership Boundary:** Albor directly implements its own lightweight Window, EventLoop, and Platform abstractions per OS (macOS AppKit, Windows Win32, Linux Wayland, Linux X11). General-purpose windowing libraries (GLFW, SDL) are rejected as they fail Wayland popup requirements (xdg_positioner), nested run-loop event registration (§7.4), IME text input, and OS accessibility integration. 2. **Targeted Modular Plumbing:** Albor reuses low-level, standard C platform libraries for specialized protocol tasks where appropriate: Linux Wayland: libdecor (client-side decorations), xkbcommon (keyboard mapping/state), libwayland-egl; Linux X11: xcb, xkbcommon; macOS: Direct AppKit / Objective-C runtime bridge + CAMetalLayer; Windows: Direct Win32 / DirectComposition / DXGI / TSF. 3. **Prototype Unblocking:** This unblocks Prototype A2 (platform presentation, surface creation, popups, and nested-loop validation across macOS, Windows, and Wayland). **Evidence status.** *Decided*, but the factual claims in point 1 are **not verified against current library versions**: the claim that SDL fails Wayland popups needs re-checking, since SDL3 added popup and tooltip windows. The supporting evidence is Prototype A2 on macOS only, and A2 left window roles, popups and modality unimplemented, which are exactly the capabilities the rejection rests on. No record yet exists of what would reverse this decision, and the reuse list omits D-Bus (portals, AT-SPI) and IME libraries. Reversal criteria to be recorded: if one library is shown to satisfy Wayland `xdg_positioner` popups, nested-loop source registration, IME and accessibility on both Wayland and Win32, this decision should be reopened.
+
+**AD-21 — Nested native loops and re-entrancy.** *Decided* as a principle (§7.4); platform mechanisms are implementation work.
+
+**AD-22 — X11 tier.** *Proposed.* Tier 2 for the first production milestone.
+
+### Semantics, identity, automation
+
+**AD-09 — Semantic tree.** *Decided.* One tree; custom nodes provide virtualized semantic children (§19.3).
+
+**AD-10 — Automation security.** *Decided.* Excluded from Release at compile/link time; local-only, token-authenticated and allow-listed in Dev/Test.
+
+**AD-11 — Node identity.** *Decided.* Explicit keys are identity; implicit keys are correlation hints only (§18.1).
+
+**AD-20 — MCP routing.** *Decided.* MCP goes only through the automation layer.
+
+### Live reload, models, text, commands
+
+**AD-12 — Live reload.** *Proposed.* External dev service sends serialized IR/patches to the in-app reload adapter in `devrt`.
+
+**AD-13 — Virtualization and model keys.** *Decided* as a principle; the model interface (§20.1) is *Proposed* pending Phase 6 design.
+
+**AD-14 — Text/layout dependency.** *Decided.* Text measurement is a foundational layout contract.
+
+**AD-15 — Commands and undo/redo.** *Decided.* Commands are the shared action abstraction; undo/redo integrates at that layer. The history API remains open.
+
+### Distribution
+
+**AD-19 — ABI, versioning and distribution.** *Proposed.* Pre-1.0: no C++ ABI stability promise; distribute as source/CMake package building static or pinned-toolchain libraries; Skia built as a pinned dependency of Albor; no Skia or platform types in public headers; standard-library types in public APIs limited to those stable within a supported toolchain set. A stable ABI (for example through a C facade) is revisited at 1.0. Validated in Prototype B (build/distribution) and A1 (Skia build cost).
+
+---
+
+## 30. Prototype Plan
+
+Each prototype states its questions, scope and pass/fail criteria recorded in advance (§28.4).
+
+### Status, tests run, and conclusions so far
+
+Every threshold below was committed before its run (§28.4) and every result is in the prototype's `RESULTS.md`, with two
+exceptions recorded as such: **A2's Revision R1 restated the input-to-present budget from 16.7 ms to 25.0 ms after the
+first run had already failed against 16.7 ms** (the original miss stands as recorded), and **Prototype D's `plan.md` was
+written retroactively after the run**, so its thresholds cannot be shown to have been pre-recorded and its reference hardware
+was declared only after the run.
+
+| Prototype | State | Tests and runs performed |
+| --- | --- | --- |
+| **D — property and binding engine** | complete | 33/33 gtest unit tests (`tests/d/`); benchmark at 100,000 properties and 11,032 bindings |
+| **A1-Build-Cost — dependency build cost** | characterisation, **verdict not robust** | cold `skia[graphite,metal]` 22.6–34.3 min over two identical runs, cold `dawn[metal]` 16.6 min; 45 vs 6 packages; 1.4–2.1× ratio; the repository's ccache never reaches vcpkg builds, so cold figures apply only without the binary cache |
+| **A2 — platform presentation (macOS)** | complete (revision 2) | 200 steady frames, 60-step live resize, 500 ms nested modal session. Pacing now rides `CVDisplayLink`: 59.98–60.01 Hz p50, max interval 18.76 ms, zero stalls over five runs; T4.1 (p99 ≤ 16.7 ms) fails at 18.50–18.69 ms on a uniform phase overshoot, not a cadence defect |
+| **A2 — Windows and Wayland** | not run | plans and platform scaffolds committed; execution tables `PENDING_CI_MATRIX_RUN` |
+| **A1 — renderer (Skia)** | complete | A1.1, A1.2a, A1.3 workloads W1/W2/W3 (401, 401, deadline-limited frames), A1.4 offscreen (400/400) |
+| **A1-Dawn — renderer (WebGPU)** | complete, macOS only | workloads W1/W2/W3 (400, 400, 400/400 frames; 3,200 hover queries) |
+| **A1-Parity — renderer output parity (Skia vs. Dawn)** | run | isolated-segment ink matched after corner-5 fix; batch parity not established (13.95% zoom 1, 63.68% zoom 8) |
+| **D2 — binding engine follow-up** | run | 8 experiments, 57 pre-registered thresholds, 55 pass / 2 fail; typed vs erased storage, chains to depth 16, diamonds and reconvergent graphs, mutation, component-local ids, `ReplaceBinding`, cycles, animation |
+| **D3 — binding engine follow-up** | **complete (R1–R11; all eleven sub-experiments reported)** | typed-storage accounting (R1: 17 checks, 11 pass / 6 fail, 64 KB slab chunk inverts the answer below ~2 048 properties); geometric growth from 1 KB doubles to the 64 KB cap and moves the crossover to 16 instances = 128 properties with slack at 12.3 % (R3); combined storage × index at 100k properties / 11k bindings: typed + sealed CSR = 32.2 B/property inside the 36 B budget, hybrid premium fails at 11.8 (R2); invalidation alone clobbers an imperative override — the minimal mechanism is a sorted animated-target record at 4.0 B/property (R7); **index × evaluation factorial: the axes are separable (index 1.18 %, interaction 6.96 %), and the sealed/segmented insertion ratio grows to 744× at 11 000 bindings (R4); two engines agree on only 140 of 204 DAGs and 45.3 % of engine state pays for engines that never run (R5); string identity invalidates on every equal-content write and a 1 024-sample snapshot content compare costs 1 450 ns (R6); `remove_then_add` grows the binding table 100 000 % over 1 000 reload cycles while in-place replacement is flat but costs 143 µs on a sealed index (R8); Kahn skips self-edges so a self-referential binding would pass a compile-time rejection, a runtime guard costs 0.96 ms at 11 000 bindings, and a union declaration costs 7.71× the invalidations (R9); D2's 43 ns read was the 40 B variant copy — the scalar fast path is 6.59 ns and the base offset is an extra random access, +49 % (R10); the authored real-UI corpus is 71.8 % scalar with 1.19 dependencies per binding, and typed + sealed CSR is 25.3 B/property, inside the 36 B budget (R11)** |
+| **B — generated-code build performance** | run | 500 components per side, 5 clean builds per configuration, rebuild-scope and write-if-changed checks |
+| **B2 — build performance frontier** | run | per-TU floor, precompiled header, forward-declared headers, unity chunking N∈{1,5,10,25,50}, compile-vs-link, peak RSS, binary size, `uint16_t` limit; 5 samples per configuration |
+| **C — text, IME and accessibility** | not started | none |
+| **E — dev runtime slice** | run | layout dump in Release and Dev, hook install check, 16-node conformance over 5 runs in both configurations |
+
+**Still open in Phase 0.** The table above records what has been *run*, not what is *finished*, and the difference is
+material: six packages are outstanding and three of them gate decisions. Audited in `docs/STATUS_AUDIT.md`.
+
+| Package | State | What it gates |
+| --- | --- | --- |
+| A1-Parity completion | partial | parity verdict. Centroid offset, per-pixel delta histogram, the antialiasing audit and metric calibration are absent; the zoom-8 attribution is unresolved |
+| Dawn-vs-Skia re-measure | not started | AD-28. **No GPU-timestamp instrumentation exists in either renderer**, so every Dawn-vs-Skia cost figure rests on CPU-side recording time, and the W2 comparison is already recorded as "partly an artefact of unequal work" |
+| Pacing triage | **run and recorded** (`prototypes/a2_macos/PACING.md`), and acted on by A2 revision 2 | all windowed timings, and AD-18b. The finding is reproduced and named (CVDisplayLink uniform; CAMetalDisplayLink starves without compositing; CADisplayLink stalls whole-process on no recorded correlate). A2 now paces from `CVDisplayLink` and holds 60 Hz with no stalls, so **the framework's macOS pacing rule is settled by measurement**; the unverified markings on the *earlier* windowed figures stand, because those runs still rode the stalling mechanism |
+| AD-18b off-UI-thread presentation | not started; **now unblocked** | AD-18b; W3 as written cannot fail. Revision 2 already presents off the UI thread on CoreVideo's thread but measures no isolation, so the experiment itself is still open |
+| Chunked append-only batches | not started | §11.3; append is O(n) at 94–120 ms against a 25 ms budget |
+| Graphite-on-Dawn spike | **run; T5.1 fails on a missing build feature** (`prototypes/a1_graphite_dawn/RESULTS.md`) | the AD-28 gate. The capability **exists in Skia's source but is not in the pinned build**: `nm` over the installed library shows Graphite exporting exactly two factories, `MakeMetal` and `MakeVulkan`, and no `MakeDawn`, because `vcpkg.json` requests only `["graphite", "metal"]` and never the port's `dawn` feature. Nothing was measured about shared-device feasibility or combined cost — the spike stops one step before its question. The fix is one manifest line and a full Skia rebuild, which is a pinned-dependency decision for the human gate |
+| Prototype C (text, IME, accessibility) | not started | §21.2 text and i18n selection; the only Phase 0 prototype never begun |
+| A2 on Windows and Wayland | blocked on hardware | AD-16's evaluation; both tables remain `PENDING_CI_MATRIX_RUN` |
+
+
+**Conclusions reached**
+
+**D.** The property and binding engine fits its budget, and what it measured is adopted as AD-04a and AD-04d
+(*Proposed*), not as one *Decided* entry: compact CSR index with
+eager-push evaluation, Kahn ordering kept out of Release and excluded at link time, 64 B per animation slot. Measured
+56 B per property and 39.3 B per binding, all recorded budgets passed. Storage layout (AD-04b) and the
+evaluation model (AD-04c) stay **Open**, because the prototype tested neither runtime index mutation nor
+diamond dependencies nor the per-chain-layer passes it itself flagged. This unblocks the Phase 2 property layout and the
+binding representation Prototype B depends on.
+
+**D2.** AD-04b and AD-04c both move from *Open* to *Open with a recommendation*, and AD-04a, AD-04d and AD-24 gain
+measured answers. Typed per-component storage wins on **value** memory (**8.00 B** per property scalar, **14.00 B** mixed, **20.00 B**
+string-heavy, against a **68.00 B** erased slot) and D2 recommended making it the default for static graphs.
+**Prototype D3 has since measured that recommendation end to end.** R1 downgraded it to conditional, because D2's
+figures excluded slab slack: with the fixed 64 KB chunk included, typed storage is **120× worse below about 2 048 live
+properties** and 2.47× better above. D2's own erased figure was also wrong (**128.00 B**, from a shared `RegionTable`),
+which means **D2's T1.3 passed on an inflated baseline**. R3 then measured the mitigation: geometric growth from a 1 KB
+first chunk doubles to the 64 KB cap and **moves the crossover to 16 instances = 128 properties**, with slack at 12.3 %
+at 4 096 instances and a 100 % sampled address-stability gate; one threshold still fails as worded (the 1 KB start
+overshoots one instance by ~2×). R2 measured the index at the brief's scale (100 000 properties, 11 000 bindings × 2
+dependencies): **typed + sealed CSR = 32.2 B/property inside the 36 B budget**, the index preserves rather than inverts
+the storage answer, and the reused segmented tail fails its premium at 11.8 B — a sparse tail record is required. R7
+answered the invalidation question: **invalidation alone resurrects a binding an imperative write had broken**; the
+minimal necessary mechanism is presence without a value, a sorted animated-target record at **4.0 B/animated property**
+against the full map's 64.0 B, passing every animation observable check. For evaluation, eager push is **confirmed** rather than replaced — it reproduces D's recorded
+pass counts exactly, and it is **faster** than both pull alternatives at every depth measured, so the case for the hybrid
+rests on reconvergence and mutation locality rather than on pass counts. `ReplaceBinding` is now a real binding
+replacement rather than a property assignment, which closes the item Prototype E recorded as unverified: after a
+replacement, changing the old binding's source evaluates **0** bindings. Two pre-registered thresholds **failed** and
+stay failed — construct-plus-destroy of a non-trivial property, and a typed write plus settle — both diagnosed in
+`RESULTS.md` without re-running to make them pass, and one further pass is recorded as **not robust** because two
+statistics on the same comparison disagree. The settle half of the write-plus-settle failure is since **measured
+resolved**: D3 R3's `settle-plan-reuse` variant meets D2's original ≤ 250 ns budget at 188.0 ns p99, and the payload half
+meets the original ≤ 200 ns budget at 67.0 ns p99 when the payload is immutable and shared, which is the §13.1 model.
+The prototype also contradicts one of D's findings: D recorded 0 redundant
+candidate visits and concluded a caching layer would not pay off, which holds for D's topology and fails as soon as a
+node is reachable at two depths. AD-04d's stale-value question is answered — D's restore is not the defect, because D
+invalidates afterwards, but the invalidate is load-bearing and lives one layer above the shadow it protects.
+
+**A2 (macOS).** Platform presentation works on AppKit. **Revision 2 moves the pacing source from `CADisplayLink` to
+`CVDisplayLink`**, the mechanism the triage found uniformly reliable, and it achieves the acceptance band: steady p50
+16.66 ms = **59.98–60.01 Hz** in five runs, maximum interval **18.76 ms**, **zero intervals over two frames** and zero
+whole-process stalls. Two defects the change exposed are load-bearing for the platform contract: a pacing callback
+**may not reach AppKit** (CoreVideo delivers on its own thread; a programmatic resize from it aborts with AppKit's
+"Must only be used from the main thread"), and the hand-off **may not run inside a dispatch block** (a modal session
+entered from one never returns). Both are recorded in `prototypes/a2/RESULTS.md`. **T4.1 fails as written** — steady
+p99 18.50–18.69 ms against the 16.7 ms budget — and the run's own evidence says it is a clock artifact rather than a
+cadence defect: the overshoot is a uniform ~1.6 ms on 30–41 % of intervals with nothing near a dropped vsync, the poll
+deadline was tightened to 0.2 ms and changed nothing, and acquisition and submission are 0.13 ms and 0.20 ms p99. The
+threshold is not revised here; the correction goes to the human gate. The frame tail that motivated the slice was attributed
+to layer-recycling back-pressure rather than GPU submission (`t_acquire` p99 20.75 ms against 0.12 ms for encode and
+submit), which produced A2 Revision R1: the input-to-present budget is 25.0 ms, not 16.7 ms. Run-to-run p99 variance was
+17.7 to 45.4 ms across five runs of one binary, so a single tail sample is not a decision input on this machine. Window
+roles, popups and modality remain unimplemented.
+
+**A1-Build-Cost (characterisation).** AD-28 recorded its build-cost blocker as *"unevaluated; no cold Skia build was
+measured"*, and a renderer decision had been argued from performance while one of its two candidate dependencies had never
+had its build cost measured. Measured now, with the caches defeated by isolation rather than deletion: **a cold
+`skia[graphite,metal]` build takes 22.6–34.3 minutes across two runs of the identical workload, against 16.6 minutes cold
+for `dawn[metal]`** — Skia's closure is **45 packages and roughly 2 660 translation units** against Dawn's 6. **The verdict
+is not robust and that is the finding:** the two samples spread 52% and straddle the pre-registered 30-minute clause, so
+the band reads *material* on one and *not material* on the other. Any single-sample build time from this machine is not a
+decision input, which is the same lesson B2 drew about tail latencies here. **What both samples agree on is the ratio:
+1.4–2.1×, not an order of magnitude** — so the "huge dependency" framing does not survive measurement. Two further
+results matter more than the timings. **The repository's ccache never reaches vcpkg builds** (`CMakePresets.json` sets
+`CMAKE_C_COMPILER_LAUNCHER` for *our* CMake; vcpkg drives its own, and neither the dedicated `CCACHE_DIR` nor vcpkg's own
+`VCPKG_C/CXX_COMPILER_LAUNCHER` produced a single cache statistic across two full builds), so the cold figures describe a
+machine or CI job with **neither** cache — and on this machine nobody pays 34 minutes, because the 205-archive vcpkg
+binary cache prevents the build entirely. And **Dawn's own cold cost is ~1.3× its recorded figure**, since AD-28's 757 s
+was explicitly warm-ccache, so earlier Skia-versus-Dawn comparisons overstated the gap.
+
+**A1-Graphite-Dawn (spike).** The spike that would decide whether one Dawn device can serve both Albor's custom geometry and Skia text **did not measure its question**: Skia's public headers declare `ContextFactory::MakeDawn` and ship `DawnBackendContext` carrying a `wgpu::Instance`/`Device`/`Queue` — exactly the shared-device shape the spike needed — but the compiled library exports only `MakeMetal` and `MakeVulkan`, because the pinned manifest never requested the port's `dawn` feature. **A header that exists is not evidence that the backend was built**, since Skia's headers are not feature-gated; the failure surfaces only at link time. So AD-28's gate gains a dependency decision rather than a performance verdict, and A1.4's note that Graphite "cannot point at a drawable" is now better read as *the Dawn path was never built*, not *the API forbids it*.
+
+**A1 — renderer (Skia).** Three findings stand out:
+
+1. *Ganesh strokes lines on the CPU.* A stroked retained batch cost 10,470 ms per frame at 1.8 × 10⁶ segments, all
+   inside `skcpu::Draw::drawDevicePoints` → `StrokeTessellateOp`. The same geometry as pre-tessellated filled quads
+   costs 0.18 ms, roughly 55,000× less. A §11.2 line batch must be filled quads or the O(1) promise is meaningless.
+2. *Ganesh cannot present this workload at 60 Hz.* Present interval p50 was 149.7 ms with the GPU saturated, while the
+   scheduling itself was sound: recording p50 0.18 ms and p99 0.394 ms, the p99 being 0.219 ns per segment against the 1.8 × 10⁶ segments in the final retained set, O(1) pan/zoom ratio 0.976×, zero frames
+   dropped.
+3. *The frame window is layer-bound, not thread-bound.* A1.1's render-thread ownership was refuted for Ganesh on macOS
+   because `nextDrawable` blocks about one display cycle; A1.2a restored a 16.68 ms p50 cadence by presenting on the UI
+   thread and recording on a worker, but left the UI thread blocked a median 16.59 ms, since `CAMetalLayer` exposes no
+   non-blocking availability check.
+
+Two pre-registered thresholds failed and stay failed: appending to a retained batch is O(n) (94–120 ms against a 25 ms
+budget), and a 10⁶-segment frame costs 220 draw calls because Skia indexes a vertex batch with 16 bits. Workload W3 was
+deadline-limited at 130 of 400 frames and is recorded as invalid rather than as a result.
+
+**A1.4 — Graphite, offscreen.** Graphite links once the port's `graphite` feature is enabled; the earlier claim that
+milestone 148 lacked it was a configuration mistake, corrected in `1e6aa68`. Offscreen, Graphite's CPU recording is
+**1.24× slower than Ganesh at p50 and 3.85× worse at p99 per segment**, while the O(1) pan/zoom claim holds on both. Its
+submit is asynchronous, so this slice measured no GPU throughput, and presenting through Graphite is blocked:
+`createBackendTexture` needs a `TextureInfo` and `TextureInfo` has no public constructor from backend data.
+
+**A1-Dawn — renderer (WebGPU), same workloads, seeds and thresholds as the Skia runs:**
+
+- *Both Skia structural limits disappear.* 1.8 × 10⁶ segments draw in **one** `Draw(6, 1800000)` call where Skia
+  needed 220, and present interval p50 is **16.62 ms** — one 60 Hz interval — where Ganesh managed 149.7 ms. Recording
+  is 0.085 ms p50 (0.114 ns per segment p99); W2 recording was reported as 30× cheaper at 0.238 ms p99 vs 7.23 ms, but that
+  figure is **partly an artefact of unequal work**: Skia drew 4,000 text labels through `drawSimpleText`, while Dawn drew no
+  glyphs at all.
+- *Input geometry matches, output parity unproven.* Hover hit ratio is 99.41% on both renderers to the digit: this is a
+  CPU-side geometry fixture check confirming both were fed byte-identical geometry; the renderer takes no part in it and
+  it does not establish pixel parity.
+- *Multi-window isolation does not exist when presenting on the UI thread, on either renderer.* Window 2's interval
+  during window 1's 100 ms hold is 100.86 ms p50 — the hold itself, not GPU contention. (This result is true by construction
+  for any design presenting on the UI thread, and is the evidence behind AD-18b's open question.)
+- Text was counted but never drawn: Dawn has no glyph stack.
+
+These results make Dawn *Proposed* as candidate primary HAL (AD-28) with six blocking items: (1) platform parity (D3D12 and
+Vulkan unvalidated), (2) no text pipeline, (3) 2D feature surface rebuild, (4) no first-party software rasterizer against AD-26,
+(5) build cost, and (6) Skia Graphite on a Dawn backend. **Items 5 and 6 have since been probed and neither retires Skia.**
+On build cost (`prototypes/a1_build_cost/RESULTS.md`): a cold `skia[graphite,metal]` build is **22.6–34.3 minutes** across
+two runs of the identical workload against **16.6 minutes** cold for `dawn[metal]`, so the dependency is dearer by
+**1.4–2.1×** rather than by an order of magnitude, and the difference vanishes on any machine with a populated vcpkg binary
+cache — which is every machine here. On Graphite (`prototypes/a1_graphite_dawn/RESULTS.md`): the capability exists in Skia's
+source but **is not in the pinned build**, so the shared-device question is still unmeasured. Skia is **not** retired, and
+the renderer decision is still not ready to freeze.
+
+**Pixel-parity findings (Prototype A1-Parity, `prototypes/a1_parity/RESULTS.md`).** Both engines render
+deterministically (T2: 0 differing bytes across repeats) and Dawn's offscreen readback is exact (T1: 1024000 of 1024000
+pixels). With **both engines drawing the same cosmetic filled quads**, the solid stroke interior is identical (the frame
+centre reads `255 64 32 255` in both) and zoom-1 disagreement is 13.95%. **The half-ink defect is resolved:** on an
+isolated horizontal line, Skia lays down the full requested ink (1.000 px at width 1.0, 2.000 px at width 2.0) and Dawn now
+lays down the exact same ink (1.000 and 2.000 px, 0.0000% difference at width 2.0). The root cause was an omitted corner in the
+WGSL vertex shader side selector (`corner == 1u || corner == 4u || corner == 5u`), which set corner 5's perpendicular offset
+to -1 instead of +1 and collapsed the second triangle (p1-, p0+, p1-) into a zero-area degenerate line. Dawn was therefore rasterising
+only triangle 1, halving the drawn ink at the segment midpoint across all widths and positions. With corner 5 corrected, the quad
+is complete, T7 confirms cosmetic stroke behaviour for both engines (1.00× ratio under zoom), and width sweeps (T7b) and height sweeps (T7c)
+both show 1.000 ratio across all tested widths (0.5 to 8.0 px) and heights (100 to 700). Averaged over 4x4 blocks on the batch, 53.18%
+of blocks differ. The ±4 per-pixel agreement threshold is sound (0.00% within ±4 due to edge antialiasing mid-tones). Zoom-1 disagreement is
+13.95% and zoom-8 is 63.68%, the latter dominated by the recorded Skia stroke defect rather than by parity. **A renderer cannot yet be shown
+to produce Skia's image; the swap question stays open.**
+
+**Platform pacing finding.** Windowed frame pacing on this machine is not reproducible: a standalone program with no albor
+code drives a `CADisplayLink` at 58 Hz or at exactly 0 Hz, apparently at random, whenever a `CAMetalLayer` is attached.
+A2's design sits in the failing configuration. **All windowed timings in Prototype A1 and Prototype A1-Dawn are therefore
+unverified and are not repaired by A1-Parity**, whose own frames are driven deterministically offscreen. The cadence
+question stays blocked on the platform. **Triage result (`prototypes/a2_macos/PACING.md`): the finding is reproduced and
+named.** In a mechanism × condition matrix (12 cells, 5 runs each), `CVDisplayLink` delivered 58.8–60.0 Hz in 60 of 60
+runs under every automated condition, `CAMetalDisplayLink` starved to 0.6 Hz in all 20 matrix runs (exactly 3 drawables
+vended, pool never returned, run-loop heartbeat still ticking — the starvation is deterministic without compositing) and
+delivered 56.5–57.0 Hz as the only link in a fresh process with a composited window, while `CADisplayLink` stalled to
+exactly 0 Hz whole-process with no recorded correlate (occlusion, activation, bundle, caffeinate and window level all
+constant across dead and live batches). The "randomness" is a per-mechanism, per-process property, not machine noise.
+Framework direction recorded for revision, not settled: pace macOS on CVDisplayLink and gate CAMetalDisplayLink pacing
+on composited visibility. The unverified markings on windowed timings stand until pacing rides a reliable mechanism.
+
+**B — generated-code build performance.** The incremental half of AD-03 is confirmed and the clean-build half is not. A
+body edit rebuilds exactly one translation unit in 0.97 s against a 1.5 s budget; an interface change rebuilds the component
+and its direct includer; an unrelated application edit rebuilds one; the generator restamps nothing on an unchanged run; and
+a property edit in one component leaves every other component's object untouched, which is AD-04a's component-local
+`PropertyId` scheme doing its job. **The clean-build threshold fails at 12.0× on wall clock and about 90× on CPU, against a
+≤ 0.50 criterion.** The two readings are both recorded because the configurations are not the same shape: the generated suite
+is 500 separate `.cpp` files compiled across 12 cores while the baseline is a single translation unit on one core, so wall
+clock substantially measures core count and CPU time is the honest measure of how much compiling the architecture costs. The
+cost is structural rather than incidental — the baseline pays for its templates once, the generated suite pays a fixed
+per-translation-unit cost 500 times over trivial component bodies — and every available mitigation (unity builds, LTO,
+merging components into fewer translation units) destroys the one-TU rebuild that the incremental thresholds confirm. So
+**AD-03's clean-build rationale is now contradicted at this workload size, while the §14.3 edit-scope invariant the
+decision depends on is supported.** The decision itself is unchanged and stays *Decided*; what changed is that one of the
+two claims it was justified by did not survive measurement. Whether the trade favours Albor depends on edit frequency against clean-build
+frequency in real use, which this prototype did not measure. Compiler memory and binary size were named in `plan.md` and
+are **not** measured, so neither is claimed.
+
+**E — dev runtime slice.** **AD-02's layout-invariance rule holds** for the classes under test: sizes, the identity field
+offset and every virtual slot are byte-identical between Release and Dev, and the measured sizes are `static_assert`s so a
+later change is a build failure rather than a diff someone has to notice. The Dev-only hook is non-null in Dev and null in
+Release from a slot declared in a header containing no `#ifdef` anywhere, and the Release binary carries zero devrt symbols,
+which is the AD-04 link-time exclusion §2.3 requires. Dual-engine conformance passes over 5 runs in both configurations,
+with two limits recorded rather than glossed: `ReplaceBinding` is applied as a `SetProperty` in this slice so binding
+replacement — the part that matters for live reload — remains unverified, and both sides of the comparison share one
+implementation, so this is not yet the agreement between two independently generated engines AD-25 requires. The transferable
+finding is a failure mode, not a number: **a dev-runtime extension can link, appear in the build and be entirely inert.**
+The installer that populated the hook sat in an anonymous namespace, so the linker discarded the object file and the Dev
+build silently matched Release — the first run of this prototype "passed" for exactly that reason. Any future check of this
+shape must assert the Dev side is *active*, not merely that both sides agree.
+
+### Prototype D — Property and binding engine
+
+Scope: property storage, dependency tracking, dirty propagation and batched evaluation; ~10⁵ properties and ~10⁴ bindings; observable external state, environment properties (theme, locale) and animation-driven properties.
+Candidates: compact dependency records, dirty bitsets with topological evaluation, shared dependency nodes.
+Measures: memory per property and per binding, update latency, cache behavior, invalidation throughput.
+Outputs: input to AD-04 (recorded in `prototypes/d/RESULTS.md`), to the property layout in Phase 2, and the binding representation required by Prototype B. What was measured is adopted as AD-04a and AD-04d (*Proposed*); typed storage layout (AD-04b) and the evaluation model (AD-04c) remained *Open* after this run, and Prototype D2 has since supplied both with a measured recommendation (see AD-04b, AD-04c).
+
+### Prototype D2 — Binding engine follow-up (typed storage, diamond topologies, runtime mutation)
+
+Scope: follow-up to Prototype D for settling AD-04b (typed storage layout) and AD-04c (evaluation model: push vs. hybrid pull).
+Variants: typed per-component storage vs. 40 B variant (including `std::string`, translated strings, snapshot shared pointers); deep chains (depth up to 16) and diamond (reconvergent) topologies; runtime graph mutation (delegate subtrees, live-reload `ReplaceBinding`, popups); component-local `PropertyId`s with runtime base offsets; cycle detection and animation interplay (AD-04d, AD-24).
+Outputs: input to AD-04b/c and the Phase 2 property layout.
+Status: run and recorded (`prototypes/d2/RESULTS.md`, plan in `plan.md` committed before the benchmark existed). Eight experiments, **57 pre-registered thresholds, 55 pass and 2 fail**. Typed storage 8.00 B/property scalar and 14.00 B mixed against 64.00 B erased; the base offset costs 2.3 % at the read path; eager push reproduces D's 8 passes for a depth-8 scene and settles depth 16 in 16 passes where both pull models take 1; the layered reconvergent graph shows eager push evaluating 18 bindings where 17 suffice and the hybrid 17; a segmented index answers a dependency insertion in 0.20 µs where the sealed CSR rebuilds in 31.10 µs, at 8.8× the index memory; `ReplaceBinding` replaces a binding function and dependency set for real; Kahn detects a static cycle by ordering 0 of 2 bindings. **Two thresholds failed and stay failed**, and one pass is recorded as not robust because p99 and mean disagree on the same ratio. Neither AD-04b nor AD-04c is marked *Decided*: no `.ui` corpus confirms the property mix, and typed storage was not combined with the hybrid model.
+
+### Prototype A1 — Renderer (single platform)
+
+The A2 platform window (AD-16 decides the windowing layer; this prototype does not) + render surface + Skia GPU renderer + `CustomRenderNode`/`RenderContext` + retained resources + workloads W1, W2 and W3 + pointer interaction + frame scheduling and the two-stage pipeline.
+Questions: custom-render API shape (retained geometry, batch primitives), render-thread model, surface/device ownership, synchronization, Skia backend choice (Ganesh versus Graphite — measured offscreen in A1.4, presentation still open), and the software-renderer parity of Level 2 (not run).
+A1 may use a convenience windowing library; it must not decide AD-16.
+
+### Prototype A1-Dawn — Renderer candidate (WebGPU)
+
+After AD-06. Dawn (WebGPU C++) through the A2 platform window, with the same retained resources, seeds and workloads
+W1, W2 and W3 as Prototype A1, so the two renderers are comparable line for line. macOS only; no Skia dependency at all.
+Questions: does instancing remove Skia's draw-call cap, and does a renderer that is not CPU-bound change the
+multi-window result? Status: run and recorded; feeds AD-28 (*Proposed*) and AD-18b's open presentation question.
+
+### Prototype A1-Build-Cost — Dependency build cost
+
+After AD-28 and Prototype A1-Graphite-Dawn. One characterisation, on the axis the renderer decision turns on and which
+AD-28 recorded as *"unevaluated; no cold Skia build was measured"*. Not a pass/fail gate: a build time is not a
+requirement, so what is committed in advance is the workload and the **bands the number is read against**, not a
+threshold. Cold-ness is defeated by isolation rather than deletion — a dedicated `CCACHE_DIR`, the vcpkg binary cache
+cleared, and fresh build-tree and install roots — and then verified from ccache's own statistics. macOS only; the pinned
+feature sets are measured unchanged. Questions: what does Skia cost to build from nothing, and does that cost decide AD-28?
+Status: **run; the verdict is not robust.** Two samples of the identical cold workload spread 52% and straddle the
+pre-registered 30-minute clause, so the band resolves differently on each; the robust finding is the 1.4–2.1× ratio
+against Dawn's 6-package closure. Results in `prototypes/a1_build_cost/RESULTS.md`.
+
+### Prototype A1-Graphite-Dawn — Graphite on a shared Dawn device
+
+After AD-28 and Prototype A1.4. One WebGPU device, created exactly as A1-Dawn creates it, handed to Skia's Graphite
+through the Dawn backend, so that Albor's Level 2 custom geometry and Skia's text share **one device and one recorded
+frame** — the arrangement that would close AD-28's text and 2D-feature-surface blockers at once. macOS only.
+Questions: does milestone 148's Graphite accept an *externally created* device, and what does the combination cost to
+record? Status: **run; T5.1 failed and the spike stopped before its question.** The capability is absent from the pinned
+build — Graphite exports only `MakeMetal` and `MakeVulkan`, because `vcpkg.json` never requests the port's `dawn`
+feature — so shared-device feasibility and combined cost are **unmeasured**, and the package now waits on a manifest
+decision rather than on more measurement. Results in `prototypes/a1_graphite_dawn/RESULTS.md`.
+
+### Prototype A1-Parity — Renderer output parity (Skia against Dawn)
+
+After AD-28's candidate comparison. Links both Prototype A1 and Prototype A1-Dawn without modifying either; one generated
+`ResourceSet`, one view transform, one clear colour, handed to both renderers so input is identical by construction. Frames
+are driven deterministically into offscreen targets — no window, swap chain or display link — because the recorded
+platform finding makes windowed pacing unreproducible here.
+Questions: do the two renderers produce the same image for the same input, and is the measurement itself repeatable?
+Status: run and recorded; both engines render deterministically and Dawn renders offscreen exactly, but output parity is
+**not** established — interiors agree while coverage differs by about 14% at zoom 1 and 64% at zoom 8. The half-ink defect
+on an isolated segment was resolved: an omitted corner in the WGSL shader's side selector collapsed the second triangle,
+halving the drawn quad; with both triangles drawn, Dawn and Skia match at 1.000 ratio across all widths and heights.
+Both flagged instruments were checked and both now give real verdicts (the ±4 per-pixel threshold is sound; the stroke-width
+ratio was rebuilt on the isolated segment and confirms cosmetic stroke behaviour at 1.00×). The GPU-vs-GPU column is deferred.
+
+### Prototype A2 — Platform presentation
+
+After AD-16, which is Decided. Per-platform surface creation, presentation, resize behavior (including nested resize loops), frame callbacks, DPI changes, window roles, popups and modality on macOS, Windows and Wayland (X11 for completeness).
+Questions: GPU backend viability per platform, Wayland roles/popups, and nested-loop behavior.
+
+### Prototype B — Generated-code build performance
+
+Stub runtime + compiler + approximately 500 generated components, with the binding representation from Prototype D, minimal headers, generated implementation files and write-if-changed generation.
+Measures: clean build, local `.ui` change, interface change, unrelated application rebuild, generated file sizes, and translation units rebuilt.
+Requires a **baseline** (an equivalent UI in the current workflow) so "significantly faster" is checkable. Also assesses distribution cost (Skia and runtime build time, AD-19).
+Status: run and recorded (`prototypes/b/RESULTS.md`). 500 components per side, i7-9750H, 5 runs per configuration. **Six of seven thresholds pass; the clean-build claim fails.** A local `.ui` body edit rebuilds exactly 1 translation unit in 0.97 s, an interface change rebuilds 2, an unrelated edit rebuilds 1, the generator restamps 0 files, and changing a property in one component does not rebuild another — so the §14.3 incremental invariant and AD-04a component-local `PropertyId`s both hold. **Clean build does not:** generated 4.45 s wall / 34.90 s CPU against baseline 0.37 s / 0.39 s, a ratio of **12.0× on wall clock and about 90× on CPU** against a ≤ 0.50 threshold. Both readings are recorded because the configurations differ in shape — the generated suite is 500 separate `.cpp` files compiled across 12 cores, the baseline is one translation unit compiled on one — so wall clock largely measures core count, while CPU time answers the question actually being asked. The cost is structural: the baseline pays for its templates once, the generated suite pays a fixed per-translation-unit cost 500 times, and every mitigation (unity builds, LTO, merging components) destroys the one-TU rebuild that the incremental thresholds confirm. **AD-03's clean-build performance claim is therefore not established; its incremental claims are, and those are the ones §14.3 depends on.**
+
+### Prototype C — Text, IME and accessibility
+
+Minimal text control with keyboard editing, IME, selection, cursor, DPI changes and accessibility, on macOS, Windows and Linux Wayland. Includes the platform text-accessibility model and a text field inside a virtualized row (focus and IME pinning).
+
+### Prototype E — Dev runtime slice
+
+Reload adapter + IR loader + restricted expression VM + descriptor tables on the prototype runtime.
+Questions: does the layout-invariance rule hold (identical runtime binary, no Release cost beyond the null-checked hooks), what is the dual-engine conformance gap on a starter corpus, can nodes be created and patched by key, and what is the descriptor-table size.
+Status: run and recorded (`prototypes/e/RESULTS.md`). **The layout-invariance rule holds and AD-02 is supported for the classes under test.** Across Release and Dev the class sizes are byte-identical (`UiNode` 16, `TextNode` 32, `ContainerNode` 32), the identity field offset matches, and every virtual slot dispatches correctly through a base pointer in both, so no slot moved or vanished. The measured sizes are `static_assert`s, so a later layout change is a build failure rather than something only a diff would notice. The Dev-only hook is `non-null` in Dev and `null` in Release from a slot declared in a header with no `#ifdef` anywhere, and the Release binary contains zero devrt symbols, which is the AD-04 link-time exclusion §2.3 requires. Dual-engine conformance passes: a 16-node tree serialises, reloads and compares all 64 property slots with exact equality, and the same patch applied by explicit `id:` to both trees re-compares equal over 5 runs. **Two limits are recorded rather than glossed:** `ReplaceBinding` is applied as a `SetProperty` in this slice, so binding replacement — the part that matters for live reload — is unverified **here** (Prototype D2 has since implemented a real replacement and confirmed the old binding stops participating, so the gap is closed for AD-04c and remains open only for E's own conformance comparison); and both sides of the comparison share one implementation, so this is not yet agreement between two independently generated engines as AD-25 requires. One defect is worth carrying forward as a class rather than a one-off: **a dev-runtime extension can link, appear in the build, and be entirely inert.** The installer that populated the hook sat in an anonymous namespace, so the linker discarded the whole object file and Dev silently matched Release. The first run of this prototype "passed" for exactly that reason.
+
+These prototypes address the highest-risk assumptions before full-scale implementation.
+
+---
+
+## 31. Implementation Phases
+
+**Phase 0:** AD-16 (*Decided*, with its evaluation and reversal criteria still to be written); Prototypes D, D2, A1,
+A1-Dawn, A1-Parity, B, E and C (parallelizable); then A2. D, D2, B and E are complete; A1 and A1-Dawn are complete on
+macOS; A1-Parity has run and pixel parity is **not** established; A2 is complete on macOS with Windows and Wayland
+`PENDING_CI_MATRIX_RUN`. **Only C (text, IME and accessibility) has not started.** D2 and then D3 leave AD-04b and AD-04c *Open*
+with a measured recommendation each, so Phase 2's property storage and Phase 3's binding system are **not** unblocked: both AD-04b and AD-04c carry a measured *Modified* recommendation rather
+than a settled decision, and converting them is the human gate's. **Prototype D3 has now reported all eleven of its sub-experiments** — the first four, then the last seven in one batch
+whose thresholds were committed before any of its programs existed (`507454e`, §28.4). The first four are the typed-storage
+arithmetic (F2.1), the combined storage-and-index memory at Prototype D's scale (F2.2, **32.2 B/property** for typed plus
+sealed CSR against the erased store's 94.0), the geometric slab growth that moves the crossover from 2 048 to 128 live
+properties together with D2's two failed timing thresholds re-judged as labelled variants on their **original** budgets
+(F2.3), and the animation shadow audit (F2.7, **invalidation alone breaks the imperative override; a 4 B presence record
+passes**). The last seven are summarised here and detailed in `prototypes/d3/RESULTS.md`, where every threshold and every
+verdict is recorded; **21 passed and 22 failed**, and the failures are the result:
+
+- **The index × evaluation factorial (F2.4) makes the two axes separable** — the index moves settle p50 by 1.18 % and the
+  interaction term is 6.96 %, both inside the 10 % bound — so AD-04a can be decided on memory and mutation locality alone.
+  It also strengthens the segmented case: the insertion-to-rebuild ratio **grows** to 744× at 11 000 bindings, and on a
+  sealed index every post-seal edit is a full rebuild, so an in-place replacement costs 143 µs where the segmented index
+  costs 0.40 µs (F2.8).
+- **The two engines are not observationally equivalent (F2.5).** Only **140 of 204** legitimate DAGs — including 137 of 200
+  pseudo-random shapes — reach the same values under eager push and the hybrid, because the hybrid's recursive pull
+  consults only already-dirty dependencies and its memo epoch forbids the correction, so a reconvergent sink settles one
+  propagation step behind (3608 against 3609). **This refutes the recorded reason for adopting the hybrid** and means
+  AD-25's conformance suite would fail on the property system today. Two engines over one store share no mutable state, so
+  link-time exclusion is viable; but **45.3 % of engine state (34.39 of 75.85 B/binding) pays for models that never run**.
+- **Equality semantics (F2.6) turn on string identity.** Four of five candidate policies report every equal-content string
+  write as a change — 1 000 invalidations per 1 000 writes of the same label — and a 1 024-sample snapshot cannot be
+  content-compared on every write (1 450 ns p99 against a 1 µs budget). `NaN`, which the pre-registered threshold expected
+  to threaten convergence, does not: all five policies converge an acyclic `NaN` chain inside the 64-pass guard.
+- **Replacement and removal (F2.8) leak on the recorded mechanism.** `remove_then_add` retains a tombstone and issues a
+  fresh id, growing the binding table **100 000 % over 1 000 reload cycles** at 41 B and 2 allocations per keystroke; in-place
+  replacement is flat. Two of six observables fail in *every* variant because they are engine defects, not mechanism
+  differences: a binding added after seal is never scheduled, and `ReplaceBinding` ends an active animation by stamping
+  `Imperative` over it.
+- **Conditional-cycle rejection (F2.9) is affordable but not yet safe to promote.** Kahn is exact on 11 of the 12 committed
+  topologies and **skips self-edges**, so a self-referential binding would pass a compile-time rejection; a runtime guard
+  costs 0.96 ms p99 at 11 000 bindings; and declaring the union of possible dependencies — the obvious way to keep a static
+  check sound — costs **7.71× the invalidations**, so it cannot be the mechanism.
+- **The read path (F2.10) was never measured, only decomposed.** D2's 43 ns was the 40 B `Value` copy: the scalar fast path
+  is **6.59 ns**, the base-offset indirection is an extra random access into the region table (**+49 %**, not 2.3 %), and the
+  machine's run-to-run spread of 20–72 % means no sub-percent read-path claim — D2's included — is measurable here.
+- **The property mix of a real UI (F2.11) confirms AD-04b's representation.** No `.ui` file exists yet, so six screens and
+  22 component types were authored and their representativeness *tested* rather than assumed: **71.8 % scalar, 28.2 %
+  payload-owning, 1.19 dependencies per binding, 9.75 B of value per property against `mixed`'s 14.00 B**, giving **25.3
+  B/property** for typed plus sealed CSR at a hundred screens against the erased store's 84.3 — inside the 36 B budget. A
+  modal dialog declares 124 properties against the 128-property crossover, so the first-chunk size is still a tuning
+  constant with a number to tune against.
+
+**Six defects in the engine itself came out of the batch, and none is fixed by a design choice**: the hybrid model's stale
+reconvergence, the two engines' 31 % divergence rate, the unscheduled post-seal `add_binding`, `ReplaceBinding` ending an
+animation, `detect_cycles`' self-edge blind spot, and a sealed index's inability to absorb a property created after `finish()`.
+Phase 2 and Phase 3 inherit them as work. Phase 2 is unblocked on storage; Phase 3's binding system is unblocked on animation shadowing. **D3 has now reported in full,
+so the only thing between these two phases and a settled property decision is the human gate** — plus six engine defects the
+batch diagnosed and did not fix, of which three are correctness defects in code Phase 2 and Phase 3 would otherwise inherit
+unchanged: the hybrid model's stale reconvergence, `ReplaceBinding` ending an active animation, and a post-seal
+`add_binding` that is never scheduled. **Until the human decides, Phase 2 should still build against a swappable storage
+interface rather than committing to either representation**, and Phase 3 should treat the eager model as the shipping path
+rather than the hybrid one.
+
+**Phase 1:** Application, EventLoop, tasks/timers, Window and `WindowHandle`, platform abstraction (including the **headless backend**), renderer, software renderer, frame scheduler and two-stage pipeline.
+
+**Phase 2:** UI tree, property storage (per Prototype D, with Prototype D3's AD-04b corrections applied: typed per-component storage with the **geometric** slab policy is the default, because the fixed 64 KB chunk's 120× small-scale loss is what D3 R1 measured and the 1 KB geometric start moved the crossover from 2 048 live properties to 128; Phase 2 still builds against a **swappable storage interface** and treats the 7.00 B/property addressability cost, the one-property-count region-reuse constraint and the first-chunk overshoot — now measured against a declared screen size, since a modal dialog holds 124 live properties and R3's crossover is 128 — as known design inputs; D3 R11 has since confirmed the property mix against an **authored** corpus at **25.3 B/property** inside the 36 B budget, which is the measured basis for the default but not a substitute for a shipped `.ui` corpus, because none exists until Phase 5), events, **semantic tree with explicit/implicit keys**, focus, input routing, and the **in-process automation core with a test harness**. Automated UI testing begins here.
+
+**Phase 3:** Reactive binding system, observable state, environment properties, and the **animation core** (property animation, scheduler integration). Prototype D3's revised AD-04c recommendation applies here: **eager push for the shipping path**, accepting its measured cost of one superseded value per settle on a reconvergent graph, because **the hybrid pull is not adoptable until its stale-reconvergence defect is fixed** — it settles a reconvergent consumer one propagation step behind, which is a correctness defect rather than a redundancy trade-off; **Kahn cycle rejection as a compile-time step rather than a Dev-only ordering**, once the self-edge blind spot is fixed, with a runtime guard for conditional graphs at the measured 0.96 ms per batch; and a precedence test that distinguishes an active animation from an imperative override, so `ReplaceBinding` cannot end an animation.
+
+**Phase 4:** **Resources** (fonts, images), text, layout, DPI, RTL, i18n core (locale and direction environment properties, catalogs), basic controls, and the first platform text-accessibility slice.
+
+**Phase 5:** Parser, semantic analysis, typed IR, C++ code generation, manifest and glue generator, incremental compilation, write-if-changed output, and the Python automation client.
+
+**Phase 6:** Widgets, models and virtualization (with item keys), styling and themes, commands, and basic platform accessibility adapters. Every widget's definition of done includes semantic role/actions/states and semantic tests.
+
+**Phase 7:** Clipboard, dialogs, menus, drag/drop, notifications.
+
+**Phase 8:** LSP, preview, inspector, diagnostics.
+
+**Phase 9:** Dev runtime: out-of-process live reload, serialized IR, patching, stable identity, state preservation.
+
+**Phase 10:** Accessibility and automation platform hardening, and the MCP adapter.
+
+**Phase 11:** Full i18n formatting/pluralization, reduced motion, X11 Tier 2 completion and platform polish.
+
+---
+
+## 32. Repository Layout
+
+```text
+albor/
+├── core/ application/ ui/ layout/ input/ focus/ commands/ model/
+├── text/ style/ animation/ window/
+├── platform/
+│   ├── macos/
+│   ├── windows/
+│   ├── linux/
+│   │   ├── wayland/
+│   │   └── x11/
+│   └── headless/
+├── render/ render-skia/ render-software/ widgets/ semantics/ accessibility/
+├── services/ resources/ i18n/
+├── compiler/ manifest/ language-server/ preview/ dev-service/
+├── devrt/ automation/ inspector/
+├── tools/ examples/ tests/
+```
+
+---
+
+## 33. Example Application
+
+```cpp
+#include <albor/application.hpp>
+
+int main() {
+    albor::Application app;
+    auto window = app.create_window({
+        .role = albor::WindowRole::Normal
+    });
+    window.get()->set_content<MainWindow>();
+    window.get()->show();
+    return app.run();
+}
+```
+
+The application does not need to understand compiler internals, generated tree representation, Skia resource management or native event translation.
+
+---
+
+## 34. Example `.ui` and Manifest
+
+Illustrative only; the grammar is still open.
+
+```text
+// manifest: simulation.ui-manifest
+native object Simulation {
+    in property<bool> ready;
+    in property<Snapshot<WaveformSet>> results;
+    command run;
+    preview { ready: true; results: sample("tran-simple-01"); }
+}
+
+native component ChartView {
+    in property<Snapshot<WaveformSet>> data;
+    semantic role: "chart";
+    semantic children: virtualized;      // provided by the application's SemanticProvider
+    preview { placeholder: "chart"; }
+}
+
+native global Commands {
+    command run_simulation: Simulation.run;
+}
+```
+
+```text
+// MainWindow.ui
+component MainWindow {
+    property<string> title: @tr("Xyce Studio");
+
+    Column {
+        spacing: 8px;
+
+        Button {
+            id: run_button;
+            command: Commands.run_simulation;     // label, enabled state, shortcut, semantics
+        }
+
+        ChartView {
+            id: results_chart;
+            data: Simulation.results;
+        }
+    }
+}
+```
+
+The `Column` has no explicit `id` and therefore only an implicit key (§18.1). `run_button` and `results_chart` have explicit identity usable in automation selectors.
+
+---
+
+## 35. Remaining Open Questions
+
+1. Exact `.ui` grammar, property and binding syntax (including expression purity and any two-way binding).
+2. Typed per-component property storage: **measured and recommended** (AD-04b, Prototype D2), but the memory target
+   Phase 2 must hit still depends on the property mix of a real `.ui` corpus, which no prototype has run. Two open
+   sub-questions ride on it: whether an `(instance, local)`-addressed dependency index can remove the 4 B per-property
+   location entry, and what the typed/erased choice costs when combined with the hybrid evaluation model.
+4. Generated C++ splitting strategy (Prototype B). **Partly answered:** one translation unit per component is what makes the
+   one-TU body-edit rebuild work, and it is also what makes a clean build cost about 90× a single-TU baseline in CPU time.
+   The open part is whether a shared preamble, precompiled headers or a documented unity-build escape hatch can recover most of
+   that clean-build cost without giving up per-component rebuild scope.
+5. Manifest syntax details and the preview-plugin ABI.
+6. ABI and versioning beyond 1.0 (AD-19 covers pre-1.0).
+7. Skia backend strategy, including Ganesh versus Graphite and its threading consequences (Prototype A1).
+8. Windows GPU backend (Prototype A2).
+9. Wayland and X11 presentation implementation (Prototype A2).
+10. Headless and software renderer implementation.
+11. Final `RenderContext` API (Prototype A1).
+12. Level 3 native GPU interop.
+13. Modal/popup implementation details per platform.
+15. Text implementation and library.
+16. Layout algorithm.
+17. Animation API details.
+18. Command history API.
+19. Automation transport and MCP schema.
+20. Live-reload wire protocol and state migration.
+21. Resource build pipeline.
+22. Platform accessibility details.
+23. Initial widget set.
+24. Whether the AD-03 clean-build penalty is acceptable in practice. Prototype B measured the cost but not the trade: that
+    depends on edit frequency against clean-build frequency in real use, which no prototype has measured. Compiler peak
+    memory and binary size, both named in Prototype B's `plan.md`, were not measured at all, and Prototype B2 must measure
+    them against a named real baseline rather than a synthetic one.
+25. Binding replacement through `UiPatch`: **replacement measured** (Prototype D2 implements a real replacement and confirms
+    the old binding stops participating), but §13.4 does not say whether a reload may take back a property the application
+    overrode, nor what removing a binding should leave behind. Both are referred to AD-24 and both will surprise
+    developers during live reload as currently observed.
+26. A genuinely independent second engine for AD-25. Prototype E's conformance comparison ran both sides through one shared
+    implementation, so it establishes that serialise, reload and patch preserve values — not agreement between two engines.
+    Prototype E2 is the prototype that would settle it.
+27. Where the eager-versus-pull crossover lies for chain depth. Prototype D2 confirmed the pass-count difference and also
+    measured eager push as the faster model at every depth up to 16, so no recommendation threshold can be set without a
+    workload deep enough for the pull models' fixed per-settle cost to be repaid.
+28. Whether the animation shadow table is needed at all. Prototype D2 reproduced every observable animation behaviour by
+    re-evaluating on end without restoring the shadow, so the table looked removable. **Prototype D3 F2.7 measured it and
+    the answer is *not* zero**: eliminating the record entirely breaks the imperative override, because `end_animation`
+    then cannot know whether an animation ever owned the target and resurrects a broken binding. What is removable is the
+    shadowed **value**, not the shadowed **presence** — a sorted record of animated targets at 4.0 B against 64.0 B passes
+    every observable check. The decision on which of the two the animation core adopts belongs with that core in Phase 3.
+29. Which index structure realises AD-04a, and whether the segmented index's memory cost survives at Prototype D's scale
+    (100 000 properties, 11 032 bindings) rather than the few hundred bindings D2 measured it on. Prototype D3 F2.2.
+    **Measured** (`prototypes/d3/RESULTS.md`, R2): typed storage plus sealed CSR costs **32.2 B/property** against the
+    erased store's 94.0 B/property on the same index, so the index preserves rather than inverts the storage answer; the
+    segmented index adds 9.0 B/property over CSR; and the hybrid's reused segmented tail **fails** its premium at 11.8
+    B/property because a dense segment table serves 1 000 entries on 100 000 properties. The structure choice is still
+    open, but it is no longer open on the question of whether the index's memory destroys the storage saving — it does not.
+
+Resolved in v3 (no longer open): window role/modality model, single source for scale factor, custom-canvas semantics, MCP routing, identity policy, automation build exclusion, compiler language (Proposed), X11 tier (Proposed), manifest authoring model (Proposed), property invalidation index and animation shadowing (AD-04a/d Proposed, both now supported by Prototype D2 on the sealed-index, component-local id and stale-value questions; storage layout AD-04b and evaluation model AD-04c remain Open with a measured MODIFY recommendation each, pending a `.ui` corpus), platform implementation strategy (AD-16).
+
+---
+
+## 36. Success Criteria
+
+### Production
+
+- Native C++ runtime.
+- No interpreter, registry, compiler frontend, or automation channel in Release.
+- Stable, small generated headers; write-if-changed generation.
+- Build-scope tests show a `.ui` body change rebuilds only the expected translation units.
+- Measured build-time results against the baseline.
+
+### Rendering
+
+- GPU accelerated; no OpenGL requirement.
+- Custom rendering through the framework rendering architecture using retained resources and batched primitives.
+- Workloads W1, W2 and W3 meet thresholds recorded before the run.
+- Software renderer parity for all Level 2 primitives.
+- No requirement to convert custom content into bitmap/image widgets.
+
+### Platform
+
+- Tier 1: macOS, Windows, Linux Wayland.
+- Tier 2: Linux X11.
+- Correct behavior during nested native loops.
+
+### UI
+
+- Declarative composition, reactive properties, layout.
+- Focus and navigation, text and IME, DPI and multi-monitor.
+- Menus and dialogs, models and virtualization.
+
+### Tooling
+
+- LSP and standalone preview.
+- Development live reload via the dev runtime.
+- Inspector and diagnostics.
+- Dual-engine conformance passing.
+
+### Accessibility and automation
+
+- Shared semantic model including custom canvases.
+- Platform accessibility adapters.
+- Stable explicit automation identities.
+- Python automation; MCP adapter via automation.
+- The reference test (Appendix B) passes against a sample application.
+
+### Engineering
+
+- Measured frame and input latency.
+- Headless CI path.
+- Clear production/development dependency boundary enforced at link time.
+
+---
+
+## 37. Architectural Summary
+
+Albor's architecture rests on explicit boundaries:
+
+- the compiler is not the runtime;
+- development tooling is not the production application;
+- the dev runtime extension is a separate library, not a variant of the runtime;
+- windowing is not rendering;
+- Skia is not the public UI architecture;
+- scene building is not render execution;
+- application data reaches custom rendering as immutable snapshots;
+- identity is explicit, correlation hints are not identity;
+- automation is not accessibility, and does not ship in production;
+- application state is not UI implementation state;
+- generated implementation is not the public C++ interface;
+- the manifest, not C++ source, defines native component interfaces.
+
+Of those boundaries, the property and build-generation ones have been exercised: Prototype D and D2 for the property and binding system, Prototype B for generated code, Prototype E for the dev runtime extension, and Prototypes A1, A1-Dawn and A1-Parity for rendering. **The validation work that remains is therefore not the list this paragraph used to carry.** Open: **Prototype C** for text, IME and accessibility, which is the only Phase 0 prototype never started; **Prototype B2** for a build baseline that reflects a real workflow rather than a synthetic one; **Prototype E2** for an independent second engine under AD-25 — which D3 has now made urgent rather than merely outstanding, since it measured the two engines disagreeing on **64 of 204** legitimate DAGs before either has been written; and the **A1-Parity, Dawn-re-measure and chunked-batch** packages, which close or gate the renderer decision. **Prototype D3 has left this list**: it has reported all eleven of its sub-experiments, and what remains on the property system is the human gate's conversion plus the **six engine defects** its last seven revisions diagnosed — three of them correctness defects that a conformance or dual-engine suite would otherwise discover in Phase 2 or Phase 9. The **pacing** package has reported and A2 revision 2 has acted on it; the **Graphite-on-Dawn** spike has reported and stops at a missing build feature rather than at a measurement, so it needs a manifest decision before it can measure anything. **A2 is complete on macOS only**; Windows and Wayland remain `PENDING_CI_MATRIX_RUN`. Phase 1 begins only after a human gate, and the renderer half of AD-28 stays open until the Graphite-on-Dawn spike reports.
+
+---
+
+## Appendix A — Review Traceability
+
+| Finding (source) | Addressed in |
+| --- | --- |
+| Live reload still needs an in-app interpreter/registry; "no reflection" only reworded (v2 review 1; second review disagreed with "resolved") | §2, §17.2, AD-02, Prototype E |
+| No module owns the IR evaluator / reload adapter; headless module missing | §6, §32 |
+| Preview of native components has no implementation source | §15.3, §17.3 |
+| Dev/prod runtime ABI divergence | §2.3 |
+| Compiled vs. dev semantic divergence | §2.4, AD-25, §27 |
+| Level 2 vs. Level 3 incoherent ("GPU resources") | §11.1, §11.3 |
+| No retained geometry; per-segment cost | §11.2, §11.3 |
+| Render threading and worker-data ownership undefined | §10.2, §10.5, AD-18a |
+| Multi-window presentation stalls (second review) | §10.3, workload W3 |
+| Primary renderer HAL undecided; Dawn is a candidate, Skia retained | §11, AD-05, AD-06, AD-28 |
+| Dawn has no text or glyph pipeline; no first-party software rasterizer | §21.2, AD-26, AD-28 |
+| Replacing Skia means rebuilding the 2D feature surface: joins, caps, dashes, clips, gradients, layers, effects | §11.1, §11.2, AD-06, AD-28 |
+| Skia Graphite on a Dawn backend as a middle option, untested | AD-28 |
+| Pixel parity Skia vs Dawn: Dawn half-ink defect resolved (WGSL quad vertex 5 side selector bug); edge antialiasing differences remain | AD-28 |
+| Windowed frame pacing not reproducible on this platform; windowed timings unverified | AD-18b, AD-28 |
+| AD-03 clean-build cost ~90× a single-TU baseline in CPU time; incremental rebuild scope confirmed instead | AD-03, §14.3 |
+| Dense property ids only reusable within one property count; reusing a differently sized region silently invalidates every binding above it | AD-04a, §13.3 |
+| A dependency-insertion-to-rebuild ratio is a function of graph size (3.87 % at 200 bindings, 0.04 % at 20 000), so no threshold on it is meaningful without the size | AD-04a |
+| Animation correctness depends on an invalidate one layer above the shadow it protects; removing it restores the animation-start value | AD-04d, §13.5 |
+| Dev-only extension can link and still be inert (linker discards unreferenced static initialisers) — assert the Dev side is active, not just that both sides agree | AD-02, AD-04, §2.3 |
+| Per-translation-unit fixed compiler cost, not header parsing, dominates generated-code build time (48.6 ms of 71.5 ms); a precompiled header buys 3 % and trimming includes makes it worse | AD-03, §14.2, §14.3 |
+| The link dominates a one-component edit (57 % of it), so compile-side optimisations have a ceiling and §14.3's edit budget must state compile and link separately | AD-03, §14.3 |
+| `UiPatch` binding replacement unverified; conformance comparison not yet between independent engines | AD-25, §17.2 |
+| Benchmark workload underspecified; no failure condition | §28.3, §28.4 |
+| Software/GPU parity | §11.7, §25, §27 |
+| Custom-canvas semantic children/automation regressed | §19.3 |
+| No phase builds semantic tree/automation; accessibility late | §31 (Phases 2, 4, 6, 10) |
+| Reference test lost | Appendix B, §27, §36 |
+| MCP routing inconsistent | §19.7, AD-20 |
+| "Explicitly enabled" ambiguous | §2.2, §19.6, AD-10 |
+| Identity of unnamed nodes; position-derived keys | §18.1, AD-11 |
+| Model row keys; instance identity | §18.2, §20.1 |
+| `Application::post`/timers; lifetime safety | §7 |
+| `Window&` lifetime; close veto | §8.4 |
+| Role vs. modality; incomplete `WindowOptions`; Tool on Wayland | §8.1, §8.2, AD-08 |
+| `RenderSurface` lost present/resize; scale factor location | §9 |
+| Nested native loops absent | §7.4, AD-21 |
+| `.ui` example vs. command model; manifest lacks objects/globals | §22.1, §15.2, §34 |
+| `px` naming | §9.3, AD-27 |
+| Binding precedence hedged; reload interaction | §13.4, AD-24 |
+| No binding-engine prototype | Prototype D |
+| Prototype B lacks baseline; depends on binding representation | Prototype B |
+| Prototype A depends on AD-16; platform/renderer concerns entangled | Prototype A1/A2, §24.1 |
+| Animation, i18n, resources too late | §31 (Phases 3, 4) |
+| X11 tier undefined | §4.1, AD-22 |
+| ABI/Skia distribution unaddressed | AD-19 |
+| Compiler language unstated | §16, AD-23 |
+| Manifest ergonomics; scanners vs. no-C++-parsing (second review) | §15.1, AD-17 |
+| Generated-header "abstract interface" wording (second review) | §14.1, AD-03 |
+| Event coalescing; hit-test tolerance | §12, §11.2 |
+| Layout algorithm and contract | §21.1 |
+| Second review: "freeze v2" recommendation | Not adopted: v3 revises v2 instead |
+
+## Appendix B — Reference Automation Test (Compatibility Target)
+
+The following test captures the desired ergonomics of the automation layer. It should remain a compatibility target for the conceptual API; Albor does not require this exact test implementation. It demonstrates semantic selectors, actions, synchronization, stable IDs and collection queries.
+
+```python
+def test_run_simulation_shows_the_charts_panel(self) -> None:
+    xyce = shutil.which("Xyce")
+    netlist = Path(__file__).resolve().parents[1] / "netlists" / "tran-simple-01.cir"
+
+    if xyce is None:
+        self.skipTest("Xyce executable not found")
+
+    with TestSession(
+        launch(args=["--netlist", str(netlist), "--xyce", xyce]),
+        self.id()
+    ) as app:
+        app.get_by_type("ToolbarButton").nth(5).click()
+        app.get_by_id("MainWindow::charts").wait_for_exists(timeout=15.0)
+        self.assertEqual(app.get_by_type("ChartView").count(), 1)
+```
+
+Note: the test uses `.nth(5)` on a type selector. Under §19.4 and §18.1, a stable-ID equivalent (`get_by_id("MainWindow::run_button")`) is the preferred form. The positional version is retained here as a compatibility target for intentionally repeated elements, not as a model of identity.

@@ -1,0 +1,28 @@
+#include "Component014.h"
+
+#include <cstdint>
+
+struct Component014::Impl
+{
+    uint32_t m_base_offset = 0;
+    float m_color = 0;
+    float m_opacity = 1;
+    float m_width = 0;
+    float m_height = 0;
+    Component013* m_child = nullptr;
+};
+
+Component014::Component014() :
+    m_impl(new Impl) {}
+Component014::~Component014() { delete m_impl; }
+
+float Component014::color() const { return m_impl->m_color; }
+float Component014::width() const { return m_impl->m_width; }
+void Component014::set_color(float v) { m_impl->m_color = v; }
+void Component014::set_opacity(float v) { m_impl->m_opacity = v; }
+void Component014::set_width(float v) { m_impl->m_width = v; }
+void Component014::set_height(float v) { m_impl->m_height = v; }
+void Component014::set_child(Component013* child) { m_impl->m_child = child; }
+void Component014::on_click() {}
+void Component014::on_hover() {}
+void Component014::on_focus() {}

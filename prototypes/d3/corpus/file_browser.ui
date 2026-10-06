@@ -1,0 +1,20 @@
+# Prototype D3 R11 corpus — the file browser window (F2.11)
+#
+# one file browser: toolbar, a folder tree, a virtualized file list whose visible rows are declared as
+# repeated delegate instances, a path bar and a status bar. The 24 rows are the visible window of a list
+# that holds thousands of rows, which is what §20 requires a virtualized view to declare.
+
+screen file_browser
+  use Frame 3
+  use Toolbar 1
+  use Button 8
+  use TreeView 1
+  use Row 12
+  use ListView 1
+  use Row 24
+  use Label 3
+  use StatusBar 1
+  use ScrollBar 2
+  use Find 1
+  use Dialog 1
+end

@@ -1,0 +1,28 @@
+#include "Component472.h"
+
+#include <cstdint>
+
+struct Component472::Impl
+{
+    uint32_t m_base_offset = 0;
+    float m_color = 0;
+    float m_opacity = 1;
+    float m_width = 0;
+    float m_height = 0;
+    Component471* m_child = nullptr;
+};
+
+Component472::Component472() :
+    m_impl(new Impl) {}
+Component472::~Component472() { delete m_impl; }
+
+float Component472::color() const { return m_impl->m_color; }
+float Component472::width() const { return m_impl->m_width; }
+void Component472::set_color(float v) { m_impl->m_color = v; }
+void Component472::set_opacity(float v) { m_impl->m_opacity = v; }
+void Component472::set_width(float v) { m_impl->m_width = v; }
+void Component472::set_height(float v) { m_impl->m_height = v; }
+void Component472::set_child(Component471* child) { m_impl->m_child = child; }
+void Component472::on_click() {}
+void Component472::on_hover() {}
+void Component472::on_focus() {}

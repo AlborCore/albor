@@ -1,0 +1,19 @@
+# Prototype D3 R11 corpus — the text editor window (F2.11)
+#
+# one editor window: a menu bar, a toolbar, a gutter, one multiline text input that owns the caret, the
+# composition string and the scroll offset, a find bar, a tab strip and a status bar.
+
+screen text_editor
+  use Frame 2
+  use MenuBar 1
+  use Toolbar 1
+  use Button 10
+  use Gutter 1
+  use TextInput 1
+  use Find 1
+  use TabStrip 1
+  use StatusBar 1
+  use ScrollBar 3
+  use Label 2
+  use Dialog 1
+end

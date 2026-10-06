@@ -1,0 +1,31 @@
+#pragma once
+
+#include <cstdint>
+
+template <typename Derived>
+struct Component342;
+
+static constexpr int kProp343_Color = 343 * 4 + 0;
+static constexpr int kProp343_Opacity = 343 * 4 + 1;
+static constexpr int kProp343_Width = 343 * 4 + 2;
+static constexpr int kProp343_Height = 343 * 4 + 3;
+
+template <typename Derived>
+struct Component343
+{
+    float m_color = 0;
+    float m_opacity = 1;
+    float m_width = 0;
+    float m_height = 0;
+    Component342<Derived>* m_child = nullptr;
+    float color() const { return m_color; }
+    float width() const { return m_width; }
+    void set_color(float v) { m_color = v; }
+    void set_opacity(float v) { m_opacity = v; }
+    void set_width(float v) { m_width = v; }
+    void set_height(float v) { m_height = v; }
+    void set_child(Component342<Derived>* child) { m_child = child; }
+    void on_click() {}
+    void on_hover() {}
+    void on_focus() {}
+};

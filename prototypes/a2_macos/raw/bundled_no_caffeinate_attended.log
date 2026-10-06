@@ -1,0 +1,52 @@
+CASE bundled_no_caffeinate_attended: bundled app, no caffeinate, attended
+DRIVER runs=5 seconds=5
+DRIVER caffeinate=/usr/bin/caffeinate
+DRIVER launched=2026-10-04T17:29:49Z
+DRIVER conditions_needing_a_human=C2_unlocked_session C7_gpu_pinning C6_external_display
+finishLaunching=yes
+finishLaunching=yes
+Prototype A2 macOS pacing triage (AD-18b, §30)
+macos_version=Version 26.6.2 (Build 25G83) runs=5 seconds=5.0
+bundle=org.albor.prototype.pacing policy=0
+display_id=2077748985 refresh=60.0 asleep=0 active=1 count=1 gpu=AMD Radeon Pro 5300M
+conditions needing a human (C2 unlocked session, C7 GPU pinning, C6 external display) are not automated here
+
+DIAG mainScreen=0x7fe81a1069b0
+mech=CADisplayLink      cond=C4_attended    hz=   0.0 cb=    0 ivl_p50=  0.00 ivl_max=    0.00 gpu_p50= 0.000/0 presented_p50=    0.000/0 drawables=   0 occl=8192 active=0 policy=0 bundle=org.albor.prototype.pacing asleep=0 disp_active=1 displays=1 refresh=60.0 hb=5 visible=1 running=0 gpu=AMD Radeon Pro 5300M
+T3.2 line mechanism=CADisplayLink condition=C4_attended callbacks=0 hz=0.0
+DIAG mainScreen=0x7fe81a1069b0
+mech=CADisplayLink      cond=C4_attended    hz=   0.0 cb=    0 ivl_p50=  0.00 ivl_max=    0.00 gpu_p50= 0.000/0 presented_p50=    0.000/0 drawables=   0 occl=8192 active=0 policy=0 bundle=org.albor.prototype.pacing asleep=0 disp_active=1 displays=1 refresh=60.0 hb=10 visible=1 running=0 gpu=AMD Radeon Pro 5300M
+T3.2 line mechanism=CADisplayLink condition=C4_attended callbacks=0 hz=0.0
+DIAG mainScreen=0x7fe81a1069b0
+mech=CADisplayLink      cond=C4_attended    hz=   0.0 cb=    0 ivl_p50=  0.00 ivl_max=    0.00 gpu_p50= 0.000/0 presented_p50=    0.000/0 drawables=   0 occl=8192 active=0 policy=0 bundle=org.albor.prototype.pacing asleep=0 disp_active=1 displays=1 refresh=60.0 hb=15 visible=1 running=0 gpu=AMD Radeon Pro 5300M
+T3.2 line mechanism=CADisplayLink condition=C4_attended callbacks=0 hz=0.0
+DIAG mainScreen=0x7fe81a1069b0
+mech=CADisplayLink      cond=C4_attended    hz=   0.0 cb=    0 ivl_p50=  0.00 ivl_max=    0.00 gpu_p50= 0.000/0 presented_p50=    0.000/0 drawables=   0 occl=8192 active=0 policy=0 bundle=org.albor.prototype.pacing asleep=0 disp_active=1 displays=1 refresh=60.0 hb=20 visible=1 running=0 gpu=AMD Radeon Pro 5300M
+T3.2 line mechanism=CADisplayLink condition=C4_attended callbacks=0 hz=0.0
+DIAG mainScreen=0x7fe81a1069b0
+mech=CADisplayLink      cond=C4_attended    hz=   0.0 cb=    0 ivl_p50=  0.00 ivl_max=    0.00 gpu_p50= 0.000/0 presented_p50=    0.000/0 drawables=   0 occl=8192 active=0 policy=0 bundle=org.albor.prototype.pacing asleep=0 disp_active=1 displays=1 refresh=60.0 hb=25 visible=1 running=0 gpu=AMD Radeon Pro 5300M
+T3.2 line mechanism=CADisplayLink condition=C4_attended callbacks=0 hz=0.0
+CELL mechanism=CADisplayLink condition=C4_attended runs=5 hz_median=0.0 hz_min=0.0 hz_max=0.0 ivl_p50_median=0.00
+mech=CVDisplayLink      cond=C4_attended    hz=  59.8 cb=  299 ivl_p50= 16.66 ivl_max=   17.72 gpu_p50= 0.000/299 presented_p50=    0.000/0 drawables= 299 occl=8192 active=0 policy=0 bundle=org.albor.prototype.pacing asleep=0 disp_active=1 displays=1 refresh=60.0 hb=30 visible=1 running=0 gpu=AMD Radeon Pro 5300M
+T3.2 line mechanism=CVDisplayLink condition=C4_attended callbacks=299 hz=59.8
+mech=CVDisplayLink      cond=C4_attended    hz=  59.8 cb=  299 ivl_p50= 16.66 ivl_max=   17.72 gpu_p50= 0.000/299 presented_p50=    0.000/0 drawables= 299 occl=8192 active=0 policy=0 bundle=org.albor.prototype.pacing asleep=0 disp_active=1 displays=1 refresh=60.0 hb=35 visible=1 running=0 gpu=AMD Radeon Pro 5300M
+T3.2 line mechanism=CVDisplayLink condition=C4_attended callbacks=299 hz=59.8
+mech=CVDisplayLink      cond=C4_attended    hz=  59.8 cb=  299 ivl_p50= 16.67 ivl_max=   17.69 gpu_p50= 0.000/300 presented_p50=    0.000/0 drawables= 299 occl=8192 active=0 policy=0 bundle=org.albor.prototype.pacing asleep=0 disp_active=1 displays=1 refresh=60.0 hb=40 visible=1 running=0 gpu=AMD Radeon Pro 5300M
+T3.2 line mechanism=CVDisplayLink condition=C4_attended callbacks=299 hz=59.8
+mech=CVDisplayLink      cond=C4_attended    hz=  59.8 cb=  299 ivl_p50= 16.66 ivl_max=   17.78 gpu_p50= 0.000/299 presented_p50=    0.000/0 drawables= 299 occl=8192 active=0 policy=0 bundle=org.albor.prototype.pacing asleep=0 disp_active=1 displays=1 refresh=60.0 hb=45 visible=1 running=0 gpu=AMD Radeon Pro 5300M
+T3.2 line mechanism=CVDisplayLink condition=C4_attended callbacks=299 hz=59.8
+mech=CVDisplayLink      cond=C4_attended    hz=  60.0 cb=  300 ivl_p50= 16.63 ivl_max=   17.70 gpu_p50= 0.000/299 presented_p50=    0.000/0 drawables= 300 occl=8192 active=0 policy=0 bundle=org.albor.prototype.pacing asleep=0 disp_active=1 displays=1 refresh=60.0 hb=50 visible=1 running=0 gpu=AMD Radeon Pro 5300M
+T3.2 line mechanism=CVDisplayLink condition=C4_attended callbacks=300 hz=60.0
+CELL mechanism=CVDisplayLink condition=C4_attended runs=5 hz_median=59.8 hz_min=59.8 hz_max=60.0 ivl_p50_median=16.66
+mech=CAMetalDisplayLink cond=C4_attended    hz=   0.6 cb=    3 ivl_p50= 16.95 ivl_max=   16.95 gpu_p50= 0.000/3 presented_p50=   65.951/3 drawables=   3 occl=8192 active=0 policy=0 bundle=org.albor.prototype.pacing asleep=0 disp_active=1 displays=1 refresh=60.0 hb=55 visible=1 running=0 gpu=AMD Radeon Pro 5300M
+T3.2 line mechanism=CAMetalDisplayLink condition=C4_attended callbacks=3 hz=0.6
+mech=CAMetalDisplayLink cond=C4_attended    hz=   0.6 cb=    3 ivl_p50= 16.79 ivl_max=   16.79 gpu_p50= 0.000/3 presented_p50=   66.082/3 drawables=   3 occl=8192 active=0 policy=0 bundle=org.albor.prototype.pacing asleep=0 disp_active=1 displays=1 refresh=60.0 hb=60 visible=1 running=0 gpu=AMD Radeon Pro 5300M
+T3.2 line mechanism=CAMetalDisplayLink condition=C4_attended callbacks=3 hz=0.6
+mech=CAMetalDisplayLink cond=C4_attended    hz=   0.6 cb=    3 ivl_p50= 16.88 ivl_max=   16.88 gpu_p50= 0.000/3 presented_p50=   63.740/3 drawables=   3 occl=8192 active=0 policy=0 bundle=org.albor.prototype.pacing asleep=0 disp_active=1 displays=1 refresh=60.0 hb=65 visible=1 running=0 gpu=AMD Radeon Pro 5300M
+T3.2 line mechanism=CAMetalDisplayLink condition=C4_attended callbacks=3 hz=0.6
+mech=CAMetalDisplayLink cond=C4_attended    hz=   0.6 cb=    3 ivl_p50= 16.94 ivl_max=   16.94 gpu_p50= 0.000/3 presented_p50=   65.079/3 drawables=   3 occl=8192 active=0 policy=0 bundle=org.albor.prototype.pacing asleep=0 disp_active=1 displays=1 refresh=60.0 hb=70 visible=1 running=0 gpu=AMD Radeon Pro 5300M
+T3.2 line mechanism=CAMetalDisplayLink condition=C4_attended callbacks=3 hz=0.6
+mech=CAMetalDisplayLink cond=C4_attended    hz=   0.6 cb=    3 ivl_p50= 17.01 ivl_max=   17.01 gpu_p50= 0.000/3 presented_p50=   65.723/3 drawables=   3 occl=8192 active=0 policy=0 bundle=org.albor.prototype.pacing asleep=0 disp_active=1 displays=1 refresh=60.0 hb=75 visible=1 running=0 gpu=AMD Radeon Pro 5300M
+T3.2 line mechanism=CAMetalDisplayLink condition=C4_attended callbacks=3 hz=0.6
+CELL mechanism=CAMetalDisplayLink condition=C4_attended runs=5 hz_median=0.6 hz_min=0.6 hz_max=0.6 ivl_p50_median=16.94
+DRIVER caffeinate_status=0

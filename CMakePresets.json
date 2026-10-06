@@ -1,0 +1,74 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 28,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/.build-${presetName}",
+      "cacheVariables": {
+        "CMAKE_CXX_STANDARD": "23",
+        "CMAKE_CXX_STANDARD_REQUIRED": "ON",
+        "CMAKE_CXX_EXTENSIONS": "OFF",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "CMAKE_C_COMPILER_LAUNCHER": "ccache",
+        "CMAKE_CXX_COMPILER_LAUNCHER": "ccache"
+      }
+    },
+    {
+      "name": "debug",
+      "inherits": "base",
+      "displayName": "Debug (ALBOR_DEV)",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ALBOR_CONFIGURATION": "Dev",
+        "ALBOR_DEV": "ON",
+        "ALBOR_TEST": "OFF",
+        "ALBOR_AUTOMATION": "OFF"
+      }
+    },
+    {
+      "name": "release",
+      "inherits": "base",
+      "displayName": "Release (no dev runtime, no automation)",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ALBOR_CONFIGURATION": "Release",
+        "ALBOR_DEV": "OFF",
+        "ALBOR_TEST": "OFF",
+        "ALBOR_AUTOMATION": "OFF"
+      }
+    },
+    {
+      "name": "test",
+      "inherits": "base",
+      "displayName": "Test (ALBOR_TEST, automation core, software renderer)",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ALBOR_CONFIGURATION": "Test",
+        "ALBOR_DEV": "OFF",
+        "ALBOR_TEST": "ON",
+        "ALBOR_AUTOMATION": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "debug"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release"
+    },
+    {
+      "name": "test",
+      "configurePreset": "test"
+    }
+  ]
+}

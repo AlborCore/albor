@@ -1,0 +1,28 @@
+#include "Component128.h"
+
+#include <cstdint>
+
+struct Component128::Impl
+{
+    uint32_t m_base_offset = 0;
+    float m_color = 0;
+    float m_opacity = 1;
+    float m_width = 0;
+    float m_height = 0;
+    Component127* m_child = nullptr;
+};
+
+Component128::Component128() :
+    m_impl(new Impl) {}
+Component128::~Component128() { delete m_impl; }
+
+float Component128::color() const { return m_impl->m_color; }
+float Component128::width() const { return m_impl->m_width; }
+void Component128::set_color(float v) { m_impl->m_color = v; }
+void Component128::set_opacity(float v) { m_impl->m_opacity = v; }
+void Component128::set_width(float v) { m_impl->m_width = v; }
+void Component128::set_height(float v) { m_impl->m_height = v; }
+void Component128::set_child(Component127* child) { m_impl->m_child = child; }
+void Component128::on_click() {}
+void Component128::on_hover() {}
+void Component128::on_focus() {}

@@ -1,0 +1,24 @@
+steady interval p50 ms   16.6645
+steady interval p99 ms   18.5040 (budget 16.7)
+steady interval max ms   18.7560
+intervals over budget    64 of 200, of which over 2 frames: 0
+posted tasks in nested   32 (expected at least 30 over 500 ms)
+deadline reached         no
+steady interval p50 ms   16.6604
+steady interval p99 ms   18.6693 (budget 16.7)
+steady interval max ms   18.7407
+intervals over budget    60 of 200, of which over 2 frames: 0
+posted tasks in nested   32 (expected at least 30 over 500 ms)
+deadline reached         no
+steady interval p50 ms   16.6578
+steady interval p99 ms   18.5823 (budget 16.7)
+steady interval max ms   18.6480
+intervals over budget    82 of 200, of which over 2 frames: 0
+posted tasks in nested   31 (expected at least 30 over 500 ms)
+deadline reached         no
+steady interval p50 ms   16.6675
+steady interval p99 ms   18.6893 (budget 16.7)
+steady interval max ms   18.7112
+intervals over budget    71 of 200, of which over 2 frames: 0
+posted tasks in nested   31 (expected at least 30 over 500 ms)
+deadline reached         no
