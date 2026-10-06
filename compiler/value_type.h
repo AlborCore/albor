@@ -1,0 +1,182 @@
+#pragma once
+
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace albor::compiler
+{
+    // the kinds of value the type system knows, which is a closed set plus two parameter forms (§11.1)
+    enum class TypeKind
+    {
+        // the type of an expression that produced nothing, which is an error rather than a value (§11.1)
+        Error,
+
+        // the type a handler body has where it only assigns (§11.1)
+        Void,
+
+        // a truth value (§11.1)
+        Bool,
+
+        // a signed integer, which never widens to float on its own (§11.1)
+        Int,
+
+        // a floating point number, which never narrows to int on its own (§11.1)
+        Float,
+
+        // a text value, which concatenation and the string conversion produce (§11.1)
+        String,
+
+        // a colour value, which a colour literal produces (§11.1)
+        Color,
+
+        // a length in logical or physical pixels, which a length literal produces (§11.1, AD-27)
+        Length,
+
+        // an immutable shared value handed across threads, written Snapshot<T> (§10.5, §13.2)
+        Snapshot,
+
+        // an ordered collection of one element type, written vector<T> (§8.1)
+        Vector,
+
+        // a native component type the manifest declares, which the checker resolves by name (§11.2, AD-17)
+        Native
+    };
+
+    // one value type, which is either a scalar kind, a parameter form or a named native type (§11.1)
+    class ValueType
+    {
+    public:
+        // build the error type, which stands for a value whose type could not be established (§11.1)
+        ValueType();
+
+        // build a scalar type of the given kind, which carries no parameter (§11.1)
+        explicit ValueType(TypeKind kind);
+
+        // build a parameter type over the given element, which Snapshot<T> and vector<T> share (§11.1)
+        [[nodiscard]] static ValueType parameterized(TypeKind kind, const ValueType& element);
+
+        // build a native type of the given name, which the manifest is the source of (§11.2, AD-17)
+        [[nodiscard]] static ValueType native(std::string name);
+
+        // report whether the type is the error type, which suppresses the problems it would otherwise raise (§11.1)
+        [[nodiscard]] bool is_error() const;
+
+        // report whether the type is a number, which is what the arithmetic operators accept (§11.1)
+        [[nodiscard]] bool is_numeric() const;
+
+        // report whether the type is the given kind, which is how a scalar rule is written (§11.1)
+        [[nodiscard]] bool is(TypeKind other) const;
+
+        // report whether two types are the same, which is what an assignment check asks (§11.1)
+        [[nodiscard]] bool equals(const ValueType& other) const;
+
+        // render the type the way the author wrote it, which is what a diagnostic prints (§11.1)
+        [[nodiscard]] std::string to_string() const;
+
+        // report which form the type takes, which decides what the accessors below mean (§11.1)
+        [[nodiscard]] TypeKind kind() const;
+
+        // hand out the native type name, which is empty for every other form (§11.2, AD-17)
+        [[nodiscard]] const std::string& native_name() const;
+
+        // hand out the element type of a parameter form, which is the error type for every other form (§11.1)
+        [[nodiscard]] const ValueType& element() const;
+
+    private:
+        // which form the type takes, which decides what the fields below mean (§11.1)
+        TypeKind m_kind = TypeKind::Error;
+
+        // the native type name, which is set only for a native type (§11.2, AD-17)
+        std::string m_native_name;
+
+        // the element type of a parameter form, which is null for every other form (§11.1)
+        std::shared_ptr<const ValueType> m_element;
+    };
+
+    // the scalar type of the given kind, which is what the builtin rules name (§11.1)
+    [[nodiscard]] ValueType scalar(TypeKind kind);
+
+    // the error type, which stands for a value whose type could not be established (§11.1)
+    [[nodiscard]] ValueType error_type();
+
+    // the type of the builtin conversion with the given name, which is absent when the name is not one (§11.1)
+    [[nodiscard]] bool builtin_conversion_target(std::string_view name, TypeKind& out_kind);
+
+    // report whether the conversion may be applied to a value of the given type, because the rules are closed (§11.1)
+    [[nodiscard]] bool conversion_allowed(TypeKind from, TypeKind to);
+
+    // report whether a value of one type may be assigned to a target type, which never widens implicitly (§11.1)
+    [[nodiscard]] bool assignable(const ValueType& from, const ValueType& to);
+
+    // one property an element type exposes, which the checker resolves an assignment against (§11.1, §11.2)
+    struct ElementProperty
+    {
+        // the name the author writes, which is what a binding names (§11.1)
+        std::string name;
+
+        // the type the property holds, which an assigned value must match (§11.1)
+        ValueType type;
+
+        // whether a handler may assign the property, which decides if an InOut direction is compatible (§11.1, §7)
+        bool assignable = false;
+
+        // whether the property is a length, which the codegen scales by the density of the surface (§11.1, AD-27)
+        bool scaled_by_density = false;
+    };
+
+    // one signal an element type raises, which a handler attaches to (§11.1, §11.2)
+    struct ElementSignal
+    {
+        // the name the author writes after the handler prefix, which is what the element raises (§11.1)
+        std::string name;
+
+        // the parameter types in declaration order, which an invocation must match (§11.1)
+        std::vector<ValueType> parameter_types;
+    };
+
+    // one element type a ui file may instantiate, which is either a builtin widget or a manifest component (§11.1, §11.2)
+    struct ElementType
+    {
+        // the name the author writes after an element keyword (§11.1)
+        std::string name;
+
+        // the properties the type exposes to bindings (§11.1)
+        std::vector<ElementProperty> properties;
+
+        // the signals the type raises, which a handler attaches to (§11.1)
+        std::vector<ElementSignal> signals;
+
+        // whether the type may contain children, which is what a container accepts (§11.1)
+        bool accepts_children = false;
+
+        // find a property by name, which is what an assignment resolves against (§11.1)
+        [[nodiscard]] const ElementProperty* find_property(std::string_view property_name) const;
+
+        // find a signal by name, which is what a handler resolves against (§11.1)
+        [[nodiscard]] const ElementSignal* find_signal(std::string_view signal_name) const;
+    };
+
+    // the set of element types a component may instantiate, which is the builtins plus the manifests (§11.1, §11.2, AD-17)
+    class ElementCatalog
+    {
+    public:
+        // build a catalog holding only the builtin widgets, which every ui file may use (§11.1, §8)
+        [[nodiscard]] static ElementCatalog with_builtins();
+
+        // add a native component from a manifest, which is the single source of truth for its types (§11.2, AD-17)
+        void add_native(const ElementType& type);
+
+        // find an element type by name, which is what an element keyword resolves against (§11.1)
+        [[nodiscard]] const ElementType* find(std::string_view name) const;
+
+        // hand out every type in the catalog, which is what a diagnostic about the whole set iterates (§11.1)
+        [[nodiscard]] const std::vector<ElementType>& types() const;
+
+    private:
+        // the known types, which are looked up by name (§11.1)
+        std::vector<ElementType> m_types;
+    };
+} // namespace albor::compiler
