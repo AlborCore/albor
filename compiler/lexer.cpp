@@ -172,7 +172,7 @@ namespace albor::compiler
             hexadecimal = true;
         }
         // a hexadecimal prefix with no digits behind it is not a number at all, so it is reported (§11.1)
-        if (hexadecimal && !at_end() && std::isxdigit(static_cast<unsigned char>(peek())) == 0) {
+        if (hexadecimal && (at_end() || std::isxdigit(static_cast<unsigned char>(peek())) == 0)) {
             // the problem is reported against the whole malformed literal (§11.1)
             m_diagnostics.add(Diagnostic::Severity::Error, SourceSpan{.start = start, .end = position()}, "E0107", "a hexadecimal literal needs at least one digit");
             // the literal is returned as an integer, so the scan reaches the units after it (§11.1)
@@ -225,7 +225,7 @@ namespace albor::compiler
             return Token{.kind = Token::Kind::Length, .text = text, .value = text, .span = SourceSpan{.start = start, .end = position()}};
         }
         // a fractional or exponent literal is a float and everything else is an integer (§11.1)
-        const Token::Kind kind = fractional || hexadecimal ? Token::Kind::Float : Token::Kind::Integer;
+        const Token::Kind kind = fractional ? Token::Kind::Float : Token::Kind::Integer;
         return Token{.kind = kind, .text = text, .value = text, .span = SourceSpan{.start = start, .end = position()}};
     }
 

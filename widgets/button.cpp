@@ -12,13 +12,23 @@ namespace albor
 
     // the vertical extent a push control never shrinks below, for the same reason (§8.2)
     constexpr float MINIMUM_HEIGHT = 16.0f;
-    Button::Button(BindingEngine* engine, std::string label, std::string explicit_id) :
-        Widget(engine, std::move(explicit_id)), m_label(std::move(label)) {
-        // the label is measured once up front, so the plate is sized before the first layout pass reaches it (§9.1)
-        m_label_layout = TextLayout::from_text(m_label, TextEngine::DEFAULT_FONT_SIZE);
+    Button::Button(BindingEngine* engine, TextEngine* text_engine, std::string label, std::string explicit_id) :
+        Widget(engine, std::move(explicit_id)), m_text_engine(text_engine), m_label(std::move(label)) {
+        // a button with no engine cannot measure, so the label stays empty and the plate falls back to the minimum extent (§9.1, AD-14)
+        if (m_text_engine == nullptr)
+            return;
+        // the label is measured once up front, so the plate is sized before the first layout pass reaches it (§9.1, AD-14)
+        m_label_layout = m_text_engine->measure(m_label, 0.0f, TextEngine::DEFAULT_FONT_SIZE);
     }
 
     void Button::measure(const SizeConstraints& constraints, Size& out_size) {
+        // a button with no engine keeps whatever it measured, because it cannot measure at all (§9.1, AD-14)
+        if (m_text_engine != nullptr) {
+            // the offered width bounds the run, because a narrow parent wraps the plate's label (§8.2, §9.1)
+            const float offered_width = constraints.maximum.width > 0.0f ? constraints.maximum.width : 0.0f;
+            // the run is measured at the default button size, because the plate carries no separate size knob (§9.1)
+            m_label_layout = m_text_engine->measure(m_label, offered_width, TextEngine::DEFAULT_FONT_SIZE);
+        }
         // a push control must stay grabbable, so the label drives the plate and a default covers an empty label (§8.2)
         const Size content{.width = std::max(m_label_layout.size.width, MINIMUM_WIDTH), .height = std::max(m_label_layout.size.height, MINIMUM_HEIGHT)};
         // the result is clamped into the offered constraints, because a parent decision is final (§8.2)
@@ -70,7 +80,27 @@ namespace albor
     }
 
     void Button::dispatch_event(Event& event) {
-        // a press is the only event that activates a button (§8.3)
+        // a hidden button takes no event at all, because it draws nothing to aim at (§8.3)
+        if (!visible())
+            return;
+        // a key that activates the button is a press, which the focused button receives (§8.3)
+        if (event.kind == EventKind::KeyDown && (event.key == Key::Return || event.key == Key::Space)) {
+            // a disabled button does not claim the key, because it refuses input (§8.3)
+            if (m_disabled)
+                return;
+            // a modified key is an application shortcut, so a plain activation ignores it (§8.3)
+            if (!event.modifiers.none())
+                return;
+            // the event is claimed, so no ancestor reacts to the same key (§8.3)
+            event.handled = true;
+            // a button with no handler still claims the key, because it swallowed it (§8.3)
+            if (!m_on_click)
+                return;
+            // the handler runs once, which is what an activation means (§8.3)
+            m_on_click();
+            return;
+        }
+        // a press is the only other event that activates a button (§8.3)
         if (event.kind != EventKind::PointerDown) {
             // any other event belongs to a parent, so the button does not claim it (§8.3)
             return;
@@ -118,8 +148,10 @@ namespace albor
             return;
         // the label is stored first, so the invalidation walks a button that already carries the new text (§6.1)
         m_label = std::move(label);
-        // the run is measured eagerly, because the plate is as wide as the text it carries (§9.1)
-        m_label_layout = TextLayout::from_text(m_label, TextEngine::DEFAULT_FONT_SIZE);
+        // a button with no engine has nothing to remeasure, because it cannot measure at all (§9.1, AD-14)
+        if (m_text_engine != nullptr)
+            // the run is measured eagerly, because the plate is as wide as the text it carries (§9.1, AD-14)
+            m_label_layout = m_text_engine->measure(m_label, 0.0f, TextEngine::DEFAULT_FONT_SIZE);
         // a new label resizes the plate, so the layout passes must run again (§8.2)
         invalidate_layout();
     }

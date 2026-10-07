@@ -83,6 +83,9 @@ namespace albor
         // map a point through the transform
         [[nodiscard]] Point apply(const Point& point) const;
 
+        // build the transform that applies this one first and the argument second, which is how a retained draw joins the current transform (§6.2, §6.4)
+        [[nodiscard]] Transform then(const Transform& outer) const;
+
         // compare two transforms component wise
         friend bool operator==(const Transform& lhs, const Transform& rhs) = default;
     };

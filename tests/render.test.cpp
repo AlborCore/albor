@@ -1,4 +1,7 @@
 #include <condition_variable>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -6,10 +9,16 @@
 
 #include <gtest/gtest.h>
 
+#include "render/custom_render_node.h"
 #include "render/frame_scene.h"
+#include "render/image_resource.h"
+#include "render/line_batch.h"
+#include "render/path_resource.h"
+#include "render/picture_resource.h"
 #include "render/render_context.h"
 #include "render/render_executor.h"
 #include "render/renderer_backend.h"
+#include "render/resource_factory.h"
 
 using namespace albor;
 
@@ -40,6 +49,36 @@ namespace
         // the text runs the surface was asked to draw, in order
         std::vector<std::string> drawn_texts;
 
+        // the retained line batches the surface was asked to draw, in order
+        std::vector<std::shared_ptr<const LineBatch>> drawn_batches;
+
+        // the transform of every drawn line batch, parallel to the batches
+        std::vector<Transform> drawn_batch_transforms;
+
+        // the stroke of every drawn line batch, parallel to the batches
+        std::vector<StrokeStyle> drawn_batch_strokes;
+
+        // the retained paths the surface was asked to draw, in order
+        std::vector<std::shared_ptr<const PathResource>> drawn_paths;
+
+        // the transform of every drawn path, parallel to the paths
+        std::vector<Transform> drawn_path_transforms;
+
+        // the paint of every drawn path, parallel to the paths
+        std::vector<Paint> drawn_path_paints;
+
+        // the retained pictures the surface was asked to replay, in order
+        std::vector<std::shared_ptr<const PictureResource>> drawn_pictures;
+
+        // the transform of every drawn picture, parallel to the pictures
+        std::vector<Transform> drawn_picture_transforms;
+
+        // the retained images the surface was asked to draw, in order
+        std::vector<std::shared_ptr<const ImageResource>> drawn_images;
+
+        // the destination of every drawn image, parallel to the images
+        std::vector<Rect> drawn_image_destinations;
+
         void save() override { save_count++; }
 
         void restore() override { restore_count++; }
@@ -65,6 +104,28 @@ namespace
         void draw_rounded_rect(const Rect& rect, float, const Paint&) override { drawn_rects.push_back(rect); }
 
         void draw_text(const TextLayout& layout, Point, const Paint&) override { drawn_texts.push_back(layout.text); }
+
+        void draw_line_batch(const std::shared_ptr<const LineBatch>& batch, const Transform& transform, const StrokeStyle& stroke) override {
+            drawn_batches.push_back(batch);
+            drawn_batch_transforms.push_back(transform);
+            drawn_batch_strokes.push_back(stroke);
+        }
+
+        void draw_path(const std::shared_ptr<const PathResource>& path, const Transform& transform, const Paint& paint) override {
+            drawn_paths.push_back(path);
+            drawn_path_transforms.push_back(transform);
+            drawn_path_paints.push_back(paint);
+        }
+
+        void draw_picture(const std::shared_ptr<const PictureResource>& picture, const Transform& transform) override {
+            drawn_pictures.push_back(picture);
+            drawn_picture_transforms.push_back(transform);
+        }
+
+        void draw_image(const std::shared_ptr<const ImageResource>& image, const Rect& destination, const Paint&) override {
+            drawn_images.push_back(image);
+            drawn_image_destinations.push_back(destination);
+        }
 
     private:
         // the transform the surface reads back
@@ -129,6 +190,9 @@ namespace
         // the rectangles of every scene the backend was asked to execute, in order
         std::vector<std::size_t> executed_rect_counts;
 
+        // the number of retained line batches every scene carried, in order (§6.4, AD-06)
+        std::vector<std::size_t> executed_batch_counts;
+
         // whether the backend came up
         bool is_ready = true;
 
@@ -145,9 +209,12 @@ namespace
             context.set_transform(Transform::translation(scene.metrics().logical_size.width / 2.0f, scene.metrics().logical_size.height / 2.0f));
             for (const Rect& rect : scene.rects())
                 context.draw_rect(rect, Paint{});
+            for (const LineBatchDraw& retained : scene.line_batches())
+                context.draw_line_batch(retained.batch, retained.transform, retained.stroke);
             context.restore();
             surface.end_frame();
             executed_rect_counts.push_back(scene.rects().size());
+            executed_batch_counts.push_back(scene.line_batches().size());
         }
     };
 
@@ -205,6 +272,24 @@ namespace
 
         // whether the test released the parked render thread (§6.1)
         bool m_released = false;
+    };
+
+    // the custom node test double, which paints one rectangle through its retained content hook (§6.4)
+    class TestCustomNode final : public CustomRenderNode
+    {
+    public:
+        // how many times the retained content was requested (§6.4)
+        std::size_t renders = 0;
+
+        // the bounds of the last retained content request (§6.4)
+        Rect last_bounds;
+
+        void render_content(RenderContext& context, const Rect& bounds) override {
+            // the visual of the node is one rectangle the size of its bounds (§6.4)
+            renders++;
+            last_bounds = bounds;
+            context.draw_rect(bounds, Paint{});
+        }
     };
 } // namespace
 
@@ -354,6 +439,50 @@ TEST(FrameScene, ASceneCarriesNoTextRuns) {
     const FrameScene scene = FrameScene::from_primitives(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f), {});
     // assert
     EXPECT_TRUE(scene.texts().empty());
+}
+
+TEST(FrameScene, ATextColourListThatDoesNotMatchTheRunsIsRefused) {
+    // arrange
+    FrameScene scene = FrameScene::from_primitives(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f), {});
+    scene.add_text(TextLayout::from_text("albor", 16.0f), Point{10.0f, 20.0f});
+    // act
+    scene.set_text_colors({Color::rgb(1.0f, 0.0f, 0.0f), Color::rgb(0.0f, 1.0f, 0.0f)});
+    // assert
+    EXPECT_TRUE(scene.text_colors().empty());
+}
+
+TEST(FrameScene, ASetTextColourTravelsWithTheRun) {
+    // arrange
+    FrameScene scene = FrameScene::from_primitives(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f), {});
+    scene.add_text(TextLayout::from_text("albor", 16.0f), Point{10.0f, 20.0f});
+    // act
+    scene.set_text_colors({Color::rgb(0.25f, 0.5f, 0.75f)});
+    // assert
+    ASSERT_EQ(scene.text_colors().size(), 1u);
+    EXPECT_EQ(scene.text_colors()[0], (Color::rgb(0.25f, 0.5f, 0.75f)));
+}
+
+TEST(FrameScene, ARectColourListThatDoesNotMatchTheRectanglesIsRefused) {
+    // arrange
+    std::vector<Rect> rects;
+    rects.push_back(Rect{0.0f, 0.0f, 1.0f, 1.0f});
+    FrameScene scene = FrameScene::from_primitives(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f), std::move(rects));
+    // act
+    scene.set_rect_colors({Color::rgb(1.0f, 0.0f, 0.0f), Color::rgb(0.0f, 1.0f, 0.0f)});
+    // assert
+    EXPECT_TRUE(scene.rect_colors().empty());
+}
+
+TEST(FrameScene, ASetRectColourTravelsWithTheRectangle) {
+    // arrange
+    std::vector<Rect> rects;
+    rects.push_back(Rect{0.0f, 0.0f, 1.0f, 1.0f});
+    FrameScene scene = FrameScene::from_primitives(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f), std::move(rects));
+    // act
+    scene.set_rect_colors({Color::rgb(0.3f, 0.4f, 0.5f)});
+    // assert
+    ASSERT_EQ(scene.rect_colors().size(), 1u);
+    EXPECT_EQ(scene.rect_colors()[0], (Color::rgb(0.3f, 0.4f, 0.5f)));
 }
 
 TEST(FrameScene, AnUnconfiguredSceneKeepsTheDefaultBackground) {
@@ -603,6 +732,28 @@ TEST(RenderExecutor, TheBackendDrawsThroughTheSurfaceContext) {
     ASSERT_EQ(surface.context.drawn_rects.size(), 1u);
 }
 
+TEST(RenderExecutor, TheBackendReplaysRetainedDraws) {
+    // arrange
+    TestRendererBackend backend;
+    RenderExecutor executor(&backend);
+    TestRenderSurface surface;
+    ResourceFactory factory;
+    const Point points[] = {{0.0f, 0.0f}, {1.0f, 1.0f}};
+    const std::shared_ptr<const LineBatch> batch = factory.create_line_batch(points);
+    FrameScene built(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f));
+    built.add_line_batch(LineBatchDraw{.batch = batch, .transform = Transform{}, .stroke = StrokeStyle{}});
+    const auto scene = std::make_shared<const FrameScene>(std::move(built));
+    // act
+    executor.submit(surface, scene);
+    executor.flush();
+    // assert
+    EXPECT_EQ(executor.executed_count(), 1u);
+    ASSERT_EQ(backend.executed_batch_counts.size(), 1u);
+    EXPECT_EQ(backend.executed_batch_counts[0], 1u);
+    ASSERT_EQ(surface.context.drawn_batches.size(), 1u);
+    EXPECT_EQ(surface.context.drawn_batches[0], batch);
+}
+
 TEST(RenderExecutor, SubmittingANullSceneIsRefused) {
     // arrange
     TestRendererBackend backend;
@@ -796,4 +947,511 @@ TEST(RendererBackendFactory, TheBackendExecutesAScene) {
     ASSERT_EQ(backend.executed_rect_counts.size(), 1u);
     EXPECT_EQ(surface.begun, 1u);
     EXPECT_EQ(surface.ended, 1u);
+}
+
+TEST(LineBatch, AFactoryBatchCarriesItsIdentifierAndSegments) {
+    // arrange
+    ResourceFactory factory;
+    const Point points[] = {{0.0f, 0.0f}, {10.0f, 10.0f}, {20.0f, 0.0f}, {30.0f, 10.0f}, {40.0f, 0.0f}, {50.0f, 10.0f}};
+    // act
+    const std::shared_ptr<const LineBatch> batch = factory.create_line_batch(points);
+    // assert
+    ASSERT_NE(batch, nullptr);
+    EXPECT_GE(batch->id(), 1u);
+    EXPECT_EQ(batch->point_count(), 6u);
+    EXPECT_EQ(batch->segment_count(), 3u);
+    ASSERT_EQ(batch->points().size(), 6u);
+    EXPECT_EQ(batch->points()[0], (Point{0.0f, 0.0f}));
+    EXPECT_EQ(batch->points()[5], (Point{50.0f, 10.0f}));
+}
+
+TEST(LineBatch, ADanglingPointIsRefused) {
+    // arrange
+    ResourceFactory factory;
+    const Point points[] = {{0.0f, 0.0f}, {10.0f, 10.0f}, {20.0f, 0.0f}};
+    // act
+    const std::shared_ptr<const LineBatch> batch = factory.create_line_batch(points);
+    // assert
+    EXPECT_EQ(batch, nullptr);
+}
+
+TEST(LineBatch, AnEmptyBatchIsRefused) {
+    // arrange, act
+    ResourceFactory factory;
+    // assert
+    EXPECT_EQ(factory.create_line_batch(std::span<const Point>()), nullptr);
+}
+
+TEST(PathResource, AFactoryPathCarriesItsVerbsAndPoints) {
+    // arrange
+    ResourceFactory factory;
+    const PathVerb verbs[] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const Point points[] = {{0.0f, 0.0f}, {10.0f, 10.0f}, {10.0f, 0.0f}};
+    // act
+    const std::shared_ptr<const PathResource> path = factory.create_path(verbs, points);
+    // assert
+    ASSERT_NE(path, nullptr);
+    EXPECT_GE(path->id(), 1u);
+    ASSERT_EQ(path->verbs().size(), 4u);
+    EXPECT_EQ(path->verbs()[0], PathVerb::MoveTo);
+    EXPECT_EQ(path->verbs()[3], PathVerb::Close);
+    ASSERT_EQ(path->points().size(), 3u);
+    EXPECT_EQ(path->points()[2], (Point{10.0f, 0.0f}));
+}
+
+TEST(PathResource, AnEmptyCommandStreamIsRefused) {
+    // arrange, act
+    ResourceFactory factory;
+    // assert
+    EXPECT_EQ(factory.create_path(std::span<const PathVerb>(), std::span<const Point>()), nullptr);
+}
+
+TEST(PathResource, ACommandStreamThatMissesItsPointsIsRefused) {
+    // arrange
+    ResourceFactory factory;
+    const PathVerb verbs[] = {PathVerb::MoveTo, PathVerb::LineTo};
+    const Point too_few[] = {{0.0f, 0.0f}};
+    const Point too_many[] = {{0.0f, 0.0f}, {10.0f, 10.0f}, {5.0f, 5.0f}};
+    // act, assert
+    EXPECT_EQ(factory.create_path(verbs, too_few), nullptr);
+    EXPECT_EQ(factory.create_path(verbs, too_many), nullptr);
+}
+
+TEST(PathResource, PointDemandCountsTheConsumingVerbs) {
+    // arrange
+    const PathVerb verbs[] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::Close, PathVerb::LineTo, PathVerb::Close};
+    // act
+    const std::size_t demand = PathResource::point_demand(verbs);
+    // assert
+    EXPECT_EQ(demand, 3u);
+}
+
+TEST(ImageResource, AFactoryImageCarriesExtentFormatAndBytes) {
+    // arrange
+    ResourceFactory factory;
+    const std::uint8_t pixels[] = {255, 0, 0, 255, 0, 255, 0, 255};
+    // act
+    const std::shared_ptr<const ImageResource> image = factory.create_image(2, 1, ImageFormat::RGBA8, pixels);
+    // assert
+    ASSERT_NE(image, nullptr);
+    EXPECT_GE(image->id(), 1u);
+    EXPECT_EQ(image->width(), 2u);
+    EXPECT_EQ(image->height(), 1u);
+    EXPECT_EQ(image->format(), ImageFormat::RGBA8);
+    EXPECT_EQ(image->row_bytes(), 8u);
+    ASSERT_EQ(image->pixels().size(), 8u);
+    EXPECT_EQ(image->pixels()[1], 0u);
+}
+
+TEST(ImageResource, AnEmptyExtentIsRefused) {
+    // arrange, act
+    ResourceFactory factory;
+    // assert
+    EXPECT_EQ(factory.create_image(0, 1, ImageFormat::RGBA8, std::span<const std::uint8_t>()), nullptr);
+    EXPECT_EQ(factory.create_image(2, 0, ImageFormat::RGBA8, std::span<const std::uint8_t>()), nullptr);
+}
+
+TEST(ImageResource, AMismatchedPixelBufferIsRefused) {
+    // arrange
+    ResourceFactory factory;
+    const std::uint8_t too_few[] = {255, 0, 0, 255};
+    // act
+    const std::shared_ptr<const ImageResource> image = factory.create_image(2, 1, ImageFormat::RGBA8, too_few);
+    // assert
+    EXPECT_EQ(image, nullptr);
+}
+
+TEST(ImageResource, BytesPerPixelAndByteCountAgree) {
+    // arrange, act
+    const std::size_t bytes = ImageResource::byte_count(2, 3, ImageFormat::RGBA8);
+    // assert
+    EXPECT_EQ(ImageResource::bytes_per_pixel(ImageFormat::RGBA8), 4u);
+    EXPECT_EQ(bytes, 24u);
+    EXPECT_EQ(ImageResource::byte_count(0, 3, ImageFormat::RGBA8), (std::numeric_limits<std::size_t>::max)());
+}
+
+TEST(PictureRecorder, CommandsAreRecordedInOrder) {
+    // arrange, act
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{});
+    recorder.draw_rounded_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), 4.0f, Paint{});
+    recorder.draw_text(TextLayout::from_text("albor", 16.0f), Point{0.0f, 0.0f}, Paint{});
+    // assert
+    ASSERT_EQ(recorder.commands().size(), 3u);
+    EXPECT_EQ(recorder.commands()[0].kind, PictureCommandKind::Rect);
+    EXPECT_EQ(recorder.commands()[1].kind, PictureCommandKind::RoundedRect);
+    EXPECT_EQ(recorder.commands()[2].kind, PictureCommandKind::Text);
+    EXPECT_FLOAT_EQ(recorder.commands()[1].radius, 4.0f);
+}
+
+TEST(PictureRecorder, AnEmptyRectangleDoesNotRecord) {
+    // arrange, act
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{5.0f, 5.0f}, Size{0.0f, 10.0f}), Paint{});
+    recorder.draw_text(TextLayout::from_text("", 16.0f), Point{0.0f, 0.0f}, Paint{});
+    // assert
+    EXPECT_TRUE(recorder.empty());
+}
+
+TEST(PictureRecorder, ACommandStampsTheTransformItWasRecordedUnder) {
+    // arrange
+    PictureRecorder recorder;
+    recorder.set_transform(Transform::translation(5.0f, 6.0f));
+    // act
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{});
+    // assert
+    ASSERT_EQ(recorder.commands().size(), 1u);
+    EXPECT_EQ(recorder.commands()[0].transform, (Transform::translation(5.0f, 6.0f)));
+}
+
+TEST(PictureRecorder, SaveAndRestoreRoundTripTheTransform) {
+    // arrange
+    PictureRecorder recorder;
+    recorder.set_transform(Transform::translation(5.0f, 6.0f));
+    recorder.save();
+    recorder.set_transform(Transform::scaling(2.0f, 2.0f));
+    // act
+    recorder.restore();
+    // assert
+    EXPECT_EQ(recorder.transform(), (Transform::translation(5.0f, 6.0f)));
+}
+
+TEST(PictureRecorder, ABatchCommandCarriesItsRetainedBatch) {
+    // arrange
+    ResourceFactory factory;
+    const Point points[] = {{0.0f, 0.0f}, {10.0f, 10.0f}};
+    const std::shared_ptr<const LineBatch> batch = factory.create_line_batch(points);
+    PictureRecorder recorder;
+    StrokeStyle stroke;
+    stroke.color = Color::rgb(0.9f, 0.1f, 0.2f);
+    // act
+    recorder.draw_line_batch(batch, Transform::translation(10.0f, 20.0f), stroke);
+    // assert
+    ASSERT_EQ(recorder.commands().size(), 1u);
+    EXPECT_EQ(recorder.commands()[0].kind, PictureCommandKind::LineBatch);
+    EXPECT_EQ(recorder.commands()[0].batch, batch);
+    EXPECT_EQ(recorder.commands()[0].transform, (Transform::translation(10.0f, 20.0f)));
+    EXPECT_EQ(recorder.commands()[0].stroke, stroke);
+}
+
+TEST(PictureRecorder, AnImageCommandCarriesItsRetainedImage) {
+    // arrange
+    ResourceFactory factory;
+    const std::uint8_t pixels[] = {255, 0, 0, 255};
+    const std::shared_ptr<const ImageResource> image = factory.create_image(1, 1, ImageFormat::RGBA8, pixels);
+    PictureRecorder recorder;
+    // act
+    recorder.draw_image(image, Rect::from_origin_size(Point{10.0f, 20.0f}, Size{4.0f, 2.0f}), Paint{});
+    // assert
+    ASSERT_EQ(recorder.commands().size(), 1u);
+    EXPECT_EQ(recorder.commands()[0].kind, PictureCommandKind::Image);
+    EXPECT_EQ(recorder.commands()[0].image, image);
+    EXPECT_FLOAT_EQ(recorder.commands()[0].rect.x, 10.0f);
+}
+
+TEST(PictureRecorder, ANestedPictureFlattensInOrder) {
+    // arrange
+    PictureRecorder inner;
+    inner.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{5.0f, 5.0f}), Paint{});
+    ResourceFactory factory;
+    const std::shared_ptr<const PictureResource> picture = factory.create_picture(inner);
+    PictureRecorder outer;
+    outer.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{});
+    // act
+    outer.draw_picture(picture, Transform{});
+    outer.draw_text(TextLayout::from_text("albor", 16.0f), Point{0.0f, 0.0f}, Paint{});
+    // assert
+    ASSERT_EQ(outer.commands().size(), 3u);
+    EXPECT_EQ(outer.commands()[0].kind, PictureCommandKind::Rect);
+    EXPECT_EQ(outer.commands()[1].kind, PictureCommandKind::Rect);
+    EXPECT_EQ(outer.commands()[2].kind, PictureCommandKind::Text);
+}
+
+TEST(PictureRecorder, AFactoryPictureRefusesAnEmptyRecording) {
+    // arrange
+    ResourceFactory factory;
+    PictureRecorder recorder;
+    // act
+    const std::shared_ptr<const PictureResource> picture = factory.create_picture(recorder);
+    // assert
+    EXPECT_EQ(picture, nullptr);
+}
+
+TEST(PictureRecorder, ResetDropsTheRecordedCommands) {
+    // arrange
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{});
+    // act
+    recorder.reset();
+    // assert
+    EXPECT_TRUE(recorder.empty());
+}
+
+TEST(ResourceFactory, EveryResourceGetsAUniqueIdentifier) {
+    // arrange
+    ResourceFactory factory;
+    const Point points[] = {{0.0f, 0.0f}, {1.0f, 1.0f}};
+    const PathVerb verbs[] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const Point path_points[] = {{0.0f, 0.0f}, {1.0f, 1.0f}, {1.0f, 0.0f}};
+    const std::uint8_t pixels[] = {255, 0, 0, 255};
+    // act
+    const std::shared_ptr<const LineBatch> batch = factory.create_line_batch(points);
+    const std::shared_ptr<const PathResource> path = factory.create_path(verbs, path_points);
+    const std::shared_ptr<const ImageResource> image = factory.create_image(1, 1, ImageFormat::RGBA8, pixels);
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{1.0f, 1.0f}), Paint{});
+    const std::shared_ptr<const PictureResource> picture = factory.create_picture(recorder);
+    // assert
+    ASSERT_NE(batch, nullptr);
+    ASSERT_NE(path, nullptr);
+    ASSERT_NE(image, nullptr);
+    ASSERT_NE(picture, nullptr);
+    const std::size_t ids[] = {static_cast<std::size_t>(batch->id()), static_cast<std::size_t>(path->id()), static_cast<std::size_t>(image->id()), static_cast<std::size_t>(picture->id())};
+    for (std::size_t left = 0; left < 4; left++)
+        for (std::size_t right = left + 1; right < 4; right++)
+            EXPECT_NE(ids[left], ids[right]);
+}
+
+TEST(FrameScene, RetainedDrawsReplayInRecordingOrder) {
+    // arrange
+    ResourceFactory factory;
+    const Point points[] = {{0.0f, 0.0f}, {1.0f, 1.0f}};
+    const std::shared_ptr<const LineBatch> batch = factory.create_line_batch(points);
+    const PathVerb verbs[] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const Point path_points[] = {{0.0f, 0.0f}, {1.0f, 1.0f}, {1.0f, 0.0f}};
+    const std::shared_ptr<const PathResource> path = factory.create_path(verbs, path_points);
+    const std::uint8_t pixels[] = {255, 0, 0, 255};
+    const std::shared_ptr<const ImageResource> image = factory.create_image(1, 1, ImageFormat::RGBA8, pixels);
+    PictureRecorder picture_recorder;
+    picture_recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{1.0f, 1.0f}), Paint{});
+    const std::shared_ptr<const PictureResource> picture = factory.create_picture(picture_recorder);
+    FrameScene scene(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    const Rect destination = Rect::from_origin_size(Point{2.0f, 3.0f}, Size{4.0f, 4.0f});
+    const Transform transform = Transform::translation(7.0f, 8.0f);
+    StrokeStyle stroke;
+    stroke.width = 2.0f;
+    // act
+    scene.add_line_batch(LineBatchDraw{.batch = batch, .transform = transform, .stroke = stroke});
+    scene.add_path(PathDraw{.path = path, .transform = transform, .paint = Paint{}});
+    scene.add_picture(PictureDraw{.picture = picture, .transform = transform});
+    scene.add_image(ImageDraw{.image = image, .destination = destination});
+    // assert
+    ASSERT_EQ(scene.line_batches().size(), 1u);
+    EXPECT_EQ(scene.line_batches()[0].batch, batch);
+    EXPECT_EQ(scene.line_batches()[0].stroke, stroke);
+    ASSERT_EQ(scene.paths().size(), 1u);
+    EXPECT_EQ(scene.paths()[0].path, path);
+    ASSERT_EQ(scene.pictures().size(), 1u);
+    EXPECT_EQ(scene.pictures()[0].picture, picture);
+    ASSERT_EQ(scene.images().size(), 1u);
+    EXPECT_EQ(scene.images()[0].image, image);
+    EXPECT_EQ(scene.images()[0].destination, destination);
+}
+
+TEST(FrameScene, ANullRetainedDrawIsRefused) {
+    // arrange, act
+    FrameScene scene(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    scene.add_line_batch(LineBatchDraw{.batch = nullptr, .transform = Transform{}, .stroke = StrokeStyle{}});
+    scene.add_path(PathDraw{.path = nullptr, .transform = Transform{}, .paint = Paint{}});
+    scene.add_picture(PictureDraw{.picture = nullptr, .transform = Transform{}});
+    scene.add_image(ImageDraw{.image = nullptr, .destination = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{4.0f, 4.0f})});
+    // assert
+    EXPECT_TRUE(scene.line_batches().empty());
+    EXPECT_TRUE(scene.paths().empty());
+    EXPECT_TRUE(scene.pictures().empty());
+    EXPECT_TRUE(scene.images().empty());
+}
+
+TEST(CustomRenderNode, MeasureConstrainsTheIntrinsicSize) {
+    // arrange
+    TestCustomNode node;
+    // act
+    Size measured{};
+    node.measure(SizeConstraints::at_most(Size{50.0f, 200.0f}), measured);
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 50.0f);
+    EXPECT_FLOAT_EQ(measured.height, 100.0f);
+}
+
+TEST(CustomRenderNode, AnIntrinsicSizeIsReplaced) {
+    // arrange
+    TestCustomNode node;
+    node.set_intrinsic_size(Size{30.0f, 40.0f});
+    // act
+    Size measured{};
+    node.measure(SizeConstraints::unconstrained(), measured);
+    // assert
+    EXPECT_EQ(node.intrinsic_size(), (Size{30.0f, 40.0f}));
+    EXPECT_FLOAT_EQ(measured.width, 30.0f);
+    EXPECT_FLOAT_EQ(measured.height, 40.0f);
+}
+
+TEST(CustomRenderNode, ARenderReachesTheRetainedHook) {
+    // arrange
+    TestCustomNode node;
+    node.set_intrinsic_size(Size{30.0f, 40.0f});
+    const Rect bounds = Rect::from_origin_size(Point{5.0f, 6.0f}, Size{30.0f, 40.0f});
+    node.arrange(bounds);
+    TestRenderContext context;
+    // act
+    node.render(context);
+    // assert
+    EXPECT_EQ(node.renders, 1u);
+    EXPECT_EQ(node.last_bounds, bounds);
+    ASSERT_EQ(context.drawn_rects.size(), 1u);
+    EXPECT_EQ(context.drawn_rects[0], bounds);
+}
+
+TEST(CustomRenderNode, AnInvisibleNodeDoesNotRender) {
+    // arrange
+    TestCustomNode node;
+    node.set_visible(false);
+    TestRenderContext context;
+    // act
+    node.render(context);
+    // assert
+    EXPECT_EQ(node.renders, 0u);
+}
+
+TEST(CustomRenderNode, ANodeWithoutAreaDoesNotRender) {
+    // arrange
+    TestCustomNode node;
+    node.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{0.0f, 0.0f}));
+    TestRenderContext context;
+    // act
+    node.render(context);
+    // assert
+    EXPECT_EQ(node.renders, 0u);
+}
+
+TEST(CustomRenderNode, AnUnchangedIntrinsicSizeInvalidatesNothing) {
+    // arrange
+    TestCustomNode node;
+    node.clear_dirty();
+    // act
+    node.set_intrinsic_size(Size{100.0f, 100.0f});
+    // assert
+    EXPECT_FALSE(node.layout_dirty());
+    // act
+    node.set_intrinsic_size(Size{64.0f, 64.0f});
+    // assert
+    EXPECT_TRUE(node.layout_dirty());
+}
+
+TEST(PictureRecorder, ACommandCountReflectsTheRecording) {
+    // arrange
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{});
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}), Paint{});
+    ResourceFactory factory;
+    // act
+    const std::shared_ptr<const PictureResource> picture = factory.create_picture(recorder);
+    // assert
+    ASSERT_NE(picture, nullptr);
+    EXPECT_EQ(picture->command_count(), 2u);
+    EXPECT_EQ(picture->command_count(), picture->commands().size());
+    EXPECT_FALSE(picture->empty());
+}
+
+TEST(PictureRecorder, RestoreWithoutASavedStateKeepsTheTransform) {
+    // arrange, act
+    PictureRecorder recorder;
+    recorder.set_transform(Transform::translation(5.0f, 6.0f));
+    recorder.restore();
+    // assert
+    EXPECT_EQ(recorder.transform(), (Transform::translation(5.0f, 6.0f)));
+}
+
+TEST(PictureRecorder, EachClipKindStoresItsRectangle) {
+    // arrange
+    PictureRecorder recorder;
+    // act
+    recorder.clip_rect(Rect::from_origin_size(Point{1.0f, 2.0f}, Size{10.0f, 10.0f}));
+    const Rect first_clip = recorder.clip();
+    recorder.clip_rounded_rect(Rect::from_origin_size(Point{4.0f, 5.0f}, Size{20.0f, 20.0f}), 3.0f);
+    // assert
+    EXPECT_EQ(first_clip, (Rect::from_origin_size(Point{1.0f, 2.0f}, Size{10.0f, 10.0f})));
+    EXPECT_EQ(recorder.clip(), (Rect::from_origin_size(Point{4.0f, 5.0f}, Size{20.0f, 20.0f})));
+}
+
+TEST(PictureRecorder, AnEmptyRoundedRectDoesNotRecord) {
+    // arrange, act
+    PictureRecorder recorder;
+    recorder.draw_rounded_rect(Rect::from_origin_size(Point{5.0f, 5.0f}, Size{0.0f, 10.0f}), 2.0f, Paint{});
+    // assert
+    EXPECT_TRUE(recorder.empty());
+}
+
+TEST(PictureRecorder, ANullBatchDoesNotRecord) {
+    // arrange, act
+    PictureRecorder recorder;
+    recorder.draw_line_batch(nullptr, Transform{}, StrokeStyle{});
+    // assert
+    EXPECT_TRUE(recorder.empty());
+}
+
+TEST(PictureRecorder, APathCommandCarriesItsRetainedPath) {
+    // arrange
+    ResourceFactory factory;
+    const PathVerb verbs[] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::Close};
+    const Point path_points[] = {{0.0f, 0.0f}, {10.0f, 10.0f}};
+    const std::shared_ptr<const PathResource> path = factory.create_path(verbs, path_points);
+    PictureRecorder recorder;
+    recorder.set_transform(Transform::translation(5.0f, 6.0f));
+    Paint paint;
+    paint.fill = Color::rgb(0.2f, 0.4f, 0.6f);
+    // act
+    recorder.draw_path(path, Transform::scaling(2.0f, 2.0f), paint);
+    // assert
+    ASSERT_EQ(recorder.commands().size(), 1u);
+    EXPECT_EQ(recorder.commands()[0].kind, PictureCommandKind::Path);
+    EXPECT_EQ(recorder.commands()[0].path, path);
+    // the local transform applies first, then the recorder's translation on top (§6.4)
+    EXPECT_EQ(recorder.commands()[0].transform.apply(Point{1.0f, 0.0f}), (Point{7.0f, 6.0f}));
+    EXPECT_EQ(recorder.commands()[0].transform.apply(Point{0.0f, 1.0f}), (Point{5.0f, 8.0f}));
+    EXPECT_EQ(recorder.commands()[0].paint, paint);
+}
+
+TEST(PictureRecorder, ANullPathDoesNotRecord) {
+    // arrange, act
+    PictureRecorder recorder;
+    recorder.draw_path(nullptr, Transform{}, Paint{});
+    // assert
+    EXPECT_TRUE(recorder.empty());
+}
+
+TEST(PictureRecorder, ANullPictureDoesNotRecord) {
+    // arrange, act
+    PictureRecorder recorder;
+    recorder.draw_picture(nullptr, Transform{});
+    // assert
+    EXPECT_TRUE(recorder.empty());
+}
+
+TEST(PictureRecorder, ANullImageOrEmptyDestinationDoesNotRecord) {
+    // arrange, act
+    PictureRecorder recorder;
+    recorder.draw_image(nullptr, Rect::from_origin_size(Point{0.0f, 0.0f}, Size{4.0f, 4.0f}), Paint{});
+    EXPECT_TRUE(recorder.empty());
+    recorder.draw_image(std::shared_ptr<const ImageResource>(), Rect::from_origin_size(Point{0.0f, 0.0f}, Size{0.0f, 4.0f}), Paint{});
+    // assert
+    EXPECT_TRUE(recorder.empty());
+}
+
+TEST(PathResource, AnUnknownVerbSignalsUnsatisfiableDemand) {
+    // arrange
+    const PathVerb unknown[] = {static_cast<PathVerb>(255)};
+    // act
+    const std::size_t demand = PathResource::point_demand(unknown);
+    // assert
+    EXPECT_EQ(demand, (std::numeric_limits<std::size_t>::max)());
+}
+
+TEST(FrameScene, AnEmptyTextRunIsRefused) {
+    // arrange, act
+    FrameScene scene(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    scene.add_text(TextLayout{}, Point{0.0f, 0.0f});
+    // assert
+    EXPECT_TRUE(scene.texts().empty());
+    EXPECT_TRUE(scene.text_origins().empty());
 }

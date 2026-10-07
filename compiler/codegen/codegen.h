@@ -27,12 +27,18 @@ namespace albor::compiler
         // build a generator that reports problems through the given list, which never throws (§11.3)
         explicit CodeGenerator(DiagnosticList& diagnostics);
 
+        // set how many components share one implementation unit, which is one by default (AD-03b)
+        void set_tu_chunk_size(std::size_t size);
+
         // generate one file of components, which is empty when a diagnostic blocked the output (§11.3, §14.3)
         [[nodiscard]] std::vector<GeneratedFile> generate(const CheckedFile& file);
 
     private:
         // the problems the generator reports, which the caller owns (§11.3)
         DiagnosticList& m_diagnostics;
+
+        // how many components share one implementation unit, which the chunk flag tunes (AD-03b)
+        std::size_t m_tu_chunk_size = 1;
     };
 
     // rewrite the file only when its content changed, which is what keeps incremental builds quiet (§14.2, AD-03a)

@@ -5,6 +5,7 @@
 
 #include "application/task_queue.h"
 #include "application/timer.h"
+#include "ui/ui_event.h"
 #include "window/window.h"
 #include "window/window_handle.h"
 #include "window/window_options.h"
@@ -115,6 +116,12 @@ namespace albor
         // install the callback a native close request reaches, which may veto the close (§5.2)
         void set_close_handler(std::function<bool(WindowHandle)> handler);
 
+        // install the callback a Closed notification reaches, which is how an application hears a window is gone (§5.2)
+        void set_closed_handler(std::function<void(WindowHandle)> handler);
+
+        // install the callback a normalized input event reaches, which is how a window's input is driven (§8.3)
+        void set_input_handler(std::function<void(WindowHandle, const Event&)> handler);
+
         // report whether the application was asked to terminate
         [[nodiscard]] bool quit_requested() const;
 
@@ -148,6 +155,12 @@ namespace albor
 
         // the callback a native close request reaches, which may veto the close (§5.2)
         std::function<bool(WindowHandle)> m_close_handler;
+
+        // the callback a Closed notification reaches per window, which the bind window forwards (§5.2)
+        std::function<void(WindowHandle)> m_closed_handler;
+
+        // the callback a normalized input event reaches, which the bind window forwards per window (§8.3)
+        std::function<void(WindowHandle, const Event&)> m_input_handler;
 
         // the exit code quit was called with, which run hands back (§4.1)
         int m_exit_code = 0;

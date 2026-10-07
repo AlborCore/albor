@@ -4,6 +4,7 @@
 
 #include "application/application.h"
 #include "examples/reactive-counter/counter_panel.h"
+#include "input/input_controller.h"
 #include "platform/macos/event_loop.h"
 #include "render/frame_scene.h"
 #include "render/render-skia/skia_renderer_backend.h"
@@ -48,6 +49,9 @@ int main() {
     // the pipeline owns the tree and drives stage one on the ui thread (§6.1, AD-18)
     albor::FramePipeline pipeline(engine, std::move(panel));
     pipeline.set_background(albor::Color::rgb(0.05f, 0.06f, 0.08f));
+    // the input controller routes the native events into the panel, which is the input path of §8.3
+    albor::InputController input;
+    input.attach(pipeline.root());
     // stage two runs on its own thread, so the ui thread is never blocked by drawing (§6.1, AD-18b)
     albor::RenderExecutor executor(renderer.get());
     pipeline.set_executor(&executor);
@@ -61,18 +65,20 @@ int main() {
         const albor::WindowMetrics metrics = window->metrics();
         // stage one settles the graph, lays out the tree and records the immutable scene (§6.1, §7.3)
         const std::shared_ptr<const albor::FrameScene> scene = pipeline.build(metrics);
-        // the first frame is followed by one click, which proves input reaches a reactive component (§8.3)
-        if (pipeline.frame_count() == 1u) {
-            albor::Event click;
-            click.kind = albor::EventKind::PointerDown;
-            click.position = albor::Point{400.0f, 300.0f};
-            pipeline.root().dispatch_event(click);
-            // the panel claims the click, so a miss would mean the tree is not laid out (§8.3)
-            if (!click.handled)
-                std::fprintf(stderr, "reactive-counter: the click reached no component\n");
-        }
         // stage two executes it off the ui thread, which never runs application code (§6.1, AD-18)
         pipeline.submit(scene);
+    });
+    // a native input event reaches the example, which forwards it into the tree of the one window (§8.3)
+    application.set_input_handler([&](albor::WindowHandle source, const albor::Event& event) {
+        // only the example window is routed, so another window is left alone (§5.2)
+        if (source != handle)
+            return;
+        // the controller routes the event and records the handled outcome, which the panel answers (§8.3)
+        albor::Event routed = event;
+        input.deliver(routed);
+        // a key press that the panel handled is the reset gesture, which restores the count (§8.3)
+        if (event.kind == albor::EventKind::KeyDown && routed.handled)
+            static_cast<albor::CounterPanel&>(pipeline.root()).reset();
     });
     // a native resize remeasures the tree, which is what the layout invalidation is for (§8.2)
     application.set_resize_handler([&](albor::WindowHandle resized) {
@@ -98,7 +104,7 @@ int main() {
         application.quit(0);
         return true;
     });
-    std::printf("reactive-counter: running, the count advances every 500ms, close the window to quit\n");
+    std::printf("reactive-counter: running, the count advances every 500ms, click to increment, any key to reset, close the window to quit\n");
     // the loop blocks until the window closes, which asks the application to quit (§4.1)
     return application.run();
 }

@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include "core/constraints.h"
+#include "layout/column_layout.h"
 #include "layout/row_layout.h"
 #include "render/frame_scene.h"
 #include "render/render_context.h"
@@ -123,6 +124,23 @@ TEST(LabelChecks, ClampsIntoTheOfferedConstraints) {
     // assert
     EXPECT_LE(measured.width, 10.0f);
     EXPECT_LE(measured.height, 10.0f);
+}
+
+TEST(LabelChecks, AColumnNarrowsTheLabelToTheWidthItLeaves) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ColumnLayout column;
+    auto label = std::make_unique<Label>(&engine, &text_engine, "A long run of text that will not fit");
+    Label* label_ptr = label.get();
+    column.add_child(std::move(label));
+    column.set_padding(10.0f);
+    Size measured{};
+    // act
+    column.measure(SizeConstraints::at_most(Size{100.0f, 500.0f}), measured);
+    // assert the label sees the width the insets leave, so its run wraps inside the column (§8.2, §9.1)
+    EXPECT_FLOAT_EQ(label_ptr->measured_size().width, 80.0f);
+    EXPECT_FLOAT_EQ(measured.width, 100.0f);
 }
 
 TEST(LabelChecks, ArrangeStoresTheBounds) {
@@ -338,7 +356,8 @@ TEST(LabelChecks, ExposesNoSemanticChildren) {
 TEST(LabelChecks, AWidgetExposesItsChildrenSemantically) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     StubTextEngine stub_text;
     button.add_child(std::make_unique<Label>(&engine, &stub_text, "child"));
     // act
@@ -353,7 +372,8 @@ TEST(LabelChecks, AWidgetExposesItsChildrenSemantically) {
 TEST(LabelChecks, AChildPastTheEndIsNoChild) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     // act
     std::unique_ptr<SemanticProvider> child = button.semantic_child(7);
     // assert
@@ -363,10 +383,11 @@ TEST(LabelChecks, AChildPastTheEndIsNoChild) {
 TEST(LabelChecks, AChildWithoutSemanticsAnnouncesNothing) {
     // arrange
     BindingEngine engine;
+    StubTextEngine text_engine;
     RowLayout row;
     row.add_child(std::make_unique<WidgetTestHost>());
     BindingEngine widget_engine;
-    Button button(&widget_engine, "Press");
+    Button button(&widget_engine, &text_engine, "Press");
     button.add_child(std::make_unique<RowLayout>());
     // act
     std::unique_ptr<SemanticProvider> child = button.semantic_child(0);
@@ -380,7 +401,8 @@ TEST(LabelChecks, AChildWithoutSemanticsAnnouncesNothing) {
 TEST(ButtonChecks, MeasuresToAtLeastTheControlSize) {
     // arrange
     BindingEngine engine;
-    Button button(&engine);
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine);
     Size measured{};
     // act
     button.measure(SizeConstraints::unconstrained(), measured);
@@ -392,7 +414,8 @@ TEST(ButtonChecks, MeasuresToAtLeastTheControlSize) {
 TEST(ButtonChecks, MeasuresToFitItsLabel) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press me");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press me");
     Size measured{};
     // act
     button.measure(SizeConstraints::unconstrained(), measured);
@@ -403,7 +426,8 @@ TEST(ButtonChecks, MeasuresToFitItsLabel) {
 TEST(ButtonChecks, ClampsIntoTheOfferedConstraints) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press me");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press me");
     Size measured{};
     // act
     button.measure(SizeConstraints::at_most(Size{10.0f, 10.0f}), measured);
@@ -412,10 +436,68 @@ TEST(ButtonChecks, ClampsIntoTheOfferedConstraints) {
     EXPECT_FLOAT_EQ(measured.height, 10.0f);
 }
 
+TEST(ButtonChecks, TheLabelMeasuresThroughTheTextEngine) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    Size measured{};
+    // act
+    button.measure(SizeConstraints::unconstrained(), measured);
+    // assert the engine's advance drives the plate, once at construction and once in the measure pass (AD-14, §9.1)
+    EXPECT_EQ(text_engine.measurements, 2u);
+    EXPECT_FLOAT_EQ(measured.width, 50.0f);
+    EXPECT_FLOAT_EQ(measured.height, 16.0f);
+}
+
+TEST(ButtonChecks, AButtonWithNoEngineStaysGrabbable) {
+    // arrange
+    BindingEngine engine;
+    Button button(&engine, nullptr, "Press");
+    Size measured{};
+    // act
+    button.measure(SizeConstraints::unconstrained(), measured);
+    // assert the minimum extent covers the label the engine never measured (§8.2, AD-14)
+    EXPECT_FLOAT_EQ(measured.width, 24.0f);
+    EXPECT_FLOAT_EQ(measured.height, 16.0f);
+}
+
+TEST(ButtonChecks, AChangedLabelIsRemeasuredByTheEngine) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    // act
+    button.set_label("Press me");
+    Size measured{};
+    button.measure(SizeConstraints::unconstrained(), measured);
+    // assert the new run asks the engine again, and the plate follows it (§9.1, AD-14)
+    EXPECT_EQ(text_engine.measurements, 3u);
+    EXPECT_FLOAT_EQ(measured.width, 80.0f);
+}
+
+TEST(ButtonChecks, AMeasureNarrowsTheRunToTheOfferedWidth) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press me");
+    Size measured{};
+    button.measure(SizeConstraints::at_most(Size{30.0f, 100.0f}), measured);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{80.0f, 30.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the run was remeasured at the offered width, so it centres by its narrowed extent (§8.2, §9.1, AD-14)
+    ASSERT_EQ(recorder.scene()->text_origins().size(), 1u);
+    EXPECT_FLOAT_EQ(recorder.scene()->texts().front().size.width, 30.0f);
+    EXPECT_FLOAT_EQ(recorder.scene()->text_origins()[0].x, 25.0f);
+}
+
 TEST(ButtonChecks, ArrangeStoresTheBounds) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     const Rect bounds = Rect::from_origin_size(Point{1.0f, 2.0f}, Size{80.0f, 30.0f});
     // act
     button.arrange(bounds);
@@ -426,7 +508,8 @@ TEST(ButtonChecks, ArrangeStoresTheBounds) {
 TEST(ButtonChecks, RendersThePlateAndTheLabel) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{80.0f, 30.0f}));
     SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
     // act
@@ -440,7 +523,8 @@ TEST(ButtonChecks, RendersThePlateAndTheLabel) {
 TEST(ButtonChecks, AnUnlabelledButtonRecordsOnlyThePlate) {
     // arrange
     BindingEngine engine;
-    Button button(&engine);
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine);
     button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{80.0f, 30.0f}));
     SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
     // act
@@ -453,7 +537,8 @@ TEST(ButtonChecks, AnUnlabelledButtonRecordsOnlyThePlate) {
 TEST(ButtonChecks, AnUnarrangedButtonDrawsNothing) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
     // act
     button.render(recorder);
@@ -464,7 +549,8 @@ TEST(ButtonChecks, AnUnarrangedButtonDrawsNothing) {
 TEST(ButtonChecks, HitsInsideItsBounds) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     button.arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{50.0f, 20.0f}));
     // act
     const bool inside = button.hit_test(Point{20.0f, 15.0f});
@@ -475,7 +561,8 @@ TEST(ButtonChecks, HitsInsideItsBounds) {
 TEST(ButtonChecks, DoesNotHitOutsideItsBounds) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     button.arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{50.0f, 20.0f}));
     // act
     const bool outside = button.hit_test(Point{100.0f, 100.0f});
@@ -486,7 +573,8 @@ TEST(ButtonChecks, DoesNotHitOutsideItsBounds) {
 TEST(ButtonChecks, DoesNotHitOnTheFarEdge) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
     // act
     const bool on_edge = button.hit_test(Point{50.0f, 10.0f});
@@ -497,7 +585,8 @@ TEST(ButtonChecks, DoesNotHitOnTheFarEdge) {
 TEST(ButtonChecks, AnUnarrangedButtonIsNotAHit) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     // act
     const bool hit = button.hit_test(Point{0.0f, 0.0f});
     // assert
@@ -507,7 +596,8 @@ TEST(ButtonChecks, AnUnarrangedButtonIsNotAHit) {
 TEST(ButtonChecks, AHiddenButtonIsNotAHit) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
     button.set_visible(false);
     // act
@@ -519,7 +609,8 @@ TEST(ButtonChecks, AHiddenButtonIsNotAHit) {
 TEST(ButtonChecks, ADisabledButtonIsNotAHit) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
     button.set_disabled(true);
     // act
@@ -532,7 +623,8 @@ TEST(ButtonChecks, ADisabledButtonIsNotAHit) {
 TEST(ButtonChecks, APressRunsTheClickHandler) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
     std::size_t clicks = 0;
     button.set_on_click([&clicks] { clicks++; });
@@ -547,7 +639,8 @@ TEST(ButtonChecks, APressRunsTheClickHandler) {
 TEST(ButtonChecks, APressOutsideIsNotClaimed) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
     std::size_t clicks = 0;
     button.set_on_click([&clicks] { clicks++; });
@@ -562,7 +655,8 @@ TEST(ButtonChecks, APressOutsideIsNotClaimed) {
 TEST(ButtonChecks, ADisabledButtonDoesNotRunTheHandler) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
     button.set_disabled(true);
     std::size_t clicks = 0;
@@ -578,7 +672,8 @@ TEST(ButtonChecks, ADisabledButtonDoesNotRunTheHandler) {
 TEST(ButtonChecks, APressWithNoHandlerIsStillClaimed) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
     Event event{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
     // act
@@ -590,7 +685,8 @@ TEST(ButtonChecks, APressWithNoHandlerIsStillClaimed) {
 TEST(ButtonChecks, AKeyPressIsNotClaimed) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
     std::size_t clicks = 0;
     button.set_on_click([&clicks] { clicks++; });
@@ -602,10 +698,107 @@ TEST(ButtonChecks, AKeyPressIsNotClaimed) {
     EXPECT_FALSE(event.handled);
 }
 
+TEST(ButtonChecks, ReturnActivatesTheButton) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
+    std::size_t clicks = 0;
+    button.set_on_click([&clicks] { clicks++; });
+    Event event{.kind = EventKind::KeyDown, .key = Key::Return};
+    // act
+    button.dispatch_event(event);
+    // assert the return key is a press for the focused button (§8.3)
+    EXPECT_EQ(clicks, 1u);
+    EXPECT_TRUE(event.handled);
+}
+
+TEST(ButtonChecks, SpaceActivatesTheButton) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
+    std::size_t clicks = 0;
+    button.set_on_click([&clicks] { clicks++; });
+    Event event{.kind = EventKind::KeyDown, .key = Key::Space};
+    // act
+    button.dispatch_event(event);
+    // assert
+    EXPECT_EQ(clicks, 1u);
+    EXPECT_TRUE(event.handled);
+}
+
+TEST(ButtonChecks, AModifiedKeyDoesNotActivateTheButton) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
+    std::size_t clicks = 0;
+    button.set_on_click([&clicks] { clicks++; });
+    Event event{.kind = EventKind::KeyDown, .key = Key::Return};
+    event.modifiers.command = true;
+    // act
+    button.dispatch_event(event);
+    // assert the command return is an application shortcut, so the button stays out of it (§8.3)
+    EXPECT_EQ(clicks, 0u);
+    EXPECT_FALSE(event.handled);
+}
+
+TEST(ButtonChecks, ADisabledButtonDoesNotReactToTheKey) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
+    button.set_disabled(true);
+    std::size_t clicks = 0;
+    button.set_on_click([&clicks] { clicks++; });
+    Event event{.kind = EventKind::KeyDown, .key = Key::Space};
+    // act
+    button.dispatch_event(event);
+    // assert
+    EXPECT_EQ(clicks, 0u);
+    EXPECT_FALSE(event.handled);
+}
+
+TEST(ButtonChecks, AHiddenButtonIgnoresTheKey) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
+    button.set_visible(false);
+    std::size_t clicks = 0;
+    button.set_on_click([&clicks] { clicks++; });
+    Event event{.kind = EventKind::KeyDown, .key = Key::Space};
+    // act
+    button.dispatch_event(event);
+    // assert
+    EXPECT_EQ(clicks, 0u);
+    EXPECT_FALSE(event.handled);
+}
+
+TEST(ButtonChecks, AKeyWithNoHandlerIsStillClaimed) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
+    Event event{.kind = EventKind::KeyDown, .key = Key::Return};
+    // act
+    button.dispatch_event(event);
+    // assert the button swallowed the key, so nothing behind it reacts (§8.3)
+    EXPECT_TRUE(event.handled);
+}
+
 TEST(ButtonChecks, SetLabelRemeasures) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "a");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "a");
     Size before{};
     button.measure(SizeConstraints::unconstrained(), before);
     button.clear_dirty();
@@ -619,7 +812,8 @@ TEST(ButtonChecks, SetLabelRemeasures) {
 TEST(ButtonChecks, AnUnchangedLabelInvalidatesNothing) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "same");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "same");
     button.clear_dirty();
     // act
     button.set_label("same");
@@ -630,7 +824,8 @@ TEST(ButtonChecks, AnUnchangedLabelInvalidatesNothing) {
 TEST(ButtonChecks, SetDisabledRedraws) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     button.clear_dirty();
     // act
     button.set_disabled(true);
@@ -641,7 +836,8 @@ TEST(ButtonChecks, SetDisabledRedraws) {
 TEST(ButtonChecks, AnUnchangedDisabledStateRedrawsNothing) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     button.set_disabled(true);
     button.clear_dirty();
     // act
@@ -653,7 +849,8 @@ TEST(ButtonChecks, AnUnchangedDisabledStateRedrawsNothing) {
 TEST(ButtonChecks, SetBackgroundRedraws) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     button.clear_dirty();
     // act
     button.set_background(Color::rgb(0.1f, 0.2f, 0.3f));
@@ -665,7 +862,8 @@ TEST(ButtonChecks, SetBackgroundRedraws) {
 TEST(ButtonChecks, AnUnchangedBackgroundRedrawsNothing) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     button.clear_dirty();
     // act
     button.set_background(button.background());
@@ -676,7 +874,8 @@ TEST(ButtonChecks, AnUnchangedBackgroundRedrawsNothing) {
 TEST(ButtonChecks, AnnouncesTheButtonRoleAndItsLabel) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press", "press_button");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press", "press_button");
     button.arrange(Rect::from_origin_size(Point{5.0f, 6.0f}, Size{80.0f, 30.0f}));
     // act
     const SemanticNode node = button.semantic_node();
@@ -691,7 +890,8 @@ TEST(ButtonChecks, AnnouncesTheButtonRoleAndItsLabel) {
 TEST(ButtonChecks, ExposesTheActivateAction) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     std::size_t clicks = 0;
     button.set_on_click([&clicks] { clicks++; });
     // act
@@ -705,7 +905,8 @@ TEST(ButtonChecks, ExposesTheActivateAction) {
 TEST(ButtonChecks, ADisabledButtonRefusesTheActivateAction) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     button.set_disabled(true);
     std::size_t clicks = 0;
     button.set_on_click([&clicks] { clicks++; });
@@ -722,7 +923,8 @@ TEST(ButtonChecks, ADisabledButtonRefusesTheActivateAction) {
 TEST(ButtonChecks, TheActivateActionWithNoHandlerDoesNothing) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     // act
     const SemanticNode node = button.semantic_node();
     const bool invoked = node.invoke("activate");
@@ -913,6 +1115,78 @@ TEST(CheckBoxChecks, AKeyPressIsNotClaimed) {
     // assert
     EXPECT_FALSE(event.handled);
     EXPECT_FALSE(box.checked());
+}
+
+TEST(CheckBoxChecks, SpaceTogglesTheBox) {
+    // arrange
+    BindingEngine engine;
+    CheckBox box(&engine);
+    box.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{16.0f, 16.0f}));
+    std::size_t toggles = 0;
+    box.set_on_toggle([&toggles](bool) { toggles++; });
+    Event event{.kind = EventKind::KeyDown, .key = Key::Space};
+    // act
+    box.dispatch_event(event);
+    // assert the space key is a press for the focused box (§8.3)
+    EXPECT_TRUE(box.checked());
+    EXPECT_EQ(toggles, 1u);
+    EXPECT_TRUE(event.handled);
+}
+
+TEST(CheckBoxChecks, SpaceFlipsTheCheckedStateBack) {
+    // arrange
+    BindingEngine engine;
+    CheckBox box(&engine);
+    box.set_checked(true);
+    box.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{16.0f, 16.0f}));
+    Event event{.kind = EventKind::KeyDown, .key = Key::Space};
+    // act
+    box.dispatch_event(event);
+    // assert
+    EXPECT_FALSE(box.checked());
+    EXPECT_TRUE(event.handled);
+}
+
+TEST(CheckBoxChecks, AModifiedSpaceDoesNotToggleTheBox) {
+    // arrange
+    BindingEngine engine;
+    CheckBox box(&engine);
+    box.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{16.0f, 16.0f}));
+    Event event{.kind = EventKind::KeyDown, .key = Key::Space};
+    event.modifiers.control = true;
+    // act
+    box.dispatch_event(event);
+    // assert the control space is an application shortcut, so the box stays out of it (§8.3)
+    EXPECT_FALSE(box.checked());
+    EXPECT_FALSE(event.handled);
+}
+
+TEST(CheckBoxChecks, ADisabledBoxIgnoresTheSpaceKey) {
+    // arrange
+    BindingEngine engine;
+    CheckBox box(&engine);
+    box.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{16.0f, 16.0f}));
+    box.set_disabled(true);
+    Event event{.kind = EventKind::KeyDown, .key = Key::Space};
+    // act
+    box.dispatch_event(event);
+    // assert
+    EXPECT_FALSE(box.checked());
+    EXPECT_FALSE(event.handled);
+}
+
+TEST(CheckBoxChecks, AHiddenBoxIgnoresTheSpaceKey) {
+    // arrange
+    BindingEngine engine;
+    CheckBox box(&engine);
+    box.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{16.0f, 16.0f}));
+    box.set_visible(false);
+    Event event{.kind = EventKind::KeyDown, .key = Key::Space};
+    // act
+    box.dispatch_event(event);
+    // assert
+    EXPECT_FALSE(box.checked());
+    EXPECT_FALSE(event.handled);
 }
 
 TEST(CheckBoxChecks, SetCheckedRedraws) {
@@ -1296,6 +1570,151 @@ TEST(SliderChecks, AShortTrackDoesNotMove) {
     EXPECT_FLOAT_EQ(slider.value(), 0.0f);
 }
 
+TEST(SliderChecks, TheRightArrowStepsTheValueUp) {
+    // arrange
+    BindingEngine engine;
+    Slider slider(&engine);
+    slider.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 16.0f}));
+    Event event{.kind = EventKind::KeyDown, .key = Key::ArrowRight};
+    // act
+    slider.dispatch_event(event);
+    // assert the step is the fixed amount of §8, so the key moved the value once (§8.3)
+    EXPECT_FLOAT_EQ(slider.value(), 0.05f);
+    EXPECT_TRUE(event.handled);
+}
+
+TEST(SliderChecks, TheLeftArrowStepsTheValueDown) {
+    // arrange
+    BindingEngine engine;
+    Slider slider(&engine);
+    slider.set_value(0.5f);
+    slider.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 16.0f}));
+    Event event{.kind = EventKind::KeyDown, .key = Key::ArrowLeft};
+    // act
+    slider.dispatch_event(event);
+    // assert
+    EXPECT_FLOAT_EQ(slider.value(), 0.45f);
+    EXPECT_TRUE(event.handled);
+}
+
+TEST(SliderChecks, TheUpArrowStepsTheValueUp) {
+    // arrange
+    BindingEngine engine;
+    Slider slider(&engine);
+    slider.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 16.0f}));
+    Event event{.kind = EventKind::KeyDown, .key = Key::ArrowUp};
+    // act
+    slider.dispatch_event(event);
+    // assert
+    EXPECT_FLOAT_EQ(slider.value(), 0.05f);
+    EXPECT_TRUE(event.handled);
+}
+
+TEST(SliderChecks, TheDownArrowStepsTheValueDown) {
+    // arrange
+    BindingEngine engine;
+    Slider slider(&engine);
+    slider.set_value(0.5f);
+    slider.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 16.0f}));
+    Event event{.kind = EventKind::KeyDown, .key = Key::ArrowDown};
+    // act
+    slider.dispatch_event(event);
+    // assert
+    EXPECT_FLOAT_EQ(slider.value(), 0.45f);
+    EXPECT_TRUE(event.handled);
+}
+
+TEST(SliderChecks, AModifiedArrowKeyDoesNotStepTheValue) {
+    // arrange
+    BindingEngine engine;
+    Slider slider(&engine);
+    slider.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 16.0f}));
+    Event event{.kind = EventKind::KeyDown, .key = Key::ArrowRight};
+    event.modifiers.command = true;
+    // act
+    slider.dispatch_event(event);
+    // assert the command arrow is an application shortcut, so the slider stays out of it (§8.3)
+    EXPECT_FLOAT_EQ(slider.value(), 0.0f);
+    EXPECT_FALSE(event.handled);
+}
+
+TEST(SliderChecks, ADisabledSliderIgnoresTheArrowKey) {
+    // arrange
+    BindingEngine engine;
+    Slider slider(&engine);
+    slider.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 16.0f}));
+    slider.set_disabled(true);
+    Event event{.kind = EventKind::KeyDown, .key = Key::ArrowRight};
+    // act
+    slider.dispatch_event(event);
+    // assert
+    EXPECT_FLOAT_EQ(slider.value(), 0.0f);
+    EXPECT_FALSE(event.handled);
+}
+
+TEST(SliderChecks, AHiddenSliderIgnoresTheArrowKey) {
+    // arrange
+    BindingEngine engine;
+    Slider slider(&engine);
+    slider.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 16.0f}));
+    slider.set_visible(false);
+    Event event{.kind = EventKind::KeyDown, .key = Key::ArrowRight};
+    // act
+    slider.dispatch_event(event);
+    // assert
+    EXPECT_FLOAT_EQ(slider.value(), 0.0f);
+    EXPECT_FALSE(event.handled);
+}
+
+TEST(SliderChecks, ADragMovesTheValueWithTheMove) {
+    // arrange
+    BindingEngine engine;
+    Slider slider(&engine);
+    slider.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 16.0f}));
+    Event press{.kind = EventKind::PointerDown, .position = Point{60.0f, 8.0f}};
+    slider.dispatch_event(press);
+    const float pressed = slider.value();
+    Event move{.kind = EventKind::PointerMove, .position = Point{119.0f, 8.0f}};
+    // act
+    slider.dispatch_event(move);
+    // assert the thumb follows the pointer across the drag, which is what dragging means (§8)
+    EXPECT_TRUE(move.handled);
+    EXPECT_GT(slider.value(), pressed);
+    EXPECT_FLOAT_EQ(slider.value(), 1.0f);
+}
+
+TEST(SliderChecks, AReleaseEndsTheDrag) {
+    // arrange
+    BindingEngine engine;
+    Slider slider(&engine);
+    slider.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 16.0f}));
+    Event press{.kind = EventKind::PointerDown, .position = Point{60.0f, 8.0f}};
+    slider.dispatch_event(press);
+    Event release{.kind = EventKind::PointerUp, .position = Point{60.0f, 8.0f}};
+    slider.dispatch_event(release);
+    const float settled = slider.value();
+    Event move{.kind = EventKind::PointerMove, .position = Point{119.0f, 8.0f}};
+    // act
+    slider.dispatch_event(move);
+    // assert the released drag is over, so the next move belongs to whoever asks (§8.3)
+    EXPECT_TRUE(release.handled);
+    EXPECT_FALSE(move.handled);
+    EXPECT_FLOAT_EQ(slider.value(), settled);
+}
+
+TEST(SliderChecks, AMoveWithoutAPressDoesNotSteerTheSlider) {
+    // arrange
+    BindingEngine engine;
+    Slider slider(&engine);
+    slider.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 16.0f}));
+    Event move{.kind = EventKind::PointerMove, .position = Point{119.0f, 8.0f}};
+    // act
+    slider.dispatch_event(move);
+    // assert a hover is not a drag, so the value stays where it was (§8.3)
+    EXPECT_FALSE(move.handled);
+    EXPECT_FLOAT_EQ(slider.value(), 0.0f);
+}
+
 TEST(SliderChecks, SetValueClampsIntoTheRange) {
     // arrange
     BindingEngine engine;
@@ -1664,8 +2083,9 @@ TEST(CanvasChecks, AnEmptyCanvasAnnouncesAsDisabled) {
 TEST(CanvasChecks, AWidgetTreeWalksIntoTheSemanticTree) {
     // arrange
     BindingEngine engine;
+    StubTextEngine text_engine;
     auto panel = std::make_unique<WidgetTestHost>();
-    auto button = std::make_unique<Button>(&engine, "Press", "press_button");
+    auto button = std::make_unique<Button>(&engine, &text_engine, "Press", "press_button");
     StubTextEngine stub_text;
     auto label = std::make_unique<Label>(&engine, &stub_text, "Count", "count_label");
     Button* button_ptr = button.get();
@@ -1730,7 +2150,8 @@ TEST(LabelChecks, AHiddenLabelStopsRecording) {
 TEST(LabelChecks, AWidgetChildIsWrappedInANonOwningView) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     StubTextEngine stub_text;
     button.add_child(std::make_unique<Label>(&engine, &stub_text, "inner"));
     // act
@@ -1757,7 +2178,8 @@ TEST(LabelChecks, AViewWithoutAProviderAnnouncesNothing) {
 TEST(LabelChecks, AViewForwardsToTheProviderItWatches) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     SemanticProviderView view(&button);
     // act
     const SemanticNode node = view.semantic_node();
@@ -1770,7 +2192,8 @@ TEST(LabelChecks, AViewForwardsToTheProviderItWatches) {
 TEST(LabelChecks, AViewReportsNoChildPastTheEnd) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     SemanticProviderView view(&button);
     // act
     std::unique_ptr<SemanticProvider> child = view.semantic_child(3);
@@ -1781,7 +2204,8 @@ TEST(LabelChecks, AViewReportsNoChildPastTheEnd) {
 TEST(LabelChecks, AViewForwardsAChildThatExists) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     StubTextEngine stub_text;
     button.add_child(std::make_unique<Label>(&engine, &stub_text, "inner"));
     SemanticProviderView view(&button);
@@ -1892,7 +2316,8 @@ TEST(SliderChecks, AnUnchangedThumbColorRedrawsNothing) {
 TEST(ButtonChecks, ADisabledButtonStillDrawsItsPlateAndLabel) {
     // arrange
     BindingEngine engine;
-    Button button(&engine, "Press");
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
     button.set_disabled(true);
     button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{80.0f, 30.0f}));
     SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
@@ -1906,7 +2331,8 @@ TEST(ButtonChecks, ADisabledButtonStillDrawsItsPlateAndLabel) {
 TEST(ButtonChecks, ADisabledAndUnlabelledButtonStillDrawsItsPlate) {
     // arrange
     BindingEngine engine;
-    Button button(&engine);
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine);
     button.set_disabled(true);
     button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{80.0f, 30.0f}));
     SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));

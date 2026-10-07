@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -23,8 +24,8 @@ namespace albor
         WindowRegistry& operator=(WindowRegistry&&) = delete;
         ~WindowRegistry() = default;
 
-        // create a window through the installed platform factory, returning the invalid handle when it fails
-        [[nodiscard]] WindowHandle create(const WindowOptions& options);
+        // create a window through the platform factory, running the hook between registration and the show (§5.3)
+        [[nodiscard]] WindowHandle create(const WindowOptions& options, const std::function<void(Window&)>& before_show = {});
 
         // adopt a window that already owns a native window, which is what a test double uses
         [[nodiscard]] WindowHandle adopt(std::unique_ptr<Window> window);

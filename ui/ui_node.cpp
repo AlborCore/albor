@@ -10,6 +10,11 @@ namespace albor
         return !explicit_id.empty();
     }
 
+    bool Modifiers::none() const {
+        // a plain press carries no modifier, which is what a focus traversal expects (§8.3)
+        return !shift && !control && !option && !command;
+    }
+
     UiNode::UiNode() = default;
 
     UiNode::~UiNode() {
@@ -85,10 +90,12 @@ namespace albor
     void UiNode::measure(const SizeConstraints& constraints, Size& out_size) {
         // a container measures itself as the largest of its children, which is the measure phase of §8.2
         Size total{};
+        // the offered ceiling travels down, because a parent knows the space the child has to fit in (§8.2)
+        const SizeConstraints child_constraints = SizeConstraints::at_most(constraints.maximum);
         for (const auto& child : m_children) {
-            // each child is measured unconstrained, because the container only learns the extent from the result (§8.2)
+            // each child measures against that ceiling, so text and content wrap inside the space the parent gives (§8.2, §9.1)
             Size child_size{};
-            child->measure(SizeConstraints::unconstrained(), child_size);
+            child->measure(child_constraints, child_size);
             // the container is at least as wide and as tall as its largest child (§8.2)
             total.width = std::max(total.width, child_size.width);
             total.height = std::max(total.height, child_size.height);
@@ -110,8 +117,12 @@ namespace albor
 
     void UiNode::render(RenderContext& context) {
         // a container draws nothing itself, but still records its children (§6.1)
-        for (const auto& child : m_children)
+        for (const auto& child : m_children) {
+            // an invisible child is not visited, so the scene carries only what is on screen (§6.1)
+            if (!child->visible())
+                continue;
             child->render(context);
+        }
     }
 
     bool UiNode::hit_test(Point logical_point) const {
@@ -123,14 +134,8 @@ namespace albor
         return false;
     }
 
-    void UiNode::dispatch_event(Event& event) {
-        // the children are offered the event in reverse order, matching the hit test order (§8.3)
-        for (auto position = m_children.size(); position > 0; position--) {
-            // a claimed event stops the walk, so no ancestor acts on it twice (§8.3)
-            if (event.handled)
-                return;
-            m_children[position - 1]->dispatch_event(event);
-        }
+    void UiNode::dispatch_event(Event&) {
+        // the offer is the node only, because the dispatcher already walked the children and a second walk would deliver twice (§8.3)
     }
 
     const Rect& UiNode::bounds() const {
@@ -181,6 +186,11 @@ namespace albor
     }
 
     bool UiNode::visible() const { return m_visible; }
+
+    bool UiNode::disabled() const {
+        // a plain node is never disabled, because only a control carries the state (§8.3)
+        return false;
+    }
 
     void UiNode::set_visible(bool visible) {
         // an unchanged visibility invalidates nothing (§6.1)

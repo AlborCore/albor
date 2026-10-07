@@ -1,5 +1,10 @@
 #include "render/frame_scene.h"
 
+#include "render/image_resource.h"
+#include "render/line_batch.h"
+#include "render/path_resource.h"
+#include "render/picture_resource.h"
+
 namespace albor
 {
     bool TextLayout::empty() const {
@@ -75,5 +80,70 @@ namespace albor
     const std::vector<Color>& FrameScene::rect_colors() const {
         // the colours are parallel to the rectangles, so index one lookup finds both (§6.1)
         return m_rect_colors;
+    }
+
+    void FrameScene::set_text_colors(std::vector<Color> colors) {
+        // the colour list must stay parallel to the run list, so a mismatched length is refused (§6.1)
+        if (colors.size() != m_texts.size())
+            return;
+        // the colours travel with the runs, because the render thread cannot ask the ui thread (§6.1, AD-18)
+        m_text_colors = std::move(colors);
+    }
+
+    const std::vector<Color>& FrameScene::text_colors() const {
+        // the colours are parallel to the runs, so index one lookup finds both (§6.1)
+        return m_text_colors;
+    }
+
+    void FrameScene::add_line_batch(LineBatchDraw draw) {
+        // a batch with no complete segment draws nothing, so it is refused at the boundary (§6.4, AD-06)
+        if (!draw.batch || draw.batch->segment_count() == 0)
+            return;
+        // the retained batch travels with the transform that places it (§6.4)
+        m_line_batches.push_back(std::move(draw));
+    }
+
+    const std::vector<LineBatchDraw>& FrameScene::line_batches() const {
+        // the batch draws replay in the order the ui thread recorded them (§6.4)
+        return m_line_batches;
+    }
+
+    void FrameScene::add_path(PathDraw draw) {
+        // a path with no command draws nothing, so it is refused at the boundary (§6.4, AD-06)
+        if (!draw.path || draw.path->verbs().empty())
+            return;
+        // the retained path travels with the transform and paint that stroke it (§6.4)
+        m_paths.push_back(std::move(draw));
+    }
+
+    const std::vector<PathDraw>& FrameScene::paths() const {
+        // the path draws replay in the order the ui thread recorded them (§6.4)
+        return m_paths;
+    }
+
+    void FrameScene::add_picture(PictureDraw draw) {
+        // a picture with no command draws nothing, so it is refused at the boundary (§6.4, AD-06)
+        if (!draw.picture || draw.picture->empty())
+            return;
+        // the retained picture travels with the transform it replays under (§6.4)
+        m_pictures.push_back(std::move(draw));
+    }
+
+    const std::vector<PictureDraw>& FrameScene::pictures() const {
+        // the picture draws replay in the order the ui thread recorded them (§6.4)
+        return m_pictures;
+    }
+
+    void FrameScene::add_image(ImageDraw draw) {
+        // an image with no pixel draws nothing, so it is refused at the boundary (§6.4, AD-06)
+        if (!draw.image || draw.image->pixels().empty())
+            return;
+        // the retained image travels with the destination it fills (§6.4)
+        m_images.push_back(std::move(draw));
+    }
+
+    const std::vector<ImageDraw>& FrameScene::images() const {
+        // the image draws replay in the order the ui thread recorded them (§6.4)
+        return m_images;
     }
 } // namespace albor

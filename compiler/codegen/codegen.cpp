@@ -253,7 +253,7 @@ namespace albor::compiler
         const std::map<std::string_view, WidgetInfo>& widget_info() {
             // the table is built once, because the builtin set is closed (§11.3)
             static const std::map<std::string_view, WidgetInfo> table{
-                {"Column", {.header = "layout/column_layout.h", .class_name = "ColumnLayout", .needs_engine = false, .needs_text_engine = false}}, {"Row", {.header = "layout/row_layout.h", .class_name = "RowLayout", .needs_engine = false, .needs_text_engine = false}}, {"Padding", {.header = "layout/padding_layout.h", .class_name = "PaddingLayout", .needs_engine = false, .needs_text_engine = false}}, {"Stack", {.header = "layout/stack_layout.h", .class_name = "StackLayout", .needs_engine = false, .needs_text_engine = false}}, {"Grid", {.header = "layout/grid_layout.h", .class_name = "GridLayout", .needs_engine = false, .needs_text_engine = false}}, {"Label", {.header = "widgets/label.h", .class_name = "Label", .needs_engine = true, .needs_text_engine = true}}, {"Button", {.header = "widgets/button.h", .class_name = "Button", .needs_engine = true, .needs_text_engine = false}}, {"Slider", {.header = "widgets/slider.h", .class_name = "Slider", .needs_engine = true, .needs_text_engine = false}}, {"CheckBox", {.header = "widgets/checkbox.h", .class_name = "CheckBox", .needs_engine = true, .needs_text_engine = false}}, {"Canvas", {.header = "widgets/canvas.h", .class_name = "Canvas", .needs_engine = true, .needs_text_engine = false}},
+                {"Column", {.header = "layout/column_layout.h", .class_name = "ColumnLayout", .needs_engine = false, .needs_text_engine = false}}, {"Row", {.header = "layout/row_layout.h", .class_name = "RowLayout", .needs_engine = false, .needs_text_engine = false}}, {"Padding", {.header = "layout/padding_layout.h", .class_name = "PaddingLayout", .needs_engine = false, .needs_text_engine = false}}, {"Stack", {.header = "layout/stack_layout.h", .class_name = "StackLayout", .needs_engine = false, .needs_text_engine = false}}, {"Grid", {.header = "layout/grid_layout.h", .class_name = "GridLayout", .needs_engine = false, .needs_text_engine = false}}, {"Label", {.header = "widgets/label.h", .class_name = "Label", .needs_engine = true, .needs_text_engine = true}}, {"Button", {.header = "widgets/button.h", .class_name = "Button", .needs_engine = true, .needs_text_engine = true}}, {"Slider", {.header = "widgets/slider.h", .class_name = "Slider", .needs_engine = true, .needs_text_engine = false}}, {"CheckBox", {.header = "widgets/checkbox.h", .class_name = "CheckBox", .needs_engine = true, .needs_text_engine = false}}, {"Canvas", {.header = "widgets/canvas.h", .class_name = "Canvas", .needs_engine = true, .needs_text_engine = false}},
             };
             return table;
         }
@@ -480,6 +480,12 @@ namespace albor::compiler
                 // each parameter is rejected on its own, because one bad type must not hide the rest (§11.3)
                 for (const ValueType& parameter : signal.parameter_types)
                     validate_type(parameter, signal.span);
+            }
+            // each default is scanned for physical lengths, because their density is undefined (§11.3, AD-27)
+            for (const CheckedProperty& property : m_component.properties) {
+                // a default is scanned only when one exists, which an empty default skips (§11.3, AD-27)
+                if (property.has_default)
+                    scan_expression(*property.default_value);
             }
             // the tree is walked, which finds a repeat, a native element or a physical length (§11.3)
             if (m_component.root != nullptr)
@@ -892,23 +898,18 @@ namespace albor::compiler
             }
             line(2, "// build the whole tree and install the bindings, which runs once (§14.1)");
             line(2, "void build();");
-            line(0, "");
-            // a declaration separates from the previous one, which the first one does not need (§14.1)
-            bool first_declaration = true;
-            // each bound assignment declares its evaluator, which the sink thunk runs (§13.3)
+            // a blank line separates each declaration from the previous one, which keeps the body readable, while each bound assignment declares its evaluator for the sink thunk (§13.3, §14.1)
             for (const NodeSlot& slot : m_nodes) {
                 // the evaluator is walked per assignment, which names it after the property (§13.3)
                 for (const CheckedAssignment& assignment : slot.node->assignments) {
                     // a constant assignment has no evaluator, because the builder applies it directly (§13.3)
                     if (assignment.dependencies.empty())
                         continue;
-                    // a blank line separates the declarations, which keeps the body readable (§14.1)
-                    if (!first_declaration)
-                        line(0, "");
+                    // the declaration reads after a blank, which separates it from the previous one (§14.1)
+                    line(0, "");
                     const std::string evaluator = "evaluate_" + std::to_string(slot.index) + "_" + sanitize(assignment.name);
                     line(2, "// evaluate the " + assignment.name + " into the widget and the sink, which is the binding body (§13.3)");
                     line(2, "static " + cpp_type(assignment.type) + " " + evaluator + "(void* raw);");
-                    first_declaration = false;
                 }
             }
             // each bound default declares its evaluator, which the property thunk runs (§13.3)
@@ -916,26 +917,22 @@ namespace albor::compiler
                 // a default with no sources has no evaluator, because the builder applies it directly (§13.3)
                 if (!property.has_default || property.default_dependencies.empty())
                     continue;
-                // a blank line separates the declarations, which keeps the body readable (§14.1)
-                if (!first_declaration)
-                    line(0, "");
+                // the declaration reads after a blank, which separates it from the previous one (§14.1)
+                line(0, "");
                 // the evaluator is named after the property, which the builder registered (§13.3)
                 const std::string& name = m_names.at(property.name);
                 line(2, "// evaluate the default of " + property.name + ", which recomputes it when a source changes (§13.3)");
                 line(2, "static " + cpp_type(property.type) + " compute_" + name + "(void* raw);");
-                first_declaration = false;
             }
             // each handler declares its body, which the wiring runs (§11.3)
             for (const NodeSlot& slot : m_nodes) {
                 // the handler is walked per attachment, which wires it after the node is built (§11.3)
                 for (const CheckedHandler& handler : slot.node->handlers) {
-                    // a blank line separates the declarations, which keeps the body readable (§14.1)
-                    if (!first_declaration)
-                        line(0, "");
+                    // the declaration reads after a blank, which separates it from the previous one (§14.1)
+                    line(0, "");
                     const std::string handle = "handle_" + std::to_string(slot.index) + "_" + sanitize(handler.name);
                     line(2, "// run the " + handler.name + " body, which is what the written handler does (§11.3)");
                     line(2, "static void " + handle + "(void* raw);");
-                    first_declaration = false;
                 }
             }
             line(1, "};");
@@ -1308,9 +1305,6 @@ namespace albor::compiler
                 // the two logical unit spell the tail, which the number precedes (§11.3, AD-27)
                 if (ends_with(text, "px"))
                     text.remove_suffix(2);
-                // the physical unit is blocked already, so its number never reaches here (§11.3, AD-27)
-                else if (ends_with(text, "phx"))
-                    text.remove_suffix(3);
                 return shortest_float(parse_number(text));
             }
             // a truth literal is emitted as its keyword, which is the only spelling (§11.3)
@@ -1498,13 +1492,19 @@ namespace albor::compiler
     CodeGenerator::CodeGenerator(DiagnosticList& diagnostics) :
         m_diagnostics(diagnostics) {}
 
+    void CodeGenerator::set_tu_chunk_size(std::size_t size) {
+        // a size of zero would leave no components in a chunk, so it is clamped back to the default (AD-03b)
+        m_tu_chunk_size = size == 0 ? 1 : size;
+    }
+
     std::vector<GeneratedFile> CodeGenerator::generate(const CheckedFile& file) {
         // a file the checker blocked produces nothing, because the generator cannot trust it (§11.3)
         if (m_diagnostics.has_errors())
             return {};
         // the files accumulate in declaration order, which matches the source (§11.3)
         std::vector<GeneratedFile> files;
-        // each component generates on its own, so one failure cannot hide the others' problems (§11.3)
+        // the implementation units accumulate when chunking, which the merge below groups (AD-03b)
+        std::vector<std::string> chunk_contents;
         for (const CheckedComponent& component : file.components) {
             // the emitter is built per component, because the output files are per component (§14.1)
             ComponentEmitter emitter(component, m_diagnostics);
@@ -1513,8 +1513,31 @@ namespace albor::compiler
                 return {};
             // the header joins the files, which is what a translation unit includes (§14.2)
             files.push_back(emitter.take_header());
-            // the implementation joins behind it, which nothing else may include (§14.2)
-            files.push_back(emitter.take_source());
+            // a single unit mode keeps one implementation per component, which is the default (AD-03b)
+            if (m_tu_chunk_size <= 1)
+                files.push_back(emitter.take_source());
+            // a chunked mode collects the implementation, which the merge below groups (AD-03b)
+            else
+                chunk_contents.push_back(emitter.take_source().content);
+        }
+        if (m_tu_chunk_size > 1) {
+            // the group counter names the chunk unit, which is what the build log shows (AD-03b)
+            std::size_t chunk_index = 0;
+            for (std::size_t begin = 0; begin < chunk_contents.size(); begin += m_tu_chunk_size) {
+                // the chunk text opens with its provenance, which names the rule that produced it (AD-03b)
+                std::string content = "// generated group of components, do not edit (§14.2, AD-03b)\n\n";
+                // the group ends before the last whole chunk, which a remainder still forms its own unit (AD-03b)
+                const std::size_t end = begin + m_tu_chunk_size < chunk_contents.size() ? begin + m_tu_chunk_size : chunk_contents.size();
+                for (std::size_t index = begin; index < end; index++) {
+                    // a blank separates the merged sources, which keeps each unit readable (AD-03b)
+                    if (index != begin)
+                        content += "\n";
+                    content += chunk_contents[index];
+                }
+                // the chunk unit joins the files, which the driver writes under the output directory (AD-03b)
+                files.push_back(GeneratedFile{.path = "facades_" + std::to_string(chunk_index) + ".cpp", .content = std::move(content)});
+                chunk_index++;
+            }
         }
         // the generated files are handed out, which the driver writes under its output directory (§14.2)
         return files;

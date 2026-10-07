@@ -10,5 +10,5 @@ add_library(albor-input STATIC ${CPP_SOURCES})
 target_include_directories(albor-input PUBLIC ${CMAKE_SOURCE_DIR})
 target_compile_features(albor-input PUBLIC cxx_std_23)
 
-# the input module needs the ui tree it routes into and the normalized event it carries (§3.2)
-target_link_libraries(albor-input PUBLIC albor-ui)
+# the input module needs the ui tree it routes into, the normalized event it carries and the focus ring it drives (§3.2)
+target_link_libraries(albor-input PUBLIC albor-ui albor-focus)

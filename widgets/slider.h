@@ -57,7 +57,7 @@ namespace albor
         void set_disabled(bool disabled);
 
         // report whether the slider refuses input (§8.3)
-        [[nodiscard]] bool disabled() const;
+        [[nodiscard]] bool disabled() const override;
 
         // replace the track colour, which redraws without changing the extent (§6.1)
         void set_track_color(Color color);
@@ -66,6 +66,9 @@ namespace albor
         void set_thumb_color(Color color);
 
     private:
+        // move the value to the position the pointer names, which a press and a drag share (§8.3)
+        void jump_to(Point logical_position);
+
         // the work a change performs, which receives the new value (§8.3)
         std::function<void(float)> m_on_change;
 
@@ -86,5 +89,8 @@ namespace albor
 
         // whether the slider refuses input (§8.3)
         bool m_disabled = false;
+
+        // whether a pointer press is dragging the thumb, which the moves rely on (§8.3)
+        bool m_dragging = false;
     };
 } // namespace albor

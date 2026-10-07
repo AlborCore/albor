@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <cstdio>
+#include <cstdlib>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -338,6 +340,227 @@ namespace albor::manifest
             emit_line(out, 0, "} // namespace albor");
             return out;
         }
+
+        // a float literal that reads back exactly, which the channel scale needs (§11.2)
+        std::string shortest_float(double value) {
+            // the buffer is generous, because a long exponent still fits with room (§11.2)
+            char buffer[64];
+            // the precision grows until the text reads back to the value, which is the shortest round trip (§11.2)
+            for (int precision = 1; precision <= 9; precision++) {
+                // the text is rendered at the tested precision (§11.2)
+                std::snprintf(buffer, sizeof(buffer), "%.*g", precision, value);
+                // a precision that reads back to the value is the one kept (§11.2)
+                if (std::strtod(buffer, nullptr) == value)
+                    break;
+            }
+            // the rendered text is finished below, so a copy is taken (§11.2)
+            std::string text(buffer);
+            // a float literal needs a dot or an exponent, which a whole number does not carry (§11.2)
+            if (text.find('.') == std::string::npos && text.find('e') == std::string::npos && text.find('E') == std::string::npos)
+                text += ".0";
+            // the f suffix makes it a float literal, which is what the api takes (§11.2)
+            text += "f";
+            return text;
+        }
+
+        // read one hex digit as its value, which a channel pair assembles from (§11.2)
+        unsigned int nibble(char digit) {
+            // a decimal digit carries its own value (§11.2)
+            if (digit >= '0' && digit <= '9')
+                return static_cast<unsigned int>(digit - '0');
+            // a letter carries the value the alphabet gives it, which the caller has already lowered (§11.2)
+            return static_cast<unsigned int>(digit - 'a' + 10);
+        }
+
+        // read one pair of hex digits as a byte, which is one colour channel (§11.2)
+        unsigned int hex_pair(char high, char low) {
+            // the value is assembled from the two nibbles (§11.2)
+            return nibble(static_cast<char>(std::tolower(static_cast<unsigned char>(high)))) * 16 + nibble(static_cast<char>(std::tolower(static_cast<unsigned char>(low))));
+        }
+
+        // the re-emitted value of one colour, which the stub member initializes from (§11.2)
+        std::string preview_color(std::string_view text) {
+            // the hash is dropped when the value carries one, because the channels follow it (§11.2)
+            const std::string_view digits = text.starts_with("#") ? text.substr(1) : text;
+            // a spelling that is not six or eight digits cannot name a colour, which the default writes (§11.2)
+            if (digits.size() != 6 && digits.size() != 8)
+                return "Color{}";
+            // every digit must be hex, which anything else cannot name (§11.2)
+            for (const char digit : digits) {
+                // a digit outside the hex alphabet voids the spelling (§11.2)
+                if (std::isxdigit(static_cast<unsigned char>(digit)) == 0)
+                    return "Color{}";
+            }
+            // each pair is one channel, which is read in hex (§11.2)
+            const unsigned int red = hex_pair(digits[0], digits[1]);
+            // the second channel follows the first, which is the written order (§11.2)
+            const unsigned int green = hex_pair(digits[2], digits[3]);
+            // the third channel follows the second, which is the written order (§11.2)
+            const unsigned int blue = hex_pair(digits[4], digits[5]);
+            // an eight digit spelling carries an alpha channel, which the short form does not (§11.2)
+            if (digits.size() == 8) {
+                // the alpha is the fourth pair, which sits at the end (§11.2)
+                const unsigned int alpha = hex_pair(digits[6], digits[7]);
+                // the long form calls rgba with all four channels (§11.2)
+                return "Color::rgba(" + shortest_float(red / 255.0) + ", " + shortest_float(green / 255.0) + ", " + shortest_float(blue / 255.0) + ", " + shortest_float(alpha / 255.0) + ")";
+            }
+            // the short form calls rgb with the three opaque channels (§11.2)
+            return "Color::rgb(" + shortest_float(red / 255.0) + ", " + shortest_float(green / 255.0) + ", " + shortest_float(blue / 255.0) + ")";
+        }
+
+        // render a decoded string as a c++ literal, which the stub member initializes from (§11.2)
+        std::string cpp_string_literal(std::string_view text) {
+            // the literal opens with the quote, which the escapes keep closed (§11.2)
+            std::string out = "\"";
+            // the raw bytes are escaped, because control and quote characters cannot be written bare (§11.2)
+            for (const char byte : text) {
+                // a backslash doubles, which keeps the c++ string identical (§11.2)
+                if (byte == '\\') {
+                    out += "\\\\";
+                    continue;
+                }
+                // a quote escapes, so it does not close the literal (§11.2)
+                if (byte == '"') {
+                    out += "\\\"";
+                    continue;
+                }
+                // a newline is written escaped, which keeps the generated file on one line (§11.2)
+                if (byte == '\n') {
+                    out += "\\n";
+                    continue;
+                }
+                // a tab is written escaped, which keeps the generated file printable (§11.2)
+                if (byte == '\t') {
+                    out += "\\t";
+                    continue;
+                }
+                // a non printable byte is written as hex, because it has no visible form (§11.2)
+                if (static_cast<unsigned char>(byte) < 0x20) {
+                    char hex[8];
+                    std::snprintf(hex, sizeof(hex), "\\x%02X", static_cast<unsigned char>(byte));
+                    out += hex;
+                    continue;
+                }
+                // every other byte is copied as written, which is what utf8 needs (§11.2)
+                out += byte;
+            }
+            // the literal closes, which completes it (§11.2)
+            out += "\"";
+            return out;
+        }
+
+        // the re-emitted value behind one stub member, which the override text or the default text carries (§11.2)
+        std::string preview_member_value(const NativeProperty& property, std::string_view text) {
+            // a colour re-emits as a constructor call, which the framework type needs (§11.2)
+            if (property.type == "color")
+                return preview_color(text);
+            // text re-emits quoted, which the decoded value needs (§11.2)
+            if (property.type == "string")
+                return cpp_string_literal(text);
+            // every other value is re-emitted as written, which the manifest already spelled (§11.2)
+            return std::string(text);
+        }
+
+        // the initializer one stub member takes, which the override or the declared default carries (§11.2)
+        std::string preview_member_initializer(const NativeProperty& property, const NativeComponent& native) {
+            // the overrides are scanned from the end, because a later override wins (§11.2)
+            for (auto entry = native.preview_overrides.rbegin(); entry != native.preview_overrides.rend(); ++entry) {
+                // the name decides, so the last override for the property is the one that shows (§11.2)
+                if (entry->property == property.name)
+                    return "{" + preview_member_value(property, entry->value_text) + "}";
+            }
+            // without an override the declared default fills the member, which is what the stub shows (§11.2)
+            if (property.has_default)
+                return "{" + preview_member_value(property, property.default_text) + "}";
+            // a property with neither override nor default stays default constructed, which the brace empty writes (§11.2)
+            return "{}";
+        }
+
+        // emit the preview stub header of one component, which the preview host instantiates (§12.2, §11.2)
+        std::string emit_preview_header(std::string_view module, const NativeComponent& native) {
+            // the header output accumulates from empty, which the emitted lines fill (§14.1)
+            std::string out;
+            // the provenance opens the unit, which identifies the manifest that produced it (§14, AD-17)
+            emit_line(out, 0, provenance(module));
+            // the include guard is the pragma, which is the only guard the project uses (§14.1)
+            emit_line(out, 0, "#pragma once");
+            emit_line(out, 0, "");
+            // the constructor takes a string, which the stub spells out (§14.1)
+            emit_line(out, 0, "#include <string>");
+            emit_line(out, 0, "");
+            // the facade header is included first, which is what this stub extends (§11.2)
+            emit_line(out, 0, "#include \"" + std::string(module) + "/" + snake_case(native.name) + ".h\"");
+            emit_line(out, 0, "");
+            // the stub lives in the framework namespace, which is what the build expects (§14.1)
+            emit_line(out, 0, "namespace albor");
+            emit_line(out, 0, "{");
+            // the stub announces itself, which is what a reader sees first (§12.2)
+            emit_line(out, 1, "// the design time stand in for " + native.name + ", which the preview host instantiates (§12.2, §11.2)");
+            emit_line(out, 1, "class " + native.name + "_Preview final : public " + native.name);
+            emit_line(out, 1, "{");
+            emit_line(out, 1, "public:");
+            emit_line(out, 2, "// build the stub, which is a facade like any other (§12.2)");
+            emit_line(out, 2, "explicit " + native.name + "_Preview(BindingEngine* engine, std::string explicit_id = {});");
+            // each property emits its accessor pair, which keeps the stub concrete (§11.2)
+            for (const NativeProperty& property : native.properties) {
+                // the c++ spelling decides, which the generator validated already (§11.2)
+                const std::string cpp = *glue_cpp(property.type);
+                emit_line(out, 2, "");
+                emit_line(out, 2, "// replace the " + property.name + " value, which the stub stores (§11.2)");
+                emit_line(out, 2, "void set_" + property.name + "(" + cpp + " value) override;");
+                emit_line(out, 2, "// hand out the " + property.name + " value, which the stub stores (§11.2)");
+                emit_line(out, 2, "[[nodiscard]] " + cpp + " " + property.name + "() const override;");
+            }
+            emit_line(out, 1, "private:");
+            // each property stores its design time value, which the accessors hand out (§11.2)
+            for (const NativeProperty& property : native.properties) {
+                // the c++ spelling decides, which the generator validated already (§11.2)
+                const std::string cpp = *glue_cpp(property.type);
+                emit_line(out, 2, "// the design time " + property.name + " value, which the accessors hand out (§11.2)");
+                emit_line(out, 2, cpp + " m_" + property.name + preview_member_initializer(property, native) + ";");
+            }
+            emit_line(out, 1, "};");
+            emit_line(out, 0, "} // namespace albor");
+            return out;
+        }
+
+        // emit the preview stub implementation of one component, which the preview host links (§12.2, §11.2)
+        std::string emit_preview_source(std::string_view module, const NativeComponent& native) {
+            // the source output accumulates from empty, which the emitted lines fill (§14.1)
+            std::string out;
+            // the provenance opens the unit, which identifies the manifest that produced it (§14, AD-17)
+            emit_line(out, 0, provenance(module));
+            emit_line(out, 0, "");
+            // the stub header is included first, which is what this unit implements (§11.2)
+            emit_line(out, 0, "#include \"" + std::string(module) + "/" + snake_case(native.name) + "_preview.h\"");
+            emit_line(out, 0, "");
+            // the move calls need the utility header, which the setters use (§14.1)
+            emit_line(out, 0, "#include <utility>");
+            emit_line(out, 0, "");
+            // the stub lives in the framework namespace, which is what the build expects (§14.1)
+            emit_line(out, 0, "namespace albor");
+            emit_line(out, 0, "{");
+            // the constructor forwards to the facade base, which settles the explicit id (§11.2)
+            emit_line(out, 1, native.name + "_Preview::" + native.name + "_Preview(BindingEngine* engine, std::string explicit_id) :");
+            emit_line(out, 1, "    " + native.name + "(engine, std::move(explicit_id)) {}");
+            // each property emits its accessors, which store and hand the value out (§11.2)
+            for (const NativeProperty& property : native.properties) {
+                // the c++ spelling decides, which the generator validated already (§11.2)
+                const std::string cpp = *glue_cpp(property.type);
+                emit_line(out, 1, "");
+                emit_line(out, 1, "void " + native.name + "_Preview::set_" + property.name + "(" + cpp + " value) {");
+                emit_line(out, 2, "// the value is stored, which the read hands out (§11.2)");
+                emit_line(out, 2, "m_" + property.name + " = value;");
+                emit_line(out, 1, "}");
+                emit_line(out, 1, "");
+                emit_line(out, 1, cpp + " " + native.name + "_Preview::" + property.name + "() const {");
+                emit_line(out, 2, "// the stored value is handed out, which is what the stub shows (§11.2)");
+                emit_line(out, 2, "return m_" + property.name + ";");
+                emit_line(out, 1, "}");
+            }
+            emit_line(out, 0, "} // namespace albor");
+            return out;
+        }
     } // namespace
 
     // build the generator over the shared problem list, which the diagnostics report into (§11.2)
@@ -444,6 +667,18 @@ namespace albor::manifest
                     component.signals.push_back(std::move(glued));
                 }
             }
+            // each override names a declared property, which the stub relies on (§11.2)
+            for (const PreviewOverride& override_entry : native.preview_overrides) {
+                // the declared properties are scanned, because an override may only retune one (§11.2)
+                const bool declared = std::any_of(native.properties.begin(), native.properties.end(), [&override_entry](const NativeProperty& property) { return property.name == override_entry.property; });
+                // an override without a property is reported, which also voids the output (§11.2)
+                if (!declared) {
+                    // the flag is set, which empties the generated output at the end (§11.2)
+                    blocked = true;
+                    // the problem names the property, because that is what the manifest wrote (§11.2)
+                    m_diagnostics.add(Diagnostic::Severity::Error, override_entry.span, "E0307", "the preview override names the undeclared property '" + override_entry.property + "'");
+                }
+            }
             // a component that blocked cannot emit, which leaves the output empty at the end (§11.2)
             if (blocked)
                 continue;
@@ -453,6 +688,13 @@ namespace albor::manifest
             outputs.push_back(GeneratedFile{.path = module_name + "/" + component.stem + ".h", .content = emit_header(file.module, component)});
             // the implementation unit joins the files, which the application links against (§11.2, AD-17)
             outputs.push_back(GeneratedFile{.path = module_name + "/" + component.stem + ".cpp", .content = emit_source(file.module, component)});
+            // a component with preview overrides also emits its stub, which the preview host instantiates (§12.2, §11.2)
+            if (!native.preview_overrides.empty()) {
+                // the stub header joins the files, which the preview host includes (§12.2)
+                outputs.push_back(GeneratedFile{.path = module_name + "/" + component.stem + "_preview.h", .content = emit_preview_header(file.module, native)});
+                // the stub unit joins the files, which the preview host links (§12.2)
+                outputs.push_back(GeneratedFile{.path = module_name + "/" + component.stem + "_preview.cpp", .content = emit_preview_source(file.module, native)});
+            }
         }
         // a blocked manifest yields nothing, which the driver reports as failure (§11.2)
         if (blocked)

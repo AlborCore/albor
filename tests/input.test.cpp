@@ -5,7 +5,9 @@
 
 #include "focus/focus_manager.h"
 #include "input/event_filter.h"
+#include "input/input_controller.h"
 #include "input/input_dispatcher.h"
+#include "ui/ui_event.h"
 #include "ui/ui_node.h"
 
 using namespace albor;
@@ -24,6 +26,14 @@ namespace
 
         // whether this node reports itself as visible, because a hidden node is not a hit (§8.3)
         bool shown = true;
+
+        // whether this node reports itself as disabled, because a disabled node takes no focus (§8.3)
+        bool blocked = false;
+
+        [[nodiscard]] bool disabled() const override {
+            // the flag is the reported state, which the focus ring reads (§8.3)
+            return blocked;
+        }
 
         void measure(const SizeConstraints& constraints, Size& out_size) override {
             // the node fills whatever it is offered, because the routing tests do not exercise layout (§8.2)
@@ -236,6 +246,38 @@ TEST(InputDispatcherChecks, DescendsThroughNestedLevels) {
     // assert the leaf claimed it, so no ancestor of it acts (§8.3)
     EXPECT_EQ(branch_ptr->deliveries, 0u);
     EXPECT_EQ(root.deliveries, 0u);
+}
+
+TEST(InputDispatcherChecks, ALeafIsOfferedOnceThroughContainersThatDoNotWalk) {
+    // arrange
+    UiNode root;
+    auto middle = std::make_unique<UiNode>();
+    auto leaf = std::make_unique<RecordingNode>();
+    RecordingNode* leaf_ptr = leaf.get();
+    middle->add_child(std::move(leaf));
+    root.add_child(std::move(middle));
+    Event event{.kind = EventKind::PointerDown};
+    // act
+    InputDispatcher::dispatch(root, event);
+    // assert the dispatcher walks the tree alone, so the leaf sees the event exactly once (§8.3)
+    EXPECT_EQ(leaf_ptr->deliveries, 1u);
+}
+
+TEST(InputDispatcherChecks, ABubbleDoesNotReachTheSiblingOfTheFocusedNode) {
+    // arrange
+    UiNode root;
+    auto first = std::make_unique<RecordingNode>();
+    auto second = std::make_unique<RecordingNode>();
+    RecordingNode* first_ptr = first.get();
+    RecordingNode* second_ptr = second.get();
+    root.add_child(std::move(first));
+    root.add_child(std::move(second));
+    Event event{.kind = EventKind::KeyDown};
+    // act
+    InputDispatcher::dispatch_to_focused(root, event, first_ptr);
+    // assert the bubble climbs the ancestors only, so the sibling never sees the key (§8.3)
+    EXPECT_EQ(first_ptr->deliveries, 1u);
+    EXPECT_EQ(second_ptr->deliveries, 0u);
 }
 
 TEST(InputDispatcherChecks, AnAlreadyClaimedEventIsNotRouted) {
@@ -651,6 +693,34 @@ TEST(FocusManagerChecks, TraversalSkipsUnfocusableNodes) {
     EXPECT_EQ(manager.focused(), visible_ptr);
 }
 
+TEST(FocusManagerChecks, TraversalSkipsDisabledNodes) {
+    // arrange
+    FocusManager manager;
+    RecordingNode root;
+    auto blocked = std::make_unique<RecordingNode>();
+    auto usable = std::make_unique<RecordingNode>();
+    RecordingNode* usable_ptr = usable.get();
+    blocked->blocked = true;
+    root.add_child(std::move(blocked));
+    root.add_child(std::move(usable));
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    usable_ptr->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    manager.request_focus(&root);
+    // act
+    manager.focus_next(root);
+    // assert the disabled node never enters the ring, so tab lands on the usable one (§8.3)
+    EXPECT_EQ(manager.focused(), usable_ptr);
+}
+
+TEST(FocusManagerChecks, FocusableRefusesADisabledNode) {
+    // arrange
+    RecordingNode node;
+    node.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    node.blocked = true;
+    // act assert
+    EXPECT_FALSE(FocusManager::focusable(node));
+}
+
 TEST(FocusManagerChecks, TraversalOnATreeWithNothingFocusableDoesNothing) {
     // arrange
     FocusManager manager;
@@ -670,4 +740,323 @@ TEST(FocusManagerChecks, BackwardTraversalOnAnEmptyRingDoesNothing) {
     manager.focus_previous(root);
     // assert
     EXPECT_EQ(manager.focused(), nullptr);
+}
+
+TEST(InputControllerChecks, StartsWithNoTree) {
+    // arrange
+    InputController controller;
+    // act assert
+    EXPECT_EQ(controller.root(), nullptr);
+    EXPECT_FALSE(controller.capturing());
+    // a delivery with no tree is dropped, which cannot dereference anything (§8.3)
+    Event event{.kind = EventKind::KeyDown};
+    controller.deliver(event);
+    EXPECT_FALSE(event.handled);
+}
+
+TEST(InputControllerChecks, AttachStoresTheTree) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    // act
+    controller.attach(root);
+    // assert
+    EXPECT_EQ(controller.root(), &root);
+}
+
+TEST(InputControllerChecks, AClaimedPressMovesTheCaret) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    // act
+    controller.deliver(press);
+    // assert
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(controller.focus().focused(), &root);
+    EXPECT_TRUE(controller.capturing());
+}
+
+TEST(InputControllerChecks, AnUnclaimedPressFocusesNothing) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    // act
+    controller.deliver(press);
+    // assert the press was answered by nobody, so the caret and the capture stay idle (§8.3)
+    EXPECT_FALSE(press.handled);
+    EXPECT_EQ(controller.focus().focused(), nullptr);
+    EXPECT_FALSE(controller.capturing());
+}
+
+TEST(InputControllerChecks, APressInEmptySpaceFocusesNothing) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{100.0f, 100.0f}};
+    // act
+    controller.deliver(press);
+    // assert the press missed every node, so nothing took the caret (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(controller.focus().focused(), nullptr);
+    EXPECT_FALSE(controller.capturing());
+}
+
+TEST(InputControllerChecks, APressOnADisabledNodeFocusesNothing) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.blocked = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    // act
+    controller.deliver(press);
+    // assert the disabled node could not take the caret, so the press has no target (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(controller.focus().focused(), nullptr);
+    EXPECT_FALSE(controller.capturing());
+}
+
+TEST(InputControllerChecks, ADragReachesTheCapturedNodeOutsideItsBounds) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    controller.deliver(press);
+    Event move{.kind = EventKind::PointerMove, .position = Point{400.0f, 400.0f}};
+    // act
+    controller.deliver(move);
+    // assert the captured node keeps the drag, so the node outside its bounds is skipped (§8.3)
+    EXPECT_EQ(root.deliveries, 2u);
+    EXPECT_TRUE(move.handled);
+    EXPECT_TRUE(controller.capturing());
+}
+
+TEST(InputControllerChecks, AReleaseEndsTheCapture) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    controller.deliver(press);
+    Event release{.kind = EventKind::PointerUp, .position = Point{400.0f, 400.0f}};
+    // act
+    controller.deliver(release);
+    // assert the release closed the drag, so the next press starts a fresh one (§8.3)
+    EXPECT_EQ(root.deliveries, 2u);
+    EXPECT_TRUE(release.handled);
+    EXPECT_FALSE(controller.capturing());
+}
+
+TEST(InputControllerChecks, AnUngrabbedMoveRoutesByPosition) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event move{.kind = EventKind::PointerMove, .position = Point{10.0f, 10.0f}};
+    // act
+    controller.deliver(move);
+    // assert the unclaimed move is offered to the tree, which is the hover path (§8.3)
+    EXPECT_EQ(root.deliveries, 1u);
+    EXPECT_FALSE(controller.capturing());
+}
+
+TEST(InputControllerChecks, EscapeCancelsACapture) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    controller.deliver(press);
+    Event escape{.kind = EventKind::KeyDown, .key = Key::Escape};
+    // act
+    controller.deliver(escape);
+    // assert the escape swallowed the drag before the tree saw it (§8.3)
+    EXPECT_TRUE(escape.handled);
+    EXPECT_EQ(root.deliveries, 1u);
+    EXPECT_FALSE(controller.capturing());
+}
+
+TEST(InputControllerChecks, TabMovesTheCaretForward) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    auto child = std::make_unique<RecordingNode>();
+    RecordingNode* child_ptr = child.get();
+    root.add_child(std::move(child));
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    child_ptr->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    controller.attach(root);
+    Event tab{.kind = EventKind::KeyDown, .key = Key::Tab};
+    // act
+    controller.deliver(tab);
+    // assert the tab moved the caret forward and was claimed, so the tree saw nothing (§8.3)
+    EXPECT_TRUE(tab.handled);
+    EXPECT_EQ(controller.focus().focused(), &root);
+    EXPECT_EQ(child_ptr->deliveries, 0u);
+}
+
+TEST(InputControllerChecks, ShiftTabMovesTheCaretBackward) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    auto child = std::make_unique<RecordingNode>();
+    RecordingNode* child_ptr = child.get();
+    root.add_child(std::move(child));
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    child_ptr->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    controller.attach(root);
+    controller.focus().request_focus(&root);
+    Event shift_tab{.kind = EventKind::KeyDown, .key = Key::Tab};
+    shift_tab.modifiers.shift = true;
+    // act
+    controller.deliver(shift_tab);
+    // assert the shift tab moved the caret backward, so the last node of the ring lands (§8.3)
+    EXPECT_TRUE(shift_tab.handled);
+    EXPECT_EQ(controller.focus().focused(), child_ptr);
+}
+
+TEST(InputControllerChecks, AModifiedTabIsRoutedToTheTree) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event tab{.kind = EventKind::KeyDown, .key = Key::Tab};
+    tab.modifiers.control = true;
+    // act
+    controller.deliver(tab);
+    // assert the control tab is not a traversal, so the tree owns it (§8.3)
+    EXPECT_EQ(root.deliveries, 1u);
+    EXPECT_FALSE(tab.handled);
+}
+
+TEST(InputControllerChecks, AKeyDownReachesTheFocusedNode) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    controller.deliver(press);
+    Event key{.kind = EventKind::KeyDown, .key = Key::Return};
+    // act
+    controller.deliver(key);
+    // assert the caret owns the key, so the focused node handled it (§8.3)
+    EXPECT_TRUE(key.handled);
+    EXPECT_EQ(root.deliveries, 2u);
+}
+
+TEST(InputControllerChecks, AKeyUpIsIgnored) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event key_up{.kind = EventKind::KeyUp, .key = Key::Return};
+    // act
+    controller.deliver(key_up);
+    // assert the key up carries no traversal and no activation (§8.3)
+    EXPECT_FALSE(key_up.handled);
+    EXPECT_EQ(root.deliveries, 0u);
+}
+
+TEST(InputControllerChecks, ATextEventReachesTheFocusedWalk) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    controller.attach(root);
+    // act
+    Event event{.kind = EventKind::TextInput, .text = "a"};
+    controller.deliver(event);
+    // assert the text channel routes through the focused walk, which the dispatcher serves (§8.3)
+    EXPECT_EQ(root.deliveries, 1u);
+    EXPECT_TRUE(event.handled);
+}
+
+TEST(InputControllerChecks, ASecondPressWhileCapturingIsDropped) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event first{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    controller.deliver(first);
+    // act
+    Event second{.kind = EventKind::PointerDown, .position = Point{20.0f, 20.0f}};
+    controller.deliver(second);
+    // assert the capture was left alone, so the drag keeps flowing (§8.3)
+    EXPECT_FALSE(second.handled);
+    EXPECT_EQ(root.deliveries, 1u);
+    EXPECT_TRUE(controller.capturing());
+}
+
+TEST(InputControllerChecks, APressFocusesTheDeepestChildUnderThePoint) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    auto child = std::make_unique<RecordingNode>();
+    RecordingNode* child_ptr = child.get();
+    child->claims = true;
+    root.add_child(std::move(child));
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    // act
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    controller.deliver(press);
+    // assert the deepest focusable node under the press took the caret (§8.3)
+    EXPECT_EQ(controller.focus().focused(), child_ptr);
+    EXPECT_TRUE(controller.capturing());
+}
+
+TEST(InputControllerChecks, TheFocusStateIsReadableThroughAConstView) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    controller.attach(root);
+    // act
+    const InputController& view = controller;
+    // assert
+    EXPECT_EQ(view.focus().focused(), nullptr);
+}
+
+TEST(InputControllerChecks, AHiddenChildHandsTheFocusToTheRoot) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    auto child = std::make_unique<RecordingNode>();
+    child->shown = false;
+    root.add_child(std::move(child));
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    // act
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    controller.deliver(press);
+    // assert a child that misses the point hides nothing inside itself (§8.3)
+    EXPECT_EQ(controller.focus().focused(), &root);
+    EXPECT_TRUE(controller.capturing());
 }

@@ -59,7 +59,7 @@ namespace albor
         // report whether the point lands on this node or on one of its descendants (§8.3)
         [[nodiscard]] virtual bool hit_test(Point logical_point) const;
 
-        // offer the event to this node and then to its children until one claims it (§8.3)
+        // offer the event to this node only, because the dispatcher walks the tree so each node is offered once (§8.3)
         virtual void dispatch_event(Event& event);
 
         // hand out the bounds a parent arranged this node to (§8.2)
@@ -88,6 +88,9 @@ namespace albor
 
         // show or hide the node, which invalidates it so the change reaches the screen (§6.1)
         void set_visible(bool visible);
+
+        // report whether the node refuses input, which a focus traversal and a hit test rely on (§8.3)
+        [[nodiscard]] virtual bool disabled() const;
 
         // install the callback an invalidation reaches, which the frame pipeline turns into a frame request (§6.1)
         void set_invalidation_handler(std::function<void()> handler);

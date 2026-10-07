@@ -55,6 +55,19 @@
         "ALBOR_TEST": "ON",
         "ALBOR_AUTOMATION": "ON"
       }
+    },
+    {
+      "name": "coverage",
+      "inherits": "base",
+      "displayName": "Coverage (instrumented unit tests)",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ALBOR_CONFIGURATION": "Test",
+        "ALBOR_COVERAGE": "ON",
+        "ALBOR_DEV": "OFF",
+        "ALBOR_TEST": "ON",
+        "ALBOR_AUTOMATION": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -69,6 +82,10 @@
     {
       "name": "test",
       "configurePreset": "test"
+    },
+    {
+      "name": "coverage",
+      "configurePreset": "coverage"
     }
   ]
 }

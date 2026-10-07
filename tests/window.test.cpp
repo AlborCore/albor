@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include "ui/ui_event.h"
 #include "window/platform_window_factory.h"
 #include "window/window.h"
 #include "window/window_handle.h"
@@ -67,6 +68,9 @@ namespace
         void show() override {
             show_count++;
             is_visible = true;
+            // a platform may report while it presents the window, so the raise proves the binding was in time (§5.3)
+            if (listener != nullptr)
+                listener->on_platform_resize(reported);
         }
 
         void hide() override {
@@ -97,6 +101,9 @@ namespace
             // a test that only counts closes never reads the flag, because the double dies with the window
             if (m_close_counter)
                 (*m_close_counter)++;
+            // a real platform reports the close it just performed, which is the Closed notification of §5.2
+            if (listener != nullptr)
+                listener->on_platform_closed();
         }
 
         // the opaque object a renderer backend would attach to, which the handle wraps (§3.5)
@@ -463,6 +470,38 @@ TEST(WindowRegistry, AHiddenWindowIsNotShownOnCreation) {
     const WindowHandle handle = registry.create(options);
     // assert
     EXPECT_FALSE(registry.find(handle)->visible());
+    set_platform_window_factory(nullptr);
+}
+
+TEST(WindowRegistry, TheHookRunsBeforeTheWindowIsShown) {
+    // arrange the double raises a resize from its show, which is what a platform may do while presenting (§5.3)
+    WindowRegistry registry;
+    set_platform_window_factory([](const WindowOptions&) -> std::unique_ptr<PlatformWindow> { return std::make_unique<TestPlatformWindow>(); });
+    bool bound = false;
+    bool bound_before_the_event = false;
+    // act
+    const WindowHandle handle = registry.create(WindowOptions{}, [&bound, &bound_before_the_event](Window& created) {
+        // the hook runs while the window is registered and still off screen, so a handler is in place (§5.3)
+        bound = true;
+        created.set_resize_handler([&bound, &bound_before_the_event](const WindowMetrics&) { bound_before_the_event = bound; });
+    });
+    // assert the binding saw the event the show raised, which proves it ran first (§5.3)
+    EXPECT_TRUE(bound);
+    EXPECT_TRUE(bound_before_the_event);
+    EXPECT_TRUE(registry.find(handle)->visible());
+    set_platform_window_factory(nullptr);
+}
+
+TEST(WindowRegistry, ARefusedWindowRunsNoHook) {
+    // arrange
+    WindowRegistry registry;
+    set_platform_window_factory([](const WindowOptions&) -> std::unique_ptr<PlatformWindow> { return nullptr; });
+    bool called = false;
+    // act
+    const WindowHandle handle = registry.create(WindowOptions{}, [&called](Window&) { called = true; });
+    // assert a refused option set never reaches the hook, because there is no window to bind (§5.1)
+    EXPECT_FALSE(called);
+    EXPECT_FALSE(handle.valid());
     set_platform_window_factory(nullptr);
 }
 
@@ -866,6 +905,36 @@ TEST(Window, AResizeWithoutAHandlerStillUpdatesTheMetrics) {
     EXPECT_EQ(window.metrics(), resized);
 }
 
+TEST(Window, AnEventReachesTheInputHandler) {
+    // arrange
+    Window window(WindowHandle::from_id(1u), WindowOptions{}, std::make_unique<TestPlatformWindow>());
+    Event seen{.kind = EventKind::KeyDown, .key = Key::Escape};
+    bool called = false;
+    window.set_input_handler([&seen, &called](const Event& event) {
+        seen = event;
+        called = true;
+    });
+    Event raised{.kind = EventKind::KeyDown, .key = Key::Tab};
+    raised.modifiers.shift = true;
+    // act
+    window.on_platform_event(raised);
+    // assert the platform event is forwarded verbatim, so the handler sees the modifiers (§8.3)
+    EXPECT_TRUE(called);
+    EXPECT_EQ(seen.kind, raised.kind);
+    EXPECT_EQ(seen.key, raised.key);
+    EXPECT_TRUE(seen.modifiers.shift);
+}
+
+TEST(Window, AnEventWithoutAnInputHandlerIsDropped) {
+    // arrange, act
+    Window window(WindowHandle::from_id(1u), WindowOptions{}, std::make_unique<TestPlatformWindow>());
+    Event event{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    // act
+    window.on_platform_event(event);
+    // assert the forward is a no op without a handler, which is the quiet default of §8.3
+    EXPECT_FALSE(event.handled);
+}
+
 TEST(Window, ACloseRequestWithoutAHandlerIsGranted) {
     // arrange, act
     Window window(WindowHandle::from_id(1u), WindowOptions{}, std::make_unique<TestPlatformWindow>());
@@ -941,6 +1010,48 @@ TEST(Window, ReplacingTheCloseHandlerChangesTheNextVerdict) {
     EXPECT_TRUE(granted);
 }
 
+TEST(Window, AClosedNotificationReachesTheClosedHandler) {
+    // arrange
+    Window window(WindowHandle::from_id(1u), WindowOptions{}, std::make_unique<TestPlatformWindow>());
+    int notifications = 0;
+    window.set_closed_handler([&notifications] { notifications++; });
+    // act
+    window.on_platform_closed();
+    // assert
+    EXPECT_EQ(notifications, 1);
+}
+
+TEST(Window, AClosedNotificationClearsTheVisibilityRecord) {
+    // arrange
+    Window window(WindowHandle::from_id(1u), WindowOptions{}, std::make_unique<TestPlatformWindow>());
+    window.show();
+    ASSERT_TRUE(window.visible());
+    // act
+    window.on_platform_closed();
+    // assert a window that closed is no longer on screen (§5.1)
+    EXPECT_FALSE(window.visible());
+}
+
+TEST(Window, AClosedNotificationWithoutAHandlerIsDropped) {
+    // arrange, act
+    Window window(WindowHandle::from_id(1u), WindowOptions{}, std::make_unique<TestPlatformWindow>());
+    window.on_platform_closed();
+    // assert nothing crashes and the window reports itself gone (§5.1)
+    EXPECT_FALSE(window.visible());
+}
+
+TEST(Window, AFrameworkCloseDoesNotRepeatTheClosedNotification) {
+    // arrange
+    Window window(WindowHandle::from_id(1u), WindowOptions{}, std::make_unique<TestPlatformWindow>());
+    int notifications = 0;
+    window.set_closed_handler([&notifications] { notifications++; });
+    // act the platform double raises the closed notification synchronously from its close, like a real platform does
+    window.close();
+    // assert the framework initiated this close, so the teardown is already underway and the notification is not repeated (§5.2)
+    EXPECT_EQ(notifications, 0);
+    EXPECT_FALSE(window.visible());
+}
+
 TEST(Window, APlatformFrameReachesTheFrameHandler) {
     // arrange
     Window window(WindowHandle::from_id(1u), WindowOptions{}, std::make_unique<TestPlatformWindow>());
@@ -972,4 +1083,24 @@ TEST(Window, EveryPlatformFrameReachesTheHandler) {
     window.on_platform_frame();
     // assert
     EXPECT_EQ(frames, 3);
+}
+
+TEST(PlatformWindowFactory, ACreateWithoutABackendBuildsNothing) {
+    // arrange
+    set_platform_window_factory(nullptr);
+    // act, assert the uninstalled backend reports no window rather than a broken one (§5.3)
+    EXPECT_EQ(PlatformWindow::create(WindowOptions{}), nullptr);
+    EXPECT_FALSE(static_cast<bool>(platform_window_factory()));
+}
+
+TEST(Window, AWindowWithoutANativeWindowDropsEveryCall) {
+    // arrange
+    Window window(WindowHandle::from_id(1u), WindowOptions{}, nullptr);
+    // act, assert every native call is a no operation rather than a crash (§5.1, §5.2)
+    window.show();
+    window.hide();
+    window.set_title("albor");
+    window.set_size(Size{10.0f, 20.0f});
+    window.close();
+    EXPECT_FALSE(window.alive());
 }

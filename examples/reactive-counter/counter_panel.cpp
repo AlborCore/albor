@@ -81,8 +81,7 @@ namespace albor
             event.handled = true;
             return;
         }
-        // anything else reaches the children, which is how a composed tree routes (§8.3)
-        UiNode::dispatch_event(event);
+        // anything else belongs to the children, which the dispatcher already offered before the panel (§8.3)
     }
 
     Color CounterPanel::background() const {

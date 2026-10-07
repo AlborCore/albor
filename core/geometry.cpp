@@ -30,4 +30,19 @@ namespace albor
         // map a point through the transform
         return {.x = mapped_x, .y = mapped_y};
     }
+
+    Transform Transform::then(const Transform& outer) const {
+        // the result is the matrix product outer times this, so a point runs through this transform first (§6.4)
+        Transform composed;
+        // the first row multiplies the outer row against this transform's columns (§6.4)
+        composed.scale_x = outer.scale_x * scale_x + outer.skew_x * skew_y;
+        composed.skew_x = outer.scale_x * skew_x + outer.skew_x * scale_y;
+        composed.translate_x = outer.scale_x * translate_x + outer.skew_x * translate_y + outer.translate_x;
+        // the second row multiplies the outer row against this transform's columns the same way (§6.4)
+        composed.skew_y = outer.skew_y * scale_x + outer.scale_y * skew_y;
+        composed.scale_y = outer.skew_y * skew_x + outer.scale_y * scale_y;
+        composed.translate_y = outer.skew_y * translate_x + outer.scale_y * translate_y + outer.translate_y;
+        // hand back the composed transform
+        return composed;
+    }
 } // namespace albor

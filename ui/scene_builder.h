@@ -49,6 +49,18 @@ namespace albor
         // override: record a text run at its baseline origin
         void draw_text(const TextLayout& layout, Point origin, const Paint& paint) override;
 
+        // override: record a retained line batch under a transform
+        void draw_line_batch(const std::shared_ptr<const LineBatch>& batch, const Transform& transform, const StrokeStyle& stroke) override;
+
+        // override: record a retained path under a transform
+        void draw_path(const std::shared_ptr<const PathResource>& path, const Transform& transform, const Paint& paint) override;
+
+        // override: record a retained picture under a transform
+        void draw_picture(const std::shared_ptr<const PictureResource>& picture, const Transform& transform) override;
+
+        // override: record a retained image into a destination rectangle
+        void draw_image(const std::shared_ptr<const ImageResource>& image, const Rect& destination, const Paint& paint) override;
+
         // set the background the scene is cleared with (§6.1)
         void set_background(Color background);
 
@@ -93,6 +105,21 @@ namespace albor
         // the recorded baseline origins, parallel to the runs (§6.1)
         std::vector<Point> m_text_origins;
 
+        // the recorded text fill colours, parallel to the runs, so stage two keeps them (§6.1, AD-18)
+        std::vector<Color> m_text_colors;
+
+        // the recorded retained line batch draws, which the scene replays in order (§6.4, AD-06)
+        std::vector<LineBatchDraw> m_line_batches;
+
+        // the recorded retained path draws, which the scene replays in order (§6.4, AD-06)
+        std::vector<PathDraw> m_paths;
+
+        // the recorded retained picture draws, which the scene replays in order (§6.4, AD-06)
+        std::vector<PictureDraw> m_pictures;
+
+        // the recorded retained image draws, which the scene replays in order (§6.4, AD-06)
+        std::vector<ImageDraw> m_images;
+
         // the current transform
         Transform m_transform;
 
@@ -116,10 +143,10 @@ namespace albor
         // hand out how many nodes the last build visited, which a test asserts on (§6.1)
         [[nodiscard]] std::size_t visited_count() const;
 
-        // hand out how many nodes the last build drew, which a test asserts on (§6.1)
+        // hand out how many nodes the last build drew, meaning the visible ones that reached the renderer, which a test asserts on (§6.1)
         [[nodiscard]] std::size_t drawn_count() const;
 
-        // hand out how many nodes the last build laid out, which a test asserts on (§8.2)
+        // hand out how many nodes the last build laid out, meaning the ones the layout gave area, which a test asserts on (§8.2)
         [[nodiscard]] std::size_t laid_out_count() const;
 
         // hand out the identifier the last node was numbered with (§18.1)
@@ -132,10 +159,10 @@ namespace albor
         // how many nodes the last build visited (§6.1)
         std::size_t m_visited = 0;
 
-        // how many nodes the last build drew (§6.1)
+        // how many nodes the last build drew, which are the visible ones (§6.1)
         std::size_t m_drawn = 0;
 
-        // how many nodes the last build laid out (§8.2)
+        // how many nodes the last build gave area, which are the ones placed in the frame (§8.2)
         std::size_t m_laid_out = 0;
 
         // the identifier the next numbered node receives (§18.1)

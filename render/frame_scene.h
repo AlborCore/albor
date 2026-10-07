@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -9,6 +10,12 @@
 
 namespace albor
 {
+    // a retained immutable resource the scene hands the render thread, which replays without rebuilding (§6.4, AD-06)
+    class LineBatch;
+    class PathResource;
+    class PictureResource;
+    class ImageResource;
+
     // one laid out run of text with its own origin, which the text engine produces (§9.1)
     struct TextLayout
     {
@@ -32,6 +39,52 @@ namespace albor
 
         // compare two runs field by field
         friend bool operator==(const TextLayout& lhs, const TextLayout& rhs) = default;
+    };
+
+    // one retained line batch with the transform and stroke it draws under, which stage two replays in order (§6.4, AD-06)
+    struct LineBatchDraw
+    {
+        // the immutable segments the draw replays
+        std::shared_ptr<const LineBatch> batch;
+
+        // the transform from batch space into scene space
+        Transform transform;
+
+        // the stroke the segments draw with
+        StrokeStyle stroke;
+    };
+
+    // one retained path with the transform and paint it draws under, which stage two replays in order (§6.4, AD-06)
+    struct PathDraw
+    {
+        // the immutable contour the draw replays
+        std::shared_ptr<const PathResource> path;
+
+        // the transform from path space into scene space
+        Transform transform;
+
+        // the fill and stroke of the contour
+        Paint paint;
+    };
+
+    // one retained picture with the transform it replays under, which stage two walks in order (§6.4, AD-06)
+    struct PictureDraw
+    {
+        // the immutable command list the draw replays
+        std::shared_ptr<const PictureResource> picture;
+
+        // the transform from picture space into scene space
+        Transform transform;
+    };
+
+    // one retained image with the destination it draws into, which stage two uploads once (§6.4, AD-06)
+    struct ImageDraw
+    {
+        // the immutable pixels the draw uploads
+        std::shared_ptr<const ImageResource> image;
+
+        // the destination rectangle in scene space
+        Rect destination;
     };
 
     // the immutable scene a UI thread builds and a render thread consumes (§6.1, AD-18)
@@ -65,8 +118,38 @@ namespace albor
         // replace the fill colour of every recorded rectangle, which travels in the same order as the rectangles (§6.1, AD-18)
         void set_rect_colors(std::vector<Color> colors);
 
-        // hand out the fill colour of every recorded rectangle, parallel to the rectangles themselves (§6.1)
+        // hand out the fill colour of every recorded rectangle, parallel to the rectangles themselves (§6.1, AD-18)
         [[nodiscard]] const std::vector<Color>& rect_colors() const;
+
+        // replace the fill colour of every recorded text run, which travels in the same order as the runs (§6.1, AD-18)
+        void set_text_colors(std::vector<Color> colors);
+
+        // hand out the fill colour of every recorded text run, parallel to the runs themselves (§6.1, AD-18)
+        [[nodiscard]] const std::vector<Color>& text_colors() const;
+
+        // add a retained line batch draw, which a ui node records during scene build (§6.4, AD-06)
+        void add_line_batch(LineBatchDraw draw);
+
+        // hand out the retained line batch draws, in recording order (§6.4, AD-06)
+        [[nodiscard]] const std::vector<LineBatchDraw>& line_batches() const;
+
+        // add a retained path draw, which a ui node records during scene build (§6.4, AD-06)
+        void add_path(PathDraw draw);
+
+        // hand out the retained path draws, in recording order (§6.4, AD-06)
+        [[nodiscard]] const std::vector<PathDraw>& paths() const;
+
+        // add a retained picture draw, which a ui node records during scene build (§6.4, AD-06)
+        void add_picture(PictureDraw draw);
+
+        // hand out the retained picture draws, in recording order (§6.4, AD-06)
+        [[nodiscard]] const std::vector<PictureDraw>& pictures() const;
+
+        // add a retained image draw, which a ui node records during scene build (§6.4, AD-06)
+        void add_image(ImageDraw draw);
+
+        // hand out the retained image draws, in recording order (§6.4, AD-06)
+        [[nodiscard]] const std::vector<ImageDraw>& images() const;
 
     private:
         // the metrics the scene was built for, which the render thread presents into
@@ -86,5 +169,20 @@ namespace albor
 
         // the fill colour of every recorded rectangle, which stage two needs because it owns the canvas (§6.1, AD-18)
         std::vector<Color> m_rect_colors;
+
+        // the fill colour of every recorded text run, which stage two needs for the same reason (§6.1, AD-18)
+        std::vector<Color> m_text_colors;
+
+        // the retained line batch draws the scene replays (§6.4, AD-06)
+        std::vector<LineBatchDraw> m_line_batches;
+
+        // the retained path draws the scene replays (§6.4, AD-06)
+        std::vector<PathDraw> m_paths;
+
+        // the retained picture draws the scene replays (§6.4, AD-06)
+        std::vector<PictureDraw> m_pictures;
+
+        // the retained image draws the scene replays (§6.4, AD-06)
+        std::vector<ImageDraw> m_images;
     };
 } // namespace albor

@@ -87,16 +87,11 @@ namespace albor
     }
 
     WindowHandle Application::create_window(const WindowOptions& options) {
-        // the registry builds the native window and adopts it, which is the only path that mints a handle (§4.1)
-        const WindowHandle handle = m_windows.create(options);
-        // a refused option set yields no window, so there is nothing to bind listeners to (§5.1)
-        Window* created = m_windows.find(handle);
-        if (created == nullptr)
-            return handle;
-        // the application becomes the listener of the window, which is how native events reach it (§5.3)
-        bind_window(handle, *created);
-        // use handle
-        return handle;
+        // the registry builds the native window, and the hook binds the listeners before the window is shown (§5.3)
+        return m_windows.create(options, [this](Window& created) {
+            // the application becomes the listener while the window is still off screen, so no event is missed (§5.3)
+            bind_window(created.handle(), created);
+        });
     }
 
     Window* Application::window(WindowHandle handle) {
@@ -111,7 +106,12 @@ namespace albor
 
     bool Application::destroy_window(WindowHandle handle) {
         // the registry closes the native window before it drops the framework window (§5.2)
-        return m_windows.destroy(handle);
+        if (!m_windows.destroy(handle))
+            return false;
+        // the teardown finished, so the Closed notification of §5.2 reaches the application
+        if (m_closed_handler)
+            m_closed_handler(handle);
+        return true;
     }
 
     std::size_t Application::window_count() const {
@@ -161,6 +161,16 @@ namespace albor
         m_close_handler = std::move(handler);
     }
 
+    void Application::set_closed_handler(std::function<void(WindowHandle)> handler) {
+        // the handler is replaced rather than chained, so a close reaches exactly one owner (§5.2)
+        m_closed_handler = std::move(handler);
+    }
+
+    void Application::set_input_handler(std::function<void(WindowHandle, const Event&)> handler) {
+        // the handler replaces the previous one, so the new owner receives every wake of §8.3
+        m_input_handler = std::move(handler);
+    }
+
     bool Application::quit_requested() const {
         // the request is recorded even when the application never reached its loop (§4.1)
         return m_quit_requested;
@@ -205,6 +215,28 @@ namespace albor
                 return;
             // invoke the frame handler
             m_frame_handler();
+        });
+
+        // a normalized input event of a window reaches the application input handler, which is where routing belongs (§8.3)
+        window.set_input_handler([this, handle](const Event& event) {
+            // an event without an application handler is dropped, which is the quiet default of §8.3
+            if (!m_input_handler)
+                return;
+            // the handle travels with the event, so the application can tell the windows apart (§8.3)
+            m_input_handler(handle, event);
+        });
+
+        // a native window close reaches the application as the Closed notification of §5.2
+        window.set_closed_handler([this, handle] {
+            // the teardown is posted, so it never runs inside the platform close callback (§4.1, §5.2)
+            m_tasks.post([this, handle] {
+                // the window was already torn down by an explicit destroy, which notified on its own (§5.2)
+                if (!m_windows.destroy(handle))
+                    return;
+                // the teardown finished first, so the Closed notification follows it (§5.2)
+                if (m_closed_handler)
+                    m_closed_handler(handle);
+            });
         });
     }
 } // namespace albor

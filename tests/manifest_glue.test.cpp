@@ -178,3 +178,195 @@ native component WaveformView {
     EXPECT_TRUE(files.empty());
     EXPECT_TRUE(has_code(diagnostics, "E0306"));
 }
+
+TEST(ManifestGlue, TheScalarPropertiesCoverTheBoolAndTextSpellings) {
+    // arrange
+    constexpr std::string_view manifest = R"(
+native component ToggleView {
+    in property<bool> enabled: true;
+    in property<string> label: "x";
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(manifest);
+    // assert
+    const GeneratedFile& header = file_named(files, "chart/toggle_view.h");
+    EXPECT_TRUE(contains(header.content, "virtual void set_enabled(bool value) = 0;"));
+    EXPECT_TRUE(contains(header.content, "[[nodiscard]] virtual bool enabled() const = 0;"));
+    EXPECT_TRUE(contains(header.content, "virtual void set_label(std::string value) = 0;"));
+    EXPECT_TRUE(contains(header.content, "[[nodiscard]] virtual std::string label() const = 0;"));
+}
+
+TEST(ManifestGlue, ANestedOrEmptySnapshotTypeBlocksTheOutput) {
+    // arrange
+    constexpr std::string_view manifest = R"(
+native component WaveformView {
+    in property<Snapshot<>> empty_data;
+}
+native component ChartView {
+    in property<Snapshot<Series<Point>>> nested_data;
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(manifest, diagnostics);
+    // assert
+    EXPECT_TRUE(files.empty());
+    EXPECT_TRUE(has_code(diagnostics, "E0305"));
+}
+
+TEST(ManifestGlue, SignalEmittersSeparateWhenAComponentHasSeveral) {
+    // arrange
+    constexpr std::string_view manifest = R"(
+native component WaveformView {
+    signal picked(float x);
+    signal zoomed(float scale);
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(manifest);
+    // assert
+    const GeneratedFile& header = file_named(files, "chart/waveform_view.h");
+    EXPECT_TRUE(contains(header.content, "std::function<void(float)> m_on_picked;\n\n        // the slot behind the zoomed signal"));
+    const GeneratedFile& source = file_named(files, "chart/waveform_view.cpp");
+    EXPECT_TRUE(contains(source.content, "m_on_zoomed(scale);"));
+}
+
+TEST(ManifestGlue, ASignalWithSeveralParametersJoinsItsSignature) {
+    // arrange
+    constexpr std::string_view manifest = R"(
+native component WaveformView {
+    signal moved(float x, float y, color tint);
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(manifest);
+    // assert
+    const GeneratedFile& header = file_named(files, "chart/waveform_view.h");
+    EXPECT_TRUE(contains(header.content, "void set_on_moved(std::function<void(float, float, Color)> handler);"));
+    EXPECT_TRUE(contains(header.content, "void emit_moved(float x, float y, Color tint);"));
+    EXPECT_TRUE(contains(header.content, "std::function<void(float, float, Color)> m_on_moved;"));
+    const GeneratedFile& source = file_named(files, "chart/waveform_view.cpp");
+    EXPECT_TRUE(contains(source.content, "m_on_moved(x, y, tint);"));
+}
+
+TEST(ManifestGlue, APreviewBlockEmitsTheDesignTimeStub) {
+    // arrange
+    constexpr std::string_view manifest = R"(
+native component WaveformView {
+    in property<Snapshot<WaveformData>> data;
+    in property<color> line_color: #00FF00;
+    signal selection_changed(float time_pos);
+    semantic role: "chart";
+    preview {
+        line_color: #FF0000;
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(manifest);
+    // assert
+    const GeneratedFile& header = file_named(files, "chart/waveform_view_preview.h");
+    EXPECT_TRUE(contains(header.content, "class WaveformView_Preview final : public WaveformView"));
+    EXPECT_TRUE(contains(header.content, "explicit WaveformView_Preview(BindingEngine* engine, std::string explicit_id = {});"));
+    EXPECT_TRUE(contains(header.content, "void set_line_color(Color value) override;"));
+    EXPECT_TRUE(contains(header.content, "[[nodiscard]] Color line_color() const override;"));
+    EXPECT_TRUE(contains(header.content, "void set_data(std::shared_ptr<const WaveformData> value) override;"));
+    EXPECT_TRUE(contains(header.content, "Color m_line_color{Color::rgb(1.0f, 0.0f, 0.0f)};"));
+    EXPECT_TRUE(contains(header.content, "std::shared_ptr<const WaveformData> m_data{};"));
+    const GeneratedFile& source = file_named(files, "chart/waveform_view_preview.cpp");
+    EXPECT_TRUE(contains(source.content, "WaveformView_Preview::WaveformView_Preview(BindingEngine* engine, std::string explicit_id) :"));
+    EXPECT_TRUE(contains(source.content, "WaveformView(engine, std::move(explicit_id)) {}"));
+    EXPECT_TRUE(contains(source.content, "void WaveformView_Preview::set_line_color(Color value) {"));
+    EXPECT_TRUE(contains(source.content, "m_line_color = value;"));
+    EXPECT_TRUE(contains(source.content, "Color WaveformView_Preview::line_color() const {"));
+    EXPECT_TRUE(contains(source.content, "return m_line_color;"));
+}
+
+TEST(ManifestGlue, AStubMemberFallsBackToTheDeclaredDefault) {
+    // arrange
+    constexpr std::string_view manifest = R"(
+native component GaugeView {
+    in property<float> level: 0.5;
+    in property<bool> enabled: true;
+    in property<string> caption: "ready";
+    in property<int> ticks;
+    in property<color> tint: #0000FF;
+    in property<color> wash: #80FFFFFF;
+    preview {
+        level: 0.75;
+        tint: broken;
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(manifest);
+    // assert
+    const GeneratedFile& header = file_named(files, "chart/gauge_view_preview.h");
+    EXPECT_TRUE(contains(header.content, "float m_level{0.75};"));
+    EXPECT_TRUE(contains(header.content, "bool m_enabled{true};"));
+    EXPECT_TRUE(contains(header.content, "std::string m_caption{\"ready\"};"));
+    EXPECT_TRUE(contains(header.content, "int m_ticks{};"));
+    EXPECT_TRUE(contains(header.content, "Color m_tint{Color{}};"));
+    EXPECT_TRUE(contains(header.content, "Color m_wash{Color::rgba(0.501960784f, 1.0f, 1.0f, 1.0f)};"));
+    EXPECT_FALSE(contains(header.content, "0.5};"));
+}
+
+TEST(ManifestGlue, AnOverrideNamingAnUndeclaredPropertyBlocksTheOutput) {
+    // arrange
+    constexpr std::string_view manifest = R"(
+native component GaugeView {
+    in property<float> level: 0.5;
+    preview {
+        missing: 1;
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(manifest, diagnostics);
+    // assert
+    EXPECT_TRUE(files.empty());
+    EXPECT_TRUE(has_code(diagnostics, "E0307"));
+}
+
+TEST(ManifestGlue, AStubMemberEscapesItsTextValue) {
+    // arrange
+    std::string manifest = std::string(R"(native component GaugeView {
+    in property<string> caption: "a\\b\"c\n\td)");
+    manifest += std::string("\x01");
+    manifest += R"(";
+    in property<string> note: "z";
+    preview {
+        note: "e\\f\"g\n\th)";
+    manifest += std::string("\x02");
+    manifest += R"(";
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(manifest);
+    // assert
+    const GeneratedFile& header = file_named(files, "chart/gauge_view_preview.h");
+    EXPECT_TRUE(contains(header.content, "std::string m_caption{\"a\\\\b\\\"c\\n\\td\\x01\"};"));
+    EXPECT_TRUE(contains(header.content, "std::string m_note{\"e\\\\f\\\"g\\n\\th\\x02\"};"));
+    EXPECT_FALSE(contains(header.content, "m_note{\"z\"};"));
+}
+
+TEST(ManifestGlue, AMalformedColourSpellingFallsBackToTheDefaultColour) {
+    // arrange
+    constexpr std::string_view manifest = R"(
+native component GaugeView {
+    in property<color> tint: #0000FF;
+    preview {
+        tint: #FF00;
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(manifest, diagnostics);
+    // assert
+    const GeneratedFile& header = file_named(files, "chart/gauge_view_preview.h");
+    EXPECT_TRUE(contains(header.content, "Color m_tint{Color{}};"));
+}

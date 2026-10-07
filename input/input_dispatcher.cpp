@@ -6,7 +6,7 @@ namespace albor
         // a claimed event is not offered again, because the walk stops at the handler that took it (§8.3)
         if (event.handled)
             return;
-        // the node itself is offered the event before its children, because the deepest handler should win (§8.3)
+        // the walk starts at the children, because the deepest handler should win and the node is offered last (§8.3)
         route_down(root, event);
     }
 
@@ -32,6 +32,7 @@ namespace albor
         if (focused == nullptr || !descends_from(root, *focused)) {
             // the ordinary depth first walk is the fallback, because a key press must reach something (§8.3)
             dispatch(root, event);
+            // exit
             return;
         }
         // the focused node is offered the event first, because a key press belongs to the caret (§8.3)

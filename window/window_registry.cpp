@@ -2,7 +2,7 @@
 
 namespace albor
 {
-    WindowHandle WindowRegistry::create(const WindowOptions& options) {
+    WindowHandle WindowRegistry::create(const WindowOptions& options, const std::function<void(Window&)>& before_show) {
         // build the native window first, because a platform that refuses the options yields no window at all (§5.1)
         std::unique_ptr<PlatformWindow> platform = PlatformWindow::create(options);
         // a refused option set is reported as the invalid handle rather than a broken window (§5.1)
@@ -12,15 +12,18 @@ namespace albor
         std::unique_ptr<Window> window = std::make_unique<Window>(WindowHandle::from_id(m_next_id), options, std::move(platform));
         // the handle of the window is the identity the caller uses from here on (§5.2)
         const WindowHandle handle = window->handle();
-        // the visibility of the options is applied before the window is registered (§5.1)
-        if (options.visible)
-            window->show();
         // the slot for the new identifier grows to fit, leaving any destroyed slot before it empty (§5.2)
         m_windows.resize(m_next_id);
         // the window takes its slot, which is what makes the handle resolve to it
         m_windows[m_next_id - 1] = std::move(window);
         // the next window receives a fresh identifier, so a destroyed handle never names a new window (§5.2)
         m_next_id++;
+        // the caller binds the handlers while the window is registered but still off screen, so no event is missed (§5.3)
+        if (before_show)
+            before_show(*m_windows[handle.id() - 1]);
+        // the visibility of the options is applied last, which is what the binding was in time for (§5.1)
+        if (options.visible)
+            m_windows[handle.id() - 1]->show();
         return handle;
     }
 
@@ -66,6 +69,7 @@ namespace albor
             // a destroyed window leaves an empty slot behind, which has nothing left to close (§5.2)
             if (!window)
                 continue;
+            // close the window
             window->close();
         }
         // the entries are released only after every native window is closed

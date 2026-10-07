@@ -32,6 +32,59 @@ namespace albor
         TextInput
     };
 
+    // one portable key name, which a platform adapter normalizes a key event onto (§8.3)
+    enum class Key
+    {
+        // no key, which every non keyboard event carries
+        None,
+
+        // the tab key, which moves focus forward unless shift is held
+        Tab,
+
+        // the return or enter key, which activates the focused control
+        Return,
+
+        // the escape key, which cancels a pending action
+        Escape,
+
+        // the left arrow key, which reaches a drag target on its left
+        ArrowLeft,
+
+        // the right arrow key, which reaches a drag target on its right
+        ArrowRight,
+
+        // the up arrow key, which reaches a drag target above
+        ArrowUp,
+
+        // the down arrow key, which reaches a drag target below
+        ArrowDown,
+
+        // the space key, which toggles or activates the focused control
+        Space,
+
+        // the delete key, which removes the selected content
+        Delete
+    };
+
+    // the modifier keys held during an event, one flag per key (§8.3)
+    struct Modifiers
+    {
+        // whether the shift key was held, which reverses a tab traversal
+        bool shift = false;
+
+        // whether the control key was held
+        bool control = false;
+
+        // whether the option or alt key was held
+        bool option = false;
+
+        // whether the command or meta key was held
+        bool command = false;
+
+        // report whether no key modifier is held
+        [[nodiscard]] bool none() const;
+    };
+
     // one normalized input event, which platform adapters produce and the tree dispatches (§8.3)
     struct Event
     {
@@ -46,6 +99,12 @@ namespace albor
 
         // the wheel delta a wheel event carries, which is zero for every other kind
         float scroll = 0.0f;
+
+        // the key a keyboard event carries, which is None for every other kind (§8.3)
+        Key key = Key::None;
+
+        // the modifier keys held during the event, which distinguishes shift tab (§8.3)
+        Modifiers modifiers;
 
         // the utf8 text a text input event carries, which is empty for every other kind
         std::string text;

@@ -1798,3 +1798,25 @@ TEST(BindingEngine, AStaticBindingReportsItsDependencies) {
     EXPECT_EQ(engine.dependencies(binding).size(), 1u);
     EXPECT_TRUE(engine.bound(binding));
 }
+
+TEST(BindingEngine, RebindingATargetReplacesTheProducer) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    const PropertyId target = engine.next_property_id();
+    struct Runner
+    {
+        static void run(void* context) { (*static_cast<std::size_t*>(context))++; }
+    };
+    std::size_t runs = 0;
+    // act
+    const BindingId first = engine.bind_static(target, {}, &Runner::run, &runs);
+    const BindingId second = engine.bind_static(target, {}, &Runner::run, &runs);
+    engine.settle();
+    // assert the second binding won the production, so the first name carries no work (§7.3)
+    EXPECT_FALSE(engine.bound(first));
+    EXPECT_TRUE(engine.bound(second));
+    EXPECT_EQ(runs, 1u);
+    EXPECT_EQ(engine.size(), 1u);
+}

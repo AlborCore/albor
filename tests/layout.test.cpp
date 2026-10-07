@@ -25,9 +25,14 @@ namespace
         // the extent this node reports when it measures itself (§8.2)
         Size intrinsic{10.0f, 20.0f};
 
+        // the constraints the last measure was offered, which a test asserts on (§8.2)
+        SizeConstraints offered;
+
         void measure(const SizeConstraints& constraints, Size& out_size) override {
             // the pass is counted, so a test proves the measure phase ran (§8.2)
             measures++;
+            // the offer is kept, so a test can prove the container offered a ceiling (§8.2)
+            offered = constraints;
             // the intrinsic extent is clamped into the offered constraints, which is what a node does (§8.2)
             out_size = constraints.constrain(intrinsic);
             m_measured_size = out_size;
@@ -82,6 +87,20 @@ TEST(StackLayoutChecks, ClampsIntoTheOfferedConstraints) {
     // assert
     EXPECT_FLOAT_EQ(measured.width, 50.0f);
     EXPECT_FLOAT_EQ(measured.height, 50.0f);
+}
+
+TEST(StackLayoutChecks, AChildIsOfferedTheCeilingOfTheStack) {
+    // arrange
+    StackLayout stack;
+    auto child = std::make_unique<LayoutTestNode>();
+    LayoutTestNode* child_ptr = child.get();
+    stack.add_child(std::move(child));
+    Size measured{};
+    // act
+    stack.measure(SizeConstraints::at_most(Size{90.0f, 70.0f}), measured);
+    // assert
+    EXPECT_FLOAT_EQ(child_ptr->offered.maximum.width, 90.0f);
+    EXPECT_FLOAT_EQ(child_ptr->offered.maximum.height, 70.0f);
 }
 
 TEST(StackLayoutChecks, ArrangesEveryChildToTheWholeBounds) {
@@ -184,6 +203,20 @@ TEST(RowLayoutChecks, HonoursTheMaximumConstraint) {
     // assert
     EXPECT_FLOAT_EQ(measured.width, 40.0f);
     EXPECT_FLOAT_EQ(measured.height, 40.0f);
+}
+
+TEST(RowLayoutChecks, AChildIsOfferedTheCeilingOfTheRow) {
+    // arrange
+    RowLayout row;
+    auto child = std::make_unique<LayoutTestNode>();
+    LayoutTestNode* child_ptr = child.get();
+    row.add_child(std::move(child));
+    Size measured{};
+    // act
+    row.measure(SizeConstraints::at_most(Size{120.0f, 60.0f}), measured);
+    // assert
+    EXPECT_FLOAT_EQ(child_ptr->offered.maximum.width, 120.0f);
+    EXPECT_FLOAT_EQ(child_ptr->offered.maximum.height, 60.0f);
 }
 
 TEST(RowLayoutChecks, PlacesChildrenLeftToRightWithGaps) {
@@ -357,6 +390,24 @@ TEST(ColumnLayoutChecks, HonoursTheMaximumConstraint) {
     column.measure(SizeConstraints::at_most(Size{50.0f, 120.0f}), measured);
     // assert
     EXPECT_FLOAT_EQ(measured.height, 120.0f);
+}
+
+TEST(ColumnLayoutChecks, AChildIsOfferedTheCeilingOfTheColumnMinusItsPadding) {
+    // arrange
+    ColumnLayout column;
+    column.set_padding(10.0f);
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{200.0f, 300.0f};
+    LayoutTestNode* child_ptr = child.get();
+    column.add_child(std::move(child));
+    Size measured{};
+    // act
+    column.measure(SizeConstraints::at_most(Size{100.0f, 200.0f}), measured);
+    // assert
+    EXPECT_FLOAT_EQ(child_ptr->offered.maximum.width, 80.0f);
+    EXPECT_FLOAT_EQ(child_ptr->offered.maximum.height, 180.0f);
+    EXPECT_FLOAT_EQ(measured.width, 100.0f);
+    EXPECT_FLOAT_EQ(measured.height, 200.0f);
 }
 
 TEST(PaddingLayoutChecks, EmptyInsetsAreTheDefault) {

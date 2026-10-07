@@ -2,11 +2,21 @@
 
 #include <algorithm>
 
+#include <skia/core/SkBitmap.h>
 #include <skia/core/SkCanvas.h>
 #include <skia/core/SkFont.h>
+#include <skia/core/SkImage.h>
 #include <skia/core/SkPaint.h>
+#include <skia/core/SkPath.h>
+#include <skia/core/SkPathBuilder.h>
 #include <skia/core/SkRRect.h>
 #include <skia/core/SkRect.h>
+#include <skia/core/SkSamplingOptions.h>
+
+#include "render/image_resource.h"
+#include "render/line_batch.h"
+#include "render/path_resource.h"
+#include "render/picture_resource.h"
 
 namespace albor::skia
 {
@@ -179,5 +189,179 @@ namespace albor::skia
                 m_canvas->drawRect(shape, stroke_paint);
             }
         }
+    }
+
+    SkMatrix SkiaRenderContext::to_skia_matrix(const Transform& transform) {
+        // the matrix mirrors the albor transform with the same column order the scale, skew and translate follow (§6.3)
+        SkMatrix matrix;
+        matrix.setScale(transform.scale_x, transform.scale_y);
+        matrix.setSkewX(transform.skew_x);
+        matrix.setSkewY(transform.skew_y);
+        matrix.postTranslate(transform.translate_x, transform.translate_y);
+        return matrix;
+    }
+
+    SkPath SkiaRenderContext::build_path(std::span<const PathVerb> verbs, std::span<const Point> points) {
+        // the path starts empty, because a malformed stream is refused before it reaches here (§6.4, AD-06)
+        SkPathBuilder builder;
+        // the point index advances with every consuming verb (§6.4)
+        std::size_t point_index = 0;
+        for (const PathVerb verb : verbs) {
+            // a move starts a new contour at the next point (§6.4)
+            if (verb == PathVerb::MoveTo) {
+                builder.moveTo(points[point_index].x, points[point_index].y);
+                point_index++;
+            }
+            // a line draws to the next point (§6.4)
+            else if (verb == PathVerb::LineTo) {
+                builder.lineTo(points[point_index].x, points[point_index].y);
+                point_index++;
+            }
+            // a close runs the contour back to its start and consumes no point (§6.4)
+            else if (verb == PathVerb::Close) {
+                builder.close();
+            }
+        }
+        return builder.detach();
+    }
+
+    void SkiaRenderContext::draw_line_batch(const std::shared_ptr<const LineBatch>& batch, const Transform& transform, const StrokeStyle& stroke) {
+        // a context with no canvas draws nothing (§6.4)
+        if (m_canvas == nullptr)
+            return;
+        // a batch with no segment draws nothing (§6.4, AD-06)
+        if (!batch || batch->segment_count() == 0)
+            return;
+        // every consecutive point pair lifts to one segment, which the batched replay walks (§6.4)
+        SkPathBuilder builder;
+        const std::span<const Point> points = batch->points();
+        for (std::size_t index = 0; index < points.size(); index += 2) {
+            builder.moveTo(points[index].x, points[index].y);
+            builder.lineTo(points[index + 1].x, points[index + 1].y);
+        }
+        const SkPath path = builder.detach();
+        // the retained transform concats under the current matrix, so the segments land where the scene placed them (§6.4)
+        m_canvas->save();
+        m_canvas->concat(to_skia_matrix(transform));
+        SkPaint stroke_paint;
+        stroke_paint.setStyle(SkPaint::kStroke_Style);
+        stroke_paint.setColor(SkColor(to_skia_color(stroke.color)));
+        stroke_paint.setStrokeWidth(stroke.width);
+        stroke_paint.setAntiAlias(true);
+        m_canvas->drawPath(path, stroke_paint);
+        m_canvas->restore();
+    }
+
+    void SkiaRenderContext::draw_path(const std::shared_ptr<const PathResource>& path, const Transform& transform, const Paint& paint) {
+        // a context with no canvas draws nothing (§6.4)
+        if (m_canvas == nullptr)
+            return;
+        // a path with no command draws nothing (§6.4, AD-06)
+        if (!path || path->verbs().empty())
+            return;
+        // the contour is rebuilt in one pass, because the resource validates the command stream on creation (§6.4, AD-06)
+        const SkPath contour = build_path(path->verbs(), path->points());
+        // the retained transform concats under the current matrix, so the contour lands where the scene placed it (§6.4)
+        m_canvas->save();
+        m_canvas->concat(to_skia_matrix(transform));
+        // a transparent fill draws nothing, which is how the paint carries only a stroke (§6.4)
+        if (paint.fills()) {
+            SkPaint fill_paint;
+            fill_paint.setColor(SkColor(to_skia_color(paint.fill)));
+            fill_paint.setAntiAlias(true);
+            m_canvas->drawPath(contour, fill_paint);
+        }
+        // a transparent or a zero width stroke draws nothing (§6.4)
+        if (paint.strokes()) {
+            SkPaint stroke_paint;
+            stroke_paint.setColor(SkColor(to_skia_color(paint.stroke)));
+            stroke_paint.setStyle(SkPaint::kStroke_Style);
+            stroke_paint.setStrokeWidth(paint.stroke_width);
+            stroke_paint.setAntiAlias(true);
+            m_canvas->drawPath(contour, stroke_paint);
+        }
+        m_canvas->restore();
+    }
+
+    void SkiaRenderContext::draw_picture(const std::shared_ptr<const PictureResource>& picture, const Transform& transform) {
+        // a context with no canvas draws nothing (§6.4)
+        if (m_canvas == nullptr)
+            return;
+        // a picture with no command draws nothing (§6.4, AD-06)
+        if (!picture || picture->empty())
+            return;
+        // the picture transform concats under the current matrix, so the commands land where the scene placed them (§6.4)
+        m_canvas->save();
+        m_canvas->concat(to_skia_matrix(transform));
+        // every command replays in recording order, because the display list is the picture (§6.4)
+        for (const PictureCommand& command : picture->commands()) {
+            // each command runs under its own recorded transform, which the concat nests under the picture's (§6.4)
+            m_canvas->save();
+            m_canvas->concat(to_skia_matrix(command.transform));
+            switch (command.kind) {
+            case PictureCommandKind::Rect:
+                // a plain rectangle command draws through the shared shape painter (§6.4)
+                paint_shape(command.paint, false, command.rect, 0.0f);
+                break;
+            case PictureCommandKind::RoundedRect:
+                // a rounded rectangle command draws through the shared shape painter (§6.4)
+                paint_shape(command.paint, true, command.rect, command.radius);
+                break;
+            case PictureCommandKind::Text:
+                // the text command draws its run at the recorded baseline, under the command transform (§6.4)
+                if (!command.text.empty())
+                    draw_text(command.text, command.origin, command.paint);
+                break;
+            case PictureCommandKind::LineBatch:
+                // the batch command replays with an identity transform, because the matrix already nests it (§6.4)
+                if (command.batch)
+                    draw_line_batch(command.batch, Transform{}, command.stroke);
+                break;
+            case PictureCommandKind::Path:
+                // the path command replays with an identity transform, because the matrix already nests it (§6.4)
+                if (command.path)
+                    draw_path(command.path, Transform{}, command.paint);
+                break;
+            case PictureCommandKind::Image:
+                // the image command draws into the recorded destination, under the command transform (§6.4)
+                if (command.image)
+                    draw_image(command.image, command.rect, command.paint);
+                break;
+            }
+            m_canvas->restore();
+        }
+        m_canvas->restore();
+    }
+
+    void SkiaRenderContext::draw_image(const std::shared_ptr<const ImageResource>& image, const Rect& destination, const Paint& paint) {
+        // a context with no canvas draws nothing (§6.4)
+        if (m_canvas == nullptr)
+            return;
+        // an image with no pixel draws nothing (§6.4, AD-06)
+        if (!image || image->pixels().empty())
+            return;
+        // a destination with no area draws nothing (§6.4)
+        if (destination.empty())
+            return;
+        // the raw buffer is an immutable row packed upload in rgba order (§6.4)
+        const SkImageInfo info = SkImageInfo::Make(static_cast<int>(image->width()), static_cast<int>(image->height()), kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+        SkBitmap bitmap;
+        // the byte stride of one row is the width times the four channels, which an upload requires (§6.4)
+        if (!bitmap.installPixels(info, const_cast<std::uint8_t*>(image->pixels().data()), image->row_bytes()))
+            return;
+        // the bitmap lifts to an image, which is what the canvas draws (§6.4)
+        sk_sp<SkImage> sk_image = SkImages::RasterFromBitmap(bitmap);
+        if (!sk_image)
+            return;
+        // the destination is drawn in the logical space the canvas matrix already maps (§6.4)
+        const SkRect dest = SkRect::MakeXYWH(destination.x, destination.y, destination.width, destination.height);
+        SkPaint image_paint;
+        // the fill colour tints the upload when the paint fills, and the stroke colour otherwise (§6.4)
+        if (paint.fills())
+            image_paint.setColor(SkColor(to_skia_color(paint.fill)));
+        else if (paint.strokes())
+            image_paint.setColor(SkColor(to_skia_color(paint.stroke)));
+        image_paint.setAntiAlias(true);
+        m_canvas->drawImageRect(sk_image, dest, SkSamplingOptions(SkFilterMode::kLinear), &image_paint);
     }
 } // namespace albor::skia

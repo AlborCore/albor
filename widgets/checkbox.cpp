@@ -1,7 +1,5 @@
 #include "widgets/checkbox.h"
 
-#include <algorithm>
-
 namespace albor
 {
     // the square a checkbox measures to, because the control has no intrinsic text (§8.2)
@@ -59,7 +57,31 @@ namespace albor
     }
 
     void CheckBox::dispatch_event(Event& event) {
-        // a press is the only event that toggles a box (§8.3)
+        // a hidden box takes no event at all, because it draws nothing to aim at (§8.3)
+        if (!visible())
+            return;
+        // a key that toggles the box is a press, which the focused box receives (§8.3)
+        if (event.kind == EventKind::KeyDown && event.key == Key::Space) {
+            // a disabled box does not claim the key, because it refuses input (§8.3)
+            if (m_disabled)
+                return;
+            // a modified key is an application shortcut, so a plain toggle ignores it (§8.3)
+            if (!event.modifiers.none())
+                return;
+            // the event is claimed, so no ancestor reacts to the same key (§8.3)
+            event.handled = true;
+            // the state flips before the handler runs, so the callback sees the new state (§8.3)
+            m_checked = !m_checked;
+            // a toggled box changes its fill, so the frame must be redrawn (§6.1)
+            invalidate();
+            // a box with no handler still toggles, because the state is the control (§8.3)
+            if (!m_on_toggle)
+                return;
+            // the handler receives the new state, which is what a toggle reports (§8.3)
+            m_on_toggle(m_checked);
+            return;
+        }
+        // a press is the only other event that toggles a box (§8.3)
         if (event.kind != EventKind::PointerDown) {
             // any other event belongs to a parent, so the box does not claim it (§8.3)
             return;

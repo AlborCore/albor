@@ -9,13 +9,11 @@ using namespace albor::compiler;
 
 namespace
 {
-    // scan a source, which the suites below use so they only state what they are about (§11.1)
     std::vector<Token> scan(std::string_view source, DiagnosticList& diagnostics) {
         // the lexer is built over the literal, whose storage the caller's source view keeps alive (§11.1)
         return Lexer(source, diagnostics).tokenize();
     }
 
-    // scan a source that is expected to be clean, which fails the test when it is not (§11.1)
     std::vector<Token> scan(std::string_view source) {
         // the diagnostics are collected so a stray problem fails the test instead of disappearing (§11.1)
         DiagnosticList diagnostics;
@@ -26,11 +24,9 @@ namespace
         return tokens;
     }
 
-    // join the spellings of the units, which is the compact form most assertions read better in (§11.1)
     std::string spellings(const std::vector<Token>& tokens) {
         // the spellings are separated by a space, so a missing or doubled unit is visible (§11.1)
         std::string joined;
-        // every unit contributes its spelling, except the end which closes the list (§11.1)
         for (const Token& token : tokens) {
             // the end unit has no spelling, so it contributes nothing at all (§11.1)
             if (token.kind == Token::Kind::End)
@@ -109,8 +105,17 @@ TEST(Lexer, ReadsIntegerAndFloatLiterals) {
     EXPECT_EQ(tokens.at(2).text, "1e3");
     EXPECT_EQ(tokens.at(3).kind, Token::Kind::Float);
     EXPECT_EQ(tokens.at(3).text, "2.5e-2");
-    EXPECT_EQ(tokens.at(4).kind, Token::Kind::Float);
+    EXPECT_EQ(tokens.at(4).kind, Token::Kind::Integer);
     EXPECT_EQ(tokens.at(4).text, "0xFF");
+}
+
+TEST(Lexer, ReadsAHexadecimalFloatWithItsFractionalDigits) {
+    // arrange, act
+    const std::vector<Token> tokens = scan("0xF.8");
+    // assert
+    ASSERT_EQ(tokens.size(), 2U);
+    EXPECT_EQ(tokens.at(0).kind, Token::Kind::Float);
+    EXPECT_EQ(tokens.at(0).text, "0xF.8");
 }
 
 TEST(Lexer, ReadsADotThatIsNotAFloatAsPunctuation) {
@@ -140,7 +145,7 @@ TEST(Lexer, ReadsAUppercaseHexadecimalPrefix) {
     const std::vector<Token> tokens = scan("0XFF");
     // assert
     ASSERT_EQ(tokens.size(), 2U);
-    EXPECT_EQ(tokens.at(0).kind, Token::Kind::Float);
+    EXPECT_EQ(tokens.at(0).kind, Token::Kind::Integer);
     EXPECT_EQ(tokens.at(0).text, "0XFF");
 }
 
@@ -354,7 +359,6 @@ TEST(Lexer, ReadsALetterAfterAZeroThatIsNotAHexadecimalPrefixAsAUnitSuffix) {
     // act
     const std::vector<Token> tokens = scan("0y1", diagnostics);
     // assert
-    // the letter is not the hexadecimal prefix, so it is read as a unit suffix (§11.1)
     ASSERT_EQ(diagnostics.count(), 1U);
     EXPECT_EQ(diagnostics.diagnostics().at(0).code, "E0101");
     // the suffix stops at the digit, because a unit carries letters only (§11.1, AD-27)
@@ -381,9 +385,10 @@ TEST(Lexer, ReadsALowercaseHexadecimalPrefixThatEndsAtTheBuffer) {
     // act
     const std::vector<Token> tokens = scan("0x", diagnostics);
     // assert
-    EXPECT_EQ(diagnostics.count(), 0U);
+    ASSERT_EQ(diagnostics.count(), 1U);
+    EXPECT_EQ(diagnostics.diagnostics().at(0).code, "E0107");
     ASSERT_EQ(tokens.size(), 2U);
-    EXPECT_EQ(tokens.at(0).kind, Token::Kind::Float);
+    EXPECT_EQ(tokens.at(0).kind, Token::Kind::Integer);
     EXPECT_EQ(tokens.at(0).text, "0x");
 }
 
@@ -393,7 +398,6 @@ TEST(Lexer, StopsAHexadecimalRunAtANonHexLetterAndReportsItAsAUnit) {
     // act
     const std::vector<Token> tokens = scan("0x1G", diagnostics);
     // assert
-    // the letter ends the run and is then read as a unit suffix, which is not a length (§11.1)
     ASSERT_EQ(diagnostics.count(), 1U);
     EXPECT_EQ(diagnostics.diagnostics().at(0).code, "E0101");
     ASSERT_EQ(tokens.size(), 2U);
@@ -420,7 +424,6 @@ TEST(Lexer, ReadsAnExponentSignThatIsNotFollowedByDigitsAsAUnitSuffix) {
     // act
     const std::vector<Token> tokens = scan("1e+x 2E3", diagnostics);
     // assert
-    // the sign carries no digits behind it, so the literal ends and the e is read as a suffix (§11.1)
     ASSERT_EQ(diagnostics.count(), 1U);
     EXPECT_EQ(diagnostics.diagnostics().at(0).code, "E0101");
     ASSERT_EQ(tokens.size(), 5U);

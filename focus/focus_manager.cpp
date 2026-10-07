@@ -54,10 +54,13 @@ namespace albor
         // a hidden node takes no focus, because the user cannot see where the caret is (§8.3)
         if (!node.visible())
             return false;
+        // a disabled node takes no focus, because it refuses every activation (§8.3)
+        if (node.disabled())
+            return false;
         // a node with no area takes no focus, because there is nothing to point at (§8.3)
         if (node.bounds().empty())
             return false;
-        // every visible node with area can take the focus, which is what phase 3 tab traversal relies on (§8.3)
+        // every active visible node with area can take the focus, which is what tab traversal relies on (§8.3)
         return true;
     }
 

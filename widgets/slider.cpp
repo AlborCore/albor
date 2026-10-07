@@ -76,7 +76,42 @@ namespace albor
     }
 
     void Slider::dispatch_event(Event& event) {
-        // a press is the only event that moves the value, because a drag arrives as press then move (§8.3)
+        // a hidden slider takes no event at all, because it draws nothing to aim at (§8.3)
+        if (!visible())
+            return;
+        // a key that steers the value reaches the focused slider (§8.3)
+        if (event.kind == EventKind::KeyDown && (event.key == Key::ArrowRight || event.key == Key::ArrowUp || event.key == Key::ArrowLeft || event.key == Key::ArrowDown)) {
+            // a disabled slider does not claim the key, because it refuses input (§8.3)
+            if (m_disabled)
+                return;
+            // a modified key is an application shortcut, so a plain step ignores it (§8.3)
+            if (!event.modifiers.none())
+                return;
+            // the right and up arrows move the value up, which is the forward direction (§8)
+            const float delta = (event.key == Key::ArrowRight || event.key == Key::ArrowUp) ? STEP : -STEP;
+            // the event is claimed, so no ancestor reacts to the same key (§8.3)
+            event.handled = true;
+            // the value moves by one step, which step reports when it changed (§8.3)
+            step(delta);
+            return;
+        }
+        // a move that continues a drag steers the value, which is what dragging means (§8.3)
+        if (event.kind == EventKind::PointerMove && m_dragging) {
+            // the event is claimed, so no ancestor reacts to the same move (§8.3)
+            event.handled = true;
+            // the thumb follows the pointer, which is how the value is steered (§8)
+            jump_to(event.position);
+            return;
+        }
+        // a release ends a drag, which leaves the value where the last move put it (§8.3)
+        if (event.kind == EventKind::PointerUp && m_dragging) {
+            // the event is claimed, so no ancestor reacts to the same release (§8.3)
+            event.handled = true;
+            // the drag ends with the release, so the next press starts a fresh one (§8.3)
+            m_dragging = false;
+            return;
+        }
+        // a press is the only other event that moves the value, because a drag arrives as press then move (§8.3)
         if (event.kind != EventKind::PointerDown) {
             // any other event belongs to a parent, so the slider does not claim it (§8.3)
             return;
@@ -89,15 +124,22 @@ namespace albor
             return;
         // the event is claimed, so no ancestor reacts to the same press (§8.3)
         event.handled = true;
+        // a press starts a drag, which the moves continue and the release ends (§8.3)
+        m_dragging = true;
+        // the thumb jumps to the press, which is how a press on a track is answered (§8)
+        jump_to(event.position);
+    }
+
+    void Slider::jump_to(Point logical_position) {
         // a track with no length has no reachable position, so the value stays where it was (§8)
         const float travel = bounds().width - THUMB_SIZE;
         if (travel <= 0.0f)
             return;
         // the press offset from the left edge becomes the fraction of the travel (§8)
-        const float fraction = std::clamp((event.position.x - bounds().x - THUMB_SIZE * 0.5f) / travel, 0.0f, 1.0f);
-        // the value is derived from the fraction, so a press anywhere on the track jumps the thumb there (§8)
+        const float fraction = std::clamp((logical_position.x - bounds().x - THUMB_SIZE * 0.5f) / travel, 0.0f, 1.0f);
+        // the value is derived from the fraction, so the thumb lands where the pointer is (§8)
         const float moved = m_minimum + (m_maximum - m_minimum) * fraction;
-        // an unchanged value changes nothing, so a press on the current position is not reported (§8.3)
+        // an unchanged value changes nothing, so a position on the current thumb is not reported (§8.3)
         if (moved == m_value)
             return;
         // the value is stored first, so the invalidation walks a slider that already carries the new value (§8)

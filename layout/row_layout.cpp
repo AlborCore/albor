@@ -9,10 +9,12 @@ namespace albor
         Size total{};
         // a child before the first one has no gap before it, so the count tracks the gaps actually placed (§8.2)
         std::size_t placed = 0;
+        // the offered ceiling travels down, because a parent knows the space the child has to fit in (§8.2)
+        const SizeConstraints child_constraints = SizeConstraints::at_most(constraints.maximum);
         for (const auto& child : children()) {
-            // each child is measured unconstrained, because the row learns its own extent from the result (§8.2)
+            // each child measures against that ceiling, so content never grows wider or taller than the row (§8.2)
             Size child_size{};
-            child->measure(SizeConstraints::unconstrained(), child_size);
+            child->measure(child_constraints, child_size);
             // the widths accumulate, because the children sit side by side (§8.2)
             total.width += child_size.width;
             // the row is as tall as its tallest child, because every child receives the full height (§8.2)

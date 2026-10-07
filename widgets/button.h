@@ -4,6 +4,7 @@
 #include <string>
 #include <utility>
 
+#include "text/text_engine.h"
 #include "widgets/widget.h"
 
 namespace albor
@@ -12,10 +13,10 @@ namespace albor
     class Button final : public Widget
     {
     public:
-        // build a button over the engine that settles its properties (§8)
-        explicit Button(BindingEngine* engine, std::string label = {}, std::string explicit_id = {});
+        // build a button over the engines it reads, with a default plate and an empty label (§8, AD-14)
+        explicit Button(BindingEngine* engine, TextEngine* text_engine, std::string label = {}, std::string explicit_id = {});
 
-        // measure the label and give the button a default extent, because a push control must be grabbable (§8.2)
+        // measure the label through the text engine and give the button a default extent, because a push control must be grabbable (§8.2, AD-14)
         void measure(const SizeConstraints& constraints, Size& out_size) override;
 
         // assign the bounds of the button, which the parent does after measuring (§8.2)
@@ -46,7 +47,7 @@ namespace albor
         void set_disabled(bool disabled);
 
         // report whether the button refuses input (§8.3)
-        [[nodiscard]] bool disabled() const;
+        [[nodiscard]] bool disabled() const override;
 
         // replace the plate fill, which redraws without changing the extent (§6.1)
         void set_background(Color background);
@@ -55,6 +56,9 @@ namespace albor
         [[nodiscard]] Color background() const override;
 
     private:
+        // the text engine that measures the label, which the application owns (§9.1, AD-14)
+        TextEngine* m_text_engine = nullptr;
+
         // the run the label measures to, because the plate is as large as the text it carries (§9.1)
         TextLayout m_label_layout;
 

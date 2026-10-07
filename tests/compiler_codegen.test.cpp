@@ -15,7 +15,6 @@ using namespace albor::compiler;
 
 namespace
 {
-    // scan, parse, check and generate a source, which is the pipeline the driver runs (§11.3)
     std::vector<GeneratedFile> generate(std::string_view source, DiagnosticList& diagnostics, ElementCatalog catalog) {
         // the scanner runs first, because the parser takes units (§11.1)
         const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
@@ -27,13 +26,11 @@ namespace
         return CodeGenerator(diagnostics).generate(checked);
     }
 
-    // generate a source against the builtins, which is what most suites need (§11.3, §8)
     std::vector<GeneratedFile> generate(std::string_view source, DiagnosticList& diagnostics) {
         // the builtin catalog is what a ui file may use without a manifest (§11.3, §8)
         return generate(source, diagnostics, ElementCatalog::with_builtins());
     }
 
-    // generate a source that is expected to be clean, which fails the test when it is not (§11.3)
     std::vector<GeneratedFile> generate(std::string_view source) {
         // the diagnostics are collected so a stray problem fails the test instead of disappearing (§11.3)
         DiagnosticList diagnostics;
@@ -44,9 +41,7 @@ namespace
         return files;
     }
 
-    // the generated file with the given name, which a suite asserts its content against (§14.2)
     const GeneratedFile& file_named(const std::vector<GeneratedFile>& files, std::string_view name) {
-        // the files are scanned, because a suite asks by the name it cares about (§14.2)
         for (const GeneratedFile& file : files) {
             // the name decides, so the lookup resolves to exactly one file (§14.2)
             if (file.path == name)
@@ -59,15 +54,21 @@ namespace
         return empty;
     }
 
-    // report whether a generated text contains a fragment, which the suites assert on (§14.2)
     bool contains(std::string_view text, std::string_view fragment) {
         // the fragment decides, so a missing line fails the exact assertion (§14.2)
         return text.find(fragment) != std::string_view::npos;
     }
 
-    // report whether any diagnostic carries the given code, because a problem may be reported in passes (§11.3)
+    bool has_file(const std::vector<GeneratedFile>& files, std::string_view name) {
+        for (const GeneratedFile& file : files) {
+            // the name decides, so the lookup resolves to at least one file (§14.2)
+            if (file.path == name)
+                return true;
+        }
+        return false;
+    }
+
     bool has_code(const DiagnosticList& diagnostics, std::string_view code) {
-        // the problems are scanned, because a run reports everything it found (§11.3)
         for (const Diagnostic& diagnostic : diagnostics.diagnostics()) {
             // the code is the stable handle, so the assertion matches on it rather than the prose (§11.3)
             if (diagnostic.code == code)
@@ -160,6 +161,8 @@ component MainView {
     // the row and the button carry their constants, and the identity is applied (AD-11)
     EXPECT_TRUE(contains(source_file.content, "auto node_2 = std::make_unique<RowLayout>();"));
     EXPECT_TRUE(contains(source_file.content, "n2->set_gap(8.0f);"));
+    // the button measures its label through the engine, so the construction hands it over (AD-14, §9.1)
+    EXPECT_TRUE(contains(source_file.content, "auto node_3 = std::make_unique<Button>(engine, text_engine);"));
     EXPECT_TRUE(contains(source_file.content, "n3->set_explicit_id(std::string(\"action_button\"));"));
     EXPECT_TRUE(contains(source_file.content, "n3->set_label(std::string(\"Increment\"));"));
     // the click handler wires to the written body, which the lambda forwards without allocating (§11.3)
@@ -273,4 +276,295 @@ TEST(Codegen, AFileTheCheckerBlockedProducesNothing) {
     EXPECT_TRUE(files.empty());
     // the checker spoke, and the generator adds nothing of its own on top (§11.3)
     EXPECT_GE(diagnostics.count(), 1U);
+}
+
+TEST(Codegen, AChunkedModeMergesTheComponentSourcesIntoOneUnit) {
+    // arrange
+    DiagnosticList diagnostics;
+    const std::string_view source = R"(
+component Alpha { Column { spacing: 4px; } }
+component Beta { Column { spacing: 8px; } }
+)";
+    // act
+    const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
+    const SourceFile file = Parser(tokens, diagnostics).parse();
+    const CheckedFile checked = TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file);
+    CodeGenerator generator(diagnostics);
+    generator.set_tu_chunk_size(2);
+    const std::vector<GeneratedFile> files = generator.generate(checked);
+    // assert
+    ASSERT_EQ(diagnostics.count(), 0U);
+    // both facades stay separate, which is what a translation unit includes (§14.2)
+    EXPECT_TRUE(contains(file_named(files, "alpha.h").content, "class Alpha final : public Component"));
+    EXPECT_TRUE(contains(file_named(files, "beta.h").content, "class Beta final : public Component"));
+    // both implementations merge into one unit, which is the configured chunk (AD-03b)
+    const GeneratedFile& chunk = file_named(files, "facades_0.cpp");
+    EXPECT_TRUE(contains(chunk.content, "// generated group of components, do not edit (§14.2, AD-03b)"));
+    EXPECT_TRUE(contains(chunk.content, "#include \"alpha.h\""));
+    EXPECT_TRUE(contains(chunk.content, "#include \"beta.h\""));
+    EXPECT_TRUE(contains(chunk.content, "n0->set_gap(4.0f);"));
+    EXPECT_TRUE(contains(chunk.content, "n0->set_gap(8.0f);"));
+    // the per component units are not emitted, which is what the chunk replaces (AD-03b)
+    EXPECT_FALSE(has_file(files, "alpha.cpp"));
+    EXPECT_FALSE(has_file(files, "beta.cpp"));
+}
+
+TEST(Codegen, AChunkedModeKeepsTheRemainderInItsOwnUnit) {
+    // arrange
+    DiagnosticList diagnostics;
+    const std::string_view source = R"(
+component A { Column { spacing: 4px; } }
+component B { Column { spacing: 8px; } }
+component C { Column { spacing: 12px; } }
+)";
+    // act
+    const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
+    const SourceFile file = Parser(tokens, diagnostics).parse();
+    const CheckedFile checked = TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file);
+    CodeGenerator generator(diagnostics);
+    generator.set_tu_chunk_size(2);
+    const std::vector<GeneratedFile> files = generator.generate(checked);
+    // assert
+    ASSERT_EQ(diagnostics.count(), 0U);
+    // the remainder still forms its own unit, which a last partial group always does (AD-03b)
+    const GeneratedFile& chunk_0 = file_named(files, "facades_0.cpp");
+    const GeneratedFile& chunk_1 = file_named(files, "facades_1.cpp");
+    EXPECT_TRUE(contains(chunk_0.content, "#include \"a.h\""));
+    EXPECT_TRUE(contains(chunk_0.content, "#include \"b.h\""));
+    EXPECT_FALSE(contains(chunk_0.content, "#include \"c.h\""));
+    EXPECT_TRUE(contains(chunk_1.content, "#include \"c.h\""));
+    EXPECT_FALSE(contains(chunk_1.content, "#include \"a.h\""));
+}
+
+TEST(Codegen, AZeroChunkSizeFallsBackToPerComponentUnits) {
+    // arrange
+    DiagnosticList diagnostics;
+    CodeGenerator generator(diagnostics);
+    // a chunk size of zero would group nothing, so it is clamped back to the default (AD-03b)
+    generator.set_tu_chunk_size(0);
+    // act
+    const std::vector<Token> tokens = Lexer("component A { Column { spacing: 4px; } }", diagnostics).tokenize();
+    const SourceFile file = Parser(tokens, diagnostics).parse();
+    const CheckedFile checked = TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file);
+    const std::vector<GeneratedFile> files = generator.generate(checked);
+    // assert
+    ASSERT_EQ(diagnostics.count(), 0U);
+    EXPECT_TRUE(has_file(files, "a.cpp"));
+    EXPECT_FALSE(has_file(files, "facades_0.cpp"));
+}
+
+TEST(Codegen, ABreaksOnAPhysicalLengthDefault) {
+    // arrange, act
+    // a default is scanned like an assignment, because its density is undefined (§11.3, AD-27)
+    const std::string_view source = R"(
+component Ring {
+    in property<length> fat: 10phx;
+    Column {}
+}
+)";
+    DiagnosticList diagnostics;
+    CodeGenerator generator(diagnostics);
+    const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
+    const SourceFile file = Parser(tokens, diagnostics).parse();
+    const CheckedFile checked = TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file);
+    const std::vector<GeneratedFile> files = generator.generate(checked);
+    // the physical length is rejected, which leaves nothing to generate (§11.3, AD-27)
+    ASSERT_EQ(diagnostics.count(), 1U);
+    EXPECT_STREQ(diagnostics.diagnostics().at(0).code.c_str(), "E0502");
+    EXPECT_TRUE(files.empty());
+}
+
+TEST(Codegen, AEscapesControlBytesInsideAString) {
+    // arrange, act
+    // the source is assembled at runtime, so no control byte is stored in this file
+    const std::string source = std::string("component Ring {\n    in property<string> chime: \"") + "\x07" + "\";\n    Column {}\n}\n";
+    DiagnosticList diagnostics;
+    CodeGenerator generator(diagnostics);
+    const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
+    const SourceFile file = Parser(tokens, diagnostics).parse();
+    const CheckedFile checked = TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file);
+    const std::vector<GeneratedFile> files = generator.generate(checked);
+    // the byte is escaped as a hex escape, which keeps the generated file printable (§11.3)
+    ASSERT_EQ(diagnostics.count(), 0U);
+    ASSERT_TRUE(has_file(files, "ring.cpp"));
+    const GeneratedFile& cpp = file_named(files, "ring.cpp");
+    EXPECT_TRUE(contains(cpp.content, "m_chime{std::string(\"\\x07\")}"));
+}
+
+TEST(Codegen, AKaleidoscopicComponentCoversColoursConversionsAndExpressions) {
+    // arrange, act
+    const std::string_view source = R"(
+component Well {
+    in property<bool> enabled: true;
+    in property<float> ratio: 0xF.8;
+    in property<color> accent: #E02030;
+    in property<color> soft: #E0203080;
+    in property<length> lead: 12px;
+    in property<int> counter: 2;
+    in property<string> text: "a\nb\t\"q\"\\z";
+    in property<string> named;
+    in property<bool> muted: false;
+    inout property<int> visible: 0;
+    inout property<int> doubled: counter * 2;
+    inout property<float> half: counter / 2.0;
+    in property<bool> flag: !enabled;
+    in property<bool> engaged: flag && counter > 0;
+    in property<bool> verdict: counter % 2 == 0 && counter >= 10 && ratio != 0.5 && (counter - 1) <= 3 && counter < 5 && !flag || flag;
+    in property<bool> painted: bool(accent);
+    in property<float> tasked: float(named);
+    in property<bool> echoed: bool(enabled);
+
+    signal moved(int x, int y);
+    signal tinted(color c);
+
+    Column {
+        spacing: 4px;
+
+        Label {
+            id: headline;
+            text: string(enabled) + "/" + string(ratio) + "/" + string(accent) + "/" + string(lead) + "/" + string(counter) + string(named);
+            foreground: accent;
+            font_size: lead;
+        }
+
+        Label {
+            text: string(bool(counter)) + string(bool(named)) + string(bool(lead)) + string(bool(ratio)) + string(bool(accent));
+        }
+
+        Label {
+            text: string(float(counter)) + string(int(counter)) + string(int(ratio)) + string(int(named)) + string(float(named));
+        }
+
+        Label {
+            text: string(100) + string(1.5) + string("x") + string(#123456) + string(12px) + string(true) +
+                string((counter + 1)) + string(!flag) + string((counter > 2)) + string(@tr("k"));
+        }
+
+        Row {
+            spacing: 8px;
+
+            Slider {
+                value: float(ratio) + float(named);
+                on_changed: {
+                    tinted(accent);
+                }
+            }
+
+            CheckBox {
+                checked: enabled;
+                on_toggled: {
+                    visible = visible + 1;
+                    visible = (visible + 1);
+                }
+            }
+
+            Button {
+                text: text;
+                background: soft;
+                disabled: muted;
+                on_clicked: {
+                    visible = visible + 1;
+                    visible = -counter;
+                    moved(counter, int(named));
+                    tinted(accent);
+                }
+            }
+        }
+
+        Canvas {
+            id: plot;
+            width: 320px;
+            height: 240px;
+        }
+
+        Canvas {
+            width: lead;
+            height: lead;
+        }
+    }
+}
+)";
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert
+    // the scalar property defaults show their emitted forms, which cover the literal spellings (§11.3)
+    const GeneratedFile& cpp = file_named(files, "well.cpp");
+    EXPECT_TRUE(contains(cpp.content, "Property<bool> m_enabled{true};"));
+    EXPECT_TRUE(contains(cpp.content, "Property<bool> m_muted{false};"));
+    // a hexadecimal float reads back as its value, which the shortest round trip then writes (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "Property<float> m_ratio{15.5f};"));
+    EXPECT_TRUE(contains(cpp.content, "Property<Color> m_accent{Color::rgb("));
+    EXPECT_TRUE(contains(cpp.content, "Property<Color> m_soft{Color::rgba("));
+    // the escaped string reappears escaped, which keeps the C++ literal identical (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "Property<std::string> m_text{std::string(\"a\\nb\\t\\\"q\\\"\\\\z\")};"));
+    // a property without a default starts empty, which the builder then settles (§7.2)
+    EXPECT_TRUE(contains(cpp.content, "Property<std::string> m_named;"));
+    // the reserved name is disambiguated, which keeps the facade unambiguous (§14.1)
+    EXPECT_TRUE(contains(cpp.content, "Property<int> m_visible_{0};"));
+    const GeneratedFile& header = file_named(files, "well.h");
+    EXPECT_TRUE(contains(header.content, "[[nodiscard]] int visible_() const;"));
+    EXPECT_TRUE(contains(header.content, "void set_visible_(int value);"));
+    // the multi parameter signal joins its parameters, which is how a signature reads (§11.3)
+    EXPECT_TRUE(contains(header.content, "void set_on_moved(std::function<void(int, int)> handler);"));
+    EXPECT_TRUE(contains(header.content, "void set_on_tinted(std::function<void(Color)> handler);"));
+    EXPECT_TRUE(contains(cpp.content, "std::function<void(int, int)> m_on_moved;"));
+    EXPECT_TRUE(contains(cpp.content, "std::function<void(Color)> m_on_tinted;"));
+    // the vertex colours pull the paint header, which a colour component needs (§14.1)
+    EXPECT_TRUE(contains(header.content, "#include \"core/paint.h\""));
+    // the text conversion needs the hex helper, which prints the colour as text (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "#include <cstdio>"));
+    EXPECT_TRUE(contains(cpp.content, "std::string well_color_to_hex(Color value) {"));
+    EXPECT_TRUE(contains(cpp.content, "well_color_to_hex(self->m_accent.get())"));
+    // the binary and unary forms render their operators, which cover the whole chart (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "compute_doubled"));
+    EXPECT_TRUE(contains(cpp.content, "m_doubled.bind_static(&Impl::compute_doubled, this, deps_doubled)"));
+    EXPECT_TRUE(contains(cpp.content, "const PropertyId deps_doubled[] = {m_counter.id()};"));
+    EXPECT_TRUE(contains(cpp.content, "(self->m_counter.get() * 2)"));
+    EXPECT_TRUE(contains(cpp.content, "(self->m_counter.get() / 2.0f)"));
+    EXPECT_TRUE(contains(cpp.content, "(self->m_enabled.get() == false)"));
+    EXPECT_TRUE(contains(cpp.content, "(self->m_flag.get() && (self->m_counter.get() > 0))"));
+    EXPECT_TRUE(contains(cpp.content, "(self->m_counter.get() % 2)"));
+    EXPECT_TRUE(contains(cpp.content, "(self->m_counter.get() >= 10)"));
+    EXPECT_TRUE(contains(cpp.content, "(self->m_ratio.get() != 0.5f)"));
+    EXPECT_TRUE(contains(cpp.content, "(self->m_counter.get() - 1)"));
+    EXPECT_TRUE(contains(cpp.content, "(self->m_counter.get() < 5)"));
+    EXPECT_TRUE(contains(cpp.content, "(self->m_flag.get() == false)"));
+    EXPECT_TRUE(contains(cpp.content, "std::stof(self->m_named.get())"));
+    EXPECT_TRUE(contains(cpp.content, "(self->m_accent.get() != Color{})"));
+    // the conversions render their shapes, which cover every arm of the rule (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "(self->m_enabled.get() ? std::string(\"true\") : std::string(\"false\"))"));
+    EXPECT_TRUE(contains(cpp.content, "std::to_string(self->m_ratio.get())"));
+    EXPECT_TRUE(contains(cpp.content, "std::to_string(self->m_lead.get())"));
+    EXPECT_TRUE(contains(cpp.content, "std::to_string(self->m_counter.get())"));
+    EXPECT_TRUE(contains(cpp.content, "!self->m_named.get().empty()"));
+    EXPECT_TRUE(contains(cpp.content, "(self->m_lead.get() != 0.0f)"));
+    EXPECT_TRUE(contains(cpp.content, "(self->m_ratio.get() != 0.0f)"));
+    EXPECT_TRUE(contains(cpp.content, "(self->m_counter.get() != 0)"));
+    EXPECT_TRUE(contains(cpp.content, "static_cast<float>(self->m_counter.get())"));
+    EXPECT_TRUE(contains(cpp.content, "std::stoi(self->m_named.get())"));
+    EXPECT_TRUE(contains(cpp.content, "static_cast<int>(self->m_ratio.get())"));
+    EXPECT_TRUE(contains(cpp.content, "(self->m_ratio.get())"));
+    EXPECT_TRUE(contains(cpp.content, "(self->m_enabled.get())"));
+    EXPECT_TRUE(contains(cpp.content, "std::to_string(1.5f)"));
+    EXPECT_TRUE(contains(cpp.content, "well_color_to_hex(Color::rgb("));
+    EXPECT_TRUE(contains(cpp.content, "(true ? std::string(\"true\") : std::string(\"false\"))"));
+    EXPECT_TRUE(contains(cpp.content, "(self->m_counter.get() > 2)"));
+    // the widgets construct with the engines they need, which decides the arguments (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<Slider>(engine);"));
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<CheckBox>(engine);"));
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<Canvas>(engine);"));
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<Button>(engine, text_engine);"));
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<Label>(engine, text_engine);"));
+    // the wired callbacks carry the parameter lists of their signals (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "set_on_change([this](float) { handle_"));
+    EXPECT_TRUE(contains(cpp.content, "set_on_toggle([this](bool) { handle_"));
+    EXPECT_TRUE(contains(cpp.content, "set_on_click([this] { handle_"));
+    // the handler bodies run the written statements, which name the sanitized property (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "self->m_visible_.set((self->m_visible_.get() + 1));"));
+    EXPECT_TRUE(contains(cpp.content, "self->m_visible_.set((-self->m_counter.get()));"));
+    EXPECT_TRUE(contains(cpp.content, "self->m_on_moved(self->m_counter.get(), std::stoi(self->m_named.get()));"));
+    EXPECT_TRUE(contains(cpp.content, "self->m_on_tinted(self->m_accent.get());"));
+    // the canvas tracks its constant dimensions once, which the intrinsic size then combines (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "n9->set_explicit_id(std::string(\"plot\"));"));
+    EXPECT_TRUE(contains(cpp.content, "set_intrinsic_size(Size{"));
+    EXPECT_TRUE(contains(cpp.content, "self->m_canvas_w_"));
 }

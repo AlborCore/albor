@@ -89,6 +89,11 @@ namespace albor
         m_close_handler = std::move(handler);
     }
 
+    void Window::set_closed_handler(std::function<void()> handler) {
+        // the handler receives the Closed notification of §5.2, which only a native close raises (§5.2)
+        m_closed_handler = std::move(handler);
+    }
+
     void Window::set_resize_handler(std::function<void(const WindowMetrics&)> handler) {
         // the handler receives the metrics the platform just reported (§9.1)
         m_resize_handler = std::move(handler);
@@ -99,12 +104,21 @@ namespace albor
         m_frame_handler = std::move(handler);
     }
 
+    void Window::set_input_handler(std::function<void(const Event&)> handler) {
+        // the handler receives the normalized events the platform raises (§8.3)
+        m_input_handler = std::move(handler);
+    }
+
     void Window::close() {
         // closing a window that never existed is a no operation rather than an error (§5.2)
         if (!m_platform) {
+            // reset flag
             m_close_pending = false;
+            // exit
             return;
         }
+        // a framework initiated close is remembered, so the native notification that follows it is not repeated (§5.2)
+        m_close_initiated = true;
         // the native window goes away first, so that no event reaches a half torn down object (§4.2)
         m_platform->close();
         // the framework window is no longer on screen once its native window is gone
@@ -141,10 +155,30 @@ namespace albor
         return !m_close_pending;
     }
 
+    void Window::on_platform_closed() {
+        // a close the framework initiated is already tearing down, so the notification is not raised twice (§5.2)
+        if (m_close_initiated)
+            return;
+        // the native window is gone, so the framework window is no longer on screen (§5.1)
+        m_visible = false;
+        // the window is closed, so a previously vetoed request no longer pends (§5.2)
+        m_close_pending = false;
+        // the Closed notification reaches the application, which is the second step of §5.2
+        if (m_closed_handler)
+            m_closed_handler();
+    }
+
     void Window::on_platform_frame() {
         // a window without a frame handler presents nothing (§4.3)
         if (!m_frame_handler)
             return;
         m_frame_handler();
+    }
+
+    void Window::on_platform_event(const Event& event) {
+        // a window without an input handler drops the event, which is the quiet default of §8.3
+        if (!m_input_handler)
+            return;
+        m_input_handler(event);
     }
 } // namespace albor

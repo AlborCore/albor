@@ -5,6 +5,7 @@
 
 #include "core/geometry.h"
 #include "core/native_window_handle.h"
+#include "ui/ui_event.h"
 #include "window/window_metrics.h"
 #include "window/window_options.h"
 
@@ -22,8 +23,14 @@ namespace albor
         // ask the framework whether the close request may proceed, because the application may veto it (§5.2)
         virtual bool on_platform_close_request() = 0;
 
+        // report that the native window closed, which follows a granted close request (§5.2)
+        virtual void on_platform_closed() = 0;
+
         // report that the platform pacing source asks for another frame
         virtual void on_platform_frame() = 0;
+
+        // report a normalized input event, which the platform adapter produces in logical coordinates (§5.3, §8.3)
+        virtual void on_platform_event(const Event& event) = 0;
     };
 
     // the platform half of a window, which every native backend implements (§5.3)

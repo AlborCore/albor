@@ -4,6 +4,7 @@
 #import <QuartzCore/CAMetalLayer.h>
 
 #include <memory>
+#include <string>
 
 // the delegate the native window consults before it closes, which is the veto point of §5.2
 @interface AlborWindowDelegate : NSObject <NSWindowDelegate>
@@ -24,6 +25,181 @@
     return self.listener->on_platform_close_request() ? YES : NO;
 }
 
+// the native window reports that it closed, which is the Closed notification of §5.2
+- (void)windowWillClose:(NSWindow*)sender {
+    // the sender is only the trigger, so it is not carried into the framework (§5.3)
+    (void)sender;
+    // a listener that is gone means the framework window is already destroyed, so nobody is left to notify (§4.2)
+    if (self.listener == nullptr)
+        return;
+
+    self.listener->on_platform_closed();
+}
+
+@end
+
+// the content view that translates native events into normalized ones, which is the input path of §8.3
+@interface AlborContentView : NSView
+
+// the framework listener the events are forwarded to, which is null once the framework window is gone (§4.2)
+@property(nonatomic, assign) albor::PlatformWindowListener* listener;
+
+@end
+
+namespace
+{
+    albor::Key key_from_nsevent(NSEvent* event) {
+        // the named keys map one platform key code onto one portable name (§8.3)
+        switch (event.keyCode) {
+        // tab
+        case 48:
+            return albor::Key::Tab;
+        // return and the keypad enter both activate
+        case 36:
+        case 76:
+            return albor::Key::Return;
+        // escape
+        case 53:
+            return albor::Key::Escape;
+        // the left arrow
+        case 123:
+            return albor::Key::ArrowLeft;
+        // the right arrow
+        case 124:
+            return albor::Key::ArrowRight;
+        // the down arrow
+        case 125:
+            return albor::Key::ArrowDown;
+        // the up arrow
+        case 126:
+            return albor::Key::ArrowUp;
+        // the space bar
+        case 49:
+            return albor::Key::Space;
+        // the backspace and the forward delete both remove
+        case 51:
+        case 117:
+            return albor::Key::Delete;
+        // every other key carries no portable name
+        default:
+            return albor::Key::None;
+        }
+    }
+
+    albor::Modifiers modifiers_from_nsevent(NSEvent* event) {
+        // the modifier flags map onto the portable set, one flag per key (§8.3)
+        albor::Modifiers modifiers;
+        const NSEventModifierFlags flags = event.modifierFlags;
+        modifiers.shift = (flags & NSEventModifierFlagShift) != 0;
+        modifiers.control = (flags & NSEventModifierFlagControl) != 0;
+        modifiers.option = (flags & NSEventModifierFlagOption) != 0;
+        modifiers.command = (flags & NSEventModifierFlagCommand) != 0;
+        return modifiers;
+    }
+} // namespace
+
+@implementation AlborContentView
+
+// the view owns the caret, so it accepts first responder for the key events to reach it (§8.3)
+- (BOOL)acceptsFirstResponder {
+    return YES;
+}
+
+// a click on an inactive window reaches the view immediately, which is what a fast press needs (§8.3)
+- (BOOL)acceptsFirstMouse:(NSEvent*)event {
+    (void)event;
+    return YES;
+}
+
+// turn a native pointer position into the logical point of §8.3, flipping the y axis to the tree origin
+- (albor::Point)logicalPointOf:(NSEvent*)event {
+    const NSPoint in_view = [self convertPoint:event.locationInWindow fromView:nil];
+    const CGFloat height = self.bounds.size.height;
+    return albor::Point{static_cast<float>(in_view.x), static_cast<float>(height - in_view.y)};
+}
+
+- (void)mouseDown:(NSEvent*)event {
+    // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
+    if (self.listener == nullptr)
+        return;
+    albor::Event message;
+    message.kind = albor::EventKind::PointerDown;
+    message.position = [self logicalPointOf:event];
+    self.listener->on_platform_event(message);
+}
+
+- (void)mouseDragged:(NSEvent*)event {
+    // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
+    if (self.listener == nullptr)
+        return;
+    albor::Event message;
+    message.kind = albor::EventKind::PointerMove;
+    message.position = [self logicalPointOf:event];
+    self.listener->on_platform_event(message);
+}
+
+- (void)mouseUp:(NSEvent*)event {
+    // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
+    if (self.listener == nullptr)
+        return;
+    albor::Event message;
+    message.kind = albor::EventKind::PointerUp;
+    message.position = [self logicalPointOf:event];
+    self.listener->on_platform_event(message);
+}
+
+- (void)scrollWheel:(NSEvent*)event {
+    // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
+    if (self.listener == nullptr)
+        return;
+    albor::Event message;
+    message.kind = albor::EventKind::Wheel;
+    message.position = [self logicalPointOf:event];
+    message.scroll = static_cast<float>(event.scrollingDeltaY);
+    self.listener->on_platform_event(message);
+}
+
+- (void)keyDown:(NSEvent*)event {
+    // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
+    if (self.listener == nullptr)
+        return;
+    albor::Event message;
+    message.kind = albor::EventKind::KeyDown;
+    message.key = key_from_nsevent(event);
+    message.modifiers = modifiers_from_nsevent(event);
+    self.listener->on_platform_event(message);
+    // the interpret path gives the input method a chance to produce committed text (§8.3)
+    [self interpretKeyEvents:@[ event ]];
+}
+
+- (void)keyUp:(NSEvent*)event {
+    // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
+    if (self.listener == nullptr)
+        return;
+    albor::Event message;
+    message.kind = albor::EventKind::KeyUp;
+    message.key = key_from_nsevent(event);
+    message.modifiers = modifiers_from_nsevent(event);
+    self.listener->on_platform_event(message);
+}
+
+- (void)insertText:(id)string {
+    // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
+    if (self.listener == nullptr)
+        return;
+    // an attributed string hands its plain text over, which is what a key event spells (§8.3)
+    NSString* text = [string isKindOfClass:[NSString class]] ? (NSString*)string : [string string];
+    if (text.length == 0)
+        return;
+    const char* utf8 = text.UTF8String;
+    if (utf8 == nullptr)
+        return;
+    albor::Event message;
+    message.kind = albor::EventKind::TextInput;
+    message.text = std::string(utf8);
+    self.listener->on_platform_event(message);
+}
+
 @end
 
 namespace albor
@@ -42,6 +218,9 @@ namespace albor
 
         // the delegate that turns a native close request into a framework close request (§5.2)
         id window_delegate = nil;
+
+        // the content view that translates the native events of §8.3 into normalized ones (§5.3, §8.3)
+        id content_view = nil;
 
         // the resize observer, which is removed before the state is released (§4.2)
         id resize_observer = nil;
@@ -101,13 +280,19 @@ namespace albor
         if (window == nil)
             return nullptr;
         window.title = [NSString stringWithUTF8String:options.title.c_str()];
-        // the content view carries the metal layer, which is the presentation path of AD-16
-        window.contentView.wantsLayer = YES;
-        window.contentView.layer = [CAMetalLayer layer];
+        // the content view carries the metal layer and translates the native events of §8.3
+        AlborContentView* content = [[AlborContentView alloc] initWithFrame:window.contentView.frame];
+        window.contentView = content;
+        content.wantsLayer = YES;
+        content.layer = [CAMetalLayer layer];
+        // the content view takes the caret, so the key events reach it once the window is key (§8.3)
+        window.initialFirstResponder = content;
+        [window makeFirstResponder:content];
         // the state is shared because the notification blocks outlive this function and capture it (§4.2)
         std::shared_ptr<MacosWindowState> state = std::make_shared<MacosWindowState>();
         state->window = window;
-        state->layer = static_cast<CAMetalLayer*>(window.contentView.layer);
+        state->content_view = content;
+        state->layer = static_cast<CAMetalLayer*>(content.layer);
         // the delegate is the veto point of a native close request, which the framework answers (§5.2)
         AlborWindowDelegate* delegate = [[AlborWindowDelegate alloc] init];
         state->window_delegate = delegate;
@@ -147,6 +332,10 @@ namespace albor
         // the listeners are detached first, because a teardown notification would otherwise reach a half dead object (§4.2)
         m_state->listener = nullptr;
         m_state->window.delegate = nil;
+        // the content view keeps no listener, because the framework window is already gone (§4.2)
+        AlborContentView* content = static_cast<AlborContentView*>(m_state->content_view);
+        if (content != nil)
+            content.listener = nil;
         // the observers are removed before the state is released, because their blocks captured it (§4.2)
         NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
         if (m_state->resize_observer != nil) {
@@ -162,6 +351,7 @@ namespace albor
         // the native objects are dropped with the state, which releases them under arc (§5.3)
         m_state->window = nil;
         m_state->window_delegate = nil;
+        m_state->content_view = nil;
         m_state->layer = nil;
     }
 
@@ -171,6 +361,10 @@ namespace albor
         AlborWindowDelegate* delegate = static_cast<AlborWindowDelegate*>(m_state->window_delegate);
         if (delegate != nil)
             delegate.listener = listener;
+        // the content view holds the same listener, because the input events travel through it (§8.3)
+        AlborContentView* content = static_cast<AlborContentView*>(m_state->content_view);
+        if (content != nil)
+            content.listener = listener;
     }
 
     void MacosPlatformWindow::show() {
@@ -244,6 +438,10 @@ namespace albor
         // the listener is detached first, because closing raises notifications the framework is already past (§4.2)
         m_state->listener = nullptr;
         m_state->window.delegate = nil;
+        // the content view keeps no listener, because the framework is already past the window (§4.2)
+        AlborContentView* content = static_cast<AlborContentView*>(m_state->content_view);
+        if (content != nil)
+            content.listener = nil;
         // the native window is closed without asking the framework, because the framework initiated this (§5.2)
         [m_state->window close];
         // a closed window has nothing left to draw (§4.3)

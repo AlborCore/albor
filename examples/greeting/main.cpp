@@ -4,6 +4,7 @@
 
 #include "application/application.h"
 #include "greeting_panel.h"
+#include "input/input_controller.h"
 #include "platform/macos/event_loop.h"
 #include "render/frame_scene.h"
 #include "render/render-skia/skia_renderer_backend.h"
@@ -58,6 +59,9 @@ int main() {
     // the pipeline owns the tree and drives stage one on the ui thread (§6.1, AD-18)
     albor::FramePipeline pipeline(engine, std::move(panel));
     pipeline.set_background(albor::Color::rgb(0.05f, 0.06f, 0.08f));
+    // the input controller routes the native events into the tree, which is the input path of §8.3
+    albor::InputController input;
+    input.attach(pipeline.root());
     // stage two runs on its own thread, so the ui thread is never blocked by drawing (§6.1, AD-18b)
     albor::RenderExecutor executor(renderer.get());
     pipeline.set_executor(&executor);
@@ -79,6 +83,15 @@ int main() {
         // only the example window is remeasured, so another window is left alone (§5.2)
         if (resized == handle)
             pipeline.root().invalidate_layout();
+    });
+    // a native input event reaches the example, which forwards it into the tree of the one window (§8.3)
+    application.set_input_handler([&](albor::WindowHandle source, const albor::Event& event) {
+        // only the example window is routed, so another window is left alone (§5.2)
+        if (source != handle)
+            return;
+        // the controller routes the event into the widget tree, which a click on the button answers (§8.3)
+        albor::Event routed = event;
+        input.deliver(routed);
     });
     // a timer advances the count, which the bound labels announce without any input (§4.2, §7.3)
     const albor::TimerHandle ticker = application.timers().schedule_repeating(

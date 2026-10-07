@@ -44,7 +44,7 @@ namespace albor
         void set_disabled(bool disabled);
 
         // report whether the box refuses input (§8.3)
-        [[nodiscard]] bool disabled() const;
+        [[nodiscard]] bool disabled() const override;
 
         // replace the outline colour, which redraws without changing the extent (§6.1)
         void set_outline(Color outline);

@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -7,8 +8,16 @@
 #include <gtest/gtest.h>
 
 #include "core/constraints.h"
+#include "layout/column_layout.h"
 #include "render/frame_scene.h"
+#include "render/image_resource.h"
+#include "render/line_batch.h"
+#include "render/path_resource.h"
+#include "render/picture_resource.h"
 #include "render/render_context.h"
+#include "render/render_executor.h"
+#include "render/renderer_backend.h"
+#include "render/resource_factory.h"
 #include "ui/component.h"
 #include "ui/frame_pipeline.h"
 #include "ui/scene_builder.h"
@@ -34,8 +43,13 @@ namespace
         // the extent this node reports when it measures itself (§8.2)
         Size intrinsic{10.0f, 20.0f};
 
+        // the constraints the last measure was offered, which a test asserts on (§8.2)
+        SizeConstraints offered;
+
         void measure(const SizeConstraints& constraints, Size& out_size) override {
             measures++;
+            // the offer is kept, so a test can prove the parent offered a ceiling (§8.2)
+            offered = constraints;
             // the container measures as the largest of its children, which is the contract of §8.2
             Size total = intrinsic;
             for (const auto& child : children()) {
@@ -130,6 +144,71 @@ namespace
         }
 
         [[nodiscard]] Color background() const override { return Color::rgb(0.1f, 0.1f, 0.15f); }
+    };
+
+    // the render context double, which accepts whatever stage two asks of it (§6.2)
+    class TestPipelineContext final : public RenderContext
+    {
+    public:
+        void save() override {}
+        void restore() override {}
+        void set_transform(const Transform&) override {}
+        [[nodiscard]] const Transform& transform() const override { return m_transform; }
+        void clip_rect(const Rect&) override {}
+        void clip_rounded_rect(const Rect&, float) override {}
+        [[nodiscard]] const Rect& clip() const override { return m_clip; }
+        void draw_rect(const Rect&, const Paint&) override {}
+        void draw_rounded_rect(const Rect&, float, const Paint&) override {}
+        void draw_text(const TextLayout&, Point, const Paint&) override {}
+        void draw_line_batch(const std::shared_ptr<const LineBatch>&, const Transform&, const StrokeStyle&) override {}
+        void draw_path(const std::shared_ptr<const PathResource>&, const Transform&, const Paint&) override {}
+        void draw_picture(const std::shared_ptr<const PictureResource>&, const Transform&) override {}
+        void draw_image(const std::shared_ptr<const ImageResource>&, const Rect&, const Paint&) override {}
+
+    private:
+        // the transform the context reports, which a test does not change (§6.2)
+        Transform m_transform;
+
+        // the clip the context reports, which a test does not change (§6.2)
+        Rect m_clip;
+    };
+
+    // the render surface double, which begins and ends frames without presenting (§6.2)
+    class TestPipelineSurface final : public RenderSurface
+    {
+    public:
+        [[nodiscard]] bool valid() const override { return true; }
+
+        [[nodiscard]] const WindowMetrics& metrics() const override { return m_metrics; }
+
+        void resize(const WindowMetrics& metrics) override { m_metrics = metrics; }
+
+        RenderContext& begin_frame() override { return m_context; }
+
+        void end_frame() override {}
+
+    private:
+        // the metrics the surface presents at, which a test does not change (§6.2)
+        WindowMetrics m_metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
+
+        // the context the surface hands out, which the backend draws into (§6.2)
+        TestPipelineContext m_context;
+    };
+
+    // the backend double, which counts the frames stage two executed (§6.2)
+    class TestExecutorBackend final : public RendererBackend
+    {
+    public:
+        // how many frames the backend executed, which a test asserts on (§6.1)
+        std::size_t frames = 0;
+
+        [[nodiscard]] bool ready() const override { return true; }
+
+        [[nodiscard]] std::unique_ptr<RenderSurface> create_surface(NativeWindowHandle, const WindowMetrics&) override { return std::make_unique<TestPipelineSurface>(); }
+
+        void resize_surface(RenderSurface&, const WindowMetrics&) override {}
+
+        void execute_frame(RenderSurface&, const FrameScene&) override { frames++; }
     };
 } // namespace
 
@@ -384,6 +463,20 @@ TEST(UiNode, AContainerMeasuresAsItsLargestChild) {
     parent.measure(SizeConstraints::unconstrained(), size);
     // assert
     EXPECT_FLOAT_EQ(size.width, 200.0f);
+}
+
+TEST(UiNode, AContainerOffersItsChildTheCeilingItReceived) {
+    // arrange
+    UiNode parent;
+    auto child = std::make_unique<TestNode>();
+    TestNode* child_ptr = child.get();
+    parent.add_child(std::move(child));
+    Size size{};
+    // act
+    parent.measure(SizeConstraints::at_most(Size{80.0f, 60.0f}), size);
+    // assert
+    EXPECT_FLOAT_EQ(child_ptr->offered.maximum.width, 80.0f);
+    EXPECT_FLOAT_EQ(child_ptr->offered.maximum.height, 60.0f);
 }
 
 TEST(UiNode, ArrangingAssignsTheBounds) {
@@ -958,6 +1051,40 @@ TEST(SceneRecorder, ARecordedColourTravelsWithTheRectangle) {
     EXPECT_EQ(recorder.scene()->rect_colors()[0], (Color::rgb(0.25f, 0.5f, 0.75f)));
 }
 
+TEST(SceneRecorder, ATextColourTravelsWithTheRun) {
+    // arrange
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    Paint paint;
+    paint.fill = Color::rgb(0.9f, 0.1f, 0.2f);
+    // act
+    recorder.draw_text(TextLayout::from_text("albor", 16.0f), Point{30.0f, 40.0f}, paint);
+    // assert
+    ASSERT_EQ(recorder.scene()->text_colors().size(), 1u);
+    EXPECT_EQ(recorder.scene()->text_colors()[0], (Color::rgb(0.9f, 0.1f, 0.2f)));
+}
+
+TEST(SceneRecorder, AStrokeOnlyRunRecordsItsStrokeColour) {
+    // arrange
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    Paint paint;
+    paint.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f);
+    paint.stroke = Color::rgb(0.4f, 0.5f, 0.6f);
+    // act
+    recorder.draw_text(TextLayout::from_text("albor", 16.0f), Point{30.0f, 40.0f}, paint);
+    // assert
+    ASSERT_EQ(recorder.scene()->text_colors().size(), 1u);
+    EXPECT_EQ(recorder.scene()->text_colors()[0], (Color::rgb(0.4f, 0.5f, 0.6f)));
+}
+
+TEST(SceneRecorder, AnEmptyTextRunRecordsNoColour) {
+    // arrange
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    // act
+    recorder.draw_text(TextLayout::from_text("", 16.0f), Point{0.0f, 0.0f}, Paint{});
+    // assert
+    EXPECT_TRUE(recorder.scene()->text_colors().empty());
+}
+
 TEST(SceneRecorder, ATextRunIsRecordedWithItsOrigin) {
     // arrange
     SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
@@ -999,6 +1126,134 @@ TEST(SceneRecorder, AnEmptySceneStillCarriesTheMetrics) {
     // assert
     EXPECT_TRUE(recorder.scene()->rects().empty());
     EXPECT_FLOAT_EQ(recorder.scene()->metrics().scale_factor, 1.0f);
+}
+
+TEST(SceneRecorder, ABatchIsRecordedWithItsTransformAndStroke) {
+    // arrange
+    ResourceFactory factory;
+    const Point points[] = {{0.0f, 0.0f}, {10.0f, 10.0f}, {20.0f, 0.0f}, {30.0f, 10.0f}};
+    const std::shared_ptr<const LineBatch> batch = factory.create_line_batch(points);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    StrokeStyle stroke;
+    stroke.color = Color::rgb(0.9f, 0.1f, 0.2f);
+    stroke.width = 2.5f;
+    // act
+    recorder.draw_line_batch(batch, Transform::translation(10.0f, 20.0f), stroke);
+    // assert
+    ASSERT_EQ(recorder.scene()->line_batches().size(), 1u);
+    EXPECT_EQ(recorder.scene()->line_batches()[0].batch, batch);
+    EXPECT_EQ(recorder.scene()->line_batches()[0].transform, (Transform::translation(10.0f, 20.0f)));
+    EXPECT_EQ(recorder.scene()->line_batches()[0].stroke, stroke);
+}
+
+TEST(SceneRecorder, ABatchComposesTheCurrentRecorderTransform) {
+    // arrange
+    ResourceFactory factory;
+    const Point points[] = {{0.0f, 0.0f}, {10.0f, 10.0f}};
+    const std::shared_ptr<const LineBatch> batch = factory.create_line_batch(points);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    recorder.set_transform(Transform::translation(100.0f, 50.0f));
+    // act
+    recorder.draw_line_batch(batch, Transform::translation(10.0f, 20.0f), StrokeStyle{});
+    // assert
+    ASSERT_EQ(recorder.scene()->line_batches().size(), 1u);
+    EXPECT_EQ(recorder.scene()->line_batches()[0].transform, (Transform::translation(110.0f, 70.0f)));
+}
+
+TEST(SceneRecorder, AnEmptyBatchIsNotRecorded) {
+    // arrange
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    // act
+    recorder.draw_line_batch(nullptr, Transform{}, StrokeStyle{});
+    // assert
+    EXPECT_TRUE(recorder.scene()->line_batches().empty());
+}
+
+TEST(SceneRecorder, APathIsRecordedWithItsPaint) {
+    // arrange
+    ResourceFactory factory;
+    const PathVerb verbs[] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const std::shared_ptr<const PathResource> path = factory.create_path(verbs, std::span<const Point>({Point{0.0f, 0.0f}, Point{10.0f, 10.0f}, Point{10.0f, 0.0f}}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    Paint paint;
+    paint.fill = Color::rgb(0.1f, 0.6f, 0.3f);
+    // act
+    recorder.draw_path(path, Transform::scaling(2.0f, 2.0f), paint);
+    // assert
+    ASSERT_EQ(recorder.scene()->paths().size(), 1u);
+    EXPECT_EQ(recorder.scene()->paths()[0].path, path);
+    EXPECT_EQ(recorder.scene()->paths()[0].transform, (Transform::scaling(2.0f, 2.0f)));
+    EXPECT_EQ(recorder.scene()->paths()[0].paint, paint);
+}
+
+TEST(SceneRecorder, AnEmptyPathIsNotRecorded) {
+    // arrange
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    // act
+    recorder.draw_path(nullptr, Transform{}, Paint{});
+    // assert
+    EXPECT_TRUE(recorder.scene()->paths().empty());
+}
+
+TEST(SceneRecorder, APictureIsRecordedWithItsTransform) {
+    // arrange
+    ResourceFactory factory;
+    PictureRecorder picture_recorder;
+    picture_recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{});
+    const std::shared_ptr<const PictureResource> picture = factory.create_picture(picture_recorder);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    // act
+    recorder.draw_picture(picture, Transform::scaling(2.0f, 2.0f));
+    // assert
+    ASSERT_EQ(recorder.scene()->pictures().size(), 1u);
+    EXPECT_EQ(recorder.scene()->pictures()[0].picture, picture);
+    EXPECT_EQ(recorder.scene()->pictures()[0].transform, (Transform::scaling(2.0f, 2.0f)));
+}
+
+TEST(SceneRecorder, AnEmptyPictureIsNotRecorded) {
+    // arrange
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    // act
+    recorder.draw_picture(nullptr, Transform{});
+    // assert
+    EXPECT_TRUE(recorder.scene()->pictures().empty());
+}
+
+TEST(SceneRecorder, AnImageIsRecordedWithItsSceneDestination) {
+    // arrange
+    ResourceFactory factory;
+    const std::uint8_t pixels[] = {255, 0, 0, 255, 0, 255, 0, 255};
+    const std::shared_ptr<const ImageResource> image = factory.create_image(2, 1, ImageFormat::RGBA8, pixels);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    // act
+    recorder.draw_image(image, Rect::from_origin_size(Point{10.0f, 20.0f}, Size{4.0f, 2.0f}), Paint{});
+    // assert
+    ASSERT_EQ(recorder.scene()->images().size(), 1u);
+    EXPECT_EQ(recorder.scene()->images()[0].image, image);
+    EXPECT_FLOAT_EQ(recorder.scene()->images()[0].destination.x, 10.0f);
+}
+
+TEST(SceneRecorder, AnImageDestinationMapsThroughTheCurrentTransform) {
+    // arrange
+    ResourceFactory factory;
+    const std::uint8_t pixels[] = {255, 0, 0, 255};
+    const std::shared_ptr<const ImageResource> image = factory.create_image(1, 1, ImageFormat::RGBA8, pixels);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    recorder.set_transform(Transform::translation(100.0f, 50.0f));
+    // act
+    recorder.draw_image(image, Rect::from_origin_size(Point{10.0f, 20.0f}, Size{4.0f, 2.0f}), Paint{});
+    // assert
+    ASSERT_EQ(recorder.scene()->images().size(), 1u);
+    EXPECT_FLOAT_EQ(recorder.scene()->images()[0].destination.x, 110.0f);
+}
+
+TEST(SceneRecorder, AnEmptyImageIsNotRecorded) {
+    // arrange
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    // act
+    recorder.draw_image(nullptr, Rect::from_origin_size(Point{0.0f, 0.0f}, Size{4.0f, 2.0f}), Paint{});
+    // assert
+    EXPECT_TRUE(recorder.scene()->images().empty());
 }
 
 TEST(SceneBuilder, ANewBuilderHasCountedNothing) {
@@ -1125,6 +1380,66 @@ TEST(SceneBuilder, AnInvisibleTreeDrawsNothing) {
     const std::shared_ptr<const FrameScene> scene = builder.build(root, WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
     // assert
     EXPECT_TRUE(scene->rects().empty());
+}
+
+TEST(SceneBuilder, AnInvisibleChildIsNotDrawn) {
+    // arrange
+    SceneBuilder builder;
+    UiNode root;
+    auto child = std::make_unique<TestNode>();
+    child->set_visible(false);
+    root.add_child(std::move(child));
+    // act
+    const std::shared_ptr<const FrameScene> scene = builder.build(root, WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
+    // assert
+    EXPECT_TRUE(scene->rects().empty());
+    EXPECT_EQ(builder.visited_count(), 2u);
+    EXPECT_EQ(builder.drawn_count(), 1u);
+}
+
+TEST(SceneBuilder, AVisibleChildIsDrawn) {
+    // arrange
+    SceneBuilder builder;
+    UiNode root;
+    root.add_child(std::make_unique<TestNode>());
+    // act
+    const std::shared_ptr<const FrameScene> scene = builder.build(root, WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
+    // assert
+    EXPECT_EQ(scene->rects().size(), 1u);
+    EXPECT_EQ(builder.drawn_count(), 2u);
+    EXPECT_EQ(builder.laid_out_count(), 2u);
+}
+
+TEST(SceneBuilder, ANodeTheLayoutGaveNoAreaIsNotLaidOut) {
+    // arrange
+    SceneBuilder builder;
+    ColumnLayout root;
+    auto child = std::make_unique<TestNode>();
+    child->intrinsic = Size{};
+    root.add_child(std::move(child));
+    // act
+    const std::shared_ptr<const FrameScene> scene = builder.build(root, WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
+    // assert
+    ASSERT_NE(scene, nullptr);
+    EXPECT_EQ(builder.visited_count(), 2u);
+    EXPECT_EQ(builder.laid_out_count(), 1u);
+    EXPECT_EQ(builder.drawn_count(), 2u);
+}
+
+TEST(SceneBuilder, TheCountsDescribeTheLastBuild) {
+    // arrange
+    SceneBuilder builder;
+    TestNode wide;
+    wide.add_child(std::make_unique<TestNode>());
+    wide.add_child(std::make_unique<TestNode>());
+    (void)builder.build(wide, WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
+    TestNode single;
+    // act
+    (void)builder.build(single, WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
+    // assert
+    EXPECT_EQ(builder.visited_count(), 1u);
+    EXPECT_EQ(builder.laid_out_count(), 1u);
+    EXPECT_EQ(builder.drawn_count(), 1u);
 }
 
 TEST(SceneBuilder, BuildingClearsTheDirtyFlags) {
@@ -1418,4 +1733,101 @@ TEST(NodeIdentity, TwoIdentitiesWithDifferentIdsDiffer) {
     second.explicit_id = "b";
     // act, assert
     EXPECT_NE(first, second);
+}
+
+TEST(FramePipeline, APipelineWithoutARootHasNothingPending) {
+    // arrange
+    BindingEngine engine;
+    // act, assert the tree-less pipeline cannot ask for a frame (§6.1)
+    FramePipeline pipeline(engine, std::unique_ptr<UiNode>{});
+    EXPECT_FALSE(pipeline.pending());
+}
+
+TEST(FramePipeline, SubmittingANullSceneWithAnExecutorFails) {
+    // arrange
+    BindingEngine engine;
+    FramePipeline pipeline(engine, std::make_unique<TestNode>());
+    TestExecutorBackend backend;
+    RenderExecutor executor(&backend);
+    TestPipelineSurface surface;
+    pipeline.set_executor(&executor);
+    pipeline.set_surface(&surface);
+    // act, assert a null scene never crosses the thread boundary (§6.1)
+    EXPECT_FALSE(pipeline.submit(nullptr));
+    EXPECT_EQ(backend.frames, 0u);
+}
+
+TEST(FramePipeline, SubmittingTheBuiltSceneHandsItToTheExecutor) {
+    // arrange
+    BindingEngine engine;
+    FramePipeline pipeline(engine, std::make_unique<TestNode>());
+    TestExecutorBackend backend;
+    RenderExecutor executor(&backend);
+    TestPipelineSurface surface;
+    pipeline.set_executor(&executor);
+    pipeline.set_surface(&surface);
+    // act
+    const std::shared_ptr<const FrameScene> scene = pipeline.build(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    const bool handed = pipeline.submit();
+    executor.flush();
+    // assert the immutable scene reached the render thread (§6.1, AD-18)
+    EXPECT_TRUE(handed);
+    EXPECT_EQ(backend.frames, 1u);
+    EXPECT_NE(scene, nullptr);
+}
+
+TEST(Component, RenderingAComponentPaintsItsBackground) {
+    // arrange
+    TestComponent component(nullptr, "canvas");
+    component.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 50.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    // act
+    component.Component::render(recorder);
+    // assert the background is the fill the component paints (§6.1, §6.2)
+    ASSERT_EQ(recorder.scene()->rects().size(), 1u);
+    EXPECT_EQ(recorder.scene()->rect_colors()[0], (Color::rgb(0.1f, 0.1f, 0.15f)));
+}
+
+TEST(Component, RenderingAnUnarrangedComponentPaintsNothing) {
+    // arrange
+    TestComponent component(nullptr, "canvas");
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    // act
+    component.Component::render(recorder);
+    // assert a component with no area draws nothing (§6.1)
+    EXPECT_TRUE(recorder.scene()->rects().empty());
+}
+
+TEST(Component, HitTestingAnInvisibleComponentFallsThroughToItsChildren) {
+    // arrange
+    TestComponent component(nullptr, "canvas");
+    auto child = std::make_unique<TestNode>();
+    component.add_child(std::move(child));
+    component.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    component.set_visible(false);
+    // act, assert the child of a hidden component is still a hit (§8.3)
+    EXPECT_TRUE(component.hit_test(Point{10.0f, 10.0f}));
+}
+
+TEST(UiNode, APlainNodeIsNeverDisabled) {
+    // arrange
+    TestNode node;
+    // act, assert only a control carries the disabled state (§8.3)
+    EXPECT_FALSE(node.disabled());
+}
+
+TEST(UiNode, TheConstVisitWalksTheTree) {
+    // arrange
+    TestNode parent;
+    auto child = std::make_unique<TestNode>();
+    TestNode* child_ptr = child.get();
+    parent.add_child(std::move(child));
+    const TestNode& view = parent;
+    std::vector<const UiNode*> walked;
+    // act
+    view.visit([&walked](const UiNode& node) { walked.push_back(&node); });
+    // assert the node comes before its children (§8.1)
+    ASSERT_EQ(walked.size(), 2u);
+    EXPECT_EQ(walked[0], &view);
+    EXPECT_EQ(walked[1], child_ptr);
 }

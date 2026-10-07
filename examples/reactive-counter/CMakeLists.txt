@@ -16,5 +16,5 @@ add_executable(albor-reactive-counter ${CPP_SOURCES})
 target_include_directories(albor-reactive-counter PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_features(albor-reactive-counter PRIVATE cxx_std_23)
 
-# the example reaches the ui tree and the reactive engine directly, so both link explicitly (§3.2)
-target_link_libraries(albor-reactive-counter PRIVATE albor-platform-macos albor-render-skia albor-ui albor-runtime albor-application)
+# the example reaches the ui tree, the reactive engine and the input path directly, so they all link explicitly (§3.2)
+target_link_libraries(albor-reactive-counter PRIVATE albor-platform-macos albor-render-skia albor-input albor-ui albor-runtime albor-application)

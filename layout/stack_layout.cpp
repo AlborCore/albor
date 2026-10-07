@@ -7,10 +7,12 @@ namespace albor
     void StackLayout::measure(const SizeConstraints& constraints, Size& out_size) {
         // an empty stack measures as nothing, because there is no child to take an extent from (§8.2)
         Size largest{};
+        // the offered ceiling travels down, because a parent knows the space the child has to fit in (§8.2)
+        const SizeConstraints child_constraints = SizeConstraints::at_most(constraints.maximum);
         for (const auto& child : children()) {
-            // each child is measured unconstrained, because the stack only learns the extent from the result (§8.2)
+            // each child measures against that ceiling, so an overlay never grows past the stack (§8.2)
             Size child_size{};
-            child->measure(SizeConstraints::unconstrained(), child_size);
+            child->measure(child_constraints, child_size);
             // the stack is as large as its largest child, because the children overlap and must all fit (§8.2)
             largest.width = std::max(largest.width, child_size.width);
             largest.height = std::max(largest.height, child_size.height);

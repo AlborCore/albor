@@ -8,6 +8,7 @@
 #include "application/task_queue.h"
 #include "application/timer.h"
 #include "application/ui_timer.h"
+#include "ui/ui_event.h"
 #include "window/platform_window_factory.h"
 
 using namespace albor;
@@ -113,6 +114,9 @@ namespace
         void show() override {
             show_count++;
             is_visible = true;
+            // a platform may report while it presents the window, so the raise proves the binding was in time (§5.3)
+            if (listener != nullptr)
+                listener->on_platform_resize(reported);
         }
 
         void hide() override {
@@ -140,6 +144,9 @@ namespace
             // a test that only counts closes never reads the flag, because the double dies with the window
             if (m_close_counter)
                 (*m_close_counter)++;
+            // a real platform reports the close it just performed, which is the Closed notification of §5.2
+            if (listener != nullptr)
+                listener->on_platform_closed();
         }
 
     private:
@@ -1236,6 +1243,141 @@ TEST(Application, AWindowResizeReachesTheResizeHandler) {
     set_platform_window_factory(nullptr);
 }
 
+TEST(Application, AWindowEventReachesTheInputHandlerWithItsHandle) {
+    // arrange
+    auto loop = std::make_unique<TestEventLoop>();
+    Application application(std::move(loop));
+    set_platform_window_factory([](const WindowOptions&) -> std::unique_ptr<PlatformWindow> { return std::make_unique<TestPlatformWindow>(); });
+    WindowHandle seen_handle;
+    EventKind seen_kind = EventKind::TextInput;
+    application.set_input_handler([&seen_handle, &seen_kind](WindowHandle handle, const Event& event) {
+        seen_handle = handle;
+        seen_kind = event.kind;
+    });
+    const WindowHandle handle = application.create_window(WindowOptions{});
+    Window* window = application.window(handle);
+    // act
+    window->on_platform_event(Event{.kind = EventKind::PointerDown, .position = Point{10.0f, 20.0f}});
+    // assert the handle travels with the event, so the application tells the windows apart (§8.3)
+    EXPECT_EQ(seen_handle, handle);
+    EXPECT_EQ(seen_kind, EventKind::PointerDown);
+    set_platform_window_factory(nullptr);
+}
+
+TEST(Application, AnUnsetInputHandlerDropsTheEvent) {
+    // arrange
+    auto loop = std::make_unique<TestEventLoop>();
+    Application application(std::move(loop));
+    set_platform_window_factory([](const WindowOptions&) -> std::unique_ptr<PlatformWindow> { return std::make_unique<TestPlatformWindow>(); });
+    const WindowHandle handle = application.create_window(WindowOptions{});
+    Window* window = application.window(handle);
+    Event event{.kind = EventKind::KeyDown, .key = Key::Tab};
+    // act
+    window->on_platform_event(event);
+    // assert the event with no handler is the quiet default of §8.3, so nothing claims it
+    EXPECT_FALSE(event.handled);
+    set_platform_window_factory(nullptr);
+}
+
+TEST(Application, TheWindowIsBoundBeforeItIsShown) {
+    // arrange the double raises a resize from its show, which is what a platform may do while presenting (§5.3)
+    auto loop = std::make_unique<TestEventLoop>();
+    Application application(std::move(loop));
+    set_platform_window_factory([](const WindowOptions&) -> std::unique_ptr<PlatformWindow> { return std::make_unique<TestPlatformWindow>(); });
+    WindowHandle seen;
+    bool called = false;
+    application.set_resize_handler([&seen, &called](WindowHandle handle) {
+        seen = handle;
+        called = true;
+    });
+    // act
+    const WindowHandle handle = application.create_window(WindowOptions{});
+    // assert the handler was in place for the event the show raised, which proves the binding ran first (§5.3)
+    EXPECT_TRUE(called);
+    EXPECT_EQ(seen, handle);
+    set_platform_window_factory(nullptr);
+}
+
+TEST(Application, AClosedWindowIsTornDownOnTheNextPump) {
+    // arrange
+    auto loop = std::make_unique<TestEventLoop>();
+    Application application(std::move(loop));
+    set_platform_window_factory([](const WindowOptions&) -> std::unique_ptr<PlatformWindow> { return std::make_unique<TestPlatformWindow>(); });
+    const WindowHandle handle = application.create_window(WindowOptions{});
+    Window* window = application.window(handle);
+    ASSERT_NE(window, nullptr);
+    // act the platform reports that the window closed on its own
+    window->on_platform_closed();
+    // assert the teardown is posted, so it never runs inside the platform close callback (§4.1, §5.2)
+    EXPECT_NE(application.window(handle), nullptr);
+    application.pump();
+    // assert the next pump completed the teardown, which deregisters the window (§5.2)
+    EXPECT_EQ(application.window(handle), nullptr);
+    EXPECT_EQ(application.window_count(), 0u);
+    set_platform_window_factory(nullptr);
+}
+
+TEST(Application, TheClosedNotificationReachesTheClosedHandler) {
+    // arrange
+    auto loop = std::make_unique<TestEventLoop>();
+    Application application(std::move(loop));
+    set_platform_window_factory([](const WindowOptions&) -> std::unique_ptr<PlatformWindow> { return std::make_unique<TestPlatformWindow>(); });
+    const WindowHandle handle = application.create_window(WindowOptions{});
+    Window* window = application.window(handle);
+    WindowHandle seen;
+    int notifications = 0;
+    application.set_closed_handler([&seen, &notifications](WindowHandle closed) {
+        seen = closed;
+        notifications++;
+    });
+    // act
+    window->on_platform_closed();
+    application.pump();
+    // assert the notification carries the handle of the window that closed (§5.2)
+    EXPECT_EQ(notifications, 1);
+    EXPECT_EQ(seen, handle);
+    set_platform_window_factory(nullptr);
+}
+
+TEST(Application, DestroyingAWindowReportsTheClose) {
+    // arrange
+    auto loop = std::make_unique<TestEventLoop>();
+    Application application(std::move(loop));
+    set_platform_window_factory([](const WindowOptions&) -> std::unique_ptr<PlatformWindow> { return std::make_unique<TestPlatformWindow>(); });
+    const WindowHandle handle = application.create_window(WindowOptions{});
+    WindowHandle seen;
+    int notifications = 0;
+    application.set_closed_handler([&seen, &notifications](WindowHandle closed) {
+        seen = closed;
+        notifications++;
+    });
+    // act
+    const bool destroyed = application.destroy_window(handle);
+    // assert an application destroy is a close too, so the notification follows its teardown (§5.2)
+    EXPECT_TRUE(destroyed);
+    EXPECT_EQ(notifications, 1);
+    EXPECT_EQ(seen, handle);
+    set_platform_window_factory(nullptr);
+}
+
+TEST(Application, AClosedWindowIsNotTornDownTwice) {
+    // arrange
+    auto loop = std::make_unique<TestEventLoop>();
+    Application application(std::move(loop));
+    set_platform_window_factory([](const WindowOptions&) -> std::unique_ptr<PlatformWindow> { return std::make_unique<TestPlatformWindow>(); });
+    const WindowHandle handle = application.create_window(WindowOptions{});
+    Window* window = application.window(handle);
+    int notifications = 0;
+    application.set_closed_handler([&notifications](WindowHandle) { notifications++; });
+    window->on_platform_closed();
+    // act the application destroys the window before the posted teardown gets its turn
+    application.destroy_window(handle);
+    application.pump();
+    // assert the explicit destroy notified once and the posted teardown found nothing left (§5.2)
+    EXPECT_EQ(notifications, 1);
+    set_platform_window_factory(nullptr);
+}
+
 TEST(Application, AWindowResizeUpdatesTheWindowMetrics) {
     // arrange
     auto loop = std::make_unique<TestEventLoop>();
@@ -1328,4 +1470,94 @@ TEST(PlatformEventLoopFactory, InstalledFactoryBuildsTheLoop) {
     // assert
     EXPECT_NE(built, nullptr);
     set_platform_event_loop_factory(nullptr);
+}
+
+TEST(Application, AFactorylessDefaultApplicationRecordsItsRequests) {
+    // arrange
+    set_platform_event_loop_factory(nullptr);
+    // act, assert the application without a native loop still reports its state (§4.1)
+    Application application;
+    EXPECT_FALSE(application.running());
+    EXPECT_EQ(application.run(), 0);
+    application.quit(5);
+    EXPECT_EQ(application.exit_code(), 5);
+    EXPECT_TRUE(application.quit_requested());
+}
+
+TEST(Application, AnInstalledFactoryBuildsTheDefaultLoop) {
+    // arrange
+    set_platform_event_loop_factory([] { return std::unique_ptr<PlatformEventLoop>(new TestEventLoop()); });
+    // act
+    Application application;
+    // assert
+    EXPECT_NE(&application.event_loop(), nullptr);
+    set_platform_event_loop_factory(nullptr);
+}
+
+TEST(Application, TheInstanceIsTheSingleApplication) {
+    // arrange
+    set_platform_event_loop_factory(nullptr);
+    // act, assert the instance is built once and handed out after (§4.1)
+    EXPECT_EQ(&Application::instance(), &Application::instance());
+}
+
+TEST(Application, TheConstRegistryResolvesTheSameWindows) {
+    // arrange
+    auto loop = std::make_unique<TestEventLoop>();
+    Application application(std::move(loop));
+    set_platform_window_factory([](const WindowOptions&) -> std::unique_ptr<PlatformWindow> { return std::make_unique<TestPlatformWindow>(); });
+    const WindowHandle handle = application.create_window(WindowOptions{});
+    // act
+    const Application& view = application;
+    // assert the reading lookup resolves what the writing one does (§5.2)
+    EXPECT_EQ(view.window(handle), application.window(handle));
+    EXPECT_NE(view.window(handle), nullptr);
+    EXPECT_EQ(view.window(WindowHandle{}), nullptr);
+    set_platform_window_factory(nullptr);
+}
+
+TEST(Timer, AnEmptyCallbackArmsNothing) {
+    // arrange
+    TimerScheduler scheduler;
+    // act, assert a timer without work registers nothing and fires into nothing (§4.2)
+    const Timer oneshot(scheduler, nullptr, std::chrono::milliseconds(10));
+    const Timer repeating = Timer::repeating(scheduler, nullptr, std::chrono::milliseconds(10));
+    EXPECT_FALSE(oneshot.active());
+    EXPECT_FALSE(repeating.active());
+    EXPECT_EQ(scheduler.size(), 0u);
+}
+
+TEST(Timer, ASelfAssignmentKeepsTheTimer) {
+    // arrange
+    TimerScheduler scheduler;
+    Timer timer(scheduler, [] {}, std::chrono::milliseconds(10));
+    // act, assert the self assignment is rejected, so the registration survives (§4.2)
+    timer = std::move(timer);
+    EXPECT_TRUE(timer.active());
+}
+
+TEST(TimerScheduler, AnEmptyCallbackRegistersNothing) {
+    // arrange
+    TimerScheduler scheduler;
+    // act, assert a timer without work would fire into nothing, so it stays out (§4.2)
+    EXPECT_EQ(scheduler.schedule_once(nullptr, std::chrono::milliseconds(10)), 0u);
+    EXPECT_EQ(scheduler.schedule_repeating(nullptr, std::chrono::milliseconds(10)), 0u);
+    EXPECT_EQ(scheduler.size(), 0u);
+}
+
+TEST(TimerScheduler, ACancelledTimerDoesNotConstrainTheWait) {
+    // arrange
+    TimerScheduler scheduler;
+    const TimerHandle handle = scheduler.schedule_once([] {}, std::chrono::milliseconds(100));
+    // act
+    scheduler.cancel(handle);
+    // assert the scheduler whose every timer was cancelled imposes no deadline (§4.2)
+    EXPECT_EQ(scheduler.time_until_next(), std::chrono::milliseconds::max());
+}
+
+TEST(TaskQueue, AnUnknownHandleIsNotQueued) {
+    // arrange
+    TaskQueue queue;
+    // act, assert
+    EXPECT_FALSE(queue.queued(999u));
 }

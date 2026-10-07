@@ -1,11 +1,19 @@
 #pragma once
 
+#include <memory>
+
 #include "core/geometry.h"
 #include "core/paint.h"
 #include "render/frame_scene.h"
 
 namespace albor
 {
+    // a retained immutable resource the scene build passes down, which the backend replays in constant time (§6.4, AD-06)
+    class LineBatch;
+    class PathResource;
+    class PictureResource;
+    class ImageResource;
+
     // the two dimensional drawing surface a renderer backend hands to the scene build (§6.2)
     class RenderContext
     {
@@ -41,6 +49,18 @@ namespace albor
 
         // draw a text run with its origin at the baseline (§6.2)
         virtual void draw_text(const TextLayout& layout, Point origin, const Paint& paint) = 0;
+
+        // draw a retained immutable line batch under a transform, which replays without rebuilding geometry (§6.4, AD-06)
+        virtual void draw_line_batch(const std::shared_ptr<const LineBatch>& batch, const Transform& transform, const StrokeStyle& stroke) = 0;
+
+        // draw a retained immutable path under a transform, which replays without rebuilding geometry (§6.4, AD-06)
+        virtual void draw_path(const std::shared_ptr<const PathResource>& path, const Transform& transform, const Paint& paint) = 0;
+
+        // replay a retained picture's commands in order under a transform (§6.4, AD-06)
+        virtual void draw_picture(const std::shared_ptr<const PictureResource>& picture, const Transform& transform) = 0;
+
+        // draw a retained immutable image into a destination rectangle (§6.4, AD-06)
+        virtual void draw_image(const std::shared_ptr<const ImageResource>& image, const Rect& destination, const Paint& paint) = 0;
     };
 
     // the surface a window presents into, which owns one drawing context per frame (§6.2)

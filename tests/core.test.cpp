@@ -245,6 +245,52 @@ TEST(Transform, EqualityComparesEveryComponent) {
     EXPECT_NE(first, other_scale);
 }
 
+TEST(Transform, ThenMapsThroughTheInnerTransformFirst) {
+    // arrange
+    const Transform scaled = Transform::scaling(2.0f, 2.0f);
+    const Transform translated = Transform::translation(10.0f, 0.0f);
+    const Point point{3.0f, 4.0f};
+    // act
+    const Transform composed = scaled.then(translated);
+    const Point mapped = composed.apply(point);
+    // assert
+    EXPECT_EQ(mapped, (Point{16.0f, 8.0f}));
+}
+
+TEST(Transform, ThenMultipliesBothScales) {
+    // arrange
+    const Transform scaled = Transform::scaling(2.0f, 2.0f);
+    // act
+    const Transform twice = scaled.then(Transform::scaling(3.0f, 3.0f));
+    // assert
+    EXPECT_EQ(twice, Transform::scaling(6.0f, 6.0f));
+}
+
+TEST(Transform, ThenAddsBothTranslations) {
+    // arrange, act
+    const Transform shifted = Transform::translation(5.0f, 0.0f).then(Transform::translation(3.0f, 0.0f));
+    // assert
+    EXPECT_EQ(shifted, Transform::translation(8.0f, 0.0f));
+}
+
+TEST(Transform, ThenComposesSkewAndScaleInTheirOrder) {
+    // arrange
+    Transform skewed_inner;
+    skewed_inner.scale_x = 2.0f;
+    skewed_inner.skew_x = 3.0f;
+    skewed_inner.scale_y = 1.0f;
+    Transform skewed_outer;
+    skewed_outer.skew_y = 5.0f;
+    // act
+    const Transform composed = skewed_inner.then(skewed_outer);
+    // assert
+    EXPECT_FLOAT_EQ(composed.scale_x, 2.0f);
+    EXPECT_FLOAT_EQ(composed.skew_x, 3.0f);
+    EXPECT_FLOAT_EQ(composed.skew_y, 10.0f);
+    EXPECT_FLOAT_EQ(composed.scale_y, 16.0f);
+    EXPECT_EQ(composed.apply(Point{1.0f, 1.0f}), (Point{5.0f, 26.0f}));
+}
+
 TEST(Color, DefaultIsOpaqueBlack) {
     // arrange, act
     const Color color;
