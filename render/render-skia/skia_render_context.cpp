@@ -10,12 +10,16 @@
 
 namespace albor::skia
 {
-    SkiaRenderContext::SkiaRenderContext(SkCanvas* canvas) :
-        m_canvas(canvas) {
+    SkiaRenderContext::SkiaRenderContext(SkCanvas* canvas, float device_scale) :
+        m_canvas(canvas), m_device_scale(device_scale) {
         // a context with no canvas draws nothing, so it starts with an empty clip (§6.2)
         if (m_canvas != nullptr) {
+            // the canvas spans the physical drawable, so the base scale maps the logical points onto it (§6.3, AD-27)
+            m_canvas->scale(m_device_scale, m_device_scale);
+            // the clip bookkeeping stays in logical points, which is the space the scene drew in (§6.3, AD-27)
             const SkImageInfo& info = m_canvas->imageInfo();
-            m_clip = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{static_cast<float>(info.width()), static_cast<float>(info.height())});
+            // the clip is initially the full canvas in logical points
+            m_clip = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{static_cast<float>(info.width()) / m_device_scale, static_cast<float>(info.height()) / m_device_scale});
         }
     }
 
@@ -56,6 +60,8 @@ namespace albor::skia
         matrix.setSkewX(transform.skew_x);
         matrix.setSkewY(transform.skew_y);
         matrix.postTranslate(transform.translate_x, transform.translate_y);
+        // the base scale sits under the scene transform, so a logical point still spans the whole drawable (§6.3, AD-27)
+        matrix.postScale(m_device_scale, m_device_scale);
         m_canvas->setMatrix(matrix);
         m_transform = transform;
     }

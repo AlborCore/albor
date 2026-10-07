@@ -13,8 +13,8 @@ namespace albor::skia
     class SkiaRenderContext final : public RenderContext
     {
     public:
-        // wrap the canvas of the frame currently being drawn
-        explicit SkiaRenderContext(SkCanvas* canvas);
+        // wrap the canvas of the frame being drawn, scaled from logical points onto the physical drawable (§6.3, AD-27)
+        SkiaRenderContext(SkCanvas* canvas, float device_scale);
 
         // override: push the current transform and clip
         void save() override;
@@ -68,6 +68,9 @@ namespace albor::skia
 
         // the canvas of the frame being drawn, which is null when no frame began
         SkCanvas* m_canvas;
+
+        // the scale from logical points onto the physical drawable, which the frames present at (§6.3, AD-27)
+        float m_device_scale;
 
         // the current transform
         Transform m_transform;

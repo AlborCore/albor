@@ -87,6 +87,12 @@ namespace
         // how many frames were ended
         std::size_t ended = 0;
 
+        // how many begun frames were presented
+        std::size_t presented = 0;
+
+        // whether a frame began and has not been ended yet
+        bool frame_in_flight = false;
+
         // whether the surface accepts a frame at all
         bool is_valid = true;
 
@@ -100,11 +106,20 @@ namespace
         void resize(const WindowMetrics& metrics) override { surface_metrics = metrics; }
 
         RenderContext& begin_frame() override {
+            // the begin registers the frame state that the matching end will present (§6.1)
             begun++;
+            frame_in_flight = true;
             return context;
         }
 
-        void end_frame() override { ended++; }
+        void end_frame() override {
+            ended++;
+            // the end presents the frame the begin registered, so an ended frame without one presents nothing (§6.3)
+            if (!frame_in_flight)
+                return;
+            presented++;
+            frame_in_flight = false;
+        }
     };
 
     // the backend test double, which records the scenes stage two executes (§6.2)
@@ -466,6 +481,56 @@ TEST(RenderSurface, AnEndFrameIsCounted) {
     EXPECT_EQ(surface.ended, 1u);
 }
 
+TEST(RenderSurface, EndingTheFramePresentsItExactlyOnce) {
+    // arrange
+    TestRenderSurface surface;
+    // act
+    surface.begin_frame();
+    surface.end_frame();
+    // assert
+    EXPECT_EQ(surface.begun, 1u);
+    EXPECT_EQ(surface.ended, 1u);
+    EXPECT_EQ(surface.presented, 1u);
+}
+
+TEST(RenderSurface, ABegunFrameIsOnlyPresentedWhenItEnds) {
+    // arrange
+    TestRenderSurface surface;
+    // act
+    surface.begin_frame();
+    surface.end_frame();
+    // the surface keeps one current frame, so the second begin replaces the in flight one (§6.1)
+    surface.begin_frame();
+    // assert
+    EXPECT_EQ(surface.presented, 1u);
+    EXPECT_EQ(surface.begun, 2u);
+    EXPECT_EQ(surface.ended, 1u);
+}
+
+TEST(RenderSurface, EndingWithoutBeginningPresentsNothing) {
+    // arrange
+    TestRenderSurface surface;
+    // act
+    surface.end_frame();
+    // assert
+    EXPECT_EQ(surface.ended, 1u);
+    EXPECT_EQ(surface.presented, 0u);
+}
+
+TEST(RenderSurface, ManyFrameCyclesPresentEachOnce) {
+    // arrange
+    TestRenderSurface surface;
+    // act
+    for (int frame = 0; frame < 5; frame++) {
+        surface.begin_frame();
+        surface.end_frame();
+    }
+    // assert
+    EXPECT_EQ(surface.begun, 5u);
+    EXPECT_EQ(surface.ended, 5u);
+    EXPECT_EQ(surface.presented, 5u);
+}
+
 TEST(RenderSurface, AResizeUpdatesTheMetrics) {
     // arrange
     TestRenderSurface surface;
@@ -597,6 +662,25 @@ TEST(RenderExecutor, ManyFramesAllExecute) {
     }
     // assert
     EXPECT_EQ(executor.executed_count(), 20u);
+}
+
+TEST(RenderExecutor, EveryExecutedFrameIsPresentedOnce) {
+    // arrange
+    TestRendererBackend backend;
+    RenderExecutor executor(&backend);
+    TestRenderSurface surface;
+    const auto scene = std::make_shared<const FrameScene>(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f));
+    // act
+    for (int frame = 0; frame < 8; frame++) {
+        executor.submit(surface, scene);
+        executor.flush();
+    }
+    // assert
+    EXPECT_EQ(executor.executed_count(), 8u);
+    EXPECT_EQ(surface.begun, 8u);
+    EXPECT_EQ(surface.ended, 8u);
+    // a frame that executed always ends in a presentation, which is the §6.3 present contract
+    EXPECT_EQ(surface.presented, 8u);
 }
 
 TEST(RenderExecutor, AStoppedExecutorAcceptsNothing) {

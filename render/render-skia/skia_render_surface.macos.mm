@@ -99,21 +99,19 @@ namespace albor::skia
     }
 
     RenderContext& SkiaRenderSurface::begin_frame() {
-        // the drawable out parameter is mandatory, because skia resolves the surface lazily on the submit (§6.3)
-        GrMTLHandle drawable = nullptr;
+        // the drawable is released last frame, so the wrap hands the this frame's drawable to this slot (§6.3)
+        m_state->drawable = nullptr;
         // wrapping the layer is what acquires a drawable, so a frame is one wrap and one draw (§6.1)
-        m_state->frame = SkSurfaces::WrapCAMetalLayer(m_state->context, (__bridge const void*)m_state->layer, GrSurfaceOrigin::kTopLeft_GrSurfaceOrigin, 1, SkColorType::kBGRA_8888_SkColorType, nullptr, nullptr, &drawable);
-        // the acquired drawable is what the frame presents once the gpu work was submitted (§6.1)
-        m_state->drawable = drawable;
+        m_state->frame = SkSurfaces::WrapCAMetalLayer(m_state->context, (__bridge const void*)m_state->layer, GrSurfaceOrigin::kTopLeft_GrSurfaceOrigin, 1, SkColorType::kBGRA_8888_SkColorType, nullptr, nullptr, &m_state->drawable);
         // a layer that cannot hand out a drawable drops the frame rather than drawing into nothing (§6.1)
         if (m_state->frame == nullptr) {
             m_state->ready = false;
-            m_state->draw_context = std::make_unique<SkiaRenderContext>(nullptr);
+            m_state->draw_context = std::make_unique<SkiaRenderContext>(nullptr, m_state->metrics.scale_factor);
             return *m_state->draw_context;
         }
         m_state->ready = true;
-        // the context wraps the canvas of the acquired surface for the duration of the frame (§6.3)
-        m_state->draw_context = std::make_unique<SkiaRenderContext>(m_state->frame->getCanvas());
+        // the context draws the logical scene scaled onto the physical drawable (§6.3, AD-27)
+        m_state->draw_context = std::make_unique<SkiaRenderContext>(m_state->frame->getCanvas(), m_state->metrics.scale_factor);
         return *m_state->draw_context;
     }
 
@@ -121,9 +119,8 @@ namespace albor::skia
         // a frame that never began has nothing to submit (§6.1)
         if (!m_state->ready || m_state->frame == nullptr || m_state->context == nullptr)
             return;
-        // the flush hands the recorded work to the gpu, and the submit makes it visible (§6.1)
-        m_state->context->flush(m_state->frame.get());
-        m_state->context->submit();
+        // the grant resolves the drawable through the slot captured by the wrap, so the presentation sees it (§6.3)
+        m_state->context->flushAndSubmit(m_state->frame.get());
         // the drawable is presented last, because the compositor may only show a submitted frame (§6.1)
         if (m_state->drawable != nullptr) {
             // the drawable crosses back into objective c only here, which is the sole presentation point (§6.1)

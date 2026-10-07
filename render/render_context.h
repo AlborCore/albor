@@ -58,10 +58,10 @@ namespace albor
         // resize the surface, which a window resize requires (§6.2)
         virtual void resize(const WindowMetrics& metrics) = 0;
 
-        // begin a frame and hand out the context that draws it (§6.1)
+        // begin a frame and hand out the context that draws it, keeping the frame state the end resolves (§6.1, AD-18)
         virtual RenderContext& begin_frame() = 0;
 
-        // end the frame and present it, which the render thread does (§6.1)
+        // end the frame and present the frame state the begin kept, exactly once per begun frame (§6.1, §6.3)
         virtual void end_frame() = 0;
     };
 } // namespace albor
