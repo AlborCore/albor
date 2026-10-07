@@ -3,6 +3,13 @@
 Work that is agreed but not done yet. Every entry names its fix precisely, so it can be
 picked up without re-deciding anything.
 
+## Phase 5 is deferred
+
+Phase 5 (devrt, automation, language server, standalone preview host, accessibility
+adapters, inspector, windows/linux platform adapters) starts only after the platform
+renders a real application. The application-readiness plan and its cluster order live in
+`PRE-PHASE-5-PLAN.md`.
+
 ## Collapse the consecutive comments in the test suites
 
 Every test file pairs an `// arrange` / `// act` / `// assert` marker with an explanatory
