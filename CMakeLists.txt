@@ -23,6 +23,9 @@ option(ALBOR_COVERAGE "Instrument the unit tests so a coverage report can be gen
 # the configuration name that the debug information and the log labels carry
 set(ALBOR_CONFIGURATION "Release" CACHE STRING "The albor configuration this build represents")
 
+# the shared build rules for generated components, which the examples and the fixtures use (§14.2)
+include(build/AlborComponent.cmake)
+
 # include paths are relative to the root of the project
 include_directories(".")
 

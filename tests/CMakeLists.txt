@@ -3,6 +3,9 @@
 # gather cpp sources (all platforms)
 file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 
+# the build-scope fixture only feeds a scripted check, so it never joins the test binary (§14.3)
+list(FILTER CPP_SOURCES EXCLUDE REGEX "/scope/")
+
 # a tree without a single suite has nothing to build, which is reported rather than silently ignored
 if(NOT CPP_SOURCES)
     message(STATUS "albor-tests: no unit suite is present in this tree")
@@ -42,3 +45,6 @@ target_link_libraries(albor-tests PRIVATE albor-layout albor-focus albor-widgets
 # the test binary is executed directly rather than through ctest, so it never needs a display (§2.2)
 include(GoogleTest)
 gtest_discover_tests(albor-tests DISCOVERY_TIMEOUT 60)
+
+# the build-scope fixture is its own product, which the §14.3 check compiles and observes (AGENTS.md, §14.3)
+add_subdirectory(scope)

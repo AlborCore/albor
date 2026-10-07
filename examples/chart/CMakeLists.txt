@@ -6,26 +6,14 @@ if(NOT APPLE)
     return()
 endif()
 
-# the directory the generated facade lands in, which must not sit in the source tree (§14.2)
-set(CHART_GENERATED "${CMAKE_BINARY_DIR}/generated/examples/chart")
+# the example compiles the application implementation and the generated facade, which the shared rule wired in (§11.2, AD-17, §14.2)
+add_executable(albor-chart main.cpp waveform_widget.cpp)
 
-# the glue driver reads the manifest and writes the facade, which is the compile step of a native type (§11.2, AD-17)
-add_custom_command(
-    OUTPUT "${CHART_GENERATED}/chart/waveform_view.h" "${CHART_GENERATED}/chart/waveform_view.cpp"
-    COMMAND $<TARGET_FILE:albor-manifest-glue> --input "${CMAKE_CURRENT_SOURCE_DIR}/chart.ui-manifest" --output "${CHART_GENERATED}"
-    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/chart.ui-manifest"
-    COMMENT "albor-chart: generating WaveformView from chart.ui-manifest"
-    VERBATIM
-)
+# the facade units are generated through the shared rule, which wires them into the example (§11.2, AD-17, §14.2)
+albor_build_native_component(albor-chart "${CMAKE_CURRENT_SOURCE_DIR}/chart.ui-manifest" WaveformView)
 
-# the example compiles the generated source and the application implementation, which proves the facade builds (AD-17)
-add_executable(albor-chart main.cpp waveform_widget.cpp "${CHART_GENERATED}/chart/waveform_view.cpp")
-
-# the glue driver must run before the generated source compiles, which is what orders the build (§11.2)
-add_dependencies(albor-chart albor-manifest-glue)
-
-# the example includes through the project root and the generated directory, which is where the facade lands (§3.5, §11.2)
-target_include_directories(albor-chart PRIVATE ${CMAKE_SOURCE_DIR} "${CHART_GENERATED}")
+# the example includes through the project root, which is where its own headers live (§3.5, §11.2)
+target_include_directories(albor-chart PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_features(albor-chart PRIVATE cxx_std_23)
 
 # the example reaches the platform, the renderers, the ui tree, the reactive engine and the widgets, so they link explicitly (§3.2)
