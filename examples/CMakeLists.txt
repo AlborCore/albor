@@ -7,3 +7,6 @@ add_subdirectory(reactive-counter)
 
 # the compiled ui greeting, which shows a component generated from a ui file at build time (§14, phase 4)
 add_subdirectory(greeting)
+
+# the manifest chart, which shows a native facade generated from a manifest and implemented by the application (§14, phase 4)
+add_subdirectory(chart)

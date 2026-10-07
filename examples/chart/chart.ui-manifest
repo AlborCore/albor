@@ -1,0 +1,8 @@
+// the chart manifest, which declares a native widget the ui could import and the application implements (§11.2, AD-17)
+
+native component WaveformView {
+    in property<Snapshot<WaveformData>> data;
+    in property<color> line_color: #00FF00;
+    signal selection_changed(float time_pos);
+    semantic role: "chart";
+}

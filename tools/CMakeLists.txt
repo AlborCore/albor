@@ -2,3 +2,6 @@
 
 # the codegen driver, which compiles a ui file into concrete facade units at build time (§11.3, AD-03a)
 add_subdirectory(albor-codegen)
+
+# the manifest glue driver, which compiles a native manifest into facade classes the application subclasses (§11.2, AD-17)
+add_subdirectory(albor-manifest-glue)
