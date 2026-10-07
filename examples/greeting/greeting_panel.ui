@@ -1,0 +1,42 @@
+// the greeting panel, which is the phase 4 example asset that the codegen driver compiles into c++ (§11.3, AD-03a)
+
+component GreetingPanel {
+    in property<string> user_name: "World";
+    inout property<int> click_count: 0;
+
+    signal run_clicked();
+
+    Column {
+        spacing: 12px;
+        padding: 16px;
+
+        Label {
+            text: @tr("Hello, ") + user_name + "!";
+            font_size: 18px;
+        }
+
+        Row {
+            spacing: 8px;
+
+            Button {
+                id: increment_button;
+                text: @tr("Increment");
+                on_clicked: {
+                    click_count = click_count + 1;
+                    run_clicked();
+                }
+            }
+
+            Button {
+                text: @tr("Reset");
+                on_clicked: {
+                    click_count = 0;
+                }
+            }
+
+            Label {
+                text: @tr("Count: ") + string(click_count);
+            }
+        }
+    }
+}

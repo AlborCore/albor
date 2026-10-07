@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <memory>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -76,6 +77,12 @@ namespace albor
         // attach a declarative binding that produces the value from its dependencies (§7.3, AD-04c)
         void bind(BindingFn<T> evaluator, std::vector<PropertyId> dependencies);
 
+        // the signature a plain binding function has, which carries its context instead of capturing one (§13.3)
+        using StaticEvaluator = T (*)(void* context);
+
+        // attach a declarative binding whose evaluator is a plain function, which generated code installs without allocating (§13.3)
+        void bind_static(StaticEvaluator evaluator, void* context, std::span<const PropertyId> dependencies);
+
         // remove the declarative binding, which leaves the property a plain value (§7.3)
         void unbind();
 
@@ -110,6 +117,9 @@ namespace albor
         // write a value produced by a declarative binding, which is private because it bypasses the precedence rules (§7.3, AD-24)
         void write_bound(T value);
 
+        // run the plain binding function over its context and write the bound channel, which is what the engine receives (§13.3)
+        static void evaluate_static(void* context);
+
         // the value the property presents when no binding and no override apply (§7.1)
         T m_value{};
 
@@ -130,6 +140,12 @@ namespace albor
 
         // the binding handle the declarative binding registered (§7.3)
         BindingId m_binding = 0;
+
+        // the plain function the declarative binding runs, which is null when the binding captures a callable instead (§13.3)
+        StaticEvaluator m_static_evaluator = nullptr;
+
+        // the context the plain function reads, which it cannot capture on its own (§13.3)
+        void* m_static_context = nullptr;
 
         // the animation presence record, which reports whether a channel is running (AD-04d)
         AnimationPresence m_presence;
@@ -196,6 +212,30 @@ namespace albor
         // a fresh binding is live again, because binding reinstates the declarative channel (AD-24)
         m_has_binding = true;
         m_overridden = false;
+    }
+    template <typename T>
+    void Property<T>::bind_static(StaticEvaluator evaluator, void* context, std::span<const PropertyId> dependencies) {
+        // a detached property cannot bind, so the caller must attach an engine first (§7.2)
+        if (m_engine == nullptr)
+            return;
+        // the bound channel starts at the presented value, so a binding that never writes leaves it intact (§7.3)
+        m_bound_value = resolved();
+        // the plain function and its context are remembered here, because the engine stores no callable for them (§13.3)
+        m_static_evaluator = evaluator;
+        m_static_context = context;
+        // the engine receives a thunk over this property, which is what keeps the path free of captures (§13.3)
+        m_binding = m_engine->bind_static(m_id, dependencies, &Property<T>::evaluate_static, this);
+        // a fresh binding is live again, because binding reinstates the declarative channel (AD-24)
+        m_has_binding = true;
+        m_overridden = false;
+    }
+    template <typename T>
+    void Property<T>::evaluate_static(void* context) {
+        // the property is recovered from the context, which is what keeps the path allocation free (§13.3)
+        auto* self = static_cast<Property<T>*>(context);
+        // a binding body with no evaluator leaves the value untouched (§7.3)
+        if (self->m_static_evaluator != nullptr)
+            self->write_bound(self->m_static_evaluator(self->m_static_context));
     }
     template <typename T>
     void Property<T>::unbind() {

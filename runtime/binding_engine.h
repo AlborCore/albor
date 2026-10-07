@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -15,6 +16,9 @@ namespace albor
 
     // the work a binding runs to produce the value of one property (§7.3)
     using BindingEvaluator = std::function<void()>;
+
+    // the work a static binding runs, which carries its context as a plain pointer instead of capturing one (§13.3)
+    using StaticBindingFn = void (*)(void* context);
 
     // the packed key a dependency map indexes on, which keeps two components from colliding on a shared slot (§7.2, §7.3)
     [[nodiscard]] constexpr std::uint64_t property_key(PropertyId id) { return (static_cast<std::uint64_t>(id.base) << 32) | static_cast<std::uint64_t>(id.slot); }
@@ -43,6 +47,9 @@ namespace albor
 
         // install an evaluator that writes the target property from its declared dependencies (§7.3)
         [[nodiscard]] BindingId bind(PropertyId target, std::vector<PropertyId> dependencies, BindingEvaluator evaluator);
+
+        // install a static evaluator over caller-owned dependencies, which generated code registers without allocating (§13.3)
+        [[nodiscard]] BindingId bind_static(PropertyId target, std::span<const PropertyId> dependencies, StaticBindingFn evaluator, void* context);
 
         // remove a binding, which stops the engine evaluating it (§7.3)
         bool unbind(BindingId binding);
@@ -95,6 +102,15 @@ namespace albor
 
             // the work that produces the bound value
             BindingEvaluator evaluator;
+
+            // the static work that runs when the binding installed a plain function instead of a callable (§13.3)
+            StaticBindingFn static_evaluator = nullptr;
+
+            // the context the static work reads, which it cannot capture on its own (§13.3)
+            void* static_context = nullptr;
+
+            // report whether the binding still carries work, which is what a live handle means (§7.3)
+            [[nodiscard]] bool registered() const { return evaluator != nullptr || static_evaluator != nullptr; }
 
             // whether the binding is waiting to be evaluated
             bool dirty = false;

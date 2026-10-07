@@ -62,13 +62,37 @@ namespace albor
         return handle;
     }
 
+    BindingId BindingEngine::bind_static(PropertyId target, std::span<const PropertyId> dependencies, StaticBindingFn evaluator, void* context) {
+        // a target may only carry one binding, because a second one would fight over the same property (§7.3)
+        const std::uint64_t key = property_key(target);
+        const auto existing = m_producers.find(key);
+        if (existing != m_producers.end())
+            unbind(existing->second);
+        // the handle is the 1-based index, so zero is always free to mean no binding (§7.3)
+        const BindingId handle = m_next_binding++;
+        Binding binding;
+        binding.target = target;
+        binding.dependencies.assign(dependencies.begin(), dependencies.end());
+        binding.static_evaluator = evaluator;
+        binding.static_context = context;
+        // a fresh binding settles on the next settle, which is what makes the first frame correct (§7.3)
+        binding.dirty = true;
+        m_bindings.push_back(std::move(binding));
+        // every declared dependency gains this binding as a consumer, which is the reverse edge of the graph (§7.3)
+        for (const PropertyId dependency : m_bindings.back().dependencies)
+            m_dependents[property_key(dependency)].push_back(handle);
+        // the target records its writer, which is what orders a consumer after its source (§7.3, AD-04a)
+        m_producers[key] = handle;
+        return handle;
+    }
+
     bool BindingEngine::unbind(BindingId binding) {
         // a stale handle names nothing, so the caller learns the removal did not happen (§7.3)
         if (binding == 0 || binding > m_bindings.size())
             return false;
         Binding& entry = m_bindings[binding - 1];
         // an already unbound handle changes nothing, so a double removal is a no operation (§7.3)
-        if (entry.evaluator == nullptr)
+        if (!entry.registered())
             return false;
         // every dependency loses the consumer edge, so a later change no longer reaches it (§7.3)
         for (const PropertyId dependency : entry.dependencies) {
@@ -87,21 +111,25 @@ namespace albor
             m_producers.erase(producer);
         // the binding is emptied rather than erased, so no handle ever names a different binding (§7.3)
         entry.evaluator = nullptr;
+        entry.static_evaluator = nullptr;
+        entry.static_context = nullptr;
         entry.dependencies.clear();
         entry.dirty = false;
         return true;
     }
 
     bool BindingEngine::bound(BindingId binding) const {
-        // an unbound handle keeps its slot but carries no evaluator (§7.3)
-        return binding != 0 && binding <= m_bindings.size() && m_bindings[binding - 1].evaluator != nullptr;
+        // an unbound handle keeps its slot but carries no work (§7.3)
+        return binding != 0 && binding <= m_bindings.size() && m_bindings[binding - 1].registered();
     }
 
     PropertyId BindingEngine::target(BindingId binding) const {
+        // find the binding entry by its handle (§7.3)
         const Binding* entry = find(binding);
         // a stale handle names no target (§7.3)
         if (entry == nullptr)
             return invalid_property_id();
+        // the target property
         return entry->target;
     }
 
@@ -125,7 +153,7 @@ namespace albor
     std::size_t BindingEngine::size() const {
         std::size_t count = 0;
         for (const Binding& binding : m_bindings)
-            if (binding.evaluator != nullptr)
+            if (binding.registered())
                 count++;
         return count;
     }
@@ -176,7 +204,11 @@ namespace albor
                     continue;
                 // the dirty flag clears before the run, so a binding that reads its own target still converges (§7.3)
                 entry->dirty = false;
-                entry->evaluator();
+                // a static binding runs its plain function over the recorded context, which is the allocation free path (§13.3)
+                if (entry->static_evaluator != nullptr)
+                    entry->static_evaluator(entry->static_context);
+                else
+                    entry->evaluator();
                 m_evaluations++;
             }
             passes++;

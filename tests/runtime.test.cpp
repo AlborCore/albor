@@ -1570,3 +1570,231 @@ TEST(Observable, AnObservableIsNotCopyable) {
     // arrange, act, assert
     EXPECT_FALSE(std::is_copy_constructible_v<Observable<int>>);
 }
+
+TEST(Property, AStaticBindingMakesThePropertyBound) {
+    // arrange
+    BindingEngine engine;
+    const std::uint32_t base = engine.begin_component();
+    Property<int> property;
+    property.set_id(engine.next_property_id());
+    property.set_engine(&engine);
+    struct Evaluator
+    {
+        static int evaluate(void*) { return 6; }
+    };
+    // act
+    property.bind_static(&Evaluator::evaluate, nullptr, {});
+    // assert
+    EXPECT_TRUE(property.bound());
+    EXPECT_EQ(property.id().base, base);
+}
+
+TEST(Property, ASettledStaticBindingWritesTheValue) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    Property<int> property;
+    property.set_id(engine.next_property_id());
+    property.set_engine(&engine);
+    struct Evaluator
+    {
+        static int evaluate(void*) { return 6; }
+    };
+    property.bind_static(&Evaluator::evaluate, nullptr, {});
+    // act
+    engine.settle();
+    // assert
+    EXPECT_EQ(property.get(), 6);
+}
+
+TEST(Property, ASourceChangeReevaluatesItsStaticConsumer) {
+    // arrange
+    BindingEngine engine;
+    const std::uint32_t base = engine.begin_component();
+    Property<int> source(2);
+    source.set_id(engine.next_property_id());
+    source.set_engine(&engine);
+    Property<int> doubled;
+    doubled.set_id(engine.next_property_id());
+    doubled.set_engine(&engine);
+    struct Evaluator
+    {
+        static int evaluate(void* context) { return static_cast<const std::pair<Property<int>*, int>*>(context)->first->get() * 2; }
+    };
+    std::pair<Property<int>*, int> context{&source, 0};
+    // the one member source is the dependency array, which the engine reads as a span (§13.3)
+    const PropertyId deps[] = {source.id()};
+    doubled.bind_static(&Evaluator::evaluate, &context, deps);
+    engine.settle();
+    // act
+    source.set(5);
+    engine.settle();
+    // assert
+    EXPECT_EQ(doubled.get(), 10);
+    EXPECT_EQ(doubled.id().base, base);
+}
+
+TEST(Property, AnImperativeSetBreaksTheStaticBinding) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    Property<int> property;
+    property.set_id(engine.next_property_id());
+    property.set_engine(&engine);
+    struct Evaluator
+    {
+        static int evaluate(void*) { return 4; }
+    };
+    property.bind_static(&Evaluator::evaluate, nullptr, {});
+    engine.settle();
+    // act
+    property.set(99);
+    // assert
+    EXPECT_FALSE(property.bound());
+    EXPECT_TRUE(property.overridden());
+    EXPECT_EQ(property.get(), 99);
+}
+
+TEST(Property, RebindRestoresTheStaticBinding) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    Property<int> property;
+    property.set_id(engine.next_property_id());
+    property.set_engine(&engine);
+    struct Evaluator
+    {
+        static int evaluate(void*) { return 4; }
+    };
+    property.bind_static(&Evaluator::evaluate, nullptr, {});
+    engine.settle();
+    property.set(99);
+    // act
+    property.rebind();
+    engine.settle();
+    // assert
+    EXPECT_FALSE(property.overridden());
+    EXPECT_EQ(property.get(), 4);
+}
+
+TEST(Property, AStaticBindingWithoutAnEngineChangesNothing) {
+    // arrange
+    Property<int> property(1);
+    struct Evaluator
+    {
+        static int evaluate(void*) { return 4; }
+    };
+    // act
+    property.bind_static(&Evaluator::evaluate, nullptr, {});
+    // assert
+    EXPECT_FALSE(property.bound());
+    EXPECT_EQ(property.get(), 1);
+}
+
+TEST(BindingEngine, SettlingRunsTheStaticBinding) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    const PropertyId target = engine.next_property_id();
+    struct Runner
+    {
+        static void run(void*) {}
+    };
+    // act
+    const BindingId binding = engine.bind_static(target, {}, &Runner::run, nullptr);
+    engine.settle();
+    // assert
+    EXPECT_TRUE(engine.bound(binding));
+    EXPECT_EQ(engine.size(), 1u);
+    EXPECT_EQ(engine.dirty_count(), 0u);
+}
+
+TEST(BindingEngine, AStaticBindingCarriesItsContext) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    const PropertyId target = engine.next_property_id();
+    struct Runner
+    {
+        static void run(void* context) { (*static_cast<std::size_t*>(context))++; }
+    };
+    std::size_t runs = 0;
+    // act
+    const BindingId binding = engine.bind_static(target, {}, &Runner::run, &runs);
+    engine.settle();
+    // assert
+    EXPECT_EQ(runs, 1u);
+    EXPECT_TRUE(engine.bound(binding));
+}
+
+TEST(BindingEngine, AChangedSourceMarksTheStaticConsumerDirty) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    Property<int> source(1);
+    source.set_id(engine.next_property_id());
+    source.set_engine(&engine);
+    const PropertyId target = engine.next_property_id();
+    struct Runner
+    {
+        static void run(void* context) { (*static_cast<std::size_t*>(context))++; }
+    };
+    std::size_t runs = 0;
+    // the one member source is the dependency array, which the engine reads as a span (§13.3)
+    const PropertyId deps[] = {source.id()};
+    // the binding is asserted through the runner count, so the identifier is discarded (§13.3)
+    (void)engine.bind_static(target, deps, &Runner::run, &runs);
+    engine.settle();
+    // act
+    source.set(2);
+    engine.settle();
+    // assert
+    EXPECT_EQ(runs, 2u);
+}
+
+TEST(BindingEngine, UnbindingRemovesTheStaticBinding) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    const PropertyId target = engine.next_property_id();
+    struct Runner
+    {
+        static void run(void*) {}
+    };
+    const BindingId binding = engine.bind_static(target, {}, &Runner::run, nullptr);
+    // act
+    const bool removed = engine.unbind(binding);
+    // assert
+    EXPECT_TRUE(removed);
+    EXPECT_FALSE(engine.bound(binding));
+    EXPECT_EQ(engine.size(), 0u);
+    EXPECT_EQ(engine.dirty_count(), 0u);
+}
+
+TEST(BindingEngine, AStaticBindingReportsItsDependencies) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    const PropertyId source = engine.next_property_id();
+    const PropertyId target = engine.next_property_id();
+    struct Runner
+    {
+        static void run(void*) {}
+    };
+    const PropertyId deps[] = {source};
+    // act
+    const BindingId binding = engine.bind_static(target, deps, &Runner::run, nullptr);
+    // assert
+    EXPECT_EQ(engine.dependent_count(source), 1u);
+    EXPECT_EQ(engine.target(binding), target);
+    EXPECT_EQ(engine.dependencies(binding).size(), 1u);
+    EXPECT_TRUE(engine.bound(binding));
+}

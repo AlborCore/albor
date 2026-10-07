@@ -110,6 +110,9 @@ add_subdirectory(compiler)
 # the manifest parser that declares the native types a ui file may use (§11.2, AD-17)
 add_subdirectory(manifest)
 
+# the developer tools, which build against the compiler and never ship in the runtime (§2.1)
+add_subdirectory(tools)
+
 if(ALBOR_EXAMPLES)
     add_subdirectory(examples)
 endif()

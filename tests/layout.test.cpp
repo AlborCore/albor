@@ -925,3 +925,66 @@ TEST(GridLayoutChecks, MeasureDoesNotArrange) {
     EXPECT_EQ(child_ptr->measures, 1u);
     EXPECT_EQ(child_ptr->arranges, 0u);
 }
+
+TEST(ColumnLayoutChecks, AddsThePaddingOnBothAxes) {
+    // arrange
+    ColumnLayout column;
+    column.set_padding(8.0f);
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{10.0f, 20.0f};
+    column.add_child(std::move(child));
+    Size measured{};
+    // act
+    column.measure(SizeConstraints::unconstrained(), measured);
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 26.0f);
+    EXPECT_FLOAT_EQ(measured.height, 36.0f);
+}
+
+TEST(ColumnLayoutChecks, ArrangesTheChildrenInsideThePadding) {
+    // arrange
+    ColumnLayout column;
+    column.set_gap(2.0f);
+    column.set_padding(6.0f);
+    auto first = std::make_unique<LayoutTestNode>();
+    auto second = std::make_unique<LayoutTestNode>();
+    first->intrinsic = Size{10.0f, 20.0f};
+    second->intrinsic = Size{10.0f, 30.0f};
+    LayoutTestNode* first_ptr = first.get();
+    LayoutTestNode* second_ptr = second.get();
+    column.add_child(std::move(first));
+    column.add_child(std::move(second));
+    Size measured{};
+    column.measure(SizeConstraints::unconstrained(), measured);
+    const Rect bounds = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{80.0f, 200.0f});
+    // act
+    column.arrange(bounds);
+    // assert
+    EXPECT_FLOAT_EQ(first_ptr->bounds().x, 6.0f);
+    EXPECT_FLOAT_EQ(first_ptr->bounds().y, 6.0f);
+    EXPECT_FLOAT_EQ(first_ptr->bounds().width, 68.0f);
+    EXPECT_FLOAT_EQ(second_ptr->bounds().y, 28.0f);
+    EXPECT_FLOAT_EQ(second_ptr->bounds().width, 68.0f);
+}
+
+TEST(ColumnLayoutChecks, PaddingChangeInvalidatesLayout) {
+    // arrange
+    ColumnLayout column;
+    column.clear_dirty();
+    // act
+    column.set_padding(5.0f);
+    // assert
+    EXPECT_TRUE(column.layout_dirty());
+    EXPECT_FLOAT_EQ(column.padding(), 5.0f);
+}
+
+TEST(ColumnLayoutChecks, UnchangedPaddingDoesNotInvalidate) {
+    // arrange
+    ColumnLayout column;
+    column.set_padding(5.0f);
+    column.clear_dirty();
+    // act
+    column.set_padding(5.0f);
+    // assert
+    EXPECT_FALSE(column.layout_dirty());
+}

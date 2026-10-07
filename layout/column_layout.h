@@ -22,8 +22,17 @@ namespace albor
         // hand out the distance between two consecutive children (§8.2)
         [[nodiscard]] float gap() const;
 
+        // set the inset that frames the children on every edge, which a padding change remeasures (§8.2)
+        void set_padding(float padding);
+
+        // hand out the inset that frames the children (§8.2)
+        [[nodiscard]] float padding() const;
+
     private:
         // the distance between two consecutive children in logical pixels (§8.2)
         float m_gap = 0.0f;
+
+        // the inset the children sit inside, in logical pixels (§8.2)
+        float m_padding = 0.0f;
     };
 } // namespace albor
