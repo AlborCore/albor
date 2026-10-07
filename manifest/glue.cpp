@@ -116,6 +116,9 @@ namespace albor::manifest
             // the parameter list in declaration order, which the signatures and the invocation both use (§11.2)
             std::string parameter_list;
             std::string argument_list;
+
+            // the types only in declaration order, which the std::function slots take rather than the named form (§11.2)
+            std::string slot_type_list;
         };
 
         // one component ready to emit, which is the generated class plus its include needs (§11.2)
@@ -237,7 +240,7 @@ namespace albor::manifest
                 if (!first)
                     emit_line(out, 2, "");
                 emit_line(out, 2, "// install the work a " + signal.name + " report runs, which the application wires (§11.2)");
-                emit_line(out, 2, "void set_on_" + signal.name + "(std::function<void(" + signal.parameter_list + ")> handler);");
+                emit_line(out, 2, "void set_on_" + signal.name + "(std::function<void(" + signal.slot_type_list + ")> handler);");
                 first = false;
             }
             // the declared role emits its read, which names the widget to assistive technology (§10.1)
@@ -272,7 +275,7 @@ namespace albor::manifest
                 if (!first_private)
                     emit_line(out, 2, "");
                 emit_line(out, 2, "// the slot behind the " + signal.name + " signal, which is empty until installed (§11.2)");
-                emit_line(out, 2, "std::function<void(" + signal.parameter_list + ")> m_on_" + signal.name + ";");
+                emit_line(out, 2, "std::function<void(" + signal.slot_type_list + ")> m_on_" + signal.name + ";");
                 first_private = false;
             }
             emit_line(out, 1, "};");
@@ -310,7 +313,7 @@ namespace albor::manifest
             // each signal emits its slot setter, which stores the installed handler (§11.2)
             for (const GluedSignal& signal : component.signals) {
                 emit_line(out, 1, "");
-                emit_line(out, 1, "void " + component.name + "::set_on_" + signal.name + "(std::function<void(" + signal.parameter_list + ")> handler) {");
+                emit_line(out, 1, "void " + component.name + "::set_on_" + signal.name + "(std::function<void(" + signal.slot_type_list + ")> handler) {");
                 emit_line(out, 2, "// the slot is stored, which the emit path runs when installed (§11.2)");
                 emit_line(out, 2, "m_on_" + signal.name + " = std::move(handler);");
                 emit_line(out, 1, "}");
@@ -420,11 +423,15 @@ namespace albor::manifest
                         glued.parameter_list += ", ";
                         // the argument list grows the comma, which joins the invocation (§11.2)
                         glued.argument_list += ", ";
+                        // the slot list grows the comma, which joins the std::function types (§11.2)
+                        glued.slot_type_list += ", ";
                     }
                     // the parameter declares its type and its name, which is what a signature needs (§11.2)
                     glued.parameter_list += *cpp + " " + parameter.name;
                     // the argument is the name alone, which is what a raiser invocation needs (§11.2)
                     glued.argument_list += parameter.name;
+                    // the type alone joins the slot list, which only the std::function signature needs (§11.2)
+                    glued.slot_type_list += *cpp;
                     // a colour parameter pulls the paint header, which the framework type lives in (AD-05)
                     if (parameter.type == "color")
                         component.needs_paint = true;
