@@ -57,6 +57,9 @@ This document defines the code style preferences for this project.
 - Action oriented: the comment states what the next line does (e.g. `// resolve the executable from the environment`)
 - One short line per comment; never a paragraph of consecutive comment lines
 - Never wrap a comment: it stays on one physical line, however long it gets
+- A comment line stays within 124 characters, which is where the shipped tree sits at its ninety ninth
+  percentile; a longer one reads as a paragraph in any editor, and `build/check-format.sh` measures it
+  over the lines a change adds
 - Every non-trivial statement gets its own comment line above it — including statements inside `if` blocks, loops, and other control structures
 - A function definition carries no comment between its signature and its opening brace: the comment goes **inside** the body, above the statement it describes
 - The declaration in the header documents what a function does; the definition annotates what its statements do, so a definition never repeats its own name as a comment
