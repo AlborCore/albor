@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <memory>
 #include <string_view>
 
@@ -35,6 +36,15 @@ namespace albor
 
         // override: report whether the collection and the unicode both resolved (§9.1)
         [[nodiscard]] bool ready() const override;
+
+        // how many shaping passes the engine has run, which is what proves the cache absorbs a repeat (§9.1)
+        [[nodiscard]] std::size_t shaped_run_count() const;
+
+        // how many shaped runs the cache currently holds (§9.1)
+        [[nodiscard]] std::size_t cache_size() const;
+
+        // drop every cached run, which a memory pressure policy calls (§9.1)
+        void clear_cache() const;
 
         // install this engine as the one the framework measures with, which a startup calls (§9.1)
         static void install();

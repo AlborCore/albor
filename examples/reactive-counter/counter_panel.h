@@ -9,6 +9,7 @@
 #include "render/render_context.h"
 #include "runtime/binding_engine.h"
 #include "runtime/property.h"
+#include "text/text_engine.h"
 #include "ui/component.h"
 
 namespace albor
@@ -17,8 +18,8 @@ namespace albor
     class CounterPanel final : public Component
     {
     public:
-        // build the panel over the engine that settles its bindings (§7.2)
-        explicit CounterPanel(BindingEngine* engine);
+        // build the panel over the engine that settles its bindings and the text engine that measures its label (§7.2, §9.1)
+        CounterPanel(BindingEngine* engine, TextEngine* text_engine);
 
         // the reactive count a timer or a click increments (§7.1)
         Property<int> count;
@@ -49,8 +50,11 @@ namespace albor
         // the rectangle the count bar occupies, which grows with the count (§6.1)
         [[nodiscard]] Rect bar_rect() const;
 
-        // the baseline the label is drawn at, which sits under the bar (§6.1)
+        // the top left of the label box, which sits under the bar (§6.1)
         [[nodiscard]] Point label_origin() const;
+
+        // the engine that measures the bound label, which is null when the application installed none (§9.1)
+        TextEngine* m_text_engine = nullptr;
 
         // the height of the count bar in logical pixels (§6.1)
         float m_bar_height = 40.0f;

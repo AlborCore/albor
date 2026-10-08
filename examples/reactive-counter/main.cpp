@@ -10,17 +10,25 @@
 #include "render/render-skia/skia_renderer_backend.h"
 #include "render/render_executor.h"
 #include "runtime/binding_engine.h"
+#include "text/text-skia/skia_text_engine.h"
 #include "ui/frame_pipeline.h"
 #include "window/window.h"
 
 int main() {
-    // the example is the composition root, so it installs the macos platform and the skia backend (§6.3)
+    // the example is the composition root, so it installs the macos platform, the skia backend and the text engine (§6.3, §9.1)
     albor::macos::install_macos_platform();
     albor::install_skia_renderer_backend();
+    albor::SkiaTextEngine::install();
     // the renderer backend owns the metal device and the skia context (§6.3)
     std::unique_ptr<albor::RendererBackend> renderer = albor::create_renderer_backend();
     if (!renderer || !renderer->ready()) {
         std::fprintf(stderr, "reactive-counter: the skia metal backend did not come up\n");
+        return 1;
+    }
+    // the text engine shapes the bound label, which the panel borrows from the application (§9.1)
+    std::unique_ptr<albor::TextEngine> text_engine = albor::create_text_engine();
+    if (!text_engine || !text_engine->ready()) {
+        std::fprintf(stderr, "reactive-counter: the skia text engine did not come up\n");
         return 1;
     }
     // the application owns the native loop, the window registry and the task dispatcher (§4.1)
@@ -44,8 +52,8 @@ int main() {
     }
     // the reactive engine owns the dependency graph that settles the bindings (§7.3)
     albor::BindingEngine engine;
-    // the panel declares its reactive properties over that engine (§7.2)
-    auto panel = std::make_unique<albor::CounterPanel>(&engine);
+    // the panel declares its reactive properties over that engine and measures its label through the text engine (§7.2, §9.1)
+    auto panel = std::make_unique<albor::CounterPanel>(&engine, text_engine.get());
     // the pipeline owns the tree and drives stage one on the ui thread (§6.1, AD-18)
     albor::FramePipeline pipeline(engine, std::move(panel));
     pipeline.set_background(albor::Color::rgb(0.05f, 0.06f, 0.08f));

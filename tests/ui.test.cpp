@@ -93,6 +93,25 @@ namespace
         }
     };
 
+    // a shaped run standing in for what a text engine produced, so a scene test records text without a font backend (§9.1)
+    std::shared_ptr<const ShapedRun> synthetic_run(std::size_t glyph_count, float font_size) {
+        // the line carries the synthesized glyphs, which no real typeface backs (§9.1)
+        ShapedRun::Line line;
+        // the line origin is the baseline the synthesized glyphs hang from (§9.1)
+        line.origin = Point{.x = 0.0f, .y = 12.0f};
+        // every glyph contributes a distinct index placed a fixed advance apart (§9.1)
+        for (std::size_t index = 0; index < glyph_count; index++)
+            line.glyphs.push_back(ShapedGlyph{.id = static_cast<std::uint32_t>(index), .position = Point{.x = static_cast<float>(index) * 8.0f, .y = 0.0f}});
+        // the run holds that one line, which is what an unwrapped run shapes into (§9.1)
+        return ShapedRun::make({std::move(line)}, font_size);
+    }
+
+    // a measured run standing in for what a text engine reports, so a test asserts on extents without a font backend (§9.1)
+    TextLayout synthetic_layout(std::size_t glyph_count, float font_size, Size size) {
+        // the shaped run travels beside the extents the layout reports (§9.1)
+        return TextLayout{.run = synthetic_run(glyph_count, font_size), .size = size, .ascent = font_size * 0.8f, .descent = font_size * 0.2f};
+    }
+
     // the text node test double, which draws a run so a scene carries text (§6.1)
     class TestTextNode final : public UiNode
     {
@@ -111,7 +130,7 @@ namespace
         void render(RenderContext& context) override {
             Paint paint;
             paint.fill = Color::rgb(1.0f, 1.0f, 1.0f);
-            context.draw_text(TextLayout::from_text(text, 16.0f), origin, paint);
+            context.draw_text(synthetic_layout(text.size(), 16.0f, Size{static_cast<float>(text.size()) * 8.0f, 16.0f}), origin, paint);
         }
     };
 
@@ -1057,7 +1076,7 @@ TEST(SceneRecorder, ATextColourTravelsWithTheRun) {
     Paint paint;
     paint.fill = Color::rgb(0.9f, 0.1f, 0.2f);
     // act
-    recorder.draw_text(TextLayout::from_text("albor", 16.0f), Point{30.0f, 40.0f}, paint);
+    recorder.draw_text(synthetic_layout(5, 16.0f, Size{40.0f, 16.0f}), Point{30.0f, 40.0f}, paint);
     // assert
     ASSERT_EQ(recorder.scene()->text_colors().size(), 1u);
     EXPECT_EQ(recorder.scene()->text_colors()[0], (Color::rgb(0.9f, 0.1f, 0.2f)));
@@ -1070,7 +1089,7 @@ TEST(SceneRecorder, AStrokeOnlyRunRecordsItsStrokeColour) {
     paint.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f);
     paint.stroke = Color::rgb(0.4f, 0.5f, 0.6f);
     // act
-    recorder.draw_text(TextLayout::from_text("albor", 16.0f), Point{30.0f, 40.0f}, paint);
+    recorder.draw_text(synthetic_layout(5, 16.0f, Size{40.0f, 16.0f}), Point{30.0f, 40.0f}, paint);
     // assert
     ASSERT_EQ(recorder.scene()->text_colors().size(), 1u);
     EXPECT_EQ(recorder.scene()->text_colors()[0], (Color::rgb(0.4f, 0.5f, 0.6f)));
@@ -1080,7 +1099,7 @@ TEST(SceneRecorder, AnEmptyTextRunRecordsNoColour) {
     // arrange
     SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
     // act
-    recorder.draw_text(TextLayout::from_text("", 16.0f), Point{0.0f, 0.0f}, Paint{});
+    recorder.draw_text(synthetic_layout(0, 16.0f, Size{0.0f, 16.0f}), Point{0.0f, 0.0f}, Paint{});
     // assert
     EXPECT_TRUE(recorder.scene()->text_colors().empty());
 }
@@ -1089,7 +1108,7 @@ TEST(SceneRecorder, ATextRunIsRecordedWithItsOrigin) {
     // arrange
     SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
     // act
-    recorder.draw_text(TextLayout::from_text("albor", 16.0f), Point{30.0f, 40.0f}, Paint{});
+    recorder.draw_text(synthetic_layout(5, 16.0f, Size{40.0f, 16.0f}), Point{30.0f, 40.0f}, Paint{});
     // assert
     ASSERT_EQ(recorder.scene()->texts().size(), 1u);
     EXPECT_FLOAT_EQ(recorder.scene()->text_origins()[0].x, 30.0f);
@@ -1099,7 +1118,7 @@ TEST(SceneRecorder, AnEmptyTextRunIsNotRecorded) {
     // arrange
     SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
     // act
-    recorder.draw_text(TextLayout::from_text("", 16.0f), Point{0.0f, 0.0f}, Paint{});
+    recorder.draw_text(synthetic_layout(0, 16.0f, Size{0.0f, 16.0f}), Point{0.0f, 0.0f}, Paint{});
     // assert
     EXPECT_TRUE(recorder.scene()->texts().empty());
 }
@@ -1368,7 +1387,7 @@ TEST(SceneBuilder, BuildingRecordsTextIntoTheScene) {
     const std::shared_ptr<const FrameScene> scene = builder.build(root, WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
     // assert
     ASSERT_EQ(scene->texts().size(), 1u);
-    EXPECT_EQ(scene->texts()[0].text, "albor");
+    EXPECT_EQ(scene->texts()[0].run->glyph_count(), 5u);
 }
 
 TEST(SceneBuilder, AnInvisibleTreeDrawsNothing) {

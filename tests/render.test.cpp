@@ -24,6 +24,25 @@ using namespace albor;
 
 namespace
 {
+    // a shaped run standing in for what a text engine produced, so a recorder test draws without a font backend (§9.1)
+    std::shared_ptr<const ShapedRun> synthetic_run(std::size_t glyph_count, float font_size) {
+        // the line is built aside, because the run stands for one unwrapped line (§9.1)
+        ShapedRun::Line line;
+        // the line origin is the baseline the synthesized glyphs hang from (§9.1)
+        line.origin = Point{.x = 0.0f, .y = 12.0f};
+        // every glyph contributes a distinct index and a position that grows with it (§9.1)
+        for (std::size_t index = 0; index < glyph_count; index++)
+            line.glyphs.push_back(ShapedGlyph{.id = static_cast<std::uint32_t>(index), .position = Point{.x = static_cast<float>(index) * 8.0f, .y = 0.0f}});
+        // the run holds that one line, which is what an unwrapped run shapes into (§9.1)
+        return ShapedRun::make({std::move(line)}, font_size);
+    }
+
+    // a measured run standing in for what a text engine reports, so a test asserts on extents without a font backend (§9.1)
+    TextLayout synthetic_layout(std::size_t glyph_count, float font_size, Size size) {
+        // the shaped run travels beside the extents the layout reports, which is what a measurement hands over (§9.1)
+        return TextLayout{.run = synthetic_run(glyph_count, font_size), .size = size, .ascent = font_size * 0.8f, .descent = font_size * 0.2f};
+    }
+
     // the context test double, which records the state contract of a draw surface (§6.2)
     class TestRenderContext final : public RenderContext
     {
@@ -46,8 +65,8 @@ namespace
         // the rectangles the surface was asked to draw, in order
         std::vector<Rect> drawn_rects;
 
-        // the text runs the surface was asked to draw, in order
-        std::vector<std::string> drawn_texts;
+        // the shaped runs the surface was asked to draw, in order (§9.1)
+        std::vector<std::shared_ptr<const ShapedRun>> drawn_texts;
 
         // the retained line batches the surface was asked to draw, in order
         std::vector<std::shared_ptr<const LineBatch>> drawn_batches;
@@ -103,7 +122,7 @@ namespace
 
         void draw_rounded_rect(const Rect& rect, float, const Paint&) override { drawn_rects.push_back(rect); }
 
-        void draw_text(const TextLayout& layout, Point, const Paint&) override { drawn_texts.push_back(layout.text); }
+        void draw_text(const TextLayout& layout, Point, const Paint&) override { drawn_texts.push_back(layout.run); }
 
         void draw_line_batch(const std::shared_ptr<const LineBatch>& batch, const Transform& transform, const StrokeStyle& stroke) override {
             drawn_batches.push_back(batch);
@@ -293,82 +312,198 @@ namespace
     };
 } // namespace
 
-TEST(TextLayout, AnEmptyStringIsEmpty) {
+TEST(FontHandle, ADefaultHandleNamesNoTypeface) {
+    // arrange, act
+    const FontHandle handle;
+    // assert a handle with nothing in it names no typeface, so a backend skips the run rather than guessing (§9.1)
+    EXPECT_FALSE(handle.valid());
+}
+
+TEST(FontHandle, AWrappedTypefaceIsAValidHandle) {
+    // arrange
+    int typeface = 0;
+    // act
+    const FontHandle handle = FontHandle::from_object(&typeface);
+    // assert wrapping a resolved typeface is what makes the handle usable (§9.1)
+    EXPECT_TRUE(handle.valid());
+}
+
+TEST(FontHandle, TheWrappedTypefaceLeavesAsAnOpaquePointer) {
+    // arrange
+    int typeface = 0;
+    // act
+    const FontHandle handle = FontHandle::from_object(&typeface);
+    // assert the typeface leaves the handle untyped, so no shaping type reaches a public header (§3.5, §9.1)
+    EXPECT_EQ(handle.object(), static_cast<const void*>(&typeface));
+}
+
+TEST(FontHandle, AHandleOverNothingHandsBackNothing) {
+    // arrange, act
+    const FontHandle handle;
+    // assert an invalid handle carries no object at all (§9.1)
+    EXPECT_EQ(handle.object(), nullptr);
+}
+
+TEST(FontHandle, EqualityComparesTheWrappedTypeface) {
+    // arrange
+    int typeface = 0;
+    // act
+    const FontHandle wrapped = FontHandle::from_object(&typeface);
+    const FontHandle same = FontHandle::from_object(&typeface);
+    const FontHandle other = FontHandle::from_object(nullptr);
+    // assert two handles are the same typeface or they are not (§9.1)
+    EXPECT_EQ(wrapped, same);
+    EXPECT_NE(wrapped, other);
+}
+
+TEST(ShapedRun, ARunOverNoLinesIsEmpty) {
+    // arrange, act
+    const std::shared_ptr<const ShapedRun> run = ShapedRun::make({}, 16.0f);
+    // assert a run that shaped no line carries no glyph (§6.2)
+    EXPECT_TRUE(run->empty());
+}
+
+TEST(ShapedRun, ARunOverLinesWithNoGlyphsIsEmpty) {
+    // arrange
+    ShapedRun::Line line;
+    // act
+    const std::shared_ptr<const ShapedRun> run = ShapedRun::make({line}, 16.0f);
+    // assert a line that shaped no glyph still costs nothing to draw (§6.2)
+    EXPECT_TRUE(run->empty());
+}
+
+TEST(ShapedRun, ARunOverGlyphsIsNotEmpty) {
+    // arrange, act
+    const std::shared_ptr<const ShapedRun> run = synthetic_run(3, 16.0f);
+    // assert a run that shaped glyphs is what the render stage replays (§9.1)
+    EXPECT_FALSE(run->empty());
+}
+
+TEST(ShapedRun, TheGlyphCountSumsTheLines) {
+    // arrange
+    ShapedRun::Line first;
+    first.glyphs.push_back(ShapedGlyph{.id = 1});
+    first.glyphs.push_back(ShapedGlyph{.id = 2});
+    ShapedRun::Line second;
+    second.glyphs.push_back(ShapedGlyph{.id = 3});
+    // act
+    const std::shared_ptr<const ShapedRun> run = ShapedRun::make({first, second}, 16.0f);
+    // assert a wrapped run reports every glyph of every line, which is what a reservation is sized from (§9.1)
+    EXPECT_EQ(run->glyph_count(), 3u);
+}
+
+TEST(ShapedRun, TheFontSizeIsTheOneEveryLineWasShapedAt) {
+    // arrange, act
+    const std::shared_ptr<const ShapedRun> run = synthetic_run(1, 22.0f);
+    // assert the renderer builds its font from this size rather than from the run height, which is what fixes a wrapped run (§9.1)
+    EXPECT_FLOAT_EQ(run->font_size(), 22.0f);
+}
+
+TEST(ShapedRun, TheLinesAreKeptInReadingOrder) {
+    // arrange, act
+    const std::shared_ptr<const ShapedRun> run = ShapedRun::make({ShapedRun::Line{}, ShapedRun::Line{}, ShapedRun::Line{}}, 16.0f);
+    // assert a renderer replays the lines in the order they were shaped (§9.1)
+    ASSERT_EQ(run->lines().size(), 3u);
+}
+
+TEST(ShapedRun, EveryLineCarriesItsOwnBaseline) {
+    // arrange
+    ShapedRun::Line first;
+    first.origin = Point{.x = 0.0f, .y = 12.0f};
+    ShapedRun::Line second;
+    second.origin = Point{.x = 0.0f, .y = 28.0f};
+    // act
+    const std::shared_ptr<const ShapedRun> run = ShapedRun::make({first, second}, 16.0f);
+    // assert a wrapped run places each line on its own baseline, which is what keeps the lines apart (§9.1)
+    ASSERT_EQ(run->lines().size(), 2u);
+    EXPECT_FLOAT_EQ(run->lines()[0].origin.y, 12.0f);
+    EXPECT_FLOAT_EQ(run->lines()[1].origin.y, 28.0f);
+}
+
+TEST(ShapedRun, EveryLineCarriesItsOwnTypeface) {
+    // arrange
+    int typeface = 0;
+    ShapedRun::Line shaped;
+    shaped.font = FontHandle::from_object(&typeface);
+    ShapedRun::Line fallback;
+    // act
+    const std::shared_ptr<const ShapedRun> run = ShapedRun::make({shaped, fallback}, 16.0f);
+    // assert a line the engine could not cover carries no typeface, so a backend skips it instead of drawing a wrong font (§9.1)
+    ASSERT_EQ(run->lines().size(), 2u);
+    EXPECT_TRUE(run->lines()[0].font.valid());
+    EXPECT_FALSE(run->lines()[1].font.valid());
+}
+
+TEST(ShapedRun, EqualityComparesTheGlyphsAndTheSize) {
+    // arrange
+    const std::shared_ptr<const ShapedRun> first = synthetic_run(2, 16.0f);
+    // act
+    const std::shared_ptr<const ShapedRun> same = synthetic_run(2, 16.0f);
+    const std::shared_ptr<const ShapedRun> other_size = synthetic_run(2, 24.0f);
+    const std::shared_ptr<const ShapedRun> other_glyphs = synthetic_run(3, 16.0f);
+    // assert two runs are equal only when they place the same glyphs at the same size (§9.1)
+    EXPECT_EQ(*first, *same);
+    EXPECT_NE(*first, *other_size);
+    EXPECT_NE(*first, *other_glyphs);
+}
+
+TEST(TextLayout, AnUnmeasuredLayoutIsEmpty) {
     // arrange, act
     const TextLayout layout;
-    // assert
+    // assert a layout that measured nothing draws nothing (§6.2)
     EXPECT_TRUE(layout.empty());
 }
 
-TEST(TextLayout, FromTextIsNotEmpty) {
+TEST(TextLayout, ALayoutCarryingAShapedRunIsNotEmpty) {
     // arrange, act
-    const TextLayout layout = TextLayout::from_text("albor", 16.0f);
-    // assert
+    const TextLayout layout = synthetic_layout(5, 16.0f, Size{80.0f, 16.0f});
+    // assert the shaped run is what makes the layout drawable (§9.1)
     EXPECT_FALSE(layout.empty());
 }
 
-TEST(TextLayout, FromTextKeepsTheText) {
-    // arrange, act
-    const TextLayout layout = TextLayout::from_text("albor", 16.0f);
-    // assert
-    EXPECT_EQ(layout.text, "albor");
-}
-
-TEST(TextLayout, FromTextMeasuresAWidthThatGrowsWithTheText) {
+TEST(TextLayout, ALayoutWhoseRunCarriesNoGlyphIsEmpty) {
     // arrange
-    const TextLayout short_run = TextLayout::from_text("ab", 16.0f);
-    // act
-    const TextLayout long_run = TextLayout::from_text("abcdefgh", 16.0f);
-    // assert
-    EXPECT_GT(long_run.size.width, short_run.size.width);
-}
-
-TEST(TextLayout, FromTextMeasuresAWidthThatGrowsWithTheFontSize) {
-    // arrange
-    const TextLayout small = TextLayout::from_text("albor", 8.0f);
-    // act
-    const TextLayout large = TextLayout::from_text("albor", 32.0f);
-    // assert
-    EXPECT_GT(large.size.width, small.size.width);
-}
-
-TEST(TextLayout, FromTextMeasuresAHeightEqualToTheFontSize) {
-    // arrange, act
-    const TextLayout layout = TextLayout::from_text("albor", 20.0f);
-    // assert
-    EXPECT_FLOAT_EQ(layout.size.height, 20.0f);
-}
-
-TEST(TextLayout, FromTextPlacesTheAscentAboveTheDescent) {
-    // arrange, act
-    const TextLayout layout = TextLayout::from_text("albor", 10.0f);
-    // assert
-    EXPECT_GT(layout.ascent, layout.descent);
-}
-
-TEST(TextLayout, TheAscentAndDescentAddUpToTheFontSize) {
-    // arrange, act
-    const TextLayout layout = TextLayout::from_text("albor", 25.0f);
-    // assert
-    EXPECT_FLOAT_EQ(layout.ascent + layout.descent, 25.0f);
-}
-
-TEST(TextLayout, FromAnEmptyStringMeasuresNoWidth) {
-    // arrange, act
-    const TextLayout layout = TextLayout::from_text("", 16.0f);
-    // assert
-    EXPECT_FLOAT_EQ(layout.size.width, 0.0f);
+    TextLayout layout;
+    layout.run = synthetic_run(0, 16.0f);
+    // act, assert a run with no glyphs costs nothing to draw, so the scene skips it (§6.2)
     EXPECT_TRUE(layout.empty());
 }
 
-TEST(TextLayout, EqualityComparesEveryField) {
+TEST(TextLayout, TheLayoutCarriesTheShapedRun) {
+    // arrange, act
+    const TextLayout layout = synthetic_layout(5, 16.0f, Size{80.0f, 16.0f});
+    // assert the run travels beside the extents, so stage two replays what stage one measured (§9.1, AD-18)
+    ASSERT_NE(layout.run, nullptr);
+    EXPECT_EQ(layout.run->glyph_count(), 5u);
+}
+
+TEST(TextLayout, TheExtentsAreReportedBesideTheRun) {
+    // arrange, act
+    const TextLayout layout = synthetic_layout(5, 16.0f, Size{80.0f, 16.0f});
+    // assert a container sizes itself from the extents the measurement reported (§8.2)
+    EXPECT_FLOAT_EQ(layout.size.width, 80.0f);
+    EXPECT_FLOAT_EQ(layout.size.height, 16.0f);
+    EXPECT_GT(layout.ascent, 0.0f);
+    EXPECT_GT(layout.descent, 0.0f);
+}
+
+TEST(TextLayout, EqualityComparesWhatTheLayoutReports) {
     // arrange
-    const TextLayout first = TextLayout::from_text("albor", 16.0f);
-    const TextLayout same = TextLayout::from_text("albor", 16.0f);
-    const TextLayout other = TextLayout::from_text("alborx", 16.0f);
-    // act, assert
+    const TextLayout first = synthetic_layout(5, 16.0f, Size{80.0f, 16.0f});
+    const TextLayout same = synthetic_layout(4, 16.0f, Size{80.0f, 16.0f});
+    const TextLayout other = synthetic_layout(5, 16.0f, Size{90.0f, 16.0f});
+    // act, assert a layout is a measurement, so two layouts that report the same extent are equal (§9.1)
     EXPECT_EQ(first, same);
     EXPECT_NE(first, other);
+}
+
+TEST(TextLayout, EqualityTellsAnEmptyLayoutFromAMeasuredOne) {
+    // arrange
+    const TextLayout empty_layout;
+    // act
+    const TextLayout measured = synthetic_layout(5, 16.0f, Size{80.0f, 16.0f});
+    // assert a layout that measures nothing is not the same measurement as one that does (§9.1)
+    EXPECT_NE(empty_layout, measured);
 }
 
 TEST(FrameScene, ConstructionKeepsTheMetrics) {
@@ -444,7 +579,7 @@ TEST(FrameScene, ASceneCarriesNoTextRuns) {
 TEST(FrameScene, ATextColourListThatDoesNotMatchTheRunsIsRefused) {
     // arrange
     FrameScene scene = FrameScene::from_primitives(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f), {});
-    scene.add_text(TextLayout::from_text("albor", 16.0f), Point{10.0f, 20.0f});
+    scene.add_text(synthetic_layout(5, 16.0f, Size{80.0f, 16.0f}), Point{10.0f, 20.0f});
     // act
     scene.set_text_colors({Color::rgb(1.0f, 0.0f, 0.0f), Color::rgb(0.0f, 1.0f, 0.0f)});
     // assert
@@ -454,7 +589,7 @@ TEST(FrameScene, ATextColourListThatDoesNotMatchTheRunsIsRefused) {
 TEST(FrameScene, ASetTextColourTravelsWithTheRun) {
     // arrange
     FrameScene scene = FrameScene::from_primitives(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f), {});
-    scene.add_text(TextLayout::from_text("albor", 16.0f), Point{10.0f, 20.0f});
+    scene.add_text(synthetic_layout(5, 16.0f, Size{80.0f, 16.0f}), Point{10.0f, 20.0f});
     // act
     scene.set_text_colors({Color::rgb(0.25f, 0.5f, 0.75f)});
     // assert
@@ -582,12 +717,12 @@ TEST(RenderContext, DrawRoundedRectIsRecorded) {
 TEST(RenderContext, DrawTextIsRecorded) {
     // arrange
     TestRenderContext context;
-    const TextLayout layout = TextLayout::from_text("albor", 16.0f);
+    const TextLayout layout = synthetic_layout(5, 16.0f, Size{80.0f, 16.0f});
     // act
     context.draw_text(layout, Point{0.0f, 0.0f}, Paint{});
-    // assert
+    // assert the surface is handed the shaped run itself, so the draw replays what was measured (§9.1)
     ASSERT_EQ(context.drawn_texts.size(), 1u);
-    EXPECT_EQ(context.drawn_texts[0], "albor");
+    EXPECT_EQ(context.drawn_texts[0], layout.run);
 }
 
 TEST(RenderSurface, ABeginFrameHandsOutTheContext) {
@@ -1075,7 +1210,7 @@ TEST(PictureRecorder, CommandsAreRecordedInOrder) {
     PictureRecorder recorder;
     recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{});
     recorder.draw_rounded_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), 4.0f, Paint{});
-    recorder.draw_text(TextLayout::from_text("albor", 16.0f), Point{0.0f, 0.0f}, Paint{});
+    recorder.draw_text(synthetic_layout(5, 16.0f, Size{80.0f, 16.0f}), Point{0.0f, 0.0f}, Paint{});
     // assert
     ASSERT_EQ(recorder.commands().size(), 3u);
     EXPECT_EQ(recorder.commands()[0].kind, PictureCommandKind::Rect);
@@ -1088,8 +1223,8 @@ TEST(PictureRecorder, AnEmptyRectangleDoesNotRecord) {
     // arrange, act
     PictureRecorder recorder;
     recorder.draw_rect(Rect::from_origin_size(Point{5.0f, 5.0f}, Size{0.0f, 10.0f}), Paint{});
-    recorder.draw_text(TextLayout::from_text("", 16.0f), Point{0.0f, 0.0f}, Paint{});
-    // assert
+    recorder.draw_text(synthetic_layout(0, 16.0f, Size{0.0f, 0.0f}), Point{0.0f, 0.0f}, Paint{});
+    // assert a run with no glyphs records nothing, because it would draw nothing (§6.2)
     EXPECT_TRUE(recorder.empty());
 }
 
@@ -1159,7 +1294,7 @@ TEST(PictureRecorder, ANestedPictureFlattensInOrder) {
     outer.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{});
     // act
     outer.draw_picture(picture, Transform{});
-    outer.draw_text(TextLayout::from_text("albor", 16.0f), Point{0.0f, 0.0f}, Paint{});
+    outer.draw_text(synthetic_layout(5, 16.0f, Size{80.0f, 16.0f}), Point{0.0f, 0.0f}, Paint{});
     // assert
     ASSERT_EQ(outer.commands().size(), 3u);
     EXPECT_EQ(outer.commands()[0].kind, PictureCommandKind::Rect);

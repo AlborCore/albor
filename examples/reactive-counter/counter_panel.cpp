@@ -5,8 +5,8 @@
 
 namespace albor
 {
-    CounterPanel::CounterPanel(BindingEngine* engine) :
-        Component(engine, "counter_panel") {
+    CounterPanel::CounterPanel(BindingEngine* engine, TextEngine* text_engine) :
+        Component(engine, "counter_panel"), m_text_engine(text_engine) {
         // the three properties are registered first, so they all share this component base (§7.2, AD-04b)
         register_property(count);
         register_property(label);
@@ -47,7 +47,7 @@ namespace albor
     }
 
     Point CounterPanel::label_origin() const {
-        // the label sits under the bar, so the two never overlap (§6.1)
+        // the label box sits under the bar, so the two never overlap (§6.1)
         return Point{bounds().x + m_padding, bounds().y + m_padding + m_bar_height + 24.0f};
     }
 
@@ -63,7 +63,14 @@ namespace albor
         // the label carries the bound text, which re-evaluates with the count (§6.1, §7.3)
         Paint text_paint;
         text_paint.fill = Color::rgb(0.92f, 0.94f, 0.96f);
-        context.draw_text(TextLayout::from_text(label.get(), 20.0f), label_origin(), text_paint);
+        // the label is measured where it is drawn, because the binding that drives it changes without a setter (§7.3, §9.1)
+        if (m_text_engine != nullptr) {
+            // the measurement is a cached lookup once the run has been shaped, so a repeat frame pays no shaping (§9.1)
+            const TextLayout label_layout = m_text_engine->measure(label.get(), 0.0f, 20.0f);
+            // an unmeasured run draws nothing, because it carries no glyph (§6.2)
+            if (!label_layout.empty())
+                context.draw_text(label_layout, label_origin(), text_paint);
+        }
         // the children draw over the panel, which a composed tree needs (§6.1)
         UiNode::render(context);
     }

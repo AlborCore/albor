@@ -1,8 +1,12 @@
 #include "text/text-skia/skia_text_engine.h"
 
+#include <functional>
 #include <string>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
+#include <skia/core/SkFont.h>
 #include <skia/modules/skparagraph/include/FontCollection.h>
 #include <skia/modules/skparagraph/include/Metrics.h>
 #include <skia/modules/skparagraph/include/Paragraph.h>
@@ -14,16 +18,63 @@
 
 namespace albor
 {
+    // how many shaped runs the cache holds before it drops them, because an application that measures nothing twice must not grow it without limit (§9.1)
+    constexpr std::size_t MAXIMUM_CACHED_RUNS = 512;
+
+    namespace
+    {
+        // what a shaped run is cached under, which is the text plus everything the layout of that text depends on (§9.1)
+        struct CacheKey
+        {
+            // the text the run was shaped from (§9.1)
+            std::string text;
+
+            // the ceiling the run was wrapped at, where a non positive one means no wrapping at all (§8.2)
+            float max_width = 0.0f;
+
+            // the size every line was shaped at (§9.1)
+            float font_size = 0.0f;
+        };
+
+        // compare two keys field by field, which is what a cached run is identified by (§9.1)
+        bool operator==(const CacheKey& lhs, const CacheKey& rhs) {
+            // the three fields are the whole key, so anything else would serve a run shaped for other inputs (§9.1)
+            return lhs.text == rhs.text && lhs.max_width == rhs.max_width && lhs.font_size == rhs.font_size;
+        }
+
+        // hash a key into a bucket, which is what the cache looks the run up by (§9.1)
+        struct CacheHasher
+        {
+            // fold the three fields into one hash, because a run shaped for other metrics must not share an entry (§9.1)
+            std::size_t operator()(const CacheKey& key) const {
+                // the text seeds the hash, because the text is what distinguishes one run from another (§9.1)
+                std::size_t seed = std::hash<std::string>{}(key.text);
+                // the ceiling is folded in, because the same text wrapped differently is another run (§9.1)
+                seed ^= std::hash<float>{}(key.max_width) + 0x9e3779b9U + (seed << 6) + (seed >> 2);
+                // the font size is folded in, because the same text shaped at another size is another run (§9.1)
+                seed ^= std::hash<float>{}(key.font_size) + 0x9e3779b9U + (seed << 6) + (seed >> 2);
+                return seed;
+            }
+        };
+    } // namespace
+
     // the shaping state, which holds everything that names a skia type so the header does not (§9.1)
     struct SkiaTextEngine::State
     {
         // the collection that owns the resolved typefaces, which every measurement borrows (§9.1)
         skia::textlayout::FontCollection collection;
+
         // the unicode implementation, which the paragraph builder borrows for line breaking and bidi (§9.1)
         sk_sp<SkUnicode> unicode;
 
         // the services this engine was built over, kept so the state and the constructor cannot disagree (§9.1)
         TextServices services;
+
+        // the shaped runs measured so far, which stage one replays instead of shaping again (§9.1, §6.1)
+        mutable std::unordered_map<CacheKey, TextLayout, CacheHasher> cache;
+
+        // how many shaping passes ran, which a test reads to prove the cache absorbs a repeated measure (§9.1)
+        mutable std::size_t shaped_runs = 0;
     };
 
     SkiaTextEngine::SkiaTextEngine() :
@@ -53,9 +104,15 @@ namespace albor
     }
 
     TextLayout SkiaTextEngine::measure(std::string_view text, float max_width, float font_size) const {
-        // an engine without unicode cannot shape, because skparagraph dereferences it without checking, so it refuses rather than passing a null through; an empty run has no glyphs to shape at all, and an unmeasured run reports nothing because a fabricated extent would size a layout wrongly (§9.1)
+        // an engine without unicode cannot shape, because skparagraph dereferences it without checking, so it refuses rather than passing a null through; an empty run has no glyphs to shape at all, and an unmeasured run reports nothing because a fabricated extent would size a layout wrongly; measurement runs in stage one on the ui thread, so the cache below is ui thread state while the runs it hands out cross to the render thread as immutable snapshots (§9.1, §6.1, §10.5)
         if (!ready() || text.empty())
-            return {.ascent = 0.0f, .descent = 0.0f};
+            return TextLayout{};
+        // the cache is keyed by the text and everything its layout depends on, because a measure of an unchanged run must not reshape it (§9.1)
+        const CacheKey key{.text = std::string(text), .max_width = max_width, .font_size = font_size};
+        // a cached run is handed back as it was measured, so a steady state frame pays no shaping (§9.1)
+        const auto cached = m_state->cache.find(key);
+        if (cached != m_state->cache.end())
+            return cached->second;
         // the text style carries the requested font size, which is what the paragraph lays out against (§9.1)
         skia::textlayout::TextStyle text_style;
         // the font size is the only typography the engine exposes, so it is set and nothing else (§9.1)
@@ -73,27 +130,70 @@ namespace albor
         const float layout_width = max_width > 0.0f ? max_width : UNBOUNDED_WIDTH;
         // the paragraph lays the run out at that width, which is the measure phase of §8.2 (§9.1)
         paragraph->layout(layout_width);
-        // the line metrics carry the ascent and descent the baseline draw needs (§9.1)
-        std::vector<skia::textlayout::LineMetrics> lines;
+        // the shaped lines are what the render stage replays, so they are collected before the paragraph goes away (§9.1, AD-18)
+        std::vector<ShapedRun::Line> lines;
+        // the visitor reports every line in reading order and names the font each line was shaped with (§9.1)
+        paragraph->visit([&lines](int, const skia::textlayout::Paragraph::VisitorInfo* info) {
+            // a null visit info marks the end of a line, which carries nothing to record (§9.1)
+            if (info == nullptr || info->count <= 0)
+                return;
+            // the line is built aside because the visitor reports one line at a time (§9.1)
+            ShapedRun::Line line;
+            // the typeface the line was shaped with is what the renderer draws its glyphs from, and the collection keeps it alive for as long as the engine does (§9.1)
+            line.font = FontHandle::from_object(info->font.getTypeface());
+            // the line origin is the baseline the glyph positions of the line hang from (§9.1)
+            line.origin = Point{.x = info->origin.x(), .y = info->origin.y()};
+            // the glyphs are reserved, because the visitor reports how many there are (§9.1)
+            line.glyphs.reserve(static_cast<std::size_t>(info->count));
+            // every glyph contributes its index and its position beside the line origin (§9.1)
+            for (int index = 0; index < info->count; index++)
+                line.glyphs.push_back(ShapedGlyph{.id = static_cast<std::uint32_t>(info->glyphs[index]), .position = Point{.x = info->positions[index].x(), .y = info->positions[index].y()}});
+            // the line joins the run in the order the visitor reported it (§9.1)
+            lines.push_back(std::move(line));
+        });
+        // the line metrics carry the ascent and descent the caller places content by (§9.1)
+        std::vector<skia::textlayout::LineMetrics> line_metrics;
         // the metrics are read per line, because a wrapped run carries one ascent per line (§9.1)
-        paragraph->getLineMetrics(lines);
-        // the run keeps its text, so the render stage has the utf8 bytes to draw later (§6.2)
-        TextLayout layout = TextLayout::from_text(std::string(text), font_size);
+        paragraph->getLineMetrics(line_metrics);
+        // the layout starts as an unmeasured default, so a run that shaped no line reports nothing (§9.1)
+        TextLayout layout;
+        // the shaped run is what the render stage replays verbatim, which is what makes measurement and drawing one path (§9.1, AD-18)
+        layout.run = ShapedRun::make(std::move(lines), font_size);
         // the reported width is the longest line rather than the layout width, because the last line may be short (§9.1)
         const float longest_line = static_cast<float>(paragraph->getLongestLine());
         // the reported height is the whole run, which is what every line of it adds up to (§9.1)
         const float run_height = static_cast<float>(paragraph->getHeight());
         layout.size = Size{.width = longest_line, .height = run_height};
         // a run with no lines carries no metrics, which is what an empty metrics list means (§9.1)
-        if (!lines.empty()) {
+        if (!line_metrics.empty()) {
             // the first line is the whole run for the unwrapped case the widgets ask for (§9.1)
-            const float first_ascent = static_cast<float>(lines.front().fAscent);
-            // the descent is read beside it, because a baseline draw needs the pair from one line (§9.1)
-            const float first_descent = static_cast<float>(lines.front().fDescent);
-            layout.ascent = first_ascent;
-            layout.descent = first_descent;
+            layout.ascent = static_cast<float>(line_metrics.front().fAscent);
+            // the descent is read beside it, because a caller places content by the pair (§9.1)
+            layout.descent = static_cast<float>(line_metrics.front().fDescent);
         }
+        // the shaping pass is counted, so a test can tell a cache hit from a fresh shaping (§9.1)
+        m_state->shaped_runs++;
+        // a full cache drops its runs, because an unbounded cache is a leak an application cannot see (§9.1)
+        if (m_state->cache.size() >= MAXIMUM_CACHED_RUNS)
+            m_state->cache.clear();
+        // the run is cached under the key that reproduces it, so the next measure of the same inputs is a lookup (§9.1)
+        m_state->cache.emplace(key, layout);
         return layout;
+    }
+
+    std::size_t SkiaTextEngine::shaped_run_count() const {
+        // the count is what the engine has shaped, which excludes every run the cache served (§9.1)
+        return m_state->shaped_runs;
+    }
+
+    std::size_t SkiaTextEngine::cache_size() const {
+        // the size is what a memory pressure policy reads before it decides to drop (§9.1)
+        return m_state->cache.size();
+    }
+
+    void SkiaTextEngine::clear_cache() const {
+        // the cache holds only runs the ui thread can rebuild, so dropping them costs nothing but the next shaping (§9.1)
+        m_state->cache.clear();
     }
 
     void SkiaTextEngine::install() {

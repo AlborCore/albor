@@ -1,6 +1,9 @@
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -34,12 +37,15 @@ namespace
             // an engine that cannot measure reports nothing, which is what an absent backend looks like (§9.1)
             if (!usable)
                 return TextLayout{};
-            // the run keeps its text, because the recorded scene needs the bytes the draw will use (§6.2)
-            TextLayout layout = TextLayout::from_text(std::string(text), font_size);
-            // the advance counts bytes and the ceiling clamps, which is what a container expects (§8.2)
-            const float advanced = static_cast<float>(text.size()) * ADVANCE;
-            layout.size = Size{.width = max_width > 0.0f ? std::min(advanced, max_width) : advanced, .height = HEIGHT};
-            return layout;
+            // the double shapes one glyph per character, which stands in for shaping without a font backend (§9.1)
+            ShapedRun::Line line;
+            // the line origin is the baseline the synthesized glyphs hang from (§9.1)
+            line.origin = Point{.x = 0.0f, .y = HEIGHT * 0.8f};
+            // every character becomes one glyph placed a fixed advance apart, which is what the double measures (§9.1)
+            for (const char character : text)
+                line.glyphs.push_back(ShapedGlyph{.id = static_cast<std::uint32_t>(character), .position = Point{.x = static_cast<float>(line.glyphs.size()) * ADVANCE, .y = 0.0f}});
+            // the shaped run travels beside the extents the layout reports, which is what a measurement hands over (§9.1)
+            return TextLayout{.run = ShapedRun::make({std::move(line)}, font_size), .size = Size{.width = std::min(static_cast<float>(text.size()) * ADVANCE, max_width > 0.0f ? max_width : static_cast<float>(text.size()) * ADVANCE), .height = HEIGHT}, .ascent = HEIGHT * 0.8f, .descent = HEIGHT * 0.2f};
         }
 
         [[nodiscard]] bool ready() const override {
@@ -157,13 +163,155 @@ TEST(SkiaTextEngineChecks, MeasuresANonEmptyRunToAShapedExtent) {
     EXPECT_GT(layout.size.height, 0.0f);
 }
 
-TEST(SkiaTextEngineChecks, KeepsTheMeasuredText) {
+TEST(SkiaTextEngineChecks, ShapesTheMeasuredTextIntoGlyphs) {
     // arrange
     SkiaTextEngine engine;
     // act
     const TextLayout layout = engine.measure("Albor", 1000.0f);
-    // assert the run carries the utf8 bytes the render stage needs (§6.2)
-    EXPECT_EQ(layout.text, "Albor");
+    // assert the render stage is handed shaped glyphs rather than bytes, which is what makes drawing replay measurement (§9.1, AD-18)
+    ASSERT_NE(layout.run, nullptr);
+    EXPECT_EQ(layout.run->glyph_count(), 5u);
+}
+
+TEST(SkiaTextEngineChecks, EveryShapedLineCarriesTheTypefaceItWasShapedWith) {
+    // arrange
+    SkiaTextEngine engine;
+    // act
+    const TextLayout layout = engine.measure("Albor", 1000.0f);
+    // assert a line names the typeface its glyphs belong to, so a renderer draws them in the right font (§9.1)
+    ASSERT_EQ(layout.run->lines().size(), 1u);
+    EXPECT_TRUE(layout.run->lines()[0].font.valid());
+}
+
+TEST(SkiaTextEngineChecks, TheShapedRunCarriesTheRequestedFontSize) {
+    // arrange
+    SkiaTextEngine engine;
+    // act
+    const TextLayout layout = engine.measure("Albor", 1000.0f, 24.0f);
+    // assert the renderer builds its font from the requested size rather than from the run height, which is what a wrapped run got wrong (§9.1)
+    EXPECT_FLOAT_EQ(layout.run->font_size(), 24.0f);
+}
+
+TEST(SkiaTextEngineChecks, TheGlyphsAdvanceAcrossTheLine) {
+    // arrange
+    SkiaTextEngine engine;
+    // act
+    const TextLayout layout = engine.measure("Albor", 1000.0f);
+    // assert the shaped positions move rightwards, because shaping placed the glyphs in reading order (§9.1)
+    const std::vector<ShapedGlyph>& glyphs = layout.run->lines()[0].glyphs;
+    ASSERT_GE(glyphs.size(), 2u);
+    EXPECT_LT(glyphs.front().position.x, glyphs.back().position.x);
+}
+
+TEST(SkiaTextEngineChecks, AWrappedRunShapesIntoSeveralBaselines) {
+    // arrange
+    SkiaTextEngine engine;
+    // act
+    const TextLayout wrapped = engine.measure("the quick brown fox jumps over the lazy dog", 60.0f);
+    const TextLayout unwrapped = engine.measure("the quick brown fox jumps over the lazy dog", 0.0f);
+    // assert a wrapped run places every line on its own baseline, which is what stage two replays (§9.1)
+    EXPECT_GT(wrapped.run->lines().size(), unwrapped.run->lines().size());
+    EXPECT_GT(wrapped.run->lines().back().origin.y, wrapped.run->lines().front().origin.y);
+}
+
+TEST(SkiaTextEngineChecks, AWrappedRunShapesEveryGlyphButTheSpacesItBreaksOn) {
+    // arrange
+    SkiaTextEngine engine;
+    const TextLayout unwrapped = engine.measure("the quick brown fox jumps over the lazy dog", 0.0f);
+    // act
+    const TextLayout wrapped = engine.measure("the quick brown fox jumps over the lazy dog", 60.0f);
+    // assert a space consumed by a line break shapes no glyph, so the wrapped run carries exactly one glyph fewer per break than the unwrapped one (§9.1)
+    const std::size_t breaks = wrapped.run->lines().size() - 1;
+    EXPECT_EQ(wrapped.run->glyph_count() + breaks, unwrapped.run->glyph_count());
+}
+
+TEST(SkiaTextEngineChecks, ASecondMeasureOfTheSameRunIsServedFromTheCache) {
+    // arrange
+    SkiaTextEngine engine;
+    const TextLayout first = engine.measure("cached", 200.0f);
+    const std::size_t shaped_after_first = engine.shaped_run_count();
+    // act
+    const TextLayout second = engine.measure("cached", 200.0f);
+    // assert a repeated measure shapes nothing and hands back the same run, which is what a steady state frame needs (§9.1)
+    EXPECT_EQ(second.run, first.run);
+    EXPECT_EQ(engine.shaped_run_count(), shaped_after_first);
+    EXPECT_EQ(engine.cache_size(), 1u);
+}
+
+TEST(SkiaTextEngineChecks, ADifferentCeilingShapesAnotherRun) {
+    // arrange
+    SkiaTextEngine engine;
+    engine.measure("twice shaped", 200.0f);
+    const std::size_t shaped_before = engine.shaped_run_count();
+    // act
+    engine.measure("twice shaped", 80.0f);
+    // assert the same text wrapped at another ceiling is another run, so the cache cannot serve the first (§9.1)
+    EXPECT_EQ(engine.shaped_run_count(), shaped_before + 1);
+}
+
+TEST(SkiaTextEngineChecks, AnotherFontSizeShapesAnotherRun) {
+    // arrange
+    SkiaTextEngine engine;
+    engine.measure("twice shaped", 200.0f, 16.0f);
+    const std::size_t shaped_before = engine.shaped_run_count();
+    // act
+    engine.measure("twice shaped", 200.0f, 32.0f);
+    // assert the same text shaped at another size is another run, so the cache cannot serve the first (§9.1)
+    EXPECT_EQ(engine.shaped_run_count(), shaped_before + 1);
+}
+
+TEST(SkiaTextEngineChecks, DistinctRunsEachTakeAnEntry) {
+    // arrange
+    SkiaTextEngine engine;
+    // act
+    engine.measure("first", 0.0f);
+    engine.measure("second", 0.0f);
+    // assert the cache holds every distinct run, because a tree lays out more than one label (§9.1)
+    EXPECT_EQ(engine.cache_size(), 2u);
+}
+
+TEST(SkiaTextEngineChecks, ClearingTheCacheDropsEveryRun) {
+    // arrange
+    SkiaTextEngine engine;
+    engine.measure("first", 0.0f);
+    engine.measure("second", 0.0f);
+    // act
+    engine.clear_cache();
+    // assert a memory pressure policy empties the cache, because the ui thread can rebuild every run (§9.1)
+    EXPECT_EQ(engine.cache_size(), 0u);
+}
+
+TEST(SkiaTextEngineChecks, TheCacheStaysBoundedWhenNothingIsEverRepeated) {
+    // arrange an application that measures a different run every time would grow the cache without limit (§9.1)
+    SkiaTextEngine engine;
+    // act
+    for (std::size_t index = 0; index < 600; index++)
+        engine.measure("run " + std::to_string(index), 0.0f);
+    // assert the cache drops its runs once it is full, so a runaway application cannot grow it without bound (§9.1)
+    EXPECT_LE(engine.cache_size(), 512u);
+    EXPECT_EQ(engine.shaped_run_count(), 600u);
+}
+
+TEST(SkiaTextEngineChecks, AMeasureAfterClearingShapesAgain) {
+    // arrange
+    SkiaTextEngine engine;
+    const TextLayout first = engine.measure("rebuilt", 0.0f);
+    engine.clear_cache();
+    // act
+    const TextLayout rebuilt = engine.measure("rebuilt", 0.0f);
+    // assert the same inputs shape the same run again, so dropping the cache costs only the next shaping (§9.1)
+    EXPECT_NE(rebuilt.run, first.run);
+    EXPECT_EQ(*rebuilt.run, *first.run);
+}
+
+TEST(SkiaTextEngineChecks, AnEmptyRunIsNeverCached) {
+    // arrange
+    SkiaTextEngine engine;
+    // act
+    engine.measure("", 100.0f);
+    // assert a run with nothing to shape costs no cache entry (§9.1)
+    EXPECT_EQ(engine.cache_size(), 0u);
+    EXPECT_EQ(engine.shaped_run_count(), 0u);
 }
 
 TEST(SkiaTextEngineChecks, WidthGrowsWithTheRun) {
@@ -320,6 +468,7 @@ TEST(SkiaTextEngineChecks, AnEngineWithoutAUnicodeMeasuresNothing) {
     const TextLayout layout = engine.measure("Albor", 1000.0f);
     // assert skparagraph dereferences the unicode without checking, so the engine refuses instead of passing a null through (§9.1)
     EXPECT_TRUE(layout.empty());
+    EXPECT_EQ(layout.run, nullptr);
     EXPECT_FLOAT_EQ(layout.size.width, 0.0f);
 }
 
@@ -340,6 +489,7 @@ TEST(SkiaTextEngineChecks, AnEngineWithNoServicesMeasuresNothing) {
     const TextLayout layout = engine.measure("Albor", 1000.0f, 24.0f);
     // assert an unready engine reports nothing rather than a fabricated extent (§9.1)
     EXPECT_TRUE(layout.empty());
+    EXPECT_EQ(layout.run, nullptr);
     EXPECT_FLOAT_EQ(layout.ascent, 0.0f);
     EXPECT_FLOAT_EQ(layout.descent, 0.0f);
 }

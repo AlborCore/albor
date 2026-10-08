@@ -1,6 +1,7 @@
 #include "render/render-skia/skia_render_context.h"
 
 #include <algorithm>
+#include <vector>
 
 #include <skia/core/SkBitmap.h>
 #include <skia/core/SkCanvas.h>
@@ -12,6 +13,7 @@
 #include <skia/core/SkRRect.h>
 #include <skia/core/SkRect.h>
 #include <skia/core/SkSamplingOptions.h>
+#include <skia/core/SkTypeface.h>
 
 #include "render/image_resource.h"
 #include "render/line_batch.h"
@@ -126,15 +128,42 @@ namespace albor::skia
         // an empty run has no glyphs to draw, so it costs nothing (§6.2)
         if (layout.empty())
             return;
-        // the font size comes from the run height, which the ui thread measured (§9.1)
-        SkFont font(nullptr, layout.size.height);
-        font.setSubpixel(true);
         // the text takes the fill colour when the paint fills, and the stroke colour otherwise (§6.2)
         SkPaint text_paint;
         text_paint.setColor(SkColor(to_skia_color(paint.fills() ? paint.fill : paint.stroke)));
         text_paint.setAntiAlias(true);
-        // the origin is the baseline, which is what the run ascent and descent describe (§9.1)
-        m_canvas->drawSimpleText(layout.text.c_str(), layout.text.size(), SkTextEncoding::kUTF8, origin.x, origin.y, font, text_paint);
+        // the run is the shaped output stage one measured, so the glyphs are replayed rather than shaped again (§9.1, AD-18)
+        const ShapedRun& run = *layout.run;
+        // every line carries its own typeface and its own baseline, because a wrapped run and a fallback both split by line (§9.1)
+        for (const ShapedRun::Line& line : run.lines()) {
+            // a line whose typeface this backend cannot interpret is skipped rather than guessed at, because a wrong font is worse than no text (§3.5, §9.1)
+            if (!line.font.valid())
+                continue;
+            // the typeface the run was shaped with is retained for the draw, because the handle only borrows the one the text engine owns (§9.1)
+            sk_sp<SkTypeface> typeface = sk_ref_sp(static_cast<const SkTypeface*>(line.font.object()));
+            // the font is built from the typeface the run was shaped with at the size it was shaped at, which is what makes measurement and drawing one path (§9.1)
+            SkFont font(typeface, run.font_size());
+            // subpixel positioning keeps a fractional origin sharp, which a snapped one would round away (§9.1)
+            font.setSubpixel(true);
+            // the glyphs and their positions are copied into the spans skia draws, because the run hands them out as const (§6.3)
+            std::vector<SkGlyphID> glyphs;
+            // the positions are parallel to the glyphs, because skia draws one position per glyph (§6.3)
+            std::vector<SkPoint> positions;
+            // the run already knows how many glyphs the line holds, so both spans are reserved once (§6.3)
+            glyphs.reserve(line.glyphs.size());
+            positions.reserve(line.glyphs.size());
+            // every shaped glyph contributes its index and its position beside the line origin (§9.1)
+            for (const ShapedGlyph& glyph : line.glyphs) {
+                // the glyph id is narrowed to what skia addresses glyphs with, which is what the visitor reported (§9.1)
+                glyphs.push_back(static_cast<SkGlyphID>(glyph.id));
+                // the position is taken as skia wants it, relative to the origin the draw is given (§6.3)
+                positions.push_back(SkPoint::Make(glyph.position.x, glyph.position.y));
+            }
+            // the line origin is the baseline, added to the run origin the caller placed the run at (§9.1)
+            const SkPoint line_origin = SkPoint::Make(origin.x + line.origin.x, origin.y + line.origin.y);
+            // the positioned glyphs are drawn as shaped, so skia rasterizes exactly the glyphs stage one measured (§9.1)
+            m_canvas->drawGlyphs(glyphs, positions, line_origin, font, text_paint);
+        }
     }
 
     std::size_t SkiaRenderContext::depth() const {

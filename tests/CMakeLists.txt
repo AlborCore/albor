@@ -41,6 +41,16 @@ target_compile_features(albor-tests PRIVATE cxx_std_23)
 # frontend through it and naming albor-compiler as well would hand the linker the same archive twice (§11.2)
 target_link_libraries(albor-tests PRIVATE albor-layout albor-focus albor-widgets albor-input albor-text-skia albor-application albor-manifest GTest::gtest_main)
 
+# the suite that draws through the skia render context reaches that backend directly, which is the one module the
+# other suites never link because it reaches a platform surface (§3.2, AD-16). the backend is apple only, so the
+# suite is gathered and linked on apple platforms alone, and the raster canvas it draws into needs no window
+# server, so the binary still runs headless (§2.2)
+if(APPLE)
+    file(GLOB_RECURSE APPLE_CPP_SOURCES "./render_skia.test.cpp")
+    target_sources(albor-tests PRIVATE ${APPLE_CPP_SOURCES})
+    target_link_libraries(albor-tests PRIVATE albor-render-skia)
+endif()
+
 
 # the test binary is executed directly rather than through ctest, so it never needs a display (§2.2)
 include(GoogleTest)

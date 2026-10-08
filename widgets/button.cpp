@@ -58,8 +58,8 @@ namespace albor
         // an empty label draws no run, because a button may carry no text at all (§6.2)
         if (m_label_layout.empty())
             return;
-        // the run is centred on the plate, because a push control centres its label (§6.1)
-        const Point origin{.x = bounds().x + (bounds().width - m_label_layout.size.width) * 0.5f, .y = bounds().y + (bounds().height - m_label_layout.size.height) * 0.5f + m_label_layout.ascent};
+        // the run is centred on the plate as a box, because every line of a shaped run places its own baseline (§6.1, §9.1)
+        const Point origin{.x = bounds().x + (bounds().width - m_label_layout.size.width) * 0.5f, .y = bounds().y + (bounds().height - m_label_layout.size.height) * 0.5f};
         // the run is recorded over the plate, which is the last thing the frame draws for this button (§6.1)
         context.draw_text(m_label_layout, origin, {.fill = Color::rgba(1.0f, 1.0f, 1.0f, m_disabled ? 0.5f : 1.0f)});
     }

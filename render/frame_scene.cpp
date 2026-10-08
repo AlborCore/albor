@@ -8,20 +8,8 @@
 namespace albor
 {
     bool TextLayout::empty() const {
-        // a run with no glyphs costs nothing to draw (§6.2)
-        return text.empty();
-    }
-
-    TextLayout TextLayout::from_text(std::string text, float font_size) {
-        // the phase 1 measurement is a fixed advance per byte, which phase 3 replaces with shaping (§9.1)
-        const float advance = font_size * 0.6f;
-        TextLayout layout;
-        layout.text = std::move(text);
-        layout.size = Size{advance * static_cast<float>(layout.text.size()), font_size};
-        // the baseline sits one fifth of the font size above the bottom of the run (§9.1)
-        layout.ascent = font_size * 0.8f;
-        layout.descent = font_size * 0.2f;
-        return layout;
+        // a run with no glyphs costs nothing to draw, whether it carries no shaped run or an empty one (§6.2)
+        return !run || run->empty();
     }
 
     FrameScene::FrameScene(WindowMetrics metrics) :

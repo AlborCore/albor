@@ -71,13 +71,17 @@ namespace
                 return TextLayout{};
             // the measurement is counted, so a test can prove the label asked (§9.1)
             measurements++;
-            // the run keeps its text, so the recorded scene carries the bytes the draw will need (§6.2)
-            TextLayout layout = TextLayout::from_text(std::string(text), font_size);
-            // the advance counts bytes, and the ceiling clamps the result the way a container expects (§8.2)
+            // the double shapes one glyph per character, which stands in for shaping without a font backend (§9.1)
+            ShapedRun::Line line;
+            // the line origin is the baseline the synthesized glyphs hang from (§9.1)
+            line.origin = Point{.x = 0.0f, .y = HEIGHT * 0.8f};
+            // every character becomes one glyph placed a fixed advance apart, which is what the double measures (§9.1)
+            for (const char character : text)
+                line.glyphs.push_back(ShapedGlyph{.id = static_cast<std::uint32_t>(character), .position = Point{.x = static_cast<float>(line.glyphs.size()) * ADVANCE, .y = 0.0f}});
+            // the advance counts characters, and the ceiling clamps the result the way a container expects (§8.2)
             const float advanced = static_cast<float>(text.size()) * ADVANCE;
-            layout.size = Size{.width = max_width > 0.0f ? std::min(advanced, max_width) : advanced, .height = HEIGHT};
-            // the metrics come from the factory, because the double shapes nothing of its own (§9.1)
-            return layout;
+            // the shaped run travels beside the extents, which is what a measurement hands over (§9.1)
+            return TextLayout{.run = ShapedRun::make({std::move(line)}, font_size), .size = Size{.width = max_width > 0.0f ? std::min(advanced, max_width) : advanced, .height = HEIGHT}, .ascent = HEIGHT * 0.8f, .descent = HEIGHT * 0.2f};
         }
 
         [[nodiscard]] bool ready() const override {
@@ -170,7 +174,7 @@ TEST(LabelChecks, RendersTheRunIntoTheScene) {
     label.render(recorder);
     // assert
     ASSERT_EQ(recorder.scene()->texts().size(), 1u);
-    EXPECT_EQ(recorder.scene()->texts().front().text, "Albor");
+    EXPECT_EQ(recorder.scene()->texts().front().run->glyph_count(), 5u);
 }
 
 TEST(LabelChecks, AnEmptyRunRecordsNothing) {
@@ -517,7 +521,7 @@ TEST(ButtonChecks, RendersThePlateAndTheLabel) {
     // assert the plate is recorded by the background hook and the run by the label (§6.1)
     EXPECT_EQ(recorder.scene()->rects().size(), 1u);
     EXPECT_EQ(recorder.scene()->texts().size(), 1u);
-    EXPECT_EQ(recorder.scene()->texts().front().text, "Press");
+    EXPECT_EQ(recorder.scene()->texts().front().run->glyph_count(), 5u);
 }
 
 TEST(ButtonChecks, AnUnlabelledButtonRecordsOnlyThePlate) {
@@ -2113,7 +2117,8 @@ TEST(LabelChecks, HandsBackTheMeasuredRun) {
     // act
     const TextLayout run = label.layout();
     // assert the render pass draws exactly the run the measure pass produced (§9.1)
-    EXPECT_EQ(run.text, "Albor");
+    ASSERT_NE(run.run, nullptr);
+    EXPECT_EQ(run.run->glyph_count(), 5u);
     EXPECT_GT(run.size.width, 0.0f);
 }
 
@@ -2127,7 +2132,8 @@ TEST(LabelChecks, TheMeasuredRunFollowsAFontSizeChange) {
     // act
     label.set_font_size(48.0f);
     // assert the run is remeasured eagerly, so the layout the render pass draws is already current (§9.1)
-    EXPECT_EQ(label.layout().text, "Albor");
+    ASSERT_NE(label.layout().run, nullptr);
+    EXPECT_EQ(label.layout().run->glyph_count(), 5u);
     EXPECT_GT(label.layout().size.height, 0.0f);
 }
 
