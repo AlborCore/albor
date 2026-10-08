@@ -13,6 +13,7 @@
 #include "render/frame_scene.h"
 #include "render/render-skia/skia_render_context.h"
 #include "text/text-skia/skia_text_engine.h"
+#include "tools/alloc-probe/alloc_probe.h"
 
 using namespace albor;
 using namespace albor::skia;
@@ -204,4 +205,45 @@ TEST(SkiaRenderContextTextChecks, DrawTextOnAContextWithNoCanvasDrawsNothing) {
     SkiaRenderContext context(nullptr, 1.0f);
     // act / assert a context with no canvas draws nothing rather than reaching through a null canvas (§6.2)
     EXPECT_NO_FATAL_FAILURE(context.draw_text(layout, Point{10.0f, 40.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)}));
+}
+
+TEST(SkiaRenderContextTextChecks, DrawingARunCostsNoAllocationOnceItHasDrawn) {
+    // arrange the run is shaped once, and the context is built over a surface that needs no window server (§6.3)
+    SkiaTextEngine engine;
+    const TextLayout layout = engine.measure("Albor", 1000.0f, 20.0f);
+    sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
+    const Paint paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)};
+    // act the first draw pays for whatever the draw path allocates for the first time (§6.3)
+    SkiaRenderContext warm_up(surface->getCanvas(), 1.0f);
+    warm_up.draw_text(layout, Point{10.0f, 40.0f}, paint);
+    probe::set_counting(true);
+    probe::reset();
+    // act the second draw of the same run, which is what a steady state frame costs (§6.3)
+    SkiaRenderContext context(surface->getCanvas(), 1.0f);
+    context.draw_text(layout, Point{10.0f, 40.0f}, paint);
+    const std::size_t repeat_allocations = probe::count();
+    probe::set_counting(false);
+    // assert the draw allocates nothing, because the glyph and position buffers live with the thread (§6.3)
+    EXPECT_EQ(repeat_allocations, 0u);
+}
+
+TEST(SkiaRenderContextTextChecks, DrawingManyLinesOfOneRunCostsNoAllocation) {
+    // arrange a wrapped run is several lines, so a per line buffer would show up here (§9.1)
+    SkiaTextEngine engine;
+    const TextLayout layout = engine.measure("the quick brown fox jumps over the lazy dog", 80.0f, 20.0f);
+    ASSERT_GT(layout.run->lines().size(), 1u);
+    sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
+    const Paint paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)};
+    // act the first draw warms the thread buffers for every line it walks (§6.3)
+    SkiaRenderContext warm_up(surface->getCanvas(), 1.0f);
+    warm_up.draw_text(layout, Point{10.0f, 40.0f}, paint);
+    probe::set_counting(true);
+    probe::reset();
+    // act the second draw walks the same lines again, which is the steady state case (§6.3)
+    SkiaRenderContext context(surface->getCanvas(), 1.0f);
+    context.draw_text(layout, Point{10.0f, 40.0f}, paint);
+    const std::size_t repeat_allocations = probe::count();
+    probe::set_counting(false);
+    // assert no line allocates, because the buffers are emptied and refilled rather than rebuilt (§6.3)
+    EXPECT_EQ(repeat_allocations, 0u);
 }

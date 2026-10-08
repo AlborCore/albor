@@ -22,6 +22,15 @@
 
 namespace albor::skia
 {
+    namespace
+    {
+        // the glyph span one draw fills, reused across lines and frames, and per thread (§6.3)
+        thread_local std::vector<SkGlyphID> g_glyph_scratch;
+
+        // the positions one draw fills, which are parallel to the glyphs because skia draws one per glyph (§6.3)
+        thread_local std::vector<SkPoint> g_position_scratch;
+    } // namespace
+
     SkiaRenderContext::SkiaRenderContext(SkCanvas* canvas, float device_scale) :
         m_canvas(canvas), m_device_scale(device_scale) {
         // a context with no canvas draws nothing, so it starts with an empty clip (§6.2)
@@ -145,24 +154,21 @@ namespace albor::skia
             SkFont font(typeface, run.font_size());
             // subpixel positioning keeps a fractional origin sharp, which a snapped one would round away (§9.1)
             font.setSubpixel(true);
-            // the glyphs and their positions are copied into the spans skia draws (§6.3)
-            std::vector<SkGlyphID> glyphs;
-            // the positions are parallel to the glyphs, because skia draws one position per glyph (§6.3)
-            std::vector<SkPoint> positions;
-            // the run already knows how many glyphs the line holds, so both spans are reserved once (§6.3)
-            glyphs.reserve(line.glyphs.size());
-            positions.reserve(line.glyphs.size());
+            // the scratch buffers are emptied rather than replaced, so their capacity survives the frame (§6.3)
+            g_glyph_scratch.clear();
+            // the positions are emptied beside the glyphs, because skia draws one position per glyph (§6.3)
+            g_position_scratch.clear();
             // every shaped glyph contributes its index and its position beside the line origin (§9.1)
             for (const ShapedGlyph& glyph : line.glyphs) {
                 // the glyph id is narrowed to what skia addresses glyphs with, which is what the visitor reported (§9.1)
-                glyphs.push_back(static_cast<SkGlyphID>(glyph.id));
+                g_glyph_scratch.push_back(static_cast<SkGlyphID>(glyph.id));
                 // the position is taken as skia wants it, relative to the origin the draw is given (§6.3)
-                positions.push_back(SkPoint::Make(glyph.position.x, glyph.position.y));
+                g_position_scratch.push_back(SkPoint::Make(glyph.position.x, glyph.position.y));
             }
             // the line origin is the baseline, added to the run origin the caller placed the run at (§9.1)
             const SkPoint line_origin = SkPoint::Make(origin.x + line.origin.x, origin.y + line.origin.y);
             // the positioned glyphs are drawn as shaped, so skia rasterizes exactly the glyphs stage one measured (§9.1)
-            m_canvas->drawGlyphs(glyphs, positions, line_origin, font, text_paint);
+            m_canvas->drawGlyphs(g_glyph_scratch, g_position_scratch, line_origin, font, text_paint);
         }
     }
 

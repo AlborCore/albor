@@ -47,13 +47,14 @@ queue holds at most one frame, so this is bounded and small, but it is per frame
 
 ## Per text line, per frame
 
-**B1. The draw path allocates two vectors per shaped line.** `SkiaRenderContext::draw_text`
-builds `std::vector<SkGlyphID>` and `std::vector<SkPoint>` for every line of every run, every frame
-(`render/render-skia/skia_render_context.cpp:149-151`). This is mine, introduced with the shaped run
-work, and it is the single worst item on this list because it scales with the amount of text on
-screen. The render thread is the only writer of those two vectors, so a thread local scratch reused
-across lines and frames removes it. The alternative is to hand skia a view over the run's own
-positions, which is a layout pun on `Point` and not worth the undefined behaviour.
+**B1. The draw path allocated two vectors per shaped line.** `SkiaRenderContext::draw_text` built a
+`std::vector<SkGlyphID>` and a `std::vector<SkPoint>` for every line of every run, every frame. This
+was mine, introduced with the shaped run work, and it scaled with the amount of text on screen.
+**Fixed**: the two buffers are thread local scratch, emptied and refilled per line, which keeps their
+capacity across frames. They are per thread rather than members because the context is rebuilt every
+frame and a member would die with it, while one surface is drawn on one thread at a time, so a shared
+buffer would race between two contexts. Measured: a repeated draw of a wrapped run now costs **0**
+allocations, against one vector pair per line before (§6.3).
 
 **B2. Every measure call built a string for the cache key.** The cache was keyed on an owning
 `CacheKey`, so a lookup constructed a `std::string` first. Measured, that cost **nothing** for a
@@ -107,10 +108,10 @@ into bounds a regression can fail.
 ## Proposed order
 
 1. P0, the three measurements, because the rest is guesswork without them.
-2. B1 and B2, the per text line and per measure allocations, which are the largest and the most
-   isolated. B1 is a thread local scratch buffer and nothing else.
-3. A1 and A2 together, moving the recorder's buffer into the scene, which turns one allocation plus
-   n copies into one allocation.
+2. B1 and B2, **both done**: a repeated draw of a shaped run allocates nothing, and a cache hit
+   allocates nothing however long the run is.
+3. A1 and A2, only once the command counts justify them. The measurement above says a small tree
+   builds in four allocations, so this is not the next thing to spend effort on.
 4. A3 and A4, the engine's walk order and the type erased visitor, both small.
 5. Re-measure, and only then decide whether the frame path needs a buffer pool, which is the one
    structural change this review does not yet recommend.
