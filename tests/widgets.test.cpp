@@ -22,6 +22,37 @@ using namespace albor;
 
 namespace
 {
+    // the child double a widget composes over, which paints one rectangle of its assigned bounds (§6.1)
+    class WidgetChildNode final : public UiNode
+    {
+    public:
+        // how many times the child was asked to draw (§6.1)
+        std::size_t draws = 0;
+
+        void measure(const SizeConstraints& constraints, Size& out_size) override {
+            // the child offers the extent it was built with, because that is what its parent asked for (§8.2)
+            UiNode::measure(constraints, out_size);
+            // the intrinsic extent is clamped into the constraints, the way a leaf does (§8.2)
+            out_size = constraints.constrain(m_intrinsic);
+            m_measured_size = out_size;
+        }
+
+        void render(RenderContext& context) override {
+            // the draw is counted, so a test can tell a recorded child from a skipped one (§6.1)
+            draws++;
+            // the child paints its own bounds, which is the content a parent has to record (§6.1)
+            context.draw_rect(bounds(), Paint{.fill = m_color});
+            // the children of the child draw over it, which is the composite contract (§6.1)
+            UiNode::render(context);
+        }
+
+        // the extent the child measures to (§8.2)
+        Size m_intrinsic = Size{40.0f, 30.0f};
+
+        // the colour the child paints (§6.1)
+        Color m_color = Color::rgb(0.2f, 0.6f, 0.9f);
+    };
+
     // the rectangles of the shape commands of a scene, which is what a widget assertion reads off the one list (§6.1)
     std::vector<Rect> rect_commands(const FrameScene& scene) {
         // the shapes are gathered in paint order, because that is the paint order the list carries (§6.1)
@@ -2449,4 +2480,138 @@ TEST(LabelChecks, TheLabelAsksTheEngineToMeasure) {
     label.measure(SizeConstraints::unconstrained(), measured);
     // assert the label measures through the engine it was given rather than computing an extent itself (§9.1)
     EXPECT_GT(text_engine.measurements, before);
+}
+
+TEST(WidgetCompositionChecks, AWidgetsChildIsMeasured) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    auto child = std::make_unique<WidgetChildNode>();
+    child->m_intrinsic = Size{120.0f, 90.0f};
+    WidgetChildNode& node = *child;
+    button.add_child(std::move(child));
+    // act
+    Size measured{};
+    button.measure(SizeConstraints::unconstrained(), measured);
+    // assert a widget is a component, so it measures for its children as well as for its own content (§8.1, §8.2)
+    EXPECT_GE(measured.width, 120.0f);
+    EXPECT_GE(measured.height, 90.0f);
+    EXPECT_EQ(node.bounds().width, 0.0f);
+}
+
+TEST(WidgetCompositionChecks, AWidgetsChildIsArranged) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    auto child = std::make_unique<WidgetChildNode>();
+    WidgetChildNode& node = *child;
+    button.add_child(std::move(child));
+    // act
+    button.arrange(Rect::from_origin_size(Point{5.0f, 6.0f}, Size{60.0f, 40.0f}));
+    // assert the child is placed, because the widget arranges through the component contract (§8.2)
+    EXPECT_EQ(node.bounds().width, 60.0f);
+    EXPECT_EQ(node.bounds().height, 40.0f);
+}
+
+TEST(WidgetCompositionChecks, AWidgetsChildIsRecordedAfterTheWidgetsOwnContent) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.add_child(std::make_unique<WidgetChildNode>());
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 40.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the composite order is background, then the widget content, then the children (§6.1)
+    ASSERT_EQ(rect_commands(*recorder.scene()).size(), 2u);
+    EXPECT_EQ(text_commands(*recorder.scene()).size(), 1u);
+    EXPECT_EQ(recorder.scene()->command_count(), 3u);
+    EXPECT_EQ(recorder.scene()->commands()[0].kind(), DrawCommandKind::Rect);
+    EXPECT_EQ(recorder.scene()->commands()[1].kind(), DrawCommandKind::Text);
+    EXPECT_EQ(recorder.scene()->commands()[2].kind(), DrawCommandKind::Rect);
+}
+
+TEST(WidgetCompositionChecks, AWidgetsChildIsAHit) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.add_child(std::make_unique<WidgetChildNode>());
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 40.0f}));
+    // act / assert the point lands on the child, which the component hit test walks (§8.3)
+    EXPECT_TRUE(button.hit_test(Point{10.0f, 10.0f}));
+}
+
+TEST(WidgetCompositionChecks, AWidgetsChildIsReachedByTheSemanticWalk) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.add_child(std::make_unique<WidgetChildNode>());
+    // act / assert the widget forwards its children to semantics, so a composite is announced whole (§10.1, AD-09)
+    EXPECT_EQ(button.semantic_child_count(), 1u);
+}
+
+TEST(WidgetCompositionChecks, TheButtonPlateIsRecordedThroughTheBackgroundHook) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.set_background(Color::rgb(0.9f, 0.1f, 0.2f));
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the plate is recorded once, through the base hook the widget already overrode (§6.1, §6.2)
+    ASSERT_EQ(rect_commands(*recorder.scene()).size(), 1u);
+    EXPECT_EQ(recorder.scene()->commands()[0].paint().fill, (Color::rgb(0.9f, 0.1f, 0.2f)));
+}
+
+TEST(WidgetCompositionChecks, ADisabledButtonFadesThroughTheBackgroundHook) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.set_background(Color::rgb(1.0f, 1.0f, 1.0f));
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    button.set_disabled(true);
+    // act
+    button.render(recorder);
+    // assert the disabled fade is a plate colour, so the state reaches the frame through one path (§6.1)
+    ASSERT_EQ(rect_commands(*recorder.scene()).size(), 1u);
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].paint().fill.red, 0.5f);
+}
+
+TEST(WidgetCompositionChecks, ACanvasWithAChildStillRunsItsCallback) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Canvas canvas(&engine, "canvas");
+    std::size_t passes = 0;
+    canvas.set_draw([&passes](RenderContext&) { passes++; });
+    canvas.add_child(std::make_unique<WidgetChildNode>());
+    canvas.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 40.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    canvas.render(recorder);
+    // assert the application callback still runs once, and the child records over it (§6.4)
+    EXPECT_EQ(passes, 1u);
+    EXPECT_EQ(rect_commands(*recorder.scene()).size(), 1u);
+}
+
+TEST(WidgetCompositionChecks, ATransparentWidgetBackgroundRecordsNothing) {
+    // arrange a widget whose background was never set, which is the default (§6.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Label label(&engine, &text_engine, "");
+    label.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    label.render(recorder);
+    // assert the transparent background is culled rather than recorded as a dead draw (§6.2)
+    EXPECT_EQ(recorder.scene()->command_count(), 0u);
 }

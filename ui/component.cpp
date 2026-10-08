@@ -45,8 +45,15 @@ namespace albor
     void Component::render(RenderContext& context) {
         // the background is drawn first, so the content lands on top of it (§6.1)
         paint_background(context);
-        // the children draw over the background, in insertion order (§6.1)
+        // the content is drawn over the background, because that is the order a composite paints in (§6.1)
+        paint_content(context);
+        // the children draw over both, in insertion order, which is what a composite tree needs (§6.1)
         UiNode::render(context);
+    }
+
+    void Component::paint_content(RenderContext& context) {
+        // a component with no content of its own still draws its background and its children (§6.1)
+        (void)context;
     }
 
     bool Component::hit_test(Point logical_point) const {

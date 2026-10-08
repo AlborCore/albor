@@ -20,7 +20,7 @@ namespace albor
         void arrange(const Rect& bounds) override;
 
         // record the outline, filled when the box is checked (§6.1)
-        void render(RenderContext& context) override;
+        void paint_content(RenderContext& context) override;
 
         // override: a box is a hit only where it is visible and enabled (§8.3)
         [[nodiscard]] bool hit_test(Point logical_point) const override;

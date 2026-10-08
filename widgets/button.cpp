@@ -30,7 +30,13 @@ namespace albor
             m_label_layout = m_text_engine->measure(m_label, offered_width, TextEngine::DEFAULT_FONT_SIZE);
         }
         // a push control must stay grabbable, so the label drives the plate and a default covers an empty label (§8.2)
-        const Size content{.width = std::max(m_label_layout.size.width, MINIMUM_WIDTH), .height = std::max(m_label_layout.size.height, MINIMUM_HEIGHT)};
+        Size content{.width = std::max(m_label_layout.size.width, MINIMUM_WIDTH), .height = std::max(m_label_layout.size.height, MINIMUM_HEIGHT)};
+        // the children are measured too, because a widget is a component and they are part of its content (§8.1, §8.2)
+        Size children{};
+        UiNode::measure(constraints, children);
+        // a widget is at least as large as its own content and as its children (§8.2)
+        content.width = std::max(content.width, children.width);
+        content.height = std::max(content.height, children.height);
         // the result is clamped into the offered constraints, because a parent decision is final (§8.2)
         m_measured_size = constraints.constrain(content);
         // the preferred size follows the measured one, so a parent can query it without a second measure (§8.2)
@@ -39,22 +45,11 @@ namespace albor
     }
 
     void Button::arrange(const Rect& bounds) {
-        // the assigned bounds replace the previous ones (§8.2)
-        m_bounds = bounds;
-        // the measured size follows the assigned one, so a later measure starts from the truth (§8.2)
-        m_measured_size = Size{.width = bounds.width, .height = bounds.height};
-        // the preferred size follows the arranged one, because the parent has now decided (§8.2)
-        m_preferred_size = m_measured_size;
+        // the component arranges its own bounds and its children, because a widget is a component (§8.2)
+        Component::arrange(bounds);
     }
 
-    void Button::render(RenderContext& context) {
-        // a button with no area has no plate, so nothing is recorded (§6.2)
-        if (bounds().empty())
-            return;
-        // a disabled button draws its plate faded, which is the only way the state reads without a style system (§6.1)
-        const Color plate = m_disabled ? Color::rgba(m_background.red * 0.5f, m_background.green * 0.5f, m_background.blue * 0.5f, m_background.alpha) : m_background;
-        // the plate is recorded first, because the label has to land on top of it (§6.1)
-        context.draw_rect(bounds(), {.fill = plate});
+    void Button::paint_content(RenderContext& context) {
         // an empty label draws no run, because a button may carry no text at all (§6.2)
         if (m_label_layout.empty())
             return;
@@ -192,6 +187,9 @@ namespace albor
     }
 
     Color Button::background() const {
+        // a disabled button draws its plate faded, which is the only way the state reads without a style system (§6.1)
+        if (m_disabled)
+            return Color::rgba(m_background.red * 0.5f, m_background.green * 0.5f, m_background.blue * 0.5f, m_background.alpha);
         // the plate fill is what the base records before the label (§6.2)
         return m_background;
     }

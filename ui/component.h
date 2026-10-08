@@ -46,6 +46,9 @@ namespace albor
         // draw the component background, which a concrete component fills in
         virtual void paint_background(RenderContext& context);
 
+        // draw the content of the component between its background and its children, which a component fills in (§6.1)
+        virtual void paint_content(RenderContext& context);
+
         // hand out the fill colour of the component background, which a concrete component overrides
         [[nodiscard]] virtual Color background() const;
 

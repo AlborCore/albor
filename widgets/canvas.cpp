@@ -1,3 +1,5 @@
+#include <algorithm>
+
 #include "widgets/canvas.h"
 
 namespace albor
@@ -7,7 +9,13 @@ namespace albor
 
     void Canvas::measure(const SizeConstraints& constraints, Size& out_size) {
         // the declared extent is what the canvas offers, because a callback cannot be asked what it will draw (§8.2)
-        const Size content = m_intrinsic_size;
+        Size content = m_intrinsic_size;
+        // the children are measured too, because a widget is a component and they are part of its content (§8.1, §8.2)
+        Size children{};
+        UiNode::measure(constraints, children);
+        // a widget is at least as large as its own content and as its children (§8.2)
+        content.width = std::max(content.width, children.width);
+        content.height = std::max(content.height, children.height);
         // the result is clamped into the offered constraints, because a parent decision is final (§8.2)
         m_measured_size = constraints.constrain(content);
         // the preferred size follows the measured one, so a parent can query it without a second measure (§8.2)
@@ -16,15 +24,11 @@ namespace albor
     }
 
     void Canvas::arrange(const Rect& bounds) {
-        // the assigned bounds replace the previous ones (§8.2)
-        m_bounds = bounds;
-        // the measured size follows the assigned one, so a later measure starts from the truth (§8.2)
-        m_measured_size = Size{.width = bounds.width, .height = bounds.height};
-        // the preferred size follows the arranged one, because the parent has now decided (§8.2)
-        m_preferred_size = m_measured_size;
+        // the component arranges its own bounds and its children, because a widget is a component (§8.2)
+        Component::arrange(bounds);
     }
 
-    void Canvas::render(RenderContext& context) {
+    void Canvas::paint_content(RenderContext& context) {
         // the pass is counted before the callback runs, so a canvas that draws nothing still records that it was asked (§6.4)
         m_draw_count++;
         // an empty canvas draws nothing, because there is no callback to draw with (§6.4)

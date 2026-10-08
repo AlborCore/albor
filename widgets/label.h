@@ -21,7 +21,7 @@ namespace albor
         void arrange(const Rect& bounds) override;
 
         // record the run at the baseline of the assigned bounds, which is what stage one replays (§6.1)
-        void render(RenderContext& context) override;
+        void paint_content(RenderContext& context) override;
 
         // override: announce the run as a label whose accessible name is the text it draws (§10.1)
         [[nodiscard]] SemanticNode semantic_node() const override;

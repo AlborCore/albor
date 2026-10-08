@@ -24,7 +24,13 @@ namespace albor
 
     void Slider::measure(const SizeConstraints& constraints, Size& out_size) {
         // a slider has no content, so its extent comes from the control metric (§8.2)
-        const Size content{.width = SLIDER_WIDTH, .height = SLIDER_HEIGHT};
+        Size content{.width = SLIDER_WIDTH, .height = SLIDER_HEIGHT};
+        // the children are measured too, because a widget is a component and they are part of its content (§8.1, §8.2)
+        Size children{};
+        UiNode::measure(constraints, children);
+        // a widget is at least as large as its own content and as its children (§8.2)
+        content.width = std::max(content.width, children.width);
+        content.height = std::max(content.height, children.height);
         // the result is clamped into the offered constraints, because a parent decision is final (§8.2)
         m_measured_size = constraints.constrain(content);
         // the preferred size follows the measured one, so a parent can query it without a second measure (§8.2)
@@ -33,15 +39,11 @@ namespace albor
     }
 
     void Slider::arrange(const Rect& bounds) {
-        // the assigned bounds replace the previous ones (§8.2)
-        m_bounds = bounds;
-        // the measured size follows the assigned one, so a later measure starts from the truth (§8.2)
-        m_measured_size = Size{.width = bounds.width, .height = bounds.height};
-        // the preferred size follows the arranged one, because the parent has now decided (§8.2)
-        m_preferred_size = m_measured_size;
+        // the component arranges its own bounds and its children, because a widget is a component (§8.2)
+        Component::arrange(bounds);
     }
 
-    void Slider::render(RenderContext& context) {
+    void Slider::paint_content(RenderContext& context) {
         // a slider with no area draws nothing, because there is no track to draw (§6.2)
         if (bounds().empty())
             return;

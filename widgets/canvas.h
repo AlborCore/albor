@@ -20,7 +20,7 @@ namespace albor
         void arrange(const Rect& bounds) override;
 
         // record whatever the callback draws, which is the whole point of a canvas (§6.1, §6.4)
-        void render(RenderContext& context) override;
+        void paint_content(RenderContext& context) override;
 
         // override: announce the canvas as a drawing surface an adapter may interact with (§10.1)
         [[nodiscard]] SemanticNode semantic_node() const override;

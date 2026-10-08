@@ -1,5 +1,6 @@
 #include "widgets/label.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace albor
@@ -21,23 +22,27 @@ namespace albor
             // the run is measured at the current font size, because the metrics follow the size (§9.1)
             m_layout = m_text_engine->measure(m_text, offered_width, m_font_size);
         }
+        // the content is at least the run the label carries, and at least its children (§8.2)
+        Size content = m_layout.size;
+        // the children are measured too, because a widget is a component and they are part of its content (§8.1, §8.2)
+        Size children{};
+        UiNode::measure(constraints, children);
+        // a widget is at least as large as its own content and as its children (§8.2)
+        content.width = std::max(content.width, children.width);
+        content.height = std::max(content.height, children.height);
         // the result is clamped into the offered constraints, because a parent decision is final (§8.2)
-        m_measured_size = constraints.constrain(m_layout.size);
+        m_measured_size = constraints.constrain(content);
         // the preferred size follows the measured one, so a parent can query it without a second measure (§8.2)
         m_preferred_size = m_measured_size;
         out_size = m_measured_size;
     }
 
     void Label::arrange(const Rect& bounds) {
-        // the assigned bounds replace the previous ones (§8.2)
-        m_bounds = bounds;
-        // the measured size follows the assigned one, so a later measure starts from the truth (§8.2)
-        m_measured_size = Size{.width = bounds.width, .height = bounds.height};
-        // the preferred size follows the arranged one, because the parent has now decided (§8.2)
-        m_preferred_size = m_measured_size;
+        // the component arranges its own bounds and its children, because a widget is a component (§8.2)
+        Component::arrange(bounds);
     }
 
-    void Label::render(RenderContext& context) {
+    void Label::paint_content(RenderContext& context) {
         // an empty run carries no glyphs, so recording it would draw nothing (§6.2)
         if (m_layout.empty())
             return;
