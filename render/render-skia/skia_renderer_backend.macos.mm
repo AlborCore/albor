@@ -93,6 +93,7 @@ namespace albor
         // metrics with no area cannot be presented, so the previous size is kept (§6.2)
         if (!metrics.valid())
             return;
+        // the layer geometry is written here, on the thread that owns the native window, because a core animation property is not written from the render thread (§5.3, D9.1)
         surface.resize(metrics);
     }
 
@@ -100,9 +101,9 @@ namespace albor
         // a frame needs a surface that could acquire a drawable (§6.1)
         if (!surface.valid())
             return;
-        // the scene is built at metrics that no longer match the surface, so the surface is resized first (§6.1)
+        // the scene was built at metrics the surface does not present at, so it is refused rather than repaired, because a repair would write the layer geometry from the thread that must not (§6.1, D9.1)
         if (surface.metrics() != scene.metrics())
-            resize_surface(surface, scene.metrics());
+            return;
         // stage two acquires the drawable and draws the immutable scene into it (§6.1, AD-18)
         RenderContext& context = surface.begin_frame();
         // the background is a full surface rectangle, which is the clear of phase 1 (§6.1)

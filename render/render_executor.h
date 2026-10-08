@@ -53,6 +53,9 @@ namespace albor
         // hand out how many frames the render thread executed
         [[nodiscard]] std::uint64_t executed_count() const;
 
+        // hand out how many frames were dropped because the scene was built at metrics the surface does not present at
+        [[nodiscard]] std::uint64_t dropped_count() const;
+
     private:
         // the render thread body, which executes one scene per available frame (§6.1)
         void run();
@@ -80,6 +83,9 @@ namespace albor
 
         // how many frames the render thread executed
         std::uint64_t m_executed = 0;
+
+        // how many frames were dropped at stale metrics, which the ui thread answers by resizing the surface (§6.1, D9.1)
+        std::uint64_t m_dropped = 0;
 
         // whether the render thread was asked to stop
         bool m_stopping = false;

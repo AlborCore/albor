@@ -32,10 +32,10 @@ namespace albor
         // override: wrap a metal layer into a presentable surface
         [[nodiscard]] std::unique_ptr<RenderSurface> create_surface(NativeWindowHandle handle, const WindowMetrics& metrics) override;
 
-        // override: resize an existing surface, which a window resize requires
+        // override: resize an existing surface, which a window resize requires from the thread that created the native window (§5.3, D9.1)
         void resize_surface(RenderSurface& surface, const WindowMetrics& metrics) override;
 
-        // override: execute an immutable frame scene on the gpu
+        // override: execute an immutable frame scene on the gpu, refusing a scene at stale metrics rather than repairing it here (§6.1, D9.1)
         void execute_frame(RenderSurface& surface, const FrameScene& scene) override;
 
     private:

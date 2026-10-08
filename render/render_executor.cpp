@@ -34,19 +34,19 @@ namespace albor
                 return false;
             // an older pending frame is dropped, so the render thread always draws the newest state (§6.1)
             m_requests.clear();
-            FrameRequest request;
-            request.surface = &surface;
-            request.scene = std::move(scene);
-            m_requests.push_back(std::move(request));
+            // append to list of pending frame requests
+            m_requests.emplace_back(&surface, scene);
         }
         // the render thread is woken so that the frame is presented without waiting for the next native event (§6.1)
         m_frame_condition.notify_one();
+        // indicate scene was enqueued
         return true;
     }
 
     bool RenderExecutor::pending() const {
         // the lock is taken because the render thread pops while the ui thread asks (§6.1)
         const std::lock_guard<std::mutex> lock(m_mutex);
+        // check queue is empty
         return !m_requests.empty();
     }
 
@@ -77,6 +77,12 @@ namespace albor
         // the lock is taken because the render thread counts while the ui thread reads (§6.1)
         const std::lock_guard<std::mutex> lock(m_mutex);
         return m_executed;
+    }
+
+    std::uint64_t RenderExecutor::dropped_count() const {
+        // the lock is taken because the render thread counts while the ui thread reads (§6.1)
+        const std::lock_guard<std::mutex> lock(m_mutex);
+        return m_dropped;
     }
 
     void RenderExecutor::run() {
@@ -111,6 +117,15 @@ namespace albor
         // a frame for a surface that no longer exists cannot be drawn, so it is dropped (§6.1)
         if (request.surface == nullptr || !request.scene) {
             const std::lock_guard<std::mutex> lock(m_mutex);
+            m_busy = false;
+            m_condition.notify_all();
+            return;
+        }
+        // a scene built at metrics the surface does not present at is dropped rather than repaired, because the repair would resize the surface from this thread and the layer geometry belongs to the thread that created the native window (§6.1, D9.1)
+        if (request.surface->metrics() != request.scene->metrics()) {
+            // the drop is counted and the flush waiters released under the lock, because the queue moved on without this frame (§6.1)
+            const std::lock_guard<std::mutex> lock(m_mutex);
+            m_dropped++;
             m_busy = false;
             m_condition.notify_all();
             return;

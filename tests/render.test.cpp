@@ -176,8 +176,8 @@ namespace
         // whether the surface accepts a frame at all
         bool is_valid = true;
 
-        // the metrics the surface presents at, which a resize changes
-        WindowMetrics surface_metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 2.0f);
+        // the metrics the surface presents at, which is what the scenes of the executor suites are built at, so the drop at stale metrics stays the business of the suites that ask for it (§6.1, D9.1)
+        WindowMetrics surface_metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
 
         [[nodiscard]] bool valid() const override { return is_valid; }
 
@@ -241,8 +241,8 @@ namespace
     class GatedRendererBackend final : public RendererBackend
     {
     public:
-        // the logical widths of every scene that reached the backend, which identifies which frame survived (§6.1)
-        std::vector<float> executed_widths;
+        // how many rectangles every scene that reached the backend carried, which identifies which frame survived (§6.1)
+        std::vector<std::size_t> executed_rect_counts;
 
         [[nodiscard]] bool ready() const override { return true; }
 
@@ -256,7 +256,7 @@ namespace
             m_arrived++;
             m_arrived_condition.notify_all();
             m_gate.wait(lock, [this] { return m_released; });
-            executed_widths.push_back(scene.metrics().logical_size.width);
+            executed_rect_counts.push_back(scene.rects().size());
         }
 
         // wait until the render thread is parked inside a frame, which makes the following submit deterministic (§6.1)
@@ -902,24 +902,25 @@ TEST(RenderExecutor, SubmittingANullSceneIsRefused) {
 }
 
 TEST(RenderExecutor, AnOlderPendingFrameIsDropped) {
-    // arrange
+    // arrange the frames carry different content at the metrics the surface presents at, because a frame at other metrics is dropped rather than coalesced (§6.1, D9.1)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
     GatedRendererBackend backend;
     RenderExecutor executor(&backend);
     TestRenderSurface surface;
     // the render thread parks inside the first frame, so the second submit lands on a known in flight state (§6.1)
-    executor.submit(surface, std::make_shared<const FrameScene>(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f)));
+    executor.submit(surface, std::make_shared<const FrameScene>(FrameScene::from_primitives(metrics, Color::rgb(0.0f, 0.0f, 0.0f), {Rect::from_origin_size(Point{0.0f, 0.0f}, Size{1.0f, 1.0f})})));
     backend.wait_until_arrived();
     // act
-    executor.submit(surface, std::make_shared<const FrameScene>(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f)));
-    executor.submit(surface, std::make_shared<const FrameScene>(WindowMetrics::from_logical(Size{1024.0f, 768.0f}, 1.0f)));
+    executor.submit(surface, std::make_shared<const FrameScene>(FrameScene::from_primitives(metrics, Color::rgb(0.0f, 0.0f, 0.0f), {Rect::from_origin_size(Point{0.0f, 0.0f}, Size{2.0f, 2.0f}), Rect::from_origin_size(Point{0.0f, 0.0f}, Size{3.0f, 3.0f})})));
+    executor.submit(surface, std::make_shared<const FrameScene>(FrameScene::from_primitives(metrics, Color::rgb(0.0f, 0.0f, 0.0f), {Rect::from_origin_size(Point{0.0f, 0.0f}, Size{1.0f, 1.0f}), Rect::from_origin_size(Point{0.0f, 0.0f}, Size{2.0f, 2.0f})})));
     backend.release();
     executor.flush();
     // assert
     EXPECT_EQ(executor.executed_count(), 2u);
     // the middle frame is dropped, so the render thread drew the first and the newest (§6.1)
-    ASSERT_EQ(backend.executed_widths.size(), 2u);
-    EXPECT_FLOAT_EQ(backend.executed_widths[0], 640.0f);
-    EXPECT_FLOAT_EQ(backend.executed_widths[1], 1024.0f);
+    ASSERT_EQ(backend.executed_rect_counts.size(), 2u);
+    EXPECT_EQ(backend.executed_rect_counts[0], 1u);
+    EXPECT_EQ(backend.executed_rect_counts[1], 2u);
 }
 
 TEST(RenderExecutor, FlushReturnsOnlyOnceNothingIsPending) {
@@ -1589,4 +1590,98 @@ TEST(FrameScene, AnEmptyTextRunIsRefused) {
     // assert
     EXPECT_TRUE(scene.texts().empty());
     EXPECT_TRUE(scene.text_origins().empty());
+}
+
+TEST(RenderExecutorStaleMetricsChecks, ASceneBuiltForTheSurfaceMetricsExecutes) {
+    // arrange
+    TestRendererBackend backend;
+    RenderExecutor executor(&backend);
+    TestRenderSurface surface;
+    surface.surface_metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 2.0f);
+    const std::shared_ptr<const FrameScene> scene = std::make_shared<const FrameScene>(FrameScene::from_primitives(surface.surface_metrics, Color::rgb(0.0f, 0.0f, 0.0f), {}));
+    // act
+    executor.submit(surface, scene);
+    executor.flush();
+    // assert a scene built for the metrics the surface presents at is executed (§6.1)
+    EXPECT_EQ(executor.executed_count(), 1u);
+    EXPECT_EQ(executor.dropped_count(), 0u);
+}
+
+TEST(RenderExecutorStaleMetricsChecks, ASceneBuiltAtOtherMetricsIsDropped) {
+    // arrange the window resized before the frame was built, which is the race the drop answers (§5.3, D9.1)
+    TestRendererBackend backend;
+    RenderExecutor executor(&backend);
+    TestRenderSurface surface;
+    surface.surface_metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 2.0f);
+    const WindowMetrics stale = WindowMetrics::from_logical(Size{1024.0f, 768.0f}, 2.0f);
+    const std::shared_ptr<const FrameScene> scene = std::make_shared<const FrameScene>(FrameScene::from_primitives(stale, Color::rgb(0.0f, 0.0f, 0.0f), {}));
+    // act
+    executor.submit(surface, scene);
+    executor.flush();
+    // assert the frame is dropped rather than executed, because executing it would present a scene the window no longer presents at (§6.1, D9.1)
+    EXPECT_EQ(executor.executed_count(), 0u);
+    EXPECT_EQ(executor.dropped_count(), 1u);
+}
+
+TEST(RenderExecutorStaleMetricsChecks, ADroppedFrameBeginsNoFrameOnTheSurface) {
+    // arrange
+    TestRendererBackend backend;
+    RenderExecutor executor(&backend);
+    TestRenderSurface surface;
+    surface.surface_metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 2.0f);
+    const WindowMetrics stale = WindowMetrics::from_logical(Size{1024.0f, 768.0f}, 2.0f);
+    const std::shared_ptr<const FrameScene> scene = std::make_shared<const FrameScene>(FrameScene::from_primitives(stale, Color::rgb(0.0f, 0.0f, 0.0f), {}));
+    // act
+    executor.submit(surface, scene);
+    executor.flush();
+    // assert no frame begins, so the surface acquires no drawable for a scene it cannot present (§6.1)
+    EXPECT_EQ(surface.begun, 0u);
+    EXPECT_EQ(surface.presented, 0u);
+}
+
+TEST(RenderExecutorStaleMetricsChecks, ADroppedFrameNeverResizesTheSurface) {
+    // arrange
+    TestRendererBackend backend;
+    RenderExecutor executor(&backend);
+    TestRenderSurface surface;
+    surface.surface_metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 2.0f);
+    const WindowMetrics stale = WindowMetrics::from_logical(Size{1024.0f, 768.0f}, 2.0f);
+    const std::shared_ptr<const FrameScene> scene = std::make_shared<const FrameScene>(FrameScene::from_primitives(stale, Color::rgb(0.0f, 0.0f, 0.0f), {}));
+    // act
+    executor.submit(surface, scene);
+    executor.flush();
+    // assert the surface still presents at the metrics it had, because the layer geometry belongs to the ui thread (§5.3, D9.1)
+    EXPECT_EQ(surface.metrics(), surface.surface_metrics);
+    EXPECT_EQ(surface.metrics().logical_size, (Size{800.0f, 600.0f}));
+}
+
+TEST(RenderExecutorStaleMetricsChecks, AResizedSurfaceExecutesTheFrameBuiltForIt) {
+    // arrange the ui thread resized the surface before the next submit, which is the documented path (§5.3, D9.1)
+    TestRendererBackend backend;
+    RenderExecutor executor(&backend);
+    TestRenderSurface surface;
+    surface.surface_metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 2.0f);
+    surface.resize(WindowMetrics::from_logical(Size{1024.0f, 768.0f}, 2.0f));
+    const std::shared_ptr<const FrameScene> scene = std::make_shared<const FrameScene>(FrameScene::from_primitives(surface.metrics(), Color::rgb(0.0f, 0.0f, 0.0f), {}));
+    // act
+    executor.submit(surface, scene);
+    executor.flush();
+    // assert a resize costs the frames in between and no more (§6.1)
+    EXPECT_EQ(executor.executed_count(), 1u);
+    EXPECT_EQ(executor.dropped_count(), 0u);
+}
+
+TEST(RenderExecutorStaleMetricsChecks, ADropReleasesTheFlushWaiters) {
+    // arrange
+    TestRendererBackend backend;
+    RenderExecutor executor(&backend);
+    TestRenderSurface surface;
+    surface.surface_metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 2.0f);
+    const WindowMetrics stale = WindowMetrics::from_logical(Size{1024.0f, 768.0f}, 2.0f);
+    const std::shared_ptr<const FrameScene> scene = std::make_shared<const FrameScene>(FrameScene::from_primitives(stale, Color::rgb(0.0f, 0.0f, 0.0f), {}));
+    // act
+    executor.submit(surface, scene);
+    // assert a dropped frame still empties the queue, so a ui thread blocked in flush is released (§6.1)
+    EXPECT_NO_FATAL_FAILURE(executor.flush());
+    EXPECT_FALSE(executor.pending());
 }

@@ -90,9 +90,15 @@ int main() {
     });
     // a native resize remeasures the tree, which is what the layout invalidation is for (§8.2)
     application.set_resize_handler([&](albor::WindowHandle resized) {
-        // only the example window is remeasured, so another window is left alone (§5.2)
-        if (resized == handle)
-            pipeline.root().invalidate_layout();
+        // only the example window is answered, so another window is left alone (§5.2)
+        if (resized != handle)
+            return;
+        // the executor drains first, because the surface the resize writes to may still be in a frame that is executing (§6.1, D9.1)
+        executor.flush();
+        // the surface is resized here on the ui thread, which is the thread the layer geometry belongs to (§5.3, D9.1)
+        renderer->resize_surface(*surface, window->metrics());
+        // the tree is remeasured, because the window now presents at other metrics (§8.2)
+        pipeline.root().invalidate_layout();
     });
     // a timer drives the count, which is what makes the scene change without any input (§4.2)
     const albor::TimerHandle ticker = application.timers().schedule_repeating(

@@ -71,16 +71,25 @@ int main() {
             return;
         // the metrics are read on every tick, so a resize is answered by the very next frame (§9.1)
         const albor::WindowMetrics metrics = window->metrics();
-        // stage one settles the graph, lays out the tree and records the immutable scene (§6.1, §7.3)
-        const std::shared_ptr<const albor::FrameScene> scene = pipeline.build(metrics);
+        // stage one settles the graph, lays out the tree and records the immutable scene, and a clean tree builds nothing at all (§6.1, §7.3)
+        const std::shared_ptr<const albor::FrameScene> scene = pipeline.build_if_dirty(metrics);
+        // a tick that found nothing dirty has no scene, so there is nothing to hand to stage two (§6.1)
+        if (!scene)
+            return;
         // stage two executes it off the ui thread, which never runs application code (§6.1, AD-18)
         pipeline.submit(scene);
     });
     // a native resize remeasures the tree, which is what the layout invalidation is for (§8.2)
     application.set_resize_handler([&](albor::WindowHandle resized) {
-        // only the example window is remeasured, so another window is left alone (§5.2)
-        if (resized == handle)
-            pipeline.root().invalidate_layout();
+        // only the example window is answered, so another window is left alone (§5.2)
+        if (resized != handle)
+            return;
+        // the executor drains first, because the surface the resize writes to may still be in a frame that is executing (§6.1, D9.1)
+        executor.flush();
+        // the surface is resized here on the ui thread, which is the thread the layer geometry belongs to (§5.3, D9.1)
+        renderer->resize_surface(*surface, window->metrics());
+        // the tree is remeasured, because the window now presents at other metrics (§8.2)
+        pipeline.root().invalidate_layout();
     });
     // a timer pushes a new snapshot and raises the selection signal, which the generated facade publishes (§4.2, §11.2)
     int tick = 0;
