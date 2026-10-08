@@ -55,11 +55,14 @@ screen. The render thread is the only writer of those two vectors, so a thread l
 across lines and frames removes it. The alternative is to hand skia a view over the run's own
 positions, which is a layout pun on `Point` and not worth the undefined behaviour.
 
-**B2. Every measure call builds a string.** The shaped run cache is keyed on
-`CacheKey{.text = std::string(text), ...}` (`text/text-skia/skia_text_engine.cpp:111`), so every
-measure allocates a `std::string`, including on a cache hit. Widgets measure their labels on every
-measure pass, so this is per node per frame. The fix is a transparent hash and a view key, so a
-lookup allocates nothing.
+**B2. Every measure call built a string for the cache key.** The cache was keyed on an owning
+`CacheKey`, so a lookup constructed a `std::string` first. Measured, that cost **nothing** for a
+short run, because a run of twenty two characters or fewer lands in the small string buffer, and it
+cost one heap allocation per call for anything longer. A label is usually short and a paragraph is
+not, so the item was real but smaller than it looked. **Fixed**: the cache now takes a view key
+through a transparent hash and comparison, and a lookup allocates nothing however long the run is
+(`text/text-skia/skia_text_engine.cpp`). Measured after the fix: ten hits of a 200 character run
+cost **0** allocations, where they cost 10 before.
 
 ## Not problems, checked so nobody reopens them
 
@@ -73,17 +76,33 @@ lookup allocates nothing.
 
 ## P0: make it measurable before changing anything
 
-The ordering here matters. Every proposal below is an optimisation whose benefit is currently a
-guess, and two of them trade an allocation against a copy. What the tree lacks is any way to count.
+The ordering here matters. Every proposal below is an optimisation whose benefit is a guess, and two
+of them trade an allocation against a copy.
 
-1. **An allocation counter behind the test build.** A counting `operator new` for the test
-   configuration, which reports the number of allocations a frame costs. It has to be excluded at
-   link time rather than `#ifdef` gated, the way the rest of the test only code is (AD-04).
-2. **A steady state frame test.** Build a tree, present it, present it again with nothing changed,
-   and assert the second frame allocates a bounded number of times. That turns "allocates a lot"
-   into a number that a regression can fail.
-3. **A counting text measure.** Measure the same label twice and assert the second costs no
-   allocation, which is the direct test of B2 and of the cache in general.
+**This part is done.** `tools/alloc-probe` replaces the global operators in a library only the test
+binary links, so a shipping build keeps the compiler ones and the probe is excluded at link time
+rather than behind a flag (AD-04, §2.3). Counting is off by default, so an ordinary test pays one
+relaxed atomic load. It reports both the number of allocations and how many of them are still live,
+which makes a leak check a side effect rather than a project.
+
+### What the probe says today
+
+| measurement | allocations |
+| --- | --- |
+| a scene build of a small tree, first time | 4 |
+| the same build again, nothing changed | 4 |
+| shaping one run, a cache miss | 429 |
+| ten cache hits, short text | 0 |
+| ten cache hits, 200 character text | 0 (was 10 before B2) |
+| ten distinct runs | 79 |
+
+Two things follow. The frame path of a small tree is **not** where the cost is, which is worth
+knowing before optimising it: four allocations for a build and a command is not a problem, and A1
+and A2 matter only as the command count grows. The miss cost of 429 is the real cliff, and the
+cache is what stands between a tree full of labels and paying it every frame.
+
+The steady state frame test and the two cache tests in `tests/allocation.test.cpp` turn these rows
+into bounds a regression can fail.
 
 ## Proposed order
 

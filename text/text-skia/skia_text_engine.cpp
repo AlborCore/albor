@@ -23,7 +23,7 @@ namespace albor
 
     namespace
     {
-        // what a shaped run is cached under, which is the text plus everything the layout of that text depends on (§9.1)
+        // what a shaped run is cached under, which owns the text because the cache has to keep it alive (§9.1)
         struct CacheKey
         {
             // the text the run was shaped from (§9.1)
@@ -36,25 +36,60 @@ namespace albor
             float font_size = 0.0f;
         };
 
-        // compare two keys field by field, which is what a cached run is identified by (§9.1)
-        bool operator==(const CacheKey& lhs, const CacheKey& rhs) {
-            // the three fields are the whole key, so anything else would serve a run shaped for other inputs (§9.1)
-            return lhs.text == rhs.text && lhs.max_width == rhs.max_width && lhs.font_size == rhs.font_size;
-        }
+        // what a lookup carries, which views the text so that finding a run allocates nothing (§9.1)
+        struct CacheLookup
+        {
+            // the text the caller measured, which the cache never copies (§9.1)
+            std::string_view text;
+
+            // the ceiling the run was wrapped at (§8.2)
+            float max_width = 0.0f;
+
+            // the size the run is shaped at (§9.1)
+            float font_size = 0.0f;
+        };
+
+        // compare keys, in either direction, so a lookup can test against an owned key (§9.1)
+        struct CacheEqual
+        {
+            // the transparent marker is what tells the map a lookup may carry a different key type (§9.1)
+            using is_transparent = void;
+
+            // two owned keys are the same run when all three fields agree (§9.1)
+            bool operator()(const CacheKey& lhs, const CacheKey& rhs) const {
+                // the three fields are the whole key, so anything else would serve a run shaped for other inputs (§9.1)
+                return lhs.text == rhs.text && lhs.max_width == rhs.max_width && lhs.font_size == rhs.font_size;
+            }
+
+            // a lookup and an owned key are the same run when the view matches the owned text (§9.1)
+            bool operator()(const CacheKey& owned, const CacheLookup& lookup) const {
+                // the ceiling and the size have to agree, because the same text wraps differently (§9.1)
+                return owned.max_width == lookup.max_width && owned.font_size == lookup.font_size && owned.text == lookup.text;
+            }
+        };
 
         // hash a key into a bucket, which is what the cache looks the run up by (§9.1)
         struct CacheHasher
         {
-            // fold the three fields into one hash, because a run shaped for other metrics must not share an entry (§9.1)
-            std::size_t operator()(const CacheKey& key) const {
+            // the transparent marker is what tells the map a lookup may carry a different key type (§9.1)
+            using is_transparent = void;
+
+            // fold three fields into one hash, because a run shaped for other metrics must not share an entry (§9.1)
+            static std::size_t fold(std::string_view text, float max_width, float font_size) {
                 // the text seeds the hash, because the text is what distinguishes one run from another (§9.1)
-                std::size_t seed = std::hash<std::string>{}(key.text);
+                std::size_t seed = std::hash<std::string_view>{}(text);
                 // the ceiling is folded in, because the same text wrapped differently is another run (§9.1)
-                seed ^= std::hash<float>{}(key.max_width) + 0x9e3779b9U + (seed << 6) + (seed >> 2);
+                seed ^= std::hash<float>{}(max_width) + 0x9e3779b9U + (seed << 6) + (seed >> 2);
                 // the font size is folded in, because the same text shaped at another size is another run (§9.1)
-                seed ^= std::hash<float>{}(key.font_size) + 0x9e3779b9U + (seed << 6) + (seed >> 2);
+                seed ^= std::hash<float>{}(font_size) + 0x9e3779b9U + (seed << 6) + (seed >> 2);
                 return seed;
             }
+
+            // an owned key hashes by the text it owns (§9.1)
+            std::size_t operator()(const CacheKey& key) const { return fold(key.text, key.max_width, key.font_size); }
+
+            // a lookup hashes by the text it views, so both shapes agree on a bucket (§9.1)
+            std::size_t operator()(const CacheLookup& lookup) const { return fold(lookup.text, lookup.max_width, lookup.font_size); }
         };
     } // namespace
 
@@ -71,7 +106,7 @@ namespace albor
         TextServices services;
 
         // the shaped runs measured so far, which stage one replays instead of shaping again (§9.1, §6.1)
-        mutable std::unordered_map<CacheKey, TextLayout, CacheHasher> cache;
+        mutable std::unordered_map<CacheKey, TextLayout, CacheHasher, CacheEqual> cache;
 
         // how many shaping passes ran, which a test reads to prove the cache absorbs a repeated measure (§9.1)
         mutable std::size_t shaped_runs = 0;
@@ -107,10 +142,10 @@ namespace albor
         // an engine without unicode cannot shape, so it refuses rather than passing a null through (§9.1)
         if (!ready() || text.empty())
             return TextLayout{};
-        // the cache is keyed by the text and everything its layout depends on (§9.1)
-        const CacheKey key{.text = std::string(text), .max_width = max_width, .font_size = font_size};
+        // the lookup views the caller's text, because copying it would allocate on every measure (§9.1)
+        const CacheLookup lookup{.text = text, .max_width = max_width, .font_size = font_size};
         // a cached run is handed back as it was measured, so a steady state frame pays no shaping (§9.1)
-        const auto cached = m_state->cache.find(key);
+        const auto cached = m_state->cache.find(lookup);
         if (cached != m_state->cache.end())
             return cached->second;
         // the text style carries the requested font size, which is what the paragraph lays out against (§9.1)
@@ -176,8 +211,8 @@ namespace albor
         // a full cache drops its runs, because an unbounded cache is a leak an application cannot see (§9.1)
         if (m_state->cache.size() >= MAXIMUM_CACHED_RUNS)
             m_state->cache.clear();
-        // the run is cached under the key that reproduces it, so the next measure of the same inputs is a lookup (§9.1)
-        m_state->cache.emplace(key, layout);
+        // the run is cached under a key that owns the text, which only a miss ever builds (§9.1)
+        m_state->cache.emplace(CacheKey{.text = std::string(text), .max_width = max_width, .font_size = font_size}, layout);
         return layout;
     }
 

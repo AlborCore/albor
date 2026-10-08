@@ -39,7 +39,11 @@ target_compile_features(albor-tests PRIVATE cxx_std_23)
 # nothing inside core, ui or render may reach it, because a production build links no parser and
 # no interpreter (AD-01, §2.1). It publishes albor-compiler publicly, so the suites reach the
 # frontend through it and naming albor-compiler as well would hand the linker the same archive twice (§11.2)
-target_link_libraries(albor-tests PRIVATE albor-layout albor-focus albor-widgets albor-input albor-text-skia albor-application albor-manifest GTest::gtest_main)
+#
+# albor-alloc-probe is linked because the binary counts its heap traffic, which is how a steady state frame and a
+# cached measure are measured rather than assumed (§2.2). A shipping build never links it, so the probe is excluded
+# at link time instead of behind a flag, which is the rule of AD-04 (§2.3)
+target_link_libraries(albor-tests PRIVATE albor-layout albor-focus albor-widgets albor-input albor-text-skia albor-application albor-manifest albor-alloc-probe GTest::gtest_main)
 
 # the suite that draws through the skia render context reaches that backend directly, which is the one module the
 # other suites never link because it reaches a platform surface (§3.2, AD-16). the backend is apple only, so the
