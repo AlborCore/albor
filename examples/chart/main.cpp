@@ -71,7 +71,7 @@ int main() {
             return;
         // the metrics are read on every tick, so a resize is answered by the very next frame (§9.1)
         const albor::WindowMetrics metrics = window->metrics();
-        // stage one settles the graph, lays out the tree and records the immutable scene, and a clean tree builds nothing at all (§6.1, §7.3)
+        // stage one records the immutable scene, and a clean tree builds nothing at all (§6.1, §7.3)
         const std::shared_ptr<const albor::FrameScene> scene = pipeline.build_if_dirty(metrics);
         // a tick that found nothing dirty has no scene, so there is nothing to hand to stage two (§6.1)
         if (!scene)
@@ -84,7 +84,7 @@ int main() {
         // only the example window is answered, so another window is left alone (§5.2)
         if (resized != handle)
             return;
-        // the executor drains first, because the surface the resize writes to may still be in a frame that is executing (§6.1, D9.1)
+        // the executor drains first, because the surface may still be in a frame (§6.1, D9.1)
         executor.flush();
         // the surface is resized here on the ui thread, which is the thread the layer geometry belongs to (§5.3, D9.1)
         renderer->resize_surface(*surface, window->metrics());

@@ -43,7 +43,7 @@ namespace albor
             return;
         // bounds
         const Rect& b = bounds();
-        // the run is recorded at the top of its box, because every line of a shaped run places its own baseline (§6.2, §9.1)
+        // the run is recorded at the top of its box, where every line places its baseline (§6.2, §9.1)
         context.draw_text(m_layout, Point{.x = b.x, .y = b.y}, {.fill = m_foreground});
     }
 

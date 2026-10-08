@@ -15,7 +15,7 @@
 #include "window/window.h"
 
 int main() {
-    // the example is the composition root, so it installs the macos platform, the skia backend and the text engine (§6.3, §9.1)
+    // the composition root installs the platform, the renderer and the text engine (§6.3, §9.1)
     albor::macos::install_macos_platform();
     albor::install_skia_renderer_backend();
     albor::SkiaTextEngine::install();
@@ -52,7 +52,7 @@ int main() {
     }
     // the reactive engine owns the dependency graph that settles the bindings (§7.3)
     albor::BindingEngine engine;
-    // the panel declares its reactive properties over that engine and measures its label through the text engine (§7.2, §9.1)
+    // the panel declares its properties over that engine and measures through the text engine (§7.2, §9.1)
     auto panel = std::make_unique<albor::CounterPanel>(&engine, text_engine.get());
     // the pipeline owns the tree and drives stage one on the ui thread (§6.1, AD-18)
     albor::FramePipeline pipeline(engine, std::move(panel));
@@ -93,7 +93,7 @@ int main() {
         // only the example window is answered, so another window is left alone (§5.2)
         if (resized != handle)
             return;
-        // the executor drains first, because the surface the resize writes to may still be in a frame that is executing (§6.1, D9.1)
+        // the executor drains first, because the surface may still be in a frame (§6.1, D9.1)
         executor.flush();
         // the surface is resized here on the ui thread, which is the thread the layer geometry belongs to (§5.3, D9.1)
         renderer->resize_surface(*surface, window->metrics());

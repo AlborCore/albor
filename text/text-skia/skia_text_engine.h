@@ -37,7 +37,7 @@ namespace albor
         // override: report whether the collection and the unicode both resolved (§9.1)
         [[nodiscard]] bool ready() const override;
 
-        // how many shaping passes the engine has run, which is what proves the cache absorbs a repeat (§9.1)
+        // how many shaping passes the engine has run (§9.1)
         [[nodiscard]] std::size_t shaped_run_count() const;
 
         // how many shaped runs the cache currently holds (§9.1)

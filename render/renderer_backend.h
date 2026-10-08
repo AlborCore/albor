@@ -22,10 +22,10 @@ namespace albor
         // build the surface a native window presents into, returning null when the backend refuses the handle (§6.2)
         [[nodiscard]] virtual std::unique_ptr<RenderSurface> create_surface(NativeWindowHandle handle, const WindowMetrics& metrics) = 0;
 
-        // resize an existing surface, which a composition root calls from the ui thread after the frame executor has drained, because the call writes platform state the render thread must not (§6.2, §5.3, D9.1)
+        // resize an existing surface, which a composition root calls from the ui thread (§6.2, D9.1)
         virtual void resize_surface(RenderSurface& surface, const WindowMetrics& metrics) = 0;
 
-        // execute an immutable frame scene, which is stage two of the frame pipeline, and which refuses a scene at stale metrics rather than repairing the surface (§6.1, AD-18, D9.1)
+        // execute an immutable frame scene, which is stage two of the frame pipeline (§6.1, AD-18)
         virtual void execute_frame(RenderSurface& surface, const FrameScene& scene) = 0;
     };
 

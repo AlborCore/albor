@@ -132,20 +132,20 @@ namespace albor::skia
         SkPaint text_paint;
         text_paint.setColor(SkColor(to_skia_color(paint.fills() ? paint.fill : paint.stroke)));
         text_paint.setAntiAlias(true);
-        // the run is the shaped output stage one measured, so the glyphs are replayed rather than shaped again (§9.1, AD-18)
+        // the run is the shaped output stage one measured, so the glyphs are replayed (§9.1, AD-18)
         const ShapedRun& run = *layout.run;
-        // every line carries its own typeface and its own baseline, because a wrapped run and a fallback both split by line (§9.1)
+        // every line carries its own typeface and its own baseline (§9.1)
         for (const ShapedRun::Line& line : run.lines()) {
-            // a line whose typeface this backend cannot interpret is skipped rather than guessed at, because a wrong font is worse than no text (§3.5, §9.1)
+            // a line this backend cannot resolve is skipped rather than guessed at (§3.5, §9.1)
             if (!line.font.valid())
                 continue;
-            // the typeface the run was shaped with is retained for the draw, because the handle only borrows the one the text engine owns (§9.1)
+            // the typeface is retained for the draw, because the handle only borrows it (§9.1)
             sk_sp<SkTypeface> typeface = sk_ref_sp(static_cast<const SkTypeface*>(line.font.object()));
-            // the font is built from the typeface the run was shaped with at the size it was shaped at, which is what makes measurement and drawing one path (§9.1)
+            // the font is built from the typeface and the size the run was shaped at (§9.1)
             SkFont font(typeface, run.font_size());
             // subpixel positioning keeps a fractional origin sharp, which a snapped one would round away (§9.1)
             font.setSubpixel(true);
-            // the glyphs and their positions are copied into the spans skia draws, because the run hands them out as const (§6.3)
+            // the glyphs and their positions are copied into the spans skia draws (§6.3)
             std::vector<SkGlyphID> glyphs;
             // the positions are parallel to the glyphs, because skia draws one position per glyph (§6.3)
             std::vector<SkPoint> positions;

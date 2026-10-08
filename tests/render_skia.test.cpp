@@ -19,7 +19,7 @@ using namespace albor::skia;
 
 namespace
 {
-    // the surface width every test draws through, which is a raster surface because these tests need no window server (§6.3)
+    // the width of the surface every test draws through, which needs no window server (§6.3)
     constexpr int SURFACE_WIDTH = 400;
 
     // the surface height every test draws through, which is deep enough for a run of several lines (§6.3)
@@ -63,7 +63,7 @@ namespace
         return Rect::from_origin_size(Point{static_cast<float>(left), static_cast<float>(top)}, Size{static_cast<float>(right - left + 1), static_cast<float>(bottom - top + 1)});
     }
 
-    // a run rebuilt from a shaped one with every typeface stripped, which is what a backend that cannot read the engine looks like (§3.5, §9.1)
+    // a run with every typeface stripped, as a backend that cannot read it sees (§3.5, §9.1)
     TextLayout without_typefaces(const TextLayout& layout) {
         // the lines are rebuilt one by one, because each names its own typeface (§9.1)
         std::vector<ShapedRun::Line> lines;
@@ -84,7 +84,7 @@ namespace
 } // namespace
 
 TEST(SkiaRenderContextTextChecks, DrawTextPutsInkOnTheCanvas) {
-    // arrange the run is shaped by the real engine, because a fabricated run could not prove the handle resolves across the two modules (§9.1)
+    // arrange the run is shaped by the real engine, which proves the handle resolves (§9.1)
     SkiaTextEngine engine;
     const TextLayout layout = engine.measure("Albor", 1000.0f, 20.0f);
     sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
@@ -122,7 +122,7 @@ TEST(SkiaRenderContextTextChecks, DrawTextMovesTheRunWithTheOriginItWasGiven) {
     SkiaRenderContext shifted(surface->getCanvas(), 1.0f);
     // act
     shifted.draw_text(layout, Point{10.0f, 100.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
-    // assert the vertical origin carries the run by exactly the distance it moved, which a baseline origin could not (§9.1)
+    // assert the origin carries the run by exactly the distance it moved (§9.1)
     EXPECT_NEAR(ink_bounds(surface).y - high_ink, 60.0f, 2.0f);
 }
 
@@ -148,14 +148,14 @@ TEST(SkiaRenderContextTextChecks, DrawTextPlacesEveryLineOfAWrappedRunOnItsOwnBa
 }
 
 TEST(SkiaRenderContextTextChecks, DrawTextSizesAWrappedRunFromTheSizeItWasShapedAt) {
-    // arrange a wrapped run is the case the run height and the shaped size disagree on, because the height covers every line (§9.1)
+    // arrange a wrapped run is where the run height and the shaped size disagree (§9.1)
     SkiaTextEngine engine;
     const TextLayout wrapped = engine.measure("the quick brown fox jumps over the lazy dog", 80.0f, 20.0f);
     sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
     SkiaRenderContext context(surface->getCanvas(), 1.0f);
     // act
     context.draw_text(wrapped, Point{10.0f, 40.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
-    // assert the glyphs are sized from the shaped font size rather than from the run height, so the ink fits the box the measurement reported (§9.1)
+    // assert the glyphs are sized from the shaped size, so the ink fits the reported box (§9.1)
     const Rect bounds = ink_bounds(surface);
     EXPECT_FALSE(bounds.empty());
     EXPECT_LE(bounds.height, wrapped.size.height);
@@ -193,7 +193,7 @@ TEST(SkiaRenderContextTextChecks, DrawTextSkipsALineWhoseTypefaceItCannotInterpr
     SkiaRenderContext context(surface->getCanvas(), 1.0f);
     // act
     context.draw_text(without_typefaces(layout), Point{10.0f, 40.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
-    // assert a wrong font is worse than no text, so a line the backend cannot resolve is skipped rather than guessed at (§9.1)
+    // assert a wrong font is worse than no text, so the line is skipped (§9.1)
     EXPECT_TRUE(ink_bounds(surface).empty());
 }
 

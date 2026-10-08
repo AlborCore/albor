@@ -121,9 +121,9 @@ namespace albor
             m_condition.notify_all();
             return;
         }
-        // a scene built at metrics the surface does not present at is dropped rather than repaired, because the repair would resize the surface from this thread and the layer geometry belongs to the thread that created the native window (§6.1, D9.1)
+        // a scene at stale metrics is dropped rather than repaired, because a repair resizes the surface here (§6.1, D9.1)
         if (request.surface->metrics() != request.scene->metrics()) {
-            // the drop is counted and the flush waiters released under the lock, because the queue moved on without this frame (§6.1)
+            // the drop is counted and the flush waiters released under the lock (§6.1)
             const std::lock_guard<std::mutex> lock(m_mutex);
             m_dropped++;
             m_busy = false;

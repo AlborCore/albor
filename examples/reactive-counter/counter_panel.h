@@ -18,7 +18,7 @@ namespace albor
     class CounterPanel final : public Component
     {
     public:
-        // build the panel over the engine that settles its bindings and the text engine that measures its label (§7.2, §9.1)
+        // build the panel over the engine that settles its bindings and the text engine (§7.2, §9.1)
         CounterPanel(BindingEngine* engine, TextEngine* text_engine);
 
         // the reactive count a timer or a click increments (§7.1)

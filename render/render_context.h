@@ -47,7 +47,7 @@ namespace albor
         // draw a filled and stroked rounded rectangle (§6.2)
         virtual void draw_rounded_rect(const Rect& rect, float radius, const Paint& paint) = 0;
 
-        // draw a shaped text run with its origin at the top left of its box, where every line places its own baseline (§6.2, §9.1)
+        // draw a shaped text run whose origin is the top left of its box (§6.2, §9.1)
         virtual void draw_text(const TextLayout& layout, Point origin, const Paint& paint) = 0;
 
         // draw a retained immutable line batch under a transform, which replays without rebuilding geometry (§6.4, AD-06)

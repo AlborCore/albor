@@ -18,7 +18,7 @@
 
 namespace albor
 {
-    // how many shaped runs the cache holds before it drops them, because an application that measures nothing twice must not grow it without limit (§9.1)
+    // how many shaped runs the cache holds before it drops them (§9.1)
     constexpr std::size_t MAXIMUM_CACHED_RUNS = 512;
 
     namespace
@@ -104,10 +104,10 @@ namespace albor
     }
 
     TextLayout SkiaTextEngine::measure(std::string_view text, float max_width, float font_size) const {
-        // an engine without unicode cannot shape, because skparagraph dereferences it without checking, so it refuses rather than passing a null through; an empty run has no glyphs to shape at all, and an unmeasured run reports nothing because a fabricated extent would size a layout wrongly; measurement runs in stage one on the ui thread, so the cache below is ui thread state while the runs it hands out cross to the render thread as immutable snapshots (§9.1, §6.1, §10.5)
+        // an engine without unicode cannot shape, so it refuses rather than passing a null through (§9.1)
         if (!ready() || text.empty())
             return TextLayout{};
-        // the cache is keyed by the text and everything its layout depends on, because a measure of an unchanged run must not reshape it (§9.1)
+        // the cache is keyed by the text and everything its layout depends on (§9.1)
         const CacheKey key{.text = std::string(text), .max_width = max_width, .font_size = font_size};
         // a cached run is handed back as it was measured, so a steady state frame pays no shaping (§9.1)
         const auto cached = m_state->cache.find(key);
@@ -130,7 +130,7 @@ namespace albor
         const float layout_width = max_width > 0.0f ? max_width : UNBOUNDED_WIDTH;
         // the paragraph lays the run out at that width, which is the measure phase of §8.2 (§9.1)
         paragraph->layout(layout_width);
-        // the shaped lines are what the render stage replays, so they are collected before the paragraph goes away (§9.1, AD-18)
+        // the shaped lines are collected before the paragraph goes away (§9.1, AD-18)
         std::vector<ShapedRun::Line> lines;
         // the visitor reports every line in reading order and names the font each line was shaped with (§9.1)
         paragraph->visit([&lines](int, const skia::textlayout::Paragraph::VisitorInfo* info) {
@@ -139,7 +139,7 @@ namespace albor
                 return;
             // the line is built aside because the visitor reports one line at a time (§9.1)
             ShapedRun::Line line;
-            // the typeface the line was shaped with is what the renderer draws its glyphs from, and the collection keeps it alive for as long as the engine does (§9.1)
+            // the typeface the line was shaped with, which the renderer draws from (§9.1)
             line.font = FontHandle::from_object(info->font.getTypeface());
             // the line origin is the baseline the glyph positions of the line hang from (§9.1)
             line.origin = Point{.x = info->origin.x(), .y = info->origin.y()};
@@ -157,7 +157,7 @@ namespace albor
         paragraph->getLineMetrics(line_metrics);
         // the layout starts as an unmeasured default, so a run that shaped no line reports nothing (§9.1)
         TextLayout layout;
-        // the shaped run is what the render stage replays verbatim, which is what makes measurement and drawing one path (§9.1, AD-18)
+        // the shaped run is what the render stage replays verbatim (§9.1, AD-18)
         layout.run = ShapedRun::make(std::move(lines), font_size);
         // the reported width is the longest line rather than the layout width, because the last line may be short (§9.1)
         const float longest_line = static_cast<float>(paragraph->getLongestLine());

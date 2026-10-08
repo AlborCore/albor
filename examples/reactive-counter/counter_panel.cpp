@@ -63,7 +63,7 @@ namespace albor
         // the label carries the bound text, which re-evaluates with the count (§6.1, §7.3)
         Paint text_paint;
         text_paint.fill = Color::rgb(0.92f, 0.94f, 0.96f);
-        // the label is measured where it is drawn, because the binding that drives it changes without a setter (§7.3, §9.1)
+        // the label is measured where it is drawn, because its binding changes on its own (§7.3, §9.1)
         if (m_text_engine != nullptr) {
             // the measurement is a cached lookup once the run has been shaped, so a repeat frame pays no shaping (§9.1)
             const TextLayout label_layout = m_text_engine->measure(label.get(), 0.0f, 20.0f);

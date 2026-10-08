@@ -32,7 +32,7 @@ namespace albor::skia
         // override: hand out the metrics the surface presents at
         [[nodiscard]] const WindowMetrics& metrics() const override;
 
-        // override: resize the layer and the surface to the metrics of a resize, which is the only path that writes the layer geometry and belongs to the thread that created the native window (§5.3, D9.1)
+        // override: resize the layer, which the thread that created the native window owns (§5.3, D9.1)
         void resize(const WindowMetrics& metrics) override;
 
         // override: acquire a drawable and hand out the context that draws into it

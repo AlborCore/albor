@@ -93,7 +93,7 @@ namespace albor
         // metrics with no area cannot be presented, so the previous size is kept (§6.2)
         if (!metrics.valid())
             return;
-        // the layer geometry is written here, on the thread that owns the native window, because a core animation property is not written from the render thread (§5.3, D9.1)
+        // the layer geometry is written here, on the thread that owns the native window (§5.3, D9.1)
         surface.resize(metrics);
     }
 
@@ -101,7 +101,7 @@ namespace albor
         // a frame needs a surface that could acquire a drawable (§6.1)
         if (!surface.valid())
             return;
-        // the scene was built at metrics the surface does not present at, so it is refused rather than repaired, because a repair would write the layer geometry from the thread that must not (§6.1, D9.1)
+        // a scene at stale metrics is refused rather than repaired here (§6.1, D9.1)
         if (surface.metrics() != scene.metrics())
             return;
         // stage two acquires the drawable and draws the immutable scene into it (§6.1, AD-18)

@@ -30,7 +30,7 @@ namespace albor
         // one laid out line of the run, which carries the typeface its glyphs came from (§9.1)
         struct Line
         {
-            // the typeface this line's glyphs were shaped with, which is per line because a fallback can split a run (§9.1)
+            // the typeface this line was shaped with, which is per line because a fallback can split it (§9.1)
             FontHandle font;
 
             // the baseline origin of the line, relative to the run origin (§9.1)

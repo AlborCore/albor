@@ -37,7 +37,7 @@ namespace
         return ShapedRun::make({std::move(line)}, font_size);
     }
 
-    // a measured run standing in for what a text engine reports, so a test asserts on extents without a font backend (§9.1)
+    // a measured run standing in for what a text engine reports, so a test needs no font backend (§9.1)
     TextLayout synthetic_layout(std::size_t glyph_count, float font_size, Size size) {
         // the shaped run travels beside the extents the layout reports, which is what a measurement hands over (§9.1)
         return TextLayout{.run = synthetic_run(glyph_count, font_size), .size = size, .ascent = font_size * 0.8f, .descent = font_size * 0.2f};
@@ -176,7 +176,7 @@ namespace
         // whether the surface accepts a frame at all
         bool is_valid = true;
 
-        // the metrics the surface presents at, which is what the scenes of the executor suites are built at, so the drop at stale metrics stays the business of the suites that ask for it (§6.1, D9.1)
+        // the metrics the surface presents at, which is what the executor suites build their scenes at (§6.1, D9.1)
         WindowMetrics surface_metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
 
         [[nodiscard]] bool valid() const override { return is_valid; }
@@ -395,7 +395,7 @@ TEST(ShapedRun, TheGlyphCountSumsTheLines) {
 TEST(ShapedRun, TheFontSizeIsTheOneEveryLineWasShapedAt) {
     // arrange, act
     const std::shared_ptr<const ShapedRun> run = synthetic_run(1, 22.0f);
-    // assert the renderer builds its font from this size rather than from the run height, which is what fixes a wrapped run (§9.1)
+    // assert the renderer builds its font from the shaped size (§9.1)
     EXPECT_FLOAT_EQ(run->font_size(), 22.0f);
 }
 
@@ -428,7 +428,7 @@ TEST(ShapedRun, EveryLineCarriesItsOwnTypeface) {
     ShapedRun::Line fallback;
     // act
     const std::shared_ptr<const ShapedRun> run = ShapedRun::make({shaped, fallback}, 16.0f);
-    // assert a line the engine could not cover carries no typeface, so a backend skips it instead of drawing a wrong font (§9.1)
+    // assert a line the engine could not cover names no typeface (§9.1)
     ASSERT_EQ(run->lines().size(), 2u);
     EXPECT_TRUE(run->lines()[0].font.valid());
     EXPECT_FALSE(run->lines()[1].font.valid());
@@ -902,7 +902,7 @@ TEST(RenderExecutor, SubmittingANullSceneIsRefused) {
 }
 
 TEST(RenderExecutor, AnOlderPendingFrameIsDropped) {
-    // arrange the frames carry different content at the metrics the surface presents at, because a frame at other metrics is dropped rather than coalesced (§6.1, D9.1)
+    // arrange the frames differ in content, because a frame at other metrics is dropped (§6.1, D9.1)
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
     GatedRendererBackend backend;
     RenderExecutor executor(&backend);
@@ -1618,7 +1618,7 @@ TEST(RenderExecutorStaleMetricsChecks, ASceneBuiltAtOtherMetricsIsDropped) {
     // act
     executor.submit(surface, scene);
     executor.flush();
-    // assert the frame is dropped rather than executed, because executing it would present a scene the window no longer presents at (§6.1, D9.1)
+    // assert the frame is dropped rather than executed (§6.1, D9.1)
     EXPECT_EQ(executor.executed_count(), 0u);
     EXPECT_EQ(executor.dropped_count(), 1u);
 }
@@ -1650,7 +1650,7 @@ TEST(RenderExecutorStaleMetricsChecks, ADroppedFrameNeverResizesTheSurface) {
     // act
     executor.submit(surface, scene);
     executor.flush();
-    // assert the surface still presents at the metrics it had, because the layer geometry belongs to the ui thread (§5.3, D9.1)
+    // assert the surface still presents at the metrics it had (§5.3, D9.1)
     EXPECT_EQ(surface.metrics(), surface.surface_metrics);
     EXPECT_EQ(surface.metrics().logical_size, (Size{800.0f, 600.0f}));
 }

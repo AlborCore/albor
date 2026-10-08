@@ -106,7 +106,7 @@ namespace
         return ShapedRun::make({std::move(line)}, font_size);
     }
 
-    // a measured run standing in for what a text engine reports, so a test asserts on extents without a font backend (§9.1)
+    // a measured run standing in for what a text engine reports, so a test needs no font backend (§9.1)
     TextLayout synthetic_layout(std::size_t glyph_count, float font_size, Size size) {
         // the shaped run travels beside the extents the layout reports (§9.1)
         return TextLayout{.run = synthetic_run(glyph_count, font_size), .size = size, .ascent = font_size * 0.8f, .descent = font_size * 0.2f};
