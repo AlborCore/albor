@@ -146,11 +146,18 @@ namespace albor
         m_last_node = 0;
         // the numbering runs first, so every node carries its correlation hint before it draws (§18.1)
         number(root);
-        // the root is measured against the window, which is the whole of the available space (§8.2)
-        Size measured{};
-        root.measure(SizeConstraints::tight(metrics.logical_size), measured);
-        // the root is arranged to the full window, because a ui tree covers its surface (§8.2)
-        root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size));
+        // a window resize changes what the tree has to fit into, so it lays out even when nothing invalidated (§8.2)
+        const bool resized = metrics != m_built_metrics;
+        // the metrics of this build are remembered, so the next one can tell whether the window moved (§8.2)
+        m_built_metrics = metrics;
+        // the layout passes run when something asked for them, and a resize is such an ask (§8.2)
+        if (root.layout_dirty() || resized) {
+            // the root is measured against the window, which is the whole of the available space (§8.2)
+            Size measured{};
+            root.measure(SizeConstraints::tight(metrics.logical_size), measured);
+            // the root is arranged to the full window, because a ui tree covers its surface (§8.2)
+            root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size));
+        }
         SceneRecorder recorder(metrics);
         recorder.set_background(background);
         recorder.save();

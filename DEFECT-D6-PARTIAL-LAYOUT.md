@@ -1,6 +1,7 @@
 # Defect D6: Layout dirty flags have no consumers, and every frame re-shapes every run
 
-Draft issue report. Context and the sibling defects live in `RENDERING-DEFECTS.md`.
+Context and the sibling defects live in `RENDERING-DEFECTS.md`. **Partially fixed**: steps 1, 2
+and 3 of the plan are done, and the part that needs a proven shape is left open.
 
 ## Summary
 
@@ -44,6 +45,8 @@ dirty query, is wired to nothing.
 
 ## Plan
 
+### Done
+
 1. **Consume the flags in the build.** `SceneBuilder::build` reads the tree state
    before the passes:
    - when the tree is layout dirty, run measure and arrange as today, then clear the
@@ -61,6 +64,8 @@ dirty query, is wired to nothing.
 3. **Make the measure that remains cheap.** The shaped-run cache from
    `RENDERING-DEFECTS.md` (Phase B) turns a repeat measure of unchanged text into a
    lookup, which bounds the cost of the full passes that a layout change still pays.
+
+### Still open
 
 4. **Follow-up, later optimization.** Subtree-level relayout and partial repaint, on
    the proven shape for this kind of cache:
@@ -80,12 +85,35 @@ dirty query, is wired to nothing.
    stores, and a command list that can be re-recorded in ranges, which the scene plan
    produces.
 
+### The invariant this now rests on
+
+Skipping measure is only safe while every path that can change a measured size asks for
+a layout. Widgets that own text do it correctly, because `set_text` calls
+`invalidate_layout` (`widgets/label.cpp:77,110`, `widgets/button.cpp:151`), and the tree
+mutations do too (`ui/ui_node.cpp:56,71,86,202`). The examples read their properties in
+`render` and draw absolutely positioned runs, so their measure cannot change.
+
+This is worth stating because the compiler work in Phase 4 will generate property
+observers, and a generated observer that repaints a node whose measured size depends on
+that property would silently keep a stale bound. **A property write that can change a
+node's measured size must invalidate layout, not only repaint** (§8.2).
+
+A second guard was added, because the flag alone was not enough: the builder remembers
+the metrics of the last build and lays out again when they differ. Without it a resize
+that no handler invalidated would leave the tree holding the bounds of the old surface,
+where before this change the unconditional passes hid the mistake. The cost is that a
+window resize always pays a full layout, which is what it has to (§8.2).
+
 ## Verification
 
-- A visual-only change (background colour, disabled state) runs the record pass and
-  no measure or arrange, asserted through the scene builder counters
-  (`ui/scene_builder.cpp:205-209`).
-- A clean tree produces no scene and no build.
+- A first build measures and arranges, a second build of an unchanged tree does not, a
+  visual change does not, and a layout change does again
+  (`SceneBuilderLayoutDirtyChecks` in `tests/ui.test.cpp`).
+- A skipped layout keeps the bounds the last build placed and still records the frame,
+  so a repaint is not lost (`SceneBuilderLayoutDirtyChecks`).
+- A resize lays the tree out again with no invalidation, which is the guard against an app
+  forgetting one.
+- A clean tree produces no scene and a visual change does (`FramePipelineDirtyChecks`).
 - The chart example presents only on invalidation: its frame count stays flat while
   the tree is clean.
 - The existing layout suites keep passing.

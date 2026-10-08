@@ -123,6 +123,42 @@ namespace
         return TextLayout{.run = synthetic_run(glyph_count, font_size), .size = size, .ascent = font_size * 0.8f, .descent = font_size * 0.2f};
     }
 
+    // the layout counting double, which reports how often the layout passes ran (§8.2)
+    class LayoutCountingNode final : public UiNode
+    {
+    public:
+        // how many times the measure pass ran on this node (§8.2)
+        std::size_t measures = 0;
+
+        // how many times the arrange pass ran on this node (§8.2)
+        std::size_t arranges = 0;
+
+        void measure(const SizeConstraints& constraints, Size& out_size) override {
+            // the measure is counted before it runs, so a skipped pass is visible (§8.2)
+            measures++;
+            // the node fills what it is offered, because a leaf has no intrinsic extent (§8.2)
+            out_size = constraints.constrain(Size{200.0f, 120.0f});
+            // the measured size is recorded, which is what the arrange pass reads (§8.2)
+            m_measured_size = out_size;
+            // the children are measured, because a composite measures them (§8.2)
+            UiNode::measure(constraints, out_size);
+        }
+
+        void arrange(const Rect& bounds) override {
+            // the arrange is counted before it runs, so a skipped pass is visible (§8.2)
+            arranges++;
+            // the node arranges its children from the node contract (§8.2)
+            UiNode::arrange(bounds);
+        }
+
+        void render(RenderContext& context) override {
+            // the node paints its bounds, so a build always has a command to record (§6.1)
+            context.draw_rect(bounds(), Paint{.fill = Color::rgb(0.2f, 0.6f, 0.9f)});
+            // the children draw over it, which is the composite contract (§6.1)
+            UiNode::render(context);
+        }
+    };
+
     // the text node test double, which draws a run so a scene carries text (§6.1)
     class TestTextNode final : public UiNode
     {
@@ -1861,4 +1897,124 @@ TEST(UiNode, TheConstVisitWalksTheTree) {
     ASSERT_EQ(walked.size(), 2u);
     EXPECT_EQ(walked[0], &view);
     EXPECT_EQ(walked[1], child_ptr);
+}
+
+TEST(SceneBuilderLayoutDirtyChecks, AFirstBuildLaysTheTreeOut) {
+    // arrange a fresh node asks for a layout, because nothing has placed it yet (§8.2)
+    SceneBuilder builder;
+    LayoutCountingNode root;
+    // act
+    builder.build(root, WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
+    // assert the first build measures and arranges, because the bounds have to come from somewhere (§8.2)
+    EXPECT_EQ(root.measures, 1u);
+    EXPECT_EQ(root.arranges, 1u);
+}
+
+TEST(SceneBuilderLayoutDirtyChecks, ASecondBuildOfAnUnchangedTreeSkipsTheLayoutPasses) {
+    // arrange
+    SceneBuilder builder;
+    LayoutCountingNode root;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
+    builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    // act the same tree at the same metrics, which is what a steady state frame asks for (§6.1)
+    builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    // assert nothing asked for a layout, so the passes do not run again (§8.2)
+    EXPECT_EQ(root.measures, 1u);
+    EXPECT_EQ(root.arranges, 1u);
+}
+
+TEST(SceneBuilderLayoutDirtyChecks, AVisualChangeSkipsTheLayoutPasses) {
+    // arrange
+    SceneBuilder builder;
+    LayoutCountingNode root;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
+    builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    root.invalidate();
+    // act a colour change moves no bound, so the layout has nothing to do (§8.2)
+    builder.build(root, metrics, Color::rgb(0.1f, 0.2f, 0.3f));
+    // assert the record pass ran again while the layout stayed where it was (§6.1, §8.2)
+    EXPECT_EQ(root.measures, 1u);
+    EXPECT_EQ(root.arranges, 1u);
+}
+
+TEST(SceneBuilderLayoutDirtyChecks, ALayoutChangeRunsTheLayoutPassesAgain) {
+    // arrange
+    SceneBuilder builder;
+    LayoutCountingNode root;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
+    builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    root.invalidate_layout();
+    // act
+    builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    // assert a layout change is exactly what the flag is for (§8.2)
+    EXPECT_EQ(root.measures, 2u);
+    EXPECT_EQ(root.arranges, 2u);
+}
+
+TEST(SceneBuilderLayoutDirtyChecks, AResizeLaysTheTreeOutWithoutAnInvalidation) {
+    // arrange
+    SceneBuilder builder;
+    LayoutCountingNode root;
+    builder.build(root, WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
+    // act the window moved, which changes what the tree fits into even though nothing invalidated (§8.2)
+    builder.build(root, WindowMetrics::from_logical(Size{1024.0f, 768.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
+    // assert a resize is treated as a layout ask, so an app cannot get a stale tree by forgetting an invalidation (§8.2)
+    EXPECT_EQ(root.measures, 2u);
+    EXPECT_EQ(root.arranges, 2u);
+}
+
+TEST(SceneBuilderLayoutDirtyChecks, ASkippedLayoutKeepsTheBoundsTheLastBuildPlaced) {
+    // arrange
+    SceneBuilder builder;
+    LayoutCountingNode root;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
+    builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    const Rect placed = root.bounds();
+    root.invalidate();
+    // act
+    builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    // assert the recorded frame still sits where the last layout put the node (§8.2)
+    EXPECT_EQ(root.bounds(), placed);
+}
+
+TEST(SceneBuilderLayoutDirtyChecks, ASkippedLayoutStillRecordsTheFrame) {
+    // arrange
+    SceneBuilder builder;
+    LayoutCountingNode root;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
+    builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    root.invalidate();
+    // act a visual change still has to be presented, which is what a skipped layout must not prevent (§6.1)
+    const std::shared_ptr<const FrameScene> scene = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    // assert
+    ASSERT_NE(scene, nullptr);
+    EXPECT_EQ(scene->command_count(), 1u);
+}
+
+TEST(FramePipelineDirtyChecks, ACleanTreeProducesNoScene) {
+    // arrange
+    BindingEngine engine;
+    FramePipeline pipeline(engine, std::make_unique<TestNode>());
+    pipeline.set_background(Color::rgb(0.0f, 0.0f, 0.0f));
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
+    pipeline.build(metrics);
+    // act the tree is clean now, because the build cleared it (§6.1)
+    const std::shared_ptr<const FrameScene> clean = pipeline.build_if_dirty(metrics);
+    // assert nothing is drawn for a frame that changed nothing (§6.1)
+    EXPECT_EQ(clean, nullptr);
+}
+
+TEST(FramePipelineDirtyChecks, AVisualChangeProducesAScene) {
+    // arrange
+    BindingEngine engine;
+    FramePipeline pipeline(engine, std::make_unique<TestNode>());
+    pipeline.set_background(Color::rgb(0.0f, 0.0f, 0.0f));
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
+    pipeline.build(metrics);
+    pipeline.root().invalidate();
+    // act
+    const std::shared_ptr<const FrameScene> dirty = pipeline.build_if_dirty(metrics);
+    // assert a visual change is still presented, because the gate is about the tree asking for a frame (§6.1)
+    ASSERT_NE(dirty, nullptr);
+    EXPECT_EQ(dirty->command_count(), 1u);
 }

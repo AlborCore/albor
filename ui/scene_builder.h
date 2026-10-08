@@ -150,5 +150,8 @@ namespace albor
 
         // the identifier the last numbered node received (§18.1)
         NodeId m_last_node = 0;
+
+        // the metrics the last build laid the tree out for, which a change of lays it out again (§8.2)
+        WindowMetrics m_built_metrics;
     };
 } // namespace albor
