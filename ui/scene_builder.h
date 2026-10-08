@@ -5,6 +5,7 @@
 
 #include "core/geometry.h"
 #include "core/paint.h"
+#include "render/draw_command.h"
 #include "render/frame_scene.h"
 #include "render/render_context.h"
 #include "ui/ui_node.h"
@@ -87,38 +88,14 @@ namespace albor
         // map a local point into scene coordinates through the current transform (§6.1)
         [[nodiscard]] Point to_scene(const Point& point) const;
 
+        // record a command after stamping the clip it was drawn under (§6.2)
+        void record(DrawCommand command);
+
         // the metrics the scene is built for (§6.1)
         WindowMetrics m_metrics;
 
         // the background the surface is cleared with (§6.1)
         Color m_background;
-
-        // the recorded rectangles, in the order stage one drew them (§6.1)
-        std::vector<Rect> m_rects;
-
-        // the recorded fill colours, which travel with the rectangles so stage two keeps them (§6.1, AD-18)
-        std::vector<Color> m_rect_colors;
-
-        // the recorded text runs (§6.1)
-        std::vector<TextLayout> m_texts;
-
-        // the recorded baseline origins, parallel to the runs (§6.1)
-        std::vector<Point> m_text_origins;
-
-        // the recorded text fill colours, parallel to the runs, so stage two keeps them (§6.1, AD-18)
-        std::vector<Color> m_text_colors;
-
-        // the recorded retained line batch draws, which the scene replays in order (§6.4, AD-06)
-        std::vector<LineBatchDraw> m_line_batches;
-
-        // the recorded retained path draws, which the scene replays in order (§6.4, AD-06)
-        std::vector<PathDraw> m_paths;
-
-        // the recorded retained picture draws, which the scene replays in order (§6.4, AD-06)
-        std::vector<PictureDraw> m_pictures;
-
-        // the recorded retained image draws, which the scene replays in order (§6.4, AD-06)
-        std::vector<ImageDraw> m_images;
 
         // the current transform
         Transform m_transform;
@@ -128,6 +105,9 @@ namespace albor
 
         // the pushed states, which a restore pops (§6.2)
         std::vector<State> m_states;
+
+        // the recorded commands in paint order, which the scene hands to stage two (§6.1, AD-18)
+        std::vector<DrawCommand> m_commands;
     };
 
     // stage one of the frame pipeline, which lays out and records the ui tree into an immutable scene (§6.1, AD-18)

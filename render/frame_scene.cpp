@@ -1,25 +1,26 @@
 #include "render/frame_scene.h"
 
-#include "render/image_resource.h"
-#include "render/line_batch.h"
-#include "render/path_resource.h"
-#include "render/picture_resource.h"
+#include <utility>
 
 namespace albor
 {
-    bool TextLayout::empty() const {
-        // a run with no glyphs costs nothing to draw, whether it carries no shaped run or an empty one (§6.2)
-        return !run || run->empty();
-    }
-
-    FrameScene::FrameScene(WindowMetrics metrics) :
-        m_metrics(metrics) {}
+    FrameScene::FrameScene(WindowMetrics metrics, Color background) :
+        m_metrics(metrics), m_background(background) {}
 
     FrameScene FrameScene::from_primitives(WindowMetrics metrics, Color background, std::vector<Rect> rects) {
         // the scene is filled once and never touched again, because the render thread consumes it (§6.1)
-        FrameScene scene(metrics);
-        scene.m_background = background;
-        scene.m_rects = std::move(rects);
+        FrameScene scene(metrics, background);
+        // the whole surface is the clip every hand drawn rectangle sits under, because nothing narrows it (§6.1)
+        const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+        // the rectangles keep the order they were given in, which is their paint order (§6.1)
+        for (const Rect& rect : rects) {
+            // the rectangle is recorded as a command, so the scene keeps one shape for every draw (§6.1)
+            DrawCommand command = DrawCommand::rectangle(rect, Paint{.fill = Color::rgb(0.20f, 0.55f, 0.90f)});
+            // the clip is stamped, because a command carries its own (§6.2)
+            command.set_clip(full);
+            // the command joins the list in the order the caller drew (§6.1)
+            scene.add_command(std::move(command));
+        }
         return scene;
     }
 
@@ -33,105 +34,26 @@ namespace albor
         return m_background;
     }
 
-    const std::vector<Rect>& FrameScene::rects() const {
-        // the rectangles are replayed in the order the ui thread built them (§6.1)
-        return m_rects;
+    const std::vector<DrawCommand>& FrameScene::commands() const {
+        // the commands replay in the order the ui thread recorded them, which is the paint order (§6.1)
+        return m_commands;
     }
 
-    const std::vector<TextLayout>& FrameScene::texts() const {
-        // the text runs are replayed in the order the ui thread built them (§6.1)
-        return m_texts;
+    std::size_t FrameScene::command_count() const {
+        // the count is what a test asserts on, and what a test double walks (§6.1)
+        return m_commands.size();
     }
 
-    void FrameScene::add_text(TextLayout layout, Point origin) {
-        // a run with no glyphs contributes nothing, so it is not recorded (§6.2)
-        if (layout.empty())
+    bool FrameScene::empty() const {
+        // a scene with no command draws its background and nothing else (§6.1)
+        return m_commands.empty();
+    }
+
+    void FrameScene::add_command(DrawCommand command) {
+        // a command that would draw nothing is refused at the boundary, because the surface would pay for it (§6.2)
+        if (command.draws_nothing())
             return;
-        // the origin travels beside the run, because the render thread cannot ask the ui thread where it was (§6.1)
-        m_text_origins.push_back(origin);
-        m_texts.push_back(std::move(layout));
-    }
-
-    const std::vector<Point>& FrameScene::text_origins() const {
-        // the origins are parallel to the runs, so index one lookup finds both (§6.1)
-        return m_text_origins;
-    }
-
-    void FrameScene::set_rect_colors(std::vector<Color> colors) {
-        // the colour list must stay parallel to the rectangle list, so a mismatched length is refused (§6.1)
-        if (colors.size() != m_rects.size())
-            return;
-        // the colours travel with the rectangles, because the render thread cannot ask the ui thread (§6.1, AD-18)
-        m_rect_colors = std::move(colors);
-    }
-
-    const std::vector<Color>& FrameScene::rect_colors() const {
-        // the colours are parallel to the rectangles, so index one lookup finds both (§6.1)
-        return m_rect_colors;
-    }
-
-    void FrameScene::set_text_colors(std::vector<Color> colors) {
-        // the colour list must stay parallel to the run list, so a mismatched length is refused (§6.1)
-        if (colors.size() != m_texts.size())
-            return;
-        // the colours travel with the runs, because the render thread cannot ask the ui thread (§6.1, AD-18)
-        m_text_colors = std::move(colors);
-    }
-
-    const std::vector<Color>& FrameScene::text_colors() const {
-        // the colours are parallel to the runs, so index one lookup finds both (§6.1)
-        return m_text_colors;
-    }
-
-    void FrameScene::add_line_batch(LineBatchDraw draw) {
-        // a batch with no complete segment draws nothing, so it is refused at the boundary (§6.4, AD-06)
-        if (!draw.batch || draw.batch->segment_count() == 0)
-            return;
-        // the retained batch travels with the transform that places it (§6.4)
-        m_line_batches.push_back(std::move(draw));
-    }
-
-    const std::vector<LineBatchDraw>& FrameScene::line_batches() const {
-        // the batch draws replay in the order the ui thread recorded them (§6.4)
-        return m_line_batches;
-    }
-
-    void FrameScene::add_path(PathDraw draw) {
-        // a path with no command draws nothing, so it is refused at the boundary (§6.4, AD-06)
-        if (!draw.path || draw.path->verbs().empty())
-            return;
-        // the retained path travels with the transform and paint that stroke it (§6.4)
-        m_paths.push_back(std::move(draw));
-    }
-
-    const std::vector<PathDraw>& FrameScene::paths() const {
-        // the path draws replay in the order the ui thread recorded them (§6.4)
-        return m_paths;
-    }
-
-    void FrameScene::add_picture(PictureDraw draw) {
-        // a picture with no command draws nothing, so it is refused at the boundary (§6.4, AD-06)
-        if (!draw.picture || draw.picture->empty())
-            return;
-        // the retained picture travels with the transform it replays under (§6.4)
-        m_pictures.push_back(std::move(draw));
-    }
-
-    const std::vector<PictureDraw>& FrameScene::pictures() const {
-        // the picture draws replay in the order the ui thread recorded them (§6.4)
-        return m_pictures;
-    }
-
-    void FrameScene::add_image(ImageDraw draw) {
-        // an image with no pixel draws nothing, so it is refused at the boundary (§6.4, AD-06)
-        if (!draw.image || draw.image->pixels().empty())
-            return;
-        // the retained image travels with the destination it fills (§6.4)
-        m_images.push_back(std::move(draw));
-    }
-
-    const std::vector<ImageDraw>& FrameScene::images() const {
-        // the image draws replay in the order the ui thread recorded them (§6.4)
-        return m_images;
+        // the command joins the list in paint order, which is the order the ui thread recorded (§6.1)
+        m_commands.push_back(std::move(command));
     }
 } // namespace albor

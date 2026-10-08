@@ -109,30 +109,8 @@ namespace albor
         // the background is a full surface rectangle, which is the clear of phase 1 (§6.1)
         const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, scene.metrics().logical_size);
         context.draw_rect(full, {.fill = scene.background()});
-        // the solid rectangles of the scene are drawn in the order the ui thread built them (§6.1)
-        for (std::size_t index = 0; index < scene.rects().size(); index++) {
-            const Rect& rect = scene.rects()[index];
-            // a rectangle with no area contributes nothing, so it is skipped rather than drawn degenerate (§6.2)
-            if (rect.empty())
-                continue;
-            // the colour stage one recorded is used, because a ui node may bind its own colour (§6.1, AD-18)
-            context.draw_rect(rect, {.fill = index < scene.rect_colors().size() ? scene.rect_colors()[index] : Color::rgb(0.20f, 0.55f, 0.90f)});
-        }
-        // the text runs of the scene are drawn at the origins the ui thread recorded, in the colours it recorded, which keeps stage two free of ui state (§6.1, AD-18)
-        for (std::size_t index = 0; index < scene.texts().size(); index++)
-            context.draw_text(scene.texts()[index], scene.text_origins()[index], {.fill = index < scene.text_colors().size() ? scene.text_colors()[index] : Color::rgb(0.90f, 0.92f, 0.95f)});
-        // the retained line batches replay in the order the ui thread recorded them, with the transform stage one composed (§6.4, AD-06)
-        for (const LineBatchDraw& draw : scene.line_batches())
-            context.draw_line_batch(draw.batch, draw.transform, draw.stroke);
-        // the retained paths replay in the order the ui thread recorded them (§6.4, AD-06)
-        for (const PathDraw& draw : scene.paths())
-            context.draw_path(draw.path, draw.transform, draw.paint);
-        // the retained pictures replay in the order the ui thread recorded them (§6.4, AD-06)
-        for (const PictureDraw& draw : scene.pictures())
-            context.draw_picture(draw.picture, draw.transform);
-        // the retained images replay in the order the ui thread recorded them, which uploads each upload once (§6.4, AD-06)
-        for (const ImageDraw& draw : scene.images())
-            context.draw_image(draw.image, draw.destination, Paint{});
+        // the commands replay through the one shared replay, which scissors where a clip changes (§6.1, §6.2)
+        replay_commands(scene.commands(), context, full);
         // the frame is presented once the immutable scene is fully recorded (§6.1)
         surface.end_frame();
     }

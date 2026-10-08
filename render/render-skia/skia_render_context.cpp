@@ -313,52 +313,16 @@ namespace albor::skia
     }
 
     void SkiaRenderContext::draw_picture(const std::shared_ptr<const PictureResource>& picture, const Transform& transform) {
-        // a context with no canvas draws nothing (§6.4)
-        if (m_canvas == nullptr)
-            return;
         // a picture with no command draws nothing (§6.4, AD-06)
         if (!picture || picture->empty())
             return;
-        // the picture transform concats under the current matrix, so the commands land where the scene placed them (§6.4)
+        // the list nests under the transform the scene gave it, like any other retained draw (§6.4)
         m_canvas->save();
+        // the picture transform sits under the current matrix, so its commands land where the scene put them (§6.4)
         m_canvas->concat(to_skia_matrix(transform));
-        // every command replays in recording order, because the display list is the picture (§6.4)
-        for (const PictureCommand& command : picture->commands()) {
-            // each command runs under its own recorded transform, which the concat nests under the picture's (§6.4)
-            m_canvas->save();
-            m_canvas->concat(to_skia_matrix(command.transform));
-            switch (command.kind) {
-            case PictureCommandKind::Rect:
-                // a plain rectangle command draws through the shared shape painter (§6.4)
-                paint_shape(command.paint, false, command.rect, 0.0f);
-                break;
-            case PictureCommandKind::RoundedRect:
-                // a rounded rectangle command draws through the shared shape painter (§6.4)
-                paint_shape(command.paint, true, command.rect, command.radius);
-                break;
-            case PictureCommandKind::Text:
-                // the text command draws its run at the recorded baseline, under the command transform (§6.4)
-                if (!command.text.empty())
-                    draw_text(command.text, command.origin, command.paint);
-                break;
-            case PictureCommandKind::LineBatch:
-                // the batch command replays with an identity transform, because the matrix already nests it (§6.4)
-                if (command.batch)
-                    draw_line_batch(command.batch, Transform{}, command.stroke);
-                break;
-            case PictureCommandKind::Path:
-                // the path command replays with an identity transform, because the matrix already nests it (§6.4)
-                if (command.path)
-                    draw_path(command.path, Transform{}, command.paint);
-                break;
-            case PictureCommandKind::Image:
-                // the image command draws into the recorded destination, under the command transform (§6.4)
-                if (command.image)
-                    draw_image(command.image, command.rect, command.paint);
-                break;
-            }
-            m_canvas->restore();
-        }
+        // the recorded clip applies to the list, and a narrower one opens a switch of its own (§6.2)
+        replay_commands(picture->commands(), *this, m_clip);
+        // the list is closed, because a picture draws inside the scope it was given (§6.2)
         m_canvas->restore();
     }
 

@@ -93,6 +93,17 @@ namespace
         }
     };
 
+    // the commands of one kind of a scene, which is what a retained draw assertion reads off the one list (§6.1)
+    std::vector<DrawCommand> commands_of(const FrameScene& scene, DrawCommandKind kind) {
+        // the commands are gathered in paint order, because that is the order the list carries (§6.1)
+        std::vector<DrawCommand> gathered;
+        // every command is read, because a scene interleaves kinds (§6.1)
+        for (const DrawCommand& command : scene.commands())
+            if (command.kind() == kind)
+                gathered.push_back(command);
+        return gathered;
+    }
+
     // a shaped run standing in for what a text engine produced, so a scene test records text without a font backend (§9.1)
     std::shared_ptr<const ShapedRun> synthetic_run(std::size_t glyph_count, float font_size) {
         // the line carries the synthesized glyphs, which no real typeface backs (§9.1)
@@ -939,11 +950,11 @@ TEST(SceneRecorder, ANewRecorderHasNoTransform) {
     EXPECT_EQ(recorder.transform(), Transform{});
 }
 
-TEST(SceneRecorder, ANewRecorderHasAnEmptyClip) {
+TEST(SceneRecorder, ANewRecorderHasTheWholeSurfaceAsItsClip) {
     // arrange, act
     SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
-    // assert
-    EXPECT_TRUE(recorder.clip().empty());
+    // assert the clip starts at the whole surface, because an empty one would cull every draw of an unclipped tree (§6.2)
+    EXPECT_EQ(recorder.clip(), (Rect{0.0f, 0.0f, 800.0f, 600.0f}));
 }
 
 TEST(SceneRecorder, ANewRecorderHasAnEmptyStack) {
@@ -1025,7 +1036,7 @@ TEST(SceneRecorder, AnEmptyRectangleIsNotRecorded) {
     // act
     recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{0.0f, 10.0f}), Paint{});
     // assert
-    EXPECT_TRUE(recorder.scene()->rects().empty());
+    EXPECT_TRUE(recorder.scene()->empty());
 }
 
 TEST(SceneRecorder, ARectangleIsRecordedInSceneCoordinates) {
@@ -1034,8 +1045,8 @@ TEST(SceneRecorder, ARectangleIsRecordedInSceneCoordinates) {
     // act
     recorder.draw_rect(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{30.0f, 40.0f}), Paint{});
     // assert
-    ASSERT_EQ(recorder.scene()->rects().size(), 1u);
-    EXPECT_FLOAT_EQ(recorder.scene()->rects()[0].x, 10.0f);
+    ASSERT_EQ(recorder.scene()->command_count(), 1u);
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].rect_geometry().rect.x, 10.0f);
 }
 
 TEST(SceneRecorder, ATransformMovesTheRecordedRectangle) {
@@ -1045,8 +1056,8 @@ TEST(SceneRecorder, ATransformMovesTheRecordedRectangle) {
     // act
     recorder.draw_rect(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{30.0f, 40.0f}), Paint{});
     // assert
-    ASSERT_EQ(recorder.scene()->rects().size(), 1u);
-    EXPECT_FLOAT_EQ(recorder.scene()->rects()[0].x, 110.0f);
+    ASSERT_EQ(recorder.scene()->command_count(), 1u);
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].rect_geometry().rect.x, 110.0f);
 }
 
 TEST(SceneRecorder, ARoundedRectangleIsRecordedAsARectangle) {
@@ -1055,7 +1066,7 @@ TEST(SceneRecorder, ARoundedRectangleIsRecordedAsARectangle) {
     // act
     recorder.draw_rounded_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{30.0f, 30.0f}), 5.0f, Paint{});
     // assert
-    EXPECT_EQ(recorder.scene()->rects().size(), 1u);
+    EXPECT_EQ(recorder.scene()->command_count(), 1u);
 }
 
 TEST(SceneRecorder, ARecordedColourTravelsWithTheRectangle) {
@@ -1066,8 +1077,8 @@ TEST(SceneRecorder, ARecordedColourTravelsWithTheRectangle) {
     // act
     recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), paint);
     // assert
-    ASSERT_EQ(recorder.scene()->rect_colors().size(), 1u);
-    EXPECT_EQ(recorder.scene()->rect_colors()[0], (Color::rgb(0.25f, 0.5f, 0.75f)));
+    ASSERT_EQ(recorder.scene()->command_count(), 1u);
+    EXPECT_EQ(recorder.scene()->commands()[0].paint().fill, (Color::rgb(0.25f, 0.5f, 0.75f)));
 }
 
 TEST(SceneRecorder, ATextColourTravelsWithTheRun) {
@@ -1078,8 +1089,8 @@ TEST(SceneRecorder, ATextColourTravelsWithTheRun) {
     // act
     recorder.draw_text(synthetic_layout(5, 16.0f, Size{40.0f, 16.0f}), Point{30.0f, 40.0f}, paint);
     // assert
-    ASSERT_EQ(recorder.scene()->text_colors().size(), 1u);
-    EXPECT_EQ(recorder.scene()->text_colors()[0], (Color::rgb(0.9f, 0.1f, 0.2f)));
+    ASSERT_EQ(recorder.scene()->command_count(), 1u);
+    EXPECT_EQ(recorder.scene()->commands()[0].paint().fill, (Color::rgb(0.9f, 0.1f, 0.2f)));
 }
 
 TEST(SceneRecorder, AStrokeOnlyRunRecordsItsStrokeColour) {
@@ -1091,8 +1102,8 @@ TEST(SceneRecorder, AStrokeOnlyRunRecordsItsStrokeColour) {
     // act
     recorder.draw_text(synthetic_layout(5, 16.0f, Size{40.0f, 16.0f}), Point{30.0f, 40.0f}, paint);
     // assert
-    ASSERT_EQ(recorder.scene()->text_colors().size(), 1u);
-    EXPECT_EQ(recorder.scene()->text_colors()[0], (Color::rgb(0.4f, 0.5f, 0.6f)));
+    ASSERT_EQ(recorder.scene()->command_count(), 1u);
+    EXPECT_EQ(recorder.scene()->commands()[0].paint().stroke, (Color::rgb(0.4f, 0.5f, 0.6f)));
 }
 
 TEST(SceneRecorder, AnEmptyTextRunRecordsNoColour) {
@@ -1101,7 +1112,7 @@ TEST(SceneRecorder, AnEmptyTextRunRecordsNoColour) {
     // act
     recorder.draw_text(synthetic_layout(0, 16.0f, Size{0.0f, 16.0f}), Point{0.0f, 0.0f}, Paint{});
     // assert
-    EXPECT_TRUE(recorder.scene()->text_colors().empty());
+    EXPECT_TRUE(recorder.scene()->empty());
 }
 
 TEST(SceneRecorder, ATextRunIsRecordedWithItsOrigin) {
@@ -1110,8 +1121,8 @@ TEST(SceneRecorder, ATextRunIsRecordedWithItsOrigin) {
     // act
     recorder.draw_text(synthetic_layout(5, 16.0f, Size{40.0f, 16.0f}), Point{30.0f, 40.0f}, Paint{});
     // assert
-    ASSERT_EQ(recorder.scene()->texts().size(), 1u);
-    EXPECT_FLOAT_EQ(recorder.scene()->text_origins()[0].x, 30.0f);
+    ASSERT_EQ(recorder.scene()->command_count(), 1u);
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].text_geometry().origin.x, 30.0f);
 }
 
 TEST(SceneRecorder, AnEmptyTextRunIsNotRecorded) {
@@ -1120,7 +1131,7 @@ TEST(SceneRecorder, AnEmptyTextRunIsNotRecorded) {
     // act
     recorder.draw_text(synthetic_layout(0, 16.0f, Size{0.0f, 16.0f}), Point{0.0f, 0.0f}, Paint{});
     // assert
-    EXPECT_TRUE(recorder.scene()->texts().empty());
+    EXPECT_TRUE(recorder.scene()->empty());
 }
 
 TEST(SceneRecorder, TheSceneCarriesTheMetricsItWasBuiltFor) {
@@ -1143,7 +1154,7 @@ TEST(SceneRecorder, AnEmptySceneStillCarriesTheMetrics) {
     // arrange, act
     SceneRecorder recorder(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f));
     // assert
-    EXPECT_TRUE(recorder.scene()->rects().empty());
+    EXPECT_TRUE(recorder.scene()->empty());
     EXPECT_FLOAT_EQ(recorder.scene()->metrics().scale_factor, 1.0f);
 }
 
@@ -1159,10 +1170,10 @@ TEST(SceneRecorder, ABatchIsRecordedWithItsTransformAndStroke) {
     // act
     recorder.draw_line_batch(batch, Transform::translation(10.0f, 20.0f), stroke);
     // assert
-    ASSERT_EQ(recorder.scene()->line_batches().size(), 1u);
-    EXPECT_EQ(recorder.scene()->line_batches()[0].batch, batch);
-    EXPECT_EQ(recorder.scene()->line_batches()[0].transform, (Transform::translation(10.0f, 20.0f)));
-    EXPECT_EQ(recorder.scene()->line_batches()[0].stroke, stroke);
+    ASSERT_EQ(commands_of(*recorder.scene(), DrawCommandKind::LineBatch).size(), 1u);
+    EXPECT_EQ(commands_of(*recorder.scene(), DrawCommandKind::LineBatch)[0].batch_geometry().batch, batch);
+    EXPECT_EQ(commands_of(*recorder.scene(), DrawCommandKind::LineBatch)[0].transform(), (Transform::translation(10.0f, 20.0f)));
+    EXPECT_EQ(commands_of(*recorder.scene(), DrawCommandKind::LineBatch)[0].batch_geometry().stroke, stroke);
 }
 
 TEST(SceneRecorder, ABatchComposesTheCurrentRecorderTransform) {
@@ -1175,8 +1186,8 @@ TEST(SceneRecorder, ABatchComposesTheCurrentRecorderTransform) {
     // act
     recorder.draw_line_batch(batch, Transform::translation(10.0f, 20.0f), StrokeStyle{});
     // assert
-    ASSERT_EQ(recorder.scene()->line_batches().size(), 1u);
-    EXPECT_EQ(recorder.scene()->line_batches()[0].transform, (Transform::translation(110.0f, 70.0f)));
+    ASSERT_EQ(commands_of(*recorder.scene(), DrawCommandKind::LineBatch).size(), 1u);
+    EXPECT_EQ(commands_of(*recorder.scene(), DrawCommandKind::LineBatch)[0].transform(), (Transform::translation(110.0f, 70.0f)));
 }
 
 TEST(SceneRecorder, AnEmptyBatchIsNotRecorded) {
@@ -1185,7 +1196,7 @@ TEST(SceneRecorder, AnEmptyBatchIsNotRecorded) {
     // act
     recorder.draw_line_batch(nullptr, Transform{}, StrokeStyle{});
     // assert
-    EXPECT_TRUE(recorder.scene()->line_batches().empty());
+    EXPECT_TRUE(commands_of(*recorder.scene(), DrawCommandKind::LineBatch).empty());
 }
 
 TEST(SceneRecorder, APathIsRecordedWithItsPaint) {
@@ -1199,10 +1210,10 @@ TEST(SceneRecorder, APathIsRecordedWithItsPaint) {
     // act
     recorder.draw_path(path, Transform::scaling(2.0f, 2.0f), paint);
     // assert
-    ASSERT_EQ(recorder.scene()->paths().size(), 1u);
-    EXPECT_EQ(recorder.scene()->paths()[0].path, path);
-    EXPECT_EQ(recorder.scene()->paths()[0].transform, (Transform::scaling(2.0f, 2.0f)));
-    EXPECT_EQ(recorder.scene()->paths()[0].paint, paint);
+    ASSERT_EQ(commands_of(*recorder.scene(), DrawCommandKind::Path).size(), 1u);
+    EXPECT_EQ(commands_of(*recorder.scene(), DrawCommandKind::Path)[0].path_geometry().path, path);
+    EXPECT_EQ(commands_of(*recorder.scene(), DrawCommandKind::Path)[0].transform(), (Transform::scaling(2.0f, 2.0f)));
+    EXPECT_EQ(commands_of(*recorder.scene(), DrawCommandKind::Path)[0].paint(), paint);
 }
 
 TEST(SceneRecorder, AnEmptyPathIsNotRecorded) {
@@ -1211,7 +1222,7 @@ TEST(SceneRecorder, AnEmptyPathIsNotRecorded) {
     // act
     recorder.draw_path(nullptr, Transform{}, Paint{});
     // assert
-    EXPECT_TRUE(recorder.scene()->paths().empty());
+    EXPECT_TRUE(commands_of(*recorder.scene(), DrawCommandKind::Path).empty());
 }
 
 TEST(SceneRecorder, APictureIsRecordedWithItsTransform) {
@@ -1224,9 +1235,9 @@ TEST(SceneRecorder, APictureIsRecordedWithItsTransform) {
     // act
     recorder.draw_picture(picture, Transform::scaling(2.0f, 2.0f));
     // assert
-    ASSERT_EQ(recorder.scene()->pictures().size(), 1u);
-    EXPECT_EQ(recorder.scene()->pictures()[0].picture, picture);
-    EXPECT_EQ(recorder.scene()->pictures()[0].transform, (Transform::scaling(2.0f, 2.0f)));
+    ASSERT_EQ(commands_of(*recorder.scene(), DrawCommandKind::Picture).size(), 1u);
+    EXPECT_EQ(commands_of(*recorder.scene(), DrawCommandKind::Picture)[0].picture_geometry().picture, picture);
+    EXPECT_EQ(commands_of(*recorder.scene(), DrawCommandKind::Picture)[0].transform(), (Transform::scaling(2.0f, 2.0f)));
 }
 
 TEST(SceneRecorder, AnEmptyPictureIsNotRecorded) {
@@ -1235,7 +1246,7 @@ TEST(SceneRecorder, AnEmptyPictureIsNotRecorded) {
     // act
     recorder.draw_picture(nullptr, Transform{});
     // assert
-    EXPECT_TRUE(recorder.scene()->pictures().empty());
+    EXPECT_TRUE(commands_of(*recorder.scene(), DrawCommandKind::Picture).empty());
 }
 
 TEST(SceneRecorder, AnImageIsRecordedWithItsSceneDestination) {
@@ -1247,9 +1258,9 @@ TEST(SceneRecorder, AnImageIsRecordedWithItsSceneDestination) {
     // act
     recorder.draw_image(image, Rect::from_origin_size(Point{10.0f, 20.0f}, Size{4.0f, 2.0f}), Paint{});
     // assert
-    ASSERT_EQ(recorder.scene()->images().size(), 1u);
-    EXPECT_EQ(recorder.scene()->images()[0].image, image);
-    EXPECT_FLOAT_EQ(recorder.scene()->images()[0].destination.x, 10.0f);
+    ASSERT_EQ(commands_of(*recorder.scene(), DrawCommandKind::Image).size(), 1u);
+    EXPECT_EQ(commands_of(*recorder.scene(), DrawCommandKind::Image)[0].image_geometry().image, image);
+    EXPECT_FLOAT_EQ(commands_of(*recorder.scene(), DrawCommandKind::Image)[0].image_geometry().destination.x, 10.0f);
 }
 
 TEST(SceneRecorder, AnImageDestinationMapsThroughTheCurrentTransform) {
@@ -1262,8 +1273,8 @@ TEST(SceneRecorder, AnImageDestinationMapsThroughTheCurrentTransform) {
     // act
     recorder.draw_image(image, Rect::from_origin_size(Point{10.0f, 20.0f}, Size{4.0f, 2.0f}), Paint{});
     // assert
-    ASSERT_EQ(recorder.scene()->images().size(), 1u);
-    EXPECT_FLOAT_EQ(recorder.scene()->images()[0].destination.x, 110.0f);
+    ASSERT_EQ(commands_of(*recorder.scene(), DrawCommandKind::Image).size(), 1u);
+    EXPECT_FLOAT_EQ(commands_of(*recorder.scene(), DrawCommandKind::Image)[0].image_geometry().destination.x, 110.0f);
 }
 
 TEST(SceneRecorder, AnEmptyImageIsNotRecorded) {
@@ -1272,7 +1283,7 @@ TEST(SceneRecorder, AnEmptyImageIsNotRecorded) {
     // act
     recorder.draw_image(nullptr, Rect::from_origin_size(Point{0.0f, 0.0f}, Size{4.0f, 2.0f}), Paint{});
     // assert
-    EXPECT_TRUE(recorder.scene()->images().empty());
+    EXPECT_TRUE(commands_of(*recorder.scene(), DrawCommandKind::Image).empty());
 }
 
 TEST(SceneBuilder, ANewBuilderHasCountedNothing) {
@@ -1365,7 +1376,7 @@ TEST(SceneBuilder, BuildingRecordsTheTreeContent) {
     // act
     const std::shared_ptr<const FrameScene> scene = builder.build(root, WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
     // assert
-    EXPECT_EQ(scene->rects().size(), 1u);
+    EXPECT_EQ(scene->command_count(), 1u);
     EXPECT_EQ(root.draws, 1u);
 }
 
@@ -1386,8 +1397,9 @@ TEST(SceneBuilder, BuildingRecordsTextIntoTheScene) {
     // act
     const std::shared_ptr<const FrameScene> scene = builder.build(root, WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
     // assert
-    ASSERT_EQ(scene->texts().size(), 1u);
-    EXPECT_EQ(scene->texts()[0].run->glyph_count(), 5u);
+    ASSERT_EQ(scene->command_count(), 1u);
+    EXPECT_EQ(scene->commands()[0].kind(), DrawCommandKind::Text);
+    EXPECT_EQ(scene->commands()[0].text_geometry().layout.run->glyph_count(), 5u);
 }
 
 TEST(SceneBuilder, AnInvisibleTreeDrawsNothing) {
@@ -1397,8 +1409,8 @@ TEST(SceneBuilder, AnInvisibleTreeDrawsNothing) {
     root.set_visible(false);
     // act
     const std::shared_ptr<const FrameScene> scene = builder.build(root, WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
-    // assert
-    EXPECT_TRUE(scene->rects().empty());
+    // assert a tree that draws nothing records no command at all (§6.1)
+    EXPECT_TRUE(scene->empty());
 }
 
 TEST(SceneBuilder, AnInvisibleChildIsNotDrawn) {
@@ -1410,8 +1422,8 @@ TEST(SceneBuilder, AnInvisibleChildIsNotDrawn) {
     root.add_child(std::move(child));
     // act
     const std::shared_ptr<const FrameScene> scene = builder.build(root, WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
-    // assert
-    EXPECT_TRUE(scene->rects().empty());
+    // assert a tree that draws nothing records no command at all (§6.1)
+    EXPECT_TRUE(scene->empty());
     EXPECT_EQ(builder.visited_count(), 2u);
     EXPECT_EQ(builder.drawn_count(), 1u);
 }
@@ -1424,7 +1436,7 @@ TEST(SceneBuilder, AVisibleChildIsDrawn) {
     // act
     const std::shared_ptr<const FrameScene> scene = builder.build(root, WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
     // assert
-    EXPECT_EQ(scene->rects().size(), 1u);
+    EXPECT_EQ(scene->command_count(), 1u);
     EXPECT_EQ(builder.drawn_count(), 2u);
     EXPECT_EQ(builder.laid_out_count(), 2u);
 }
@@ -1637,7 +1649,7 @@ TEST(FramePipeline, AReactiveChangeReachesTheNextFrame) {
     const std::shared_ptr<const FrameScene> scene = pipeline.build(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
     // assert
     ASSERT_NE(scene, nullptr);
-    EXPECT_EQ(scene->rects().size(), 1u);
+    EXPECT_EQ(scene->command_count(), 1u);
 }
 
 TEST(FramePipeline, ABoundLabelFollowsItsCount) {
@@ -1803,8 +1815,8 @@ TEST(Component, RenderingAComponentPaintsItsBackground) {
     // act
     component.Component::render(recorder);
     // assert the background is the fill the component paints (§6.1, §6.2)
-    ASSERT_EQ(recorder.scene()->rects().size(), 1u);
-    EXPECT_EQ(recorder.scene()->rect_colors()[0], (Color::rgb(0.1f, 0.1f, 0.15f)));
+    ASSERT_EQ(recorder.scene()->command_count(), 1u);
+    EXPECT_EQ(recorder.scene()->commands()[0].paint().fill, (Color::rgb(0.1f, 0.1f, 0.15f)));
 }
 
 TEST(Component, RenderingAnUnarrangedComponentPaintsNothing) {
@@ -1814,7 +1826,7 @@ TEST(Component, RenderingAnUnarrangedComponentPaintsNothing) {
     // act
     component.Component::render(recorder);
     // assert a component with no area draws nothing (§6.1)
-    EXPECT_TRUE(recorder.scene()->rects().empty());
+    EXPECT_TRUE(recorder.scene()->empty());
 }
 
 TEST(Component, HitTestingAnInvisibleComponentFallsThroughToItsChildren) {

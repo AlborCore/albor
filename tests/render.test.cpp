@@ -37,6 +37,17 @@ namespace
         return ShapedRun::make({std::move(line)}, font_size);
     }
 
+    // the rectangles of the shape commands of a scene, which is what a shape assertion reads off the one list (§6.1)
+    std::vector<Rect> rect_commands(const FrameScene& scene) {
+        // the shapes are gathered in command order, because that is the paint order the list carries (§6.1)
+        std::vector<Rect> rects;
+        // every command is read, because a scene interleaves kinds (§6.1)
+        for (const DrawCommand& command : scene.commands())
+            if (command.kind() == DrawCommandKind::Rect || command.kind() == DrawCommandKind::RoundedRect)
+                rects.push_back(command.rect_geometry().rect);
+        return rects;
+    }
+
     // a measured run standing in for what a text engine reports, so a test needs no font backend (§9.1)
     TextLayout synthetic_layout(std::size_t glyph_count, float font_size, Size size) {
         // the shaped run travels beside the extents the layout reports, which is what a measurement hands over (§9.1)
@@ -67,6 +78,9 @@ namespace
 
         // the shaped runs the surface was asked to draw, in order (§9.1)
         std::vector<std::shared_ptr<const ShapedRun>> drawn_texts;
+
+        // what every draw was, in the order the surface was asked for it, which is the paint order (§6.1)
+        std::vector<std::string> draw_log;
 
         // the retained line batches the surface was asked to draw, in order
         std::vector<std::shared_ptr<const LineBatch>> drawn_batches;
@@ -118,32 +132,46 @@ namespace
 
         [[nodiscard]] const Rect& clip() const override { return current_clip; }
 
-        void draw_rect(const Rect& rect, const Paint&) override { drawn_rects.push_back(rect); }
+        void draw_rect(const Rect& rect, const Paint&) override {
+            drawn_rects.push_back(rect);
+            draw_log.emplace_back("rect");
+        }
 
-        void draw_rounded_rect(const Rect& rect, float, const Paint&) override { drawn_rects.push_back(rect); }
+        void draw_rounded_rect(const Rect& rect, float radius, const Paint&) override {
+            drawn_rects.push_back(rect);
+            rounded_radii.push_back(radius);
+            draw_log.emplace_back("rounded");
+        }
 
-        void draw_text(const TextLayout& layout, Point, const Paint&) override { drawn_texts.push_back(layout.run); }
+        void draw_text(const TextLayout& layout, Point, const Paint&) override {
+            drawn_texts.push_back(layout.run);
+            draw_log.emplace_back("text");
+        }
 
         void draw_line_batch(const std::shared_ptr<const LineBatch>& batch, const Transform& transform, const StrokeStyle& stroke) override {
             drawn_batches.push_back(batch);
             drawn_batch_transforms.push_back(transform);
             drawn_batch_strokes.push_back(stroke);
+            draw_log.emplace_back("batch");
         }
 
         void draw_path(const std::shared_ptr<const PathResource>& path, const Transform& transform, const Paint& paint) override {
             drawn_paths.push_back(path);
             drawn_path_transforms.push_back(transform);
             drawn_path_paints.push_back(paint);
+            draw_log.emplace_back("path");
         }
 
         void draw_picture(const std::shared_ptr<const PictureResource>& picture, const Transform& transform) override {
             drawn_pictures.push_back(picture);
             drawn_picture_transforms.push_back(transform);
+            draw_log.emplace_back("picture");
         }
 
         void draw_image(const std::shared_ptr<const ImageResource>& image, const Rect& destination, const Paint&) override {
             drawn_images.push_back(image);
             drawn_image_destinations.push_back(destination);
+            draw_log.emplace_back("image");
         }
 
     private:
@@ -226,14 +254,21 @@ namespace
             RenderContext& context = surface.begin_frame();
             context.save();
             context.set_transform(Transform::translation(scene.metrics().logical_size.width / 2.0f, scene.metrics().logical_size.height / 2.0f));
-            for (const Rect& rect : scene.rects())
-                context.draw_rect(rect, Paint{});
-            for (const LineBatchDraw& retained : scene.line_batches())
-                context.draw_line_batch(retained.batch, retained.transform, retained.stroke);
+            // the one shared replay draws the command list, which is what stage two does (§6.1, §6.2)
+            replay_commands(scene.commands(), context, Rect::from_origin_size(Point{0.0f, 0.0f}, scene.metrics().logical_size));
             context.restore();
             surface.end_frame();
-            executed_rect_counts.push_back(scene.rects().size());
-            executed_batch_counts.push_back(scene.line_batches().size());
+            // the shape and batch counts are read off the list, which is what a backend counts (§6.1)
+            std::size_t rects = 0;
+            std::size_t batches = 0;
+            for (const DrawCommand& command : scene.commands()) {
+                if (command.kind() == DrawCommandKind::Rect)
+                    rects++;
+                if (command.kind() == DrawCommandKind::LineBatch)
+                    batches++;
+            }
+            executed_rect_counts.push_back(rects);
+            executed_batch_counts.push_back(batches);
         }
     };
 
@@ -256,7 +291,11 @@ namespace
             m_arrived++;
             m_arrived_condition.notify_all();
             m_gate.wait(lock, [this] { return m_released; });
-            executed_rect_counts.push_back(scene.rects().size());
+            std::size_t rects = 0;
+            for (const DrawCommand& command : scene.commands())
+                if (command.kind() == DrawCommandKind::Rect)
+                    rects++;
+            executed_rect_counts.push_back(rects);
         }
 
         // wait until the render thread is parked inside a frame, which makes the following submit deterministic (§6.1)
@@ -510,19 +549,26 @@ TEST(FrameScene, ConstructionKeepsTheMetrics) {
     // arrange
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 2.0f);
     // act
-    const FrameScene scene(metrics);
+    const FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
     // assert
     EXPECT_EQ(scene.metrics(), metrics);
 }
 
-TEST(FrameScene, AnEmptySceneHasNoPrimitives) {
+TEST(FrameScene, AnEmptySceneCarriesNoCommand) {
     // arrange
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 2.0f);
     // act
-    const FrameScene scene(metrics);
+    const FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    // assert a scene with no command draws its background and nothing else (§6.1)
+    EXPECT_TRUE(scene.empty());
+    EXPECT_EQ(scene.command_count(), 0u);
+}
+
+TEST(FrameScene, ConstructionKeepsTheBackground) {
+    // arrange, act
+    const FrameScene scene(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.25f, 0.5f, 0.75f));
     // assert
-    EXPECT_TRUE(scene.rects().empty());
-    EXPECT_TRUE(scene.texts().empty());
+    EXPECT_EQ(scene.background(), (Color::rgb(0.25f, 0.5f, 0.75f)));
 }
 
 TEST(FrameScene, FromPrimitivesCarriesTheMetrics) {
@@ -549,9 +595,10 @@ TEST(FrameScene, FromPrimitivesKeepsEveryRectangle) {
     // act
     const FrameScene scene = FrameScene::from_primitives(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f), std::move(rects));
     // assert
-    ASSERT_EQ(scene.rects().size(), 2u);
-    EXPECT_EQ(scene.rects()[0], (Rect{0.0f, 0.0f, 10.0f, 10.0f}));
-    EXPECT_EQ(scene.rects()[1], (Rect{10.0f, 10.0f, 20.0f, 20.0f}));
+    const std::vector<Rect> drawn = rect_commands(scene);
+    ASSERT_EQ(drawn.size(), 2u);
+    EXPECT_EQ(drawn[0], (Rect{0.0f, 0.0f, 10.0f, 10.0f}));
+    EXPECT_EQ(drawn[1], (Rect{10.0f, 10.0f, 20.0f, 20.0f}));
 }
 
 TEST(FrameScene, FromPrimitivesKeepsTheRectangleOrder) {
@@ -562,156 +609,158 @@ TEST(FrameScene, FromPrimitivesKeepsTheRectangleOrder) {
     rects.push_back(Rect{2.0f, 2.0f, 3.0f, 3.0f});
     // act
     const FrameScene scene = FrameScene::from_primitives(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f), std::move(rects));
-    // assert
-    ASSERT_EQ(scene.rects().size(), 3u);
-    EXPECT_EQ(scene.rects()[0], (Rect{0.0f, 0.0f, 1.0f, 1.0f}));
-    EXPECT_EQ(scene.rects()[1], (Rect{1.0f, 1.0f, 2.0f, 2.0f}));
-    EXPECT_EQ(scene.rects()[2], (Rect{2.0f, 2.0f, 3.0f, 3.0f}));
+    // assert the list is in paint order, so the scene draws what the caller drew in that order (§6.1)
+    const std::vector<Rect> drawn = rect_commands(scene);
+    ASSERT_EQ(drawn.size(), 3u);
+    EXPECT_EQ(drawn[0], (Rect{0.0f, 0.0f, 1.0f, 1.0f}));
+    EXPECT_EQ(drawn[1], (Rect{1.0f, 1.0f, 2.0f, 2.0f}));
+    EXPECT_EQ(drawn[2], (Rect{2.0f, 2.0f, 3.0f, 3.0f}));
 }
 
-TEST(FrameScene, ASceneCarriesNoTextRuns) {
+TEST(FrameScene, FromPrimitivesStampsEveryCommandWithTheWholeSurface) {
     // arrange, act
-    const FrameScene scene = FrameScene::from_primitives(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f), {});
-    // assert
-    EXPECT_TRUE(scene.texts().empty());
+    const FrameScene scene = FrameScene::from_primitives(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f), {Rect{0.0f, 0.0f, 10.0f, 10.0f}});
+    // assert a hand drawn scene never narrows its clip, so the replay opens no switch for it (§6.2)
+    ASSERT_EQ(scene.command_count(), 1u);
+    EXPECT_EQ(scene.commands()[0].clip(), (Rect{0.0f, 0.0f, 640.0f, 480.0f}));
 }
 
-TEST(FrameScene, ATextColourListThatDoesNotMatchTheRunsIsRefused) {
+TEST(FrameScene, TheKindFollowsTheGeometryACommandCarries) {
     // arrange
-    FrameScene scene = FrameScene::from_primitives(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f), {});
-    scene.add_text(synthetic_layout(5, 16.0f, Size{80.0f, 16.0f}), Point{10.0f, 20.0f});
-    // act
-    scene.set_text_colors({Color::rgb(1.0f, 0.0f, 0.0f), Color::rgb(0.0f, 1.0f, 0.0f)});
-    // assert
-    EXPECT_TRUE(scene.text_colors().empty());
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    // act the clip is stamped first, because a command that carries none draws nothing (§6.2)
+    DrawCommand command = DrawCommand::rounded_rectangle(Rect{0.0f, 0.0f, 10.0f, 10.0f}, 4.0f, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    command.set_clip(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size));
+    scene.add_command(std::move(command));
+    // assert the kind is read off the geometry, so the two can never disagree (§6.2)
+    ASSERT_EQ(scene.command_count(), 1u);
+    EXPECT_EQ(scene.commands()[0].kind(), DrawCommandKind::RoundedRect);
 }
 
-TEST(FrameScene, ASetTextColourTravelsWithTheRun) {
+TEST(FrameScene, ARoundedRectangleKeepsItsRadius) {
     // arrange
-    FrameScene scene = FrameScene::from_primitives(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f), {});
-    scene.add_text(synthetic_layout(5, 16.0f, Size{80.0f, 16.0f}), Point{10.0f, 20.0f});
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand command = DrawCommand::rounded_rectangle(Rect{0.0f, 0.0f, 10.0f, 10.0f}, 4.0f, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
     // act
-    scene.set_text_colors({Color::rgb(0.25f, 0.5f, 0.75f)});
-    // assert
-    ASSERT_EQ(scene.text_colors().size(), 1u);
-    EXPECT_EQ(scene.text_colors()[0], (Color::rgb(0.25f, 0.5f, 0.75f)));
+    command.set_clip(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size));
+    scene.add_command(std::move(command));
+    // assert the radius survives the record, which is what a bucketed scene lost (§6.2)
+    ASSERT_EQ(scene.command_count(), 1u);
+    EXPECT_FLOAT_EQ(scene.commands()[0].rect_geometry().radius, 4.0f);
 }
 
-TEST(FrameScene, ARectColourListThatDoesNotMatchTheRectanglesIsRefused) {
-    // arrange
-    std::vector<Rect> rects;
-    rects.push_back(Rect{0.0f, 0.0f, 1.0f, 1.0f});
-    FrameScene scene = FrameScene::from_primitives(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f), std::move(rects));
+TEST(FrameScene, ACommandThatCarriesNoClipDrawsUnclipped) {
+    // arrange a command nobody stamped, which is what a caller that skipped the recorder produces (§6.2)
+    FrameScene scene(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
     // act
-    scene.set_rect_colors({Color::rgb(1.0f, 0.0f, 0.0f), Color::rgb(0.0f, 1.0f, 0.0f)});
-    // assert
-    EXPECT_TRUE(scene.rect_colors().empty());
+    scene.add_command(DrawCommand::rectangle(Rect{0.0f, 0.0f, 10.0f, 10.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)}));
+    // assert a hand built command is not silently dropped, because a missing clip means no clip rather than nothing (§6.2)
+    ASSERT_EQ(scene.command_count(), 1u);
+    EXPECT_EQ(scene.commands()[0].clip(), DrawCommand::unclipped());
 }
 
-TEST(FrameScene, ASetRectColourTravelsWithTheRectangle) {
-    // arrange
-    std::vector<Rect> rects;
-    rects.push_back(Rect{0.0f, 0.0f, 1.0f, 1.0f});
-    FrameScene scene = FrameScene::from_primitives(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f), std::move(rects));
-    // act
-    scene.set_rect_colors({Color::rgb(0.3f, 0.4f, 0.5f)});
-    // assert
-    ASSERT_EQ(scene.rect_colors().size(), 1u);
-    EXPECT_EQ(scene.rect_colors()[0], (Color::rgb(0.3f, 0.4f, 0.5f)));
-}
-
-TEST(FrameScene, AnUnconfiguredSceneKeepsTheDefaultBackground) {
+TEST(FrameScene, ACommandCarriesTheColourItWasPainted) {
     // arrange, act
-    const FrameScene scene(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f));
-    // assert
-    EXPECT_EQ(scene.background(), Color{});
-    EXPECT_FLOAT_EQ(scene.background().alpha, 1.0f);
+    FrameScene scene(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
+    scene.add_command(DrawCommand::rectangle(Rect{0.0f, 0.0f, 10.0f, 10.0f}, Paint{.fill = Color::rgb(0.3f, 0.4f, 0.5f)}));
+    // assert the paint travels with the geometry, so stage two cannot ask what the ui thread painted (§6.1, AD-18)
+    ASSERT_EQ(scene.command_count(), 1u);
+    EXPECT_EQ(scene.commands()[0].paint().fill, (Color::rgb(0.3f, 0.4f, 0.5f)));
 }
 
-TEST(RenderContext, SaveAndRestoreAreCounted) {
+TEST(FrameScene, ACommandThatPaintsNothingIsCulled) {
     // arrange
-    TestRenderContext context;
-    // act
-    context.save();
-    context.restore();
+    FrameScene scene(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
+    Paint transparent;
+    transparent.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f);
+    transparent.stroke = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f);
+    // act a paint that neither fills nor strokes would draw nothing, so it is refused at the boundary (§6.2)
+    scene.add_command(DrawCommand::rectangle(Rect{0.0f, 0.0f, 10.0f, 10.0f}, transparent));
     // assert
-    EXPECT_EQ(context.save_count, 1u);
-    EXPECT_EQ(context.restore_count, 1u);
+    EXPECT_EQ(scene.command_count(), 0u);
 }
 
-TEST(RenderContext, TheTransformReadsBackWhatWasSet) {
-    // arrange
-    TestRenderContext context;
-    const Transform transform = Transform::translation(3.0f, 4.0f);
-    // act
-    context.set_transform(transform);
-    // assert
-    EXPECT_EQ(context.transform(), transform);
-}
-
-TEST(RenderContext, ADefaultContextHasTheIdentityTransform) {
+TEST(FrameScene, ACommandWithNoAreaIsCulled) {
     // arrange, act
-    const TestRenderContext context;
+    FrameScene scene(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
+    // act
+    scene.add_command(DrawCommand::rectangle(Rect{0.0f, 0.0f, 0.0f, 10.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)}));
     // assert
-    EXPECT_EQ(context.transform(), Transform{});
+    EXPECT_EQ(scene.command_count(), 0u);
 }
 
-TEST(RenderContext, EveryTransformIsRecorded) {
+TEST(FrameScene, ACommandUnderAnEmptyClipIsCulled) {
     // arrange
-    TestRenderContext context;
-    // act
-    context.set_transform(Transform::scaling(2.0f, 2.0f));
-    context.set_transform(Transform::translation(1.0f, 1.0f));
+    DrawCommand clipped = DrawCommand::rectangle(Rect{0.0f, 0.0f, 10.0f, 10.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // act the clip is stamped to nothing, which no ink can land inside (§6.2)
+    clipped.set_clip(Rect{});
+    FrameScene scene(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
+    scene.add_command(std::move(clipped));
     // assert
-    ASSERT_EQ(context.transforms.size(), 2u);
-    EXPECT_EQ(context.transforms[0], Transform::scaling(2.0f, 2.0f));
-    EXPECT_EQ(context.transforms[1], Transform::translation(1.0f, 1.0f));
+    EXPECT_EQ(scene.command_count(), 0u);
 }
 
-TEST(RenderContext, ClipRectIsRecorded) {
+TEST(FrameScene, CommandsOfDifferentKindsKeepTheirPaintOrder) {
     // arrange
-    TestRenderContext context;
-    const Rect clip{0.0f, 0.0f, 100.0f, 100.0f};
-    // act
-    context.clip_rect(clip);
-    // assert
-    ASSERT_EQ(context.clips.size(), 1u);
-    EXPECT_EQ(context.clips[0], clip);
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
+    const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    // act a contour is recorded before a rectangle that overlaps it (§6.1)
+    DrawCommand contour = DrawCommand::path(nullptr, Transform{}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    contour.set_clip(full);
+    scene.add_command(std::move(contour));
+    DrawCommand shape = DrawCommand::rectangle(Rect{0.0f, 0.0f, 10.0f, 10.0f}, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    shape.set_clip(full);
+    scene.add_command(std::move(shape));
+    // assert the rectangle is recorded after the contour, so it draws over it rather than under it (§6.1)
+    ASSERT_EQ(scene.command_count(), 1u);
+    EXPECT_EQ(scene.commands()[0].kind(), DrawCommandKind::Rect);
 }
 
-TEST(RenderContext, ClipRoundedRectIsRecordedWithItsRadius) {
+TEST(FrameScene, ATextCommandCarriesItsRunAndItsBoxOrigin) {
     // arrange
-    TestRenderContext context;
-    const Rect clip{0.0f, 0.0f, 100.0f, 100.0f};
+    FrameScene scene(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand command = DrawCommand::text(synthetic_layout(5, 16.0f, Size{80.0f, 16.0f}), Point{10.0f, 20.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
     // act
-    context.clip_rounded_rect(clip, 8.0f);
-    // assert
-    ASSERT_EQ(context.clips.size(), 1u);
-    EXPECT_EQ(context.clips[0], clip);
-    ASSERT_EQ(context.rounded_radii.size(), 1u);
-    EXPECT_FLOAT_EQ(context.rounded_radii[0], 8.0f);
+    command.set_clip(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{640.0f, 480.0f}));
+    scene.add_command(std::move(command));
+    // assert the run and its origin travel together, which is what a parallel list kept apart (§6.1)
+    ASSERT_EQ(scene.command_count(), 1u);
+    EXPECT_EQ(scene.commands()[0].kind(), DrawCommandKind::Text);
+    EXPECT_EQ(scene.commands()[0].text_geometry().origin, (Point{10.0f, 20.0f}));
+    EXPECT_EQ(scene.commands()[0].text_geometry().layout.run->glyph_count(), 5u);
 }
 
-TEST(RenderContext, DrawRectIsRecorded) {
+TEST(FrameScene, AnEmptyTextCommandIsRefused) {
     // arrange
-    TestRenderContext context;
-    const Rect rect{1.0f, 2.0f, 3.0f, 4.0f};
+    FrameScene scene(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand command = DrawCommand::text(synthetic_layout(0, 16.0f, Size{0.0f, 16.0f}), Point{0.0f, 0.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
     // act
-    context.draw_rect(rect, Paint{});
-    // assert
-    ASSERT_EQ(context.drawn_rects.size(), 1u);
-    EXPECT_EQ(context.drawn_rects[0], rect);
+    command.set_clip(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{640.0f, 480.0f}));
+    scene.add_command(std::move(command));
+    // assert a run with no glyphs draws nothing, so the scene carries no dead draw (§6.2)
+    EXPECT_EQ(scene.command_count(), 0u);
 }
 
-TEST(RenderContext, DrawRoundedRectIsRecorded) {
+TEST(FrameScene, EqualityComparesTheCommandsInOrder) {
     // arrange
-    TestRenderContext context;
-    const Rect rect{1.0f, 2.0f, 3.0f, 4.0f};
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
+    const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    DrawCommand first = DrawCommand::rectangle(Rect{0.0f, 0.0f, 1.0f, 1.0f}, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    first.set_clip(full);
+    DrawCommand second = DrawCommand::rectangle(Rect{1.0f, 0.0f, 1.0f, 1.0f}, Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f)});
+    second.set_clip(full);
     // act
-    context.draw_rounded_rect(rect, 4.0f, Paint{});
-    // assert
-    ASSERT_EQ(context.drawn_rects.size(), 1u);
-    EXPECT_EQ(context.drawn_rects[0], rect);
+    FrameScene ordered(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    ordered.add_command(first);
+    ordered.add_command(second);
+    FrameScene reversed(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    reversed.add_command(second);
+    reversed.add_command(first);
+    // assert two scenes are equal only when their commands are equal and in the same order (§6.1)
+    EXPECT_NE(ordered, reversed);
 }
 
 TEST(RenderContext, DrawTextIsRecorded) {
@@ -816,7 +865,7 @@ TEST(RenderExecutor, AnExecutorWithoutABeBackendAcceptsNothing) {
     // arrange
     RenderExecutor executor(nullptr);
     TestRenderSurface surface;
-    const auto scene = std::make_shared<const FrameScene>(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f));
+    const auto scene = std::make_shared<const FrameScene>(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
     // act
     const bool submitted = executor.submit(surface, scene);
     // assert
@@ -875,8 +924,11 @@ TEST(RenderExecutor, TheBackendReplaysRetainedDraws) {
     ResourceFactory factory;
     const Point points[] = {{0.0f, 0.0f}, {1.0f, 1.0f}};
     const std::shared_ptr<const LineBatch> batch = factory.create_line_batch(points);
-    FrameScene built(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f));
-    built.add_line_batch(LineBatchDraw{.batch = batch, .transform = Transform{}, .stroke = StrokeStyle{}});
+    const WindowMetrics built_metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
+    FrameScene built(built_metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand recorded = DrawCommand::line_batch(batch, Transform{}, StrokeStyle{.width = 1.0f});
+    recorded.set_clip(Rect::from_origin_size(Point{0.0f, 0.0f}, built_metrics.logical_size));
+    built.add_command(std::move(recorded));
     const auto scene = std::make_shared<const FrameScene>(std::move(built));
     // act
     executor.submit(surface, scene);
@@ -928,7 +980,7 @@ TEST(RenderExecutor, FlushReturnsOnlyOnceNothingIsPending) {
     TestRendererBackend backend;
     RenderExecutor executor(&backend);
     TestRenderSurface surface;
-    executor.submit(surface, std::make_shared<const FrameScene>(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f)));
+    executor.submit(surface, std::make_shared<const FrameScene>(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f)));
     // act
     executor.flush();
     // assert
@@ -941,7 +993,7 @@ TEST(RenderExecutor, ManyFramesAllExecute) {
     TestRendererBackend backend;
     RenderExecutor executor(&backend);
     TestRenderSurface surface;
-    const auto scene = std::make_shared<const FrameScene>(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f));
+    const auto scene = std::make_shared<const FrameScene>(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
     // act
     for (int index = 0; index < 20; index++) {
         executor.submit(surface, scene);
@@ -956,7 +1008,7 @@ TEST(RenderExecutor, EveryExecutedFrameIsPresentedOnce) {
     TestRendererBackend backend;
     RenderExecutor executor(&backend);
     TestRenderSurface surface;
-    const auto scene = std::make_shared<const FrameScene>(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f));
+    const auto scene = std::make_shared<const FrameScene>(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
     // act
     for (int frame = 0; frame < 8; frame++) {
         executor.submit(surface, scene);
@@ -977,7 +1029,7 @@ TEST(RenderExecutor, AStoppedExecutorAcceptsNothing) {
     TestRenderSurface surface;
     // act
     executor.stop();
-    const bool submitted = executor.submit(surface, std::make_shared<const FrameScene>(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f)));
+    const bool submitted = executor.submit(surface, std::make_shared<const FrameScene>(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f)));
     // assert
     EXPECT_FALSE(submitted);
 }
@@ -998,7 +1050,7 @@ TEST(RenderExecutor, StoppingFlushesTheFrameAlreadyQueued) {
     TestRendererBackend backend;
     RenderExecutor executor(&backend);
     TestRenderSurface surface;
-    executor.submit(surface, std::make_shared<const FrameScene>(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f)));
+    executor.submit(surface, std::make_shared<const FrameScene>(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f)));
     executor.flush();
     // act
     executor.stop();
@@ -1013,7 +1065,7 @@ TEST(RenderExecutor, DestructionFlushesThePendingFrame) {
     const std::uint64_t executed = [&] {
         // the executor must outlive the submit, so it is scoped here and read after the scope
         RenderExecutor executor(&backend);
-        executor.submit(surface, std::make_shared<const FrameScene>(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f)));
+        executor.submit(surface, std::make_shared<const FrameScene>(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f)));
         return executor.executed_count();
     }();
     // act, assert
@@ -1214,10 +1266,10 @@ TEST(PictureRecorder, CommandsAreRecordedInOrder) {
     recorder.draw_text(synthetic_layout(5, 16.0f, Size{80.0f, 16.0f}), Point{0.0f, 0.0f}, Paint{});
     // assert
     ASSERT_EQ(recorder.commands().size(), 3u);
-    EXPECT_EQ(recorder.commands()[0].kind, PictureCommandKind::Rect);
-    EXPECT_EQ(recorder.commands()[1].kind, PictureCommandKind::RoundedRect);
-    EXPECT_EQ(recorder.commands()[2].kind, PictureCommandKind::Text);
-    EXPECT_FLOAT_EQ(recorder.commands()[1].radius, 4.0f);
+    EXPECT_EQ(recorder.commands()[0].kind(), DrawCommandKind::Rect);
+    EXPECT_EQ(recorder.commands()[1].kind(), DrawCommandKind::RoundedRect);
+    EXPECT_EQ(recorder.commands()[2].kind(), DrawCommandKind::Text);
+    EXPECT_FLOAT_EQ(recorder.commands()[1].rect_geometry().radius, 4.0f);
 }
 
 TEST(PictureRecorder, AnEmptyRectangleDoesNotRecord) {
@@ -1237,7 +1289,7 @@ TEST(PictureRecorder, ACommandStampsTheTransformItWasRecordedUnder) {
     recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{});
     // assert
     ASSERT_EQ(recorder.commands().size(), 1u);
-    EXPECT_EQ(recorder.commands()[0].transform, (Transform::translation(5.0f, 6.0f)));
+    EXPECT_EQ(recorder.commands()[0].transform(), (Transform::translation(5.0f, 6.0f)));
 }
 
 TEST(PictureRecorder, SaveAndRestoreRoundTripTheTransform) {
@@ -1264,10 +1316,10 @@ TEST(PictureRecorder, ABatchCommandCarriesItsRetainedBatch) {
     recorder.draw_line_batch(batch, Transform::translation(10.0f, 20.0f), stroke);
     // assert
     ASSERT_EQ(recorder.commands().size(), 1u);
-    EXPECT_EQ(recorder.commands()[0].kind, PictureCommandKind::LineBatch);
-    EXPECT_EQ(recorder.commands()[0].batch, batch);
-    EXPECT_EQ(recorder.commands()[0].transform, (Transform::translation(10.0f, 20.0f)));
-    EXPECT_EQ(recorder.commands()[0].stroke, stroke);
+    EXPECT_EQ(recorder.commands()[0].kind(), DrawCommandKind::LineBatch);
+    EXPECT_EQ(recorder.commands()[0].batch_geometry().batch, batch);
+    EXPECT_EQ(recorder.commands()[0].transform(), (Transform::translation(10.0f, 20.0f)));
+    EXPECT_EQ(recorder.commands()[0].batch_geometry().stroke, stroke);
 }
 
 TEST(PictureRecorder, AnImageCommandCarriesItsRetainedImage) {
@@ -1280,9 +1332,9 @@ TEST(PictureRecorder, AnImageCommandCarriesItsRetainedImage) {
     recorder.draw_image(image, Rect::from_origin_size(Point{10.0f, 20.0f}, Size{4.0f, 2.0f}), Paint{});
     // assert
     ASSERT_EQ(recorder.commands().size(), 1u);
-    EXPECT_EQ(recorder.commands()[0].kind, PictureCommandKind::Image);
-    EXPECT_EQ(recorder.commands()[0].image, image);
-    EXPECT_FLOAT_EQ(recorder.commands()[0].rect.x, 10.0f);
+    EXPECT_EQ(recorder.commands()[0].kind(), DrawCommandKind::Image);
+    EXPECT_EQ(recorder.commands()[0].image_geometry().image, image);
+    EXPECT_FLOAT_EQ(recorder.commands()[0].image_geometry().destination.x, 10.0f);
 }
 
 TEST(PictureRecorder, ANestedPictureFlattensInOrder) {
@@ -1298,9 +1350,9 @@ TEST(PictureRecorder, ANestedPictureFlattensInOrder) {
     outer.draw_text(synthetic_layout(5, 16.0f, Size{80.0f, 16.0f}), Point{0.0f, 0.0f}, Paint{});
     // assert
     ASSERT_EQ(outer.commands().size(), 3u);
-    EXPECT_EQ(outer.commands()[0].kind, PictureCommandKind::Rect);
-    EXPECT_EQ(outer.commands()[1].kind, PictureCommandKind::Rect);
-    EXPECT_EQ(outer.commands()[2].kind, PictureCommandKind::Text);
+    EXPECT_EQ(outer.commands()[0].kind(), DrawCommandKind::Rect);
+    EXPECT_EQ(outer.commands()[1].kind(), DrawCommandKind::Rect);
+    EXPECT_EQ(outer.commands()[2].kind(), DrawCommandKind::Text);
 }
 
 TEST(PictureRecorder, AFactoryPictureRefusesAnEmptyRecording) {
@@ -1361,41 +1413,49 @@ TEST(FrameScene, RetainedDrawsReplayInRecordingOrder) {
     PictureRecorder picture_recorder;
     picture_recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{1.0f, 1.0f}), Paint{});
     const std::shared_ptr<const PictureResource> picture = factory.create_picture(picture_recorder);
-    FrameScene scene(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
     const Rect destination = Rect::from_origin_size(Point{2.0f, 3.0f}, Size{4.0f, 4.0f});
     const Transform transform = Transform::translation(7.0f, 8.0f);
     StrokeStyle stroke;
     stroke.width = 2.0f;
-    // act
-    scene.add_line_batch(LineBatchDraw{.batch = batch, .transform = transform, .stroke = stroke});
-    scene.add_path(PathDraw{.path = path, .transform = transform, .paint = Paint{}});
-    scene.add_picture(PictureDraw{.picture = picture, .transform = transform});
-    scene.add_image(ImageDraw{.image = image, .destination = destination});
-    // assert
-    ASSERT_EQ(scene.line_batches().size(), 1u);
-    EXPECT_EQ(scene.line_batches()[0].batch, batch);
-    EXPECT_EQ(scene.line_batches()[0].stroke, stroke);
-    ASSERT_EQ(scene.paths().size(), 1u);
-    EXPECT_EQ(scene.paths()[0].path, path);
-    ASSERT_EQ(scene.pictures().size(), 1u);
-    EXPECT_EQ(scene.pictures()[0].picture, picture);
-    ASSERT_EQ(scene.images().size(), 1u);
-    EXPECT_EQ(scene.images()[0].image, image);
-    EXPECT_EQ(scene.images()[0].destination, destination);
+    // act the four retained kinds are recorded into the one list, in the order they are added (§6.4)
+    for (DrawCommand command : {DrawCommand::line_batch(batch, transform, stroke), DrawCommand::path(path, transform, Paint{}), DrawCommand::picture(picture, transform), DrawCommand::image(image, destination, Paint{})}) {
+        // the clip is stamped, because every command carries its own (§6.2)
+        command.set_clip(full);
+        // the command joins the list in the order the test added it (§6.1)
+        scene.add_command(std::move(command));
+    }
+    // assert the list is the four kinds in that order, which is what stage two replays (§6.1)
+    ASSERT_EQ(scene.command_count(), 4u);
+    EXPECT_EQ(scene.commands()[0].kind(), DrawCommandKind::LineBatch);
+    EXPECT_EQ(scene.commands()[1].kind(), DrawCommandKind::Path);
+    EXPECT_EQ(scene.commands()[2].kind(), DrawCommandKind::Picture);
+    EXPECT_EQ(scene.commands()[3].kind(), DrawCommandKind::Image);
+    EXPECT_EQ(scene.commands()[0].batch_geometry().batch, batch);
+    EXPECT_EQ(scene.commands()[0].batch_geometry().stroke, stroke);
+    EXPECT_EQ(scene.commands()[0].transform(), transform);
+    EXPECT_EQ(scene.commands()[1].path_geometry().path, path);
+    EXPECT_EQ(scene.commands()[2].picture_geometry().picture, picture);
+    EXPECT_EQ(scene.commands()[3].image_geometry().image, image);
+    EXPECT_EQ(scene.commands()[3].image_geometry().destination, destination);
 }
 
 TEST(FrameScene, ANullRetainedDrawIsRefused) {
     // arrange, act
-    FrameScene scene(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
-    scene.add_line_batch(LineBatchDraw{.batch = nullptr, .transform = Transform{}, .stroke = StrokeStyle{}});
-    scene.add_path(PathDraw{.path = nullptr, .transform = Transform{}, .paint = Paint{}});
-    scene.add_picture(PictureDraw{.picture = nullptr, .transform = Transform{}});
-    scene.add_image(ImageDraw{.image = nullptr, .destination = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{4.0f, 4.0f})});
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    // act a retained draw with nothing to replay is refused at the boundary, whatever its kind (§6.4, AD-06)
+    for (DrawCommand command : {DrawCommand::line_batch(nullptr, Transform{}, StrokeStyle{}), DrawCommand::path(nullptr, Transform{}, Paint{}), DrawCommand::picture(nullptr, Transform{}), DrawCommand::image(nullptr, Rect::from_origin_size(Point{0.0f, 0.0f}, Size{4.0f, 4.0f}), Paint{})}) {
+        // the clip is stamped first, so the cull that refuses it is the retained one (§6.2)
+        command.set_clip(full);
+        // the command is offered to the scene (§6.1)
+        scene.add_command(std::move(command));
+    }
     // assert
-    EXPECT_TRUE(scene.line_batches().empty());
-    EXPECT_TRUE(scene.paths().empty());
-    EXPECT_TRUE(scene.pictures().empty());
-    EXPECT_TRUE(scene.images().empty());
+    EXPECT_EQ(scene.command_count(), 0u);
 }
 
 TEST(CustomRenderNode, MeasureConstrainsTheIntrinsicSize) {
@@ -1540,12 +1600,12 @@ TEST(PictureRecorder, APathCommandCarriesItsRetainedPath) {
     recorder.draw_path(path, Transform::scaling(2.0f, 2.0f), paint);
     // assert
     ASSERT_EQ(recorder.commands().size(), 1u);
-    EXPECT_EQ(recorder.commands()[0].kind, PictureCommandKind::Path);
-    EXPECT_EQ(recorder.commands()[0].path, path);
+    EXPECT_EQ(recorder.commands()[0].kind(), DrawCommandKind::Path);
+    EXPECT_EQ(recorder.commands()[0].path_geometry().path, path);
     // the local transform applies first, then the recorder's translation on top (§6.4)
-    EXPECT_EQ(recorder.commands()[0].transform.apply(Point{1.0f, 0.0f}), (Point{7.0f, 6.0f}));
-    EXPECT_EQ(recorder.commands()[0].transform.apply(Point{0.0f, 1.0f}), (Point{5.0f, 8.0f}));
-    EXPECT_EQ(recorder.commands()[0].paint, paint);
+    EXPECT_EQ(recorder.commands()[0].transform().apply(Point{1.0f, 0.0f}), (Point{7.0f, 6.0f}));
+    EXPECT_EQ(recorder.commands()[0].transform().apply(Point{0.0f, 1.0f}), (Point{5.0f, 8.0f}));
+    EXPECT_EQ(recorder.commands()[0].paint(), paint);
 }
 
 TEST(PictureRecorder, ANullPathDoesNotRecord) {
@@ -1584,12 +1644,15 @@ TEST(PathResource, AnUnknownVerbSignalsUnsatisfiableDemand) {
 }
 
 TEST(FrameScene, AnEmptyTextRunIsRefused) {
-    // arrange, act
-    FrameScene scene(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
-    scene.add_text(TextLayout{}, Point{0.0f, 0.0f});
-    // assert
-    EXPECT_TRUE(scene.texts().empty());
-    EXPECT_TRUE(scene.text_origins().empty());
+    // arrange the whole scene is offered a run that measured nothing (§6.2)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand command = DrawCommand::text(TextLayout{}, Point{0.0f, 0.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // act
+    command.set_clip(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size));
+    scene.add_command(std::move(command));
+    // assert the scene carries no dead draw, which is what a run with no glyphs is (§6.2)
+    EXPECT_EQ(scene.command_count(), 0u);
 }
 
 TEST(RenderExecutorStaleMetricsChecks, ASceneBuiltForTheSurfaceMetricsExecutes) {
@@ -1684,4 +1747,150 @@ TEST(RenderExecutorStaleMetricsChecks, ADropReleasesTheFlushWaiters) {
     // assert a dropped frame still empties the queue, so a ui thread blocked in flush is released (§6.1)
     EXPECT_NO_FATAL_FAILURE(executor.flush());
     EXPECT_FALSE(executor.pending());
+}
+
+TEST(ReplayCommandsChecks, AnUnclippedListDrawsWithNoSaveAndNoRestore) {
+    // arrange a list whose commands all carry the same clip, which is what an unclipped tree records (§6.2)
+    const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f});
+    std::vector<DrawCommand> commands;
+    for (int index = 0; index < 3; index++) {
+        // the clip is stamped on every command, because a recorder stamps it as it records (§6.2)
+        DrawCommand command = DrawCommand::rectangle(Rect{0.0f, 0.0f, 10.0f, 10.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+        command.set_clip(full);
+        // the command joins the list in order (§6.1)
+        commands.push_back(std::move(command));
+    }
+    TestRenderContext context;
+    // act
+    replay_commands(commands, context, full);
+    // assert an unclipped run of commands opens no clip switch at all (§6.2)
+    ASSERT_EQ(context.draw_log.size(), 3u);
+    EXPECT_EQ(context.save_count, 0u);
+    EXPECT_EQ(context.restore_count, 0u);
+    EXPECT_TRUE(context.clips.empty());
+}
+
+TEST(ReplayCommandsChecks, ANarrowerClipOpensOneSwitchAndClosesIt) {
+    // arrange
+    const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f});
+    const Rect narrow = Rect::from_origin_size(Point{10.0f, 10.0f}, Size{50.0f, 50.0f});
+    std::vector<DrawCommand> commands;
+    // the first command narrows the clip, because that is what a clipped subtree records (§6.2)
+    DrawCommand first = DrawCommand::rectangle(Rect{0.0f, 0.0f, 10.0f, 10.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    first.set_clip(narrow);
+    commands.push_back(std::move(first));
+    // the second stays under it, so the switch is not opened again (§6.2)
+    DrawCommand second = DrawCommand::rectangle(Rect{0.0f, 0.0f, 10.0f, 10.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    second.set_clip(narrow);
+    commands.push_back(std::move(second));
+    TestRenderContext context;
+    // act
+    replay_commands(commands, context, full);
+    // assert the clip was scissored once, and the switch was balanced (§6.2)
+    ASSERT_EQ(context.draw_log.size(), 2u);
+    ASSERT_EQ(context.clips.size(), 1u);
+    EXPECT_EQ(context.clips[0], narrow);
+    EXPECT_EQ(context.save_count, 1u);
+    EXPECT_EQ(context.restore_count, 1u);
+}
+
+TEST(ReplayCommandsChecks, TwoClipsInARowScissorTwice) {
+    // arrange
+    const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f});
+    const Rect left = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 100.0f});
+    const Rect right = Rect::from_origin_size(Point{100.0f, 0.0f}, Size{50.0f, 100.0f});
+    std::vector<DrawCommand> commands;
+    for (const Rect& clip : {left, right}) {
+        // the clip changes per command, which is what two sibling subtrees record (§6.2)
+        DrawCommand command = DrawCommand::rectangle(Rect{0.0f, 0.0f, 10.0f, 10.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+        command.set_clip(clip);
+        // the command joins the list in order (§6.1)
+        commands.push_back(std::move(command));
+    }
+    TestRenderContext context;
+    // act
+    replay_commands(commands, context, full);
+    // assert each clip applied in turn, and the list balanced every switch it opened (§6.2)
+    ASSERT_EQ(context.clips.size(), 2u);
+    EXPECT_EQ(context.clips[0], left);
+    EXPECT_EQ(context.clips[1], right);
+    EXPECT_EQ(context.save_count, context.restore_count);
+}
+
+TEST(ReplayCommandsChecks, PaintOrderSurvivesAcrossKinds) {
+    // arrange the contour is recorded before the rectangle that overlaps it (§6.1)
+    const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f});
+    ResourceFactory factory;
+    const PathVerb verbs[] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const Point points[] = {{0.0f, 0.0f}, {1.0f, 1.0f}, {1.0f, 0.0f}};
+    const std::shared_ptr<const PathResource> path = factory.create_path(verbs, points);
+    std::vector<DrawCommand> commands;
+    for (DrawCommand command : {DrawCommand::path(path, Transform{}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)}), DrawCommand::rounded_rectangle(Rect{0.0f, 0.0f, 10.0f, 10.0f}, 2.0f, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)}), DrawCommand::text(synthetic_layout(3, 16.0f, Size{30.0f, 16.0f}), Point{0.0f, 0.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)})}) {
+        // the clip is stamped, because a recorder stamps it on every command (§6.2)
+        command.set_clip(full);
+        // the command joins the list in the order the loop built it (§6.1)
+        commands.push_back(std::move(command));
+    }
+    TestRenderContext context;
+    // act
+    replay_commands(commands, context, full);
+    // assert the surface is asked for the three draws in that order, which a bucketed scene could not say (§6.1)
+    ASSERT_EQ(context.draw_log.size(), 3u);
+    EXPECT_EQ(context.draw_log[0], "path");
+    EXPECT_EQ(context.draw_log[1], "rounded");
+    EXPECT_EQ(context.draw_log[2], "text");
+}
+
+TEST(ReplayCommandsChecks, ARoundedRectangleReplaysAsARoundedRectangle) {
+    // arrange
+    const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f});
+    std::vector<DrawCommand> commands;
+    DrawCommand command = DrawCommand::rounded_rectangle(Rect{0.0f, 0.0f, 20.0f, 20.0f}, 4.0f, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // act
+    command.set_clip(full);
+    commands.push_back(std::move(command));
+    TestRenderContext context;
+    // act / assert the radius reaches the backend, which is what a rounded rect recorded as a plain one lost (§6.2)
+    replay_commands(commands, context, full);
+    ASSERT_EQ(context.rounded_radii.size(), 1u);
+    EXPECT_FLOAT_EQ(context.rounded_radii[0], 4.0f);
+}
+
+TEST(ReplayCommandsChecks, APictureReplaysThroughTheSameReplay) {
+    // arrange the picture is recorded by the picture recorder, which records the same command type (§6.4)
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    recorder.draw_text(synthetic_layout(3, 16.0f, Size{30.0f, 16.0f}), Point{0.0f, 0.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    ResourceFactory factory;
+    const std::shared_ptr<const PictureResource> picture = factory.create_picture(recorder);
+    ASSERT_NE(picture, nullptr);
+    const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f});
+    std::vector<DrawCommand> commands;
+    DrawCommand command = DrawCommand::picture(picture, Transform{});
+    // act
+    command.set_clip(full);
+    commands.push_back(std::move(command));
+    TestRenderContext context;
+    // act
+    replay_commands(commands, context, full);
+    // assert a frame asks the surface for the picture itself, which is what a nested replay then walks (§6.4)
+    ASSERT_EQ(context.draw_log.size(), 1u);
+    EXPECT_EQ(context.draw_log[0], "picture");
+}
+
+TEST(ReplayCommandsChecks, APicturesOwnCommandsReplayInOrder) {
+    // arrange the picture's own list is replayed directly, which is what the nested draw does (§6.4)
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    recorder.draw_rounded_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), 2.0f, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    ResourceFactory factory;
+    const std::shared_ptr<const PictureResource> picture = factory.create_picture(recorder);
+    ASSERT_NE(picture, nullptr);
+    TestRenderContext context;
+    // act
+    replay_commands(picture->commands(), context, DrawCommand::unclipped());
+    // assert the nested list draws in its recording order, through the one replay (§6.4)
+    ASSERT_EQ(context.draw_log.size(), 2u);
+    EXPECT_EQ(context.draw_log[0], "rect");
+    EXPECT_EQ(context.draw_log[1], "rounded");
 }

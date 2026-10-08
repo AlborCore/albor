@@ -22,6 +22,28 @@ using namespace albor;
 
 namespace
 {
+    // the rectangles of the shape commands of a scene, which is what a widget assertion reads off the one list (§6.1)
+    std::vector<Rect> rect_commands(const FrameScene& scene) {
+        // the shapes are gathered in paint order, because that is the paint order the list carries (§6.1)
+        std::vector<Rect> rects;
+        // every command is read, because a scene interleaves kinds (§6.1)
+        for (const DrawCommand& command : scene.commands())
+            if (command.kind() == DrawCommandKind::Rect || command.kind() == DrawCommandKind::RoundedRect)
+                rects.push_back(command.rect_geometry().rect);
+        return rects;
+    }
+
+    // the commands of the runs of a scene, which is what a run assertion reads off the one list (§6.1)
+    std::vector<DrawCommand> text_commands(const FrameScene& scene) {
+        // the runs are gathered in paint order, because that is the paint order the list carries (§6.1)
+        std::vector<DrawCommand> gathered;
+        // every command is read, because a scene interleaves kinds (§6.1)
+        for (const DrawCommand& command : scene.commands())
+            if (command.kind() == DrawCommandKind::Text)
+                gathered.push_back(command);
+        return gathered;
+    }
+
     // the leaf the padding wrapper arranges, so a widget can be nested without a full tree (§8.2)
     class WidgetTestHost final : public UiNode
     {
@@ -173,8 +195,8 @@ TEST(LabelChecks, RendersTheRunIntoTheScene) {
     // act
     label.render(recorder);
     // assert
-    ASSERT_EQ(recorder.scene()->texts().size(), 1u);
-    EXPECT_EQ(recorder.scene()->texts().front().run->glyph_count(), 5u);
+    ASSERT_EQ(text_commands(*recorder.scene()).size(), 1u);
+    EXPECT_EQ(text_commands(*recorder.scene()).front().text_geometry().layout.run->glyph_count(), 5u);
 }
 
 TEST(LabelChecks, AnEmptyRunRecordsNothing) {
@@ -189,7 +211,7 @@ TEST(LabelChecks, AnEmptyRunRecordsNothing) {
     // act
     label.render(recorder);
     // assert
-    EXPECT_TRUE(recorder.scene()->texts().empty());
+    EXPECT_TRUE(text_commands(*recorder.scene()).empty());
 }
 
 TEST(LabelChecks, TheRunIsDrawnInTheForegroundColour) {
@@ -205,7 +227,7 @@ TEST(LabelChecks, TheRunIsDrawnInTheForegroundColour) {
     // act / assert the colour is read back, because the run colour itself lives in the recorded scene (§6.1)
     SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
     label.render(recorder);
-    EXPECT_EQ(recorder.scene()->texts().size(), 1u);
+    EXPECT_EQ(text_commands(*recorder.scene()).size(), 1u);
 }
 
 TEST(LabelChecks, SetTextRemeasuresAndInvalidates) {
@@ -492,9 +514,9 @@ TEST(ButtonChecks, AMeasureNarrowsTheRunToTheOfferedWidth) {
     // act
     button.render(recorder);
     // assert the run was remeasured at the offered width, so it centres by its narrowed extent (§8.2, §9.1, AD-14)
-    ASSERT_EQ(recorder.scene()->text_origins().size(), 1u);
-    EXPECT_FLOAT_EQ(recorder.scene()->texts().front().size.width, 30.0f);
-    EXPECT_FLOAT_EQ(recorder.scene()->text_origins()[0].x, 25.0f);
+    ASSERT_EQ(text_commands(*recorder.scene()).size(), 1u);
+    EXPECT_FLOAT_EQ(text_commands(*recorder.scene()).front().text_geometry().layout.size.width, 30.0f);
+    EXPECT_FLOAT_EQ(text_commands(*recorder.scene()).front().text_geometry().origin.x, 25.0f);
 }
 
 TEST(ButtonChecks, ArrangeStoresTheBounds) {
@@ -519,9 +541,9 @@ TEST(ButtonChecks, RendersThePlateAndTheLabel) {
     // act
     button.render(recorder);
     // assert the plate is recorded by the background hook and the run by the label (§6.1)
-    EXPECT_EQ(recorder.scene()->rects().size(), 1u);
-    EXPECT_EQ(recorder.scene()->texts().size(), 1u);
-    EXPECT_EQ(recorder.scene()->texts().front().run->glyph_count(), 5u);
+    EXPECT_EQ(rect_commands(*recorder.scene()).size(), 1u);
+    EXPECT_EQ(text_commands(*recorder.scene()).size(), 1u);
+    EXPECT_EQ(text_commands(*recorder.scene()).front().text_geometry().layout.run->glyph_count(), 5u);
 }
 
 TEST(ButtonChecks, AnUnlabelledButtonRecordsOnlyThePlate) {
@@ -534,8 +556,8 @@ TEST(ButtonChecks, AnUnlabelledButtonRecordsOnlyThePlate) {
     // act
     button.render(recorder);
     // assert
-    EXPECT_TRUE(recorder.scene()->texts().empty());
-    EXPECT_EQ(recorder.scene()->rects().size(), 1u);
+    EXPECT_TRUE(text_commands(*recorder.scene()).empty());
+    EXPECT_EQ(rect_commands(*recorder.scene()).size(), 1u);
 }
 
 TEST(ButtonChecks, AnUnarrangedButtonDrawsNothing) {
@@ -547,7 +569,7 @@ TEST(ButtonChecks, AnUnarrangedButtonDrawsNothing) {
     // act
     button.render(recorder);
     // assert a button with no bounds has no plate, so nothing is recorded (§6.2)
-    EXPECT_TRUE(recorder.scene()->rects().empty());
+    EXPECT_TRUE(rect_commands(*recorder.scene()).empty());
 }
 
 TEST(ButtonChecks, HitsInsideItsBounds) {
@@ -969,7 +991,7 @@ TEST(CheckBoxChecks, RendersTheOutline) {
     // act
     box.render(recorder);
     // assert an unchecked box strokes only, so nothing is filled (§6.1)
-    EXPECT_EQ(recorder.scene()->rects().size(), 1u);
+    EXPECT_EQ(rect_commands(*recorder.scene()).size(), 1u);
     EXPECT_FALSE(box.checked());
 }
 
@@ -983,7 +1005,7 @@ TEST(CheckBoxChecks, ACheckedBoxAlsoFills) {
     // act
     box.render(recorder);
     // assert the fill sits under the outline, so two rectangles are recorded (§6.1)
-    EXPECT_EQ(recorder.scene()->rects().size(), 2u);
+    EXPECT_EQ(rect_commands(*recorder.scene()).size(), 2u);
 }
 
 TEST(CheckBoxChecks, AnUnarrangedBoxDrawsNothing) {
@@ -994,7 +1016,7 @@ TEST(CheckBoxChecks, AnUnarrangedBoxDrawsNothing) {
     // act
     box.render(recorder);
     // assert
-    EXPECT_TRUE(recorder.scene()->rects().empty());
+    EXPECT_TRUE(rect_commands(*recorder.scene()).empty());
 }
 
 TEST(CheckBoxChecks, HitsInsideItsBounds) {
@@ -1405,7 +1427,7 @@ TEST(SliderChecks, RendersTheTrackAndTheThumb) {
     // act
     slider.render(recorder);
     // assert the track and the thumb are two rectangles (§6.1)
-    EXPECT_EQ(recorder.scene()->rects().size(), 2u);
+    EXPECT_EQ(rect_commands(*recorder.scene()).size(), 2u);
 }
 
 TEST(SliderChecks, TheThumbMovesWithTheValue) {
@@ -1420,9 +1442,9 @@ TEST(SliderChecks, TheThumbMovesWithTheValue) {
     // act
     slider.render(high_recorder);
     // assert the thumb is the second rectangle, so its x has to differ between the two values (§6.1)
-    ASSERT_EQ(high_recorder.scene()->rects().size(), 2u);
-    ASSERT_EQ(low_recorder.scene()->rects().size(), 2u);
-    EXPECT_GT(high_recorder.scene()->rects()[1].x, low_recorder.scene()->rects()[1].x);
+    ASSERT_EQ(rect_commands(*high_recorder.scene()).size(), 2u);
+    ASSERT_EQ(rect_commands(*low_recorder.scene()).size(), 2u);
+    EXPECT_GT(rect_commands(*high_recorder.scene())[1].x, rect_commands(*low_recorder.scene())[1].x);
 }
 
 TEST(SliderChecks, AnUnarrangedSliderDrawsNothing) {
@@ -1433,7 +1455,7 @@ TEST(SliderChecks, AnUnarrangedSliderDrawsNothing) {
     // act
     slider.render(recorder);
     // assert
-    EXPECT_TRUE(recorder.scene()->rects().empty());
+    EXPECT_TRUE(rect_commands(*recorder.scene()).empty());
 }
 
 TEST(SliderChecks, ATrackWithNoLengthDrawsOnlyTheTrack) {
@@ -1445,7 +1467,7 @@ TEST(SliderChecks, ATrackWithNoLengthDrawsOnlyTheTrack) {
     // act
     slider.render(recorder);
     // assert a track shorter than the thumb has no reachable position, so no thumb is drawn (§6.2)
-    EXPECT_EQ(recorder.scene()->rects().size(), 1u);
+    EXPECT_EQ(rect_commands(*recorder.scene()).size(), 1u);
 }
 
 TEST(SliderChecks, HitsInsideItsBounds) {
@@ -1995,7 +2017,7 @@ TEST(CanvasChecks, TheDrawCallbackRecordsIntoTheContext) {
     // assert
     EXPECT_TRUE(canvas.draws());
     EXPECT_EQ(canvas.draw_count(), 1u);
-    EXPECT_EQ(recorder.scene()->rects().size(), 1u);
+    EXPECT_EQ(rect_commands(*recorder.scene()).size(), 1u);
 }
 
 TEST(CanvasChecks, AnEmptyCanvasRecordsNothing) {
@@ -2008,7 +2030,7 @@ TEST(CanvasChecks, AnEmptyCanvasRecordsNothing) {
     canvas.render(recorder);
     // assert the pass is counted even with no callback, so a test can tell it was offered (§6.4)
     EXPECT_EQ(canvas.draw_count(), 1u);
-    EXPECT_TRUE(recorder.scene()->rects().empty());
+    EXPECT_TRUE(rect_commands(*recorder.scene()).empty());
 }
 
 TEST(CanvasChecks, TheDrawCallbackRunsOnEveryFrame) {
@@ -2150,7 +2172,7 @@ TEST(LabelChecks, AHiddenLabelStopsRecording) {
     // act
     label.render(recorder);
     // assert a hidden node is skipped by stage one, so the scene builder never reaches its render (§6.1)
-    EXPECT_EQ(recorder.scene()->texts().size(), 1u);
+    EXPECT_EQ(text_commands(*recorder.scene()).size(), 1u);
 }
 
 TEST(LabelChecks, AWidgetChildIsWrappedInANonOwningView) {
@@ -2330,8 +2352,8 @@ TEST(ButtonChecks, ADisabledButtonStillDrawsItsPlateAndLabel) {
     // act
     button.render(recorder);
     // assert a disabled control stays on screen, only faded, so it still records both commands (§6.1)
-    EXPECT_EQ(recorder.scene()->rects().size(), 1u);
-    EXPECT_EQ(recorder.scene()->texts().size(), 1u);
+    EXPECT_EQ(rect_commands(*recorder.scene()).size(), 1u);
+    EXPECT_EQ(text_commands(*recorder.scene()).size(), 1u);
 }
 
 TEST(ButtonChecks, ADisabledAndUnlabelledButtonStillDrawsItsPlate) {
@@ -2345,8 +2367,8 @@ TEST(ButtonChecks, ADisabledAndUnlabelledButtonStillDrawsItsPlate) {
     // act
     button.render(recorder);
     // assert the plate is recorded before the empty run is skipped (§6.1)
-    EXPECT_EQ(recorder.scene()->rects().size(), 1u);
-    EXPECT_TRUE(recorder.scene()->texts().empty());
+    EXPECT_EQ(rect_commands(*recorder.scene()).size(), 1u);
+    EXPECT_TRUE(text_commands(*recorder.scene()).empty());
 }
 
 TEST(LabelChecks, AZeroWidthOfferMeasuresAsNothing) {
@@ -2413,7 +2435,7 @@ TEST(LabelChecks, ALabelWithNoEngineDrawsNothing) {
     // act
     label.render(recorder);
     // assert an empty run records nothing, so nothing reaches the render stage (§6.2)
-    EXPECT_TRUE(recorder.scene()->texts().empty());
+    EXPECT_TRUE(text_commands(*recorder.scene()).empty());
 }
 
 TEST(LabelChecks, TheLabelAsksTheEngineToMeasure) {

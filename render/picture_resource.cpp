@@ -1,8 +1,10 @@
 #include "render/picture_resource.h"
 
+#include <utility>
+
 namespace albor
 {
-    PictureResource::PictureResource(std::uint64_t id, std::vector<PictureCommand> commands) :
+    PictureResource::PictureResource(std::uint64_t id, std::vector<DrawCommand> commands) :
         m_id(id), m_commands(std::move(commands)) {}
 
     std::uint64_t PictureResource::id() const {
@@ -10,7 +12,7 @@ namespace albor
         return m_id;
     }
 
-    const std::vector<PictureCommand>& PictureResource::commands() const {
+    const std::vector<DrawCommand>& PictureResource::commands() const {
         // the commands are handed back in recording order, which is the replay order (§6.4)
         return m_commands;
     }
@@ -25,7 +27,8 @@ namespace albor
         return m_commands.empty();
     }
 
-    PictureRecorder::PictureRecorder() = default;
+    PictureRecorder::PictureRecorder() :
+        m_clip(DrawCommand::unclipped()) {}
 
     void PictureRecorder::save() {
         // the current state is pushed before it can be replaced, so a restore has something to return to (§6.2)
@@ -54,12 +57,12 @@ namespace albor
     }
 
     void PictureRecorder::clip_rect(const Rect& rect) {
-        // the clip is stored rather than intersected, because the picture replays the geometry as is (§6.2)
+        // the clip is stamped rather than intersected, because the replay scissors to it where it stands (§6.2)
         m_clip = rect;
     }
 
     void PictureRecorder::clip_rounded_rect(const Rect& rect, float) {
-        // a rounded clip reduces to its rectangle in a picture, which is what the replay clips to (§6.2)
+        // a rounded clip reduces to its rectangle, which is what the replay scissors to (§6.2)
         m_clip = rect;
     }
 
@@ -69,70 +72,28 @@ namespace albor
     }
 
     void PictureRecorder::draw_rect(const Rect& rect, const Paint& paint) {
-        // a rectangle with no area contributes nothing to the frame (§6.2)
-        if (rect.empty())
-            return;
-        PictureCommand command;
-        command.kind = PictureCommandKind::Rect;
         // the rectangle stays raw, because the transform travels beside it (§6.4)
-        command.rect = rect;
-        command.transform = m_transform;
-        command.paint = paint;
-        record(std::move(command));
+        record(DrawCommand::rectangle(rect, paint));
     }
 
     void PictureRecorder::draw_rounded_rect(const Rect& rect, float radius, const Paint& paint) {
-        // a rectangle with no area contributes nothing to the frame (§6.2)
-        if (rect.empty())
-            return;
-        PictureCommand command;
-        command.kind = PictureCommandKind::RoundedRect;
-        // the rectangle stays raw, because the transform travels beside it (§6.4)
-        command.rect = rect;
-        command.radius = radius;
-        command.transform = m_transform;
-        command.paint = paint;
-        record(std::move(command));
+        // the radii travel with the geometry, so a recorded command keeps them (§6.2)
+        record(DrawCommand::rounded_rectangle(rect, radius, paint));
     }
 
     void PictureRecorder::draw_text(const TextLayout& layout, Point origin, const Paint& paint) {
-        // a run with no glyphs costs nothing, so it is not recorded (§6.2)
-        if (layout.empty())
-            return;
-        PictureCommand command;
-        command.kind = PictureCommandKind::Text;
-        command.text = layout;
         // the origin stays raw, because the transform travels beside it (§6.4)
-        command.origin = origin;
-        command.transform = m_transform;
-        command.paint = paint;
-        record(std::move(command));
+        record(DrawCommand::text(layout, origin, paint));
     }
 
     void PictureRecorder::draw_line_batch(const std::shared_ptr<const LineBatch>& batch, const Transform& transform, const StrokeStyle& stroke) {
-        // a batch with no segment draws nothing, so it is not recorded (§6.4, AD-06)
-        if (!batch || batch->segment_count() == 0)
-            return;
-        PictureCommand command;
-        command.kind = PictureCommandKind::LineBatch;
-        command.batch = batch;
         // the passed transform composes after the recorder's own, like every retained draw (§6.4)
-        command.transform = transform.then(m_transform);
-        command.stroke = stroke;
-        record(std::move(command));
+        record(DrawCommand::line_batch(batch, transform.then(m_transform), stroke));
     }
 
     void PictureRecorder::draw_path(const std::shared_ptr<const PathResource>& path, const Transform& transform, const Paint& paint) {
-        // a path with no command draws nothing, so it is not recorded (§6.4, AD-06)
-        if (!path || path->verbs().empty())
-            return;
-        PictureCommand command;
-        command.kind = PictureCommandKind::Path;
-        command.path = path;
         // the passed transform composes after the recorder's own, like every retained draw (§6.4)
-        command.transform = transform.then(m_transform);
-        command.paint = paint;
-        record(std::move(command));
+        record(DrawCommand::path(path, transform.then(m_transform), paint));
     }
 
     void PictureRecorder::draw_picture(const std::shared_ptr<const PictureResource>& picture, const Transform& transform) {
@@ -142,29 +103,24 @@ namespace albor
         // the passed transform sits below the recorder's own, which every replayed command inherits (§6.4)
         const Transform outer = transform.then(m_transform);
         // nesting is flattened, so the resulting picture stays a single ordered command list (§6.4)
-        for (const PictureCommand& command : picture->commands()) {
+        for (const DrawCommand& command : picture->commands()) {
             // the recorded transform stamps the command into the surrounding space (§6.4)
-            PictureCommand stored = command;
-            stored.transform = command.transform.then(outer);
+            DrawCommand stored = command;
+            // the transforms compose, so a nested command lands where both parents put it (§6.4)
+            stored.set_transform(command.transform().then(outer));
+            // the outer clip wins, because it is the one the surrounding content asked for (§6.2)
+            stored.set_clip(m_clip);
+            // the stored command joins the list in recording order (§6.4)
             record(std::move(stored));
         }
     }
 
     void PictureRecorder::draw_image(const std::shared_ptr<const ImageResource>& image, const Rect& destination, const Paint& paint) {
-        // an image with no pixel or no destination draws nothing, so it is not recorded (§6.4, AD-06)
-        if (!image || image->pixels().empty() || destination.empty())
-            return;
-        PictureCommand command;
-        command.kind = PictureCommandKind::Image;
         // the destination stays raw, because the transform travels beside it (§6.4)
-        command.rect = destination;
-        command.image = image;
-        command.transform = m_transform;
-        command.paint = paint;
-        record(std::move(command));
+        record(DrawCommand::image(image, destination, paint));
     }
 
-    const std::vector<PictureCommand>& PictureRecorder::commands() const {
+    const std::vector<DrawCommand>& PictureRecorder::commands() const {
         // the commands are handed back in recording order, which becomes the picture's replay order (§6.4)
         return m_commands;
     }
@@ -179,10 +135,19 @@ namespace albor
         m_states.clear();
         m_commands.clear();
         m_transform = Transform{};
-        m_clip = Rect{};
+        // the clip returns to the whole area, because a picture that was clipped records nothing under the old one (§6.2)
+        m_clip = DrawCommand::unclipped();
     }
 
-    void PictureRecorder::record(PictureCommand command) {
+    void PictureRecorder::record(DrawCommand command) {
+        // every command carries the clip the recorder stood at, because the replay scissors to it (§6.2)
+        command.set_clip(m_clip);
+        // a command that would draw nothing is culled here, so the picture never carries it (§6.2)
+        if (command.draws_nothing())
+            return;
+        // a shape command draws under the transform the recorder stands at (§6.4)
+        if (command.kind() == DrawCommandKind::Rect || command.kind() == DrawCommandKind::RoundedRect || command.kind() == DrawCommandKind::Text || command.kind() == DrawCommandKind::Image)
+            command.set_transform(m_transform);
         // every accepted command is kept, because the picture replays in order (§6.4)
         m_commands.push_back(std::move(command));
     }
