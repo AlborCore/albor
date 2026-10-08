@@ -1,0 +1,179 @@
+# Albor
+
+**A cross-platform declarative UI framework for C++.**
+
+Albor compiles a compact `.ui` declarative language directly to native C++ — no
+interpreter, no reflection, no runtime UI evaluator in production builds. It pairs
+conventional desktop controls with first-class support for high-throughput custom
+rendering (schematics, CAD views, waveforms, plots), real multi-window behavior with
+modality, and a two-stage render pipeline that never blocks the UI thread on drawing.
+
+> **Status: under heavy development.** macOS (AppKit + Metal) is the first platform
+> backend; Windows (Win32/Direct3D) and Linux (Wayland/X11/Vulkan) follow. The
+> architecture is settled and specified in
+> [`albor-design-v4.md`](albor-design-v4.md).
+
+## Why Albor exists
+
+Albor was built out of concrete limitations hit while building a desktop application on
+an existing declarative framework:
+
+1. **A foreign-language runtime in the middle.** A Rust core under a C++ API means
+   slow builds, extra binary size, and a real correctness hazard: on Apple Silicon, a
+   C++ exception traversing the Rust boundary loses its RTTI, so the receiving C++
+   code cannot catch it by type — which forces the runtime to be dynamically linked.
+   Albor is pure C++ end to end: one language, one toolchain, static linking, one
+   exception model.
+
+2. **Custom rendering stopped at the abstraction.** Applications with domain-specific
+   views — a circuit schematic editor is the motivating case — need direct access to
+   the native surface, or a way to issue retained drawing commands that the renderer
+   replays without going through a universal drawing API. Albor's render contract
+   (`CustomRenderNode`, retained `LineBatch` / `PathResource` / `PictureResource`
+   resources) is designed for exactly this workload, and the surface level is a
+   supported, documented extension point rather than a workaround.
+
+3. **No dialogs.** Without window roles and modality, every feature of an application
+   collapses into one large single-window UI. Albor treats window roles, modality and
+   close-request handling as core window behavior (§5), so dialogs are dialogs.
+
+## Design pillars
+
+These are non-negotiable invariants (AD-NN in the design spec); violating any of them
+is a defect, not a style choice:
+
+- **No interpreter in Release (AD-01).** Production builds contain no `.ui` parser, no
+  IR evaluator, no type registry, no property-by-name reflection. `.ui` compiles to
+  native C++.
+- **Two-stage frame (AD-18).** The UI thread runs layout and records an immutable
+  `FrameScene`; a render thread executes it. Render execution never calls application
+  code.
+- **Immutable snapshots cross threads (§10.5).** Application data reaches custom nodes
+  and bindings as `std::shared_ptr<const T>` in an observable `Snapshot<T>`; workers
+  never mutate live UI objects.
+- **No platform or renderer types in public headers (AD-05).** Rendering, windowing,
+  text shaping and property storage sit behind stable interfaces, so any subsystem can
+  be swapped without breaking application code.
+- **The manifest is the single source of truth (AD-17).** Native C++ components exposed
+  to `.ui` are declared in native manifests; the C++ glue is generated, and the
+  compiler never parses application headers.
+- **Explicit identity (AD-11).** A node's author-assigned `id:` is its authoritative
+  identity; generated keys are correlation hints only.
+- **Concrete, non-virtual facades (AD-03).** Generated public headers expose a stable
+  interface over a private implementation — never an abstract base with virtual
+  dispatch.
+- **Dev/Test features are excluded at link time, never with `#ifdef` (AD-04).** Class
+  layout is byte-identical across Release, Dev and Test.
+
+## The language
+
+```
+component GreetingPanel {
+    in property<string> user_name: "World";
+    inout property<int> click_count: 0;
+
+    signal run_clicked();
+
+    Column {
+        spacing: 12px;
+        padding: 16px;
+
+        Label {
+            text: @tr("Hello, ") + user_name + "!";
+            font_size: 18px;
+        }
+
+        Row {
+            spacing: 8px;
+
+            Button {
+                id: increment_button;
+                text: @tr("Increment");
+                on_clicked: {
+                    click_count = click_count + 1;
+                    run_clicked();
+                }
+            }
+
+            Label {
+                text: @tr("Count: ") + string(click_count);
+            }
+        }
+    }
+}
+```
+
+The compiler generates a concrete facade class per component — properties, signals and
+children as a stable, non-virtual interface — and rebuilds only the translation units
+that actually changed when a `.ui` body is edited (§14.3).
+
+## Using a component
+
+```cpp
+#include "application/application.h"
+#include "platform/macos/event_loop.h"
+#include "render/render-skia/skia_renderer_backend.h"
+#include "greeting_panel.h"
+
+int main() {
+    // the composition root installs the platform, the renderer and the text engine
+    albor::macos::install_macos_platform();
+    albor::install_skia_renderer_backend();
+    albor::SkiaTextEngine::install();
+
+    albor::Application& application = albor::Application::instance();
+    // ...
+    auto panel = std::make_unique<albor::GreetingPanel>(&engine, text_engine.get());
+    panel->set_on_run_clicked([] { /* react to the signal */ });
+    // ...
+}
+```
+
+Complete, buildable versions live in [`examples/`](examples/) — a hand-built reactive
+counter, a manifest-driven chart with custom line-batch rendering, and the compiled
+`GreetingPanel` above.
+
+## What is implemented
+
+| area | state |
+| --- | --- |
+| application, event loop, tasks, timers | done (§4) |
+| macOS platform: AppKit window, display-link pacing, input | done (§5) |
+| Skia renderer backend (Metal/Ganesh), render executor thread | done (§6) |
+| reactive properties, eager-push binding engine, snapshots | done (§7) |
+| ui tree, components, event routing, focus | done (§8) |
+| measure/arrange layout, row/column/stack/grid/padding | done (§8.2) |
+| widgets: Button, Label, CheckBox, Slider, Canvas | done (§8) |
+| semantic tree, explicit keys, semantic provider | done (§10.1) |
+| `.ui` compiler, manifest, glue generator, codegen | in progress (phase 4, §11) |
+| text shaping (Skia/paragraph), i18n | baseline (§9.1) |
+| Win32 / Wayland / X11 platform backends | planned (phase 1 follow-up) |
+| software renderer, headless CI, parity suite | planned (AD-26) |
+| style/theme system, hover and pressed states | planned |
+| LSP, preview, live reload, automation, accessibility adapters | planned (phase 5) |
+
+## Building
+
+Requirements: C++23, CMake ≥ 3.24, [vcpkg](https://vcpkg.io) (manifest mode;
+dependencies are pinned in [`vcpkg.json`](vcpkg.json)).
+
+```sh
+cmake --preset debug          # configure (fetches vcpkg dependencies)
+cmake --build --preset debug  # build
+```
+
+Unit tests are built into `./.build-debug/tests/albor-tests` — run that executable
+directly.
+
+## Documentation
+
+- [`albor-design-v4.md`](albor-design-v4.md) — the architecture specification; the
+  single source of truth for module layout and decisions (`AD-NN`, `§N` are cited
+  throughout the code and reviews).
+- [`STYLE-GUIDE.md`](STYLE-GUIDE.md) — code style rules enforced by
+  `build/check-format.sh`.
+- [`AGENTS.md`](AGENTS.md) — the contract for AI agents working in this repository.
+
+## License
+
+[Apache License 2.0](LICENSE)

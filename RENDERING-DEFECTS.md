@@ -137,7 +137,9 @@ follow-up work listed at the end.
    style, and its geometry payload. Retained resources cross as
    `std::shared_ptr<const>` handles, as they already do (§6.4, AD-06).
 2. `FrameScene` becomes the window metrics, the background colour and one
-   `std::vector` of commands in paint order. The parallel vectors go away.
+   `std::vector` of commands in paint order. The parallel vectors go away. The same
+   command list is what the planned software reference renderer consumes (AD-26), so
+   the scene rework and that renderer land on one command vocabulary.
 3. The recorder records in paint order, keeps its clip and transform stack, and culls
    at record time: empty geometry and paints that neither fill nor stroke are dropped
    (D8).
@@ -165,17 +167,22 @@ follow-up work listed at the end.
     draws glyph quads. No text type names a renderer type and no renderer type names a
     text engine type (§3.5, AD-19).
 
+The detailed staging for the text rework, including the vendored stack and the shaper
+decision forks, is filed as `TEXT-RENDERING-PLAN.md`.
+
 ### Follow-up, filed separately
 
 - D5: widgets must chain to the component render path so children and the component
-  background render.
+  background render. Filed as `DEFECT-D5-WIDGET-CHILDREN.md`.
 - D6: consumers for the layout dirty flag, so a subtree relayout replaces a full tree
-  relayout; and the chart example must go through `build_if_dirty`.
+  relayout; and the chart example must go through `build_if_dirty`. Filed as
+  `DEFECT-D6-PARTIAL-LAYOUT.md`.
 - D7: a style module and pointer enter/leave events for hover and pressed states.
+  Filed as `DEFECT-D7-STYLE-INTERACTION-STATES.md`.
 - D9.1: surface resize must run on the thread that owns the layer, or the resize must
-  be marshalled back to the ui thread.
+  be marshalled back to the ui thread. Filed as `DEFECT-D9-1-LAYER-THREADING.md`.
 - D9.4: a policy for canvas draw callbacks, which run during recording on the ui
-  thread.
+  thread. Filed as `DEFECT-D9-4-CANVAS-POLICY.md`.
 
 ## Verification
 
