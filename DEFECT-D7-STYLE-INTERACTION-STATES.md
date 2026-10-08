@@ -76,18 +76,17 @@ and each widget invented its own.
 
 ### Still open
 
-5. **The other controls resolve through the theme, but their own metrics are still
-   literals.** The button reads its minimum from the theme; the check box, the slider and the
-   label still carry `BOX_SIZE`, `OUTLINE_WIDTH`, `SLIDER_WIDTH`, `THUMB_SIZE` and `STEP` in
-   their `.cpp` files. `ControlMetrics` already holds those values, so the remaining work is
-   mechanical: read them through `theme()` the way the button does. It is left because each one
-   needs its own paint test to prove the fallback is unchanged, and doing all four in one pass
-   would make a regression in any of them hard to read.
+5. **The palette is flat and the radius is unused.** Every control resolves one colour per role
+   and every widget resolves one palette entry per state, but a real design system wants light
+   and dark themes, and it wants the hover and pressed entries derived from one accent rather
+   than written out four times. `Theme` is currently a struct of literals with setters; what is
+   missing is a builder that derives a palette, and a test that two derived themes differ in the
+   states that should differ.
 
-6. **No control other than the button draws a state.** The state machine lives on the widget
-   base and every widget inherits it, so hover and press work for a check box or a slider
-   already; what they do not do yet is resolve their paint from the palette by state, which is
-   the same mechanical work as item 5.
+6. **The rounded plate is still unused.** `ControlMetrics` carries a corner radius and the
+   recorder has had rounded rectangles since the command vocabulary landed, but no control draws
+   a rounded plate yet. The hover and pressed states therefore read as a colour change on a hard
+   rectangle, which is legible but not what the design intends (§6.1).
 
 ### The invariant the replay rests on
 

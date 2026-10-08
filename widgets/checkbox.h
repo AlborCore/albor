@@ -56,6 +56,15 @@ namespace albor
         void set_check_fill(Color check_fill);
 
     private:
+        // the outline width the box strokes with, which comes from the theme when one is installed (§6.1)
+        [[nodiscard]] float outline_width() const;
+
+        // the fill colours the box resolves through, which are the installed palette when a theme is present (§6.1)
+        [[nodiscard]] const Color* fill_colors() const;
+
+        // the outline colours the box resolves through, which are the installed palette when a theme is present (§6.1)
+        [[nodiscard]] const Color* outline_colors() const;
+
         // the work a toggle performs, which receives the new state (§8.3)
         std::function<void(bool)> m_on_toggle;
 

@@ -48,6 +48,9 @@ namespace albor
         [[nodiscard]] const TextLayout& layout() const;
 
     private:
+        // the foreground colours the label resolves through, which are the palette when a theme is installed (§6.1)
+        [[nodiscard]] const Color* foreground_colors() const;
+
         // the text engine that measures the run, which the application owns (§9.1)
         TextEngine* m_text_engine = nullptr;
 

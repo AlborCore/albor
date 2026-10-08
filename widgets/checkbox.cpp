@@ -4,18 +4,14 @@
 
 namespace albor
 {
-    // the square a checkbox measures to, because the control has no intrinsic text (§8.2)
-    constexpr float BOX_SIZE = 16.0f;
-
-    // the width of the box outline, which is what makes an unchecked box visible (§6.1)
-    constexpr float OUTLINE_WIDTH = 2.0f;
-
     CheckBox::CheckBox(BindingEngine* engine, std::string explicit_id) :
         Widget(engine, std::move(explicit_id)) {}
 
     void CheckBox::measure(const SizeConstraints& constraints, Size& out_size) {
+        // the extent comes from the theme when one is installed, so a sizing decision lives in one place (§8.2)
+        const ControlMetrics& metrics = theme() != nullptr ? theme()->metrics() : default_metrics();
         // a checkbox is a fixed square, because its extent comes from the control metric rather than from content (§8.2)
-        Size content{.width = BOX_SIZE, .height = BOX_SIZE};
+        Size content{.width = metrics.checkbox_box.width, .height = metrics.checkbox_box.height};
         // the children are measured too, because a widget is a component and they are part of its content (§8.1, §8.2)
         Size children{};
         UiNode::measure(constraints, children);
@@ -40,11 +36,11 @@ namespace albor
             return;
         // a checked box carries a fill, which is the only way the state reads without a glyph (§6.1)
         if (m_checked) {
-            // the fill sits under the outline, so the border stays visible on top (§6.1)
-            context.draw_rect(bounds(), {.fill = m_check_fill});
+            // the fill resolves by state, so a hover and a press differ without a second literal (§6.1)
+            context.draw_rect(bounds(), {.fill = resolve(fill_colors(), m_check_fill)});
         }
-        // the outline is stroked on top, because a control must read as a control (§6.1)
-        context.draw_rect(bounds(), {.stroke = m_outline, .stroke_width = OUTLINE_WIDTH});
+        // the outline resolves by state, so the border reads as part of the control (§6.1)
+        context.draw_rect(bounds(), {.stroke = resolve(outline_colors(), m_outline), .stroke_width = outline_width()});
     }
 
     bool CheckBox::hit_test(Point logical_point) const {
@@ -64,6 +60,8 @@ namespace albor
         // a hidden box takes no event at all, because it draws nothing to aim at (§8.3)
         if (!visible())
             return;
+        // the transitions run first, so a press is a state before it is a toggle (§8.3)
+        handle_hover_transitions(event);
         // a key that toggles the box is a press, which the focused box receives (§8.3)
         if (event.kind == EventKind::KeyDown && event.key == Key::Space) {
             // a disabled box does not claim the key, because it refuses input (§8.3)
@@ -193,5 +191,28 @@ namespace albor
         m_check_fill = check_fill;
         // a fill change is visual only, so the layout passes are left alone (§6.1)
         invalidate();
+    }
+    float CheckBox::outline_width() const {
+        // the width comes from the theme when one is installed (§6.1)
+        if (theme() != nullptr)
+            return theme()->metrics().checkbox_outline;
+        // without a theme the box keeps the literal it always drew with (§6.1)
+        return 2.0f;
+    }
+
+    const Color* CheckBox::fill_colors() const {
+        // without a theme the table is unused, because the resolver returns the box's own value (§6.1)
+        if (theme() == nullptr)
+            return nullptr;
+        // the installed palette answers, because the theme owns the colour (§6.1)
+        return theme()->palette().checkbox_fill;
+    }
+
+    const Color* CheckBox::outline_colors() const {
+        // without a theme the table is unused, because the resolver returns the box's own value (§6.1)
+        if (theme() == nullptr)
+            return nullptr;
+        // the installed palette answers, because the theme owns the colour (§6.1)
+        return theme()->palette().checkbox_outline;
     }
 } // namespace albor

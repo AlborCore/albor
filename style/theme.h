@@ -44,6 +44,9 @@ namespace albor
         // the extent of a slider thumb along the track, which is what the user grabs (§6.1)
         float slider_thumb = 12.0f;
 
+        // the amount one key press moves a slider value, because a semantic action carries no exact target (§10.1)
+        float slider_step = 0.05f;
+
         // the corner radius a plate is drawn with, which is what makes a hover state read as a plate (§6.1)
         float corner_radius = 6.0f;
     };
@@ -115,6 +118,24 @@ namespace albor
 
         // replace the corner radius a plate is drawn with (§6.1)
         void set_corner_radius(float value);
+
+        // replace the extent a check box measures to, which the control reads instead of a literal (§8.2)
+        void set_checkbox_box(Size value);
+
+        // replace the width a check box outline strokes at (§6.1)
+        void set_checkbox_outline(float value);
+
+        // replace the extent a slider measures to (§8.2)
+        void set_slider_extent(Size value);
+
+        // replace the thickness a slider track is drawn at (§6.1)
+        void set_slider_track_thickness(float value);
+
+        // replace the extent of a slider thumb, which is what the user grabs (§6.1)
+        void set_slider_thumb(float value);
+
+        // replace the amount one key press moves a slider value (§10.1)
+        void set_slider_step(float value);
 
     private:
         // the colours, which the overrides above write (§6.1)

@@ -66,6 +66,12 @@ namespace albor
         void set_thumb_color(Color color);
 
     private:
+        // the track colours the slider resolves through, which are the installed palette when a theme is present (§6.1)
+        [[nodiscard]] const Color* track_colors() const;
+
+        // the thumb colours the slider resolves through, which are the installed palette when a theme is present (§6.1)
+        [[nodiscard]] const Color* thumb_colors() const;
+
         // move the value to the position the pointer names, which a press and a drag share (§8.3)
         void jump_to(Point logical_position);
 

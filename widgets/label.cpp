@@ -48,8 +48,8 @@ namespace albor
             return;
         // bounds
         const Rect& b = bounds();
-        // the run is recorded at the top of its box, where every line places its baseline (§6.2, §9.1)
-        context.draw_text(m_layout, Point{.x = b.x, .y = b.y}, {.fill = m_foreground});
+        // the run is recorded at the top of its box, and the foreground resolves by state (§6.1, §9.1)
+        context.draw_text(m_layout, Point{.x = b.x, .y = b.y}, {.fill = resolve(foreground_colors(), m_foreground)});
     }
 
     SemanticNode Label::semantic_node() const {
@@ -118,5 +118,12 @@ namespace albor
     const TextLayout& Label::layout() const {
         // the run is what the render pass draws and what the measure pass produced (§9.1)
         return m_layout;
+    }
+    const Color* Label::foreground_colors() const {
+        // without a theme the table is unused, because the resolver returns the label's own value (§6.1)
+        if (theme() == nullptr)
+            return nullptr;
+        // the installed palette answers, because the theme owns the colour (§6.1)
+        return theme()->palette().label_foreground;
     }
 } // namespace albor

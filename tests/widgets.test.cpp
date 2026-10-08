@@ -2833,3 +2833,123 @@ TEST(ControlStateChecks, AMoveInsideBoundsKeepsAHeldPress) {
     // assert a drag inside the control keeps the press, because the drag belongs to it (§8.3)
     EXPECT_TRUE(button.pressed());
 }
+
+TEST(ThemeChecks, ACheckBoxKeepsItsOwnExtentWithoutATheme) {
+    // arrange
+    BindingEngine engine;
+    CheckBox box(&engine, "box");
+    Size measured{};
+    // act
+    box.measure(SizeConstraints::at_most(Size{200.0f, 200.0f}), measured);
+    // assert the fallback is the literal the box always measured to (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 16.0f);
+    EXPECT_FLOAT_EQ(measured.height, 16.0f);
+}
+
+TEST(ThemeChecks, AThemedCheckBoxMeasuresFromTheTheme) {
+    // arrange a theme whose metric differs from the literal, so the answer can only come from the theme (§8.2)
+    BindingEngine engine;
+    CheckBox box(&engine, "box");
+    Theme theme;
+    theme.set_checkbox_box(Size{40.0f, 40.0f});
+    box.set_theme(&theme);
+    Size measured{};
+    // act
+    box.measure(SizeConstraints::at_most(Size{200.0f, 200.0f}), measured);
+    // assert the theme answered rather than the literal (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 40.0f);
+    EXPECT_FLOAT_EQ(measured.height, 40.0f);
+}
+
+TEST(ThemeChecks, ACheckBoxStrokeWidthFallsBackToItsLiteral) {
+    // arrange
+    BindingEngine engine;
+    CheckBox box(&engine, "box");
+    box.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{16.0f, 16.0f}));
+    box.set_checked(true);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    box.render(recorder);
+    // assert the outline is the two point stroke the box always drew (§6.1)
+    ASSERT_EQ(recorder.scene()->commands().size(), 2u);
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[1].paint().stroke_width, 2.0f);
+}
+
+TEST(ThemeChecks, ASliderKeepsItsOwnExtentWithoutATheme) {
+    // arrange
+    BindingEngine engine;
+    Slider slider(&engine, "slider");
+    Size measured{};
+    // act
+    slider.measure(SizeConstraints::at_most(Size{400.0f, 400.0f}), measured);
+    // assert the fallback is the literal the slider always measured to (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 120.0f);
+    EXPECT_FLOAT_EQ(measured.height, 16.0f);
+}
+
+TEST(ThemeChecks, ASliderThumbStillFitsItsTrack) {
+    // arrange the track and thumb metrics that both paths use (§6.1)
+    BindingEngine engine;
+    Slider slider(&engine, "slider");
+    slider.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 16.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    slider.render(recorder);
+    // assert the thumb is the twelve point square at the minimum value, which is the thumb's origin (§6.1)
+    ASSERT_EQ(recorder.scene()->commands().size(), 2u);
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[1].rect_geometry().rect.width, 12.0f);
+}
+
+TEST(ThemeChecks, AThemedSliderDrawsTheThemedTrackAndThumb) {
+    // arrange a theme whose metrics differ from the literals, so the answer can only come from the theme (§6.1)
+    BindingEngine engine;
+    Theme theme;
+    theme.set_slider_track_thickness(8.0f);
+    theme.set_slider_thumb(20.0f);
+    Slider slider(&engine, "slider");
+    slider.set_theme(&theme);
+    slider.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 16.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    slider.render(recorder);
+    // assert the themed geometry answered, which is what makes the metric configurable (§6.1)
+    ASSERT_EQ(recorder.scene()->commands().size(), 2u);
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].rect_geometry().rect.height, 8.0f);
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[1].rect_geometry().rect.width, 20.0f);
+}
+
+TEST(ThemeChecks, AThemedSliderTrackResolvesByState) {
+    // arrange
+    BindingEngine engine;
+    Theme theme;
+    Slider slider(&engine, "slider");
+    slider.set_theme(&theme);
+    slider.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 16.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act the track is drawn first, so its colour is the resting one (§6.1)
+    slider.render(recorder);
+    const float normal_red = recorder.scene()->commands()[0].paint().fill.red;
+    // act the hover state resolves the same command through the palette (§6.1)
+    Event enter{.kind = EventKind::PointerEnter, .position = Point{10.0f, 8.0f}};
+    slider.dispatch_event(enter);
+    SceneRecorder hovered_recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    slider.render(hovered_recorder);
+    const float hovered_red = hovered_recorder.scene()->commands()[0].paint().fill.red;
+    // assert two states are two colours, which is the hover visual the plan asks for (§6.1, §8.3)
+    EXPECT_NE(normal_red, hovered_red);
+}
+
+TEST(ThemeChecks, ALabelKeepsItsOwnForegroundWithoutATheme) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Label label(&engine, &text_engine, "Albor");
+    label.set_foreground(Color::rgb(0.1f, 0.2f, 0.3f));
+    label.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{80.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    label.render(recorder);
+    // assert the label's own colour is what is drawn (§6.1)
+    ASSERT_EQ(text_commands(*recorder.scene()).size(), 1u);
+    EXPECT_FLOAT_EQ(text_commands(*recorder.scene())[0].paint().fill.red, 0.1f);
+}

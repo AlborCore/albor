@@ -23,8 +23,10 @@ namespace albor
         Widget(engine, std::move(explicit_id)) {}
 
     void Slider::measure(const SizeConstraints& constraints, Size& out_size) {
-        // a slider has no content, so its extent comes from the control metric (§8.2)
-        Size content{.width = SLIDER_WIDTH, .height = SLIDER_HEIGHT};
+        // a slider has no content, so its extent comes from the themed control metric (§8.2)
+        const ControlMetrics& metrics = theme() != nullptr ? theme()->metrics() : default_metrics();
+        // the control measures to the themed extent (§8.2)
+        Size content{.width = metrics.slider_extent.width, .height = metrics.slider_extent.height};
         // the children are measured too, because a widget is a component and they are part of its content (§8.1, §8.2)
         Size children{};
         UiNode::measure(constraints, children);
@@ -47,21 +49,27 @@ namespace albor
         // a slider with no area draws nothing, because there is no track to draw (§6.2)
         if (bounds().empty())
             return;
+        // the track metrics come from the theme when one is installed (§6.1)
+        const ControlMetrics& metrics = theme() != nullptr ? theme()->metrics() : default_metrics();
+        // the thickness is what the theme says, or the value the slider always drew with (§6.1)
+        const float thickness = theme() != nullptr ? metrics.slider_track_thickness : 4.0f;
+        // the thumb extent is what the theme says, or the value the slider always drew with (§6.1)
+        const float thumb_extent = theme() != nullptr ? metrics.slider_thumb : 12.0f;
         // the track is a thin band centred vertically, because a slider reads as a horizontal line (§6.1)
-        const Rect track = Rect::from_origin_size(Point{.x = bounds().x, .y = bounds().y + (bounds().height - TRACK_THICKNESS) * 0.5f}, Size{.width = bounds().width, .height = TRACK_THICKNESS});
-        // the track is filled, because the whole control must be visible before it is touched (§6.1)
-        context.draw_rect(track, {.fill = m_track_color});
+        const Rect track = Rect::from_origin_size(Point{.x = bounds().x, .y = bounds().y + (bounds().height - thickness) * 0.5f}, Size{.width = bounds().width, .height = thickness});
+        // the track colour resolves by state, so a hover and a press differ without a second literal (§6.1)
+        context.draw_rect(track, {.fill = resolve(track_colors(), m_track_color)});
         // the travel of the thumb is the track minus the thumb, so it never overhangs either end (§6.1)
-        const float travel = std::max(0.0f, bounds().width - THUMB_SIZE);
+        const float travel = std::max(0.0f, bounds().width - thumb_extent);
         // a track with no travel has no reachable position, so the thumb is left off (§6.2)
         if (travel <= 0.0f)
             return;
         // the fraction of the range the value sits at, which is what places the thumb (§8)
         const float fraction = (m_value - m_minimum) / (m_maximum - m_minimum);
         // the thumb is a square centred on the track at the value position (§6.1)
-        const Rect thumb = Rect::from_origin_size(Point{.x = bounds().x + travel * fraction, .y = bounds().y + (bounds().height - THUMB_SIZE) * 0.5f}, Size{.width = THUMB_SIZE, .height = THUMB_SIZE});
-        // the thumb is filled, because it is what the user grabs (§6.1)
-        context.draw_rect(thumb, {.fill = m_thumb_color});
+        const Rect thumb = Rect::from_origin_size(Point{.x = bounds().x + travel * fraction, .y = bounds().y + (bounds().height - thumb_extent) * 0.5f}, Size{.width = thumb_extent, .height = thumb_extent});
+        // the thumb colour resolves by state, so it is what the user grabs in every state (§6.1)
+        context.draw_rect(thumb, {.fill = resolve(thumb_colors(), m_thumb_color)});
     }
 
     bool Slider::hit_test(Point logical_point) const {
@@ -81,6 +89,8 @@ namespace albor
         // a hidden slider takes no event at all, because it draws nothing to aim at (§8.3)
         if (!visible())
             return;
+        // the transitions run first, so a press is a state before it is a drag (§8.3)
+        handle_hover_transitions(event);
         // a key that steers the value reaches the focused slider (§8.3)
         if (event.kind == EventKind::KeyDown && (event.key == Key::ArrowRight || event.key == Key::ArrowUp || event.key == Key::ArrowLeft || event.key == Key::ArrowDown)) {
             // a disabled slider does not claim the key, because it refuses input (§8.3)
@@ -89,8 +99,10 @@ namespace albor
             // a modified key is an application shortcut, so a plain step ignores it (§8.3)
             if (!event.modifiers.none())
                 return;
-            // the right and up arrows move the value up, which is the forward direction (§8)
-            const float delta = (event.key == Key::ArrowRight || event.key == Key::ArrowUp) ? STEP : -STEP;
+            // the increment is what the theme says, or the value the slider always moved by (§10.1)
+            const float increment = theme() != nullptr ? theme()->metrics().slider_step : 0.05f;
+            // the key decides the direction, and a left or down key is the negative one (§8.3)
+            const float delta = (event.key == Key::ArrowRight || event.key == Key::ArrowUp) ? increment : -increment;
             // the event is claimed, so no ancestor reacts to the same key (§8.3)
             event.handled = true;
             // the value moves by one step, which step reports when it changed (§8.3)
@@ -278,5 +290,20 @@ namespace albor
         m_thumb_color = color;
         // a thumb colour change is visual only, so the layout passes are left alone (§6.1)
         invalidate();
+    }
+    const Color* Slider::track_colors() const {
+        // without a theme the table is unused, because the resolver returns the slider's own value (§6.1)
+        if (theme() == nullptr)
+            return nullptr;
+        // the installed palette answers, because the theme owns the colour (§6.1)
+        return theme()->palette().slider_track;
+    }
+
+    const Color* Slider::thumb_colors() const {
+        // without a theme the table is unused, because the resolver returns the slider's own value (§6.1)
+        if (theme() == nullptr)
+            return nullptr;
+        // the installed palette answers, because the theme owns the colour (§6.1)
+        return theme()->palette().slider_thumb;
     }
 } // namespace albor
