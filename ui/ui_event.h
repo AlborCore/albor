@@ -19,6 +19,12 @@ namespace albor
         // a pointer moved to a logical position
         PointerMove,
 
+        // the pointer entered a node's bounds, which the dispatcher synthesizes at a boundary (§8.3)
+        PointerEnter,
+
+        // the pointer left a node's bounds, which the dispatcher synthesizes at a boundary (§8.3)
+        PointerLeave,
+
         // a wheel turned at a logical position
         Wheel,
 

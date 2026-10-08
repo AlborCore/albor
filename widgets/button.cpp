@@ -29,8 +29,10 @@ namespace albor
             // the run is measured at the default button size, because the plate carries no separate size knob (§9.1)
             m_label_layout = m_text_engine->measure(m_label, offered_width, TextEngine::DEFAULT_FONT_SIZE);
         }
+        // the minimum comes from the theme when one is installed, so a sizing decision is configured in one place (§8.2)
+        const ControlMetrics& metrics = theme() != nullptr ? theme()->metrics() : default_metrics();
         // a push control must stay grabbable, so the label drives the plate and a default covers an empty label (§8.2)
-        Size content{.width = std::max(m_label_layout.size.width, MINIMUM_WIDTH), .height = std::max(m_label_layout.size.height, MINIMUM_HEIGHT)};
+        Size content{.width = std::max(m_label_layout.size.width, metrics.button_minimum.width), .height = std::max(m_label_layout.size.height, metrics.button_minimum.height)};
         // the children are measured too, because a widget is a component and they are part of its content (§8.1, §8.2)
         Size children{};
         UiNode::measure(constraints, children);
@@ -53,10 +55,12 @@ namespace albor
         // an empty label draws no run, because a button may carry no text at all (§6.2)
         if (m_label_layout.empty())
             return;
+        // the label colour resolves by state, so a hover and a press read differently without a second literal (§6.1)
+        const Color label_color = resolve(label_colors(), Color{0.96f, 0.97f, 0.99f, 1.0f});
         // the run is centred on the plate as a box, where every line places its baseline (§6.1, §9.1)
         const Point origin{.x = bounds().x + (bounds().width - m_label_layout.size.width) * 0.5f, .y = bounds().y + (bounds().height - m_label_layout.size.height) * 0.5f};
         // the run is recorded over the plate, which is the last thing the frame draws for this button (§6.1)
-        context.draw_text(m_label_layout, origin, {.fill = Color::rgba(1.0f, 1.0f, 1.0f, m_disabled ? 0.5f : 1.0f)});
+        context.draw_text(m_label_layout, origin, {.fill = label_color});
     }
 
     bool Button::hit_test(Point logical_point) const {
@@ -78,6 +82,8 @@ namespace albor
         // a hidden button takes no event at all, because it draws nothing to aim at (§8.3)
         if (!visible())
             return;
+        // the transitions run first, so a press is a state before it is an activation (§8.3)
+        handle_hover_transitions(event);
         // a key that activates the button is a press, which the focused button receives (§8.3)
         if (event.kind == EventKind::KeyDown && (event.key == Key::Return || event.key == Key::Space)) {
             // a disabled button does not claim the key, because it refuses input (§8.3)
@@ -187,10 +193,30 @@ namespace albor
     }
 
     Color Button::background() const {
-        // a disabled button draws its plate faded, which is the only way the state reads without a style system (§6.1)
+        // a themed button resolves by state, so a hover and a press differ without a second literal (§6.1)
+        if (theme() != nullptr)
+            return resolve(plate_colors(), m_background);
+        // an unthemed button keeps the inline fade, because it is the only visual it had (§6.1)
         if (m_disabled)
             return Color::rgba(m_background.red * 0.5f, m_background.green * 0.5f, m_background.blue * 0.5f, m_background.alpha);
         // the plate fill is what the base records before the label (§6.2)
         return m_background;
     }
+
+    const Color* Button::plate_colors() const {
+        // without a theme the table is unused, because the resolver returns the widget's own value (§6.1)
+        if (theme() == nullptr)
+            return nullptr;
+        // the installed palette answers, because the theme owns the colour (§6.1)
+        return theme()->palette().button_plate;
+    }
+
+    const Color* Button::label_colors() const {
+        // without a theme the table is unused, because the resolver returns the widget's own value (§6.1)
+        if (theme() == nullptr)
+            return nullptr;
+        // the installed palette answers, because the theme owns the colour (§6.1)
+        return theme()->palette().button_label;
+    }
+
 } // namespace albor

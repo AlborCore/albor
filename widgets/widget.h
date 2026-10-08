@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "semantics/semantic_provider.h"
+#include "style/theme.h"
 #include "ui/component.h"
 
 namespace albor
@@ -70,5 +71,40 @@ namespace albor
 
         // override: wrap the child at an index, returning null when the index is past the end (§10.1, AD-09)
         [[nodiscard]] std::unique_ptr<SemanticProvider> semantic_child(std::size_t index) const override;
+
+        // install the theme the widget resolves its paint and sizing through, which the caller owns (§6.1)
+        void set_theme(const Theme* theme);
+
+        // hand out the installed theme, which is null while no theme is installed (§6.1)
+        [[nodiscard]] const Theme* theme() const;
+
+        // hand out the state the widget is in, which a pointer transition or a press changes (§8.3)
+        [[nodiscard]] ControlState state() const;
+
+        // report whether the pointer is inside the widget, which is what the hover paint reads (§8.3)
+        [[nodiscard]] bool hovered() const;
+
+        // report whether a press is held on the widget, which is what the pressed paint reads (§8.3)
+        [[nodiscard]] bool pressed() const;
+
+    protected:
+        // run the pointer transitions through the state flags, which every control calls before its own handling (§8.3)
+        void handle_hover_transitions(const Event& event);
+
+        // resolve a role in the current state, falling back to the widget's own value when no theme is installed (§6.1)
+        [[nodiscard]] Color resolve(const Color* theme_colors, Color own) const;
+
+        // the fallback metrics, which are what a widget measures from while no theme is installed (§8.2)
+        [[nodiscard]] static const ControlMetrics& default_metrics();
+
+    private:
+        // the installed theme, which is null while the widget uses its own values (§6.1)
+        const Theme* m_theme = nullptr;
+
+        // whether the pointer is inside the widget, which the enter and leave events set (§8.3)
+        bool m_hovered = false;
+
+        // whether a press is held on the widget, which the down and up events set (§8.3)
+        bool m_pressed = false;
     };
 } // namespace albor

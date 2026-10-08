@@ -1,6 +1,7 @@
 # Defect D7: No style module, and no interaction states beyond the disabled fade
 
-Draft issue report. Context and the sibling defects live in `RENDERING-DEFECTS.md`.
+Context and the sibling defects live in `RENDERING-DEFECTS.md`. **Mostly fixed**: the theme, the
+synthesized transitions and the control state are done for the button. What is left is stated below.
 
 ## Summary
 
@@ -43,6 +44,8 @@ and each widget invented its own.
 
 ## Plan
 
+### Done
+
 1. **Build `style/`.** A theme maps style roles to values: background, foreground,
    accent, and their disabled, hovered and pressed variants, plus control sizing
    tokens (minimum extents, corner radius, stroke widths). Widgets resolve paints from
@@ -62,8 +65,43 @@ and each widget invented its own.
    until pointer up or leave. Widgets select their paint from the theme by state, so
    the button fade becomes a disabled theme entry instead of inline arithmetic.
 
+   The precedence is disabled, then pressed, then hovered, then normal, and the
+   states are `ControlState` in `style/theme.h`. `Widget::handle_hover_transitions`
+   runs before a widget's own handling, so a press is a state and an activation at
+   once. A drag that leaves the bounds releases the press, and a drag that stays
+   inside keeps it, because the drag belongs to the control (§8.3).
+
 4. **Interaction contract.** A widget with no theme falls back to its current
    hardcoded values, so no existing test changes behaviour until a theme is installed.
+
+### Still open
+
+5. **The other controls resolve through the theme, but their own metrics are still
+   literals.** The button reads its minimum from the theme; the check box, the slider and the
+   label still carry `BOX_SIZE`, `OUTLINE_WIDTH`, `SLIDER_WIDTH`, `THUMB_SIZE` and `STEP` in
+   their `.cpp` files. `ControlMetrics` already holds those values, so the remaining work is
+   mechanical: read them through `theme()` the way the button does. It is left because each one
+   needs its own paint test to prove the fallback is unchanged, and doing all four in one pass
+   would make a regression in any of them hard to read.
+
+6. **No control other than the button draws a state.** The state machine lives on the widget
+   base and every widget inherits it, so hover and press work for a check box or a slider
+   already; what they do not do yet is resolve their paint from the palette by state, which is
+   the same mechanical work as item 5.
+
+### The invariant the replay rests on
+
+`InputController` holds the hovered nodes as raw pointers, because a tree owns its nodes and the
+controller borrows them. **An application that removes or hides a subtree while the pointer is
+inside it must call `refresh_hover()`**, which replays the exits and rebuilds the chain against
+the tree as it now stands. Without that call the chain keeps a pointer to a node that may have
+been destroyed, and the next pointer move dispatches a leave into freed memory.
+
+This is a real hazard rather than a nicety, and the framework does not yet have a way to detect
+the mutation from inside the input module: the tree mutation paths (`UiNode::remove_child`,
+`set_visible`) reach no input observer. The honest fix is a change notification on the tree, which
+is a larger change than this defect, so the obligation is recorded here and covered by the three
+`HoverChecks` refresh tests until that notification exists (§8.3).
 
 ## Dependencies and notes
 
@@ -75,6 +113,24 @@ and each widget invented its own.
   pointer.
 
 ## Verification
+
+What is covered by tests now:
+
+- A theme carries a palette and metrics, an override replaces one entry, and a state
+  override replaces one state without moving the rest (`ThemeChecks`).
+- A widget has no theme until one is installed; with none it draws its own plate, and the
+  fallback metrics are the literals it used before, so no existing test changes behaviour.
+- A theme override changes the paint without touching the widget, and a themed button
+  measures from the themed minimum.
+- Normal, hovered and pressed are three different plates; a disabled button reports disabled
+  over a hover; a drag outside releases a held press and a drag inside keeps it
+  (`ControlStateChecks`).
+- Enter and leave are synthesized exactly at boundary crossings: a first move enters, a second
+  move inside does not, a move off leaves, crossing siblings leaves then enters, a child leaving
+  keeps its root hovered, a press learns what it landed on, a hidden node is skipped, and a key
+  press synthesizes nothing (`HoverChecks`).
+- The replay: hiding a hovered subtree replays its exit and leaves nothing hovered, and a
+  controller that never saw a pointer invents nothing.
 
 - Enter and leave are synthesized exactly at boundary crossings, asserted on a two
   widget column.

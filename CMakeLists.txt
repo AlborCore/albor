@@ -92,6 +92,9 @@ add_subdirectory(text)
 # the frame scheduler integrated animation core of §7.3, which drives properties through their presence channel (§3.2)
 add_subdirectory(animation)
 
+# the theme and style tokens of §6.1, which the widgets resolve their paint through (§3.2)
+add_subdirectory(style)
+
 # the standard widgets of §8, which are ui components that also expose semantics (§3.2)
 add_subdirectory(widgets)
 

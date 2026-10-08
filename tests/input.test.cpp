@@ -18,8 +18,14 @@ namespace
     class RecordingNode final : public UiNode
     {
     public:
-        // how many events this node was offered (§8.3)
+        // how many routed events this node was offered (§8.3)
         std::size_t deliveries = 0;
+
+        // how many pointer enter transitions this node was told (§8.3)
+        std::size_t enters = 0;
+
+        // how many pointer leave transitions this node was told (§8.3)
+        std::size_t leaves = 0;
 
         // whether this node claims the events it is offered (§8.3)
         bool claims = false;
@@ -50,6 +56,15 @@ namespace
         }
 
         void dispatch_event(Event& event) override {
+            // a synthesized transition is counted on its own, because it is not a routed input event (§8.3)
+            if (event.kind == EventKind::PointerEnter) {
+                enters++;
+                return;
+            }
+            if (event.kind == EventKind::PointerLeave) {
+                leaves++;
+                return;
+            }
             // the delivery is counted before the claim, so a refusing node is still observable (§8.3)
             deliveries++;
             // a claiming node marks the event handled, which stops the walk (§8.3)
@@ -1059,4 +1074,266 @@ TEST(InputControllerChecks, AHiddenChildHandsTheFocusToTheRoot) {
     // assert a child that misses the point hides nothing inside itself (§8.3)
     EXPECT_EQ(controller.focus().focused(), &root);
     EXPECT_TRUE(controller.capturing());
+}
+
+TEST(HoverChecks, AFirstMoveOverANodeTellsItEntered) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event move{.kind = EventKind::PointerMove, .position = Point{10.0f, 10.0f}};
+    // act
+    controller.deliver(move);
+    // assert the transition is synthesized at the crossing, not awaited from the platform (§8.3)
+    EXPECT_EQ(root.enters, 1u);
+    EXPECT_EQ(root.leaves, 0u);
+}
+
+TEST(HoverChecks, ASecondMoveInsideTheSameNodeTellsNothing) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event first{.kind = EventKind::PointerMove, .position = Point{10.0f, 10.0f}};
+    controller.deliver(first);
+    // act a move inside the same node is not a transition, so only the routed move is delivered (§8.3)
+    Event second{.kind = EventKind::PointerMove, .position = Point{20.0f, 20.0f}};
+    controller.deliver(second);
+    // assert
+    EXPECT_EQ(root.enters, 1u);
+    EXPECT_EQ(root.leaves, 0u);
+    EXPECT_EQ(root.deliveries, 2u);
+}
+
+TEST(HoverChecks, AMoveOffANodeTellsItLeft) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event first{.kind = EventKind::PointerMove, .position = Point{10.0f, 10.0f}};
+    controller.deliver(first);
+    // act the pointer leaves the bounds entirely (§8.3)
+    Event outside{.kind = EventKind::PointerMove, .position = Point{400.0f, 400.0f}};
+    controller.deliver(outside);
+    // assert the exit arrives exactly at the crossing (§8.3)
+    EXPECT_EQ(root.enters, 1u);
+    EXPECT_EQ(root.leaves, 1u);
+}
+
+TEST(HoverChecks, CrossingBetweenTwoSiblingsTellsLeaveThenEnter) {
+    // arrange two siblings side by side, so the pointer crosses one boundary (§8.3)
+    InputController controller;
+    RecordingNode root;
+    auto first = std::make_unique<RecordingNode>();
+    auto second = std::make_unique<RecordingNode>();
+    RecordingNode* first_ptr = first.get();
+    RecordingNode* second_ptr = second.get();
+    first->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    second->arrange(Rect::from_origin_size(Point{50.0f, 0.0f}, Size{50.0f, 50.0f}));
+    // the root holds both siblings, so it is arranged to span them (§8.2)
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 50.0f}));
+    // the last added child is the topmost, so the second is hit first (§8.3)
+    root.add_child(std::move(second));
+    root.add_child(std::move(first));
+    controller.attach(root);
+    Event over_first{.kind = EventKind::PointerMove, .position = Point{10.0f, 10.0f}};
+    controller.deliver(over_first);
+    // act the pointer moves onto the sibling (§8.3)
+    Event over_second{.kind = EventKind::PointerMove, .position = Point{60.0f, 10.0f}};
+    controller.deliver(over_second);
+    // assert the node left was told, and the root stayed hovered because the pointer never left it (§8.3)
+    EXPECT_EQ(first_ptr->enters, 1u);
+    EXPECT_EQ(first_ptr->leaves, 1u);
+    EXPECT_EQ(second_ptr->enters, 1u);
+    EXPECT_EQ(second_ptr->leaves, 0u);
+    EXPECT_EQ(root.enters, 1u);
+    EXPECT_EQ(root.leaves, 0u);
+}
+
+TEST(HoverChecks, AChildEnterIsToldAfterItsParentLeftNothing) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    auto child = std::make_unique<RecordingNode>();
+    RecordingNode* child_ptr = child.get();
+    child->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    root.add_child(std::move(child));
+    // the root is arranged first, because its arrange pushes the same bounds into every child (§8.2)
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    // the child is arranged after, so it holds the smaller box the test needs (§8.2)
+    child_ptr->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    controller.attach(root);
+    // act the pointer lands on the child, which is inside the root too (§8.3)
+    Event landed{.kind = EventKind::PointerMove, .position = Point{15.0f, 15.0f}};
+    controller.deliver(landed);
+    // assert both are told, because both contain the point (§8.3)
+    EXPECT_EQ(child_ptr->enters, 1u);
+    EXPECT_EQ(root.enters, 1u);
+}
+
+TEST(HoverChecks, AChildLeavingKeepsTheRootHovered) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    auto child = std::make_unique<RecordingNode>();
+    RecordingNode* child_ptr = child.get();
+    child->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    root.add_child(std::move(child));
+    // the root is arranged first, because its arrange pushes the same bounds into every child (§8.2)
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    // the child is arranged after, so it holds the smaller box the test needs (§8.2)
+    child_ptr->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    controller.attach(root);
+    Event inside{.kind = EventKind::PointerMove, .position = Point{15.0f, 15.0f}};
+    controller.deliver(inside);
+    // act the pointer moves onto the root but off the child (§8.3)
+    Event first{.kind = EventKind::PointerMove, .position = Point{80.0f, 80.0f}};
+    controller.deliver(first);
+    // assert the inner node left while the outer one did not (§8.3)
+    EXPECT_EQ(child_ptr->leaves, 1u);
+    EXPECT_EQ(root.leaves, 0u);
+}
+
+TEST(HoverChecks, APressLearnsWhatItLandedOn) {
+    // arrange a press with no preceding move, which is what a real click is (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    // act
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    controller.deliver(press);
+    // assert the press synthesized the enter it needed, so a hover visual does not lag the click (§8.3)
+    EXPECT_EQ(root.enters, 1u);
+}
+
+TEST(HoverChecks, TheHoveredNodeIsTheInnermostUnderThePointer) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    auto child = std::make_unique<RecordingNode>();
+    RecordingNode* child_ptr = child.get();
+    child->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    root.add_child(std::move(child));
+    // the root is arranged first, because its arrange pushes the same bounds into every child (§8.2)
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    // the child is arranged after, so it holds the smaller box the test needs (§8.2)
+    child_ptr->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    controller.attach(root);
+    // act
+    Event landed{.kind = EventKind::PointerMove, .position = Point{15.0f, 15.0f}};
+    controller.deliver(landed);
+    // assert the child covers the root, so it owns the point (§8.3)
+    EXPECT_EQ(controller.hovered(), child_ptr);
+}
+
+TEST(HoverChecks, NothingIsHoveredOverEmptySpace) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    // act
+    Event first{.kind = EventKind::PointerMove, .position = Point{400.0f, 400.0f}};
+    controller.deliver(first);
+    // assert
+    EXPECT_EQ(controller.hovered(), nullptr);
+    EXPECT_EQ(root.enters, 0u);
+}
+
+TEST(HoverChecks, AHiddenNodeIsNotHovered) {
+    // arrange a node that draws nothing is not under the pointer (§8.3)
+    InputController controller;
+    RecordingNode root;
+    RecordingNode child;
+    auto hidden = std::make_unique<RecordingNode>();
+    RecordingNode* hidden_ptr = hidden.get();
+    hidden->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    // the double refuses its own hit, which is how a hidden node behaves (§8.3)
+    hidden->shown = false;
+    root.add_child(std::move(hidden));
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    // the hidden child is arranged after, so it holds the smaller box under the point (§8.2)
+    hidden_ptr->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    controller.attach(root);
+    // act the pointer lands where the hidden child is (§8.3)
+    Event first{.kind = EventKind::PointerMove, .position = Point{15.0f, 15.0f}};
+    controller.deliver(first);
+    // assert the hidden node is skipped and the root still contains the point (§8.3)
+    EXPECT_EQ(hidden_ptr->enters, 0u);
+    EXPECT_EQ(root.enters, 1u);
+}
+
+TEST(HoverChecks, AKeyDownSynthesizesNoTransition) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    // act a key carries no position, so there is no pointer to place (§8.3)
+    Event key{.kind = EventKind::KeyDown, .key = Key::Return};
+    controller.deliver(key);
+    // assert
+    EXPECT_EQ(root.enters, 0u);
+    EXPECT_EQ(root.leaves, 0u);
+}
+
+TEST(HoverChecks, ARefreshReplaysTheExitOfContentThatIsGone) {
+    // arrange a hovered child that the application is about to remove (§8.3)
+    InputController controller;
+    RecordingNode root;
+    auto child = std::make_unique<RecordingNode>();
+    RecordingNode* child_ptr = child.get();
+    child->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    root.add_child(std::move(child));
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    child_ptr->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    controller.attach(root);
+    Event inside{.kind = EventKind::PointerMove, .position = Point{15.0f, 15.0f}};
+    controller.deliver(inside);
+    ASSERT_EQ(child_ptr->enters, 1u);
+    // act the subtree is hidden under the pointer, and the controller is told the tree moved (§8.3)
+    child_ptr->shown = false;
+    controller.refresh_hover();
+    // assert the exit was replayed, so no widget keeps a hover pointing at content that is gone (§8.3)
+    EXPECT_EQ(child_ptr->leaves, 1u);
+}
+
+TEST(HoverChecks, ARefreshLeavesNothingHoveredOverAHiddenSubtree) {
+    // arrange a whole subtree that the application hides under the pointer (§8.3)
+    InputController controller;
+    RecordingNode root;
+    auto child = std::make_unique<RecordingNode>();
+    RecordingNode* child_ptr = child.get();
+    child->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    root.add_child(std::move(child));
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    child_ptr->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    controller.attach(root);
+    Event inside{.kind = EventKind::PointerMove, .position = Point{15.0f, 15.0f}};
+    controller.deliver(inside);
+    ASSERT_EQ(controller.hovered(), child_ptr);
+    // act the subtree is hidden and the root no longer contains the point either (§8.3)
+    child_ptr->shown = false;
+    root.shown = false;
+    controller.refresh_hover();
+    // assert the chain is empty rather than pointing at a hidden node (§8.3)
+    EXPECT_EQ(controller.hovered(), nullptr);
+}
+
+TEST(HoverChecks, ARefreshOnACleanControllerDoesNothing) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    // act a controller that never saw a pointer has nothing to replay (§8.3)
+    controller.refresh_hover();
+    // assert
+    EXPECT_EQ(controller.hovered(), nullptr);
+    EXPECT_EQ(root.enters, 0u);
+    EXPECT_EQ(root.leaves, 0u);
 }

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 #include "core/geometry.h"
 #include "focus/focus_manager.h"
 #include "input/event_filter.h"
@@ -39,9 +41,24 @@ namespace albor
         // report whether a pointer drag is captured, which the tests assert on (§8.3)
         [[nodiscard]] bool capturing() const;
 
+        // report the node the pointer is over, which is the innermost hovered node (§8.3)
+        [[nodiscard]] UiNode* hovered() const;
+
+        // replay the exits after the tree changed under the pointer, which an application calls once it mutated it (§8.3)
+        void refresh_hover();
+
     private:
         // find the deepest focusable node under the point, which click to focus lands on (§8.3)
         [[nodiscard]] UiNode* focusable_under(UiNode& node, Point point) const;
+
+        // refresh the hover chain against the point, which synthesizes the enter and leave transitions (§8.3)
+        void update_hover(Point point);
+
+        // replay a leave to every hovered node, which a tree change under the pointer needs (§8.3)
+        void clear_hover();
+
+        // hand out the innermost node of a chain, or null when the chain is empty (§8.3)
+        [[nodiscard]] static UiNode* deepest_of(const std::vector<UiNode*>& chain);
 
         // route a positioned event, which moves the focus and captures a drag on a claimed press (§8.3)
         void deliver_pointer(Event& event);
@@ -57,5 +74,8 @@ namespace albor
 
         // the node dragging, which claims the moves until the button comes up (§8.3)
         UiNode* m_capture = nullptr;
+
+        // the nodes the pointer is currently over, deepest first, which the transitions are diffed against (§8.3)
+        std::vector<UiNode*> m_hover_chain;
     };
 } // namespace albor

@@ -2615,3 +2615,221 @@ TEST(WidgetCompositionChecks, ATransparentWidgetBackgroundRecordsNothing) {
     // assert the transparent background is culled rather than recorded as a dead draw (§6.2)
     EXPECT_EQ(recorder.scene()->command_count(), 0u);
 }
+
+TEST(ThemeChecks, AThemeCarriesAPaletteAndMetrics) {
+    // arrange
+    Theme theme;
+    // act, assert the theme answers for both halves of what a widget resolves (§6.1, §8.2)
+    EXPECT_EQ(theme.palette().button_plate[state_index(ControlState::Normal)].red, 0.20f);
+    EXPECT_FLOAT_EQ(theme.metrics().corner_radius, 6.0f);
+}
+
+TEST(ThemeChecks, AThemeOverrideReplacesOneEntry) {
+    // arrange
+    Theme theme;
+    theme.set_button_plate(Color::rgb(0.9f, 0.1f, 0.2f));
+    // act, assert the normal entry moved and the rest of the palette stayed (§6.1)
+    EXPECT_FLOAT_EQ(theme.palette().button_plate[state_index(ControlState::Normal)].red, 0.9f);
+    EXPECT_FLOAT_EQ(theme.palette().button_plate[state_index(ControlState::Pressed)].red, 0.14f);
+}
+
+TEST(ThemeChecks, AThemeOverrideReplacesOneStateOnly) {
+    // arrange
+    Theme theme;
+    theme.set_button_plate(ControlState::Hovered, Color::rgb(0.0f, 1.0f, 0.0f));
+    // act, assert the hovered entry moved and the normal one did not (§6.1)
+    EXPECT_FLOAT_EQ(theme.palette().button_plate[state_index(ControlState::Hovered)].green, 1.0f);
+    EXPECT_FLOAT_EQ(theme.palette().button_plate[state_index(ControlState::Normal)].red, 0.20f);
+}
+
+TEST(ThemeChecks, AWidgetHasNoThemeUntilOneIsInstalled) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    // act, assert a widget built without a theme resolves nothing (§6.1)
+    EXPECT_EQ(button.theme(), nullptr);
+}
+
+TEST(ThemeChecks, AWidgetWithNoThemeDrawsItsOwnPlate) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.set_background(Color::rgb(1.0f, 0.0f, 0.0f));
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the own value wins while no theme is installed, so nothing changes for an existing app (§6.1)
+    ASSERT_EQ(rect_commands(*recorder.scene()).size(), 1u);
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].paint().fill.red, 1.0f);
+}
+
+TEST(ThemeChecks, AThemeOverrideChangesThePaintWithoutTouchingTheWidget) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_button_plate(Color::rgb(0.9f, 0.1f, 0.2f));
+    Button button(&engine, &text_engine, "Press");
+    button.set_background(Color::rgb(1.0f, 0.0f, 0.0f));
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act the widget is untouched apart from the theme pointer (§6.1)
+    button.render(recorder);
+    // assert the theme won over the widget's own colour, which is the override direction the plan sets (§6.1)
+    ASSERT_EQ(rect_commands(*recorder.scene()).size(), 1u);
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].paint().fill.red, 0.9f);
+}
+
+TEST(ThemeChecks, AThemedButtonMeasuresFromTheThemeMetrics) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_button_minimum(Size{120.0f, 40.0f});
+    Button button(&engine, &text_engine, "");
+    button.set_theme(&theme);
+    Size measured{};
+    // act
+    button.measure(SizeConstraints::at_most(Size{400.0f, 400.0f}), measured);
+    // assert the empty label still measured to the themed minimum, because the metric is the theme's (§8.2)
+    EXPECT_GE(measured.width, 120.0f);
+    EXPECT_GE(measured.height, 40.0f);
+}
+
+TEST(ThemeChecks, AnUnthemedButtonKeepsItsOwnMinimum) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "");
+    Size measured{};
+    // act
+    button.measure(SizeConstraints::at_most(Size{400.0f, 400.0f}), measured);
+    // assert the fallback metrics are the literals the widget used before, so its extent is unchanged (§8.2)
+    EXPECT_GE(measured.width, 24.0f);
+    EXPECT_LT(measured.width, 120.0f);
+}
+
+TEST(ControlStateChecks, AButtonIsNormalWhileThePointerIsElsewhere) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    // act, assert the resting state needs no pointer (§8.3)
+    EXPECT_EQ(button.state(), ControlState::Normal);
+    EXPECT_FALSE(button.hovered());
+}
+
+TEST(ControlStateChecks, AnEnterMakesAButtonHovered) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    Event enter{.kind = EventKind::PointerEnter, .position = Point{10.0f, 5.0f}};
+    // act
+    button.dispatch_event(enter);
+    // assert the transition arrived as a state (§8.3)
+    EXPECT_TRUE(button.hovered());
+    EXPECT_EQ(button.state(), ControlState::Hovered);
+}
+
+TEST(ControlStateChecks, ALeaveMakesAButtonNormalAgain) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    Event enter{.kind = EventKind::PointerEnter, .position = Point{10.0f, 5.0f}};
+    button.dispatch_event(enter);
+    Event leave{.kind = EventKind::PointerLeave, .position = Point{90.0f, 5.0f}};
+    // act
+    button.dispatch_event(leave);
+    // assert
+    EXPECT_FALSE(button.hovered());
+    EXPECT_EQ(button.state(), ControlState::Normal);
+}
+
+TEST(ControlStateChecks, ADisabledButtonReportsDisabledOverAHover) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    Event enter{.kind = EventKind::PointerEnter, .position = Point{10.0f, 5.0f}};
+    button.dispatch_event(enter);
+    button.set_disabled(true);
+    // act, assert a control that refuses input reads disabled whatever the pointer does (§8.3)
+    EXPECT_EQ(button.state(), ControlState::Disabled);
+}
+
+TEST(ControlStateChecks, AThemedButtonDrawsADifferentPlatePerState) {
+    // arrange the three states a pointer can produce, read off three plates (§6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    Button button(&engine, &text_engine, "Press");
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    // act each state is drawn through its own recorder, because a scene is immutable once built (§6.1)
+    const float normal_red = [&] {
+        SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+        button.render(recorder);
+        return recorder.scene()->commands()[0].paint().fill.red;
+    }();
+    Event enter{.kind = EventKind::PointerEnter, .position = Point{10.0f, 5.0f}};
+    button.dispatch_event(enter);
+    float hovered_red = 0.0f;
+    {
+        SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+        button.render(recorder);
+        hovered_red = recorder.scene()->commands()[0].paint().fill.red;
+    }
+    // act the press lands after the hover, which is the order a pointer produces (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 5.0f}};
+    button.dispatch_event(press);
+    float pressed_red = 0.0f;
+    {
+        SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+        button.render(recorder);
+        pressed_red = recorder.scene()->commands()[0].paint().fill.red;
+    }
+    // assert three states are three colours, which is what a hover visual is (§6.1, §8.3)
+    EXPECT_FLOAT_EQ(normal_red, 0.20f);
+    EXPECT_FLOAT_EQ(hovered_red, 0.26f);
+    EXPECT_FLOAT_EQ(pressed_red, 0.14f);
+}
+
+TEST(ControlStateChecks, AMoveOutsideBoundsReleasesAHeldPress) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 5.0f}};
+    button.dispatch_event(press);
+    ASSERT_TRUE(button.pressed());
+    Event move{.kind = EventKind::PointerMove, .position = Point{400.0f, 400.0f}};
+    // act the pointer dragged off the plate, which is what dragging away means (§8.3)
+    button.dispatch_event(move);
+    // assert the press did not stay held on a control the pointer left (§8.3)
+    EXPECT_FALSE(button.pressed());
+}
+
+TEST(ControlStateChecks, AMoveInsideBoundsKeepsAHeldPress) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 5.0f}};
+    button.dispatch_event(press);
+    Event move{.kind = EventKind::PointerMove, .position = Point{30.0f, 10.0f}};
+    // act
+    button.dispatch_event(move);
+    // assert a drag inside the control keeps the press, because the drag belongs to it (§8.3)
+    EXPECT_TRUE(button.pressed());
+}

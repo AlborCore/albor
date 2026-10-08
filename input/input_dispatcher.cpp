@@ -68,4 +68,34 @@ namespace albor
         // the tree answers for itself, because hit testing is the node contract of §8.3
         return root.hit_test(logical_point);
     }
+
+    void InputDispatcher::hover_chain(UiNode& root, Point logical_point, std::vector<UiNode*>& out_chain) {
+        // the children are searched last added first, because the topmost control owns the point (§8.3)
+        for (auto position = root.child_count(); position > 0; position--) {
+            UiNode* child = root.child_at(position - 1);
+            // a child that misses the point holds nothing inside it either, so the walk stops there (§8.3)
+            if (child == nullptr || !child->hit_test(logical_point))
+                continue;
+            // the deepest chain comes first, because a leave has to reach the innermost node before its parent (§8.3)
+            hover_chain(*child, logical_point, out_chain);
+            // the walk stops at the child that held the point, because above it there is only its own chain (§8.3)
+            break;
+        }
+        // the node joins the chain after its own descendants, which keeps the chain deepest first (§8.3)
+        if (root.hit_test(logical_point))
+            out_chain.push_back(&root);
+    }
+
+    void InputDispatcher::dispatch_to_chain(const std::vector<UiNode*>& chain, Event& event) {
+        // the chain is deepest first, which is the order a transition has to arrive in (§8.3)
+        for (UiNode* node : chain) {
+            // a node that left the tree mid walk is skipped, because the events own the tree (§8.3)
+            if (node == nullptr)
+                continue;
+            // every node in the chain sees the transition, because a hover is not claimed like a press (§8.3)
+            node->dispatch_event(event);
+        }
+        // a transition is delivered to the whole chain, so handled is deliberately not consulted here (§8.3)
+        event.handled = false;
+    }
 } // namespace albor

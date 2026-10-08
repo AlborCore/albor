@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 #include "ui/ui_event.h"
 #include "ui/ui_node.h"
 
@@ -17,6 +19,12 @@ namespace albor
 
         // report whether the point lands on the tree, which is what a platform adapter asks before dispatching (§8.3)
         [[nodiscard]] static bool hits(UiNode& root, Point logical_point);
+
+        // collect the chain of nodes under the point, deepest first, which is the hover set of §8.3
+        static void hover_chain(UiNode& root, Point logical_point, std::vector<UiNode*>& out_chain);
+
+        // walk the chain into the target, which keeps the synthesized transitions in one place (§8.3)
+        static void dispatch_to_chain(const std::vector<UiNode*>& chain, Event& event);
 
     private:
         // offer the event to every child of the node and then to the node, which is the pointer path of §8.3

@@ -65,4 +65,104 @@ namespace albor
         // a child with no semantics is announced as a node that carries no meaning, so the walk still has a shape (§10.1, AD-09)
         return std::make_unique<SemanticNodeProvider>(SemanticNode{SemanticRole::None});
     }
+
+    void Widget::set_theme(const Theme* theme) {
+        // the theme is borrowed, because the application owns it and outlives every widget (§6.1)
+        m_theme = theme;
+        // a theme changes the paint, so the widget asks for a frame (§6.1)
+        invalidate();
+    }
+
+    const Theme* Widget::theme() const {
+        // the installed theme is handed back as borrowed, because the widget does not own it (§6.1)
+        return m_theme;
+    }
+
+    ControlState Widget::state() const {
+        // a disabled control reports disabled whatever the pointer does, because it refuses input (§8.3)
+        if (disabled())
+            return ControlState::Disabled;
+        // a held press wins over the hover, because a press is the later and stronger signal (§8.3)
+        if (m_pressed)
+            return ControlState::Pressed;
+        // the pointer inside the control is the next strongest signal (§8.3)
+        if (m_hovered)
+            return ControlState::Hovered;
+        // nothing is happening to the control, which is the resting paint (§8.3)
+        return ControlState::Normal;
+    }
+
+    bool Widget::hovered() const {
+        // the flag is what the pointer transitions set, and the tests read (§8.3)
+        return m_hovered;
+    }
+
+    bool Widget::pressed() const {
+        // the flag is what the press set, and the tests read (§8.3)
+        return m_pressed;
+    }
+
+    Color Widget::resolve(const Color* theme_colors, Color own) const {
+        // without a theme the widget keeps its own value, so no existing test changes behaviour (§6.1)
+        if (m_theme == nullptr)
+            return own;
+        // with a theme the role wins, because the theme is the surface an application configures (§6.1)
+        return theme_colors[state_index(state())];
+    }
+
+    const ControlMetrics& Widget::default_metrics() {
+        // a theme with no overrides holds the same numbers the widgets used as literals, so both paths agree (§8.2)
+        static const ControlMetrics metrics;
+        // the fallback is shared, because nothing writes to it (§8.2)
+        return metrics;
+    }
+
+    void Widget::handle_hover_transitions(const Event& event) {
+        // the enter is the hover flag, so a move across a boundary flips it exactly once (§8.3)
+        if (event.kind == EventKind::PointerEnter) {
+            // an already hovered widget is not repainted, because nothing about it changed (§6.1)
+            if (m_hovered)
+                return;
+            m_hovered = true;
+            invalidate();
+            return;
+        }
+        // a leave clears the hover and any press with it, because a press held outside is not a press here (§8.3)
+        if (event.kind == EventKind::PointerLeave) {
+            // a widget that was neither hovered nor pressed changes nothing, so it is not repainted (§6.1)
+            if (!m_hovered && !m_pressed)
+                return;
+            m_hovered = false;
+            m_pressed = false;
+            invalidate();
+            return;
+        }
+        // a press sets the pressed flag, which the state reads (§8.3)
+        if (event.kind == EventKind::PointerDown) {
+            // a second press while one is held changes nothing, so the widget is not repainted (§8.3)
+            if (m_pressed)
+                return;
+            m_pressed = true;
+            invalidate();
+            return;
+        }
+        // a release clears the press, while a pointer capture keeps the moves coming (§8.3)
+        if (event.kind == EventKind::PointerUp) {
+            // a widget that held no press changes nothing, so it is not repainted (§6.1)
+            if (!m_pressed)
+                return;
+            m_pressed = false;
+            invalidate();
+            return;
+        }
+        // a move that arrives outside the bounds clears the press, so dragging away releases it (§8.3)
+        if (event.kind == EventKind::PointerMove && m_pressed) {
+            // a press held inside the widget survives the move, because the drag belongs to it (§8.3)
+            if (hit_test(event.position))
+                return;
+            // the pointer left while a press was held, so the press is released like a hover (§8.3)
+            m_pressed = false;
+            invalidate();
+        }
+    }
 } // namespace albor

@@ -52,7 +52,7 @@ namespace albor
         // replace the plate fill, which redraws without changing the extent (§6.1)
         void set_background(Color background);
 
-        // override: hand out the plate fill, which the base records before the label (§6.2)
+        // override: hand out the plate fill, which the base records before the label and which resolves by state (§6.2)
         [[nodiscard]] Color background() const override;
 
     private:
@@ -73,5 +73,11 @@ namespace albor
 
         // whether the button refuses input (§8.3)
         bool m_disabled = false;
+
+        // the plate colours the button resolves through, which are the installed palette when a theme is present (§6.1)
+        [[nodiscard]] const Color* plate_colors() const;
+
+        // the label colours the button resolves through, which are the installed palette when a theme is present (§6.1)
+        [[nodiscard]] const Color* label_colors() const;
     };
 } // namespace albor

@@ -1,5 +1,8 @@
 #include "input/input_controller.h"
 
+#include <algorithm>
+#include <utility>
+
 namespace albor
 {
     void InputController::attach(UiNode& root) {
@@ -10,6 +13,19 @@ namespace albor
     UiNode* InputController::root() const {
         // the tree is the one the controller was pointed at (§8.3)
         return m_root;
+    }
+
+    UiNode* InputController::hovered() const {
+        // the hovered node is the innermost of the chain, because a child covers its parent (§8.3)
+        return deepest_of(m_hover_chain);
+    }
+
+    UiNode* InputController::deepest_of(const std::vector<UiNode*>& chain) {
+        // an empty chain means the pointer is over nothing (§8.3)
+        if (chain.empty())
+            return nullptr;
+        // the chain is built deepest first, so its front is the node that owns the point (§8.3)
+        return chain.front();
     }
 
     void InputController::deliver(Event& event) {
@@ -52,6 +68,11 @@ namespace albor
     }
 
     void InputController::deliver_pointer(Event& event) {
+        // every positioned event refreshes the hover chain, so a press also knows what it landed on (§8.3)
+        update_hover(event.position);
+        // a synthesized transition is the whole event, because it was already routed to the chain (§8.3)
+        if (event.kind == EventKind::PointerEnter || event.kind == EventKind::PointerLeave)
+            return;
         // a press with no drag yet routes by position and may start a capture (§8.3)
         if (event.kind == EventKind::PointerDown) {
             // a second press while a drag is alive interrupts nothing, so it is dropped (§8.3)
@@ -125,5 +146,66 @@ namespace albor
     bool InputController::capturing() const {
         // a capture exists exactly while a drag is alive (§8.3)
         return m_capture != nullptr;
+    }
+    void InputController::refresh_hover() {
+        // a controller without a tree has nothing hovered, because the chain follows the tree (§8.3)
+        if (m_root == nullptr) {
+            m_hover_chain.clear();
+            return;
+        }
+        // a controller that never saw a pointer has nothing to replay, so a refresh invents nothing (§8.3)
+        if (m_hover_chain.empty())
+            return;
+        // the last point of the innermost hovered node is where the pointer was, which is what the replay uses (§8.3)
+        const Point point{m_hover_chain.front()->bounds().x, m_hover_chain.front()->bounds().y};
+        // the exits are replayed first, so nothing keeps a hover pointing at content that is gone (§8.3)
+        clear_hover();
+        // the chain is rebuilt against the tree as it now stands, so the new state is correct at once (§8.3)
+        update_hover(point);
+    }
+
+    void InputController::update_hover(Point point) {
+        // the new chain is collected before anything is told, because a diff needs both sides (§8.3)
+        std::vector<UiNode*> next;
+        // a controller without a tree has no chain, so the refresh is a no op (§8.3)
+        if (m_root != nullptr)
+            InputDispatcher::hover_chain(*m_root, point, next);
+        // a chain that did not change produces no transition, because a hover is not a move (§8.3)
+        if (next == m_hover_chain)
+            return;
+        // the nodes that left are told first, because a leave must reach the inner node before its parent (§8.3)
+        for (UiNode* node : m_hover_chain) {
+            // a node that is still under the pointer keeps its hover, so it is not told again (§8.3)
+            if (std::find(next.begin(), next.end(), node) != next.end())
+                continue;
+            Event leave{.kind = EventKind::PointerLeave, .position = point};
+            InputDispatcher::dispatch_to_chain(std::vector<UiNode*>{node}, leave);
+        }
+        // the nodes that arrived are told after, so a move reads as leaving before entering (§8.3)
+        for (UiNode* node : next) {
+            // a node that was already under the pointer was not told it left, so it is not told again (§8.3)
+            if (std::find(m_hover_chain.begin(), m_hover_chain.end(), node) != m_hover_chain.end())
+                continue;
+            Event enter{.kind = EventKind::PointerEnter, .position = point};
+            InputDispatcher::dispatch_to_chain(std::vector<UiNode*>{node}, enter);
+        }
+        // the chain is replaced only after the transitions, so a handler asking for it sees the new state (§8.3)
+        m_hover_chain = std::move(next);
+    }
+
+    void InputController::clear_hover() {
+        // an empty chain has nothing to leave (§8.3)
+        if (m_hover_chain.empty())
+            return;
+        // the exit events are replayed in chain order, because a stale hover must not survive the change (§8.3)
+        for (UiNode* node : m_hover_chain) {
+            // a node that left the tree is skipped, because the events own the tree (§8.3)
+            if (node == nullptr)
+                continue;
+            Event leave{.kind = EventKind::PointerLeave, .position = Point{node->bounds().x, node->bounds().y}};
+            InputDispatcher::dispatch_to_chain(std::vector<UiNode*>{node}, leave);
+        }
+        // the chain is emptied, so the next move starts from nothing (§8.3)
+        m_hover_chain.clear();
     }
 } // namespace albor
