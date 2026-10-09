@@ -111,7 +111,7 @@ TEST(AllocationProbeChecks, ASteadyStateFrameAllocatesLessThanTheFirstOne) {
 TEST(AllocationProbeChecks, ARepeatedMeasureOfOneRunCostsNoAllocation) {
     // arrange the run is shaped once, so the second measure is a cache lookup (§9.1)
     SkiaTextEngine engine;
-    engine.measure("albor", 500.0f, 16.0f);
+    [[maybe_unused]] const auto discarded_114 = engine.measure("albor", 500.0f, 16.0f);
     probe::set_counting(true);
     probe::reset();
     // act
@@ -127,12 +127,12 @@ TEST(AllocationProbeChecks, ARepeatedMeasureOfALongRunCostsNoAllocation) {
     // arrange the text is past the small string limit, which is where copying a key would have allocated (§9.1)
     SkiaTextEngine engine;
     const std::string long_text(200, 'b');
-    engine.measure(long_text, 500.0f, 16.0f);
+    [[maybe_unused]] const auto discarded_130 = engine.measure(long_text, 500.0f, 16.0f);
     probe::set_counting(true);
     probe::reset();
     // act
     for (int repeat = 0; repeat < 10; repeat++)
-        engine.measure(long_text, 500.0f, 16.0f);
+        [[maybe_unused]] const auto discarded_135 = engine.measure(long_text, 500.0f, 16.0f);
     const std::size_t repeat_allocations = probe::count();
     probe::set_counting(false);
     // assert the cache is looked up through a view, so a hit costs nothing however long the run is (§9.1)
@@ -143,8 +143,8 @@ TEST(AllocationProbeChecks, AMissShapesTheRunExactlyOnce) {
     // arrange
     SkiaTextEngine engine;
     // act the same run is measured twice, which is the steady state pattern of a label (§9.1)
-    engine.measure("repeated", 500.0f, 16.0f);
-    engine.measure("repeated", 500.0f, 16.0f);
+    [[maybe_unused]] const auto discarded_146 = engine.measure("repeated", 500.0f, 16.0f);
+    [[maybe_unused]] const auto discarded_147 = engine.measure("repeated", 500.0f, 16.0f);
     // assert the second measure was served by the cache, which is what makes a frame cheap (§9.1)
     EXPECT_EQ(engine.shaped_run_count(), 1u);
 }

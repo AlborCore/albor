@@ -228,8 +228,8 @@ namespace albor
 
         // a native window close reaches the application as the Closed notification of §5.2
         window.set_closed_handler([this, handle] {
-            // the teardown is posted, so it never runs inside the platform close callback (§4.1, §5.2)
-            m_tasks.post([this, handle] {
+            // the teardown is never cancelled, because the window goes away whether or not the task runs (§5.2)
+            [[maybe_unused]] const TaskHandle teardown = m_tasks.post([this, handle] {
                 // the window was already torn down by an explicit destroy, which notified on its own (§5.2)
                 if (!m_windows.destroy(handle))
                     return;

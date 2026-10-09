@@ -17,4 +17,4 @@ target_include_directories(albor-greeting PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_features(albor-greeting PRIVATE cxx_std_23)
 
 # the example reaches the ui tree, the reactive engine, the widgets, the layout and the input path, so they all link explicitly (§3.2)
-target_link_libraries(albor-greeting PRIVATE albor-platform-macos albor-render-skia albor-text-skia albor-widgets albor-layout albor-input albor-ui albor-runtime albor-application)
+target_link_libraries(albor-greeting PRIVATE albor-platform-macos albor-render-skia albor-text-skia albor-widgets albor-layout albor-input albor-application)

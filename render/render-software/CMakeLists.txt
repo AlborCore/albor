@@ -26,4 +26,4 @@ target_compile_features(albor-render-software PUBLIC cxx_std_23)
 target_include_directories(albor-render-software SYSTEM PRIVATE ${ALBOR_SKIA_INCLUDE_ROOT})
 
 # the reference draws through the same portable context the gpu backend uses, so the two cannot drift (§6.3, AD-26)
-target_link_libraries(albor-render-software PUBLIC albor-render albor-render-skia PRIVATE unofficial::skia::skia)
+target_link_libraries(albor-render-software PUBLIC albor-render albor-render-skia PRIVATE albor-skia)

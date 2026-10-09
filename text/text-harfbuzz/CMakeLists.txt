@@ -1,11 +1,11 @@
 # the vendored text engine that shapes with harfbuzz instead of a renderer bundled shaper (§9.1, §3.2)
 
-# the vendored shaper and the font reader it needs are direct dependencies, not an accident of the renderer
+# the shaper and the font reader are discovered here so their include roots are known, but they enter a link line
+# through the shared carrier alone, because skparagraph already carries both archives (AD-28)
 find_package(harfbuzz CONFIG REQUIRED)
 find_package(freetype CONFIG REQUIRED)
 
 # the engine issues the typeface the renderer draws with, which this skia version builds through its font manager (§9.1, AD-28)
-find_package(unofficial-skia CONFIG REQUIRED)
 
 # the skia headers self include as "skia/core/...", so the port needs the directory above include/skia as a root
 if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
@@ -33,7 +33,7 @@ target_compile_features(albor-text-harfbuzz PUBLIC cxx_std_23)
 target_include_directories(albor-text-harfbuzz SYSTEM PRIVATE ${ALBOR_SKIA_INCLUDE_ROOT} ${HARFBUZZ_INCLUDE_DIRS})
 
 # the engine shapes with harfbuzz over a freetype face, and issues the typeface the renderer draws with (§9.1, AD-28)
-target_link_libraries(albor-text-harfbuzz PUBLIC albor-text PRIVATE unofficial::skia::skia harfbuzz::harfbuzz Freetype::Freetype)
+target_link_libraries(albor-text-harfbuzz PUBLIC albor-text PRIVATE albor-skia)
 
 # the resolver reaches core text, which is the platform typeface source this engine draws from (§9.1, AD-28)
 if(APPLE)

@@ -1532,7 +1532,10 @@ TEST(Timer, ASelfAssignmentKeepsTheTimer) {
     TimerScheduler scheduler;
     Timer timer(scheduler, [] {}, std::chrono::milliseconds(10));
     // act, assert the self assignment is rejected, so the registration survives (§4.2)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wself-move"
     timer = std::move(timer);
+#pragma clang diagnostic pop
     EXPECT_TRUE(timer.active());
 }
 

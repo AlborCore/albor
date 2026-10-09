@@ -4,8 +4,6 @@
 # against and a CI runner is not an apple machine. Only the metal backend is apple only, and the .macos infix
 # marks exactly the sources that reach the metal device and the core animation layer (§5.3, AD-16)
 
-# find_package(skia) is deprecated by the port itself and raises an author warning, so the config package the port documents is used
-find_package(unofficial-skia CONFIG REQUIRED)
 
 # the skia headers self include as "skia/core/...", so the port needs the directory above include/skia as an include root
 if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
@@ -34,7 +32,7 @@ if(NOT APPLE)
     target_include_directories(albor-render-skia SYSTEM PRIVATE ${ALBOR_SKIA_INCLUDE_ROOT})
 
     # the portable half reaches the cpu rasterizer only, so it needs skia and no platform framework (§6.3, AD-26)
-    target_link_libraries(albor-render-skia PUBLIC albor-render PRIVATE unofficial::skia::skia)
+    target_link_libraries(albor-render-skia PUBLIC albor-render PRIVATE albor-skia)
     return()
 endif()
 
@@ -55,4 +53,4 @@ target_compile_options(albor-render-skia PRIVATE -fobjc-arc)
 target_include_directories(albor-render-skia SYSTEM PRIVATE ${ALBOR_SKIA_INCLUDE_ROOT})
 
 # the backend implements the rendering hal and reaches the metal device and the core animation layer (§6.3, AD-16)
-target_link_libraries(albor-render-skia PUBLIC albor-render PRIVATE unofficial::skia::skia "-framework Metal" "-framework QuartzCore" "-framework Foundation")
+target_link_libraries(albor-render-skia PUBLIC albor-render PRIVATE albor-skia "-framework Metal" "-framework QuartzCore" "-framework Foundation")

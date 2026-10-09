@@ -45,8 +45,10 @@ namespace
         // every pixel is scanned, because the run may place glyphs anywhere in the surface (§6.3)
         for (int row = 0; row < SURFACE_HEIGHT; row++)
             for (int column = 0; column < SURFACE_WIDTH; column++) {
+                // the pixel is addressed by its row major index, which is what the surface hands back (§6.3)
+                const std::size_t index = static_cast<std::size_t>(row) * SURFACE_WIDTH + static_cast<std::size_t>(column);
                 // a transparent pixel is not ink, because every test clears the surface before it draws (§6.3)
-                if (SkColorGetA(pixels[static_cast<std::size_t>(row) * SURFACE_WIDTH + column]) == 0)
+                if (SkColorGetA(pixels[index]) == 0)
                     continue;
                 // the left edge follows the leftmost ink and the right edge the rightmost (§6.3)
                 left = std::min(left, column);

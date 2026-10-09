@@ -41,7 +41,7 @@ namespace albor::software
         void end_frame() override;
 
         // read the pixels as packed bytes, which is the screenshot a conformance check compares (§6.3, AD-26)
-        [[nodiscard]] std::vector<std::uint8_t> read_pixels() const;
+        [[nodiscard]] std::vector<std::uint8_t> read_pixels() const override;
 
         // report how many frames this surface finished, which is what a headless test counts (§4.3)
         [[nodiscard]] std::size_t frame_count() const;

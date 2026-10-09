@@ -4,15 +4,6 @@
 
 namespace albor
 {
-    // the width a slider measures to, because a slider is horizontal and needs room to drag (§8.2)
-    constexpr float SLIDER_WIDTH = 120.0f;
-
-    // the height a slider measures to, because a track is thin (§8.2)
-    constexpr float SLIDER_HEIGHT = 16.0f;
-
-    // the thickness of the track, which is drawn centred on the control (§6.1)
-    constexpr float TRACK_THICKNESS = 4.0f;
-
     // the extent of the thumb along the track, which is what the user grabs (§6.1)
     constexpr float THUMB_SIZE = 12.0f;
 

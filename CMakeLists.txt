@@ -60,6 +60,18 @@ if(APPLE)
     set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
 endif()
 
+# the skia package is discovered once here, because three modules reach it and a second discovery would put the
+# same archive on a link line twice, which the linker then reports as a duplicate (AD-05, AD-26)
+find_package(unofficial-skia CONFIG REQUIRED)
+find_package(harfbuzz CONFIG REQUIRED)
+find_package(freetype CONFIG REQUIRED)
+
+# the single carrier every module that reaches skia or the vendored shaper links, so the package enters a link line
+# exactly once (AD-05, AD-28). skparagraph already carries harfbuzz and freetype on its interface, so naming them
+# here as well would place the same archives on a link line twice, which the linker reports as a duplicate
+add_library(albor-skia INTERFACE)
+target_link_libraries(albor-skia INTERFACE unofficial::skia::skia unofficial::skia::modules::skparagraph)
+
 enable_testing()
 
 # the shared value types every other module includes (§3.2)

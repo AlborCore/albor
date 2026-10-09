@@ -17,4 +17,4 @@ target_include_directories(albor-chart PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_features(albor-chart PRIVATE cxx_std_23)
 
 # the example reaches the platform, the renderers, the ui tree, the reactive engine and the widgets, so they link explicitly (§3.2)
-target_link_libraries(albor-chart PRIVATE albor-platform-macos albor-render-skia albor-text-skia albor-widgets albor-layout albor-ui albor-runtime albor-application)
+target_link_libraries(albor-chart PRIVATE albor-platform-macos albor-render-skia albor-text-skia albor-widgets albor-layout albor-application)
