@@ -1,7 +1,7 @@
 # Text Rendering Plan: Shaped Runs, Atlas, and Decoupling from the Render Stack
 
 Plan for the text pipeline. The defects it clears are D1 (text measured shaped, drawn
-unshaped) and the text cost of D6, both filed in `RENDERING-DEFECTS.md`; the decision
+unshaped) and the text cost of D6, both tracked on GitHub; the decision
 forks below are open until implementation time.
 
 ## Problem
@@ -85,7 +85,7 @@ draws — it removes the shaping dependency, and phase 4 is what removes font di
 What is left is line box geometry. Both engines agree on glyph count, on every glyph position and on
 measured width, but the oracle places Arial's first baseline at 15.0 and the vendored engine at
 18.105, a difference of 3.105 logical pixels, so the two pictures differ completely.
-`DEFECT-TEXT-VENDOR-BASELINE.md` records it, and one decision it needs: whether the vendored engine
+the vendored baseline issue records it, and one decision it needs: whether the vendored engine
 must match the oracle's metrics or becomes the reference the oracle is compared against.
 
 Behind the existing `TextEngine` factory, the vendored engine becomes the default once the line box
@@ -143,7 +143,7 @@ identifiers to its own glyph cache: the skia backend rasterizes through its inte
 glyph cache and draws the positioned glyphs, the software renderer rasterizes with
 vendored stb_truetype into its own atlas and draws textured quads. Text as quads works
 with the current imperative `RenderContext` and with the ordered command list of
-`RENDERING-DEFECTS.md` alike, so this phase does not block on the scene rework; the
+the ordered command list alike, so this phase does not block on the scene rework; the
 only interlock is keeping the `draw_text` signature coordinated with the command's
 text payload.
 

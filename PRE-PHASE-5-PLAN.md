@@ -23,7 +23,8 @@ The deferral is recorded here; BACKLOG.md points back at this document.
 ## Why this order
 
 The framework currently cannot render a real application correctly, and
-RENDERING-DEFECTS.md documents why: text draws at the wrong point size with
+The widget rendering defects it was written against are tracked on GitHub:
+text draws at the wrong point size with
 unshaped bytes (D1), clips are discarded (D2), paint order collapses across
 primitive categories (D3), rounded corners are dropped (D4), widgets never
 render children (D5), interaction states beyond the disabled fade do not
@@ -51,9 +52,7 @@ fidelity first, then feel, then facade, then widgets, then examples.
 
 ## Cluster 1 (C1): rendering fidelity
 
-Executes Phases A and B of RENDERING-DEFECTS.md. Clears D1, D2, D3, D4,
-D8, D9.2, D9.3 and the allocation churn of D9.5. Does not touch the two
-stage threading (AD-18).
+Executed. Cleared D1, D2, D3, D4, D8, D9.2, D9.3 and the allocation churn of D9.5, without touching the two stage threading (AD-18).
 
 1. Define one scene command type as a tagged union over the primitive
    kinds RenderContext already declares: rect, rounded rect, text, line

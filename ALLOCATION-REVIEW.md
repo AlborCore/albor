@@ -1,7 +1,7 @@
 # Allocation Review: the per frame cost of the framework
 
 Draft review. Every item names the code it comes from, so each can be confirmed or dismissed without
-re-reading the tree. The plan this review feeds is `RENDERING-DEFECTS.md` and `DEFECT-D6-PARTIAL-LAYOUT.md`.
+re-reading the tree. The work this review fed is tracked on GitHub: the ordered display list landed, and the partial layout follow-up is open there.
 
 ## Summary
 
@@ -19,7 +19,7 @@ allocation counter, no benchmark harness under `tools/`, and no steady state fra
 **A1. The recorder's buffers are built and thrown away every frame.**
 `SceneBuilder::build` constructs a `SceneRecorder` per build (`ui/scene_builder.cpp:154`), so its
 `m_commands` and its save stack start at zero capacity and grow by doubling, reallocating and
-copying every command as they go. This is Phase A item 6 of `RENDERING-DEFECTS.md`, which is
+copying every command as they go. This is Phase A item 6 of the ordered display list work, which is
 outstanding rather than deferred.
 
 **A2. Every command is copied once more when the scene is frozen.**

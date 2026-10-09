@@ -53,7 +53,7 @@ Two conventions are worth stating, because both were arrived at by correcting a 
   way. Where this document states a rule, the rule is stated as the code enforces it.
 - **A doc comment form the comment rule exempts is still missing.** `STYLE-GUIDE.md` forbids
   consecutive comment lines, so a multi-line contract cannot be written in a header where a caller
-  would read it. The affected contracts are in `DEFECT-D9-4-CANVAS-POLICY.md` instead. This is a
+  would read it. The affected contracts live in the canvas draw policy issue instead. This is a
   gap in the style guide, not a settled position.
 
 ---
@@ -884,8 +884,8 @@ Text rendering and measurement are foundational to UI layout:
   bytes, so the drawing typeface is resolved from the platform font manager by family name while the
   shaping stays vendored. That is the boundary this phase draws: it removes the shaping dependency,
   and compile time glyph embedding is what removes font discovery. The two engines still disagree on
-  where a line's baseline sits, which is what keeps the current engine in place; see
-  `DEFECT-TEXT-VENDOR-BASELINE.md`.
+  where a line's baseline sits, which is what keeps the current engine in place; see the
+  vendored baseline issue.
 - Text measurement is computed during the layout measure phase so containers accurately adapt to localized text lengths.
 - Fonts are managed as immutable resources through the `ResourceManager`.
 
@@ -1287,7 +1287,7 @@ and narrower where it does not:
   exactly and only genuinely antialiased content carrying a budget.
 
 A tolerance wide enough to absorb a three pixel baseline error has defeated the purpose, which is why
-the baseline gap in `DEFECT-TEXT-VENDOR-BASELINE.md` is a blocker and not a rounding difference. It
+the baseline gap in the vendored baseline issue is a blocker and not a rounding difference. It
 sits in layout, where the budget is zero.
 
 ### Consequences for work already planned
@@ -1295,7 +1295,7 @@ sits in layout, where the budget is zero.
 - **Phase 4 of `TEXT-RENDERING-PLAN.md` is on the critical path**, not optional.
 - **The Metal teardown trap in `BACKLOG.md` blocks a stated objective**, because the reference cannot
   be compared against a GPU backend that cannot be destroyed (§15, AD-26).
-- **The vendored engine defines the metrics.** The open question in `DEFECT-TEXT-VENDOR-BASELINE.md`
+- **The vendored engine defines the metrics.** The open question in the vendored baseline issue
   is answered by this section: matching a platform paragraph engine was never the goal.
 
 ---
