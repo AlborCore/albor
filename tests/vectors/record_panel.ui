@@ -1,0 +1,10 @@
+import task;
+
+// the record fixture, which proves a generated record struct compiles into a facade (§11.2, AD-17, AD-13)
+
+component RecordPanel {
+    inout property<vector<Task>> tasks;
+    inout property<vector<vector<Task>>> grouped;
+
+    Column {}
+}

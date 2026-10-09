@@ -30,6 +30,9 @@ namespace albor::compiler
         // set how many components share one implementation unit, which is one by default (AD-03b)
         void set_tu_chunk_size(std::size_t size);
 
+        // set the catalog the components resolve records against, because a record header lives in a module (§11.2, AD-17)
+        void set_catalog(const ElementCatalog* catalog);
+
         // generate one file of components, which is empty when a diagnostic blocked the output (§11.3, §14.3)
         [[nodiscard]] std::vector<GeneratedFile> generate(const CheckedFile& file);
 
@@ -39,6 +42,9 @@ namespace albor::compiler
 
         // how many components share one implementation unit, which the chunk flag tunes (AD-03b)
         std::size_t m_tu_chunk_size = 1;
+
+        // the catalog records resolve against, which is null when the caller registered none (§11.2, AD-17)
+        const ElementCatalog* m_catalog = nullptr;
     };
 
     // rewrite the file only when its content changed, which is what keeps incremental builds quiet (§14.2, AD-03a)

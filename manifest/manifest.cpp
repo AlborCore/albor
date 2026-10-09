@@ -590,4 +590,50 @@ namespace albor::manifest
         // the report names what was expected and what was found, because both are needed to fix it (§11.2)
         m_diagnostics.add(Diagnostic::Severity::Error, peek().span, "E0303", "expected " + std::string(expected) + " but found '" + found + "'");
     }
+    namespace
+    {
+        // the compiler type a written field type names, which is the same spelling the checker resolves (§11.2, AD-17)
+        compiler::ValueType field_value_type(std::string_view written) {
+            // a boolean field carries a bool, which a binding stores directly (§11.2)
+            if (written == "bool")
+                return compiler::scalar(compiler::TypeKind::Bool);
+            // an integer field carries an int, which is what counts rows and indices (§11.2)
+            if (written == "int")
+                return compiler::scalar(compiler::TypeKind::Int);
+            // a floating point field carries a float, which is what a measurement arrives as (§11.2)
+            if (written == "float")
+                return compiler::scalar(compiler::TypeKind::Float);
+            // a text field carries a string, which is what a label reads (§11.2)
+            if (written == "string")
+                return compiler::scalar(compiler::TypeKind::String);
+            // a colour field carries the framework colour, which names no platform type (§11.2, AD-05)
+            if (written == "color")
+                return compiler::scalar(compiler::TypeKind::Color);
+            // a snapshot field carries an immutable shared value, which is how data crosses a thread (§11.2, §13.2)
+            if (written.starts_with("Snapshot<") && written.ends_with(">")) {
+                // the element name sits between the brackets, which is the type argument (§11.2, §13.2)
+                const std::string_view element = written.substr(9, written.size() - 10);
+                // an empty argument names no type, so the field is untyped rather than guessed (§11.2)
+                if (!element.empty())
+                    return compiler::ValueType::parameterized(compiler::TypeKind::Snapshot, compiler::ValueType::native(std::string(element)));
+            }
+            // a type outside the set the glue generator spells is unknown, which the checker reports (§11.2)
+            return compiler::error_type();
+        }
+    } // namespace
+
+    void register_records(const ManifestFile& file, ElementCatalog& catalog) {
+        // the records are walked in declaration order, which is the order a ui file reads their fields (§11.2, AD-17)
+        for (const RecordDeclaration& declaration : file.records) {
+            // the record starts with its name and collects the fields as they are translated (§11.2, AD-17)
+            compiler::RecordType record{.name = declaration.name, .fields = {}};
+            // each field is walked, because a field read resolves by name against the declaration (§11.2, AD-17)
+            for (const RecordField& field : declaration.fields) {
+                // the written type becomes the type a field read produces, which is the whole of the bridge (§11.2)
+                record.fields.push_back(compiler::RecordFieldType{.name = field.name, .type = field_value_type(field.type), .is_key = field.is_key});
+            }
+            // the record joins the catalog, which is what makes vector<Task> resolve (§11.2, AD-17, AD-13)
+            catalog.add_record(record);
+        }
+    }
 } // namespace albor::manifest

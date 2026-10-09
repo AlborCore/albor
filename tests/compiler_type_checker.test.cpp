@@ -23,6 +23,17 @@ namespace
         return TypeChecker(catalog, diagnostics).check(file);
     }
 
+    // check a source against a catalog that is expected to be clean, which fails the test when it is not (§11.1)
+    CheckedFile check(std::string_view source, ElementCatalog catalog) {
+        // the diagnostics are collected so a stray problem fails the test instead of disappearing (§11.1)
+        DiagnosticList diagnostics;
+        // the file is checked, and the collected problems are checked before it is returned (§11.1)
+        CheckedFile file = check(source, diagnostics, std::move(catalog));
+        // a clean source produces nothing, so a problem here is a checker defect (§11.1)
+        EXPECT_EQ(diagnostics.count(), 0U);
+        return file;
+    }
+
     // check a source against the builtins, which is what most suites need (§11.1, §8)
     CheckedFile check(std::string_view source, DiagnosticList& diagnostics) {
         // the builtin catalog is what a ui file may use without a manifest (§11.1, §8)
@@ -88,6 +99,21 @@ namespace
                 count++;
         }
         return count;
+    }
+
+    // the element catalog holding one record, which is what a repeat walks (§11.2, AD-17, AD-13)
+    ElementCatalog with_task() {
+        // the builtins are always present, because a component mixes them with its own types (§11.1, §8)
+        ElementCatalog catalog = ElementCatalog::with_builtins();
+        // the record is what the manifest declares, so the checker resolves its fields (§11.2, AD-17)
+        catalog.add_record(RecordType{.name = "Task",
+                                      .fields = {// the key carries the identity a row is keyed by, which AD-13 requires (§18.1, AD-13)
+                                                 RecordFieldType{.name = "key", .type = scalar(TypeKind::String), .is_key = true},
+                                                 // a plain field is read by name and carries no identity (§11.2, AD-17)
+                                                 RecordFieldType{.name = "title", .type = scalar(TypeKind::String), .is_key = false},
+                                                 // a boolean field is read the same way a scalar is (§11.2, AD-17)
+                                                 RecordFieldType{.name = "done", .type = scalar(TypeKind::Bool), .is_key = false}}});
+        return catalog;
     }
 
     // the element catalog holding one native component, which is what a manifest contributes (§11.2, AD-17)
@@ -1351,4 +1377,61 @@ TEST(TypeChecker, ReportsOnlyTheFirstDisagreementInAList) {
     check("component C { in property<vector<int>> items: [1, \"a\", \"b\"]; Column {} }", diagnostics);
     // assert exactly one problem is raised, because the first disagreement settles what the list cannot be (§8.1)
     EXPECT_EQ(count_code(diagnostics, "E0408"), 1U);
+}
+
+TEST(TypeChecker, ResolvesACollectionOfARecordTheManifestDeclared) {
+    // arrange a collection of a record, which is what a list of tasks is (§11.2, AD-17, AD-13)
+    const CheckedFile file = check("component C { in property<vector<Task>> tasks; Column {} }", with_task());
+    // act
+    const ValueType type = file.components.at(0).properties.at(0).type;
+    // assert the element resolved to the record, which is what registration bought (§11.2, AD-17)
+    ASSERT_TRUE(type.is(TypeKind::Vector));
+    EXPECT_EQ(type.element().native_name(), "Task");
+}
+
+TEST(TypeChecker, TypesAFieldReadAsTheDeclaredFieldType) {
+    // arrange a field read inside a repeat body, which is how a row reaches its item (§11.2, AD-17, AD-13)
+    const CheckedFile file = check("component C { in property<vector<Task>> tasks; Column { Repeat(t in tasks) { Label { text: t.title; } } } }", with_task());
+    // act the body is the second child of the column, and the label is inside it (§11.2)
+    const CheckedNode& body = *file.components.at(0).root->children.at(0)->repeat_body;
+    // assert the read produced the field's declared type, because there is no inference (§11.2, AD-17)
+    EXPECT_TRUE(body.assignments.at(0).type.is(TypeKind::String));
+}
+
+TEST(TypeChecker, RefusesAFieldTheRecordDoesNotDeclare) {
+    // arrange diagnostics, because a field read resolves against the declaration (§11.2, AD-17)
+    DiagnosticList diagnostics;
+    // the field is not one the manifest declared (§11.2, AD-17)
+    check("component C { in property<vector<Task>> tasks; Column { Repeat(t in tasks) { Label { text: t.nope; } } } }", diagnostics, with_task());
+    // assert
+    EXPECT_TRUE(has_code(diagnostics, "E0416"));
+}
+
+TEST(TypeChecker, RefusesAFieldReadOnAScalar) {
+    // arrange diagnostics, because a scalar carries no members (§11.2)
+    DiagnosticList diagnostics;
+    // the source is a collection of integers, which has no fields at all (§11.2)
+    check("component C { in property<vector<int>> items; Column { Repeat(i in items) { Label { text: string(i.nope); } } } }", diagnostics);
+    // assert the read is a type mismatch, because there is no record to look the field up in (§11.2)
+    EXPECT_TRUE(has_code(diagnostics, "E0410"));
+}
+
+TEST(TypeChecker, RefusesAFieldReadOnADataTypeThatIsNotARecord) {
+    // arrange diagnostics, because a data type carries no members (§11.2, AD-17)
+    DiagnosticList diagnostics;
+    // the item is a data type the manifest declared, which is named but is not a record (§11.2, AD-17)
+    check("component C { in property<vector<WaveformData>> waves; Column { Repeat(w in waves) { Label { text: string(w.peak); } } } }", diagnostics, with_waveform());
+    // assert the problem names the type rather than a missing field, because no field list exists (§11.2, AD-17)
+    EXPECT_TRUE(has_code(diagnostics, "E0417"));
+}
+
+TEST(TypeChecker, ReportsAKeyFieldExactlyOnce) {
+    // arrange a catalog, because identity is what a row is keyed by (§18.1, AD-13)
+    const ElementCatalog catalog = with_task();
+    // act
+    const RecordType* record = catalog.find_record("Task");
+    // assert exactly one field carries the identity, because two keys would key a row ambiguously (§18.1, AD-13)
+    ASSERT_NE(record, nullptr);
+    ASSERT_NE(record->key_field(), nullptr);
+    EXPECT_EQ(record->key_field()->name, "key");
 }

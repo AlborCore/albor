@@ -84,6 +84,18 @@ namespace albor::compiler
         return node;
     }
 
+    ExpressionPtr FieldAccessExpression::make(ExpressionPtr object, std::string field, SourceSpan span) {
+        // the node is allocated before it is filled, because the caller only holds the owning pointer (§11.2)
+        auto node = std::make_unique<FieldAccessExpression>();
+        // the object is moved in, because only one tree may own it (§11.2)
+        node->object = std::move(object);
+        // the field name is moved in, because the parser owns the stream (§11.2)
+        node->field = std::move(field);
+        // the span covers the whole access, so a diagnostic about it points at both halves (§11.2)
+        node->span = span;
+        return node;
+    }
+
     ExpressionPtr ArrayExpression::make(std::vector<ExpressionPtr> elements, SourceSpan span) {
         // the node is allocated before it is filled, because the caller only holds the owning pointer (§11.1)
         auto node = std::make_unique<ArrayExpression>();

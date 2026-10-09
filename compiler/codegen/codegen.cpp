@@ -228,10 +228,13 @@ namespace albor::compiler
             case TypeKind::Vector:
                 // a collection becomes the standard vector over its element, which recurses into a nested one (§8.1)
                 return "std::vector<" + cpp_type(type.element()) + ">";
+            case TypeKind::Native:
+                // a record and a data type are both spelled by the name the manifest declared (§11.2, AD-17)
+                return type.native_name();
             case TypeKind::Error:
                 return "std::string";
             default:
-                // a native type is blocked before it reaches here (§11.3, AD-17)
+                // a snapshot is still blocked before it reaches here, because its element is a data type (§11.3)
                 return "std::string";
             }
         }
@@ -345,8 +348,8 @@ namespace albor::compiler
             };
 
             // build the emitter over the component and the shared problem list (§11.3)
-            ComponentEmitter(const CheckedComponent& component, DiagnosticList& diagnostics) :
-                m_component(component), m_diagnostics(diagnostics), m_class(component.name), m_stem(snake_case(component.name)) {}
+            ComponentEmitter(const CheckedComponent& component, DiagnosticList& diagnostics, const ElementCatalog* catalog, std::vector<std::string> modules) :
+                m_component(component), m_diagnostics(diagnostics), m_class(component.name), m_stem(snake_case(component.name)), m_catalog(catalog), m_modules(std::move(modules)) {}
 
             // generate the two files of the component, which is empty when a problem blocked it (§11.3)
             bool emit();
@@ -425,6 +428,9 @@ namespace albor::compiler
             // render the colour to text helper, which the string conversion needs (§11.3)
             void emit_color_helper();
 
+            // collect the manifest headers the given type needs, which is where a record struct is declared (§11.2, AD-17)
+            void collect_record_headers(const ValueType& type);
+
             // render one expression as C++, which the codegen re-emits the written shape (§11.3)
             std::string emit_expression(const Expression& expression);
 
@@ -488,6 +494,15 @@ namespace albor::compiler
             // whether any property carries a collection, which decides the vector header (§8.1)
             bool m_uses_vector = false;
 
+            // the manifest headers the component needs, which the glue generator wrote from the same source (§11.2, AD-17)
+            std::vector<std::string> m_record_headers;
+
+            // the catalog the records resolve against, which is null when the caller registered none (§11.2, AD-17)
+            const ElementCatalog* m_catalog = nullptr;
+
+            // the manifest modules the file imported, which name the directories the record headers live in (§11.1, AD-17)
+            std::vector<std::string> m_modules;
+
             // whether the component translated anything, which is why the catalogue header is pulled (§9.2, §11.3)
             bool m_uses_i18n = false;
 
@@ -504,12 +519,38 @@ namespace albor::compiler
             bool m_blocked = false;
         };
 
+        void ComponentEmitter::collect_record_headers(const ValueType& type) {
+            // a record is named by its own name, which the glue generator turned into a snake case file (§11.2, AD-17)
+            if (type.is(TypeKind::Native)) {
+                // the catalog is what distinguishes a record from a plain data type, because both are native (§11.2)
+                if (m_catalog == nullptr || m_catalog->find_record(type.native_name()) == nullptr)
+                    return;
+                // each imported module is searched, because the record lives in exactly one of them (§11.1, §11.2, AD-17)
+                for (const std::string& module : m_modules) {
+                    // the header path is the module and the snake cased record, which is what the generator wrote (§11.2)
+                    const std::string header = module + "/" + snake_case(type.native_name()) + ".h";
+                    // a header already collected is not repeated, because the include is written once (§14.1)
+                    if (std::find(m_record_headers.begin(), m_record_headers.end(), header) == m_record_headers.end())
+                        m_record_headers.push_back(header);
+                    // the first module that declares the record wins, because a name resolves to one module (§11.2, AD-17)
+                    if (m_catalog->find_record(type.native_name()) != nullptr)
+                        break;
+                }
+                return;
+            }
+            // a parameter form carries its element inside, which is where a nested record hides (§8.1, §11.2)
+            if (type.kind() == TypeKind::Vector || type.kind() == TypeKind::Snapshot)
+                collect_record_headers(type.element());
+        }
+
         void ComponentEmitter::validate() {
             // the property types are rejected first, because every other pass reads them (§11.3)
             for (const CheckedProperty& property : m_component.properties) {
                 // a collection anywhere in a declared type pulls the vector header into the facade (§8.1, §14.1)
                 if (carries_vector(property.type))
                     m_uses_vector = true;
+                // a record anywhere in a declared type pulls the manifest header that declares its struct (§11.2, AD-17)
+                collect_record_headers(property.type);
                 validate_type(property.type, property.span);
             }
             // the signal parameter types are rejected with them, because the facade signatures need them (§11.3)
@@ -519,6 +560,8 @@ namespace albor::compiler
                     // a collection parameter is spelled in the facade signature, so the header is needed (§8.1, §14.1)
                     if (carries_vector(parameter))
                         m_uses_vector = true;
+                    // a record parameter is spelled in the facade signature, so its manifest header is needed (§11.2)
+                    collect_record_headers(parameter);
                     validate_type(parameter, signal.span);
                 }
             }
@@ -592,7 +635,25 @@ namespace albor::compiler
                 validate_type(type.element(), span);
                 return;
             }
-            // a native or a collection type has no C++ spell here, which is reported (§11.3)
+            // a record is spelled by its own name, and the manifest header declares the struct (§11.2, AD-17)
+            if (type.is(TypeKind::Native)) {
+                // a registered record is generatable, because the glue generator wrote its definition (§11.2)
+                if (m_catalog != nullptr && m_catalog->find_record(type.native_name()) != nullptr)
+                    return;
+                // a data type the manifest declared is not a record, so nothing generates it (§11.2, AD-17)
+                m_diagnostics.add(Diagnostic::Severity::Error, span, "E0501", "a value of type '" + type.to_string() + "' cannot be generated yet");
+                // the blocking flag is set, which empties the generated output (§11.3)
+                m_blocked = true;
+                return;
+            }
+            // a snapshot carries an immutable shared value, which a generated property cannot yet hold (§11.3, §13.2)
+            if (type.is(TypeKind::Snapshot)) {
+                m_diagnostics.add(Diagnostic::Severity::Error, span, "E0501", "a value of type '" + type.to_string() + "' cannot be generated yet");
+                // the blocking flag is set, which empties the generated output (§11.3)
+                m_blocked = true;
+                return;
+            }
+            // a native element the generator cannot construct has no C++ spell here, which is reported (§11.3, AD-17)
             m_diagnostics.add(Diagnostic::Severity::Error, span, "E0501", "a value of type '" + type.to_string() + "' cannot be generated yet");
             // the blocking flag is set, which empties the generated output (§11.3)
             m_blocked = true;
@@ -628,6 +689,9 @@ namespace albor::compiler
             if (const auto* array = dynamic_cast<const ArrayExpression*>(&expression))
                 for (const ExpressionPtr& element : array->elements)
                     scan_expression(*element);
+            // a field read walks its object, because the object may hold anything a scan must refuse (§11.2)
+            if (const auto* access = dynamic_cast<const FieldAccessExpression*>(&expression))
+                scan_expression(*access->object);
         }
 
         void ComponentEmitter::scan_color(const Expression& expression) {
@@ -751,10 +815,13 @@ namespace albor::compiler
             line(0, "#include <memory>");
             // the string signatures need the string header, which is in every header (§14.1)
             line(0, "#include <string>");
-            line(0, "");
-            // a collection signature pulls the vector header, which only a collection component needs (§8.1, §14.1)
+            // a collection signature needs the vector header, which only a collection component has (§8.1, §14.1)
             if (m_uses_vector)
                 line(0, "#include <vector>");
+            line(0, "");
+            // each record the component names pulls the manifest header the glue generator wrote (§11.2, AD-17)
+            for (const std::string& header : m_record_headers)
+                line(0, "#include \"" + header + "\"");
             // a colour signature pulls the paint header, which only a colour component needs (§14.1)
             if (m_uses_color)
                 line(0, "#include \"core/paint.h\"");
@@ -965,7 +1032,7 @@ namespace albor::compiler
             }
             line(2, "// build the whole tree and install the bindings, which runs once (§14.1)");
             line(2, "void build();");
-            // a blank line separates each declaration from the previous one, which keeps the body readable, while each bound assignment declares its evaluator for the sink thunk (§13.3, §14.1)
+            // a blank line separates each declaration, which keeps the body readable (§14.1)
             for (const NodeSlot& slot : m_nodes) {
                 // the evaluator is walked per assignment, which names it after the property (§13.3)
                 for (const CheckedAssignment& assignment : slot.node->assignments) {
@@ -1351,6 +1418,9 @@ namespace albor::compiler
             // a bracketed list renders as a braced initialiser, whose element type comes from the checker (§8.1)
             if (const auto* array = dynamic_cast<const ArrayExpression*>(&expression))
                 return emit_array(*array);
+            // a field read renders as the member access the record declares (§11.2, AD-17)
+            if (const auto* access = dynamic_cast<const FieldAccessExpression*>(&expression))
+                return emit_expression(*access->object) + "." + access->field;
             // a form the checker rejected cannot render, which the empty literal stands in for (§11.3)
             return emit_string_literal({});
         }
@@ -1579,6 +1649,11 @@ namespace albor::compiler
     CodeGenerator::CodeGenerator(DiagnosticList& diagnostics) :
         m_diagnostics(diagnostics) {}
 
+    void CodeGenerator::set_catalog(const ElementCatalog* catalog) {
+        // the catalog is stored as given, because a caller that registered none simply has no records (§11.2, AD-17)
+        m_catalog = catalog;
+    }
+
     void CodeGenerator::set_tu_chunk_size(std::size_t size) {
         // a size of zero would leave no components in a chunk, so it is clamped back to the default (AD-03b)
         m_tu_chunk_size = size == 0 ? 1 : size;
@@ -1594,7 +1669,7 @@ namespace albor::compiler
         std::vector<std::string> chunk_contents;
         for (const CheckedComponent& component : file.components) {
             // the emitter is built per component, because the output files are per component (§14.1)
-            ComponentEmitter emitter(component, m_diagnostics);
+            ComponentEmitter emitter(component, m_diagnostics, m_catalog, file.imported_modules);
             // a component that was blocked empties the whole output, which the driver then treats as failed (§11.3)
             if (!emitter.emit())
                 return {};

@@ -640,3 +640,66 @@ TEST(Codegen, ATranslationInsideAListIsStillExtracted) {
     // assert the catalogue header is pulled, which is what proves the translation was reached (§9.2, §11.3)
     EXPECT_TRUE(contains(source.content, "albor::i18n::translate"));
 }
+
+TEST(Codegen, ARecordCollectionPullsTheManifestHeaderThatDeclaresTheStruct) {
+    // arrange a catalog holding a record, which is what the manifest contributes (§11.2, AD-17)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    catalog.add_record(RecordType{.name = "Task", .fields = {RecordFieldType{.name = "title", .type = scalar(TypeKind::String), .is_key = false}}});
+    DiagnosticList diagnostics;
+    // the file imports the module, because that is what names the header's directory (§11.1, §11.2, AD-17)
+    const std::vector<Token> tokens = Lexer("import chart; component C { in property<vector<Task>> tasks; Column {} }", diagnostics).tokenize();
+    const SourceFile file = Parser(tokens, diagnostics).parse();
+    const CheckedFile checked = TypeChecker(catalog, diagnostics).check(file);
+    // act
+    CodeGenerator generator(diagnostics);
+    // the catalog is what tells the generator a record is generatable and where its header lives (§11.2, AD-17)
+    generator.set_catalog(&catalog);
+    const std::vector<GeneratedFile> files = generator.generate(checked);
+    // assert the header declares the record by the name the manifest wrote (§11.2, AD-17)
+    ASSERT_EQ(files.size(), 2U);
+    const GeneratedFile header = file_named(files, "c.h");
+    EXPECT_TRUE(contains(header.content, "#include \"chart/task.h\""));
+    // assert the collection is spelled over the record, which is what the facade exposes (§11.2)
+    EXPECT_TRUE(contains(header.content, "const std::vector<Task>& tasks() const;"));
+}
+
+TEST(Codegen, ARecordFieldReadRendersAsAMemberAccess) {
+    // arrange a catalog holding a record, because a field read needs its declaration (§11.2, AD-17)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    catalog.add_record(RecordType{.name = "Task", .fields = {RecordFieldType{.name = "title", .type = scalar(TypeKind::String), .is_key = false}}});
+    DiagnosticList diagnostics;
+    // the read is inside a repeat body, which is where a row reaches its item (§11.2, AD-17, AD-13)
+    const std::string_view source = "import chart; component C { in property<vector<Task>> tasks; Column { Repeat(t in tasks) { Label { text: t.title; } } } }";
+    const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
+    const SourceFile file = Parser(tokens, diagnostics).parse();
+    const CheckedFile checked = TypeChecker(catalog, diagnostics).check(file);
+    // act
+    CodeGenerator generator(diagnostics);
+    // the catalog is set, because without it a record is not generatable (§11.2, AD-17)
+    generator.set_catalog(&catalog);
+    const std::vector<GeneratedFile> files = generator.generate(checked);
+    // assert the file is blocked by the repeat, which is the next feature and not this one (§11.3)
+    EXPECT_TRUE(files.empty());
+    // assert the record itself resolved, because only the repeat is refused (§11.2, AD-17)
+    EXPECT_FALSE(has_code(diagnostics, "E0416"));
+}
+
+TEST(Codegen, ADataTypeStillBlocksTheOutput) {
+    // arrange diagnostics, because a data type is named but is not a record (§11.2, AD-17)
+    DiagnosticList diagnostics;
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // the data type is what a snapshot carries, and nothing generates it (§11.2, AD-17)
+    catalog.add_native_data("WaveformData");
+    // the property is a collection of the data type, which has no struct anywhere (§11.2, AD-17)
+    const std::vector<Token> tokens = Lexer("component C { in property<vector<WaveformData>> waves; Column {} }", diagnostics).tokenize();
+    const SourceFile file = Parser(tokens, diagnostics).parse();
+    const CheckedFile checked = TypeChecker(catalog, diagnostics).check(file);
+    // act
+    CodeGenerator generator(diagnostics);
+    // the catalog is set, so the generator knows a data type is not a record (§11.2, AD-17)
+    generator.set_catalog(&catalog);
+    const std::vector<GeneratedFile> files = generator.generate(checked);
+    // assert
+    EXPECT_TRUE(files.empty());
+    EXPECT_TRUE(has_code(diagnostics, "E0501"));
+}

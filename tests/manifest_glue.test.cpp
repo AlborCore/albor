@@ -480,3 +480,72 @@ native component Gauge {
     // assert both are emitted, because a manifest declares both kinds (§11.2, AD-17)
     EXPECT_EQ(files.size(), 3U);
 }
+
+TEST(RecordRegistration, ARecordReachesTheCompilerCatalog) {
+    // arrange the manifest a task record is declared in, because the manifest is the single source (§11.2, AD-17)
+    const std::string_view source = R"(
+record Task {
+    key: string;
+    title: string;
+    done: bool = false;
+}
+)";
+    DiagnosticList diagnostics;
+    const ManifestFile file = ManifestParser(Lexer(source, diagnostics).tokenize(), diagnostics).parse("chart");
+    // the catalog starts empty of records, because registration is what puts one there (§11.2, AD-17)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act
+    register_records(file, catalog);
+    // assert the record resolved by name, which is what makes vector<Task> a known type (§11.2, AD-17)
+    const RecordType* record = catalog.find_record("Task");
+    ASSERT_NE(record, nullptr);
+    // assert every declared field reached the catalog in declaration order (§11.2, AD-17)
+    ASSERT_EQ(record->fields.size(), 3U);
+    EXPECT_EQ(record->fields.at(0).name, "key");
+    EXPECT_EQ(record->fields.at(2).name, "done");
+}
+
+TEST(RecordRegistration, AFieldKeepsTheTypeTheManifestWrote) {
+    // arrange a record whose fields have different types, because each must survive the bridge (§11.2, AD-17)
+    const std::string_view source = R"(
+record Task {
+    key: string;
+    retries: int;
+    ratio: float;
+    done: bool = false;
+}
+)";
+    DiagnosticList diagnostics;
+    const ManifestFile file = ManifestParser(Lexer(source, diagnostics).tokenize(), diagnostics).parse("chart");
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act
+    register_records(file, catalog);
+    // assert each written type became the type a field read produces (§11.2, AD-17)
+    const RecordType* record = catalog.find_record("Task");
+    ASSERT_NE(record, nullptr);
+    EXPECT_TRUE(record->find_field("key")->type.is(TypeKind::String));
+    EXPECT_TRUE(record->find_field("retries")->type.is(TypeKind::Int));
+    EXPECT_TRUE(record->find_field("ratio")->type.is(TypeKind::Float));
+    EXPECT_TRUE(record->find_field("done")->type.is(TypeKind::Bool));
+}
+
+TEST(RecordRegistration, TheKeyFieldCarriesTheIdentity) {
+    // arrange a record whose key the manifest flagged, which is what a row is keyed by (§18.1, AD-13)
+    const std::string_view source = R"(
+record Task {
+    key: string;
+    title: string;
+}
+)";
+    DiagnosticList diagnostics;
+    const ManifestFile file = ManifestParser(Lexer(source, diagnostics).tokenize(), diagnostics).parse("chart");
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act
+    register_records(file, catalog);
+    // assert exactly one field carries the identity, and it is the one the manifest marked (§18.1, AD-11, AD-13)
+    const RecordType* record = catalog.find_record("Task");
+    ASSERT_NE(record, nullptr);
+    ASSERT_NE(record->key_field(), nullptr);
+    EXPECT_EQ(record->key_field()->name, "key");
+    EXPECT_FALSE(record->find_field("title")->is_key);
+}

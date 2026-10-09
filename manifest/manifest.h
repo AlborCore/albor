@@ -7,11 +7,13 @@
 
 #include "compiler/diagnostic.h"
 #include "compiler/lexer.h"
+#include "compiler/value_type.h"
 
 namespace albor::manifest
 {
     using compiler::Diagnostic;
     using compiler::DiagnosticList;
+    using compiler::ElementCatalog;
     using compiler::SourceLocation;
     using compiler::SourceSpan;
     using compiler::Token;
@@ -160,6 +162,9 @@ namespace albor::manifest
         // the records the file declares, which are the element types a repeat walks (§11.2, AD-17, AD-13)
         std::vector<RecordDeclaration> records;
     };
+
+    // register the records a manifest declares into a catalog, which is what makes vector<Task> resolve (§11.2, AD-13)
+    void register_records(const ManifestFile& file, compiler::ElementCatalog& catalog);
 
     // the parser that turns a scanned manifest into a declaration list, which reports rather than throws (§11.2)
     class ManifestParser

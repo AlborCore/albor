@@ -185,6 +185,9 @@ namespace albor::compiler
     {
         // the checked components in declaration order (§11.1)
         std::vector<CheckedComponent> components;
+
+        // the manifest modules the file imported, which name where a record header lives (§11.1, §11.2, AD-17)
+        std::vector<std::string> imported_modules;
     };
 
     // the checker that resolves a parsed file into a typed tree, which reports rather than throws (§11.1)
@@ -252,6 +255,9 @@ namespace albor::compiler
 
         // type a bracketed list, whose elements must agree because a collection has one element type (§8.1)
         ValueType type_array(const ArrayExpression& array, const Scope& scope, std::vector<std::string>& dependencies);
+
+        // type a field read, which resolves the object first and then the field the manifest declared (§11.2, AD-17)
+        ValueType type_field_access(const FieldAccessExpression& access, const Scope& scope, std::vector<std::string>& dependencies);
 
         // type a reference, which resolves against the scope (§11.1)
         ValueType type_property(const PropertyExpression& reference, const Scope& scope, std::vector<std::string>& dependencies);

@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include "record_panel.h"
 #include "runtime/binding_engine.h"
 #include "text/text_engine.h"
 #include "vector_panel.h"
@@ -67,4 +68,43 @@ TEST(VectorCodegen, ACollectionIsSettableFromTheHost) {
     // assert the read reflects the write, because the accessor goes through the property (§14.1)
     ASSERT_EQ(panel.numbers().size(), 2u);
     EXPECT_EQ(panel.numbers().at(0), 7);
+}
+
+TEST(VectorCodegen, ARecordCollectionCarriesTheGeneratedStruct) {
+    // arrange a panel over the engines its body reads, which is what an application constructs (§11.3)
+    BindingEngine engine;
+    RecordPanel panel(&engine, nullptr);
+    // act the host fills the collection with the generated record type (§11.2, AD-17)
+    panel.set_tasks(std::vector<Task>{Task{.key = "a", .title = "first", .done = false}});
+    // assert the record survived the round trip, which is what the manifest declared (§11.2, AD-17)
+    ASSERT_EQ(panel.tasks().size(), 1U);
+    EXPECT_EQ(panel.tasks().at(0).title, "first");
+    // assert the manifest default survived, because the glue generator re-emits it (§11.2)
+    EXPECT_FALSE(panel.tasks().at(0).done);
+}
+
+TEST(VectorCodegen, AKeyedRecordKeepsItsIdentityAcrossAWrite) {
+    // arrange
+    BindingEngine engine;
+    RecordPanel panel(&engine, nullptr);
+    // act two rows are written, which is what a repeater would materialize (§18.1, AD-13)
+    panel.set_tasks(std::vector<Task>{Task{.key = "a", .title = "one", .done = false}, Task{.key = "b", .title = "two", .done = true}});
+    // act one row changes, which is what a later keyed reconciliation has to match by identity (§18.1, AD-13)
+    panel.set_tasks(std::vector<Task>{Task{.key = "b", .title = "two", .done = true}, Task{.key = "a", .title = "one", .done = false}});
+    // assert the keys moved with their rows, which is what identity means (§18.1, AD-11, AD-13)
+    ASSERT_EQ(panel.tasks().size(), 2U);
+    EXPECT_EQ(panel.tasks().at(0).key, "b");
+    EXPECT_EQ(panel.tasks().at(1).key, "a");
+}
+
+TEST(VectorCodegen, ANestedRecordCollectionCarriesItsStructs) {
+    // arrange
+    BindingEngine engine;
+    RecordPanel panel(&engine, nullptr);
+    // act a group of tasks, which is what a nested collection holds (§8.1)
+    panel.set_grouped(std::vector<std::vector<Task>>{{Task{.key = "a", .title = "only", .done = false}}});
+    // assert each level is its own collection, which is what nesting means (§8.1)
+    ASSERT_EQ(panel.grouped().size(), 1U);
+    ASSERT_EQ(panel.grouped().at(0).size(), 1U);
+    EXPECT_EQ(panel.grouped().at(0).at(0).title, "only");
 }

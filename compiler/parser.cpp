@@ -751,8 +751,22 @@ namespace albor::compiler
             // the application is assembled, so the codegen re-emits the written shape (§11.1)
             return UnaryExpression::make(UnaryOperator::Negate, std::move(value), span);
         }
-        // anything else is a primary, which is where the value itself begins (§11.1)
-        return parse_primary();
+        // a primary is the value, and a field read is a postfix on it, so both are read here (§11.2)
+        ExpressionPtr value = parse_primary();
+        // a dot after a value reads one of its fields, which is how a repeat body reaches its item (§11.2, AD-17)
+        while (at_punctuation(".")) {
+            // the dot is consumed, because the field name follows it (§11.2)
+            advance();
+            // the field name is required, because a trailing dot names nothing (§11.2)
+            const std::string field = peek().kind == Token::Kind::Identifier ? std::string(peek().text) : std::string();
+            // the name unit is consumed either way, because the parser owns the stream and must move on (§11.2)
+            advance();
+            // the span runs from the object through the name, because that is what a diagnostic covers (§11.2)
+            const SourceSpan span{.start = value->location().start, .end = last_consumed_end()};
+            // the access is assembled, so the codegen re-emits the written shape (§11.2)
+            value = FieldAccessExpression::make(std::move(value), field, span);
+        }
+        return value;
     }
 
     ExpressionPtr Parser::parse_primary() {

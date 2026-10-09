@@ -21,7 +21,7 @@ function(albor_build_ui_component target ui_source)
     # the driver compiles the ui file into the units, which write only when their content changed (§14.2, AD-03a)
     add_custom_command(
         OUTPUT ${units}
-        COMMAND $<TARGET_FILE:albor-codegen> --input "${ui_source}" --output "${generated_dir}"
+        COMMAND $<TARGET_FILE:albor-codegen> --input "${ui_source}" --output "${generated_dir}" ${ARGN}
         DEPENDS "${ui_source}" albor-codegen
         COMMENT "${target}: generating ${stem} from ${ui_source}"
         VERBATIM
@@ -29,6 +29,28 @@ function(albor_build_ui_component target ui_source)
     # the generated units join the target, which is what compiles them with the rest (§14.1)
     target_sources(${target} PRIVATE ${units})
     # the generated directory joins the include path, which is where the facade header lives (§3.5, §11.3)
+    target_include_directories(${target} PRIVATE "${generated_dir}")
+endfunction()
+
+# generate the record structs a manifest declares for a target, because a repeat names them as element types (§11.2, AD-17, AD-13)
+function(albor_build_native_record target manifest_source)
+    # the generated units land in a per target directory, which must not sit in the source tree (§14.2)
+    set(generated_dir "${CMAKE_BINARY_DIR}/generated/${target}")
+    # the record names are only known once the manifest is parsed, so the build tracks a stamp rather than the headers (§11.2)
+    # the headers reach the compile through the includes a generated facade writes, so they need not be listed as sources (§11.2, AD-17)
+    set(stamp "${generated_dir}/records.stamp")
+    # the driver compiles the manifest into the struct headers, which write only when their content changed (§11.2, AD-17)
+    add_custom_command(
+        OUTPUT "${stamp}"
+        COMMAND $<TARGET_FILE:albor-manifest-glue> --input "${manifest_source}" --output "${generated_dir}"
+        COMMAND "${CMAKE_COMMAND}" -E touch "${stamp}"
+        DEPENDS "${manifest_source}" albor-manifest-glue
+        COMMENT "${target}: generating records from ${manifest_source}"
+        VERBATIM
+    )
+    # the stamp joins the sources, which is what orders the generation before anything includes a record (§11.2, §14.2)
+    target_sources(${target} PRIVATE "${stamp}")
+    # the generated directory joins the include path, which is where a record header lives (§3.5, §11.2)
     target_include_directories(${target} PRIVATE "${generated_dir}")
 endfunction()
 

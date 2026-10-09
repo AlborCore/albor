@@ -1,0 +1,7 @@
+// the record fixture, which declares the shape a list of tasks carries (§11.2, AD-17, AD-13)
+
+record Task {
+    key: string;
+    title: string;
+    done: bool = false;
+}

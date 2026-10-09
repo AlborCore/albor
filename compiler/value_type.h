@@ -137,6 +137,35 @@ namespace albor::compiler
         std::vector<ValueType> parameter_types;
     };
 
+    // one field a manifest record declares, which a repeat body reads by name (§11.2, AD-17, AD-13)
+    struct RecordFieldType
+    {
+        // the field name the author writes after the dot, which is what a binding addresses (§11.2, AD-17)
+        std::string name;
+
+        // the type the field holds, which a field read resolves to (§11.2)
+        ValueType type;
+
+        // whether the field carries the record's identity, which is the one field a row is keyed by (§18.1, AD-13)
+        bool is_key = false;
+    };
+
+    // one data record the manifest declares, which a repeat walks as the element of a collection (§11.2, AD-17, AD-13)
+    struct RecordType
+    {
+        // the declared name, which is what an author writes after vector (§11.2, AD-17)
+        std::string name;
+
+        // the fields in declaration order, where exactly one carries the identity (§11.2, AD-18)
+        std::vector<RecordFieldType> fields;
+
+        // find a field by name, which is what a field read resolves against (§11.2, AD-17)
+        [[nodiscard]] const RecordFieldType* find_field(std::string_view field_name) const;
+
+        // hand out the field that carries the identity, which a row is keyed by, and is null when none does (§18.1, AD-13)
+        [[nodiscard]] const RecordFieldType* key_field() const;
+    };
+
     // one element type a ui file may instantiate, which is either a builtin widget or a manifest component (§11.1, §11.2)
     struct ElementType
     {
@@ -172,6 +201,12 @@ namespace albor::compiler
         // add a native data type from a manifest, which a snapshot may carry but which is never an element (§11.2, AD-17)
         void add_native_data(std::string name);
 
+        // add a record from a manifest, which a collection of it holds and a repeat walks (§11.2, AD-17, AD-13)
+        void add_record(const RecordType& record);
+
+        // find a record by name, which is what a vector element type resolves against (§11.2, AD-17)
+        [[nodiscard]] const RecordType* find_record(std::string_view name) const;
+
         // report whether the catalog holds a native type of either form, which is what a type name resolves (§11.2, AD-17)
         [[nodiscard]] bool holds_native(std::string_view name) const;
 
@@ -187,5 +222,8 @@ namespace albor::compiler
 
         // the known native data types, which a snapshot may carry but which is never an element (§11.2, AD-17)
         std::vector<std::string> m_native_data;
+
+        // the known records, which a collection holds and a repeat walks (§11.2, AD-17, AD-13)
+        std::vector<RecordType> m_records;
     };
 } // namespace albor::compiler

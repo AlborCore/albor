@@ -50,6 +50,9 @@ namespace albor::compiler
                 // the wrapper is rebuilt rather than trusted, so a malformed element still resolves (§8.1)
                 return ValueType::parameterized(TypeKind::Vector, resolve_type_name(inner, catalog));
             }
+            // a record is a named type a repeat walks, and it resolves like any other manifest name (§11.2, AD-17, AD-13)
+            if (catalog.find_record(written) != nullptr)
+                return ValueType::native(std::string(written));
             // anything else is a native type, which the catalog holds only if a manifest declared it (§11.2, AD-17)
             if (catalog.find(written) != nullptr || catalog.holds_native(written))
                 return ValueType::native(std::string(written));
@@ -84,6 +87,9 @@ namespace albor::compiler
     CheckedFile TypeChecker::check(const SourceFile& file) {
         // the file is assembled as the components are checked, so one mistake costs one component (§11.1)
         CheckedFile checked;
+        // the imports name the manifest modules, which is what a record header path is built from (§11.1, AD-17)
+        for (const ImportDeclaration& imported : file.imports)
+            checked.imported_modules.push_back(imported.module);
         // the components are checked in declaration order, because the result preserves it (§11.1)
         for (const ComponentDeclaration& component : file.components) {
             // the component is assembled locally, because the pass state belongs to one declaration (§11.1)
@@ -123,7 +129,7 @@ namespace albor::compiler
             property.name = declaration.name;
             property.direction = declaration.direction;
             property.span = declaration.span;
-            // the written type resolves against the catalog, which is where a native type comes from (§11.1, §11.2, AD-17)
+            // the written type resolves against the catalog, which is where a native type comes from (§11.2, AD-17)
             property.type = resolve_type_name(declaration.type, m_catalog);
             // a type that did not resolve is reported here, because nothing downstream can (§11.1)
             if (property.type.is_error())
@@ -487,10 +493,45 @@ namespace albor::compiler
         // a bracketed list types as the collection its elements agree on (§8.1)
         if (const auto* array = dynamic_cast<const ArrayExpression*>(&expression))
             return type_array(*array, scope, dependencies);
+        // a field read resolves the object first, because the field is only known once the record is (§11.2)
+        if (const auto* access = dynamic_cast<const FieldAccessExpression*>(&expression))
+            return type_field_access(*access, scope, dependencies);
         // a form with no rule is reported, because typing it as nothing would let it through unchecked (§11.1)
         m_diagnostics.add(Diagnostic::Severity::Error, expression.location(), "E0415", "this expression form has no type rule");
         // the error type stands in, so nothing downstream raises a second complaint (§11.1)
         return error_type();
+    }
+
+    ValueType TypeChecker::type_field_access(const FieldAccessExpression& access, const Scope& scope, std::vector<std::string>& dependencies) {
+        // the object is typed first, because the field is only known once the record type is (§11.2)
+        const ValueType object = type_expression(*access.object, scope, dependencies);
+        // an object whose type failed names no record, so the field cannot resolve (§11.2)
+        if (object.is_error())
+            return error_type();
+        // only a native type carries fields, because a scalar has no members (§11.2, AD-17)
+        if (!object.is(TypeKind::Native)) {
+            // the problem names both sides, because the author needs to know a value has no fields (§11.2)
+            report_type_mismatch(access, object, ValueType::native("*record*"));
+            return error_type();
+        }
+        // a field read reaches a record only when the manifest declared one by that name (§11.2, AD-17)
+        const RecordType* record = m_catalog.find_record(object.native_name());
+        // a native type that is not a record carries no fields, which the manifest declared as data (§11.2, AD-17)
+        if (record == nullptr) {
+            // the problem points at the access, because that is what the author must change (§11.2, AD-17)
+            m_diagnostics.add(Diagnostic::Severity::Error, access.span, "E0417", "'" + object.native_name() + "' is not a record, so it has no fields");
+            return error_type();
+        }
+        // the field name resolves against the declaration, which the manifest wrote (§11.2, AD-17)
+        const RecordFieldType* field = record->find_field(access.field);
+        // a field the record does not declare cannot be read, which is reported rather than guessed (§11.2, AD-17)
+        if (field == nullptr) {
+            // the problem points at the field name, because that is the part the author must change (§11.2)
+            m_diagnostics.add(Diagnostic::Severity::Error, access.span, "E0416", "'" + record->name + "' has no field named '" + access.field + "'");
+            return error_type();
+        }
+        // the declared field type is the whole of the answer, because there is no inference (§11.2, AD-17)
+        return field->type;
     }
 
     ValueType TypeChecker::type_array(const ArrayExpression& array, const Scope& scope, std::vector<std::string>& dependencies) {

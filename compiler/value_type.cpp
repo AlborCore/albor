@@ -303,6 +303,47 @@ namespace albor::compiler
         m_native_data.push_back(std::move(name));
     }
 
+    const RecordFieldType* RecordType::find_field(std::string_view field_name) const {
+        // the fields are scanned, because a record carries only a handful of them (§11.2, AD-17)
+        for (const RecordFieldType& field : fields) {
+            // the name decides, so a field read resolves to exactly one field (§11.2, AD-17)
+            if (field.name == field_name)
+                return &field;
+        }
+        // a field the record does not declare is a report the checker raises (§11.2, AD-17)
+        return nullptr;
+    }
+
+    const RecordFieldType* RecordType::key_field() const {
+        // the fields are scanned, because exactly one of them carries the identity (§18.1, AD-13)
+        for (const RecordFieldType& field : fields) {
+            // the flagged field is the key, which is what a row is keyed by (§18.1, AD-13)
+            if (field.is_key)
+                return &field;
+        }
+        // a record with no key cannot be keyed, which the manifest validator already reported (§11.2, AD-18)
+        return nullptr;
+    }
+
+    void ElementCatalog::add_record(const RecordType& record) {
+        // a record the catalog already holds is not redefined, because a ui file would resolve two shapes (§11.2, AD-17)
+        if (find_record(record.name) != nullptr)
+            return;
+        // the record is appended, because the manifest is the single source of truth for it (§11.2, AD-17, AD-13)
+        m_records.push_back(record);
+    }
+
+    const RecordType* ElementCatalog::find_record(std::string_view name) const {
+        // the records are scanned, because a component names only a handful of them (§11.2, AD-17)
+        for (const RecordType& record : m_records) {
+            // the name decides, so a vector element type resolves to exactly one record (§11.2, AD-17)
+            if (record.name == name)
+                return &record;
+        }
+        // a record the manifest never declared is a report the checker raises (§11.2, AD-17)
+        return nullptr;
+    }
+
     bool ElementCatalog::holds_native(std::string_view name) const {
         // a data type is not an element, so the element lookup does not find it (§11.2, AD-17)
         return std::find(m_native_data.begin(), m_native_data.end(), name) != m_native_data.end();

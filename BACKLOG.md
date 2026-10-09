@@ -139,13 +139,23 @@ The front end was already finished and is not the problem. The lexer accepts `ve
 parser parses `Repeat(item in source [, index]) { one element }`, and the type checker
 resolves the repeat's item name and index against the source's element type.
 
-**The three steps**, in order, because each is written against the one before. Steps 2 and 3
-remain; step 1 is still open and still blocks the example above, which uses a record:
+**The three steps**, in order, because each is written against the one before. Steps 1 and 2
+are done; step 3 is the only one left:
 
-1. **Register records with the compiler catalog.** `Task` currently dies in
-   `resolve_type_name` as `E0400`, because only scalars and manifest *components* are known
-   types. Registering records makes `vector<Task>` resolve and lets `item.title` be typed as
-   a field read rather than an unknown property. Nothing is generated yet at this step.
+1. ~~**Register records with the compiler catalog.**~~ **Done.** `register_records()` in
+   `manifest/manifest.cpp` translates each declared field into a `RecordFieldType` and adds
+   the record to the catalog, which is what makes `vector<Task>` resolve. The manifest is the
+   only path into the compiler, so AD-17 holds: the compiler never sees the C++ struct, it
+   only learns the field names and types the manifest wrote.
+
+   A field read needed its own syntax, because `item.title` did not parse at all before this.
+   `FieldAccessExpression` is the postfix form and binds tighter than any operator. The
+   checker resolves the object first and then the field, so `E0416` names the record that
+   lacks the field and `E0417` says the type is not a record and has no field list.
+
+   `albor-codegen` grew a `--manifest` flag, because the driver hardcoded the builtin catalog
+   and a record could never reach the checker. Generated facades now include the manifest
+   header that declares the struct, resolved through the module the `.ui` file imports.
 2. ~~**Lift `E0501` for collections.**~~ **Done.** `ArrayExpression` is the only way an
    author writes a collection value, so the parser reads `[1, 2]` as one expression rather
    than as three. The checker types a list as the element type its elements agree on, and

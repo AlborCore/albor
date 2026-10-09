@@ -15,6 +15,7 @@
 #include "compiler/parser.h"
 #include "compiler/type_checker.h"
 #include "compiler/value_type.h"
+#include "manifest/manifest.h"
 
 namespace
 {
@@ -36,6 +37,12 @@ namespace
         }
     }
 
+    // read a stream whole, because the scanner takes the whole unit and both inputs are text (§11.1)
+    std::string stream_text(std::istream& stream) {
+        // the content accumulates, because a scanner needs every character before it produces a token (§11.1)
+        return std::string((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+    }
+
     // print every problem with its file, which is what a console compilation shows (§11.1)
     void print_diagnostics(const albor::compiler::DiagnosticList& diagnostics, std::string_view input) {
         // the problems are printed in the order they were found, which a compilation reports that way (§11.1)
@@ -50,6 +57,10 @@ int main(int argc, char** argv) {
     std::filesystem::path output;
     // the chunk size is one component per unit, which the flag tunes for large projects (AD-03b)
     std::size_t tu_chunk_size = 1;
+    // the manifest declares the records a ui file may name, which is optional because a file may use none (§11.2, AD-17)
+    std::filesystem::path manifest;
+    // the catalog starts with the builtin widgets, which every ui file may instantiate (§11.1, §8)
+    albor::compiler::ElementCatalog catalog = albor::compiler::ElementCatalog::with_builtins();
     // the flags are consumed in order, because each names its following value (§11.3)
     for (int i = 1; i < argc; ++i) {
         // the input flag takes the file to compile (§11.3)
@@ -74,6 +85,11 @@ int main(int argc, char** argv) {
             }
             continue;
         }
+        // the manifest flag names the manifest that declares the records a ui file uses (§11.2, AD-17)
+        if (std::string_view(argv[i]) == "--manifest" && i + 1 < argc) {
+            manifest = argv[++i];
+            continue;
+        }
         // an unknown flag is a misuse, which the build that wired it up got wrong (§11.3)
         std::fprintf(stderr, "albor-codegen: unknown flag '%s'\n", argv[i]);
         std::fprintf(stderr, "albor-codegen: usage: albor-codegen --input <file.ui> --output <dir> [--tu-chunk-size <n>]\n");
@@ -90,15 +106,35 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "albor-codegen: cannot open '%s'\n", input.c_str());
         return 1;
     }
-    std::string source((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+    // the source text is read, because a scanner needs every character before it produces a token (§11.1)
+    std::string source = stream_text(stream);
     // the problems are collected in one list through the whole pipeline (§11.1)
     albor::compiler::DiagnosticList diagnostics;
-    // the scanner turns the unit into tokens (§11.1)
+    // the manifest is read and parsed, because its records are what the catalog resolves (§11.2, AD-17)
+    if (!manifest.empty()) {
+        // the manifest text is read, because its records must be known before the ui file is checked (§11.2, AD-17)
+        std::ifstream manifest_stream(manifest, std::ios::binary);
+        // a manifest that cannot be read is reported, because the compiler cannot resolve records without it (§11.2)
+        if (!manifest_stream) {
+            std::fprintf(stderr, "albor-codegen: cannot open '%s'\n", manifest.c_str());
+            return 1;
+        }
+        // the module name is the file stem, which is what the glue generator names the directory after (§11.2)
+        const std::string module = std::filesystem::path(manifest).stem().string();
+        // the problems of the manifest join the run, because a bad record is the author's problem too (§11.2)
+        const std::vector<albor::compiler::Token> manifest_tokens = albor::compiler::Lexer(stream_text(manifest_stream), diagnostics).tokenize();
+        // the manifest is parsed into declarations, which is where the records live (§11.2, AD-17)
+        const albor::manifest::ManifestFile parsed = albor::manifest::ManifestParser(manifest_tokens, diagnostics).parse(module);
+        // the records join the catalog, which is what makes vector<Task> resolve (§11.2, AD-17, AD-13)
+        albor::manifest::register_records(parsed, catalog);
+    }
+
+    // the scanner turns the unit into tokens, after the records are known (§11.1, §11.2, AD-17)
     const std::vector<albor::compiler::Token> tokens = albor::compiler::Lexer(source, diagnostics).tokenize();
     // the parser turns the tokens into an untyped tree (§11.1)
     const albor::compiler::SourceFile file = albor::compiler::Parser(tokens, diagnostics).parse();
-    // the checker resolves the tree against the builtin widgets (§11.1, §8)
-    const albor::compiler::CheckedFile checked = albor::compiler::TypeChecker(albor::compiler::ElementCatalog::with_builtins(), diagnostics).check(file);
+    // the checker resolves the tree against the catalog, which holds the builtins and records (§11.2, §8)
+    const albor::compiler::CheckedFile checked = albor::compiler::TypeChecker(catalog, diagnostics).check(file);
     // a blocking problem stops the driver before any generation, which is what a console compile reports (§11.1)
     if (diagnostics.has_errors()) {
         print_diagnostics(diagnostics, input.c_str());
@@ -106,6 +142,8 @@ int main(int argc, char** argv) {
     }
     // the generator turns the checked file into the facade units (§11.3, AD-03a)
     albor::compiler::CodeGenerator generator(diagnostics);
+    // the catalog is handed over, because a record header is written into a module the generator must name (§11.2, AD-17)
+    generator.set_catalog(&catalog);
     // the chunk size is passed through, which tunes clean rebuild times on large projects (AD-03b)
     generator.set_tu_chunk_size(tu_chunk_size);
     const std::vector<albor::compiler::GeneratedFile> files = generator.generate(checked);

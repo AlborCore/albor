@@ -258,6 +258,26 @@ namespace albor::compiler
         static ExpressionPtr make(std::vector<ExpressionPtr> elements, SourceSpan span);
     };
 
+    // a read of one field of a record, written item.title, which is how a repeat body reaches its item (§11.2, AD-17)
+    class FieldAccessExpression : public Expression
+    {
+    public:
+        // the record the field is read from, which is the repeat item binding or a record valued property (§11.2)
+        ExpressionPtr object;
+
+        // the field name as written, which the manifest declares (§11.2, AD-17)
+        std::string field;
+
+        // where the access was written (§11.2)
+        SourceSpan span;
+
+        // hand out where the access was written (§11.2)
+        [[nodiscard]] const SourceSpan& location() const override { return span; }
+
+        // build a field read, which the parser makes once it has read the name after the dot (§11.2)
+        static ExpressionPtr make(ExpressionPtr object, std::string field, SourceSpan span);
+    };
+
     // the statements a handler body may contain, which is a closed set of two forms (§11.1)
     enum class HandlerStatementKind
     {
