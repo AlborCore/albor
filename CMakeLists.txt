@@ -145,6 +145,7 @@ add_subdirectory(platform/headless)
 # the compiler frontend that turns .ui source into native c++ (§11.1)
 add_subdirectory(compiler)
 add_subdirectory(language-server)
+add_subdirectory(preview)
 
 # the manifest parser that declares the native types a ui file may use (§11.2, AD-17)
 add_subdirectory(manifest)
