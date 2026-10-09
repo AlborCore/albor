@@ -1293,7 +1293,7 @@ sits in layout, where the budget is zero.
 ### Consequences for work already planned
 
 - **Phase 4 of `TEXT-RENDERING-PLAN.md` is on the critical path**, not optional.
-- **The Metal teardown trap in `BACKLOG.md` blocks a stated objective**, because the reference cannot
+- **The Metal teardown trap blocks a stated objective**, because the reference cannot
   be compared against a GPU backend that cannot be destroyed (§15, AD-26).
 - **The vendored engine defines the metrics.** The open question in the vendored baseline issue
   is answered by this section: matching a platform paragraph engine was never the goal.

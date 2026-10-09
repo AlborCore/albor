@@ -18,7 +18,7 @@ must be able to render a real application — widgets that are really used,
 correct rendering, non-scary examples — before developer tooling is worth
 building on top of it.
 
-The deferral is recorded here; BACKLOG.md points back at this document.
+The deferral is recorded here; the issue tracker points back at this document.
 
 ## Why this order
 

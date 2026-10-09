@@ -88,7 +88,7 @@ After editing:
 1. Build the project
 2. Fix compiler warnings/errors
 3. Run the linter check on all changed C++ files: `bash build/check-format.sh`
-4. Fix every consecutive comment line in the files you changed: one comment line above a statement, and when a test marker is followed by an explanation only the `// arrange` / `// act` / `// assert` marker stays (`STYLE-GUIDE.md`, `BACKLOG.md`)
+4. Fix every consecutive comment line in the files you changed: one comment line above a statement, and when a test marker is followed by an explanation only the `// arrange` / `// act` / `// assert` marker stays (`STYLE-GUIDE.md`; the sweep state is tracked in the issue tracker)
 5. Summarize changed files
 6. Do not execute unit tests unless explicitly asked
 

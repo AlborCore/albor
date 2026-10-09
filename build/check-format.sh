@@ -67,7 +67,7 @@ fi
 # longer one wraps into a paragraph where STYLE-GUIDE.md asks for one short line (§Comments)
 COMMENT_LINE_LIMIT=124
 
-# the ref the comment rules are measured against, which lets the pre existing backlog stay tracked in BACKLOG.md
+# the ref the comment rules are measured against, which keeps the sweep history in the issue tracker
 # while every line a change adds is held to the rule; override it to measure against a branch point
 COMMENT_BASE_REF="${ALBOR_COMMENT_BASE:-HEAD}"
 
@@ -117,7 +117,7 @@ check_comment_rules() {
     done
 
     # a modified file carries no consecutive comment lines, because a file this change touches is fixed in the same
-    # change, which is the rule BACKLOG.md records for the suites that still carry the violation (§Comments)
+    # change, which is the rule the sweep issue records for the suites that still carry the violation (§Comments)
     for file in "${changed[@]}"; do
         # the pairs are reported with their first line, which is the one a change would move the second comment onto
         reported="$(awk '
@@ -134,7 +134,7 @@ check_comment_rules() {
         # the rule is restated, so a failure says what to do rather than only where
         echo "error: $failures comment rule violations, see STYLE-GUIDE.md §Comments" >&2
         echo "  one short comment line per statement, never a paragraph of comment lines" >&2
-        echo "  a file this change touches carries the fix for any pair it already had (BACKLOG.md)" >&2
+        echo "  a file this change touches carries the fix for any pair it already had (STYLE-GUIDE.md §Comments)" >&2
         return 1
     fi
 
