@@ -51,6 +51,11 @@ target_link_libraries(albor-tests PRIVATE albor-layout albor-widgets albor-style
 # other suites never link because it reaches a platform surface (§3.2, AD-16). the backend is apple only, so the
 # suite is gathered and linked on apple platforms alone, and the raster canvas it draws into needs no window
 # server, so the binary still runs headless (§2.2)
+if(ALBOR_DEV)
+    target_sources(albor-tests PRIVATE "./conditional/devrt.test.cpp")
+    target_link_libraries(albor-tests PRIVATE albor-devrt)
+endif()
+
 if(APPLE)
     target_sources(albor-tests PRIVATE "./conditional/render_skia.test.cpp")
     target_link_libraries(albor-tests PRIVATE albor-render-skia)
