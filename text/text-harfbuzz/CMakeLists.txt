@@ -19,8 +19,11 @@ endif()
 # gather cpp sources, which reach harfbuzz and freetype only and therefore build everywhere (§3.5, AD-05)
 file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 
+# the typeface resolver reaches the platform font manager, so the .macos infix marks the one file that is not portable
+file(GLOB_RECURSE MACOS_SOURCES "./*.macos.mm")
+
 # create the static library from the gathered sources
-add_library(albor-text-harfbuzz STATIC ${CPP_SOURCES})
+add_library(albor-text-harfbuzz STATIC ${CPP_SOURCES} ${MACOS_SOURCES})
 
 # the engine names albor types only, and no shaping type reaches a public header (§3.5, §9.1, AD-19)
 target_include_directories(albor-text-harfbuzz PUBLIC ${CMAKE_SOURCE_DIR})
@@ -31,3 +34,9 @@ target_include_directories(albor-text-harfbuzz SYSTEM PRIVATE ${ALBOR_SKIA_INCLU
 
 # the engine shapes with harfbuzz over a freetype face, and issues the typeface the renderer draws with (§9.1, AD-28)
 target_link_libraries(albor-text-harfbuzz PUBLIC albor-text PRIVATE unofficial::skia::skia harfbuzz::harfbuzz Freetype::Freetype)
+
+# the resolver reaches core text, which is the platform typeface source this engine draws from (§9.1, AD-28)
+if(APPLE)
+    set_source_files_properties("./harfbuzz_typeface_resolver.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(albor-text-harfbuzz PRIVATE "-framework CoreText" "-framework CoreFoundation")
+endif()

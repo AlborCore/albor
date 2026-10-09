@@ -11,8 +11,8 @@ namespace albor::harfbuzz
     class HarfbuzzTextEngine final : public TextEngine
     {
     public:
-        // build over a font file, reporting a refusal by returning null because shaping needs a face (§9.1)
-        [[nodiscard]] static std::unique_ptr<HarfbuzzTextEngine> create(const std::string& font_path);
+        // build over a font file and the family the renderer draws from, refusing when either is absent (§9.1)
+        [[nodiscard]] static std::unique_ptr<HarfbuzzTextEngine> create(const std::string& font_path, const std::string& family_name);
 
         ~HarfbuzzTextEngine() override;
 
@@ -34,10 +34,10 @@ namespace albor::harfbuzz
         [[nodiscard]] bool drawable() const;
 
     private:
-        // load the face and the shaper over it, which is the whole of construction (§9.1)
-        explicit HarfbuzzTextEngine(const std::string& font_path);
+        // load the face, the shaper and the drawing typeface, which is the whole of construction (§9.1)
+        HarfbuzzTextEngine(const std::string& font_path, const std::string& family_name);
 
-        // the opaque freetype, harfbuzz and typeface state, so that no shaping type leaves this header (§3.5, AD-19)
+        // the opaque freetype, harfbuzz and resolver state, so that no shaping type leaves this header (§3.5, AD-19)
         struct HarfbuzzEngineState;
 
         // the loaded state, which the engine owns for its whole life (§9.1)

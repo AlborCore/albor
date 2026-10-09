@@ -1,6 +1,5 @@
 #include "text/text-harfbuzz/harfbuzz_text_engine.h"
 
-#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -12,6 +11,7 @@
 
 #include "render/font_handle.h"
 #include "render/shaped_run.h"
+#include "text/text-harfbuzz/harfbuzz_typeface_resolver.h"
 
 namespace albor::harfbuzz
 {
@@ -27,6 +27,9 @@ namespace albor::harfbuzz
         // the harfbuzz font that shapes, which is built from the face (§9.1)
         hb_font_t* font = nullptr;
 
+        // the resolver holding the drawing typeface, which only the platform can supply (§9.1, AD-28)
+        std::unique_ptr<HarfbuzzTypefaceResolver> resolver;
+
         // the design units per em, which converts a harfbuzz position into logical pixels (§9.1, AD-27)
         float units_per_em = 1000.0f;
 
@@ -37,12 +40,15 @@ namespace albor::harfbuzz
         float descender = -200.0f;
     };
 
-    std::unique_ptr<HarfbuzzTextEngine> HarfbuzzTextEngine::create(const std::string& font_path) {
+    std::unique_ptr<HarfbuzzTextEngine> HarfbuzzTextEngine::create(const std::string& font_path, const std::string& family_name) {
         // an empty path names no font, so the engine is refused rather than built empty (§9.1)
         if (font_path.empty())
             return nullptr;
-        // the engine is built through its private constructor, which loads the face (§9.1)
-        std::unique_ptr<HarfbuzzTextEngine> engine(new HarfbuzzTextEngine(font_path));
+        // an empty family names nothing the renderer could draw, so the engine is refused (§9.1)
+        if (family_name.empty())
+            return nullptr;
+        // the engine is built through its constructor, which loads the face and the typeface (§9.1)
+        std::unique_ptr<HarfbuzzTextEngine> engine(new HarfbuzzTextEngine(font_path, family_name));
         // a face that did not load leaves an engine that is not ready, which a caller checks (§9.1)
         if (!engine->ready())
             return nullptr;
@@ -50,7 +56,7 @@ namespace albor::harfbuzz
         return engine;
     }
 
-    HarfbuzzTextEngine::HarfbuzzTextEngine(const std::string& font_path) :
+    HarfbuzzTextEngine::HarfbuzzTextEngine(const std::string& font_path, const std::string& family_name) :
         m_state(std::make_unique<HarfbuzzEngineState>()) {
         // freetype comes up once per engine, and it fails only on a broken install (§9.1)
         if (FT_Init_FreeType(&m_state->library) != 0) {
@@ -74,6 +80,11 @@ namespace albor::harfbuzz
         // a font that did not build leaves an engine that cannot shape (§9.1)
         if (m_state->font == nullptr)
             return;
+        // the drawing typeface comes from the platform, because the renderer build offers no other source (§9.1, AD-28)
+        m_state->resolver = HarfbuzzTypefaceResolver::create(family_name);
+        // a resolver that did not build leaves runs that measure correctly and draw nothing (§9.1, AD-28)
+        if (m_state->resolver == nullptr)
+            return;
     }
 
     HarfbuzzTextEngine::~HarfbuzzTextEngine() {
@@ -89,13 +100,13 @@ namespace albor::harfbuzz
     }
 
     bool HarfbuzzTextEngine::ready() const {
-        // the engine shapes exactly when a harfbuzz font was built over the face (§9.1)
-        return m_state->font != nullptr;
+        // the engine is usable exactly when it can shape and the renderer can draw what it shaped (§9.1, AD-28)
+        return m_state->font != nullptr && m_state->resolver != nullptr && m_state->resolver->typeface() != nullptr;
     }
 
     bool HarfbuzzTextEngine::drawable() const {
-        // this engine issues no typeface, so every run carries an empty font handle; see DEFECT-TEXT-VENDOR-TYPEFACE
-        return false;
+        // a run is drawable exactly when the engine resolved a typeface for the renderer (§9.1, AD-28)
+        return m_state->resolver != nullptr && m_state->resolver->typeface() != nullptr;
     }
 
     TextLayout HarfbuzzTextEngine::measure(std::string_view text, float max_width) const {
@@ -121,13 +132,11 @@ namespace albor::harfbuzz
         // a size of no pixels cannot be shaped at, so the run measures nothing (§9.1)
         if (font_size <= 0.0f)
             return TextLayout{};
-
         // the buffer carries the run and its properties, and is destroyed by the unique pointer (§9.1)
         std::unique_ptr<hb_buffer_t, decltype(&hb_buffer_destroy)> buffer(hb_buffer_create(), &hb_buffer_destroy);
         // a buffer that did not allocate shapes nothing, which an absent layout reports (§9.1)
         if (buffer == nullptr)
             return TextLayout{};
-
         // the text is added as utf8 and the script and direction are guessed from it, which is the shaping default (§9.1)
         hb_buffer_add_utf8(buffer.get(), text.data(), static_cast<int>(text.size()), 0, -1);
         // the guess fills in script, language and direction from the buffer's contents (§9.1)
@@ -136,24 +145,20 @@ namespace albor::harfbuzz
         hb_font_set_scale(m_state->font, static_cast<int>(font_size * 64.0f), static_cast<int>(font_size * 64.0f));
         // the shaping pass itself, which produces the glyph ids and their positions (§9.1)
         hb_shape(m_state->font, buffer.get(), nullptr, 0);
-
         // the shaped output, which carries one entry per glyph (§9.1)
         unsigned glyph_count = 0;
         hb_glyph_info_t* glyphs = hb_buffer_get_glyph_infos(buffer.get(), &glyph_count);
         // the positions are read beside the glyphs, because one position describes one glyph (§9.1)
         hb_glyph_position_t* positions = hb_buffer_get_glyph_positions(buffer.get(), &glyph_count);
-
         // a run with no glyphs measures nothing, which is what an empty layout means (§6.2)
         if (glyph_count == 0 || glyphs == nullptr || positions == nullptr)
             return TextLayout{};
-
         // the line is the whole run, because this engine does not wrap yet (§9.1)
         ShapedRun::Line line;
-        // the font handle stays empty because this engine cannot issue a drawable typeface; see the defect (§9.1)
-        line.font = FontHandle{};
+        // the font handle carries the typeface the platform resolved, which the renderer draws with (§9.1, AD-28)
+        line.font = FontHandle::from_object(m_state->resolver->typeface());
         // the baseline sits at the ascender, which is where every glyph of the line hangs from (§9.1)
         line.origin = Point{.x = 0.0f, .y = m_state->ascender * font_size};
-
         // the advance is accumulated in design units, because harfbuzz reports positions in them (§9.1)
         float advance = 0.0f;
         // the glyphs are reserved, because the shaped output reports how many there are (§9.1)
@@ -170,12 +175,10 @@ namespace albor::harfbuzz
             // the pen advances by this glyph's advance, which is what lays the next one out (§9.1)
             advance += static_cast<float>(position.x_advance) / 64.0f;
         }
-
         // the lines join the run in reading order, which for one line is the one line (§9.1)
         std::vector<ShapedRun::Line> lines;
         // the line joins the run by move, because it is already built (§9.1)
         lines.push_back(std::move(line));
-
         // the shaped run is what the render stage replays verbatim (§9.1, AD-18)
         TextLayout layout;
         // the run is built over its lines and the size it was shaped at (§9.1)

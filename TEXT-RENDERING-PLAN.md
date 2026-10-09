@@ -76,17 +76,20 @@ face, and `tests/text_conformance.test.cpp` runs the dual engine comparison the 
 for: both engines shape the same strings and glyph positions are compared within tolerance,
 along with glyph count, measured width, accented text and reproducibility.
 
-**The vendored run is not yet drawable, so `text/text-skia/` is not deleted.** The renderer
-build exports exactly one font manager, `SkFontMgr_New_CoreText`, and no way to turn font
-bytes into a typeface, so a vendored run carries an empty `FontHandle`. The oracle is still
-the drawable engine, and deleting it today would leave the framework with an engine that
-measures correctly and draws nothing. `DEFECT-TEXT-VENDOR-TYPEFACE.md` records the three
-options for resolving that and the one invariant that must hold first: a caller has to be
-able to tell a non-drawable run from a drawable one, which `HarfbuzzTextEngine::drawable()`
-now states and two tests pin.
+**The vendored run now draws, and the engines still disagree on where the baseline sits.**
+The typeface question is settled: the renderer build exports no way to turn font bytes into a
+typeface, so the drawing typeface comes from the platform font manager by family name
+(`harfbuzz_typeface_resolver.macos.mm`) while shaping stays vendored. That is the boundary phase 3
+draws — it removes the shaping dependency, and phase 4 is what removes font discovery.
 
-Behind the existing `TextEngine` factory, the vendored engine becomes the default once it can
-draw. `text/text-skia/` stays as the shaping oracle until then.
+What is left is line box geometry. Both engines agree on glyph count, on every glyph position and on
+measured width, but the oracle places Arial's first baseline at 15.0 and the vendored engine at
+18.105, a difference of 3.105 logical pixels, so the two pictures differ completely.
+`DEFECT-TEXT-VENDOR-BASELINE.md` records it, and one decision it needs: whether the vendored engine
+must match the oracle's metrics or becomes the reference the oracle is compared against.
+
+Behind the existing `TextEngine` factory, the vendored engine becomes the default once the line box
+agrees. `text/text-skia/` stays as the shaping oracle until then.
 
 ### Phase 4: compile time glyph embedding
 

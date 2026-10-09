@@ -15,8 +15,11 @@ using namespace albor;
 
 namespace
 {
-    // the font both engines shape with, so the comparison is of shapers and not of fonts (§15, §9.1)
+    // the font file the vendored engine shapes from, and the family the renderer draws with (§9.1, AD-28)
     const char* const FONT_PATH = "/System/Library/Fonts/Supplemental/Arial.ttf";
+
+    // the family the platform resolves for drawing, which must name that same face (§15, AD-28)
+    const char* const FONT_FAMILY = "Arial";
 
     // the largest glyph position difference two shapers may disagree by, in logical pixels (§15, AD-25)
     constexpr float POSITION_TOLERANCE = 0.75f;
@@ -28,7 +31,7 @@ namespace
     bool has_font() {
         // the conformance suite needs a real font, and a host without one reports the absence (§9.1)
         std::ifstream probe(FONT_PATH, std::ios::binary);
-        // the probe answers whether the font is present, which a host without one cannot shape against (§9.1)
+            // the probe answers whether the font is present, which a host without one cannot shape against (§9.1)
         return probe.good();
     }
 
@@ -41,7 +44,7 @@ namespace
 
 TEST(DualEngineConformanceChecks, TheVendoredEngineLoadsAFont) {
     // arrange, act
-    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH, FONT_FAMILY);
     // assert the vendored engine is usable, because a suite that skips silently proves nothing (§15, §9.1)
     if (!has_font())
         GTEST_SKIP() << "no conformance font on this host";
@@ -53,7 +56,7 @@ TEST(DualEngineConformanceChecks, BothEnginesAgreeOnGlyphCount) {
     // arrange both engines shaping the same text at the same size (§15, AD-25)
     if (!has_font())
         GTEST_SKIP() << "no conformance font on this host";
-    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> vendored = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> vendored = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH, FONT_FAMILY);
     ASSERT_NE(vendored, nullptr);
     SkiaTextEngine oracle;
     // act the same string through both shapers, which is the dual engine comparison of AD-25 (§15)
@@ -70,7 +73,7 @@ TEST(DualEngineConformanceChecks, BothEnginesAgreeOnGlyphPositions) {
     // arrange the same text through both shapers (§15, AD-25)
     if (!has_font())
         GTEST_SKIP() << "no conformance font on this host";
-    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> vendored = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> vendored = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH, FONT_FAMILY);
     ASSERT_NE(vendored, nullptr);
     SkiaTextEngine oracle;
     const TextLayout reference = oracle.measure("Albor framework", 0.0f, 20.0f);
@@ -94,7 +97,7 @@ TEST(DualEngineConformanceChecks, BothEnginesAgreeOnMeasuredWidth) {
     // arrange
     if (!has_font())
         GTEST_SKIP() << "no conformance font on this host";
-    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> vendored = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> vendored = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH, FONT_FAMILY);
     ASSERT_NE(vendored, nullptr);
     SkiaTextEngine oracle;
     // act the same string is measured by both (§15, AD-25)
@@ -108,7 +111,7 @@ TEST(DualEngineConformanceChecks, BothEnginesAgreeOnAccentsAndPunctuation) {
     // arrange text that exercises shaping rather than simple advances (§9.1)
     if (!has_font())
         GTEST_SKIP() << "no conformance font on this host";
-    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> vendored = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> vendored = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH, FONT_FAMILY);
     ASSERT_NE(vendored, nullptr);
     SkiaTextEngine oracle;
     const std::string text = "café naïve (résumé) 1,234.56";
@@ -126,7 +129,7 @@ TEST(DualEngineConformanceChecks, TheVendoredEngineIsReproducible) {
     // arrange one engine asked twice, which is what a conformance suite leans on (§15, §9.1)
     if (!has_font())
         GTEST_SKIP() << "no conformance font on this host";
-    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> vendored = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> vendored = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH, FONT_FAMILY);
     ASSERT_NE(vendored, nullptr);
     // act
     const TextLayout first = vendored->measure("repeatable", 0.0f, 16.0f);
@@ -139,7 +142,7 @@ TEST(DualEngineConformanceChecks, TheVendoredEngineIsReproducible) {
 
 TEST(DualEngineConformanceChecks, AnAbsentFontIsRefusedRatherThanHalfBuilt) {
     // arrange, act a path that names no font, which is what a refused engine must answer (§9.1)
-    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create("/no/such/font.ttf");
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create("/no/such/font.ttf", FONT_FAMILY);
     // assert an engine with no face is refused, because a half built one would shape nothing silently (§9.1)
     EXPECT_EQ(engine, nullptr);
 }
@@ -148,7 +151,7 @@ TEST(DualEngineConformanceChecks, AnEmptyStringMeasuresNothing) {
     // arrange
     if (!has_font())
         GTEST_SKIP() << "no conformance font on this host";
-    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> vendored = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> vendored = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH, FONT_FAMILY);
     ASSERT_NE(vendored, nullptr);
     // act an empty string carries no glyph, which is what an empty layout means (§6.2)
     const TextLayout measured = vendored->measure("", 0.0f, 16.0f);
@@ -156,18 +159,25 @@ TEST(DualEngineConformanceChecks, AnEmptyStringMeasuresNothing) {
     EXPECT_EQ(measured.run, nullptr);
 }
 
-TEST(DualEngineConformanceChecks, TheVendoredRunIsNotYetDrawable) {
+TEST(DualEngineConformanceChecks, TheVendoredRunIsDrawable) {
     // arrange
     if (!has_font())
         GTEST_SKIP() << "no conformance font on this host";
-    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> vendored = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> vendored = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH, FONT_FAMILY);
     ASSERT_NE(vendored, nullptr);
     const TextLayout measured = vendored->measure("Albor", 0.0f, 16.0f);
     ASSERT_NE(measured.run, nullptr);
-    // act assert the boundary is stated rather than implied, so a caller checks drawable() first (§6.2)
-    EXPECT_FALSE(vendored->drawable());
-    // the handle is empty for the same reason, and a frame drawn from it would carry no glyph (§6.2)
-    EXPECT_FALSE(measured.run->lines().front().font.valid());
+    // act assert the run carries a typeface, which is what phase 3 needed before the oracle could go (§9.1, AD-28)
+    EXPECT_TRUE(vendored->drawable());
+    // the handle is valid for the same reason, so the renderer has something to draw the glyphs with (§9.1)
+    EXPECT_TRUE(measured.run->lines().front().font.valid());
+}
+
+TEST(DualEngineConformanceChecks, AnUnknownFamilyLeavesTheEngineUnusable) {
+    // arrange, act a family the platform does not have, which is the shape of a missing font (§9.1)
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH, "NoSuchFamilyAlbor");
+    // assert
+    EXPECT_EQ(engine, nullptr);
 }
 
 TEST(DualEngineConformanceChecks, TheOracleRunIsDrawable) {

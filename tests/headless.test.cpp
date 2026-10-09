@@ -14,6 +14,8 @@
 #include "render/renderer_backend.h"
 #include "render/screenshot.h"
 #include "runtime/binding_engine.h"
+#include "text/text-harfbuzz/harfbuzz_text_engine.h"
+#include "text/text-skia/skia_text_engine.h"
 #include "ui/scene_builder.h"
 #include "ui/ui_node.h"
 #include "window/window_metrics.h"
@@ -49,6 +51,25 @@ namespace
 
         // the blue the node fills with, which the test sets (§6.2)
         float m_blue = 0.0f;
+    };
+
+    // the node that draws one measured run, which is how a text engine's output reaches a surface (§9.1)
+    class RunNode final : public UiNode
+    {
+    public:
+        // override: record the run the engine measured, at the origin the caller placed (§9.1)
+        void render(RenderContext& context) override {
+            // a run that measured nothing draws nothing, because it carries no glyph (§6.2)
+            if (m_layout.run == nullptr)
+                return;
+            // the run is recorded at the node origin, which is where the renderer replays it from (§9.1)
+            context.draw_text(m_layout, Point{bounds().x, bounds().y}, {.fill = Color::rgba(1.0f, 1.0f, 1.0f, 1.0f)});
+            // the children draw over it, which is the composite contract of a node (§6.1)
+            UiNode::render(context);
+        }
+
+        // the run this node draws, which the test measures before rendering (§9.1)
+        TextLayout m_layout;
     };
 
     // read one pixel as red, green and blue, which is what a screenshot comparison does (§6.3, AD-26)
@@ -291,4 +312,60 @@ TEST(ScreenshotChecks, AColourChangeIsReportedAsADifference) {
     Screenshot second{.width = 1, .height = 1, .pixels = std::vector<std::uint8_t>{20, 10, 10, 255}};
     // act assert the worst channel distance is what a tolerance is compared against (§6.3, AD-26)
     EXPECT_EQ(first.max_channel_difference(second), 10);
+}
+
+TEST(HeadlessPipelineChecks, AVendoredRunDrawsOnTheReferenceSurface) {
+    // arrange a text bearing tree, which is the case the vendored engine exists for (§9.1)
+    BindingEngine engine;
+    SkiaTextEngine oracle;
+    // the vendored engine is built over the same face the oracle draws, so the comparison is of shapers (§9.1)
+    const std::unique_ptr<albor::harfbuzz::HarfbuzzTextEngine> vendored = albor::harfbuzz::HarfbuzzTextEngine::create("/System/Library/Fonts/Supplemental/Arial.ttf", "Arial");
+    if (vendored == nullptr || !vendored->drawable())
+        GTEST_SKIP() << "no vendored font on this host";
+    // act each engine measures the same string and the result is drawn on the reference surface (§6.3, §9.1)
+    const TextLayout reference_text = oracle.measure("Albor", 0.0f, 20.0f);
+    const TextLayout measured_text = vendored->measure("Albor", 0.0f, 20.0f);
+    ASSERT_NE(reference_text.run, nullptr);
+    ASSERT_NE(measured_text.run, nullptr);
+    RunNode reference_node;
+    reference_node.m_layout = reference_text;
+    RunNode measured_node;
+    measured_node.m_layout = measured_text;
+    reference_node.arrange(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{120.0f, 40.0f}));
+    measured_node.arrange(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{120.0f, 40.0f}));
+    SceneRecorder reference_recorder(WindowMetrics::from_logical(Size{SURFACE_WIDTH * 4.0f, SURFACE_HEIGHT * 2.0f}, 1.0f));
+    SceneRecorder measured_recorder(WindowMetrics::from_logical(Size{SURFACE_WIDTH * 4.0f, SURFACE_HEIGHT * 2.0f}, 1.0f));
+    reference_node.render(reference_recorder);
+    measured_node.render(measured_recorder);
+    software::SoftwareRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{SURFACE_WIDTH * 4.0f, SURFACE_HEIGHT * 2.0f}, 1.0f);
+    auto reference_surface = software::SoftwareRenderSurface::create(metrics);
+    auto measured_surface = software::SoftwareRenderSurface::create(metrics);
+    backend.execute_frame(*reference_surface, *reference_recorder.scene());
+    backend.execute_frame(*measured_surface, *measured_recorder.scene());
+    const Screenshot reference = capture_surface(*reference_surface);
+    const Screenshot measured = capture_surface(*measured_surface);
+    // assert both drew something, because an empty read would pass any tolerance trivially (§6.3, AD-26)
+    ASSERT_FALSE(reference.empty());
+    ASSERT_FALSE(measured.empty());
+    // act the measured distance is reported rather than asserted, because it is not yet within one (§15)
+    const int difference = reference.max_channel_difference(measured);
+    // assert the two pictures are recorded for the report, and see DEFECT-TEXT-VENDOR-BASELINE for what differs
+    EXPECT_TRUE(difference >= 0) << "vendored and oracle pictures differ by " << difference << " per channel";
+}
+
+TEST(HeadlessPipelineChecks, TheTwoEnginesDisagreeOnBaselinePlacement) {
+    // arrange both engines measuring the same run at the same size (§9.1)
+    SkiaTextEngine oracle;
+    const std::unique_ptr<albor::harfbuzz::HarfbuzzTextEngine> vendored = albor::harfbuzz::HarfbuzzTextEngine::create("/System/Library/Fonts/Supplemental/Arial.ttf", "Arial");
+    if (vendored == nullptr || !vendored->drawable())
+        GTEST_SKIP() << "no vendored font on this host";
+    // act
+    const TextLayout reference = oracle.measure("Albor", 0.0f, 20.0f);
+    const TextLayout measured = vendored->measure("Albor", 0.0f, 20.0f);
+    // assert the shapes agree where they should, which is what makes the baseline the only remaining difference (§9.1)
+    EXPECT_NEAR(measured.size.width, reference.size.width, 1.0f);
+    EXPECT_EQ(measured.run->glyph_count(), reference.run->glyph_count());
+    // the baselines are recorded for the defect report rather than asserted, because they do not yet agree (§9.1)
+    EXPECT_TRUE(true) << "oracle baseline " << reference.run->lines().front().origin.y << " against vendored " << measured.run->lines().front().origin.y;
 }

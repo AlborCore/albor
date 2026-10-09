@@ -3,22 +3,20 @@
 Work that is agreed but not done yet. Every entry names its fix precisely, so it can be
 picked up without re-deciding anything.
 
-## The vendored text engine cannot issue a drawable typeface
+## The vendored text engine places the baseline differently from the oracle
 
-`text/text-harfbuzz/` shapes correctly and agrees with the Skia oracle on glyph count,
-glyph positions, measured width and reproducibility. Its runs carry an empty `FontHandle`,
-so they do not draw. Full record and the three options are in
-`DEFECT-TEXT-VENDOR-TYPEFACE.md`; the short version is that this Skia build exports only
-`SkFontMgr_New_CoreText` and has no way to turn font bytes into a typeface, so a vendored
-engine reading a font from a file has nothing drawable to hand the renderer.
+`text/text-harfbuzz/` shapes correctly and draws, and it agrees with the Skia oracle on glyph
+count, every glyph position and measured width. It disagrees on line box geometry: Arial's first
+baseline sits at 15.0 in the oracle and 18.105 in the vendored engine, so the two rendered pictures
+differ completely. Full record in `DEFECT-TEXT-VENDOR-BASELINE.md`.
 
-This blocks the rest of phase 3, because `text/text-skia/` may only be deleted once the
-vendored engine can draw — deleting it sooner would leave the framework measuring correctly
-and drawing nothing.
+This is what blocks the rest of phase 3, because `text/text-skia/` may only be deleted once the two
+engines produce the same picture.
 
-Decide first where a drawable typeface comes from: a FreeType or HarfBuzz path in the
-renderer (touches AD-28), a `FontHandle` that names a font file and lets each backend resolve
-it, or the platform font manager by family name (least work, gives up the from-a-file property).
+A decision is needed before the fix, not just the fix. The vendored engine models a line box with
+the ascender alone, which cannot match a paragraph engine that uses ascent, descent and leading.
+Either it models all three, or — probably cheaper and arguably more correct — the vendored engine
+becomes the reference and the oracle is compared against it instead of the other way round.
 
 ## The Metal backend traps when it is destroyed
 
