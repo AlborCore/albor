@@ -195,7 +195,15 @@ otherwise repeat.
 The lesson in both is the same shape: a capability was given to whichever component could
 see the inputs, which is how a boundary was crossed without anyone deciding to cross it.
 
-### Still open, filed separately
+#### Resolved after the spec reconciliation
+
+- **The two stage pipeline had no end to end coverage.** Every caller of
+  `RendererBackend::execute_frame` was a test double; the real Skia backend never ran in a test. The
+  primitives were proven one at a time and the pipeline was proven in halves. The CPU reference
+  backend closes it: `tests/headless.test.cpp` builds a scene from a real tree, draws it through the
+  real backend onto a real raster, and reads a pixel back (§6.1, §6.3, AD-26).
+
+## Still open, filed separately
 
 - D6: consumers for the layout dirty flag, so a subtree relayout replaces a full tree
   relayout; and the chart example must go through `build_if_dirty`. The flag is consumed

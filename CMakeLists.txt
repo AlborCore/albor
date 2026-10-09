@@ -107,8 +107,12 @@ add_subdirectory(focus)
 # the skia metal backend that implements the rendering hal (§3.2, AD-05)
 add_subdirectory(render/render-skia)
 
+# the cpu reference backend that ci compares against, which is not a platform adapter (§3.2, AD-26)
+add_subdirectory(render/render-software)
+
 # the macos appkit adapter with its display link pacing (§3.2, AD-16)
 add_subdirectory(platform/macos)
+add_subdirectory(platform/headless)
 
 # the compiler frontend that turns .ui source into native c++ (§11.1)
 add_subdirectory(compiler)

@@ -3,12 +3,17 @@
 ## Architecture and Design Specification — Version 4
 
 **Status:** Implementation Specification  
-**Version:** 4.1  
-**Date:** 2026-10-05 (4.0) / 2026-10-08 (4.1)  
+**Version:** 4.2  
+**Date:** 2026-10-05 (4.0) / 2026-10-08 (4.1, 4.2)  
 **Project:** AlborCore / Albor  
 **Supersedes:** v3.0 (and closes Phase 0 exploratory prototyping)
 
 ### Revision Log
+
+**4.2 — the headless platform and the CPU reference backend.** AD-26 mandated a software rasterizer
+reference and AD-16 mandated a headless platform; both modules now exist. §5.3 states what headless
+is and is not, §6.3 states the three properties that make the reference contractual, and §6.2 drops
+`resource_factory()`, which the previous revision declared and the interface never had.
 
 **4.1 — clarifications from Phases 1 to 3 implementation.** No settled decision was reopened. Five
 sections were amended because the text permitted a defect that was then found and fixed, and one
@@ -25,6 +30,9 @@ is marked "settled during implementation" in place, and AD-29 through AD-33 reco
 | §8.3 | Synthesized hover transitions; detachment announced before the mutation | a hover is not derivable from raw moves; a removed hovered node left a dangling pointer |
 | §8.4 | **New.** Style and theming contract | `style/` was named in §3.2 but had no written contract |
 | §9.1 | `ShapedRun` as the replayable unit; cache lookup must not allocate | measured and drawn text could disagree; a cache key that owned its string paid per lookup |
+| §5.3 | What headless is and is not | a test surface and a headless application surface are different things |
+| §6.2 | `resource_factory()` removed from `RendererBackend`; the declaration was never implemented | the spec showed a method the interface does not have |
+| §6.3 | The CPU reference backend and its three contractual properties | AD-26 made the module mandatory, and its portability is the point |
 
 Two conventions are worth stating, because both were arrived at by correcting a mistake:
 
@@ -351,7 +359,27 @@ that knew both the surface and the incoming metrics and was therefore given auth
 - **Windows:** Implemented via direct Win32 APIs, using DirectComposition, DXGI swapchains, and Windows Text Services Framework (TSF) for IME.
 - **Linux Wayland:** Implemented via Wayland client libraries, `libdecor` for client-side window decorations, `xkbcommon` for key mapping, and `xdg_positioner` for popup surfaces.
 - **Linux X11:** Tier 2 fallback implementation using `xcb` and `xkbcommon`.
-- **Headless:** Headless backend with no native window for headless CI testing and automation screenshots.
+- **Headless:** No native window, synthetic metrics, and an event loop that pumps once per call
+  rather than on a display link. It exists for CI testing and automation screenshots (§3.2, AD-26).
+
+**What Headless Is and Is Not (settled during implementation):**
+
+Headless is a **test surface, not a headless application surface.** That distinction decides its
+pacing and should be stated before anyone builds on it:
+
+- **Frames are pumped explicitly, not requested by a clock.** There is no display link, so
+  `request_frame` records a flag and a caller draws it. A frame is therefore *deterministic* and
+  ordered, which is exactly what a parity or screenshot check needs and exactly what a running
+  application does not.
+- **`native_handle()` is empty, not fabricated.** There is no platform object. A backend that
+  needs one, such as the Metal backend, must refuse a headless window rather than receive a
+  pointer to nothing.
+- **Resize and input are synthetic and raised by the caller.** A headless window exposes
+  `raise_resize`, `raise_event` and `raise_close_request`, so a test drives the same paths the
+  application uses instead of reaching around the adapter.
+- **It does not replace a runner.** Win32, Wayland and X11 (§3.2, AD-16) still need real CI
+  runners, because "written" and "verified on the target" are different claims and only the second
+  one is worth anything.
 
 ---
 
@@ -479,15 +507,19 @@ class RendererBackend {
 public:
     virtual ~RendererBackend() = default;
 
+    virtual bool ready() const = 0;
     virtual std::unique_ptr<RenderSurface> create_surface(NativeWindowHandle handle, const WindowMetrics& metrics) = 0;
     virtual void resize_surface(RenderSurface& surface, const WindowMetrics& metrics) = 0;
     virtual void execute_frame(RenderSurface& surface, const FrameScene& scene) = 0;
-
-    virtual ResourceFactory& resource_factory() = 0;
 };
 
 } // namespace albor
 ```
+
+`resource_factory()` is deliberately **not** on this interface. Retained resources are created through
+a `ResourceFactory` that the composition root owns (§6.4), and putting a factory accessor on every
+backend would imply a backend owns one, which the level 2 contract does not require. The earlier
+revision of this section declared it; the implementation does not have it and does not need it.
 
 `RendererBackend::execute_frame` receives a `FrameScene` whose only payload is the ordered
 `DrawCommand` list of §6.1, and its obligation is to replay that list in order. The replay is one
@@ -506,6 +538,27 @@ that owns the layer, which in the shipped architecture means the UI thread.
 - It includes native integration with HarfBuzz for Unicode text shaping, bidi layout, font fallback, and complex path rasterization.
 - Skia includes a software rasterizer (`SkBitmap` / `SkCanvas`) which directly powers Albor's software rendering engine for headless CI tests and pixel-diff regression testing (AD-26).
 - **Pluggability:** Because all rendering operations route through `RenderContext` and `RendererBackend`, an alternative backend (such as Google Dawn / WebGPU or direct Metal) can be added as a separate module (`render-dawn/`) in the future without modifying any UI nodes, custom rendering components, or application code.
+
+**The CPU Reference Backend (`render-software`, AD-26):**
+
+AD-26 makes the software rasterizer the deterministic reference that CI compares against, and that
+obliges the module to be more than a convenience. Three properties are contractual:
+
+- **It draws through the same `RenderContext` as the GPU backend.** The Metal backend and the
+  reference share one portable Skia context implementation; only the surface differs. A second
+  context implementation would be a second interpretation of §6.2, which is exactly the drift the
+  shared replay of §6.1 exists to prevent.
+- **It needs no native window.** `create_surface` ignores the `NativeWindowHandle` entirely and
+  allocates a raster from `WindowMetrics` alone. That is what makes the reference reproducible: the
+  same metrics and the same immutable scene must produce the same bytes, on any machine, with no
+  display attached.
+- **The portable half of the Skia module builds everywhere.** Only the Metal backend is Apple-only.
+  A CI runner is not an Apple machine, so gating the whole module on `APPLE` would have made the
+  reference untestable on the platform it exists for (§3.5, AD-16).
+
+The reference also exposes what the HAL does not: `read_pixels()` for a screenshot comparison and a
+finished-frame count for a test to synchronize on. These are concrete-backend affordances for the
+conformance suites, not part of `RenderSurface`.
 
 ### 6.4 Custom Rendering Contract (Level 2)
 

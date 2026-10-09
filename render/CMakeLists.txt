@@ -1,8 +1,10 @@
 # the rendering hal, the immutable frame scene and the two stage pipeline (§3.2)
 
-# gather cpp sources (all platforms), dropping the backend module because it owns its own target
+# gather cpp sources (all platforms), dropping every nested backend because each owns its own target
 file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
-list(FILTER CPP_SOURCES EXCLUDE REGEX "/render-skia/")
+
+# a backend module is a directory below render/, and its sources belong to its own target rather than this one
+list(FILTER CPP_SOURCES EXCLUDE REGEX "/render-(skia|software)/")
 
 # create the static library from the gathered cpp sources
 add_library(albor-render STATIC ${CPP_SOURCES})

@@ -2021,7 +2021,6 @@ TEST(ComponentContractChecks, AComponentRecordsBackgroundContentThenChildren) {
         explicit OrderNode(BindingEngine* engine) :
             Component(engine) {}
 
-
         // the phases this component saw, in the order the composite ran them (§6.1)
         std::vector<std::string> phases;
 
