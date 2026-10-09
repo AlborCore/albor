@@ -13,6 +13,12 @@ namespace albor::manifest
         // the keyword that introduces a component declaration (§11.2)
         constexpr std::string_view COMPONENT_KEYWORD = "component";
 
+        // the keyword that introduces a data record, which is the element type a repeat walks (§11.2, AD-13)
+        constexpr std::string_view RECORD_KEYWORD = "record";
+
+        // the field name that carries a record's identity, which is the one field a row is keyed by (§18.1, AD-13)
+        constexpr std::string_view KEY_FIELD = "key";
+
         // the keyword that introduces a property declaration, which carries the direction (§11.2)
         constexpr std::string_view PROPERTY_KEYWORD = "property";
 
@@ -47,6 +53,18 @@ namespace albor::manifest
         while (peek().kind != Token::Kind::End) {
             // the offset before the declaration is kept, because the reader must always make progress (§11.2)
             const std::size_t before = m_index;
+            // a record needs no native keyword, because it describes data rather than a native object (§11.2, AD-13)
+            if (at_keyword(RECORD_KEYWORD)) {
+                // the declaration is read into a local, because a broken one is dropped rather than kept (§11.2)
+                RecordDeclaration record = parse_record();
+                // a record that carries a name is kept, because a nameless one is a recovered fragment (§11.2)
+                if (!record.name.empty())
+                    file.records.push_back(std::move(record));
+                // a declaration that consumed nothing would leave the loop on the same unit forever (§11.2)
+                if (m_index == before)
+                    advance();
+                continue;
+            }
             // the native keyword is required, because a manifest declares nothing else (§11.2, AD-17)
             if (at_keyword(NATIVE_KEYWORD)) {
                 // the keyword is consumed, so the component keyword behind it is checked (§11.2)
@@ -152,6 +170,16 @@ namespace albor::manifest
         return name;
     }
 
+    std::string ManifestParser::expect_type_name() {
+        // the name is required, because the glue generator needs a type (§11.2, AD-17)
+        std::string name = expect_identifier();
+        // a type with no angle is scalar, which is the common case (§11.2)
+        if (!at_punctuation("<"))
+            return name;
+        // the bracketed remainder is read whole, because a nested type carries its own angles (§11.2)
+        return name + expect_bracketed_type();
+    }
+
     std::string ManifestParser::expect_bracketed_type() {
         // the opening angle is required, so a declared type is always delimited (§11.2)
         expect_punctuation("<");
@@ -252,6 +280,65 @@ namespace albor::manifest
         // the span ends at the closing brace, which the reader has already consumed (§11.2)
         component.span.end = m_last_consumed_end;
         return component;
+    }
+
+    RecordDeclaration ManifestParser::parse_record() {
+        // the declaration is assembled locally, because the caller takes it by value (§11.2)
+        RecordDeclaration record;
+        // the span starts at the keyword, so a diagnostic points at the whole declaration (§11.2)
+        record.span.start = peek().span.start;
+        // the keyword is consumed, because the caller has already matched it (§11.2)
+        advance();
+        // the name is required, because it is the element type a ui file writes after vector (§11.2, AD-17)
+        record.name = expect_identifier();
+        // the opening brace is required, because a record always has a body (§11.2)
+        expect_punctuation("{");
+        // the fields run until the closing brace or the end of the stream (§11.2)
+        while (true) {
+            // the closing brace ends the body, which is the normal exit (§11.2)
+            if (at_punctuation("}"))
+                break;
+            // the end unit ends the body too, because no field can follow it (§11.2)
+            if (peek().kind == Token::Kind::End)
+                break;
+            // the field is read into the declaration the caller is building (§11.2)
+            parse_record_field(record);
+        }
+        // a body that never closed is reported, because the declaration is incomplete (§11.2)
+        expect_punctuation("}");
+        // the span ends at the closing brace, which the reader has already consumed (§11.2)
+        record.span.end = m_last_consumed_end;
+        // a record without a key field has no identity, which is what a row is keyed by (§18.1, AD-11)
+        if (std::none_of(record.fields.begin(), record.fields.end(), [](const RecordField& field) { return field.is_key; }))
+            m_diagnostics.add(Diagnostic::Severity::Error, record.span, "E0308", "a record must declare a 'key' field, because its identity is explicit");
+        return record;
+    }
+
+    void ManifestParser::parse_record_field(RecordDeclaration& record) {
+        // the span starts at the name, so a diagnostic points at the whole field (§11.2)
+        RecordField field;
+        field.span.start = peek().span.start;
+        // the field name is required, because a binding addresses the field by it (§11.2)
+        field.name = expect_identifier();
+        // the colon separates the name from its type, which a binding checks against (§11.2)
+        expect_punctuation(":");
+        // the type is required, because the glue generator needs a c++ type (§11.2, AD-17)
+        field.type = expect_type_name();
+        // the field named key carries the record's identity, which a row is keyed by (§18.1, AD-11)
+        field.is_key = field.name == KEY_FIELD;
+        // an equals sign introduces a default, which the glue generator re-emits (§11.2)
+        if (accept_punctuation("=")) {
+            // the value is read as written, because the generator re-emits rather than reinterprets (§11.2)
+            field.default_value = expect_value_text();
+        }
+        // the separator is optional, so a field that omits it is still read (§11.2)
+        const bool has_separator = accept_punctuation(";");
+        // a field that carries no separator and no default is still complete, because the type ended it (§11.2)
+        (void)has_separator;
+        // the span ends at the last unit the field consumed (§11.2)
+        field.span.end = m_last_consumed_end;
+        // the field joins the record, because a record is exactly the fields it declares (§11.2)
+        record.fields.push_back(std::move(field));
     }
 
     void ManifestParser::parse_component_member(NativeComponent& component) {

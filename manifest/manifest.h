@@ -116,6 +116,38 @@ namespace albor::manifest
         SourceSpan span;
     };
 
+    // one field a record declares, which a .ui file reads by name (§11.2, AD-17)
+    struct RecordField
+    {
+        // the field name, which is what a binding writes as item.name (§11.2, AD-17)
+        std::string name;
+
+        // the field type as written, which the glue generator maps to a c++ type (§11.2, AD-17)
+        std::string type;
+
+        // the default as written, which the glue generator re-emits rather than reinterprets (§11.2)
+        std::string default_value;
+
+        // whether the field carries the record's identity, which is the one field a row is keyed by (§18.1, AD-13)
+        bool is_key = false;
+
+        // where the field was written, so a diagnostic points at it (§11.2)
+        SourceSpan span;
+    };
+
+    // one data record the manifest declares, which is the element type a .ui repeat walks (§11.2, AD-17, AD-13)
+    struct RecordDeclaration
+    {
+        // the declared name, which is the element type a .ui file writes after vector (§11.2, AD-17)
+        std::string name;
+
+        // the fields the record carries, where exactly one carries its identity (§11.2, AD-18)
+        std::vector<RecordField> fields;
+
+        // where the declaration was written, so a diagnostic points at it (§11.2)
+        SourceSpan span;
+    };
+
     // one parsed manifest, which is the single source of truth for the native types it declares (§11.2, AD-17)
     struct ManifestFile
     {
@@ -124,6 +156,9 @@ namespace albor::manifest
 
         // the components the file declares, in declaration order (§11.2, AD-17)
         std::vector<NativeComponent> components;
+
+        // the records the file declares, which are the element types a repeat walks (§11.2, AD-17, AD-13)
+        std::vector<RecordDeclaration> records;
     };
 
     // the parser that turns a scanned manifest into a declaration list, which reports rather than throws (§11.2)
@@ -167,11 +202,20 @@ namespace albor::manifest
         // read a bracketed type name, which may nest as Snapshot<T> does (§11.2)
         [[nodiscard]] std::string expect_bracketed_type();
 
+        // read a type name written bare, which may still nest as vector<string> does (§11.2)
+        [[nodiscard]] std::string expect_type_name();
+
         // read a value as written, which the glue generator re-emits rather than reinterprets (§11.2)
         [[nodiscard]] std::string expect_value_text();
 
-        // read one component declaration, which is the only declaration a manifest holds (§11.2)
+        // read one component declaration, which is what a manifest declares (§11.2)
         [[nodiscard]] NativeComponent parse_component();
+
+        // read one record declaration, which is the element type a repeat walks (§11.2, AD-13)
+        [[nodiscard]] RecordDeclaration parse_record();
+
+        // read one field of a record, which is what a binding addresses by name (§11.2)
+        void parse_record_field(RecordDeclaration& record);
 
         // read one member of a component, which is a property, a signal, a semantic role or a preview block (§11.2)
         void parse_component_member(NativeComponent& component);
