@@ -51,8 +51,12 @@ jobs:
       - name: configure (coverage preset)
         run: cmake --preset coverage
 
-      - name: build the instrumented unit test runner
-        run: cmake --build --preset coverage --target albor-tests --parallel 4
+      - name: build the instrumented tree
+        run: |
+          # a full build rather than --target albor-tests: albor-preview carries its units through
+          # $<TARGET_OBJECTS:>, which puts the objects on the test link line without a rule to build
+          # them, so the target alone fails on a clean tree where an incremental local tree passes
+          cmake --build --preset coverage --parallel 4
 
       - name: run the unit tests
         working-directory: .build-coverage/tests
