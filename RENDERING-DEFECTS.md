@@ -174,19 +174,39 @@ at this list, which is the index of them.
 The detailed staging for the text rework, including the vendored stack and the shaper
 decision forks, is filed as `TEXT-RENDERING-PLAN.md`.
 
-### Follow-up, filed separately
+### Resolved, record closed
 
-- D5: widgets must chain to the component render path so children and the component
-  background render. Filed as `DEFECT-D5-WIDGET-CHILDREN.md`.
+These two defects are fixed and their documents are deleted. The cause is kept here,
+because it is a design lesson the specification does not hold and a future writer would
+otherwise repeat.
+
+- **D5, widgets never rendered their children.** The widgets had been written as
+  leaves: each overrode the whole contract and none deferred to the composite parts. The
+  hierarchy already permitted composition, since `Widget` extends `Component` which
+  extends `UiNode` and `add_child` is inherited, so a leaf-only implementation broke the
+  contract silently instead of refusing it. The fix was `paint_content` plus a plate that
+  the background hook fills once (§6.1, §6.2, §8.1).
+- **D9.1, the metal layer was resized from the render thread.** The executor was given
+  enough authority to repair the surface, because when the resize path was written it was
+  the only component that knew both the surface and the incoming metrics. The ui thread's
+  authoritative metrics path was never connected to the surface. Resize runs on the ui
+  thread and the executor drops a frame whose metrics are stale (AD-18, §6.1).
+
+The lesson in both is the same shape: a capability was given to whichever component could
+see the inputs, which is how a boundary was crossed without anyone deciding to cross it.
+
+### Still open, filed separately
+
 - D6: consumers for the layout dirty flag, so a subtree relayout replaces a full tree
-  relayout; and the chart example must go through `build_if_dirty`. Filed as
+  relayout; and the chart example must go through `build_if_dirty`. The flag is consumed
+  and the gate is wired; the partial repaint remains. Filed as
   `DEFECT-D6-PARTIAL-LAYOUT.md`.
-- D7: a style module and pointer enter/leave events for hover and pressed states.
-  Filed as `DEFECT-D7-STYLE-INTERACTION-STATES.md`.
-- D9.1: surface resize must run on the thread that owns the layer, or the resize must
-  be marshalled back to the ui thread. Filed as `DEFECT-D9-1-LAYER-THREADING.md`.
-- D9.4: a policy for canvas draw callbacks, which run during recording on the ui
-  thread. Filed as `DEFECT-D9-4-CANVAS-POLICY.md`.
+- D7: a style module and pointer enter/leave events for hover and pressed states. The
+  theme, the transitions, the state machine and the palette builder are done; runtime
+  scheme switching is not. Filed as `DEFECT-D7-STYLE-INTERACTION-STATES.md`.
+- D9.4: a policy for canvas draw callbacks, which run during recording on the ui thread.
+  The contract is documented and two options are undecided. Filed as
+  `DEFECT-D9-4-CANVAS-POLICY.md`.
 
 ## Verification
 
