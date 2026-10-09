@@ -12,6 +12,8 @@
 #include <hb-ft.h>
 #include <hb.h>
 
+#include FT_OUTLINE_H
+
 #include "render/font_handle.h"
 #include "render/shaped_run.h"
 #include "resources/embedded_font.h"
@@ -180,6 +182,146 @@ namespace albor::harfbuzz
         // the library goes last, because it owns nothing else at this point (§9.1)
         if (m_state->library != nullptr)
             FT_Done_FreeType(m_state->library);
+    }
+
+    namespace
+    {
+        // the outline the decomposer writes into, which is a flat point list because a ui path is (§6.4, AD-06)
+        struct OutlineSink
+        {
+            // the points walked so far, in the font's own units (§6.4)
+            std::vector<Point> points;
+
+            // the scale that converts those units into the logical pixels the caller asked for (§9.1, AD-27)
+            float scale = 1.0f;
+
+            // whether the walk is sampling in font units, which the curve flattener needs and a line does not (§9.1)
+            bool in_font_units = false;
+
+            // the move callback, which starts a contour at the pen position (§6.4)
+            static int move_to(const FT_Vector* to, void* user) {
+                // the sink is what freetype hands back, because the callbacks carry no context of their own (§6.4)
+                auto* sink = static_cast<OutlineSink*>(user);
+                // the point joins the walk, scaled unless the flattener is sampling (§6.4, §9.1)
+                sink->points.push_back(sink->in_font_units ? Point{.x = static_cast<float>(to->x), .y = static_cast<float>(to->y)} : Point{.x = static_cast<float>(to->x) * sink->scale, .y = static_cast<float>(to->y) * sink->scale});
+                return 0;
+            }
+
+            // the line callback, which continues the current contour (§6.4)
+            static int line_to(const FT_Vector* to, void* user) {
+                // the sink is what freetype hands back (§6.4)
+                auto* sink = static_cast<OutlineSink*>(user);
+                // the point joins the walk, scaled unless the flattener is sampling (§6.4, §9.1)
+                sink->points.push_back(sink->in_font_units ? Point{.x = static_cast<float>(to->x), .y = static_cast<float>(to->y)} : Point{.x = static_cast<float>(to->x) * sink->scale, .y = static_cast<float>(to->y) * sink->scale});
+                return 0;
+            }
+
+            // how many segments one curve is flattened into, fixed rather than adaptive so it cannot vary (§15)
+            static constexpr int CURVE_SEGMENTS = 8;
+
+            // the conic callback, flattened because a ui path is polygonal and a control point is off curve (§6.4)
+            static int conic_to(const FT_Vector* control, const FT_Vector* to, void* user) {
+                // the sink is what freetype hands back (§6.4)
+                auto* sink = static_cast<OutlineSink*>(user);
+                // the previous point is the contour's start of this curve, because freetype reports a segment (§6.4)
+                const Point start = sink->points.empty() ? Point{0.0f, 0.0f} : sink->points.back();
+                // every segment is sampled, so the polyline follows the curve rather than cutting across it (§6.4)
+                for (int step = 1; step <= CURVE_SEGMENTS; step++) {
+                    // the parameter runs over the segment, which is why the count is fixed (§6.4, §15)
+                    const float t = static_cast<float>(step) / static_cast<float>(CURVE_SEGMENTS);
+                    // the inverse parameter is what the quadratic basis needs (§6.4)
+                    const float inverse = 1.0f - t;
+                    // the curve is evaluated in font units, because that is what freetype reported (§9.1)
+                    const float x = inverse * inverse * start.x + 2.0f * inverse * t * static_cast<float>(control->x) + t * t * static_cast<float>(to->x);
+                    // the vertical coordinate follows the same basis (§9.1)
+                    const float y = inverse * inverse * start.y + 2.0f * inverse * t * static_cast<float>(control->y) + t * t * static_cast<float>(to->y);
+                    // the sampled point joins the walk, converted into the logical pixels the sink carries (§6.4, AD-27)
+                    sink->points.push_back(Point{.x = x * sink->scale, .y = y * sink->scale});
+                }
+                return 0;
+            }
+
+            // the cubic callback, which is flattened by the same fixed count and for the same reason (§6.4, §15)
+            static int cubic_to(const FT_Vector* control_one, const FT_Vector* control_two, const FT_Vector* to, void* user) {
+                // the sink is what freetype hands back (§6.4)
+                auto* sink = static_cast<OutlineSink*>(user);
+                // the previous point is the curve's start, because freetype reports a segment (§6.4)
+                const Point start = sink->points.empty() ? Point{0.0f, 0.0f} : sink->points.back();
+                // every segment is sampled, so the polyline follows the curve (§6.4)
+                for (int step = 1; step <= CURVE_SEGMENTS; step++) {
+                    // the parameter runs over the segment, which is why the count is fixed (§6.4, §15)
+                    const float t = static_cast<float>(step) / static_cast<float>(CURVE_SEGMENTS);
+                    // the inverse parameter is what the cubic basis needs (§6.4)
+                    const float inverse = 1.0f - t;
+                    // the three weights of a cubic at this parameter, which are the basis functions (§6.4)
+                    const float w0 = inverse * inverse * inverse;
+                    // the middle weight multiplies the first control point (§6.4)
+                    const float w1 = 3.0f * inverse * inverse * t;
+                    // the second middle weight multiplies the second control point (§6.4)
+                    const float w2 = 3.0f * inverse * t * t;
+                    // the last weight multiplies the curve's end (§6.4)
+                    const float w3 = t * t * t;
+                    // the curve is evaluated in font units, because that is what freetype reported (§9.1)
+                    const float x = w0 * start.x + w1 * static_cast<float>(control_one->x) + w2 * static_cast<float>(control_two->x) + w3 * static_cast<float>(to->x);
+                    // the vertical coordinate follows the same basis (§9.1)
+                    const float y = w0 * start.y + w1 * static_cast<float>(control_one->y) + w2 * static_cast<float>(control_two->y) + w3 * static_cast<float>(to->y);
+                    // the sampled point joins the walk, converted into the logical pixels the sink carries (§6.4, AD-27)
+                    sink->points.push_back(Point{.x = x * sink->scale, .y = y * sink->scale});
+                }
+                return 0;
+            }
+        };
+    } // namespace
+
+    std::vector<Point> HarfbuzzTextEngine::glyph_outline(std::uint32_t glyph_id, float font_size) const {
+        // an engine with no face has no outlines, which is a refusal rather than an empty glyph (§9.1)
+        if (m_state->face == nullptr)
+            return {};
+        // a size of no pixels cannot scale an outline to, so there is nothing to return (§9.1, AD-27)
+        if (font_size <= 0.0f)
+            return {};
+        // the glyph is loaded unhinted, because hinting depends on the rasterizer and AD-34 forbids that (§15, AD-34)
+        if (FT_Load_Glyph(m_state->face, static_cast<FT_UInt>(glyph_id), FT_LOAD_NO_SCALE | FT_LOAD_NO_HINTING) != 0)
+            return {};
+        // a glyph with no outline draws nothing, which is what a space is (§6.2)
+        if (m_state->face->glyph->format != FT_GLYPH_FORMAT_OUTLINE)
+            return {};
+        // the sink carries the points and the scale, because the callbacks carry neither (§6.4)
+        OutlineSink sink;
+        // the scale converts font units into the logical pixels the caller asked for (§9.1, AD-27)
+        sink.scale = font_size / static_cast<float>(m_state->face->units_per_EM);
+        // the flattener samples in font units, because the curves are evaluated before the scale is applied (§9.1)
+        sink.in_font_units = true;
+        // the scale is left off until the walk is finished, because a sampled point must not be scaled twice (§9.1, AD-27)
+        sink.scale = 1.0f;
+        // the callbacks are the standard freetype decompose set, which walks an outline into points (§6.4)
+        FT_Outline_Funcs callbacks{};
+        // the contour, line, conic and cubic callbacks are the four freetype reports (§6.4)
+        callbacks.move_to = &OutlineSink::move_to;
+        // the line callback continues a contour (§6.4)
+        callbacks.line_to = &OutlineSink::line_to;
+        // the conic callback flattens a quadratic (§6.4)
+        callbacks.conic_to = &OutlineSink::conic_to;
+        // the cubic callback flattens a cubic (§6.4)
+        callbacks.cubic_to = &OutlineSink::cubic_to;
+        // the shift and delta are zero because the glyph was loaded unscaled (§9.1)
+        callbacks.shift = 0;
+        // the delta is zero because the coordinates are used as they are (§9.1)
+        callbacks.delta = 0;
+        // the walk fills the sink, and a failure leaves it empty rather than half drawn (§6.4)
+        if (FT_Outline_Decompose(&m_state->face->glyph->outline, &callbacks, &sink) != 0)
+            return {};
+        // the walk is scaled once at the end, so a curve is sampled in units and scaled as a whole (§9.1, AD-27)
+        std::vector<Point> scaled;
+        // the final scale is the one the caller asked for, applied to every sampled point (§6.4, AD-27)
+        const float final_scale = font_size / static_cast<float>(m_state->face->units_per_EM);
+        // the reserve is the walk's length, because the conversion makes exactly that many points (§6.4)
+        scaled.reserve(sink.points.size());
+        // every point is converted, which is what makes the outline a drawable shape (§6.4)
+        for (const Point& point : sink.points)
+            scaled.push_back(Point{.x = point.x * final_scale, .y = point.y * final_scale});
+        // the scaled points are the outline the renderer draws (§6.4, AD-06)
+        return scaled;
     }
 
     bool HarfbuzzTextEngine::ready() const {

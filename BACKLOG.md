@@ -21,6 +21,19 @@ it either. The fix is to model ascent, descent and leading in the vendored line 
 The Metal teardown trap below also stops being a nice to have: it blocks AD-26, and AD-26 is now the
 definition of correct rasterization for AD-34.
 
+## Embedded text is not wired into the renderer yet
+
+`glyph_outline` extracts a real, deterministically tessellated outline from the embedded font's own
+bytes, unhinted, and it is proven by six tests including one that distinguishes tessellation from
+control points. What is missing is the wiring: `SkiaRenderContext::draw_text` still resolves a run's
+`FontHandle` as an `SkTypeface` and draws through Skia's glyph path, so a run produced by the vendored
+engine is still drawn the platform way.
+
+The change is to record each glyph outline as path commands, which the framework already carries
+(`PathResource`, `draw_path`). It trades Skia's optimized glyph path for determinism, which is the
+trade AD-34 asks for, and it makes text considerably heavier in the command stream until the
+pre-rasterized atlas of the later phase replaces it.
+
 ## The Metal backend traps when it is destroyed
 
 `SkiaRendererBackend` cannot be destroyed. Constructing one and letting it leave scope

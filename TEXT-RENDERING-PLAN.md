@@ -106,6 +106,21 @@ matters is green: an engine reading the font from the registry and an engine rea
 a path produce **identical layouts and an identical content hash**, which is layout identity with no
 tolerance in it.
 
+**The typeface route is settled and its first piece is built.** The renderer build has no way to make a
+typeface from font bytes: `SkTypeface::MakeFromData` does not exist in this version,
+`SkFontMgr_New_Custom_Data` is declared but absent from the archive, and `SkTypeface` has twenty pure
+virtuals, so subclassing it means reimplementing `SkTypeface_FreeType` and `SkScalerContext_FreeType`.
+Instead, **embedded text draws as outlines**: `glyph_outline` walks the face with
+`FT_Outline_Decompose` and flattens curves at a **fixed** segment count, so the shape is a function of
+the embedded bytes and not of a rasterizer. Hinting is off, which is the point: hinting is
+platform-dependent, and AD-34 exists to remove that dependence.
+
+Curves are genuinely tessellated rather than sampled at their control points, which the first
+implementation got wrong: a quadratic control point is pulled off the curve, so walking through them
+draws a shape that cuts the corner. The test that distinguishes the two measures the widest gap
+between neighbouring points against the glyph's width, because a tessellated curve leaves many short
+chords and a control point leaves one long one.
+
 Two things are deliberately not done yet. **The compiler does not yet emit the registration**: the
 registry exists and generated code will call it, but the `.ui` walk that discovers the fonts a
 component needs is not written. And **drawing still asks the platform for a typeface**, because this

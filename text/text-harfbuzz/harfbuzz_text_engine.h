@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 
+#include "core/geometry.h"
 #include "text/text_engine.h"
 
 namespace albor::harfbuzz
@@ -22,6 +23,9 @@ namespace albor::harfbuzz
 
         // the content hash of the font this engine shapes with, which is its identity in a layout (§15, AD-34)
         [[nodiscard]] std::uint64_t font_hash() const;
+
+        // extract one glyph's outline as a polyline, which is how embedded text draws (§15, AD-34)
+        [[nodiscard]] std::vector<Point> glyph_outline(std::uint32_t glyph_id, float font_size) const;
 
         ~HarfbuzzTextEngine() override;
 

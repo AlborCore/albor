@@ -298,3 +298,148 @@ TEST(EmbeddedFontChecks, AnEmbeddedEngineNeedsNoFileOnDisk) {
     // exit
     resources::FontRegistry::clear();
 }
+
+TEST(GlyphOutlineChecks, AVisibleGlyphHasAnOutline) {
+    // arrange an engine over the carried font, and the glyph index of a letter inside the string (§9.1)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("A", 0.0f, 20.0f);
+    ASSERT_NE(layout.run, nullptr);
+    ASSERT_GT(layout.run->glyph_count(), 0u);
+    // act the first glyph is the letter, because a one letter string shapes one glyph (§9.1)
+    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 20.0f);
+    // assert the outline is a real shape, because an empty outline would draw nothing (§6.2, §15)
+    ASSERT_FALSE(outline.empty());
+    EXPECT_GT(outline.size(), 3u);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(GlyphOutlineChecks, ASpaceHasNoOutline) {
+    // arrange a space shapes to a glyph that carries no outline (§6.2)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure(" ", 0.0f, 20.0f);
+    ASSERT_NE(layout.run, nullptr);
+    // act the space glyph is drawn as nothing, so it has no points (§6.2)
+    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 20.0f);
+    // assert an empty outline is returned rather than a degenerate shape (§6.2)
+    EXPECT_TRUE(outline.empty());
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(GlyphOutlineChecks, AnOutlineIsReproducible) {
+    // arrange one glyph asked for twice, which is the property AD-34 depends on (§15, AD-34)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("A", 0.0f, 20.0f);
+    ASSERT_NE(layout.run, nullptr);
+    const std::uint32_t glyph = layout.run->lines().front().glyphs.front().id;
+    // act the same glyph is walked twice from the same bytes (§15, AD-34)
+    const std::vector<Point> first = engine->glyph_outline(glyph, 20.0f);
+    const std::vector<Point> second = engine->glyph_outline(glyph, 20.0f);
+    // assert the two outlines are identical, because the shape comes from the font and not from a rasterizer (§15)
+    ASSERT_EQ(first.size(), second.size());
+    for (std::size_t index = 0; index < first.size(); index++) {
+        // act assert each point matches exactly, since an outline carries no tolerance (§15, AD-34)
+        EXPECT_FLOAT_EQ(first[index].x, second[index].x);
+        // the vertical coordinate matches for the same reason (§15, AD-34)
+        EXPECT_FLOAT_EQ(first[index].y, second[index].y);
+    }
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(GlyphOutlineChecks, AnOutlineScalesWithTheFontSize) {
+    // arrange one glyph at two sizes, which is what the scale in the sink is for (§9.1, AD-27)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("A", 0.0f, 40.0f);
+    ASSERT_NE(layout.run, nullptr);
+    const std::uint32_t glyph = layout.run->lines().front().glyphs.front().id;
+    // act
+    const std::vector<Point> small = engine->glyph_outline(glyph, 20.0f);
+    const std::vector<Point> large = engine->glyph_outline(glyph, 40.0f);
+    // assert doubling the size doubles the shape, because the outline is in logical pixels (§9.1, AD-27)
+    ASSERT_EQ(small.size(), large.size());
+    float small_height = 0.0f;
+    float large_height = 0.0f;
+    for (std::size_t index = 0; index < small.size(); index++) {
+        // the extents are accumulated because a glyph outline is not anchored at the origin (§9.1)
+        small_height = std::max(small_height, std::abs(small[index].y));
+        // the larger outline is measured the same way, so the ratio means something (§9.1)
+        large_height = std::max(large_height, std::abs(large[index].y));
+    }
+    EXPECT_NEAR(large_height, small_height * 2.0f, 0.01f);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(GlyphOutlineChecks, AnUnknownGlyphHasNoOutline) {
+    // arrange an engine whose face carries fewer glyphs than the index asks for (§6.2)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act an index past the end of the font cannot be loaded (§9.1)
+    const std::vector<Point> outline = engine->glyph_outline(1000000u, 20.0f);
+    // assert nothing is returned rather than a crash or a degenerate shape (§6.2)
+    EXPECT_TRUE(outline.empty());
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(GlyphOutlineChecks, ACurveGlyphIsTessellatedRatherThanSampled) {
+    // arrange a round letter, whose outline is a circle and whose every point sits at one radius (§6.4)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("o", 0.0f, 100.0f);
+    ASSERT_NE(layout.run, nullptr);
+    // act the round letter is walked, which is where a conic or a cubic is reported (§6.4)
+    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 100.0f);
+    ASSERT_FALSE(outline.empty());
+    // assert a real tessellation happened, which a polyline through control points would not produce (§6.4, §15)
+    EXPECT_GT(outline.size(), 32u);
+    // act the widest gap between consecutive points is measured, which is what distinguishes a tessellation (§6.4)
+    float widest_gap = 0.0f;
+    float leftmost = outline.front().x;
+    float rightmost = outline.front().x;
+    for (std::size_t index = 1; index < outline.size(); index++) {
+        // the gap is the distance between neighbours, which a curve walk keeps small and even (§6.4)
+        const float gap = std::hypot(outline[index].x - outline[index - 1].x, outline[index].y - outline[index - 1].y);
+        widest_gap = std::max(widest_gap, gap);
+        // the extent is tracked, because the gap is measured against the glyph's own width (§6.4)
+        leftmost = std::min(leftmost, outline[index].x);
+        // the other edge is tracked beside it (§6.4)
+        rightmost = std::max(rightmost, outline[index].x);
+    }
+    const float glyph_width = rightmost - leftmost;
+    ASSERT_GT(glyph_width, 1.0f);
+    // assert every gap is a small fraction of the glyph, which control points would not be (§15, AD-34)
+    EXPECT_LT(widest_gap, glyph_width * 0.2f);
+    // exit
+    resources::FontRegistry::clear();
+}
