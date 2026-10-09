@@ -3,10 +3,38 @@
 ## Architecture and Design Specification — Version 4
 
 **Status:** Implementation Specification  
-**Version:** 4.0  
-**Date:** 2026-10-05  
+**Version:** 4.1  
+**Date:** 2026-10-05 (4.0) / 2026-10-08 (4.1)  
 **Project:** AlborCore / Albor  
 **Supersedes:** v3.0 (and closes Phase 0 exploratory prototyping)
+
+### Revision Log
+
+**4.1 — clarifications from Phases 1 to 3 implementation.** No settled decision was reopened. Five
+sections were amended because the text permitted a defect that was then found and fixed, and one
+section was added because the module it describes had no written contract at all. Every addition
+is marked "settled during implementation" in place, and AD-29 through AD-33 record them.
+
+| Section | Change | Reason |
+| :--- | :--- | :--- |
+| §5.3 | Surface ownership rule; stale-metric frames are dropped | resize was running on a thread that did not own the layer |
+| §6.1 | The scene command vocabulary, defined | a scene had no command type; frames and pictures needed one shared list |
+| §6.2 | Replay obligation of the backend | the vocabulary needed a stated execution contract |
+| §8.1 | The `Component` composite; `render` declared `final` | widgets as leaves silently dropped their children |
+| §8.2 | When the layout phases run, plus the size-change invariant | the layout dirty flag had no consumer; a repaint-only invalidation would have kept stale bounds |
+| §8.3 | Synthesized hover transitions; detachment announced before the mutation | a hover is not derivable from raw moves; a removed hovered node left a dangling pointer |
+| §8.4 | **New.** Style and theming contract | `style/` was named in §3.2 but had no written contract |
+| §9.1 | `ShapedRun` as the replayable unit; cache lookup must not allocate | measured and drawn text could disagree; a cache key that owned its string paid per lookup |
+
+Two conventions are worth stating, because both were arrived at by correcting a mistake:
+
+- **A document that describes intent rather than the tree will be believed.** A status line once
+  described a contract a header did not contain, and no test failed, because tests pass either
+  way. Where this document states a rule, the rule is stated as the code enforces it.
+- **A doc comment form the comment rule exempts is still missing.** `STYLE-GUIDE.md` forbids
+  consecutive comment lines, so a multi-line contract cannot be written in a header where a caller
+  would read it. The affected contracts are in `DEFECT-D9-4-CANVAS-POLICY.md` instead. This is a
+  gap in the style guide, not a settled position.
 
 ---
 
@@ -303,6 +331,21 @@ public:
 } // namespace albor
 ```
 
+**Surface Ownership Rule (clarified during implementation):**
+
+A render surface is owned by the thread that created the layer behind it, and **surface
+resize runs on that thread**. `RendererBackend::resize_surface` (AD-05) is therefore not
+callable from the render executor as an act of self repair, because the executor does not own
+the layer. The UI thread holds authoritative `WindowMetrics`, applies them to the surface, and
+the executor only ever receives an already-correct scene.
+
+The consequence for the executor is a rule it must obey rather than a capability it may use: a
+frame whose scene metrics do not match the surface metrics is **dropped**, not stretched. A
+stale-metric frame is discarded and a fresh one is requested, so a resize can never present a
+scene built against the previous surface size. This was not an abstract concern; building the
+resize path on the executor produced a real defect, because the executor was the only component
+that knew both the surface and the incoming metrics and was therefore given authority over both.
+
 **Platform Implementation Strategy (AD-16 Decided):**
 - **macOS:** Implemented via direct Objective-C++/AppKit integration. Presentation attaches via `CAMetalLayer`. Pacing is driven by `CVDisplayLink` running on a CoreVideo callback thread and marshaling frame scheduling safely to the UI thread.
 - **Windows:** Implemented via direct Win32 APIs, using DirectComposition, DXGI swapchains, and Windows Text Services Framework (TSF) for IME.
@@ -357,6 +400,48 @@ Immutable FrameScene Built
    - Submits work to the graphics queue and triggers presentation.
    - **Crucial Rule:** Stage 2 never executes application callbacks or touches mutable UI state.
 
+**The Scene Command Vocabulary (AD-07, settled during implementation):**
+
+A `FrameScene` is not an interface, a callback list, or a backend handle. It is **one ordered
+list of `DrawCommand` values**, and that list is the only thing stage 2 executes. The
+vocabulary is a tagged union over exactly the primitive kinds `RenderContext` declares in §6.2:
+
+```cpp
+enum class DrawCommandKind { Rect, RoundedRect, Text, LineBatch, Path, Picture, Image };
+
+class DrawCommand {
+public:
+    using Geometry = std::variant<RectGeometry, TextGeometry, BatchGeometry,
+                                  PathGeometry, PictureGeometry, ImageGeometry>;
+
+    DrawCommandKind kind() const;
+    const Rect& clip() const;      // stamped at record time, scissored by the replay
+    const Paint& paint() const;
+    const Transform& transform() const;  // pictures nest under it
+    // ... geometry accessors, one per alternative
+};
+```
+
+Four properties of this decision are load-bearing, and each of them was reached by fixing a
+real defect rather than by preference:
+
+- **One vocabulary for frames and pictures.** A `PictureResource` (§6.4) stores the same
+  `DrawCommand` list a frame stores. Replay for a frame and replay for a nested picture run
+  through one function, so the two can never disagree about what a clip or a radius means.
+  Two vocabularies is how a rounded plate ends up square in a picture.
+- **The clip is stamped per command at record time, not replayed as a stack operation.**
+  `save`, `restore`, and `clip` are recording-time bookkeeping inside the scene recorder. Stage 2
+  receives commands that each carry the clip they were recorded under, which makes the immutable
+  scene genuinely immutable: a consumer can reorder, filter, or cache commands without
+  reconstructing a transform stack that was never sent.
+- **Order is the payload.** There is no category field and no per-kind list. Paint order is the
+  list order, which is the only order a 2D compositor can honour.
+- **Cull at record time.** A command whose clip and paint are empty is dropped during recording,
+  so an invisible node costs nothing in stage 2 and the frame carries no dead weight.
+
+This is the concrete form of AD-07 and AD-18a. It does not relax either: it is what makes them
+implementable without a callback reaching across the thread boundary.
+
 ### 6.2 Rendering HAL: `RendererBackend` and `RenderContext`
 
 The framework rendering architecture is strictly abstracted from underlying GPU driver libraries:
@@ -403,6 +488,16 @@ public:
 
 } // namespace albor
 ```
+
+`RendererBackend::execute_frame` receives a `FrameScene` whose only payload is the ordered
+`DrawCommand` list of §6.1, and its obligation is to replay that list in order. The replay is one
+shared routine used for both a frame and a nested `PictureResource`, so the backend never has a
+second interpretation of a command. A backend is free to translate the vocabulary into whatever
+its native API wants, but it may not reorder commands, may not reinterpret a clip, and may not
+skip a command that is not visibly empty, because all three change the picture a frame means.
+
+`resize_surface` is subject to the surface ownership rule in §5.3: the caller must be the thread
+that owns the layer, which in the shipped architecture means the UI thread.
 
 ### 6.3 Baseline Backend: Skia (AD-05, AD-28 Decided)
 
@@ -521,6 +616,46 @@ protected:
 } // namespace albor
 ```
 
+**The `Component` Composite (settled during implementation):**
+
+`UiNode` above is the node contract, not the composition contract. Every hand-written and
+generated component derives from `Component`, which is where the three phases of a composite
+are fixed so that a subclass cannot accidentally drop one of them:
+
+```cpp
+class Component : public UiNode {
+public:
+    // the paint the background hook records, and the radius it records it with
+    virtual Color background() const;      // transparent by default
+    virtual float corner_radius() const;    // zero, a hard rectangle, by default
+
+    // runs background, then content, then children; final, so no subclass may replace it (§6.1)
+    void render(RenderContext& context) final;
+
+protected:
+    virtual void paint_background(RenderContext& context);   // records background()
+    virtual void paint_content(RenderContext& context) {}   // the subclass's own drawing
+};
+```
+
+`Component::render` runs **background, then content, then children**, and it is declared
+`final`. A component overrides `paint_content`, not `render`. This exists because of a real
+defect: the widgets had been written as leaves, each overriding the whole contract and none
+deferring to the composite parts. The hierarchy permitted composition all along, since
+`add_child` is inherited, so a leaf-only widget broke the contract **silently** — it compiled, it
+rendered, and its subtree simply never appeared.
+
+`final` is what makes the rule durable rather than conventional. A plain `override` is still
+virtual in C++, so a subclass could still replace `render` and reintroduce the defect while
+satisfying the compiler; `final` turns that into a compile error. Making the declaration `final`
+is a change that immediately paid for itself: two call sites were using the old pattern, one in
+an example and one in a test double, and both were rewritten to `paint_content` rather than
+worked around.
+
+The same reasoning governs the phase order. A plate is recorded once by the background hook and
+consumed once, so a themed control changes colour by resolving a role rather than by drawing a
+second shape over the first.
+
 ### 8.2 Layout Contract
 
 Layout operates in logical coordinates (`px`) and executes a two-phase contract:
@@ -532,12 +667,141 @@ Layout operates in logical coordinates (`px`) and executes a two-phase contract:
    - `Stack`: Layered overlay layout.
    - `Grid`: Multi-cell grid layout with row/column span support.
 
+**When the Phases Run (settled during implementation):**
+
+Layout is **not** a full tree pass on every frame. Each node carries a render-dirty and a
+layout-dirty flag; invalidation bubbles to the root, and the scene build consults the root's
+state before it measures:
+
+- layout dirty, or the window metrics changed since the last build: run measure and arrange;
+- layout clean: **skip both** and reuse the stored bounds, running only the record pass.
+
+This is the concrete form of §6.1's "resolves invalidated layout subtrees", and it is the
+difference between a colour change costing a repaint and costing a relayout of every node.
+
+Two rules make the skip sound, and both are contracts rather than implementation notes:
+
+1. **Every path that can change a measured size must invalidate layout, not only repaint.** A
+   property write whose value can alter a node's measured extent calls `invalidate_layout()`; a
+   write that only affects paint calls `invalidate()`. A repaint-only invalidation on a
+   size-changing property leaves a stale bound, silently, with every test still green. The
+   compiler in §11.3 generates property observers, so **the generated binding is where this rule
+   is most likely to be broken**, and it is a rule the generator must therefore satisfy rather
+   than one each widget satisfies by hand.
+2. **A change of `WindowMetrics` forces a layout pass regardless of the flags.** The build
+   remembers the metrics of the previous build and lays out again when they differ. Without this
+   a resize that no handler invalidated would keep the bounds of the old surface — which the
+   unconditional passes used to hide, so introducing the skip without this guard would have
+   turned a forgotten invalidation into a visible layout bug.
+
+The remaining refinement, deliberately not built, is subtree-level relayout and partial repaint:
+a side table keyed by node identity holding cached screen bounds, per-item dirty tracking, dirty
+regions capped at a small fixed number of rectangles, and back-buffer-age history so a
+multi-buffered swapchain repaints only what changed across swaps. It needs per-node measured-size
+retention and range re-recording of the command list, both of which the scene model of §6.1 now
+provides.
+
 ### 8.3 Input Normalization and Focus
 
 - **Input Events:** Native mouse, touch, wheel, key, and text input events are normalized by platform adapters into portable `PointerEvent`, `KeyEvent`, and `TextCompositionEvent` objects.
 - **High-Frequency Coalescing:** High-frequency mouse moves and touch events are coalesced to one event per display frame interval, with intermediate samples preserved for precise drawing tools.
 - **Focus Management:** A central `FocusManager` per window controls tab key traversal, focus scopes, focus restoration on window reactivation, and accessible keyboard navigation.
 - **IME Architecture:** Text input supports active IME pre-edit composition strings, candidate windows, and cursor positioning as distinct events from physical key strokes.
+
+**Hover Transitions Are Synthesized, Not Delivered (settled during implementation):**
+
+A platform delivers pointer moves. A widget needs to know when the pointer *entered* and *left*
+it, and those are different facts: a hover visual cannot be built from raw moves, because a move
+inside a widget and a move that crosses onto it are indistinguishable to the widget. The
+normalized event set therefore carries `PointerEnter` and `PointerLeave`, and the input
+controller **synthesizes** them from the pointer position plus the hit test it already runs for
+routing (§6.1 stage one).
+
+The synthesis is a diff, not a resend:
+
+- the dispatcher builds the **chain** of nodes whose bounds contain the point, deepest first,
+  stopping at the topmost node that contains it;
+- the controller diffs the new chain against the previous one and replays `PointerLeave` to
+  every node that left and `PointerEnter` to every node that arrived;
+- a move whose chain is unchanged produces no transition at all, because a hover is not a move;
+- a press synthesizes the enter it needs, so a hover visual does not lag the click behind it;
+- a key press synthesizes nothing, because a key carries no position.
+
+The chain order matters and is fixed: **deepest first**. An exit has to reach the inner node
+before its parent, and a transition delivered parent-first would leave a child painted hovered
+while its parent was told otherwise.
+
+**A Detaching Subtree Is Announced Before It Leaves (settled during implementation):**
+
+The input controller holds the hovered nodes as **borrowed raw pointers**, because the tree owns
+its nodes. That makes tree mutation a lifetime hazard: removing a hovered node and letting it be
+destroyed leaves a dangling pointer in the chain, and the next pointer move dispatches into
+freed memory. This was a real use-after-free, not a theoretical one.
+
+The rule is therefore part of the input contract: **a subtree that is about to leave the tree is
+announced while it is still alive and still in the tree.** `UiNode::remove_child` and
+`UiNode::set_visible(false)` notify before the mutation takes effect; the observer replays the
+exits and cuts the subtree from the chain; only then does the tree destroy anything.
+
+The ordering is the entire fix. An observer that ran *after* the removal could not work, because
+the node is already gone and cannot be told anything. This is why the notification lives in the
+tree rather than in the caller, and it is the general shape to follow for any module that borrows
+node pointers across a mutation.
+
+---
+
+### 8.4 Style and Theming (settled during implementation)
+
+§3.2 names `style/` for themes and palettes. This is its contract, which until now existed only
+as per-widget literals. The rule the module exists to enforce: **a widget resolves a colour by
+role, and never carries a literal.**
+
+```cpp
+enum class ControlState { Normal, Hovered, Pressed, Disabled };
+
+struct Palette {                       // one colour per role, per state
+    Color button_plate[4];
+    Color button_label[4];
+    Color checkbox_fill[4], checkbox_outline[4];
+    Color slider_track[4], slider_thumb[4];
+    Color label_foreground[4];
+};
+
+struct ControlMetrics {                // sizing decisions, not paint
+    Size button_minimum;      // a push control must stay grabbable
+    Size checkbox_box;        float checkbox_outline;
+    Size slider_extent;       float slider_track_thickness, slider_thumb, slider_step;
+    float corner_radius;       // the shape a plate is drawn with
+};
+
+class Theme {
+    const Palette& palette() const;
+    const ControlMetrics& metrics() const;
+    Color surface() const;
+    // setters per role, per state, so a builder can write all four
+};
+```
+
+Four properties are load-bearing:
+
+1. **Resolution is by role *and* state, and the precedence is fixed:** `Disabled`, then
+   `Pressed`, then `Hovered`, then `Normal`. A control that refuses input reads disabled whatever
+   the pointer is doing, because that is the fact a user needs to see.
+2. **State lives on the widget base, not on each control.** The transitions are handled once, so
+   every control inherits hover and press for free, and no control can implement them slightly
+   differently.
+3. **A palette is *derived*, not written out.** `ThemeBuilder` turns four accents and a scheme
+   into every entry of every role, so an application chooses an accent and a light or dark scheme
+   rather than authoring sixteen literals. A hover lifts toward the text colour and a press sinks;
+   the two directions differ because a press that lifted would read as a release.
+4. **No theme installed means no behaviour change.** A widget with a null theme keeps its own
+   values, both colour and sizing. This is a hard contract, not a convenience: it is what allows a
+   theme to be introduced into a codebase with existing widgets and existing tests without a
+   single behavioural difference until one is installed.
+
+Installation is a single call, `apply_theme(root, theme)`, which walks a subtree and hands the
+theme to every widget in it. It lives in `widgets/` rather than on `UiNode`, because the ui tree
+must not know what a widget or a theme is (§3.2, AD-05).
 
 ---
 
@@ -549,6 +813,41 @@ Text rendering and measurement are foundational to UI layout:
 - `TextEngine` provides font discovery, fallback resolution, HarfBuzz Unicode shaping, and BiDi line breaking.
 - Text measurement is computed during the layout measure phase so containers accurately adapt to localized text lengths.
 - Fonts are managed as immutable resources through the `ResourceManager`.
+
+**The Shaped Run Is the Replayable Unit (AD-14, settled during implementation):**
+
+Measurement and drawing must agree exactly, or text is measured at one width and drawn at
+another. The unit that guarantees agreement is the **`ShapedRun`**: the result of shaping one
+string at one font size, carrying per-glyph ids and positions, per-line baselines, and the
+typefaces each line resolved to.
+
+- A `TextLayout` is a **shared, immutable** handle to a `ShapedRun` plus its measured box. It is
+  cheap to hold and to copy, and it is what a widget stores, what the scene command carries, and
+  what a picture retains.
+- Stage two draws the **glyphs the shaper produced**, at the **positions the shaper produced**. It
+  does not re-measure and it does not re-shape. Re-deriving glyph positions in the renderer is the
+  defect that made measured and drawn text disagree, and it is why `ShapedRun` crosses the thread
+  boundary as data rather than being recomputed from a string.
+- Because a run is immutable and shared, a subtree drawn many times records the same handle each
+  time, and a retained picture (§6.4) stores it without copying the glyph array.
+
+**Measure Results Are Cached, and a Cache Lookup Must Not Allocate:**
+
+Shaping is the most expensive thing in a frame, and a stable tree re-measures the same strings
+every time it lays out. The engine therefore caches shaped runs keyed by the text, the wrapping
+width, and the font size.
+
+The contract has a performance half as well as a correctness half: **a cache hit must not
+allocate.** A lookup is a *view* of the caller's text, compared through a transparent hash and
+equality, and the string is owned only when an entry is inserted. This matters more than it looks,
+because a key that owns its string pays on every lookup rather than every miss, and the layout
+measure pass is a lookup. It is measured, not asserted: the allocation probe in §27 turns both
+properties into test bounds.
+
+The cache is keyed by wrapping width because a run is shaped *for* a width. A cache keyed only by
+text and size would return a run shaped for a different constraint, which is a silent layout
+error rather than a slow one.
+
 
 ### 9.2 Internationalization (i18n)
 
@@ -708,6 +1007,30 @@ Every architectural decision from Phase 0 is formally settled for production imp
 | **AD-26** | Software Parity | **Decided** | Skia software rasterizer provides deterministic reference rendering for CI headless testing. |
 | **AD-27** | Units Definition | **Decided** | `px` denotes logical pixels; `phx` denotes physical device pixels. |
 | **AD-28** | Candidate Primary HAL | **Decided** | **Skia is the primary HAL.** WebGPU/Dawn remains an optional future pluggable backend candidate. |
+| **AD-29** | Scene Command Vocabulary | **Decided** | A `FrameScene` is one ordered list of tagged `DrawCommand` values, shared verbatim with `PictureResource`; clips are stamped per command at record time rather than replayed as a stack. |
+| **AD-30** | Style Resolution | **Decided** | Widgets resolve colour by role and state through a `Theme`, never carrying literals; palettes are derived from a few accents; a null theme preserves existing values exactly. |
+| **AD-31** | Composite Contract Enforcement | **Decided** | `Component::render` is not overridable: it runs background, content, then children, and subclasses override `paint_content`, so a missing phase is a compile error rather than a silently absent subtree. |
+| **AD-32** | Borrowed Node Lifetime | **Decided** | A subtree leaving the tree is announced to observers while it is still alive and still in the tree; observers of borrowed node pointers must be told before the mutation, never after. |
+| **AD-33** | Surface Ownership | **Decided** | A surface is owned by the thread that created its layer; resize runs on that thread, and the render executor drops a frame whose metrics are stale rather than stretching it. |
+
+**How AD-29 through AD-33 came about.** None of these reopened an existing decision. They are
+recorded separately because each was reached by fixing a defect that the earlier text permitted,
+which means the earlier text was genuinely incomplete rather than merely undocumented:
+
+- AD-29 came from a scene that needed a command vocabulary and did not have one; two vocabularies
+  for frames and pictures is how a rounded plate becomes square inside a picture.
+- AD-30 came from every widget carrying its own colours, so a design change meant editing every
+  widget.
+- AD-31 came from widgets being written as leaves that compiled, rendered, and silently dropped
+  their children. Declaring `Component::render` `final` is what enforces it, and doing so exposed
+  two call sites still using the old pattern.
+- AD-32 came from a use-after-free: a hovered node removed from the tree left the input controller
+  holding a freed pointer.
+- AD-33 came from resize being run on the render thread, which does not own the layer.
+
+A settled decision is only reopened with a documented revision. These five were additions to
+unstated ground, and the sections carrying them are marked "settled during implementation" so a
+later reader can tell clarified text from original intent.
 
 ---
 

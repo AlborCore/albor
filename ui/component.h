@@ -37,8 +37,8 @@ namespace albor
         // assign the bounds of the component and of its children (§8.2)
         void arrange(const Rect& bounds) override;
 
-        // record the content of the component into the context (§6.1)
-        void render(RenderContext& context) override;
+        // record the component, which runs the background, the content, then the children (§6.1)
+        void render(RenderContext& context) final;
 
         // report whether the point lands on the component content or on a descendant (§8.3)
         [[nodiscard]] bool hit_test(Point logical_point) const override;

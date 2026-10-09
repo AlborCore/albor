@@ -34,7 +34,7 @@ namespace albor
 
         void arrange(const Rect& bounds) override;
 
-        void render(RenderContext& context) override;
+        void paint_content(RenderContext& context) override;
 
         [[nodiscard]] Color background() const override;
 

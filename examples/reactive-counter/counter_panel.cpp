@@ -51,11 +51,7 @@ namespace albor
         return Point{bounds().x + m_padding, bounds().y + m_padding + m_bar_height + 24.0f};
     }
 
-    void CounterPanel::render(RenderContext& context) {
-        // the panel background covers the whole component (§6.1)
-        Paint background_paint;
-        background_paint.fill = background();
-        context.draw_rect(bounds(), background_paint);
+    void CounterPanel::paint_content(RenderContext& context) {
         // the bar carries the bound accent, which is what makes a count change visible (§6.1, §7.3)
         Paint bar_paint;
         bar_paint.fill = accent.get();
@@ -71,8 +67,6 @@ namespace albor
             if (!label_layout.empty())
                 context.draw_text(label_layout, label_origin(), text_paint);
         }
-        // the children draw over the panel, which a composed tree needs (§6.1)
-        UiNode::render(context);
     }
 
     void CounterPanel::dispatch_event(Event& event) {

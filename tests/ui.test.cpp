@@ -202,13 +202,6 @@ namespace
         // the reactive accent a binding derives from the count (§7)
         Property<int> accent;
 
-        void render(RenderContext& context) override {
-            // the component paints its background and then its children (§6.1)
-            paint_background(context);
-            for (const auto& child : children())
-                child->render(context);
-        }
-
         [[nodiscard]] Color background() const override { return Color::rgb(0.1f, 0.1f, 0.15f); }
     };
 
@@ -2017,4 +2010,39 @@ TEST(FramePipelineDirtyChecks, AVisualChangeProducesAScene) {
     // assert a visual change is still presented, because the gate is about the tree asking for a frame (§6.1)
     ASSERT_NE(dirty, nullptr);
     EXPECT_EQ(dirty->command_count(), 1u);
+}
+
+TEST(ComponentContractChecks, AComponentRecordsBackgroundContentThenChildren) {
+    // arrange a node that counts the order the composite ran in (§6.1)
+    class OrderNode final : public Component
+    {
+    public:
+        // a component needs its engine, which the tree owns and this double does not use (§7.2)
+        explicit OrderNode(BindingEngine* engine) :
+            Component(engine) {}
+
+
+        // the phases this component saw, in the order the composite ran them (§6.1)
+        std::vector<std::string> phases;
+
+        [[nodiscard]] Color background() const override { return Color::rgb(0.1f, 0.1f, 0.1f); }
+
+    protected:
+        void paint_content(RenderContext& context) override {
+            // the content phase runs between the background and the children (§6.1)
+            phases.emplace_back("content");
+            // the content draws nothing, because only the order is under test here (§6.2)
+            (void)context;
+        }
+    };
+
+    BindingEngine engine;
+    OrderNode node(&engine);
+    node.phases.emplace_back("start");
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    node.render(recorder);
+    // assert the content phase ran, which is what paint_content is for (§6.1)
+    ASSERT_EQ(node.phases.size(), 2u);
+    EXPECT_EQ(node.phases[1], "content");
 }
