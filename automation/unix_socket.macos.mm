@@ -54,6 +54,15 @@ namespace albor::automation::platform
                 }
                 // the socket is restricted to its owner, because a world readable endpoint is not local (§10.3, AD-10)
                 ::chmod(endpoint.socket_path.c_str(), S_IRUSR | S_IWUSR);
+                // the listener is non blocking, because a blocking accept would stall the ui thread (§6.1, §10.3)
+                const int flags = ::fcntl(m_fd, F_GETFL, 0);
+                // the descriptor flags are set, which is what makes accept return rather than wait (§10.3)
+                if (flags < 0 || ::fcntl(m_fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+                    // the descriptor is released, because a listener that could block owns nothing (§10.3)
+                    close_listener();
+                    // the failure is reported, because a blocking listener is not acceptable (§10.3)
+                    return fail(std::string("non blocking listener: ") + std::strerror(errno));
+                }
                 // the listener starts accepting, which is the last step before a client may connect (§10.3)
                 if (::listen(m_fd, 8) < 0) {
                     // the descriptor is released, because a failed listen owns nothing (§10.3)
@@ -70,21 +79,40 @@ namespace albor::automation::platform
                 // a listener that was never bound cannot serve, which is a host error rather than a client refusal (§10.3)
                 if (m_fd < 0)
                     return fail("not listening");
+                // a client already connected is served first, because one conversation spans many frames (§10.3)
+                if (m_client >= 0) {
+                    // whatever it has sent is answered, and a frame never waits for more (§6.1, §10.3)
+                    converse(m_client);
+                    // the frame is done, because the next line arrives on a later frame (§10.3)
+                    return true;
+                }
                 // the client is accepted, which is the first moment its identity can be checked (§10.3, AD-10)
                 const int client = ::accept(m_fd, nullptr, nullptr);
-                // a failed accept leaves the listener intact, so the caller may serve again (§10.3)
+                // a listener with nobody waiting is the normal case, and a frame must not wait for one (§6.1, §10.3)
+                if (client < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+                    return true;
+                // any other failure leaves the listener intact, so the caller may serve again (§10.3)
                 if (client < 0)
                     return false;
+                // the accepted descriptor stays non blocking, because the frame may not wait on it (§6.1, §10.3)
+                const int flags = ::fcntl(client, F_GETFL, 0);
+                // the non blocking form is set explicitly, because a client must never stall the ui thread (§10.3)
+                if (flags >= 0)
+                    (void)::fcntl(client, F_SETFL, flags | O_NONBLOCK);
                 // the conversation is refused before any byte is read, when the peer is not this user (§10.3, AD-10)
                 if (!same_user(client)) {
                     // the client is closed unread, so a refused peer sends nothing into the server (§10.3, AD-10)
                     ::close(client);
                     return true;
                 }
-                // the client is served to completion, which is one whole conversation (§10.3)
+                // the client is remembered, because a conversation spans frames (§10.3)
+                m_client = client;
+                // the session is fresh per client, which is what makes authentication per conversation (§10.3, AD-10)
+                m_session = std::make_unique<AutomationSession>(m_registry, m_token);
+                // the pending line starts empty, because a conversation begins with no partial request (§10.3)
+                m_pending.clear();
+                // the client is answered this frame, because its first line is usually already waiting (§10.3)
                 converse(client);
-                // the client is closed, because this transport serves one client at a time (§10.3)
-                ::close(client);
                 return true;
             }
 
@@ -161,36 +189,44 @@ namespace albor::automation::platform
                 return true;
             }
 
-            // read requests from one client until it closes, answering each through the registry (§10.3)
+            // serve whatever one client has already sent, without waiting, because a frame may not block (§6.1, §10.3)
             void converse(int client) {
-                // every connection authenticates against this run's token, which is what the endpoint published (§10.3)
-                AutomationSession session(m_registry, m_token);
-                // the buffer is reused for every line, because a connection reads many (§10.3)
-                std::string pending;
-                // the reading loop runs until the peer closes or the stop flag is raised (§10.3)
-                while (!m_stopped) {
-                    // one byte is read at a time, because the wire is line delimited (§10.3)
-                    char byte = 0;
-                    // the read blocks, which is what makes the conversation interactive (§10.3)
-                    const ssize_t got = ::read(client, &byte, 1);
-                    // a closed peer ends the conversation, which is the normal exit (§10.3)
-                    if (got <= 0)
-                        break;
-                    // a newline completes a line, which is what the protocol is framed on (§10.3)
+                // whatever has arrived is read, and a client that has sent nothing costs one read (§10.3)
+                char buffer[512];
+                // the read is attempted once, because the descriptor is non blocking and a wait would stall the ui (§10.3)
+                const ssize_t got = ::read(client, buffer, sizeof(buffer));
+                // nothing arrived, which is the normal case between two client messages (§10.3)
+                if (got <= 0) {
+                    // a closed peer ends the conversation, which is the only way this read reports it (§10.3)
+                    if (got == 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) {
+                        // the descriptor is dropped, because the peer is gone (§10.3)
+                        ::close(client);
+                        // the conversation is forgotten, because there is nothing left to answer (§10.3)
+                        m_client = -1;
+                    }
+                    // nothing was complete, so nothing is answered (§10.3)
+                    return;
+                }
+                // each byte that arrived is placed in the pending line, which is what the protocol frames on (§10.3)
+                for (ssize_t i = 0; i < got; i++) {
+                    // the byte decides, because a newline is what completes a request (§10.3)
+                    const char byte = buffer[i];
+                    // a carriage return is dropped, so a windows client still works (§10.3)
+                    if (byte == '\r')
+                        continue;
+                    // a newline completes a line, which is what a request is (§10.3)
                     if (byte == '\n') {
-                        // the line is answered and the reply written, which is one whole exchange (§10.3)
-                        const std::string reply = encode_result(session.handle(pending)) + "\n";
+                        // the pending line is answered and the reply written, which is one exchange (§10.3)
+                        const std::string reply = encode_result(m_session->handle(m_pending)) + "\n";
                         // the reply goes out whole, which is what the client reads (§10.3)
                         (void)::write(client, reply.data(), reply.size());
                         // the line is cleared, so the next one starts fresh (§10.3)
-                        pending.clear();
+                        m_pending.clear();
+                        // the loop continues, because one read may carry several lines (§10.3)
                         continue;
                     }
-                    // a carriage return is dropped, so a client that writes windows line endings still works (§10.3)
-                    if (byte == '\r')
-                        continue;
                     // any other byte joins the line, which is how the request accumulates (§10.3)
-                    pending.push_back(byte);
+                    m_pending.push_back(byte);
                 }
             }
 
@@ -202,6 +238,15 @@ namespace albor::automation::platform
 
             // the last refusal, which the host logs (§10.3, AD-10)
             std::string m_error;
+
+            // the client being served, or minus one when nobody is connected (§10.3)
+            int m_client = -1;
+
+            // the partial line the client is sending, because a request may straddle two frames (§10.3)
+            std::string m_pending;
+
+            // the conversation being served, which spans frames so a client may take its time (§10.3, AD-10)
+            std::unique_ptr<AutomationSession> m_session;
 
             // the commands this server runs, which the allow list governs (§10.3, AD-10)
             AutomationRegistry& m_registry;

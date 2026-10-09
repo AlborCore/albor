@@ -3,6 +3,7 @@
 #include <memory>
 
 #include "application/application.h"
+#include "drivability.h"
 #include "greeting_panel.h"
 #include "input/input_controller.h"
 #include "platform/macos/event_loop.h"
@@ -66,7 +67,9 @@ int main() {
     albor::RenderExecutor executor(renderer.get());
     pipeline.set_executor(&executor);
     pipeline.set_surface(surface.get());
-    // the ui thread builds a frame per pacing tick and hands it to the render thread (§6.1)
+    // the drivability is built over the live tree, which is what assistive technology and automation read (§10.1, §10.3)
+    albor::example::Drivable drivable(pipeline.root(), window->native_handle().object());
+
     application.set_frame_handler([&] {
         // the window may already be gone when a queued tick arrives (§4.2)
         if (application.window(handle) == nullptr)
@@ -75,7 +78,8 @@ int main() {
         const albor::WindowMetrics metrics = window->metrics();
         // stage one settles the graph, lays out the tree and records the immutable scene (§6.1, §7.3)
         const std::shared_ptr<const albor::FrameScene> scene = pipeline.build(metrics);
-        // stage two executes it off the ui thread, which never runs application code (§6.1, AD-18)
+        // the semantic tree is rebuilt after the bindings settled, then one client is served (§10.1, §10.3)
+        drivable.refresh(); // stage two executes it off the ui thread, which never runs application code (§6.1, AD-18)
         pipeline.submit(scene);
     });
     // a native resize remeasures the tree, which is what the layout invalidation is for (§8.2)
@@ -121,6 +125,7 @@ int main() {
     std::printf("greeting: running, the count advances every 500ms, close the window to quit\n");
     // the panel loads the builtin tree, which is the code the driver generated from greeting_panel.ui (§11.3, AD-03a)
     std::printf("greeting: GreetingPanel generated from greeting_panel.ui, click Increment to raise the signal\n");
+
     // the loop blocks until the window closes, which asks the application to quit (§4.1)
     return application.run();
 }
