@@ -74,19 +74,24 @@ and each widget invented its own.
 4. **Interaction contract.** A widget with no theme falls back to its current
    hardcoded values, so no existing test changes behaviour until a theme is installed.
 
+5. **The palette is derived from a few accents.** `ThemeBuilder` turns four accents and a scheme
+   into every entry of every role, so an application picks an accent rather than writing out
+   sixteen literals. A hover lifts toward the text colour and a press sinks, and the two schemes
+   differ, which is what makes them two themes rather than one. Every role gained a state taking
+   setter, which is what the builder writes through (§6.1).
+
+6. **The plate is drawn with the themed radius.** `Component::paint_background` draws a rounded
+   rectangle when the component reports a radius and a hard one when it does not, so a themed
+   control gets the shape the theme specifies and an unthemed one keeps the rectangle it has
+   always drawn (§6.2).
+
 ### Still open
 
-5. **The palette is flat and the radius is unused.** Every control resolves one colour per role
-   and every widget resolves one palette entry per state, but a real design system wants light
-   and dark themes, and it wants the hover and pressed entries derived from one accent rather
-   than written out four times. `Theme` is currently a struct of literals with setters; what is
-   missing is a builder that derives a palette, and a test that two derived themes differ in the
-   states that should differ.
-
-6. **The rounded plate is still unused.** `ControlMetrics` carries a corner radius and the
-   recorder has had rounded rectangles since the command vocabulary landed, but no control draws
-   a rounded plate yet. The hover and pressed states therefore read as a colour change on a hard
-   rectangle, which is legible but not what the design intends (§6.1).
+7. **Nothing chooses a theme for an application.** `ThemeBuilder` derives a theme and a widget
+   accepts one, but there is no place that installs a theme across a tree, so an application with
+   twenty widgets still calls `set_theme` twenty times. The obvious shape is a walk that hands one
+   theme to every widget in a subtree, which belongs on `UiNode` or on the pipeline rather than on
+   the application, and it is not written yet (§6.1).
 
 ### The replay hazard, and how it is closed
 
@@ -141,6 +146,10 @@ What is covered by tests now:
   nested subtree exits its deepest node first (`HoverChecks`).
 - `refresh_hover()` covers what the tree cannot report: it replays the exits after a hidden
   subtree leaves nothing hovered, and a controller that never saw a pointer invents nothing.
+- A derived theme has four distinct plate states, a hover lifts while a press sinks, the light
+  and dark themes differ, a changed accent moves the plate, a derived button draws the derived
+  colour, and a themed button draws a rounded plate while an unthemed one draws a hard one
+  (`ThemeBuilderChecks`, `ThemeChecks`).
 
 - Enter and leave are synthesized exactly at boundary crossings, asserted on a two
   widget column.

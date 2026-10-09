@@ -7,11 +7,6 @@
 
 namespace albor
 {
-    // the extent a push control never shrinks below, because an unlabelled button must stay grabbable (§8.2)
-    constexpr float MINIMUM_WIDTH = 24.0f;
-
-    // the vertical extent a push control never shrinks below, for the same reason (§8.2)
-    constexpr float MINIMUM_HEIGHT = 16.0f;
     Button::Button(BindingEngine* engine, TextEngine* text_engine, std::string label, std::string explicit_id) :
         Widget(engine, std::move(explicit_id)), m_text_engine(text_engine), m_label(std::move(label)) {
         // a button with no engine cannot measure, so the label stays empty and the plate falls back to the minimum extent (§9.1, AD-14)

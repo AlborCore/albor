@@ -52,6 +52,9 @@ namespace albor
         // hand out the fill colour of the component background, which a concrete component overrides
         [[nodiscard]] virtual Color background() const;
 
+        // hand out the corner radius the background is drawn with, where zero means a hard rectangle (§6.2)
+        [[nodiscard]] virtual float corner_radius() const;
+
         // hand out the size the component measured itself to (§8.2)
         [[nodiscard]] const Size& preferred_size() const;
 

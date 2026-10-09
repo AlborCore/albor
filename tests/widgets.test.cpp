@@ -10,6 +10,7 @@
 #include "render/render_context.h"
 #include "runtime/binding_engine.h"
 #include "semantics/semantic_provider.h"
+#include "style/theme_builder.h"
 #include "ui/scene_builder.h"
 #include "widgets/button.h"
 #include "widgets/canvas.h"
@@ -2952,4 +2953,132 @@ TEST(ThemeChecks, ALabelKeepsItsOwnForegroundWithoutATheme) {
     // assert the label's own colour is what is drawn (§6.1)
     ASSERT_EQ(text_commands(*recorder.scene()).size(), 1u);
     EXPECT_FLOAT_EQ(text_commands(*recorder.scene())[0].paint().fill.red, 0.1f);
+}
+
+TEST(ThemeBuilderChecks, ADerivedPlateHasFourDistinctStates) {
+    // arrange
+    Accents accents;
+    // act
+    const Theme theme = ThemeBuilder::dark(accents);
+    const Palette& palette = theme.palette();
+    // assert the four states are four colours, which is what a hover and a press need (§6.1)
+    const Color normal = palette.button_plate[state_index(ControlState::Normal)];
+    const Color hovered = palette.button_plate[state_index(ControlState::Hovered)];
+    const Color pressed = palette.button_plate[state_index(ControlState::Pressed)];
+    const Color disabled = palette.button_plate[state_index(ControlState::Disabled)];
+    EXPECT_NE(normal.red, hovered.red);
+    EXPECT_NE(normal.red, pressed.red);
+    EXPECT_FLOAT_EQ(disabled.alpha, 0.45f);
+}
+
+TEST(ThemeBuilderChecks, AHoverLiftsAndAPressSinks) {
+    // arrange
+    Accents accents;
+    // act
+    const Palette palette = ThemeBuilder::dark(accents).palette();
+    // assert the two directions differ, because a press that lifted would read as a release (§6.1, §8.3)
+    const Color normal = palette.button_plate[state_index(ControlState::Normal)];
+    const Color hovered = palette.button_plate[state_index(ControlState::Hovered)];
+    const Color pressed = palette.button_plate[state_index(ControlState::Pressed)];
+    EXPECT_GT(hovered.red, normal.red);
+    EXPECT_LT(pressed.red, normal.red);
+}
+
+TEST(ThemeBuilderChecks, LightAndDarkThemesDiffer) {
+    // arrange one set of accents, drawn two ways (§6.1)
+    Accents accents;
+    // act
+    const Palette light = ThemeBuilder::light(accents).palette();
+    const Palette dark = ThemeBuilder::dark(accents).palette();
+    // assert the schemes differ, which is what makes them two themes rather than one (§6.1)
+    EXPECT_NE(light.button_plate[state_index(ControlState::Hovered)].red, dark.button_plate[state_index(ControlState::Hovered)].red);
+}
+
+TEST(ThemeBuilderChecks, ADerivedThemeCarriesItsSurface) {
+    // arrange
+    Accents accents;
+    accents.surface = Color::rgb(0.9f, 0.9f, 0.9f);
+    // act
+    const Theme theme = ThemeBuilder::light(accents);
+    // assert the surface is readable back, which a frame background needs (§6.1)
+    EXPECT_FLOAT_EQ(theme.surface().red, 0.9f);
+}
+
+TEST(ThemeBuilderChecks, AChangedAccentMovesThePlate) {
+    // arrange two accent sets, so the derivation has something to react to (§6.1)
+    Accents first;
+    Accents second;
+    second.accent = Color::rgb(0.9f, 0.1f, 0.2f);
+    // act
+    const Palette first_palette = ThemeBuilder::dark(first).palette();
+    const Palette second_palette = ThemeBuilder::dark(second).palette();
+    // assert the plate followed the accent, which is the point of deriving it (§6.1)
+    EXPECT_FLOAT_EQ(first_palette.button_plate[state_index(ControlState::Normal)].red, 0.20f);
+    EXPECT_FLOAT_EQ(second_palette.button_plate[state_index(ControlState::Normal)].red, 0.9f);
+}
+
+TEST(ThemeBuilderChecks, ADerivedButtonDrawsTheDerivedPlate) {
+    // arrange a widget on a derived theme, which is how an application installs one (§6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = ThemeBuilder::dark(Accents{});
+    Button button(&engine, &text_engine, "Press");
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the drawn plate is the derived normal state, not the palette default (§6.1)
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].paint().fill.red, theme.palette().button_plate[state_index(ControlState::Normal)].red);
+}
+
+TEST(ThemeBuilderChecks, LightenAndDarkenMoveOppositeWays) {
+    // arrange
+    const Color base = Color::rgb(0.5f, 0.5f, 0.5f);
+    // act assert the two helpers are inverses of each other in direction (§6.1)
+    EXPECT_GT(ThemeBuilder::lighten(base, 0.2f).red, base.red);
+    EXPECT_LT(ThemeBuilder::darken(base, 0.2f).red, base.red);
+}
+
+TEST(ThemeChecks, AThemedButtonDrawsARoundedPlate) {
+    // arrange a theme with a radius, which is what a design system installs (§6.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_corner_radius(8.0f);
+    Button button(&engine, &text_engine, "Press");
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the plate is the rounded kind, which is what the radius asked for (§6.2)
+    ASSERT_FALSE(recorder.scene()->commands().empty());
+    EXPECT_EQ(recorder.scene()->commands()[0].kind(), DrawCommandKind::RoundedRect);
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].rect_geometry().radius, 8.0f);
+}
+
+TEST(ThemeChecks, AnUnthemedButtonStillDrawsAHardPlate) {
+    // arrange no theme, so nothing asked for a radius (§6.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the rectangle kind is what an unthemed control has always drawn (§6.2)
+    ASSERT_FALSE(recorder.scene()->commands().empty());
+    EXPECT_EQ(recorder.scene()->commands()[0].kind(), DrawCommandKind::Rect);
+}
+
+TEST(ThemeChecks, ADefaultThemeAlreadyCarriesARadius) {
+    // arrange
+    const Theme theme;
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    // act the widget is installed on the default theme without any configuration (§6.2)
+    button.set_theme(&theme);
+    EXPECT_GT(button.corner_radius(), 0.0f);
 }

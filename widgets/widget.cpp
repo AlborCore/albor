@@ -49,6 +49,14 @@ namespace albor
     Widget::Widget(BindingEngine* engine, std::string explicit_id) :
         Component(engine, std::move(explicit_id)) {}
 
+    float Widget::corner_radius() const {
+        // without a theme the plate is a hard rectangle, because nothing asked for a radius (§6.2)
+        if (m_theme == nullptr)
+            return 0.0f;
+        // the theme owns the radius, because a design system draws its controls to one shape (§6.2)
+        return m_theme->metrics().corner_radius;
+    }
+
     std::size_t Widget::semantic_child_count() const {
         // the semantic walk visits the same children the layout walks, so the two counts agree (§10.1, AD-09)
         return child_count();

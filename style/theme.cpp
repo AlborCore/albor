@@ -27,9 +27,19 @@ namespace albor
         m_palette.button_label[state_index(ControlState::Normal)] = value;
     }
 
+    void Theme::set_button_label(ControlState state, Color value) {
+        // the state selects the entry, because the palette keeps one colour per state in order (§6.1)
+        m_palette.button_label[state_index(state)] = value;
+    }
+
     void Theme::set_checkbox_fill(Color value) {
         // the normal state is the common case, so it gets its own entry point (§6.1)
         m_palette.checkbox_fill[state_index(ControlState::Normal)] = value;
+    }
+
+    void Theme::set_checkbox_fill(ControlState state, Color value) {
+        // the state selects the entry, because the palette keeps one colour per state in order (§6.1)
+        m_palette.checkbox_fill[state_index(state)] = value;
     }
 
     void Theme::set_checkbox_outline(Color value) {
@@ -37,9 +47,19 @@ namespace albor
         m_palette.checkbox_outline[state_index(ControlState::Normal)] = value;
     }
 
+    void Theme::set_checkbox_outline(ControlState state, Color value) {
+        // the state selects the entry, because the palette keeps one colour per state in order (§6.1)
+        m_palette.checkbox_outline[state_index(state)] = value;
+    }
+
     void Theme::set_slider_track(Color value) {
         // the normal state is the common case, so it gets its own entry point (§6.1)
         m_palette.slider_track[state_index(ControlState::Normal)] = value;
+    }
+
+    void Theme::set_slider_track(ControlState state, Color value) {
+        // the state selects the entry, because the palette keeps one colour per state in order (§6.1)
+        m_palette.slider_track[state_index(state)] = value;
     }
 
     void Theme::set_slider_thumb(Color value) {
@@ -47,9 +67,19 @@ namespace albor
         m_palette.slider_thumb[state_index(ControlState::Normal)] = value;
     }
 
+    void Theme::set_slider_thumb(ControlState state, Color value) {
+        // the state selects the entry, because the palette keeps one colour per state in order (§6.1)
+        m_palette.slider_thumb[state_index(state)] = value;
+    }
+
     void Theme::set_label_foreground(Color value) {
         // the normal state is the common case, so it gets its own entry point (§6.1)
         m_palette.label_foreground[state_index(ControlState::Normal)] = value;
+    }
+
+    void Theme::set_label_foreground(ControlState state, Color value) {
+        // the state selects the entry, because the palette keeps one colour per state in order (§6.1)
+        m_palette.label_foreground[state_index(state)] = value;
     }
 
     void Theme::set_button_minimum(Size value) {
@@ -85,6 +115,16 @@ namespace albor
     void Theme::set_slider_step(float value) {
         // the step is one value because a key press moves the value symmetrically (§10.1)
         m_metrics.slider_step = value;
+    }
+
+    Color Theme::surface() const {
+        // the surface is stored by value, so a frame background reads the installed one (§6.1)
+        return m_surface;
+    }
+
+    void Theme::set_surface(Color value) {
+        // the surface is one value because the whole frame shares it (§6.1)
+        m_surface = value;
     }
 
     void Theme::set_corner_radius(float value) {

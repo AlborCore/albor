@@ -69,12 +69,26 @@ namespace albor
         if (bounds().empty())
             return;
         // the fill is the only paint a background needs, so the stroke stays empty (§6.2)
-        context.draw_rect(bounds(), {.fill = background()});
+        const Color fill = background();
+        // a radius means a rounded plate, which is what a themed control draws (§6.2)
+        const float radius = corner_radius();
+        if (radius > 0.0f) {
+            // the plate is rounded, so the corners take the radius rather than the fill (§6.2)
+            context.draw_rounded_rect(bounds(), radius, {.fill = fill});
+            return;
+        }
+        // without a radius the background is a hard rectangle, which is what an unthemed component drew (§6.2)
+        context.draw_rect(bounds(), {.fill = fill});
     }
 
     Color Component::background() const {
         // the default component is transparent, so a derived component decides whether it paints (§6.2)
         return Color::rgba(0.0f, 0.0f, 0.0f, 0.0f);
+    }
+
+    float Component::corner_radius() const {
+        // the default component is a hard rectangle, because nothing asked for a radius (§6.2)
+        return 0.0f;
     }
 
     const Size& Component::preferred_size() const {

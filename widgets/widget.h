@@ -66,6 +66,9 @@ namespace albor
         // build a widget over the engine that settles its properties (§8.1, §7.2)
         explicit Widget(BindingEngine* engine, std::string explicit_id = {});
 
+        // override: hand out the plate radius, which a theme sets and an unthemed widget leaves hard (§6.2)
+        [[nodiscard]] float corner_radius() const override;
+
         // override: hand out how many children the ui tree holds, which is what the semantic walk walks (§10.1, AD-09)
         [[nodiscard]] std::size_t semantic_child_count() const override;
 

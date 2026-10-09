@@ -98,26 +98,50 @@ namespace albor
         // replace the label colour of the normal state (§6.1)
         void set_button_label(Color value);
 
+        // replace one state of the entry, which is what a derived palette writes (§6.1)
+        void set_button_label(ControlState state, Color value);
+
         // replace the fill of the normal state of a check box (§6.1)
         void set_checkbox_fill(Color value);
+
+        // replace one state of the entry, which is what a derived palette writes (§6.1)
+        void set_checkbox_fill(ControlState state, Color value);
 
         // replace the outline of the normal state of a check box (§6.1)
         void set_checkbox_outline(Color value);
 
+        // replace one state of the entry, which is what a derived palette writes (§6.1)
+        void set_checkbox_outline(ControlState state, Color value);
+
         // replace the track of the normal state of a slider (§6.1)
         void set_slider_track(Color value);
+
+        // replace one state of the entry, which is what a derived palette writes (§6.1)
+        void set_slider_track(ControlState state, Color value);
 
         // replace the thumb of the normal state of a slider (§6.1)
         void set_slider_thumb(Color value);
 
+        // replace one state of the entry, which is what a derived palette writes (§6.1)
+        void set_slider_thumb(ControlState state, Color value);
+
         // replace the text colour of the normal state of a label (§6.1)
         void set_label_foreground(Color value);
+
+        // replace one state of the entry, which is what a derived palette writes (§6.1)
+        void set_label_foreground(ControlState state, Color value);
 
         // replace the smallest push control extent, which is a sizing decision rather than a colour (§8.2)
         void set_button_minimum(Size value);
 
         // replace the corner radius a plate is drawn with (§6.1)
         void set_corner_radius(float value);
+
+        // hand out the surface colour, which a frame background resolves through (§6.1)
+        [[nodiscard]] Color surface() const;
+
+        // replace the surface colour, which is what a derived palette sets (§6.1)
+        void set_surface(Color value);
 
         // replace the extent a check box measures to, which the control reads instead of a literal (§8.2)
         void set_checkbox_box(Size value);
@@ -143,6 +167,9 @@ namespace albor
 
         // the sizing, which the overrides above write (§8.2)
         ControlMetrics m_metrics;
+
+        // the surface colour, which a frame background resolves through (§6.1)
+        Color m_surface{0.07f, 0.08f, 0.10f, 1.0f};
     };
 
     // the index a state maps to, because the palette stores one colour per state in declaration order (§6.1)
