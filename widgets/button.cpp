@@ -119,6 +119,8 @@ namespace albor
     SemanticNode Button::semantic_node() const {
         // the role is a button, because a press performs an action (§10.1)
         SemanticNode node{SemanticRole::Button};
+        // the author assigned id travels with the node, because automation selects by it and by nothing else (AD-11)
+        node.set_explicit_id(identity().explicit_id);
         // the accessible name is the label, because that is what a screen reader must speak (§10.1)
         node.set_name(m_label);
         // the bounds travel with the node, because an adapter places the announcement where it was drawn (§10.1)

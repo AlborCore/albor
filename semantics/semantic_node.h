@@ -102,6 +102,15 @@ namespace albor
         // replace the role the node announces (§10.1)
         void set_role(SemanticRole role);
 
+        // hand out the author assigned id, which is empty when the author named nothing (AD-11, §18.1)
+        [[nodiscard]] const std::string& explicit_id() const;
+
+        // replace the author assigned id, which is what makes a node addressable (AD-11, §18.1)
+        void set_explicit_id(std::string id);
+
+        // report whether the node carries an author assigned id, which automation requires (AD-11, §18.1)
+        [[nodiscard]] bool identified() const;
+
         // hand out the accessible name, which is what a screen reader speaks (§10.1)
         [[nodiscard]] const std::string& name() const;
 
@@ -165,6 +174,9 @@ namespace albor
     private:
         // the role the node announces (§10.1)
         SemanticRole m_role;
+
+        // the author assigned id, which is the only identity automation may select by (AD-11, §18.1)
+        std::string m_explicit_id;
 
         // the accessible name a screen reader speaks (§10.1)
         std::string m_name;

@@ -110,6 +110,8 @@ namespace albor
     SemanticNode CheckBox::semantic_node() const {
         // the role is a checkbox, because a press flips a boolean (§10.1)
         SemanticNode node{SemanticRole::Checkbox};
+        // the author assigned id travels with the node, because automation selects by it and by nothing else (AD-11)
+        node.set_explicit_id(identity().explicit_id);
         // the accessible name is the identity the author assigned, because an unlabelled box has no text (§10.1, AD-11)
         node.set_name(identity().explicit_id);
         // the bounds travel with the node, because an adapter places the announcement where it was drawn (§10.1)

@@ -53,6 +53,9 @@ namespace albor
         // hand out the node at an index, returning null when the index is past the end (§10.1)
         [[nodiscard]] const SemanticNode* at(std::size_t index) const;
 
+        // hand out the node at an index for writing, which is how a reported state lands on the live tree (§10.1)
+        [[nodiscard]] SemanticNode* mutable_at(std::size_t index);
+
         // find the first node with the given accessible name, returning null when none matches (§10.1)
         [[nodiscard]] const SemanticNode* find(std::string_view name) const;
 

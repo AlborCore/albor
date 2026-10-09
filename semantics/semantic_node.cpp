@@ -17,6 +17,12 @@ namespace albor
         m_role = role;
     }
 
+    const std::string& SemanticNode::explicit_id() const { return m_explicit_id; }
+
+    void SemanticNode::set_explicit_id(std::string id) { m_explicit_id = std::move(id); }
+
+    bool SemanticNode::identified() const { return !m_explicit_id.empty(); }
+
     const std::string& SemanticNode::name() const {
         // the accessible name is what a screen reader speaks instead of the role (§10.1)
         return m_name;

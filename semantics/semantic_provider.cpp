@@ -53,6 +53,13 @@ namespace albor
 
     std::size_t SemanticTree::size() const { return m_nodes.size(); }
 
+    SemanticNode* SemanticTree::mutable_at(std::size_t index) {
+        // an index past the end names no node (§10.1)
+        if (index >= m_nodes.size())
+            return nullptr;
+        return &m_nodes[index];
+    }
+
     const SemanticNode* SemanticTree::at(std::size_t index) const {
         // an index past the end names no node (§10.1)
         if (index >= m_nodes.size())
