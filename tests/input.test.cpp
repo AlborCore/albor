@@ -1337,3 +1337,114 @@ TEST(HoverChecks, ARefreshOnACleanControllerDoesNothing) {
     EXPECT_EQ(root.enters, 0u);
     EXPECT_EQ(root.leaves, 0u);
 }
+
+TEST(HoverChecks, RemovingAHoveredSubtreeReplaysItsExitBeforeItDies) {
+    // arrange a hovered child the application is about to remove (§8.3)
+    InputController controller;
+    RecordingNode root;
+    auto child = std::make_unique<RecordingNode>();
+    RecordingNode* child_ptr = child.get();
+    child->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    root.add_child(std::move(child));
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    child_ptr->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    controller.attach(root);
+    Event inside{.kind = EventKind::PointerMove, .position = Point{15.0f, 15.0f}};
+    controller.deliver(inside);
+    ASSERT_EQ(child_ptr->enters, 1u);
+    // act the child is removed and destroyed, with no refresh call from the application (§8.3)
+    const std::unique_ptr<UiNode> removed = root.remove_child(child_ptr);
+    ASSERT_NE(removed, nullptr);
+    ASSERT_EQ(child_ptr->leaves, 1u);
+    // assert the chain no longer points at the destroyed node, so no later move can reach it (§8.3)
+    EXPECT_EQ(controller.hovered(), &root);
+}
+
+TEST(HoverChecks, AMoveAfterTheRemovalReachesNothingGone) {
+    // arrange the same removal, and then a move that used to walk a destroyed node (§8.3)
+    InputController controller;
+    RecordingNode root;
+    auto child = std::make_unique<RecordingNode>();
+    RecordingNode* child_ptr = child.get();
+    child->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    root.add_child(std::move(child));
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    child_ptr->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    controller.attach(root);
+    Event inside{.kind = EventKind::PointerMove, .position = Point{15.0f, 15.0f}};
+    controller.deliver(inside);
+    const std::unique_ptr<UiNode> removed = root.remove_child(child_ptr);
+    ASSERT_NE(removed, nullptr);
+    // act the pointer moves across the area the child used to occupy (§8.3)
+    Event afterwards{.kind = EventKind::PointerMove, .position = Point{15.0f, 15.0f}};
+    controller.deliver(afterwards);
+    // assert the destroyed node was not told again, because it is no longer in the chain (§8.3)
+    EXPECT_EQ(child_ptr->enters, 1u);
+    EXPECT_EQ(child_ptr->leaves, 1u);
+}
+
+TEST(HoverChecks, HidingAHoveredNodeReplaysItsExit) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    auto child = std::make_unique<RecordingNode>();
+    RecordingNode* child_ptr = child.get();
+    child->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    root.add_child(std::move(child));
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    child_ptr->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    controller.attach(root);
+    Event inside{.kind = EventKind::PointerMove, .position = Point{15.0f, 15.0f}};
+    controller.deliver(inside);
+    ASSERT_EQ(child_ptr->enters, 1u);
+    // act the node hides itself under the pointer, which needs no application call (§8.3)
+    child_ptr->set_visible(false);
+    // assert the exit was replayed, so no widget keeps a hover on a node that draws nothing (§8.3)
+    EXPECT_EQ(child_ptr->leaves, 1u);
+    EXPECT_EQ(controller.hovered(), &root);
+}
+
+TEST(HoverChecks, RemovingANodeThatWasNeverHoveredTellsNothing) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    auto child = std::make_unique<RecordingNode>();
+    RecordingNode* child_ptr = child.get();
+    child->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    root.add_child(std::move(child));
+    controller.attach(root);
+    // act the pointer was never over it, so there is no chain entry to exit (§8.3)
+    const std::unique_ptr<UiNode> removed = root.remove_child(child_ptr);
+    // assert
+    ASSERT_NE(removed, nullptr);
+    EXPECT_EQ(child_ptr->leaves, 0u);
+}
+
+TEST(HoverChecks, RemovingADeeplyNestedSubtreeExitsEveryDescendant) {
+    // arrange a hovered grandchild under a hovered child (§8.3)
+    InputController controller;
+    RecordingNode root;
+    auto child = std::make_unique<RecordingNode>();
+    auto grandchild = std::make_unique<RecordingNode>();
+    RecordingNode* child_ptr = child.get();
+    RecordingNode* grandchild_ptr = grandchild.get();
+    child_ptr->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{60.0f, 60.0f}));
+    grandchild_ptr->arrange(Rect::from_origin_size(Point{20.0f, 20.0f}, Size{20.0f, 20.0f}));
+    child_ptr->add_child(std::move(grandchild));
+    root.add_child(std::move(child));
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    child_ptr->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{60.0f, 60.0f}));
+    grandchild_ptr->arrange(Rect::from_origin_size(Point{20.0f, 20.0f}, Size{20.0f, 20.0f}));
+    controller.attach(root);
+    Event inside{.kind = EventKind::PointerMove, .position = Point{25.0f, 25.0f}};
+    controller.deliver(inside);
+    ASSERT_EQ(grandchild_ptr->enters, 1u);
+    ASSERT_EQ(child_ptr->enters, 1u);
+    // act the child holding the grandchild is removed (§8.3)
+    const std::unique_ptr<UiNode> removed = root.remove_child(child_ptr);
+    ASSERT_NE(removed, nullptr);
+    // assert the deepest node was told first, so no widget kept a hover on a node that is going (§8.3)
+    EXPECT_EQ(grandchild_ptr->leaves, 1u);
+    EXPECT_EQ(child_ptr->leaves, 1u);
+    EXPECT_EQ(root.leaves, 0u);
+}

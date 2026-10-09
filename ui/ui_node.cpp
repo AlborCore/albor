@@ -78,6 +78,8 @@ namespace albor
         // a node that is not a child is not removed (§8.1)
         if (found == m_children.end())
             return nullptr;
+        // the observer is told first, while the child is still alive and still in the tree (§8.3)
+        notify_detaching(child);
         std::unique_ptr<UiNode> removed = std::move(*found);
         m_children.erase(found);
         // the detached node is a root again, so a later walk up does not reach a dying parent (§8.1)
@@ -196,6 +198,9 @@ namespace albor
         // an unchanged visibility invalidates nothing (§6.1)
         if (m_visible == visible)
             return;
+        // a node about to hide is told first, while it is still in the tree and still hoverable (§8.3)
+        if (!visible)
+            notify_detaching(this);
         // the flag is stored first, so the invalidation walks a subtree that already knows it is hidden (§6.1)
         m_visible = visible;
         // showing or hiding a node changes what the frame contains (§6.1)
@@ -205,6 +210,24 @@ namespace albor
     void UiNode::set_invalidation_handler(std::function<void()> handler) {
         // the handler belongs to the root, so a caller installs it on the root alone (§6.1)
         m_invalidation_handler = std::move(handler);
+    }
+
+    void UiNode::set_detaching_handler(std::function<void(UiNode*)> handler) {
+        // the handler belongs to the root, so a caller installs it on the root alone (§8.3)
+        m_detaching_handler = std::move(handler);
+    }
+
+    void UiNode::notify_detaching(UiNode* node) {
+        // the notification climbs to the root, because only the root carries the handler (§8.3)
+        if (m_parent != nullptr) {
+            m_parent->notify_detaching(node);
+            return;
+        }
+        // a root with no observer has nothing to tell, because nobody is watching the tree (§8.3)
+        if (!m_detaching_handler)
+            return;
+        // the handler is handed the node, which is still alive, so it can replay the state it holds (§8.3)
+        m_detaching_handler(node);
     }
 
     const NodeIdentity& UiNode::identity() const {

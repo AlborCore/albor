@@ -88,19 +88,26 @@ and each widget invented its own.
    a rounded plate yet. The hover and pressed states therefore read as a colour change on a hard
    rectangle, which is legible but not what the design intends (§6.1).
 
-### The invariant the replay rests on
+### The replay hazard, and how it is closed
 
 `InputController` holds the hovered nodes as raw pointers, because a tree owns its nodes and the
-controller borrows them. **An application that removes or hides a subtree while the pointer is
-inside it must call `refresh_hover()`**, which replays the exits and rebuilds the chain against
-the tree as it now stands. Without that call the chain keeps a pointer to a node that may have
-been destroyed, and the next pointer move dispatches a leave into freed memory.
+controller borrows them. Removing a hovered node and letting it be destroyed therefore left the
+chain pointing at freed memory, and the next pointer move dispatched a leave into it.
 
-This is a real hazard rather than a nicety, and the framework does not yet have a way to detect
-the mutation from inside the input module: the tree mutation paths (`UiNode::remove_child`,
-`set_visible`) reach no input observer. The honest fix is a change notification on the tree, which
-is a larger change than this defect, so the obligation is recorded here and covered by the three
-`HoverChecks` refresh tests until that notification exists (§8.3).
+**The tree now announces a detachment before it happens.** `UiNode::remove_child` and
+`UiNode::set_visible(false)` call `notify_detaching`, which climbs to the root and hands the
+observer the node **while it is still alive and still in the tree**. `InputController` installs
+that observer on `attach`, replays the exits for the node and every descendant above it in the
+chain, and cuts them from the chain before the tree destroys anything.
+
+The order is what makes it safe, and it is the reason the notification exists at all rather than
+the application calling `refresh_hover()` afterwards: after the fact, the node is gone and cannot
+be told anything.
+
+`refresh_hover()` stays, for the case the tree cannot report: an application that changes a
+node's bounds or its own hit rule under the pointer. The controller uses its remembered point to
+rebuild the chain against the tree as it now stands, and it invents no hover when nothing was
+hovered (§8.3).
 
 ## Dependencies and notes
 
@@ -128,8 +135,12 @@ What is covered by tests now:
   move inside does not, a move off leaves, crossing siblings leaves then enters, a child leaving
   keeps its root hovered, a press learns what it landed on, a hidden node is skipped, and a key
   press synthesizes nothing (`HoverChecks`).
-- The replay: hiding a hovered subtree replays its exit and leaves nothing hovered, and a
-  controller that never saw a pointer invents nothing.
+- The replay: a hovered node that is removed and destroyed is told its exit while it is still
+  alive, a move afterwards reaches nothing gone, hiding a hovered node replays its exit without
+  any application call, removing a node that was never hovered tells nothing, and a deeply
+  nested subtree exits its deepest node first (`HoverChecks`).
+- `refresh_hover()` covers what the tree cannot report: it replays the exits after a hidden
+  subtree leaves nothing hovered, and a controller that never saw a pointer invents nothing.
 
 - Enter and leave are synthesized exactly at boundary crossings, asserted on a two
   widget column.

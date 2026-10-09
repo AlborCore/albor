@@ -95,6 +95,9 @@ namespace albor
         // install the callback an invalidation reaches, which the frame pipeline turns into a frame request (§6.1)
         void set_invalidation_handler(std::function<void()> handler);
 
+        // install the handler told when a subtree is about to leave the tree, which the input module needs (§8.3)
+        void set_detaching_handler(std::function<void(UiNode*)> handler);
+
         // hand out the identity the author assigned, which automation and semantics key on (AD-11)
         [[nodiscard]] const NodeIdentity& identity() const;
 
@@ -111,6 +114,9 @@ namespace albor
         void visit(const std::function<void(const UiNode&)>& visitor) const;
 
     protected:
+        // tell the observer that a subtree is about to leave, which runs while the node is still alive (§8.3)
+        void notify_detaching(UiNode* node);
+
         // the final bounds a parent arranged this node to (§8.2)
         Rect m_bounds;
 
@@ -128,6 +134,9 @@ namespace albor
 
         // the callback an invalidation reaches, which the frame pipeline installs on the root (§6.1)
         std::function<void()> m_invalidation_handler;
+
+        // the handler told about a detaching subtree, which only the root carries (§8.3)
+        std::function<void(UiNode*)> m_detaching_handler;
 
         // whether the node asked for a redraw since the last frame (§6.1)
         bool m_render_dirty = true;

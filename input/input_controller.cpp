@@ -8,6 +8,27 @@ namespace albor
     void InputController::attach(UiNode& root) {
         // the tree is adopted without ownership, because the scene owner keeps it alive (§8.3)
         m_root = &root;
+        // a detaching subtree is reported before it leaves, while the node is still alive to be told (§8.3)
+        root.set_detaching_handler([this](UiNode* node) { release_subtree(node); });
+    }
+
+    void InputController::release_subtree(UiNode* node) {
+        // the chain runs deepest first, so the node's descendants stand before it and its ancestors behind (§8.3)
+        const auto found = std::find(m_hover_chain.begin(), m_hover_chain.end(), node);
+        // a subtree that was never hovered holds nothing to exit (§8.3)
+        if (found == m_hover_chain.end())
+            return;
+        // the going nodes are copied out first, because cutting the chain below would leave nothing to read (§8.3)
+        const std::vector<UiNode*> leaving(m_hover_chain.begin(), std::next(found));
+        // the subtree is cut off the front, so nothing points at what is going away (§8.3)
+        m_hover_chain.erase(m_hover_chain.begin(), std::next(found));
+        // the deepest first is replayed, because an exit has to reach the inner node before its parent (§8.3)
+        for (UiNode* leaving_node : leaving) {
+            // the exit is replayed while the node is still alive, which is the whole point of the order (§8.3)
+            const Rect& bounds = leaving_node->bounds();
+            Event leave{.kind = EventKind::PointerLeave, .position = Point{bounds.x, bounds.y}};
+            InputDispatcher::dispatch_to_chain(std::vector<UiNode*>{leaving_node}, leave);
+        }
     }
 
     UiNode* InputController::root() const {

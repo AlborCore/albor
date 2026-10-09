@@ -47,6 +47,9 @@ namespace albor
         // replay the exits after the tree changed under the pointer, which an application calls once it mutated it (§8.3)
         void refresh_hover();
 
+        // replay the exits for a subtree that is leaving the tree, which the tree reports before it goes (§8.3)
+        void release_subtree(UiNode* node);
+
     private:
         // find the deepest focusable node under the point, which click to focus lands on (§8.3)
         [[nodiscard]] UiNode* focusable_under(UiNode& node, Point point) const;
