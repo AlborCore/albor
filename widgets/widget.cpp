@@ -2,6 +2,15 @@
 
 namespace albor
 {
+    void apply_theme(UiNode& root, const Theme& theme) {
+        // the whole subtree is walked, because a nested widget is as unthemed as the root (§6.1)
+        root.visit([&theme](UiNode& node) {
+            // a node that is not a widget has nothing to theme, so it is passed over (§6.1)
+            if (auto* widget = dynamic_cast<Widget*>(&node))
+                widget->set_theme(&theme);
+        });
+    }
+
     SemanticNode SemanticNodeProvider::semantic_node() const {
         // the announced node is handed back by value, because a consumer owns what it reads (§10.1)
         return m_node;

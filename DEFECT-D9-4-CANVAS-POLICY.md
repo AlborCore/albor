@@ -140,6 +140,18 @@ Cost and benefit: direct native access is exactly what a schematic editor needs,
 no retained plumbing is required. Cost: application code becomes renderer specific,
 and every non-implementing renderer needs a documented unsupported path.
 
+## Status
+
+**Option A is done, and the contract is now written where a caller will read it**: the header of
+`widgets/canvas.h` states that the callback runs during the record pass on the ui thread, that it must
+be cheap and must not block, that it may touch application state, and that expensive content belongs
+in a retained resource that is recorded once and replayed. Nothing in the runtime changed, because the
+recorded output was already correct.
+
+Options B and C remain open and both need a decision before they are built: B is a framework
+capability that should land with the retained resource work, and C is a native control surface. The
+open question below is the decision that has not been taken (§6.4).
+
 ## Open question for implementation time
 
 Option A is a documentation change; Option B is a framework capability; Option C is a

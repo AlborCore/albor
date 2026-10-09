@@ -6,7 +6,7 @@
 
 namespace albor
 {
-    // the widget that hands its drawing context to a callback, which is how custom content is drawn (§6.4, §8)
+    // the widget that hands its context to a callback, which is on the ui thread and must be cheap (§6.4, AD-18)
     class Canvas final : public Widget
     {
     public:

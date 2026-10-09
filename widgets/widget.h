@@ -59,6 +59,9 @@ namespace albor
         const SemanticProvider* m_provider;
     };
 
+    // hand one theme to every widget in a subtree, so an application need not walk the tree itself (§6.1)
+    void apply_theme(UiNode& root, const Theme& theme);
+
     // the base every standard widget derives from, which is a component for layout and a provider for semantics (§8, §10.1)
     class Widget : public Component, public SemanticProvider
     {

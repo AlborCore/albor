@@ -3082,3 +3082,36 @@ TEST(ThemeChecks, ADefaultThemeAlreadyCarriesARadius) {
     button.set_theme(&theme);
     EXPECT_GT(button.corner_radius(), 0.0f);
 }
+
+TEST(ThemeChecks, AThemeWalkReachesEveryWidgetInASubtree) {
+    // arrange a tree of themed candidates, where only the root and one child are widgets (§6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    auto root = std::make_unique<Button>(&engine, &text_engine, "Root");
+    auto plain = std::make_unique<WidgetChildNode>();
+    auto nested = std::make_unique<Button>(&engine, &text_engine, "Nested");
+    Button* root_ptr = root.get();
+    Button* nested_ptr = nested.get();
+    root->add_child(std::move(plain));
+    root->add_child(std::move(nested));
+    const Theme theme = ThemeBuilder::dark(Accents{});
+    // act one walk installs the theme on the whole subtree (§6.1)
+    apply_theme(*root, theme);
+    // assert both widgets took it, which is the whole point of the walk (§6.1)
+    EXPECT_EQ(root_ptr->theme(), &theme);
+    EXPECT_EQ(nested_ptr->theme(), &theme);
+}
+
+TEST(ThemeChecks, AThemeWalkLeavesANonWidgetAlone) {
+    // arrange a tree whose root is not a widget at all (§6.1)
+    BindingEngine engine;
+    WidgetChildNode root;
+    auto nested = std::make_unique<Button>(&engine, nullptr, "Nested");
+    Button* nested_ptr = nested.get();
+    root.add_child(std::move(nested));
+    const Theme theme = ThemeBuilder::light(Accents{});
+    // act
+    apply_theme(root, theme);
+    // assert the widget inside the plain node was still reached (§6.1)
+    EXPECT_EQ(nested_ptr->theme(), &theme);
+}
