@@ -10,14 +10,38 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # a push to a branch that already has an open pull request would run the same
+  # build twice (once for the push, once for the pull_request event), and a
+  # cold skia build is an expensive thing to burn twice
+  check-pr:
+    if: github.event_name == 'push' && github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      has_pr: ${{ steps.check.outputs.has_pr }}
+    steps:
+      - name: check for an open pull request
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          response=$(curl -skf -H "Authorization: token $GITHUB_TOKEN" "${GITHUB_API_URL}/repos/${{ github.repository }}/pulls?head=${{ github.repository_owner }}:${{ github.ref_name }}&state=open&per_page=1")
+          count=$(echo "$response" | grep -c '"number"' || true)
+          echo "has_pr=$( [ "$count" -gt 0 ] && echo true || echo false )" >> "$GITHUB_OUTPUT"
+
   build:
     name: build (${{ matrix.name }})
+    needs: [check-pr]
+    if: |-
+      !cancelled() &&
+      (github.event_name != 'push' || github.ref == 'refs/heads/main' || needs.check-pr.outputs.has_pr != 'true')
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
     defaults:
@@ -31,6 +55,8 @@ jobs:
             os: macos-latest
             vcpkg-root: /usr/local/share/vcpkg
             setup: |
+              # the vcpkg binary cache root must exist before vcpkg runs
+              mkdir -p .vcpkg-cache
               # the release preset launches the compiler through ccache, which the runner image does not ship
               HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
               ccache --max-size 2G
@@ -49,29 +75,29 @@ jobs:
           #   setup: sudo apt-get update && sudo apt-get install -y ccache
     env:
       VCPKG_ROOT: ${{ matrix.vcpkg-root }}
-      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.vcpkg-binary-cache
+      VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
       CCACHE_DIR: ${{ github.workspace }}/.ccache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: platform setup
         run: ${{ matrix.setup }}
 
       - name: restore the vcpkg binary cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
-          path: .vcpkg-binary-cache
-          key: ${{ runner.os }}-vcpkg-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          path: ${{ github.workspace }}/.vcpkg-cache
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            ${{ runner.os }}-vcpkg-
+            vcpkg-${{ runner.os }}-
 
       - name: restore the ccache directory
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .ccache
-          key: ${{ runner.os }}-ccache-${{ github.sha }}
+          key: ccache-${{ runner.os }}-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-ccache-
+            ccache-${{ runner.os }}-
 
       - name: configure (release preset)
         run: cmake --preset release
