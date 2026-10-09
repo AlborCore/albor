@@ -1,4 +1,4 @@
-# Defect: the Metal backend double releases its command queue, so no GPU frame can be tested
+# Defect: the Metal backend traps while destroying its command queue, so no GPU frame can be tested
 
 Context: the CPU reference backend and the headless platform landed in `render/render-software/` and
 `platform/headless/`. This record is what the first attempt to use them revealed.
@@ -28,8 +28,42 @@ hide every other failure in the suite.
 
 ## Cause
 
-A C++ struct with strong ARC members, held by a smart pointer, has two owners of its destruction:
-the compiler's ARC cleanup and the container's deleter. The struct was written as though it had one.
+**Not yet established.** The first hypothesis, that a struct with strong ARC members inside a
+`std::unique_ptr` has two owners of its destruction, is **wrong**. Four variants were built and tested,
+and each still traps with the identical crash signature:
+
+| Variant | Result |
+| :--- | :--- |
+| as committed: `std::unique_ptr` + `abandonContext()` | traps |
+| ARC members emptied in a user declared destructor | traps |
+| state owned by a plain pointer, deleted explicitly | traps |
+| as above, and `abandonContext()` removed | traps |
+
+Leaking the state so that nothing is ever released does **not** trap, which is the only reason the
+release path is still implicated rather than the driver refusing some operation.
+
+## What is ruled out
+
+- **The smart pointer is not the second owner.** Removing it changes nothing.
+- **`abandonContext()` is not the trigger.** Removing it changes nothing, even though it was the one
+  material difference between the framework code and the standalone probe that exits cleanly.
+- **Metal and Skia setup is not at fault.** A standalone program performing the same
+  `MTLCreateSystemDefaultDevice`, `newCommandQueue` and `GrDirectContexts::MakeMetal` calls, with the
+  same queue/context destruction order, exits with status 0.
+- **It is not construction.** Every step reports success; the trap is in deallocation.
+
+## What remains
+
+The trap is in `MTLIOAccelCommandQueue dealloc` reaching `_dispatch_semaphore_dispose`, which is
+consistent with a dispatch semaphore being disposed on an object whose memory was already freed.
+That points at the queue being released while something still holds a reference to it, and the
+remaining candidate this defect has not yet tested is **Ganesh retaining the queue through
+`GrMtlBackendContext` in addition to the framework retaining it**, which would make the two releases
+unbalanced by exactly one.
+
+The next step is to read what `GrMtlBackendContext` requires of the caller — specifically whether
+`fOwner` or a release callback must be supplied — rather than to try more ownership permutations
+blind. Every attempt so far has changed the framework and not the answer.
 
 ## Reproduce
 
