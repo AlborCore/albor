@@ -164,7 +164,7 @@ component MainView {
     // the button measures its label through the engine, so the construction hands it over (AD-14, §9.1)
     EXPECT_TRUE(contains(source_file.content, "auto node_3 = std::make_unique<Button>(engine, text_engine);"));
     EXPECT_TRUE(contains(source_file.content, "n3->set_explicit_id(std::string(\"action_button\"));"));
-    EXPECT_TRUE(contains(source_file.content, "n3->set_label(std::string(\"Increment\"));"));
+    EXPECT_TRUE(contains(source_file.content, "n3->set_label(albor::i18n::translate(std::string(\"Increment\")));"));
     // the click handler wires to the written body, which the lambda forwards without allocating (§11.3)
     EXPECT_TRUE(contains(source_file.content, "n3->set_on_click([this] { handle_3_clicked(this); });"));
     // the children join their parents in preorder, and the root is adopted last (§8.1)
@@ -172,7 +172,7 @@ component MainView {
     EXPECT_TRUE(contains(source_file.content, "owner->add_child(std::move(node_0));"));
     // the bound sink evaluators compute and push, which is the binding body (§13.3)
     EXPECT_TRUE(contains(source_file.content, "std::string MainView::Impl::evaluate_1_text(void* raw) {"));
-    EXPECT_TRUE(contains(source_file.content, "const std::string value = ((std::string(\"Hello, \") + self->m_user_name.get()) + std::string(\"!\"));"));
+    EXPECT_TRUE(contains(source_file.content, "const std::string value = ((albor::i18n::translate(std::string(\"Hello, \")) + self->m_user_name.get()) + std::string(\"!\"));"));
     EXPECT_TRUE(contains(source_file.content, "self->m_node_1->set_text(value);"));
     // the handler writes the property and reports the signal, which is the written body (§11.3)
     EXPECT_TRUE(contains(source_file.content, "void MainView::Impl::handle_3_clicked(void* raw) {"));
@@ -354,7 +354,6 @@ TEST(Codegen, AZeroChunkSizeFallsBackToPerComponentUnits) {
 }
 
 TEST(Codegen, ABreaksOnAPhysicalLengthDefault) {
-    // arrange, act
     // a default is scanned like an assignment, because its density is undefined (§11.3, AD-27)
     const std::string_view source = R"(
 component Ring {
@@ -375,7 +374,6 @@ component Ring {
 }
 
 TEST(Codegen, AEscapesControlBytesInsideAString) {
-    // arrange, act
     // the source is assembled at runtime, so no control byte is stored in this file
     const std::string source = std::string("component Ring {\n    in property<string> chime: \"") + "\x07" + "\";\n    Column {}\n}\n";
     DiagnosticList diagnostics;
@@ -485,7 +483,6 @@ component Well {
 }
 )";
     const std::vector<GeneratedFile> files = generate(source);
-    // assert
     // the scalar property defaults show their emitted forms, which cover the literal spellings (§11.3)
     const GeneratedFile& cpp = file_named(files, "well.cpp");
     EXPECT_TRUE(contains(cpp.content, "Property<bool> m_enabled{true};"));

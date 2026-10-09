@@ -458,6 +458,9 @@ namespace albor::compiler
             // whether any emission uses a colour, which decides the headers to include (§11.3)
             bool m_uses_color = false;
 
+            // whether the component translated anything, which is why the catalogue header is pulled (§9.2, §11.3)
+            bool m_uses_i18n = false;
+
             // whether any node is a canvas, which adds the geometry header (§11.3)
             bool m_uses_canvas = false;
 
@@ -581,6 +584,9 @@ namespace albor::compiler
         }
 
         void ComponentEmitter::scan_color(const Expression& expression) {
+            // a translation resolves through the catalogue, which needs its own header (§9.2, §11.3)
+            if (dynamic_cast<const TranslationExpression*>(&expression) != nullptr)
+                m_uses_i18n = true;
             // a colour literal needs the paint header, which its constructor call requires (§11.3)
             if (const auto* literal = dynamic_cast<const LiteralExpression*>(&expression); literal != nullptr && literal->kind == LiteralExpression::Kind::Color)
                 m_uses_color = true;
@@ -779,6 +785,9 @@ namespace albor::compiler
             // a colour emission needs the paint header, which only a colour component reaches (§14.1)
             if (m_uses_color)
                 project_headers.push_back("core/paint.h");
+            // a translated emission resolves through the catalogue, which only a translated component needs (§9.2)
+            if (m_uses_i18n)
+                project_headers.push_back("i18n/catalog.h");
             // the widget headers join the set, because each constructed class must be declared (§14.1)
             for (const NodeSlot& slot : m_nodes) {
                 // the widget info of the element names the header to include (§14.1)
@@ -1263,9 +1272,9 @@ namespace albor::compiler
             // a literal renders from its value, which carries its own spelling (§11.3)
             if (const auto* literal = dynamic_cast<const LiteralExpression*>(&expression))
                 return emit_literal(*literal);
-            // a translation is a fixed string, which the catalog resolve would have done for real (§11.3)
+            // a translation is resolved through the catalog, which is what makes @tr mean something (§9.2, §11.3)
             if (const auto* translation = dynamic_cast<const TranslationExpression*>(&expression))
-                return emit_string_literal(translation->text);
+                return "albor::i18n::translate(" + emit_string_literal(translation->text) + ")";
             // a reference reads the property member, which is the reactive value (§11.3)
             if (const auto* reference = dynamic_cast<const PropertyExpression*>(&expression))
                 return m_object + "->m_" + sanitize(reference->name) + ".get()";

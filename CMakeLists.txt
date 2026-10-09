@@ -88,6 +88,7 @@ add_subdirectory(semantics)
 
 # the platform accessibility bridge consumes the semantic tree, so it comes after it (§10.2)
 add_subdirectory(accessibility)
+add_subdirectory(i18n)
 
 # the automation core exists only when it is explicitly enabled, and never in a release link (§10.3, AD-10)
 if(ALBOR_AUTOMATION)
