@@ -73,7 +73,7 @@ building the cache first would mean building it twice.
 
 Behind the existing `TextEngine` factory, the vendored engine becomes the default.
 `text/text-skia/` stays temporarily as a shaping oracle: the dual engine conformance
-corpus (§27) runs through both engines, glyph positions compared within tolerance.
+corpus (§15) runs through both engines, glyph positions compared within tolerance.
 When conformance passes, the skia text backend is deleted.
 
 ### Phase 4: compile time glyph embedding
@@ -137,7 +137,7 @@ is now glyph quad dominated, and `text-skia/` is removed after conformance.
 - A wrapped two line run draws with the shaped glyphs, at the measured size, with
   correct line breaks.
 - The dual engine conformance corpus agrees between the vendored engine and the skia
-  oracle within tolerance (§27), after which the oracle is removed.
+  oracle within tolerance (§15), after which the oracle is removed.
 - A steady state frame performs no shaping work: repeated measure of unchanged text is
   a cache lookup.
 - No skia include reaches `text/` outside `text-skia/`, asserted in review and by the

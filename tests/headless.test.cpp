@@ -12,6 +12,7 @@
 #include "render/render-software/software_renderer_backend.h"
 #include "render/render_context.h"
 #include "render/renderer_backend.h"
+#include "render/screenshot.h"
 #include "runtime/binding_engine.h"
 #include "ui/scene_builder.h"
 #include "ui/ui_node.h"
@@ -132,9 +133,16 @@ TEST(HeadlessPipelineChecks, AResizeReallocatesTheRaster) {
     // act the surface is resized, which is what a window resize requires (§6.2, D9.1)
     const WindowMetrics resized = WindowMetrics::from_logical(Size{SURFACE_WIDTH * 2.0f, SURFACE_HEIGHT * 2.0f}, 1.0f);
     backend.resize_surface(*surface, resized);
-    // assert the metrics moved and the raster followed, because a stale extent would stretch the frame (§6.2)
+    // act a frame is drawn at the new extent, because an unread raster proves nothing about its size (§6.2)
+    PaintedNode node;
+    SceneBuilder builder;
+    const std::shared_ptr<const FrameScene> scene = builder.build(node, resized, Color::rgb(0.0f, 0.0f, 0.0f));
+    backend.execute_frame(*surface, *scene);
+    const Screenshot captured = capture_surface(*surface);
+    // assert the raster followed the metrics, because a stale extent would stretch the frame (§6.2)
     EXPECT_EQ(surface->metrics(), resized);
-    EXPECT_NE(surface->read_pixels().size(), 0u);
+    EXPECT_EQ(captured.width, static_cast<int>(resized.pixel_size.width));
+    EXPECT_EQ(captured.height, static_cast<int>(resized.pixel_size.height));
 }
 
 TEST(HeadlessPipelineChecks, TheBackendNeedsNoNativeHandle) {
@@ -217,4 +225,70 @@ TEST(HeadlessPipelineChecks, AHeadlessEventLoopRecordsPacingInsteadOfATicking) {
     EXPECT_TRUE(loop.pacing());
     loop.stop_frame_pacing();
     EXPECT_FALSE(loop.pacing());
+}
+
+TEST(ScreenshotChecks, ACaptureCarriesTheExtentAndTheBytes) {
+    // arrange a surface the reference can draw into, which is what a capture reads (§6.3)
+    PaintedNode node;
+    node.m_red = 1.0f;
+    SceneBuilder builder;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{SURFACE_WIDTH, SURFACE_HEIGHT}, 1.0f);
+    const std::shared_ptr<const FrameScene> scene = builder.build(node, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    software::SoftwareRendererBackend backend;
+    auto surface = software::SoftwareRenderSurface::create(metrics);
+    ASSERT_NE(surface, nullptr);
+    backend.execute_frame(*surface, *scene);
+    // act
+    const Screenshot captured = capture_surface(*surface);
+    // assert the extent is physical pixels, because a comparison needs the device buffer size (§6.3, AD-27)
+    EXPECT_FALSE(captured.empty());
+    EXPECT_EQ(captured.width, static_cast<int>(SURFACE_WIDTH));
+    EXPECT_EQ(captured.height, static_cast<int>(SURFACE_HEIGHT));
+    EXPECT_EQ(captured.pixels.size(), static_cast<std::size_t>(SURFACE_WIDTH * SURFACE_HEIGHT * 4));
+}
+
+TEST(ScreenshotChecks, ARefusedReadIsEmptyRatherThanBlack) {
+    // arrange a surface that never drew, because an empty read is a refusal and not a frame (§6.3)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{SURFACE_WIDTH, SURFACE_HEIGHT}, 1.0f);
+    auto surface = software::SoftwareRenderSurface::create(metrics);
+    ASSERT_NE(surface, nullptr);
+    // act a capture before any frame was drawn
+    const Screenshot captured = capture_surface(*surface);
+    // assert the extent is reported as nothing, so a caller cannot mistake it for a black frame (§6.3)
+    EXPECT_TRUE(captured.empty());
+}
+
+TEST(ScreenshotChecks, TwoCapturesOfOneFrameAreIdentical) {
+    // arrange one scene drawn twice, which is what makes the reference usable as a gate (§6.3, AD-26)
+    PaintedNode node;
+    node.m_red = 1.0f;
+    node.m_green = 0.5f;
+    SceneBuilder builder;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{SURFACE_WIDTH, SURFACE_HEIGHT}, 1.0f);
+    const std::shared_ptr<const FrameScene> scene = builder.build(node, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    software::SoftwareRendererBackend backend;
+    auto surface = software::SoftwareRenderSurface::create(metrics);
+    backend.execute_frame(*surface, *scene);
+    // act
+    const Screenshot first = capture_surface(*surface);
+    backend.execute_frame(*surface, *scene);
+    const Screenshot second = capture_surface(*surface);
+    // assert the reference is reproducible, which is the property every other suite leans on (§6.3, AD-26)
+    EXPECT_EQ(first.max_channel_difference(second), 0);
+}
+
+TEST(ScreenshotChecks, DifferentExtentsCannotBeCompared) {
+    // arrange two reads of different sizes, which is a test bug rather than a rendering result (§6.3)
+    Screenshot first{.width = 4, .height = 4, .pixels = std::vector<std::uint8_t>(64, 0)};
+    Screenshot second{.width = 8, .height = 8, .pixels = std::vector<std::uint8_t>(256, 0)};
+    // act assert the answer is worse than any tolerance, so a mismatched pair cannot pass (§6.3, AD-26)
+    EXPECT_GT(first.max_channel_difference(second), 2);
+}
+
+TEST(ScreenshotChecks, AColourChangeIsReportedAsADifference) {
+    // arrange two reads that differ in one channel, which is what a real regression looks like (§6.3)
+    Screenshot first{.width = 1, .height = 1, .pixels = std::vector<std::uint8_t>{10, 10, 10, 255}};
+    Screenshot second{.width = 1, .height = 1, .pixels = std::vector<std::uint8_t>{20, 10, 10, 255}};
+    // act assert the worst channel distance is what a tolerance is compared against (§6.3, AD-26)
+    EXPECT_EQ(first.max_channel_difference(second), 10);
 }

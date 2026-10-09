@@ -87,7 +87,7 @@ stage threading (AD-18).
     a texture and draws glyph quads. No text type names a renderer type
     and no renderer type names a text engine type (§3.5, AD-19).
 
-Verification (§27, from RENDERING-DEFECTS.md): paint order is preserved
+Verification (§15 of the specification): paint order is preserved
 across categories; a recorded clip reaches stage two; a rounded radius
 survives recording; an alpha zero paint is culled; a wrapped run draws
 with the shaped glyphs at the measured size.
@@ -162,7 +162,7 @@ snapshot; a commit; a push.
 ## Risks
 
 - C1 changes render/ and ui/scene_builder deeper than any change so far;
-  the diff is large but the §27 verification list already exists, so the
+  the diff is large but the §15 verification list already exists, so the
   cluster lands as one reviewed unit.
 - TextField IME touches the macOS view delegate, which is fiddly; the
   insertText: path exists (platform_window.macos.mm:186), the remaining

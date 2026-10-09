@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "core/native_window_handle.h"
 #include "render/render_context.h"
@@ -40,6 +42,9 @@ namespace albor::skia
 
         // override: flush the work to the gpu and present the drawable
         void end_frame() override;
+
+        // override: read the last presented frame back, which is what a parity check compares (§6.3, AD-26)
+        [[nodiscard]] std::vector<std::uint8_t> read_pixels() const override;
 
     private:
         // build the surface over its opaque state

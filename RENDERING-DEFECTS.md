@@ -203,6 +203,11 @@ see the inputs, which is how a boundary was crossed without anyone deciding to c
   backend closes it: `tests/headless.test.cpp` builds a scene from a real tree, draws it through the
   real backend onto a real raster, and reads a pixel back (§6.1, §6.3, AD-26).
 
+- **The GPU cannot be compared against the reference yet.** `RenderSurface::read_pixels()` and a
+  canonical screenshot format landed, and the CPU reference is fully tested, but the Metal backend
+  cannot be destroyed: its ARC state double releases a command queue and the driver traps. Filed as
+  `DEFECT-METAL-BACKEND-DOUBLE-RELEASE.md`.
+
 ## Still open, filed separately
 
 - D6: consumers for the layout dirty flag, so a subtree relayout replaces a full tree

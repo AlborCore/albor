@@ -4,7 +4,10 @@
 #import <QuartzCore/CAMetalLayer.h>
 
 #include <skia/core/SkCanvas.h>
+#include <skia/core/SkColor.h>
 #include <skia/core/SkColorSpace.h>
+#include <skia/core/SkColorType.h>
+#include <skia/core/SkImage.h>
 #include <skia/core/SkSurface.h>
 #include <skia/gpu/ganesh/GrDirectContext.h>
 #include <skia/gpu/ganesh/mtl/SkSurfaceMetal.h>
@@ -33,6 +36,9 @@ namespace albor::skia
 
         // the metrics the surface presents at
         WindowMetrics metrics;
+
+        // the image of the last presented frame, which is the only way to read a gpu frame back (§6.3, AD-26)
+        sk_sp<SkImage> last_frame;
 
         // whether the last wrap produced a surface that could be drawn into
         bool ready = false;
@@ -119,6 +125,8 @@ namespace albor::skia
         // a frame that never began has nothing to submit (§6.1)
         if (!m_state->ready || m_state->frame == nullptr || m_state->context == nullptr)
             return;
+        // the presented frame is snapshotted before it is released, because a drawable returns to the pool (§6.3)
+        m_state->last_frame = m_state->frame->makeImageSnapshot();
         // the grant resolves the drawable through the slot captured by the wrap, so the presentation sees it (§6.3)
         m_state->context->flushAndSubmit(m_state->frame.get());
         // the drawable is presented last, because the compositor may only show a submitted frame (§6.1)
@@ -132,6 +140,26 @@ namespace albor::skia
         m_state->frame = nullptr;
         m_state->draw_context = nullptr;
         m_state->ready = false;
+    }
+
+    std::vector<std::uint8_t> SkiaRenderSurface::read_pixels() const {
+        // a surface that never presented has nothing to read, which is a refusal rather than an error (§6.3)
+        if (m_state->last_frame == nullptr)
+            return {};
+        // the read uses the canonical info, because two backends must produce bytes a comparison can read (§6.3, AD-26)
+        const SkImageInfo info = SkImageInfo::Make(m_state->last_frame->width(), m_state->last_frame->height(), kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+        // the stride is the padded row, which skia rounds per row rather than reporting per image (§6.3)
+        const std::size_t stride = info.minRowBytes();
+        // the buffer is sized from the minimum byte size, because a row is padded to its own stride (§6.3)
+        std::vector<std::uint8_t> pixels(info.computeMinByteSize());
+        // an extent the info cannot size is refused, because a wrapped size is not a frame (§6.3)
+        if (SkImageInfo::ByteSizeOverflowed(pixels.size()))
+            return {};
+        // the read is refused when the image cannot be copied, because a half read is not a screenshot (§6.3)
+        if (!m_state->last_frame->readPixels(info, pixels.data(), stride, 0, 0))
+            return {};
+        // the tightly packed bytes are what a conformance check compares (§6.3, AD-26)
+        return pixels;
     }
 
     SkiaRenderSurface::SkiaRenderSurface(std::unique_ptr<SkiaSurfaceState> state) :

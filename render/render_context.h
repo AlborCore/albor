@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "core/geometry.h"
 #include "core/paint.h"
@@ -83,5 +85,11 @@ namespace albor
 
         // end the frame and present the frame state the begin kept, exactly once per begun frame (§6.1, §6.3)
         virtual void end_frame() = 0;
+
+        // read the last FINISHED frame back, refusing before the first or mid frame; see render/screenshot.h (§6.3)
+        [[nodiscard]] virtual std::vector<std::uint8_t> read_pixels() const {
+            // a surface that cannot read back reports nothing, which is a refusal rather than an error (§6.3)
+            return {};
+        }
     };
 } // namespace albor

@@ -894,7 +894,7 @@ The contract has a performance half as well as a correctness half: **a cache hit
 allocate.** A lookup is a *view* of the caller's text, compared through a transparent hash and
 equality, and the string is owned only when an entry is inserted. This matters more than it looks,
 because a key that owns its string pays on every lookup rather than every miss, and the layout
-measure pass is a lookup. It is measured, not asserted: the allocation probe in §27 turns both
+measure pass is a lookup. It is measured, not asserted: the allocation probe in §15 turns both
 properties into test bounds.
 
 The cache is keyed by wrapping width because a run is shaped *for* a width. A cache keyed only by
@@ -1133,6 +1133,38 @@ With Phase 0 prototypes formally concluded, engineering proceeds directly along 
 
 ---
 
-## 15. Conclusion
+## 15. Cross-Cutting Conformance Suites
+
+Unit tests cover a module against itself. The suites below cover the properties that only fail when
+two modules meet, which is why each one is defined against a **corpus** rather than a single case.
+
+| Suite | Decides | Requires |
+| :--- | :--- | :--- |
+| **Dual-engine conformance** (AD-25) | one `.ui` corpus produces the same observable behaviour through compiled C++ and through the Dev IR evaluator | the compiler, the evaluator, one shared corpus |
+| **GPU / software parity** (AD-26) | a GPU frame and a CPU reference frame agree within a stated per-channel tolerance | both backends, `RenderSurface::read_pixels()`, a tolerance |
+| **LSP / compiler agreement** | the same corpus produces the same diagnostics from both | the compiler and the language server |
+| **Manifest consistency** | generated glue, descriptor tables and preview stubs agree with the manifest | the manifest, the glue generator, the preview host |
+| **Semantic tree** | role, name, states and actions of every widget are declared | the semantic providers (§10.1) |
+| **Build scope** (§14.3) | a `.ui` body edit rebuilds only the expected translation units | the write-if-changed generator |
+| **Automation compatibility** | the reference automation test runs against a sample application | the automation core (AD-10) |
+
+Three rules apply to every suite here, and each one was learned by a suite that could otherwise
+pass dishonestly:
+
+1. **A refused read is not an agreement.** A parity check that reads nothing from one side passes any
+   tolerance trivially. Every comparison asserts that **both** sides produced a frame before it
+   compares them (§6.3).
+2. **A tolerance is written, not guessed.** The bound is a per-channel value stated in the suite, and
+   a flat interior is expected to agree exactly while only antialiased edges may differ (§6.3, AD-26).
+3. **A suite that traps is worse than no suite.** A crash takes the whole test binary down and hides
+   every other failure, so a suite that cannot yet run is held out of the default build and recorded,
+   rather than shipped red.
+
+The CPU reference backend of §6.3 exists to make the parity suite possible, and it is deliberately
+deterministic: the same metrics and the same immutable scene produce the same bytes.
+
+---
+
+## 16. Conclusion
 
 Albor Design Version 4 closes the era of speculative prototyping and equips the project with a clean, decoupled, and actionable blueprint. By relying on strict modular abstractions and pragmatic, battle-tested defaults—starting with Skia for rendering and Eager-Push for reactive bindings—Albor is now ready for immediate production implementation.

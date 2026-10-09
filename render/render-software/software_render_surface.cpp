@@ -5,6 +5,7 @@
 
 #include <skia/core/SkCanvas.h>
 #include <skia/core/SkColor.h>
+#include <skia/core/SkColorType.h>
 #include <skia/core/SkImageInfo.h>
 #include <skia/core/SkSurface.h>
 
@@ -40,6 +41,12 @@ namespace albor::software
 
     namespace
     {
+        // the image info every backend reads back as, so a comparison compares pictures rather than formats (§6.3, AD-26)
+        SkImageInfo canonical_info(int width, int height) {
+            // premultiplied rgba is the one order two rasterizers agree on byte for byte (§6.3, AD-26)
+            return SkImageInfo::Make(width, height, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+        }
+
         // the image info the raster allocates at, which is the one format every conformance check reads (§6.3)
         SkImageInfo raster_info(const WindowMetrics& metrics) {
             // the logical size is scaled onto physical pixels, because the raster is a device buffer (§6.3, AD-27)
@@ -141,8 +148,11 @@ namespace albor::software
         // an unusable surface has no pixels, so an empty read is the honest answer (§6.2)
         if (!valid())
             return {};
-        // the image info is read from the raster, because the extent and the stride come from it (§6.3)
-        const SkImageInfo info = m_state->raster->imageInfo();
+        // a read is of the last finished frame, so an unfinished one refuses; both backends must agree (§6.3, AD-26)
+        if (m_state->frames == 0 || m_state->begun)
+            return {};
+        // the read uses the canonical info, because two backends must produce bytes a comparison can read (§6.3, AD-26)
+        const SkImageInfo info = canonical_info(m_state->raster->imageInfo().width(), m_state->raster->imageInfo().height());
         // the stride is the padded row, which skia rounds per row rather than reporting per image (§6.3)
         const std::size_t stride = info.minRowBytes();
         // the buffer is sized from the minimum byte size, because a row is padded to its own stride (§6.3)
