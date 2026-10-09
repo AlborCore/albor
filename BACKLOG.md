@@ -21,22 +21,31 @@ it either. The fix is to model ascent, descent and leading in the vendored line 
 The Metal teardown trap below also stops being a nice to have: it blocks AD-26, and AD-26 is now the
 definition of correct rasterization for AD-34.
 
-## Embedded text reaches a surface, but nothing drives it yet
+## Embedded text draws, but no application installs the resolver yet
 
-The outline path is wired: a `GlyphOutline` command records a glyph, the shared replay turns it into a
-retained contour and draws it as a filled path, and the test reads ink off the software reference. An
-`EmbeddedTextDrawChecks` suite covers that an embedded run produces one outline command per glyph and
-that the raster is no longer blank.
+The caller shipped in `1d2eb55`. A `ShapedRun` carries the content hash of the font it was shaped from,
+the vendored engine reports its own hash, and `SceneRecorder::draw_text` expands any run carrying one
+into a `GlyphOutline` command per glyph through a cache. `FramePipeline` forwards a resolver, so an
+application installs one line at startup and every widget draws embedded text through the ordinary
+`draw_text` it already called.
 
-What is missing is the caller. Nothing in the framework yet turns a vendored `TextLayout` into those
-commands: `Component::paint_content` still calls `draw_text`, and the recorder only emits outlines when
-a caller asks for them explicitly. Two pieces are needed. `draw_text` has to detect a run whose lines
-carry no drawable typeface and expand it into outline commands, which means the recorder needs the
-outline cache and a resolver wired in from the composition root. And the engine has to be told to mark
-its runs as embedded, since an empty `FontHandle` is currently the only signal.
+Two things remain, and both are downstream of the platform rather than of this path.
 
-The replay also allocates a `PathResource` per glyph per frame, because a contour needs verbs and the
-outline stores only points. Building the verbs once, at outline construction, removes it.
+**No example installs the resolver.** Nothing in `examples/` calls `set_outline_resolver`, so no
+application reaches the embedded path at all; every one still goes through the Skia paragraph engine.
+Wiring it into an example is the honest test of whether AD-34's text story works outside a test.
+
+**The replay allocates a `PathResource` per glyph per frame**, because a contour needs verbs and the
+outline stores only points. Building the verbs once, at outline construction, removes it. The embedded
+path also does a cache lookup per glyph per frame, which is a hash lookup rather than an allocation,
+and is the thing to revisit if text ever shows up in a profile.
+
+**A measurement caveat worth keeping.** `tools/alloc-probe` replaces global `operator new`, so it is
+blind to direct `malloc`, which is how Skia allocates. Scene build figures it reports are sound (it
+over-counts, not under-counts: 1000 objects read as 1011, the extra being the vector's own growth),
+but any figure that includes rasterization is not. Closing that means intercepting `malloc` in the
+probe; it was attempted and recurses, so it needs a reentrancy guard. Until then, do not quote a
+render-side allocation number.
 
 ## The Metal backend traps when it is destroyed
 
@@ -80,6 +89,75 @@ the driver, which is where it ultimately sits.
 Before restoring the parity suite, land a lifecycle test that constructs and destroys a
 backend: a suite that traps takes the whole test binary down and hides every other failure.
 
+## A .ui file cannot express a list, so no application can show one
+
+**The target.** A component declares an ordered collection and renders one row per item,
+with rows keyed by a stable identity so a row survives its item moving or being deleted:
+
+```
+component TaskList {
+    inout property<vector<Task>> tasks;
+
+    Column {
+        Repeat(task in tasks) {
+            Row {
+                CheckBox { checked: task.done; }
+                Label { text: task.title; }
+            }
+        }
+    }
+}
+```
+
+This is the MVP gap that matters most. Every other part of the framework is further along
+than this one, and a list is the single most common thing a UI framework does.
+
+**Where it stands.** The manifest half is done and committed. `record` declarations parse,
+require a `key` field (`E0308` when absent, because identity is explicit per AD-11), and
+generate a plain aggregate whose members carry the declared types and re-emitted defaults.
+An untranslatable field type reports `E0309` and empties the output rather than emitting a
+struct that would not compile. The generated header was verified to pass `-Wall -Wextra
+-Wpedantic -fsyntax-only` and `clang-format --dry-run --Werror`, which §14.2 requires of
+generated code.
+
+The front end was already finished and is not the problem. The lexer accepts `vector<T>`, the
+parser parses `Repeat(item in source [, index]) { one element }`, and the type checker
+resolves the repeat's item name and index against the source's element type.
+
+**The three steps that remain**, in order, because each is written against the one before:
+
+1. **Register records with the compiler catalog.** `Task` currently dies in
+   `resolve_type_name` as `E0400`, because only scalars and manifest *components* are known
+   types. Registering records makes `vector<Task>` resolve and lets `item.title` be typed as
+   a field read rather than an unknown property. Nothing is generated yet at this step.
+2. **Lift `E0501` for collections.** `ComponentEmitter::validate_type` rejects every
+   non-scalar, so a `vector<T>` property blocks the whole translation unit. It needs a C++
+   spelling (`std::vector<Task>`) and a `cpp_type` branch to go with it.
+3. **Lift `E0500` for `Repeat`.** `validate_node` rejects the node outright. The emitter
+   needs to materialize one row per element and reconcile rows by `key` rather than by
+   position.
+
+**The decision that shapes step 3.** AD-13 is settled: model views virtualize materialized
+nodes, rows keyed by stable `ItemKey` identifiers. A repeater emitted as a plain loop in
+`build()` would contradict it and be rewritten when virtualization lands, because row
+identity is the thing virtualization depends on. Rows are therefore materialized and keyed
+now, and virtualization becomes an optimization over that rather than a replacement for it.
+`model/` is the reserved home for the keyed view and does not exist yet.
+
+**Why records had to come from the manifest.** AD-17 says the compiler never parses C++
+headers and the manifest is the single source of truth for native types. A `.ui` file that
+must know a task's fields can only learn them from the manifest, so extending the manifest
+was forced rather than chosen.
+
+**What still blocks a real application even after the above.** A todo application also needs
+a text entry widget: `widgets/` holds only button, canvas, checkbox, label and slider, while
+`EventKind::TextInput` is normalized, routed through focus, and consumed by nothing.
+`SemanticRole::TextField` is declared but no widget produces it. Separately, a handler body
+is a closed grammar of exactly two statements (`compiler/ast.h` `HandlerStatementKind`):
+assign a property of *this* component, or invoke *this* component's signal. So even a
+working repeater cannot add or remove a row from a `.ui` file. That is a language design
+change rather than codegen work, and it is not scoped here.
+
 ## Phase 5 is deferred
 
 Phase 5 (devrt, automation, language server, standalone preview host, accessibility
@@ -94,6 +172,11 @@ comment line beneath it. Two comment lines above one statement violate the singl
 in `STYLE-GUIDE.md` (§Comments), so the sweep keeps only the marker and drops the
 explanation: `// assert` alone above the assertion, because the test name and the assertion
 already say what the check means.
+
+`tests/manifest.test.cpp` was already swept in this direction (commit `0ba2c38`) by merging
+each marker with its explanation into one line rather than dropping the explanation, which
+satisfies the rule but leaves that file inconsistent with the rest of the sweep. Align it or
+record the exception before the sweep reaches it.
 
 162 pairs across 6 files:
 
