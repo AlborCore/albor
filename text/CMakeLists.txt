@@ -1,8 +1,10 @@
 # the text engine contract of §9.1, which every shaping backend implements
 
-# gather cpp sources (all platforms), dropping the backend module because it owns its own target
+# gather cpp sources (all platforms), dropping every backend directory because each owns its own target
 file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
-list(FILTER CPP_SOURCES EXCLUDE REGEX "/text-skia/")
+
+# a text backend is a directory below text/, and its sources belong to its own target rather than this one
+list(FILTER CPP_SOURCES EXCLUDE REGEX "/text-(skia|harfbuzz)/")
 
 # create the static library from the gathered cpp sources
 add_library(albor-text STATIC ${CPP_SOURCES})

@@ -88,6 +88,7 @@ add_subdirectory(layout)
 
 # the text engine of §9.1, which measures a run so containers adapt to their content (§3.2)
 add_subdirectory(text)
+add_subdirectory(text/text-harfbuzz)
 
 # the frame scheduler integrated animation core of §7.3, which drives properties through their presence channel (§3.2)
 add_subdirectory(animation)

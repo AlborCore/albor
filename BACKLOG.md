@@ -3,6 +3,23 @@
 Work that is agreed but not done yet. Every entry names its fix precisely, so it can be
 picked up without re-deciding anything.
 
+## The vendored text engine cannot issue a drawable typeface
+
+`text/text-harfbuzz/` shapes correctly and agrees with the Skia oracle on glyph count,
+glyph positions, measured width and reproducibility. Its runs carry an empty `FontHandle`,
+so they do not draw. Full record and the three options are in
+`DEFECT-TEXT-VENDOR-TYPEFACE.md`; the short version is that this Skia build exports only
+`SkFontMgr_New_CoreText` and has no way to turn font bytes into a typeface, so a vendored
+engine reading a font from a file has nothing drawable to hand the renderer.
+
+This blocks the rest of phase 3, because `text/text-skia/` may only be deleted once the
+vendored engine can draw — deleting it sooner would leave the framework measuring correctly
+and drawing nothing.
+
+Decide first where a drawable typeface comes from: a FreeType or HarfBuzz path in the
+renderer (touches AD-28), a `FontHandle` that names a font file and lets each backend resolve
+it, or the platform font manager by family name (least work, gives up the from-a-file property).
+
 ## The Metal backend traps when it is destroyed
 
 `SkiaRendererBackend` cannot be destroyed. Constructing one and letting it leave scope

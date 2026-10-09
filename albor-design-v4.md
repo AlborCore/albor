@@ -864,6 +864,13 @@ must not know what a widget or a theme is (§3.2, AD-05).
 
 Text rendering and measurement are foundational to UI layout:
 - `TextEngine` provides font discovery, fallback resolution, HarfBuzz Unicode shaping, and BiDi line breaking.
+- **The shipped engine does not yet do this, and the divergence is recorded.** The running engine
+  shapes through the renderer's bundled paragraph module rather than a vendored HarfBuzz and ICU,
+  so the dependency the specification names is present only transitively. A vendored shaper is now
+  built (`text/text-harfbuzz/`) and agrees with the current engine on glyph positions, but it issues
+  no drawable typeface, because the renderer build exposes no portable way to create one from font
+  bytes. See `DEFECT-TEXT-VENDOR-TYPEFACE.md`; the shaper is not the only Skia dependency in the text
+  stack and the typeface is the harder of the two.
 - Text measurement is computed during the layout measure phase so containers accurately adapt to localized text lengths.
 - Fonts are managed as immutable resources through the `ResourceManager`.
 
