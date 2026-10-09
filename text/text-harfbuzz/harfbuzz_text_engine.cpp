@@ -1,5 +1,8 @@
 #include "text/text-harfbuzz/harfbuzz_text_engine.h"
 
+#include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <vector>
 
@@ -11,6 +14,7 @@
 
 #include "render/font_handle.h"
 #include "render/shaped_run.h"
+#include "resources/embedded_font.h"
 #include "text/text-harfbuzz/harfbuzz_typeface_resolver.h"
 
 namespace albor::harfbuzz
@@ -27,6 +31,12 @@ namespace albor::harfbuzz
         // the harfbuzz font that shapes, which is built from the face (§9.1)
         hb_font_t* font = nullptr;
 
+        // the bytes the face was built from, which freetype reads without a file (§9.1, AD-34)
+        std::vector<std::uint8_t> bytes;
+
+        // the content hash of those bytes, which is the font's identity in a layout (§15, AD-34)
+        std::uint64_t font_hash = 0;
+
         // the resolver holding the drawing typeface, which only the platform can supply (§9.1, AD-28)
         std::unique_ptr<HarfbuzzTypefaceResolver> resolver;
 
@@ -39,6 +49,20 @@ namespace albor::harfbuzz
         // the descender of the face in design units, which places the bottom of the run (§9.1)
         float descender = -200.0f;
     };
+
+    namespace
+    {
+        // read a font file into memory, because the engine identifies a font by its bytes and not by a path (§15, AD-34)
+        std::vector<std::uint8_t> read_font_bytes(const std::string& path) {
+            // the file is opened in binary, because a font read as text would be corrupted (§9.1)
+            std::ifstream file(path, std::ios::binary);
+            // a file that is not there carries no font, so the read is refused (§9.1)
+            if (!file)
+                return {};
+            // the bytes are read whole, because a face is built from a complete font (§9.1)
+            return std::vector<std::uint8_t>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        }
+    } // namespace
 
     std::unique_ptr<HarfbuzzTextEngine> HarfbuzzTextEngine::create(const std::string& font_path, const std::string& family_name) {
         // an empty path names no font, so the engine is refused rather than built empty (§9.1)
@@ -56,6 +80,29 @@ namespace albor::harfbuzz
         return engine;
     }
 
+    std::unique_ptr<HarfbuzzTextEngine> HarfbuzzTextEngine::create_embedded(std::string_view family) {
+        // an empty family names nothing the build carries, so the engine is refused (§9.1)
+        if (family.empty())
+            return nullptr;
+        // the font comes from the registry the generated code filled, which is where AD-34's bytes live (§11.3, AD-34)
+        const resources::EmbeddedFont* font = resources::FontRegistry::find_family(family);
+        // a family the build does not carry has no font, and falling back would break identity (§15, AD-34)
+        if (font == nullptr)
+            return nullptr;
+        // the engine is built over the bytes themselves, so no file system is consulted (§15, AD-34)
+        std::unique_ptr<HarfbuzzTextEngine> engine(new HarfbuzzTextEngine(font->bytes.data(), font->bytes.size(), family));
+        // an engine that could not shape the carried bytes is refused rather than half built (§9.1)
+        if (!engine->ready())
+            return nullptr;
+        // the engine is returned only when it can actually shape (§9.1)
+        return engine;
+    }
+
+    std::uint64_t HarfbuzzTextEngine::font_hash() const {
+        // the hash identifies the bytes this engine shaped with, and a layout is keyed on it (§15, AD-34)
+        return m_state->font_hash;
+    }
+
     HarfbuzzTextEngine::HarfbuzzTextEngine(const std::string& font_path, const std::string& family_name) :
         m_state(std::make_unique<HarfbuzzEngineState>()) {
         // freetype comes up once per engine, and it fails only on a broken install (§9.1)
@@ -68,6 +115,42 @@ namespace albor::harfbuzz
             m_state->face = nullptr;
             return;
         }
+        // the bytes are read so the engine can report the same identity an embedded one would (§15, AD-34)
+        m_state->bytes = read_font_bytes(font_path);
+        // the hash is over those bytes, so a path loaded font and an embedded one identify identically (§15, AD-34)
+        m_state->font_hash = resources::hash_font_bytes(m_state->bytes.data(), m_state->bytes.size());
+        // the shaper and the typeface come up next, because both need the face (§9.1)
+        load(nullptr, 0, family_name);
+    }
+
+    HarfbuzzTextEngine::HarfbuzzTextEngine(const std::uint8_t* font_bytes, std::size_t byte_count, std::string_view family_name) :
+        m_state(std::make_unique<HarfbuzzEngineState>()) {
+        // freetype comes up once per engine, and it fails only on a broken install (§9.1)
+        if (FT_Init_FreeType(&m_state->library) != 0) {
+            m_state->library = nullptr;
+            return;
+        }
+        // the bytes are copied, because freetype borrows them and the registry owns its own (§9.1, AD-34)
+        m_state->bytes.assign(font_bytes, font_bytes + byte_count);
+        // the face is read from memory, which is the whole point: no file system is touched (§15, AD-34)
+        if (FT_New_Memory_Face(m_state->library, m_state->bytes.data(), static_cast<FT_Long>(byte_count), 0, &m_state->face) != 0) {
+            m_state->face = nullptr;
+            return;
+        }
+        // the hash identifies the bytes, and it is what a layout is keyed on (§15, AD-34)
+        m_state->font_hash = resources::hash_font_bytes(m_state->bytes.data(), m_state->bytes.size());
+        // the shaper and the typeface come up next, because both need the face (§9.1)
+        load(nullptr, 0, family_name);
+    }
+
+    void HarfbuzzTextEngine::load(const std::uint8_t* font_bytes, std::size_t byte_count, std::string_view family_name) {
+        // the arguments are unused here because both sources already built the face (§9.1)
+        (void)font_bytes;
+        // the byte count is unused for the same reason (§9.1)
+        (void)byte_count;
+        // an engine with no face has nothing to read metrics from, so it stops here (§9.1)
+        if (m_state->face == nullptr)
+            return;
         // the units per em convert design units into logical pixels, and a zero would divide by nothing (§9.1, AD-27)
         if (m_state->face->units_per_EM > 0)
             m_state->units_per_em = static_cast<float>(m_state->face->units_per_EM);
@@ -81,7 +164,7 @@ namespace albor::harfbuzz
         if (m_state->font == nullptr)
             return;
         // the drawing typeface comes from the platform, because the renderer build offers no other source (§9.1, AD-28)
-        m_state->resolver = HarfbuzzTypefaceResolver::create(family_name);
+        m_state->resolver = HarfbuzzTypefaceResolver::create(std::string(family_name));
         // a resolver that did not build leaves runs that measure correctly and draw nothing (§9.1, AD-28)
         if (m_state->resolver == nullptr)
             return;

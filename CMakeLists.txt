@@ -95,6 +95,7 @@ add_subdirectory(animation)
 
 # the theme and style tokens of §6.1, which the widgets resolve their paint through (§3.2)
 add_subdirectory(style)
+add_subdirectory(resources)
 
 # the standard widgets of §8, which are ui components that also expose semantics (§3.2)
 add_subdirectory(widgets)

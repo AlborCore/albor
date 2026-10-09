@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include "render/shaped_run.h"
+#include "resources/embedded_font.h"
 #include "text/text-harfbuzz/harfbuzz_text_engine.h"
 #include "text/text-skia/skia_text_engine.h"
 
@@ -31,11 +32,24 @@ namespace
     bool has_font() {
         // the conformance suite needs a real font, and a host without one reports the absence (§9.1)
         std::ifstream probe(FONT_PATH, std::ios::binary);
-            // the probe answers whether the font is present, which a host without one cannot shape against (§9.1)
+        // the probe answers whether the font is present, which a host without one cannot shape against (§9.1)
         return probe.good();
     }
 
-    // the largest distance between two glyph positions, which is the measure the tolerance is written against (§15)
+    // build a registered font over a font file, which is what generated code will emit for an embedded one (§11.3, AD-34)
+    resources::EmbeddedFont make_embedded_font(std::string family, const char* path) {
+        // the bytes are read whole, because a face is built from a complete font (§9.1)
+        std::ifstream file(path, std::ios::binary);
+        // a file that is not there carries no font, so the caller sees an empty registration (§9.1)
+        if (!file)
+            return resources::EmbeddedFont{.family = std::move(family)};
+        // the bytes travel with the registration, which is what a generated font does (§11.3, AD-34)
+        std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        // the hash is computed by the registry, so a caller cannot register a wrong identity (§15)
+        return resources::EmbeddedFont{.family = std::move(family), .content_hash = 0, .bytes = std::move(bytes)};
+    }
+
+    // the largest distance between two glyph positions, which the tolerance is written against (§15)
     float position_distance(Point left, Point right) {
         // the axes differ independently, so the larger one is the distance (§15)
         return std::max(std::abs(left.x - right.x), std::abs(left.y - right.y));
@@ -181,10 +195,106 @@ TEST(DualEngineConformanceChecks, AnUnknownFamilyLeavesTheEngineUnusable) {
 }
 
 TEST(DualEngineConformanceChecks, TheOracleRunIsDrawable) {
-    // arrange the oracle, which issues a typeface and therefore draws (§9.1, AD-28)
+    // arrange the oracle issues a typeface and so draws (§9.1, AD-28)
     SkiaTextEngine oracle;
     const TextLayout reference = oracle.measure("Albor", 0.0f, 16.0f);
     ASSERT_NE(reference.run, nullptr);
     // act assert the oracle is the drawable one, which is why it is kept as the oracle (§9.1)
     EXPECT_TRUE(reference.run->lines().front().font.valid());
+}
+
+TEST(EmbeddedFontChecks, ARegisteredFontIsFoundByFamilyAndByHash) {
+    // arrange the registry starts empty, because a registration from another test would answer this (§2.2)
+    resources::FontRegistry::clear();
+    EXPECT_EQ(resources::FontRegistry::count(), 0u);
+    // act a font is registered the way generated code registers one (§11.3, AD-34)
+    resources::FontRegistry::register_font(make_embedded_font("AlborTest", FONT_PATH));
+    // assert both lookups answer, since a family is asked for and a hash is what a layout keys on (§15)
+    ASSERT_NE(resources::FontRegistry::find_family("AlborTest"), nullptr);
+    const resources::EmbeddedFont* found = resources::FontRegistry::find_family("AlborTest");
+    EXPECT_NE(resources::FontRegistry::find_hash(found->content_hash), nullptr);
+    EXPECT_EQ(resources::FontRegistry::count(), 1u);
+    // exit the registry is emptied, so the next test starts from nothing (§2.2)
+    resources::FontRegistry::clear();
+}
+
+TEST(EmbeddedFontChecks, TheHashIsOverTheBytesAndNotTheName) {
+    // arrange the same bytes registered under two names (§15, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font("AlborOne", FONT_PATH));
+    resources::FontRegistry::register_font(make_embedded_font("AlborTwo", FONT_PATH));
+    const resources::EmbeddedFont* one = resources::FontRegistry::find_family("AlborOne");
+    const resources::EmbeddedFont* two = resources::FontRegistry::find_family("AlborTwo");
+    ASSERT_NE(one, nullptr);
+    ASSERT_NE(two, nullptr);
+    // act assert the names differ and the identity does not, because the identity is the bytes (§15, AD-34)
+    EXPECT_EQ(one->content_hash, two->content_hash);
+    EXPECT_NE(one->content_hash, 0u);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(EmbeddedFontChecks, ARefusedFontIsNotRegistered) {
+    // arrange the registry starts empty (§2.2)
+    resources::FontRegistry::clear();
+    // act a font with no bytes cannot shape, and one with no name cannot be asked for (§9.1)
+    resources::FontRegistry::register_font(resources::EmbeddedFont{.family = "Empty", .bytes = {}});
+    resources::FontRegistry::register_font(resources::EmbeddedFont{.family = "", .bytes = {1, 2, 3}});
+    // assert neither joined, because a half registered font is worse than none (§9.1)
+    EXPECT_EQ(resources::FontRegistry::count(), 0u);
+    EXPECT_EQ(resources::FontRegistry::find_family("Empty"), nullptr);
+}
+
+TEST(EmbeddedFontChecks, AnUnknownFamilyIsRefusedRatherThanFallingBack) {
+    // arrange the registry carries one font, so a fallback would be visible (§15, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    // act an engine over a family the build does not carry (§9.1)
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded("AlborAbsent");
+    // assert the engine is refused rather than shaping with the carried font, which would break identity (§15, AD-34)
+    EXPECT_EQ(engine, nullptr);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(EmbeddedFontChecks, AnEmbeddedFontShapesExactlyAsTheSameFileDoes) {
+    // arrange one engine reads the font from the build and one from the file, which is the claim (§15, AD-34)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> embedded = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> from_file = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH, FONT_FAMILY);
+    ASSERT_NE(embedded, nullptr);
+    ASSERT_NE(from_file, nullptr);
+    // act the same strings are shaped by both, which is the claim AD-34 makes about the source of the font (§15)
+    const std::string text = "Albor framework";
+    const TextLayout embedded_layout = embedded->measure(text, 0.0f, 20.0f);
+    const TextLayout file_layout = from_file->measure(text, 0.0f, 20.0f);
+    // assert the two fonts identify as the same bytes, which is the whole claim (§15, AD-34)
+    EXPECT_EQ(embedded->font_hash(), from_file->font_hash());
+    ASSERT_NE(embedded_layout.run, nullptr);
+    ASSERT_NE(file_layout.run, nullptr);
+    // assert the layouts are identical, not merely close: this is layout identity and it has no tolerance (§15)
+    EXPECT_EQ(*embedded_layout.run, *file_layout.run);
+    EXPECT_FLOAT_EQ(embedded_layout.size.width, file_layout.size.width);
+    EXPECT_FLOAT_EQ(embedded_layout.ascent, file_layout.ascent);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(EmbeddedFontChecks, AnEmbeddedEngineNeedsNoFileOnDisk) {
+    // arrange the registry carries the bytes, so the engine has everything it needs (§15, AD-34)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    // act the engine is built from the registry alone, with no path anywhere in the call (§15, AD-34)
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> embedded = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    // assert it shapes, which is what makes the build self contained (§9.1)
+    ASSERT_NE(embedded, nullptr);
+    ASSERT_TRUE(embedded->ready());
+    EXPECT_GT(embedded->font_hash(), 0u);
+    // exit
+    resources::FontRegistry::clear();
 }

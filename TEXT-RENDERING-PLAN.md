@@ -99,6 +99,19 @@ platform cannot render the same pixels on all three. Phase 4 is therefore the pr
 whole objective and not the strongest form of the dependency free goal as this plan previously framed
 it. See section 15 of the specification.
 
+**Started, at the runtime end.** `resources/` carries a font's bytes in the binary and identifies them
+by content hash, and `HarfbuzzTextEngine::create_embedded` builds a face from those bytes with
+`FT_New_Memory_Face`, so a build shapes from its own font rather than from a file system. The test that
+matters is green: an engine reading the font from the registry and an engine reading the same font from
+a path produce **identical layouts and an identical content hash**, which is layout identity with no
+tolerance in it.
+
+Two things are deliberately not done yet. **The compiler does not yet emit the registration**: the
+registry exists and generated code will call it, but the `.ui` walk that discovers the fonts a
+component needs is not written. And **drawing still asks the platform for a typeface**, because this
+renderer build offers no way to make one from bytes, so an embedded font must be registered under a
+family the platform also resolves. That dependency is the next thing phase 4 removes.
+
 A compiler pass rasterizes exactly the glyphs an application needs, at the pixel sizes
 and weights its `.ui` declares, into static font data carried in the application
 binary, and emits the registration calls in the generated code (§11.3). The runtime

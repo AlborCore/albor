@@ -1,7 +1,10 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "text/text_engine.h"
 
@@ -13,6 +16,12 @@ namespace albor::harfbuzz
     public:
         // build over a font file and the family the renderer draws from, refusing when either is absent (§9.1)
         [[nodiscard]] static std::unique_ptr<HarfbuzzTextEngine> create(const std::string& font_path, const std::string& family_name);
+
+        // build over a font the build carries, which is how AD-34 removes font discovery (§15, AD-34)
+        [[nodiscard]] static std::unique_ptr<HarfbuzzTextEngine> create_embedded(std::string_view family);
+
+        // the content hash of the font this engine shapes with, which is its identity in a layout (§15, AD-34)
+        [[nodiscard]] std::uint64_t font_hash() const;
 
         ~HarfbuzzTextEngine() override;
 
@@ -36,6 +45,12 @@ namespace albor::harfbuzz
     private:
         // load the face, the shaper and the drawing typeface, which is the whole of construction (§9.1)
         HarfbuzzTextEngine(const std::string& font_path, const std::string& family_name);
+
+        // load the face from bytes the build carries, which is how the engine avoids a file system (§15, AD-34)
+        HarfbuzzTextEngine(const std::uint8_t* font_bytes, std::size_t byte_count, std::string_view family_name);
+
+        // bring the engine up over bytes and then over a family, because both sources load the same face (§9.1)
+        void load(const std::uint8_t* font_bytes, std::size_t byte_count, std::string_view family_name);
 
         // the opaque freetype, harfbuzz and resolver state, so that no shaping type leaves this header (§3.5, AD-19)
         struct HarfbuzzEngineState;
