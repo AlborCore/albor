@@ -8,7 +8,7 @@
 
 namespace albor
 {
-    // the bytes one finished frame was read back as; the read rules are in DEFECT-METAL-BACKEND-DOUBLE-RELEASE (§6.3)
+    // the bytes one finished frame was read back as; the read rules are in DEFECT-METAL-BACKEND-TEARDOWN (§6.3)
     struct Screenshot
     {
         // the width in pixels, which is the physical extent and not the logical one (§6.3, AD-27)

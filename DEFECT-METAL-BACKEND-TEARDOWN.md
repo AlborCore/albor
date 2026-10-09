@@ -3,6 +3,10 @@
 Context: the CPU reference backend and the headless platform landed in `render/render-software/` and
 `platform/headless/`. This record is what the first attempt to use them revealed.
 
+**Status: deferred.** This is tracked in `BACKLOG.md` and is revisited once the missing modules are
+implemented. The investigation is complete up to the point where the next step stopped being an
+ownership change; the summary below is what a later reader needs and nothing else.
+
 ## Summary
 
 `SkiaRendererBackend` cannot be destroyed. Constructing one and letting it go out of scope traps with

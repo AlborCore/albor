@@ -206,7 +206,7 @@ see the inputs, which is how a boundary was crossed without anyone deciding to c
 - **The GPU cannot be compared against the reference yet.** `RenderSurface::read_pixels()` and a
   canonical screenshot format landed, and the CPU reference is fully tested, but the Metal backend
   cannot be destroyed: its ARC state double releases a command queue and the driver traps. Filed as
-  `DEFECT-METAL-BACKEND-DOUBLE-RELEASE.md`.
+  `DEFECT-METAL-BACKEND-TEARDOWN.md`.
 
 ## Still open, filed separately
 
