@@ -370,3 +370,113 @@ native component GaugeView {
     const GeneratedFile& header = file_named(files, "chart/gauge_view_preview.h");
     EXPECT_TRUE(contains(header.content, "Color m_tint{Color{}};"));
 }
+
+TEST(RecordGlue, ARecordBecomesAPlainStruct) {
+    // arrange
+    const std::string_view source = R"(
+record Task {
+    key: string;
+    title: string;
+    done: bool = false;
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert
+    ASSERT_EQ(files.size(), 1U);
+    EXPECT_EQ(files.at(0).path, "chart/task.h");
+    EXPECT_NE(files.at(0).content.find("struct Task"), std::string::npos);
+}
+
+TEST(RecordGlue, ARecordFieldBecomesAPlainMember) {
+    // arrange
+    const std::string_view source = R"(
+record Task {
+    key: string;
+    title: string;
+    done: bool = false;
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the members carry their declared types, which is what a binding reads (§11.2)
+    EXPECT_NE(files.at(0).content.find("std::string key;"), std::string::npos);
+    EXPECT_NE(files.at(0).content.find("std::string title;"), std::string::npos);
+}
+
+TEST(RecordGlue, ADeclaredDefaultIsReEmittedOnTheMember) {
+    // arrange
+    const std::string_view source = R"(
+record Task {
+    key: string;
+    done: bool = false;
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the default survives, because the member is aggregate initialized (§11.2)
+    EXPECT_NE(files.at(0).content.find("bool done = false;"), std::string::npos);
+}
+
+TEST(RecordGlue, AColourFieldPullsThePaintHeader) {
+    // arrange
+    const std::string_view source = R"(
+record Task {
+    key: string;
+    tint: color;
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the framework colour type lives in the paint header, which the struct must include (AD-05)
+    EXPECT_NE(files.at(0).content.find("#include \"core/paint.h\""), std::string::npos);
+    EXPECT_NE(files.at(0).content.find("Color tint;"), std::string::npos);
+}
+
+TEST(RecordGlue, TheKeyFieldIsNamedAsCarryingIdentity) {
+    // arrange
+    const std::string_view source = R"(
+record Task {
+    key: string;
+    title: string;
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the key is called out, because a row is keyed by it and identity is explicit (§18.1, AD-11)
+    EXPECT_NE(files.at(0).content.find("which carries the identity a row is keyed by"), std::string::npos);
+}
+
+TEST(RecordGlue, AnUntranslatableFieldTypeBlocksTheOutput) {
+    // arrange
+    DiagnosticList diagnostics;
+    const std::string_view source = R"(
+record Task {
+    key: string;
+    odd: Texture;
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the output is empty, because a struct with a missing member would not compile (§11.2)
+    EXPECT_TRUE(files.empty());
+    ASSERT_EQ(diagnostics.count(), 1U);
+    EXPECT_EQ(diagnostics.diagnostics().at(0).code, "E0309");
+}
+
+TEST(RecordGlue, ARecordAndAComponentBothEmit) {
+    // arrange
+    const std::string_view source = R"(
+record Task {
+    key: string;
+}
+
+native component Gauge {
+    in property<float> value;
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert both are emitted, because a manifest declares both kinds (§11.2, AD-17)
+    EXPECT_EQ(files.size(), 3U);
+}

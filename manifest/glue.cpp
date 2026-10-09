@@ -99,6 +99,38 @@ namespace albor::manifest
             return snapshot_cpp(type);
         }
 
+        // one field of a record ready to emit, which the generated struct is built from (§11.2, AD-13)
+        struct GluedField
+        {
+            // the member name, which is what a binding writes as item.name (§11.2, AD-13)
+            std::string name;
+
+            // the c++ spelling of the field type, which the struct member is declared with (§11.2)
+            std::string cpp_type;
+
+            // the default as written, which the member initializes from when the manifest gave one (§11.2)
+            std::string default_value;
+
+            // whether the field carries the record's identity, which is what a row is keyed by (§18.1, AD-13)
+            bool is_key = false;
+        };
+
+        // one record ready to emit, which is the struct the compiler and the application both name (§11.2, AD-13)
+        struct GluedRecord
+        {
+            // the struct name, which is the declared name the manifest holds (§11.2, AD-17)
+            std::string name;
+
+            // the unit name is the lowered name, which is what the file is called (§11.3)
+            std::string stem;
+
+            // the fields in declaration order, which is the order a binding reads them (§11.2)
+            std::vector<GluedField> fields;
+
+            // whether any field is a colour, which pulls the paint header the struct needs (AD-05)
+            bool needs_paint = false;
+        };
+
         // one property ready to emit, which the generated accessors are built from (§11.2)
         struct GluedProperty
         {
@@ -167,6 +199,55 @@ namespace albor::manifest
             // every generated line ends with a newline, which is what a source file expects (§14.1)
             out.push_back('\n');
         }
+
+        // the struct emitted for one record, which is the type a .ui repeat walks (§11.2, AD-13)
+        std::string emit_record(std::string_view module, const GluedRecord& record) {
+            // the header output accumulates from empty, which the emitted lines fill (§14.1)
+            std::string out;
+            // the provenance opens the unit, which identifies the manifest that produced it (§14, AD-17)
+            emit_line(out, 0, provenance(module));
+            // the include guard is the pragma, which is the only guard the project uses (§14.1)
+            emit_line(out, 0, "#pragma once");
+            // the blank opens the include section, which separates the guard (§14.1)
+            emit_line(out, 0, "");
+            // the string members need the string header, which a text field pulls (§11.2)
+            const bool has_text = std::any_of(record.fields.begin(), record.fields.end(), [](const GluedField& field) { return field.cpp_type == "std::string"; });
+            // a text field pulls the header, which its member is declared against (§11.2)
+            if (has_text)
+                emit_line(out, 0, "#include <string>");
+            // the standard section closes, which separates it from the project headers (§14.1)
+            emit_line(out, 0, "");
+            // a colour member pulls the paint header, which the framework type lives in (AD-05)
+            if (record.needs_paint)
+                emit_line(out, 0, "#include \"core/paint.h\"");
+            // the blank opens the namespace, which separates the includes (§14.1)
+            emit_line(out, 0, "");
+            // the record lives in the framework namespace, which is what the generated properties name (§14.1)
+            emit_line(out, 0, "namespace albor");
+            emit_line(out, 0, "{");
+            // the struct is a plain aggregate, because a record is data rather than behaviour (§11.2, AD-13)
+            emit_line(out, 1, "// the " + record.name + " record the " + std::string(module) + " manifest declares, which a repeat walks (§11.2, AD-13)");
+            // the aggregate opens, which is what keeps it constructible from a .ui binding (§14.1)
+            emit_line(out, 1, "struct " + record.name);
+            emit_line(out, 1, "{");
+            // each field is a plain member, in declaration order, which is the order a binding reads (§11.2)
+            for (const GluedField& field : record.fields) {
+                // the key field is named because a row is keyed by it (§18.1, AD-11, AD-13)
+                const std::string role = field.is_key ? ", which carries the identity a row is keyed by (§18.1, AD-11)" : ", which the manifest declares (§11.2)";
+                emit_line(out, 2, "// the " + field.name + " field" + role);
+                // a default the manifest wrote is re-emitted, which is what makes the aggregate usable (§11.2)
+                const std::string initializer = field.default_value.empty() ? "" : " = " + field.default_value;
+                // the member is the declaration, which is the whole of a record field (§14.1)
+                emit_line(out, 2, field.cpp_type + " " + field.name + initializer + ";");
+            }
+            // the aggregate closes, which ends the record (§14.1)
+            emit_line(out, 1, "};");
+            // the namespace closes, which ends the unit (§14.1)
+            emit_line(out, 0, "} // namespace albor");
+            return out;
+        }
+
+        // the c++ spelling of a manifest type
 
         // emit the facade header of one component, which the application subclasses (§11.2, AD-17)
         std::string emit_header(std::string_view module, const GluedComponent& component) {
@@ -573,6 +654,38 @@ namespace albor::manifest
         std::vector<GeneratedFile> outputs;
         // whether any component could not translate, which voids the whole output (§11.2)
         bool blocked = false;
+        // each record is processed on its own, because one bad field must not hide the rest (§11.2)
+        for (const RecordDeclaration& declaration : file.records) {
+            // the record ready to emit is fresh, which the manifest fields fill (§11.2)
+            GluedRecord record;
+            // the struct name is the declared name, which is what a .ui file writes (§11.2, AD-17)
+            record.name = declaration.name;
+            // the unit name is the lowered name, which is what the file is called (§11.3)
+            record.stem = snake_case(declaration.name);
+            // each field is translated on its own, so one bad type reports without hiding the rest (§11.2)
+            for (const RecordField& field : declaration.fields) {
+                // the c++ spelling decides, which only the known types have (§11.2)
+                const auto cpp = glue_cpp(field.type);
+                // an untranslatable field is reported, which also voids the output (§11.2)
+                if (!cpp) {
+                    // the flag is set, which empties the generated output at the end (§11.2)
+                    blocked = true;
+                    // the problem names the type, because that is what the manifest wrote (§11.2)
+                    m_diagnostics.add(Diagnostic::Severity::Error, field.span, "E0309", "the glue generator cannot translate the '" + field.type + "' record field type");
+                    // this field is dropped, which keeps a partial struct out of the output (§11.2)
+                    continue;
+                }
+                // a colour field pulls the paint header, which the framework type lives in (AD-05)
+                if (field.type == "color")
+                    record.needs_paint = true;
+                // the translated field joins the record, which the struct is emitted from (§11.2)
+                record.fields.push_back(GluedField{.name = field.name, .cpp_type = *cpp, .default_value = field.default_value, .is_key = field.is_key});
+            }
+            // the module path of the unit is the file module, which the caller places under (§14.2)
+            const std::string module_name = std::string(file.module);
+            // the record header joins the files, which the generated properties include (§11.2, AD-17)
+            outputs.push_back(GeneratedFile{.path = module_name + "/" + record.stem + ".h", .content = emit_record(file.module, record)});
+        }
         // each component is processed on its own, because one problem must not hide the rest (§11.2)
         for (const NativeComponent& native : file.components) {
             // the component ready to emit is fresh, which the manifest fields fill (§11.2)
