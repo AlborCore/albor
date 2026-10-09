@@ -1,6 +1,6 @@
 # Defect D5: Widgets never render their children
 
-Draft issue report. Context and the sibling defects live in `RENDERING-DEFECTS.md`.
+Context and the sibling defects live in `RENDERING-DEFECTS.md`. **Fixed**: widgets record their children and paint through the content hook.
 
 ## Summary
 

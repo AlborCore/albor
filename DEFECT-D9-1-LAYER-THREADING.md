@@ -1,6 +1,6 @@
 # Defect D9.1: The metal layer is resized from the render thread
 
-Draft issue report. Context and the sibling defects live in `RENDERING-DEFECTS.md`.
+Context and the sibling defects live in `RENDERING-DEFECTS.md`. **Fixed**: resize runs on the ui thread and the executor drops stale metric frames.
 
 ## Summary
 

@@ -85,13 +85,17 @@ and each widget invented its own.
    control gets the shape the theme specifies and an unthemed one keeps the rectangle it has
    always drawn (§6.2).
 
+7. **One call themes a tree.** `apply_theme(UiNode& root, const Theme&)` walks a subtree and hands
+   the theme to every widget in it, so an application does not call `set_theme` once per widget. It
+   lives in `widgets/` rather than on `UiNode`, because the ui tree does not know what a widget or a
+   theme is, and the walk costs one tree visit rather than a tree walk per control (§6.1).
+
 ### Still open
 
-7. **Nothing chooses a theme for an application.** `ThemeBuilder` derives a theme and a widget
-   accepts one, but there is no place that installs a theme across a tree, so an application with
-   twenty widgets still calls `set_theme` twenty times. The obvious shape is a walk that hands one
-   theme to every widget in a subtree, which belongs on `UiNode` or on the pipeline rather than on
-   the application, and it is not written yet (§6.1).
+8. **No scheme switching at runtime.** `ThemeBuilder` derives a light and a dark theme, but nothing
+   reads a preference and swaps between them. The application installs whichever it built, and a
+   change means installing the other theme over the tree, which is one `apply_theme` call but has no
+   policy behind it (§6.1).
 
 ### The replay hazard, and how it is closed
 

@@ -143,10 +143,16 @@ and every non-implementing renderer needs a documented unsupported path.
 ## Status
 
 **Option A is done, and the contract is now written where a caller will read it**: the header of
-`widgets/canvas.h` states that the callback runs during the record pass on the ui thread, that it must
-be cheap and must not block, that it may touch application state, and that expensive content belongs
-in a retained resource that is recorded once and replayed. Nothing in the runtime changed, because the
-recorded output was already correct.
+`widgets/canvas.h` states that the callback is on the ui thread during recording and must be cheap.
+Nothing in the runtime changed, because the recorded output was already correct.
+
+The header says less than it should. The comment rule in `STYLE-GUIDE.md` forbids consecutive comment
+lines, so the four point contract cannot be written as a block above the class; it is one line in the
+header and the rest of it lives here. A caller who reads only the header learns the thread and the
+cost rule, and this document carries the rest: that the callback must not block, that it may touch
+application state because it is the one place custom drawing may, and that expensive content belongs
+in a retained resource recorded once and replayed. Writing that contract properly needs a doc comment
+form the rule exempts, which is a change to `STYLE-GUIDE.md` and not to this defect.
 
 Options B and C remain open and both need a decision before they are built: B is a framework
 capability that should land with the retained resource work, and C is a native control surface. The

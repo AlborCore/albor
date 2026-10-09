@@ -126,8 +126,12 @@ nothing records the shaped output.
 ## Plan
 
 The plan clears D1, D2, D3, D4, D8, D9.2 and D9.3, and the allocation churn of D9.5,
-without changing the two stage threading (AD-18). D5, D6, D7 and D9.1, D9.4 are
-follow-up work listed at the end.
+without changing the two stage threading (AD-18).
+
+D5, D9.1 and most of D7 are done. D6 is done except for the partial repaint work.
+D9.4 has its documented contract and two options still undecided. The status of each
+is in the header of its own document, which is where a reader should look rather than
+at this list, which is the index of them.
 
 ### Phase A: the scene becomes one ordered command list
 
