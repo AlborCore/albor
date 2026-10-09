@@ -104,3 +104,20 @@ jobs:
 
       - name: build (release preset)
         run: cmake --build --preset release --parallel 4
+
+  # coverage is a pull request signal only: a push never runs it, on any
+  # branch. fork pull requests are excluded as well, because they cannot
+  # receive the write token the coverage api upload needs
+  coverage:
+    name: C++ coverage
+    needs: [check-pr]
+    if: |-
+      !cancelled() &&
+      github.repository == 'AlborCore/albor' &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      pull-requests: read
+      code-quality: write
+    uses: ./.github/workflows/coverage.yml

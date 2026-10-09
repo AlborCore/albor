@@ -1,0 +1,99 @@
+name: coverage (reusable)
+
+on:
+  workflow_call:
+
+jobs:
+  coverage:
+    name: C++ coverage
+    runs-on: macos-latest
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    env:
+      VCPKG_ROOT: /usr/local/share/vcpkg
+      VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      LLVM_PROFILE_FILE: ${{ github.workspace }}/coverage.profraw
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # the job token must not land in .git/config, because this job builds and tests the pull request's code
+          persist-credentials: false
+
+      - name: platform setup
+        run: |
+          # the vcpkg binary cache root must exist before vcpkg runs
+          mkdir -p .vcpkg-cache
+          # every preset launches the compiler through ccache, which the runner image does not ship
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
+          ccache --max-size 2G
+          # the preset is c++23, so take the newest xcode the image carries rather than its default
+          sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
+
+      - name: restore the vcpkg binary cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ github.workspace }}/.vcpkg-cache
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
+
+      - name: restore the ccache directory
+        uses: actions/cache@v5
+        with:
+          path: .ccache
+          key: ccache-coverage-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            ccache-coverage-${{ runner.os }}-
+
+      - name: configure (coverage preset)
+        run: cmake --preset coverage
+
+      - name: build the instrumented unit test runner
+        run: cmake --build --preset coverage --target albor-tests --parallel 4
+
+      - name: run the unit tests
+        working-directory: .build-coverage/tests
+        run: ./albor-tests
+
+      - name: generate the cobertura report
+        run: |
+          xcrun llvm-profdata merge -sparse coverage.profraw -o coverage.profdata
+          xcrun llvm-cov export --format=lcov -instr-profile=coverage.profdata \
+            -ignore-filename-regex='(^|/)tests/' \
+            ./.build-coverage/tests/albor-tests > coverage.lcov
+          # the export carries absolute source paths, and the coverage api matches on repository relative ones
+          sed -i '' "s|^SF:$PWD/|SF:|" coverage.lcov
+          python3 -m pip install lcov_cobertura
+          lcov_cobertura coverage.lcov --output cobertura.xml
+
+      - name: upload the report artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: cobertura-report
+          path: cobertura.xml
+          if-no-files-found: error
+          retention-days: 7
+
+  upload-coverage:
+    name: publish coverage
+    needs: [coverage]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      code-quality: write
+    steps:
+      - name: download the coverage report
+        uses: actions/download-artifact@v8
+        with:
+          name: cobertura-report
+
+      - name: upload to the github code coverage api
+        uses: actions/upload-code-coverage@v1
+        with:
+          file: cobertura.xml
+          language: C++
+          label: code-coverage/c++
