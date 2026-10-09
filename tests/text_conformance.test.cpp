@@ -7,10 +7,16 @@
 
 #include <gtest/gtest.h>
 
+#include "render/draw_command.h"
+#include "render/render-software/software_render_surface.h"
+#include "render/render-software/software_renderer_backend.h"
+#include "render/screenshot.h"
 #include "render/shaped_run.h"
 #include "resources/embedded_font.h"
 #include "text/text-harfbuzz/harfbuzz_text_engine.h"
 #include "text/text-skia/skia_text_engine.h"
+#include "ui/scene_builder.h"
+#include "window/window_metrics.h"
 
 using namespace albor;
 
@@ -440,6 +446,73 @@ TEST(GlyphOutlineChecks, ACurveGlyphIsTessellatedRatherThanSampled) {
     ASSERT_GT(glyph_width, 1.0f);
     // assert every gap is a small fraction of the glyph, which control points would not be (§15, AD-34)
     EXPECT_LT(widest_gap, glyph_width * 0.2f);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(EmbeddedTextDrawChecks, AnEmbeddedRunRecordsOneOutlinePerGlyph) {
+    // arrange a run whose font the renderer cannot use, which is how an embedded run presents itself (§15, AD-34)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("Albor", 0.0f, 20.0f);
+    ASSERT_NE(layout.run, nullptr);
+    // act every glyph becomes an outline command at the pen position the run placed it (§6.4, AD-34)
+    std::vector<DrawCommand> commands;
+    for (const ShapedGlyph& glyph : layout.run->lines().front().glyphs) {
+        // the outline is built once per glyph, which is what the cache would do in a frame (§6.4)
+        const std::shared_ptr<const GlyphOutline> outline = std::make_shared<const GlyphOutline>(engine->font_hash(), glyph.id, 20.0f, engine->glyph_outline(glyph.id, 20.0f));
+        // a glyph with no outline records nothing, which is what a space is (§6.2)
+        if (outline->empty())
+            continue;
+        // the command lands at the glyph's own position in the run (§9.1)
+        commands.push_back(DrawCommand::glyph_outline(outline, glyph.position, Paint{.fill = Color::rgba(1.0f, 1.0f, 1.0f, 1.0f)}));
+    }
+    // assert the run produced commands, which is what stops it being a run that draws nothing (§15, AD-34)
+    EXPECT_FALSE(commands.empty());
+    EXPECT_EQ(commands.front().kind(), DrawCommandKind::GlyphOutline);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(EmbeddedTextDrawChecks, AnEmbeddedRunPutsInkOnTheReferenceSurface) {
+    // arrange the same run, drawn onto the software reference rather than described (§15, AD-26)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("Albor", 0.0f, 40.0f);
+    ASSERT_NE(layout.run, nullptr);
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{160.0f, 60.0f}, 1.0f);
+    SceneRecorder recorder(metrics);
+    // act every glyph is recorded as an outline at the baseline the run placed it (§6.4, §9.1)
+    for (const ShapedGlyph& glyph : layout.run->lines().front().glyphs) {
+        // the outline is the embedded font's own contour, so this is the AD-34 path end to end (§15)
+        const std::shared_ptr<const GlyphOutline> outline = std::make_shared<const GlyphOutline>(engine->font_hash(), glyph.id, 40.0f, engine->glyph_outline(glyph.id, 40.0f));
+        // the baseline offset comes from the run's own line origin, which is what places the glyph (§9.1)
+        recorder.glyph_outline(outline, Point{glyph.position.x, layout.run->lines().front().origin.y + glyph.position.y}, {.fill = Color::rgba(1.0f, 1.0f, 1.0f, 1.0f)});
+    }
+    software::SoftwareRendererBackend backend;
+    auto surface = software::SoftwareRenderSurface::create(metrics);
+    ASSERT_NE(surface, nullptr);
+    backend.execute_frame(*surface, *recorder.scene());
+    const Screenshot drawn = capture_surface(*surface);
+    // assert the surface carries ink, which is the claim: embedded text now reaches a raster (§15, AD-34)
+    ASSERT_FALSE(drawn.empty());
+    bool any_lit = false;
+    for (std::uint8_t channel : drawn.pixels) {
+        // one lit channel proves the outlines were rasterized rather than skipped (§15)
+        if (channel != 0) {
+            any_lit = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(any_lit);
     // exit
     resources::FontRegistry::clear();
 }

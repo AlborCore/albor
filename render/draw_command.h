@@ -7,6 +7,7 @@
 
 #include "core/geometry.h"
 #include "core/paint.h"
+#include "render/glyph_outline.h"
 #include "render/image_resource.h"
 #include "render/line_batch.h"
 #include "render/path_resource.h"
@@ -43,6 +44,9 @@ namespace albor
 
         // a retained image into a destination rectangle (§6.4, AD-06)
         Image,
+
+        // one glyph of an embedded font, drawn as its tessellated outline (§6.4, AD-06, AD-34)
+        GlyphOutline,
     };
 
     // the geometry a rectangle command carries, which is the rectangle and its corner radii (§6.2)
@@ -120,12 +124,25 @@ namespace albor
         friend bool operator==(const ImageGeometry& lhs, const ImageGeometry& rhs) = default;
     };
 
+    // the geometry a glyph outline command carries, which is the outline and where it lands (§6.4)
+    struct GlyphOutlineGeometry
+    {
+        // the tessellated outline the replay draws, which is retained rather than rebuilt (§6.4, AD-06)
+        std::shared_ptr<const GlyphOutline> outline;
+
+        // the pen position the glyph sits at, which the outline is drawn relative to (§9.1)
+        Point position;
+
+        // compare two outlines component wise, which a command comparison needs (§6.2)
+        friend bool operator==(const GlyphOutlineGeometry& lhs, const GlyphOutlineGeometry& rhs) = default;
+    };
+
     // one draw of a frame scene, which is an ordered list of these so paint order survives the hand off (§6.1, AD-18)
     class DrawCommand
     {
     public:
         // the geometry a command carries, where the alternative index is the kind (§6.2)
-        using Geometry = std::variant<RectGeometry, TextGeometry, BatchGeometry, PathGeometry, PictureGeometry, ImageGeometry>;
+        using Geometry = std::variant<RectGeometry, TextGeometry, BatchGeometry, PathGeometry, PictureGeometry, ImageGeometry, GlyphOutlineGeometry>;
 
         // the clip that stands for no clip at all, which is what a command carries until a recorder stamps one (§6.2)
         [[nodiscard]] static const Rect& unclipped();
@@ -150,6 +167,9 @@ namespace albor
 
         // build a retained image command (§6.4, AD-06)
         [[nodiscard]] static DrawCommand image(std::shared_ptr<const ImageResource> image, Rect destination, Paint paint);
+
+        // build a glyph outline command, which is how embedded text reaches the surface (§6.4, AD-34)
+        [[nodiscard]] static DrawCommand glyph_outline(std::shared_ptr<const GlyphOutline> outline, Point position, Paint paint);
 
         // the kind of geometry the command carries (§6.2)
         [[nodiscard]] DrawCommandKind kind() const;
@@ -181,6 +201,9 @@ namespace albor
         // the pixels and the destination of an image command (§6.4)
         [[nodiscard]] const ImageGeometry& image_geometry() const;
 
+        // the outline and the position of a glyph outline command (§6.4, AD-34)
+        [[nodiscard]] const GlyphOutlineGeometry& glyph_outline_geometry() const;
+
         // stamp the clip the recorder stood at, which is what the replay scissors to (§6.2)
         void set_clip(Rect clip);
 
@@ -192,6 +215,9 @@ namespace albor
 
         // draw the command into a context, which is the one replay the frame and a picture share (§6.1, §6.4)
         void replay(RenderContext& context) const;
+
+        // draw one embedded glyph as its outline, which builds a contour and so is separate (§6.4, AD-34)
+        void replay_glyph_outline(RenderContext& context) const;
 
         // compare two commands field by field (§6.2)
         friend bool operator==(const DrawCommand& lhs, const DrawCommand& rhs) = default;

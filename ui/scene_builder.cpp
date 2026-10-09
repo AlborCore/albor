@@ -88,6 +88,11 @@ namespace albor
         record(DrawCommand::image(image, to_scene(destination), paint));
     }
 
+    void SceneRecorder::glyph_outline(const std::shared_ptr<const GlyphOutline>& outline, Point position, const Paint& paint) {
+        // the position is mapped into scene space now, like every recorded geometry (§6.4, AD-34)
+        record(DrawCommand::glyph_outline(outline, to_scene(position), paint));
+    }
+
     void SceneRecorder::set_background(Color background) {
         // the background is the clear colour of the whole frame (§6.1)
         m_background = background;

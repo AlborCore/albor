@@ -1,7 +1,5 @@
 #include "platform/headless/headless_platform_window.h"
 
-#include <utility>
-
 #include "window/window_metrics.h"
 #include "window/window_options.h"
 

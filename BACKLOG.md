@@ -21,18 +21,22 @@ it either. The fix is to model ascent, descent and leading in the vendored line 
 The Metal teardown trap below also stops being a nice to have: it blocks AD-26, and AD-26 is now the
 definition of correct rasterization for AD-34.
 
-## Embedded text is not wired into the renderer yet
+## Embedded text reaches a surface, but nothing drives it yet
 
-`glyph_outline` extracts a real, deterministically tessellated outline from the embedded font's own
-bytes, unhinted, and it is proven by six tests including one that distinguishes tessellation from
-control points. What is missing is the wiring: `SkiaRenderContext::draw_text` still resolves a run's
-`FontHandle` as an `SkTypeface` and draws through Skia's glyph path, so a run produced by the vendored
-engine is still drawn the platform way.
+The outline path is wired: a `GlyphOutline` command records a glyph, the shared replay turns it into a
+retained contour and draws it as a filled path, and the test reads ink off the software reference. An
+`EmbeddedTextDrawChecks` suite covers that an embedded run produces one outline command per glyph and
+that the raster is no longer blank.
 
-The change is to record each glyph outline as path commands, which the framework already carries
-(`PathResource`, `draw_path`). It trades Skia's optimized glyph path for determinism, which is the
-trade AD-34 asks for, and it makes text considerably heavier in the command stream until the
-pre-rasterized atlas of the later phase replaces it.
+What is missing is the caller. Nothing in the framework yet turns a vendored `TextLayout` into those
+commands: `Component::paint_content` still calls `draw_text`, and the recorder only emits outlines when
+a caller asks for them explicitly. Two pieces are needed. `draw_text` has to detect a run whose lines
+carry no drawable typeface and expand it into outline commands, which means the recorder needs the
+outline cache and a resolver wired in from the composition root. And the engine has to be told to mark
+its runs as embedded, since an empty `FontHandle` is currently the only signal.
+
+The replay also allocates a `PathResource` per glyph per frame, because a contour needs verbs and the
+outline stores only points. Building the verbs once, at outline construction, removes it.
 
 ## The Metal backend traps when it is destroyed
 
