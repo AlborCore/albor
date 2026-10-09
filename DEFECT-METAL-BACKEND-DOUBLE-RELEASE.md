@@ -52,18 +52,51 @@ release path is still implicated rather than the driver refusing some operation.
   same queue/context destruction order, exits with status 0.
 - **It is not construction.** Every step reports success; the trap is in deallocation.
 
+## One correction the header produced
+
+`GrMtlBackendContext` carries no `fOwner` and no release callback. Its `sk_cfp` members are the whole
+contract, and `sk_cfp`'s **copy assignment calls `SkCFSafeRetain`**, which CFRetains the object.
+
+The code carried a comment saying the opposite:
+
+```cpp
+// skia borrows the device and the queue through bridged handles, so it does not retain them itself
+```
+
+That comment was **false**. Ganesh is a second owner of both objects, not a borrower. The comment has
+been corrected, because a false statement about ownership is worse than a missing one: it is what a
+later reader trusts.
+
 ## What remains
 
-The trap is in `MTLIOAccelCommandQueue dealloc` reaching `_dispatch_semaphore_dispose`, which is
-consistent with a dispatch semaphore being disposed on an object whose memory was already freed.
-That points at the queue being released while something still holds a reference to it, and the
-remaining candidate this defect has not yet tested is **Ganesh retaining the queue through
-`GrMtlBackendContext` in addition to the framework retaining it**, which would make the two releases
-unbalanced by exactly one.
+**Two owners is not automatically a double free.** The counts balance on paper: `newCommandQueue`
+gives one reference, `sk_cfp` assignment gives Ganesh another, and Ganesh releases its own when the
+context dies. A fifth variant tested exactly that by making Ganesh the *sole* owner — the state
+holding unretained borrows and the strong locals released as soon as the context came up — and it
+still trapped. So the arithmetic being unbalanced is **not** the explanation either.
 
-The next step is to read what `GrMtlBackendContext` requires of the caller — specifically whether
-`fOwner` or a release callback must be supplied — rather than to try more ownership permutations
-blind. Every attempt so far has changed the framework and not the answer.
+Every ownership hypothesis has now been tested and eliminated:
+
+| Hypothesis | Test | Result |
+| :--- | :--- | :--- |
+| smart pointer is a second owner | plain pointer, explicit delete | still traps |
+| `abandonContext()` triggers it | removed | still traps |
+| framework and Ganesh both own | Ganesh made sole owner | still traps |
+| an over release of the queue | leaked the state | does **not** trap |
+| Metal and Skia setup | standalone probe, same calls, same order | exits 0 |
+
+The remaining suspect is no longer ownership arithmetic at all. The trap is inside
+`MTLIOAccelCommandQueue dealloc` → `dispatch_release` → `_dispatch_semaphore_dispose`, which is driver
+code that disposes a dispatch semaphore it believes it owns. The most plausible explanation left is
+that **the queue is released while Ganesh still has work or a semaphore in flight on it**, and the
+driver traps rather than tolerating it; that would make this a shutdown-ordering problem rather than a
+counting problem.
+
+The next step is therefore to stop changing ownership and instead find out what the driver requires at
+teardown, by testing whether a **GPU idle wait** or an explicit `GrDirectContext` teardown *before*
+the queue is released avoids the trap. That is a different class of experiment, and it is the last one
+worth trying before escalating this to a platform issue against the AMD driver, which is where a trap
+inside a vendor dealloc ultimately belongs.
 
 ## Reproduce
 

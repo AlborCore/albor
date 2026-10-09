@@ -39,7 +39,7 @@ namespace albor
             // a device without a command queue has nowhere to submit frames, so the backend refuses it (§6.3)
             if (state->queue == nil)
                 return nullptr;
-            // skia borrows the device and the queue through bridged handles, so it does not retain them itself (§6.3)
+            // skia retains both: assigning an sk_cfp copy calls SkCFSafeRetain, so ganesh is a second owner (§6.3)
             GrMtlBackendContext backend;
             backend.fDevice = sk_cfp<GrMTLHandle>((__bridge const void*)device);
             backend.fQueue = sk_cfp<GrMTLHandle>((__bridge const void*)state->queue);
