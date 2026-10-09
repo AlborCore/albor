@@ -14,6 +14,9 @@ namespace albor::automation
         // build a session over a registry, minting the token this conversation must present (§10.3, AD-10)
         explicit AutomationSession(AutomationRegistry& registry);
 
+        // build a session that authenticates against a token the caller already published (§10.3, AD-10)
+        AutomationSession(AutomationRegistry& registry, std::string token);
+
         // report whether a presented token is this session's, without ever disclosing the expected one (§10.3, AD-10)
         [[nodiscard]] HandshakeResult authenticate(std::string_view presented);
 

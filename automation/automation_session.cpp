@@ -1,6 +1,7 @@
 #include "automation/automation_session.h"
 
 #include <random>
+#include <utility>
 
 #include "automation/automation_protocol.h"
 
@@ -37,6 +38,9 @@ namespace albor::automation
 
     AutomationSession::AutomationSession(AutomationRegistry& registry) :
         m_registry(registry), m_token(mint_token()) {}
+
+    AutomationSession::AutomationSession(AutomationRegistry& registry, std::string token) :
+        m_registry(registry), m_token(std::move(token)) {}
 
     HandshakeResult AutomationSession::authenticate(std::string_view presented) {
         // an authenticated conversation does not re authenticate, which keeps a token from being replayed (§10.3)

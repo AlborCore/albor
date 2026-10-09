@@ -7,6 +7,7 @@ file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 # back under their own condition. a release configure must not compile the automation suite at all, or the link fails
 # on symbols the release link does not have (AD-10)
 list(FILTER CPP_SOURCES EXCLUDE REGEX "/automation\.test\.cpp$")
+list(FILTER CPP_SOURCES EXCLUDE REGEX "/automation_transport\.test\.cpp$")
 list(FILTER CPP_SOURCES EXCLUDE REGEX "/render_skia\.test\.cpp$")
 
 # the build-scope fixture only feeds a scripted check, so it never joins the test binary (§14.3)
@@ -55,9 +56,8 @@ target_link_libraries(albor-tests PRIVATE albor-layout albor-widgets albor-style
 # other suites never link because it reaches a platform surface (§3.2, AD-16). the backend is apple only, so the
 # suite is gathered and linked on apple platforms alone, and the raster canvas it draws into needs no window
 # server, so the binary still runs headless (§2.2)
-if(APPLE)
-    file(GLOB_RECURSE APPLE_CPP_SOURCES "./render_skia.test.cpp")
-    target_sources(albor-tests PRIVATE ${APPLE_CPP_SOURCES})
+if(APPLE AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/render_skia.test.cpp")
+    target_sources(albor-tests PRIVATE "./render_skia.test.cpp")
     target_link_libraries(albor-tests PRIVATE albor-render-skia)
 endif()
 
@@ -65,8 +65,12 @@ endif()
 # the automation suite reaches the automation core, which exists only when it is enabled, so the suite is gathered
 # under the same condition. a release configure has no such target, and referencing it would fail the link (AD-10)
 if(ALBOR_AUTOMATION)
-    file(GLOB_RECURSE AUTOMATION_CPP_SOURCES "./automation.test.cpp")
-    target_sources(albor-tests PRIVATE ${AUTOMATION_CPP_SOURCES})
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/automation.test.cpp")
+        target_sources(albor-tests PRIVATE "./automation.test.cpp")
+    endif()
+    if(APPLE AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/automation_transport.test.cpp")
+        target_sources(albor-tests PRIVATE "./automation_transport.test.cpp")
+    endif()
     target_link_libraries(albor-tests PRIVATE albor-automation)
 endif()
 
