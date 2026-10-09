@@ -98,6 +98,7 @@ endif()
 # the dev runtime extension is linked only in a Dev configuration, so a release carries no reload path (§12.1, AD-02)
 if(ALBOR_DEV)
     add_subdirectory(devrt)
+    add_subdirectory(inspector)
 endif()
 
 # the rendering hal, the frame scene and the two stage pipeline (§3.2)

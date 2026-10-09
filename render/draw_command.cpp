@@ -208,6 +208,91 @@ namespace albor
         return true;
     }
 
+    Rect DrawCommand::bounds() const {
+        // the geometry kind decides what the command could touch, because no single accessor spans them (§6.2)
+        switch (kind()) {
+        case DrawCommandKind::Rect:
+        case DrawCommandKind::RoundedRect:
+            // a rectangle covers exactly the rectangle it was given (§6.2)
+            return rect_geometry().rect;
+        case DrawCommandKind::Text: {
+            // a run covers its measured extent, which the layout already carries (§9.1)
+            const TextLayout& layout = text_geometry().layout;
+            // the size is measured, so the bound is the origin at zero with that extent (§6.2, §9.1)
+            return Rect{.x = 0.0f, .y = 0.0f, .width = layout.size.width, .height = layout.size.height};
+        }
+        case DrawCommandKind::LineBatch:
+            // a batch has no single rectangle of its own, so it covers the clip it draws under (§6.2)
+            return clip();
+        case DrawCommandKind::Path: {
+            // a contour is bounded by its own points, which the resource carries (§6.4)
+            const std::shared_ptr<const PathResource>& path = path_geometry().path;
+            // a missing contour covers nothing, which is the quiet default (§6.4)
+            if (path == nullptr || path->points().empty())
+                return Rect{};
+            // the left edge starts at the first point, which every contour has (§6.4)
+            float left = path->points().front().x;
+            // the right edge starts at the same point (§6.4)
+            float right = left;
+            // the top edge starts at the same point (§6.4)
+            float top = path->points().front().y;
+            // the bottom edge starts at the same point (§6.4)
+            float bottom = top;
+            // every further point widens the edges, which is what makes the bound conservative (§6.4)
+            for (const Point& point : path->points()) {
+                // the left edge follows the leftmost point (§6.4)
+                left = std::min(left, point.x);
+                // the right edge follows the rightmost (§6.4)
+                right = std::max(right, point.x);
+                // the top edge follows the topmost (§6.4)
+                top = std::min(top, point.y);
+                // the bottom edge follows the bottommost (§6.4)
+                bottom = std::max(bottom, point.y);
+            }
+            // the bound is returned whole (§6.4)
+            return Rect{.x = left, .y = top, .width = right - left, .height = bottom - top};
+        }
+        case DrawCommandKind::Picture:
+            // a picture may draw anything, so it covers the clip entirely (§6.2)
+            return clip();
+        case DrawCommandKind::Image:
+            // an image covers exactly where it was placed (§6.2)
+            return image_geometry().destination;
+        case DrawCommandKind::GlyphOutline: {
+            // an outline covers its own points placed at its position (§6.4, §6.2)
+            const std::shared_ptr<const GlyphOutline>& outline = glyph_outline_geometry().outline;
+            // a missing outline covers nothing, which is the quiet default (§6.4)
+            if (outline == nullptr || outline->points().empty())
+                return Rect{};
+            // the position places the glyph, which the geometry carries (§6.2)
+            const Point position = glyph_outline_geometry().position;
+            // the left edge starts at the first point, placed (§6.4)
+            float left = position.x + outline->points().front().x;
+            // the right edge starts at the same point (§6.4)
+            float right = left;
+            // the top edge starts at the same point (§6.4)
+            float top = position.y + outline->points().front().y;
+            // the bottom edge starts at the same point (§6.4)
+            float bottom = top;
+            // every further point widens the edges, which is what makes the bound conservative (§6.4)
+            for (const Point& point : outline->points()) {
+                // the left edge follows the leftmost point (§6.4)
+                left = std::min(left, position.x + point.x);
+                // the right edge follows the rightmost (§6.4)
+                right = std::max(right, position.x + point.x);
+                // the top edge follows the topmost (§6.4)
+                top = std::min(top, position.y + point.y);
+                // the bottom edge follows the bottommost (§6.4)
+                bottom = std::max(bottom, position.y + point.y);
+            }
+            // the bound is returned whole (§6.4)
+            return Rect{.x = left, .y = top, .width = right - left, .height = bottom - top};
+        }
+        }
+        // a kind outside the enumeration covers nothing, which is the quiet default (§6.2)
+        return Rect{};
+    }
+
     void DrawCommand::replay_glyph_outline(RenderContext& context) const {
         // the outline is a single closed contour, so its verbs are one move followed by one line per point (§6.4)
         const GlyphOutlineGeometry& geometry = glyph_outline_geometry();

@@ -177,6 +177,9 @@ namespace albor
         // the clip the command draws under, which the replay scissors to (§6.2)
         [[nodiscard]] const Rect& clip() const;
 
+        // the area the command covers, which an overlay bounds or a debugger measures (§6.2, §12.2)
+        [[nodiscard]] Rect bounds() const;
+
         // the transform the retained geometry draws under, which a picture command nests under (§6.4)
         [[nodiscard]] const Transform& transform() const;
 

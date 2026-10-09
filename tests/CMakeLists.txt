@@ -54,6 +54,8 @@ target_link_libraries(albor-tests PRIVATE albor-layout albor-widgets albor-style
 if(ALBOR_DEV)
     target_sources(albor-tests PRIVATE "./conditional/devrt.test.cpp")
     target_link_libraries(albor-tests PRIVATE albor-devrt)
+    target_sources(albor-tests PRIVATE "./conditional/inspector.test.cpp")
+    target_link_libraries(albor-tests PRIVATE albor-inspector)
 endif()
 
 if(APPLE)
