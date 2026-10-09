@@ -51,7 +51,7 @@ Violating any of these is a defect, not a style issue.
 - **Identity is explicit** (AD-11, §18.1): a node's `id:` is its identity; compiler-generated implicit keys are correlation hints for live reload and must never be used by automation selectors or semantic keys.
 - **Two-stage frame** (AD-18, §10.2): scene build runs on the UI thread and produces an immutable `FrameScene`; render execution may run on a render thread and must never call application code.
 - **Immutable snapshots cross threads** (§10.5, §13.2): application data reaches custom nodes and bindings as `std::shared_ptr<const T>` in an observable `Snapshot<T>`. `Observable<T>::post_set` is the thread-safe path; `set` is UI-thread only.
-- **The manifest is the single source of truth for native components** (AD-17, §15.1): C++ glue is generated from the manifest, and the compiler never parses C++ headers.
+- **The manifest is the single source of truth for native components** (AD-17, §11.2): C++ glue is generated from the manifest, and the compiler never parses C++ headers.
 - **No platform or Skia types in public headers** (§3.5, AD-05, AD-19).
 - **The compiler is not the runtime, and development tooling is not the production application** (§2).
 
@@ -150,7 +150,7 @@ For generated C++ (§14) and any hand-written stand-in for it:
 
 ## Testing
 
-C++ uses Google Test; Python uses `unittest` (see `STYLE-GUIDE.md`). Beyond per-file unit tests, the architecture defines cross-cutting suites (§15):
+C++ uses Google Test; Python uses `unittest` (see `STYLE-GUIDE.md`). Beyond per-file unit tests, the architecture defines cross-cutting suites (§16):
 
 - **Dual-engine conformance**: one `.ui` corpus through compiled output and the dev IR evaluator, same observable behavior (AD-25). This is what makes §2.4 true.
 - **GPU/software parity**: every Level 2 resource kind and primitive behaves the same in both renderers within tolerance (§11.7, AD-26). The software renderer is the screenshot reference.

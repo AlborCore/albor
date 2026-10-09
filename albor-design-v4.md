@@ -3,12 +3,22 @@
 ## Architecture and Design Specification — Version 4
 
 **Status:** Implementation Specification  
-**Version:** 4.2  
-**Date:** 2026-10-05 (4.0) / 2026-10-08 (4.1, 4.2)  
+**Version:** 4.3  
+**Date:** 2026-10-05 (4.0) / 2026-10-08 (4.1, 4.2, 4.3)  
 **Project:** AlborCore / Albor  
 **Supersedes:** v3.0 (and closes Phase 0 exploratory prototyping)
 
 ### Revision Log
+
+**4.3 — the product objective, added to the specification.** An application must render the same
+pixels on macOS, Windows and Linux, text included. That requirement was not stated anywhere in this
+document, and AD-26 answers a different and weaker question. §15 records it, AD-34 registers it, and
+§16 is the conformance section that earlier revisions of this document cited as §27.
+
+The consequence worth noticing is that **compile time glyph embedding stops being an optimisation and
+becomes a precondition**, because three platforms do not resolve the same system font. §15 also splits
+the claim in two, because layout identity is exact and achievable while rasterization identity is not,
+and conflating them would let the goal be quietly missed.
 
 **4.2 — the headless platform and the CPU reference backend.** AD-26 mandated a software rasterizer
 reference and AD-16 mandated a headless platform; both modules now exist. §5.3 states what headless
@@ -33,6 +43,8 @@ is marked "settled during implementation" in place, and AD-29 through AD-33 reco
 | §5.3 | What headless is and is not | a test surface and a headless application surface are different things |
 | §6.2 | `resource_factory()` removed from `RendererBackend`; the declaration was never implemented | the spec showed a method the interface does not have |
 | §6.3 | The CPU reference backend and its three contractual properties | AD-26 made the module mandatory, and its portability is the point |
+| §15 | **New.** Cross-platform pixel identity, and its dependency order | the objective was stated and mandated nowhere |
+| §16 | Renumbered from §15; the conformance suites the earlier revisions cited as §27 |
 
 Two conventions are worth stating, because both were arrived at by correcting a mistake:
 
@@ -1075,6 +1087,7 @@ Every architectural decision from Phase 0 is formally settled for production imp
 | **AD-31** | Composite Contract Enforcement | **Decided** | `Component::render` is not overridable: it runs background, content, then children, and subclasses override `paint_content`, so a missing phase is a compile error rather than a silently absent subtree. |
 | **AD-32** | Borrowed Node Lifetime | **Decided** | A subtree leaving the tree is announced to observers while it is still alive and still in the tree; observers of borrowed node pointers must be told before the mutation, never after. |
 | **AD-33** | Surface Ownership | **Decided** | A surface is owned by the thread that created its layer; resize runs on that thread, and the render executor drops a frame whose metrics are stale rather than stretching it. |
+| **AD-34** | Cross-Platform Pixel Identity | **Decided** | An application renders the same pixels on macOS, Windows and Linux: fonts are embedded, shaping is vendored, layout is exact, and every platform's rasterization agrees with the CPU reference within a written tolerance. |
 
 **How AD-29 through AD-33 came about.** None of these reopened an existing decision. They are
 recorded separately because each was reached by fixing a defect that the earlier text permitted,
@@ -1090,6 +1103,9 @@ which means the earlier text was genuinely incomplete rather than merely undocum
 - AD-32 came from a use-after-free: a hovered node removed from the tree left the input controller
   holding a freed pointer.
 - AD-33 came from resize being run on the render thread, which does not own the layer.
+- AD-34 is not derived from a defect. It is the product objective, added once the question of what the
+  reference engine is for surfaced the fact that "deterministic in CI" and "identical across
+  platforms" are different requirements with different consequences.
 
 A settled decision is only reopened with a documented revision. These five were additions to
 unstated ground, and the sections carrying them are marked "settled during implementation" so a
@@ -1143,7 +1159,83 @@ With Phase 0 prototypes formally concluded, engineering proceeds directly along 
 
 ---
 
-## 15. Cross-Cutting Conformance Suites
+## 15. Cross-Platform Pixel Identity (AD-34)
+
+**The objective, stated plainly: an application built on this framework renders the same pixels on
+macOS, Windows and Linux.** Given the same theme and the same content, the three platforms produce
+the same image. Text is part of that, which makes text the hardest case rather than an exception to it.
+
+This is not currently mandated anywhere in this document, and it was not mandated when AD-26 was
+settled. AD-26 asks for a deterministic reference for **CI**; AD-34 asks for **identity across
+platforms**, which is a stronger and different requirement. It is recorded here because it changes
+several decisions that were otherwise being made on other grounds.
+
+### What identity requires, in dependency order
+
+Each item below is a precondition for the one above it. Skipping one does not make the next harder;
+it makes the goal unreachable.
+
+1. **The same font bytes.** A system font is not the same file on three platforms, and font
+   *versions* differ even on one. **Compile time glyph embedding (§9.1, phase 4) is therefore a
+   requirement of this decision, not an optional optimisation.** This is the single largest
+   consequence: the text plan's phase 4 moves from "the strongest form of the dependency free goal"
+   to "the thing that makes AD-34 possible at all".
+2. **The same shaper, with no platform fallback.** Vendored HarfBuzz with an explicit font and an
+   explicit fallback list. A fallback chain resolved by the platform produces different glyphs on
+   each platform, and every later stage then differs.
+3. **The same metrics and the same line box.** Text metrics come from the vendored engine and from
+   the embedded font, never from the platform's text system. This is why the vendored engine defines
+   the metrics rather than matching a platform paragraph engine (§9.1).
+4. **The same rounding.** Positions are quantised identically before they reach a rasterizer, because
+   a half pixel difference at twenty font sizes compounds into a visibly different image.
+5. **The same rasterizer, or a bounded agreement with it.** See the split below.
+
+### The split between layout identity and rasterization identity
+
+These are different claims and conflating them is how this goal gets quietly missed.
+
+- **Layout identity is exact and achievable.** Glyph selection, glyph positions, advances, baseline
+  placement, line breaking and measured extents are deterministic arithmetic over the embedded font.
+  Once steps 1 through 4 hold, two platforms running the same build compute **the same numbers**,
+  bit for bit. This is a hard requirement and it is testable without a display.
+- **Rasterization identity is not achievable as bit equality across three backends.** Antialiasing,
+  hinting and subpixel positioning differ between CoreGraphics, DirectWrite and any FreeType
+  configuration, and between Skia's CPU and GPU paths. What is achievable, and what is required, is
+  that **every platform matches the reference rasterizer within a stated per-channel tolerance**.
+
+The reference rasterizer is therefore the definition of correct output, and AD-26's software backend
+stops being a CI convenience: it becomes the thing every platform's output is measured against.
+
+### What this rules out
+
+- **A per-platform font manager.** Resolving a typeface from the platform is precisely what this
+  decision forbids, because the three platforms will not resolve the same file. The typeface resolver
+  in `text/text-harfbuzz/` exists today as a transitional measure and is not the end state.
+- **Platform text measurement.** Any measured extent taken from a platform text system is a per
+  platform number, and layout follows measured extents (§8.2).
+- **Platform colour management.** A per platform colour transform makes identical RGBA values render
+  as different pixels, so the pipeline is fixed by the framework rather than by the OS.
+
+### Honest limits
+
+Bit-exact identity of *rendered text* across three GPU backends is not a claim this document should
+make, because it is not one Skia can currently deliver. The defensible formulation, and the one the
+conformance suites enforce, is: **layout is exact; rasterization agrees with the reference within a
+written tolerance; and the tolerance is a number, not a judgement.** A tolerance wide enough to
+absorb a three pixel baseline error has defeated the purpose, which is why the baseline gap in
+`DEFECT-TEXT-VENDOR-BASELINE.md` is a blocker rather than a rounding difference.
+
+### Consequences for work already planned
+
+- **Phase 4 of `TEXT-RENDERING-PLAN.md` is on the critical path**, not optional.
+- **The Metal teardown trap in `BACKLOG.md` blocks a stated objective**, because the reference cannot
+  be compared against a GPU backend that cannot be destroyed (§15, AD-26).
+- **The vendored engine defines the metrics.** The open question in `DEFECT-TEXT-VENDOR-BASELINE.md`
+  is answered by this section: matching a platform paragraph engine was never the goal.
+
+---
+
+## 16. Cross-Cutting Conformance Suites
 
 Unit tests cover a module against itself. The suites below cover the properties that only fail when
 two modules meet, which is why each one is defined against a **corpus** rather than a single case.
@@ -1175,6 +1267,6 @@ deterministic: the same metrics and the same immutable scene produce the same by
 
 ---
 
-## 16. Conclusion
+## 17. Conclusion
 
 Albor Design Version 4 closes the era of speculative prototyping and equips the project with a clean, decoupled, and actionable blueprint. By relying on strict modular abstractions and pragmatic, battle-tested defaults—starting with Skia for rendering and Eager-Push for reactive bindings—Albor is now ready for immediate production implementation.

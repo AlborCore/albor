@@ -3,6 +3,10 @@
 Context: `text/text-harfbuzz/` implements the vendored shaper of phase 3 of `TEXT-RENDERING-PLAN.md`.
 The typeface question it raised first is resolved; this is what is left.
 
+**The decision this needed is answered by AD-34 (section 15):** cross-platform pixel identity is the
+objective, so the vendored engine defines the metrics and the oracle is compared against it. Matching
+the oracle was never the requirement.
+
 ## Summary
 
 The two engines **agree on shaping** and **disagree on where the baseline sits**. For Arial at 20
@@ -43,10 +47,12 @@ box with one number. It therefore cannot agree with a paragraph engine that mode
    measurement is what containers adapt to; a line box needs ascent, descent and leading, and the
    baseline follows from all three. The face exposes `ascender`, `descender`, `height` and, through
    FreeType, the OS/2 and hhea tables the metrics are chosen from.
-2. **Decide whether the two engines must agree exactly or within a tolerance.** If the oracle is only
-   a temporary shaper, then matching it is unnecessary and the *reference* becomes the specification.
-   That is a smaller change and probably the right one: the vendored engine defines the metrics, and
-   the oracle is compared against it rather than the other way round. It is a decision, not a defect.
+2. **The vendored engine defines the metrics; the oracle is compared against it.** This is answered by
+   AD-34 and section 15, and it is not a choice between two good options. Three platforms cannot agree
+   with a macOS paragraph engine, so matching one was never the goal: the metrics must come from the
+   vendored engine over an embedded font, and the oracle's job is to be measured against it until it is
+   deleted. The fix is therefore to model ascent, descent and leading in the vendored line box, not to
+   tune the vendored engine toward a paragraph engine that will not exist on the other two platforms.
 3. **Then compare pixels**, which is the real test and the one `AVendoredRunDrawsOnTheReferenceSurface`
    already runs. It records the distance rather than asserting it, because the distance is 255 today.
 

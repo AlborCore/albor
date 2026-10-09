@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <vector>
 
-#include "core/geometry.h"
 #include "render/render_context.h"
 
 namespace albor

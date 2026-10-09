@@ -13,10 +13,13 @@ differ completely. Full record in `DEFECT-TEXT-VENDOR-BASELINE.md`.
 This is what blocks the rest of phase 3, because `text/text-skia/` may only be deleted once the two
 engines produce the same picture.
 
-A decision is needed before the fix, not just the fix. The vendored engine models a line box with
-the ascender alone, which cannot match a paragraph engine that uses ascent, descent and leading.
-Either it models all three, or — probably cheaper and arguably more correct — the vendored engine
-becomes the reference and the oracle is compared against it instead of the other way round.
+**The decision is made, by AD-34 and section 15 of the specification.** Cross-platform pixel identity
+is the objective, so the vendored engine defines the metrics and the oracle is compared against it.
+Matching a macOS paragraph engine was never the requirement, because two other platforms cannot match
+it either. The fix is to model ascent, descent and leading in the vendored line box.
+
+The Metal teardown trap below also stops being a nice to have: it blocks AD-26, and AD-26 is now the
+definition of correct rasterization for AD-34.
 
 ## The Metal backend traps when it is destroyed
 

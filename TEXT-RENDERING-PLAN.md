@@ -93,6 +93,12 @@ agrees. `text/text-skia/` stays as the shaping oracle until then.
 
 ### Phase 4: compile time glyph embedding
 
+**Load bearing, not optional.** AD-34 makes cross-platform pixel identity the objective, and three
+platforms do not resolve the same system font, so an application that resolves fonts from the
+platform cannot render the same pixels on all three. Phase 4 is therefore the precondition for the
+whole objective and not the strongest form of the dependency free goal as this plan previously framed
+it. See section 15 of the specification.
+
 A compiler pass rasterizes exactly the glyphs an application needs, at the pixel sizes
 and weights its `.ui` declares, into static font data carried in the application
 binary, and emits the registration calls in the generated code (§11.3). The runtime
@@ -152,7 +158,7 @@ is now glyph quad dominated, and `text-skia/` is removed after conformance.
 - A wrapped two line run draws with the shaped glyphs, at the measured size, with
   correct line breaks.
 - The dual engine conformance corpus agrees between the vendored engine and the skia
-  oracle within tolerance (§15), after which the oracle is removed.
+  oracle within tolerance (§16), after which the oracle is removed.
 - A steady state frame performs no shaping work: repeated measure of unchanged text is
   a cache lookup.
 - No skia include reaches `text/` outside `text-skia/`, asserted in review and by the
