@@ -64,8 +64,51 @@ namespace albor
     }
 
     void SceneRecorder::draw_text(const TextLayout& layout, Point origin, const Paint& paint) {
+        // a run the renderer cannot draw through a typeface it holds expands into outlines instead (§15, AD-34)
+        if (layout.run != nullptr && layout.run->font_hash() != 0) {
+            // the expansion is the AD-34 path, and it is what makes embedded text reach a surface (§6.4)
+            record_embedded_run(layout, origin, paint);
+            return;
+        }
         // the origin is mapped now, because the render thread cannot ask where the ui thread drew it (§6.1, AD-18)
         record(DrawCommand::text(layout, to_scene(origin), paint));
+    }
+
+    void SceneRecorder::record_embedded_run(const TextLayout& layout, Point origin, const Paint& paint) {
+        // a recorder with no resolver cannot build an outline, so the run draws nothing rather than silently (§6.4)
+        if (!m_outline_resolver)
+            return;
+        // every line of the run places its own baseline, which the glyphs hang from (§9.1)
+        for (const ShapedRun::Line& line : layout.run->lines()) {
+            // the baseline is the run origin under the line's own origin, which is where every glyph sits (§9.1)
+            const Point baseline{origin.x + line.origin.x, origin.y + line.origin.y};
+            // every glyph becomes one outline command at the place the shaped run gave it (§6.4, AD-34)
+            for (const ShapedGlyph& glyph : line.glyphs) {
+                // the key is everything that changes the shape, so a cache hit is provably the same outline (§6.4)
+                const GlyphOutlineKey key{.font_hash = layout.run->font_hash(), .glyph_id = glyph.id, .font_size = layout.run->font_size()};
+                // the outline comes from the cache or from the resolver, and a miss builds it once (§6.4)
+                const std::shared_ptr<const GlyphOutline> outline = m_outline_cache.lookup(key, m_outline_resolver);
+                // a glyph the build cannot outline draws nothing, which is a refusal rather than a blank (§6.4)
+                if (outline == nullptr || outline->empty())
+                    continue;
+                // the glyph sits at its own offset from the baseline, which the run measured (§9.1)
+                const Point position{baseline.x + glyph.position.x, baseline.y + glyph.position.y};
+                // the outline is recorded as the command stage two replays (§6.4, AD-34)
+                glyph_outline(outline, position, paint);
+                // the command is counted, which is what a test asserts on (§6.4)
+                m_outline_commands++;
+            }
+        }
+    }
+
+    void SceneRecorder::set_outline_resolver(GlyphOutlineResolver resolver) {
+        // the resolver belongs to the recorder, which is what a composition root installs (§6.4, §11.3)
+        m_outline_resolver = std::move(resolver);
+    }
+
+    std::size_t SceneRecorder::outline_command_count() const {
+        // the count is what a test asserts on, because the commands are otherwise invisible (§6.4)
+        return m_outline_commands;
     }
 
     void SceneRecorder::draw_line_batch(const std::shared_ptr<const LineBatch>& batch, const Transform& transform, const StrokeStyle& stroke) {
@@ -164,6 +207,8 @@ namespace albor
             root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size));
         }
         SceneRecorder recorder(metrics);
+        // the resolver is handed on, because an embedded run expands into outlines during this recording (§6.4, AD-34)
+        recorder.set_outline_resolver(m_outline_resolver);
         recorder.set_background(background);
         recorder.save();
         // an invisible tree draws nothing, so the scene carries only the background (§6.1)
@@ -185,6 +230,11 @@ namespace albor
         // the dirty flags clear only after a successful build, so a failed build keeps them (§6.1)
         root.clear_dirty();
         return recorder.scene();
+    }
+
+    void SceneBuilder::set_outline_resolver(GlyphOutlineResolver resolver) {
+        // the resolver belongs to the builder, which hands it to each recorder it creates (§6.4, §11.3)
+        m_outline_resolver = std::move(resolver);
     }
 
     std::size_t SceneBuilder::visited_count() const { return m_visited; }

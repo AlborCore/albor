@@ -3,12 +3,11 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <utility>
 
 #include "animation/animation_engine.h"
-#include "core/geometry.h"
 #include "core/paint.h"
 #include "render/frame_scene.h"
+#include "render/glyph_outline.h"
 #include "render/render_executor.h"
 #include "runtime/binding_engine.h"
 #include "ui/scene_builder.h"
@@ -29,6 +28,9 @@ namespace albor
 
         // the pipeline owns the tree, so it cannot be copied or moved (§6.1)
         ~FramePipeline();
+
+        // install the resolver embedded text draws through, which an application does once at startup (§6.4, AD-34)
+        void set_outline_resolver(GlyphOutlineResolver resolver);
 
         FramePipeline(const FramePipeline&) = delete;
         FramePipeline& operator=(const FramePipeline&) = delete;

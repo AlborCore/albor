@@ -13,8 +13,10 @@
 #include "render/screenshot.h"
 #include "render/shaped_run.h"
 #include "resources/embedded_font.h"
+#include "text/text-harfbuzz/embedded_glyph_provider.h"
 #include "text/text-harfbuzz/harfbuzz_text_engine.h"
 #include "text/text-skia/skia_text_engine.h"
+#include "ui/frame_pipeline.h"
 #include "ui/scene_builder.h"
 #include "window/window_metrics.h"
 
@@ -513,6 +515,165 @@ TEST(EmbeddedTextDrawChecks, AnEmbeddedRunPutsInkOnTheReferenceSurface) {
         }
     }
     EXPECT_TRUE(any_lit);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+namespace
+{
+    // the node that draws one run through the ordinary text path, which is what the caller fix is about (§6.1)
+    class EmbeddedTextNode final : public UiNode
+    {
+    public:
+        // override: draw the run the engine measured, at the node's own origin (§6.1, §9.1)
+        void render(RenderContext& context) override {
+            // a run that measured nothing draws nothing, because it carries no glyph (§6.2)
+            if (m_layout.run == nullptr)
+                return;
+            // this is the ordinary text call, with no special path for embedded runs (§6.1)
+            context.draw_text(m_layout, Point{bounds().x, bounds().y}, {.fill = Color::rgba(1.0f, 1.0f, 1.0f, 1.0f)});
+            // the children draw over it, which is the composite contract of a node (§6.1)
+            UiNode::render(context);
+        }
+
+        // the run this node draws, which the test measures with the vendored engine (§9.1)
+        TextLayout m_layout;
+    };
+} // namespace
+
+TEST(EmbeddedTextCallerChecks, AnEmbeddedRunDrawsThroughTheOrdinaryTextCall) {
+    // arrange a build whose recorder can resolve outlines, which is what a composition root installs (§6.4, AD-34)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    harfbuzz::EmbeddedGlyphProvider provider;
+    SceneBuilder builder;
+    // the resolver is installed, which is the one thing an application has to do (§6.4, AD-34)
+    builder.set_outline_resolver(provider.resolver());
+    // act a node draws vendored text through draw_text, exactly as any widget would (§6.1)
+    EmbeddedTextNode node;
+    node.m_layout = engine->measure("Albor", 0.0f, 40.0f);
+    ASSERT_NE(node.m_layout.run, nullptr);
+    // act the run is recorded through the normal build path, not through a special case (§6.1)
+    const std::shared_ptr<const FrameScene> scene = builder.build(node, WindowMetrics::from_logical(Size{200.0f, 80.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
+    ASSERT_NE(scene, nullptr);
+    // assert the scene carries outline commands rather than a text command, which is the caller working (§6.4)
+    bool any_outline = false;
+    bool any_text = false;
+    for (const DrawCommand& command : scene->commands()) {
+        any_outline = any_outline || command.kind() == DrawCommandKind::GlyphOutline;
+        any_text = any_text || command.kind() == DrawCommandKind::Text;
+    }
+    EXPECT_TRUE(any_outline);
+    EXPECT_FALSE(any_text);
+    // the run carries its font identity, which is what the recorder keys the expansion on (§15, AD-34)
+    ASSERT_GT(node.m_layout.run->font_hash(), 0u);
+    // assert the engine was built for that font, because the resolver is what reached into the build (§11.3)
+    EXPECT_EQ(provider.engine_count(), 1u);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(EmbeddedTextCallerChecks, AnEmbeddedRunPutsInkOnTheSurfaceThroughTheOrdinaryTextCall) {
+    // arrange the same build, drawn onto the software reference (§15, AD-26)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    harfbuzz::EmbeddedGlyphProvider provider;
+    SceneBuilder builder;
+    builder.set_outline_resolver(provider.resolver());
+    EmbeddedTextNode node;
+    node.m_layout = engine->measure("Albor", 0.0f, 40.0f);
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{200.0f, 80.0f}, 1.0f);
+    // act
+    const std::shared_ptr<const FrameScene> scene = builder.build(node, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    ASSERT_NE(scene, nullptr);
+    software::SoftwareRendererBackend backend;
+    auto surface = software::SoftwareRenderSurface::create(metrics);
+    ASSERT_NE(surface, nullptr);
+    backend.execute_frame(*surface, *scene);
+    const Screenshot drawn = capture_surface(*surface);
+    // assert the surface is not blank, which is the claim: embedded text draws with no special call (§15, AD-34)
+    ASSERT_FALSE(drawn.empty());
+    bool any_lit = false;
+    for (std::uint8_t channel : drawn.pixels) {
+        // one lit channel proves the outlines reached the raster (§15)
+        if (channel != 0) {
+            any_lit = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(any_lit);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(EmbeddedTextCallerChecks, ARunTheRendererCanDrawStillGoesThroughTheTextCommand) {
+    // arrange a run the renderer can draw, which is the path that must not change (§9.1, AD-28)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    SkiaTextEngine oracle;
+    const TextLayout layout = oracle.measure("Albor", 0.0f, 20.0f);
+    ASSERT_NE(layout.run, nullptr);
+    ASSERT_TRUE(layout.run->font_hash() == 0u);
+    SceneBuilder builder;
+    EmbeddedTextNode node;
+    node.m_layout = layout;
+    // act
+    const std::shared_ptr<const FrameScene> scene = builder.build(node, WindowMetrics::from_logical(Size{200.0f, 80.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
+    ASSERT_NE(scene, nullptr);
+    // assert the text command is still what a drawable run produces, because the fix must not touch it (§6.4)
+    bool any_text = false;
+    for (const DrawCommand& command : scene->commands())
+        any_text = any_text || command.kind() == DrawCommandKind::Text;
+    EXPECT_TRUE(any_text);
+}
+
+TEST(EmbeddedTextCallerChecks, ARecorderWithoutAResolverDrawsNothingRatherThanSilently) {
+    // arrange a vendored run recorded by a recorder that was never given a resolver (§6.4)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 80.0f}, 1.0f));
+    // act the run is drawn with no resolver installed (§6.4)
+    recorder.draw_text(engine->measure("Albor", 0.0f, 40.0f), Point{0.0f, 0.0f}, {.fill = Color::rgba(1.0f, 1.0f, 1.0f, 1.0f)});
+    // assert nothing was recorded, because a run drawn by no path is worse than one that is refused (§6.4)
+    EXPECT_EQ(recorder.outline_command_count(), 0u);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(EmbeddedTextCallerChecks, ThePipelineInstallsTheResolverAnApplicationGivesIt) {
+    // arrange a pipeline, which is the composition root a frame is built through (§6.1)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    auto node = std::make_unique<EmbeddedTextNode>();
+    node->m_layout = engine->measure("Albor", 0.0f, 40.0f);
+    BindingEngine bindings;
+    FramePipeline pipeline(bindings, std::move(node));
+    harfbuzz::EmbeddedGlyphProvider provider;
+    // act the application installs the resolver the one way it can (§6.4, AD-34)
+    pipeline.set_outline_resolver(provider.resolver());
+    const std::shared_ptr<const FrameScene> scene = pipeline.build(WindowMetrics::from_logical(Size{200.0f, 80.0f}, 1.0f));
+    // assert a frame built through the pipeline carries outlines, which is the whole path proven (§6.1)
+    ASSERT_NE(scene, nullptr);
+    std::size_t outlines = 0;
+    for (const DrawCommand& command : scene->commands())
+        outlines = outlines + (command.kind() == DrawCommandKind::GlyphOutline ? 1u : 0u);
+    EXPECT_GT(outlines, 0u);
     // exit
     resources::FontRegistry::clear();
 }

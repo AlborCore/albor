@@ -66,6 +66,12 @@ namespace albor
         // record one embedded glyph as its outline, which is not a context primitive because the command carries it
         void glyph_outline(const std::shared_ptr<const GlyphOutline>& outline, Point position, const Paint& paint);
 
+        // install the resolver that turns an embedded run into outline commands, which a composition root does (§6.4)
+        void set_outline_resolver(GlyphOutlineResolver resolver);
+
+        // report how many outline commands this recorder emitted, which a test asserts on (§6.4)
+        [[nodiscard]] std::size_t outline_command_count() const;
+
         // set the background the scene is cleared with (§6.1)
         void set_background(Color background);
 
@@ -76,6 +82,18 @@ namespace albor
         [[nodiscard]] std::size_t depth() const;
 
     private:
+        // record an embedded run as one outline command per glyph, which is how AD-34 text draws (§6.4, AD-34)
+        void record_embedded_run(const TextLayout& layout, Point origin, const Paint& paint);
+
+        // the resolver that builds a glyph outline, which is empty until a composition root installs one (§6.4)
+        GlyphOutlineResolver m_outline_resolver;
+
+        // the outlines this recorder already built, which a frame would otherwise rebuild per glyph (§6.4)
+        GlyphOutlineCache m_outline_cache;
+
+        // the outline commands this recorder emitted, which a test asserts on (§6.4)
+        std::size_t m_outline_commands = 0;
+
         // the transform and clip one save pushed
         struct State
         {
@@ -124,6 +142,9 @@ namespace albor
         // lay out and record the tree for the given metrics, which returns the scene stage two consumes (§6.1)
         [[nodiscard]] std::shared_ptr<const FrameScene> build(UiNode& root, WindowMetrics metrics, Color background);
 
+        // install the resolver embedded text draws through, which a composition root does once (§6.4, AD-34)
+        void set_outline_resolver(GlyphOutlineResolver resolver);
+
         // hand out how many nodes the last build visited, which a test asserts on (§6.1)
         [[nodiscard]] std::size_t visited_count() const;
 
@@ -140,7 +161,10 @@ namespace albor
         // number every node of the tree, which gives the in tree correlation hint (§18.1)
         void number(UiNode& root);
 
-        // how many nodes the last build visited (§6.1)
+        // the resolver embedded text draws through, which a builder without one has none of (§6.4, AD-34)
+        GlyphOutlineResolver m_outline_resolver;
+
+        // how many nodes the last build visited, which a test asserts on (§6.1)
         std::size_t m_visited = 0;
 
         // how many nodes the last build drew, which are the visible ones (§6.1)

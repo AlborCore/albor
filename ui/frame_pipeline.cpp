@@ -22,6 +22,11 @@ namespace albor
         m_engine.settle();
     }
 
+    void FramePipeline::set_outline_resolver(GlyphOutlineResolver resolver) {
+        // the pipeline forwards it to the builder, which keeps ui free of any text engine (§3.5, AD-34)
+        m_builder.set_outline_resolver(std::move(resolver));
+    }
+
     UiNode& FramePipeline::root() {
         // the root is never null for a pipeline built over a tree (§6.1)
         return *m_root;

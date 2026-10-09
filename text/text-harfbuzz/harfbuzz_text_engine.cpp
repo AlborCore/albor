@@ -407,7 +407,7 @@ namespace albor::harfbuzz
         // the shaped run is what the render stage replays verbatim (§9.1, AD-18)
         TextLayout layout;
         // the run is built over its lines and the size it was shaped at (§9.1)
-        layout.run = ShapedRun::make(std::move(lines), font_size);
+        layout.run = ShapedRun::make(std::move(lines), font_size, m_state->font_hash);
         // the width is the accumulated advance, which is the whole line because nothing wraps (§8.2)
         layout.size = Size{.width = advance, .height = (m_state->ascender - m_state->descender) * font_size};
         // the ascent is the scaled ascender, which a caller places content by (§9.1)

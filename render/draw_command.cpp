@@ -197,6 +197,12 @@ namespace albor
             const ImageGeometry& image = image_geometry();
             return !image.image || image.image->pixels().empty() || image.destination.empty();
         }
+        // an outline with no point, or no paint, contributes nothing (§6.4, AD-34)
+        case DrawCommandKind::GlyphOutline: {
+            // the outline is read alone, because a missing one leaves nothing to trace (§6.4)
+            const GlyphOutlineGeometry& outline = glyph_outline_geometry();
+            return !outline.outline || outline.outline->empty() || !paints;
+        }
         }
         // the switch covers every kind, so nothing reaches here (§6.2)
         return true;
