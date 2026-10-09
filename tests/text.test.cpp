@@ -241,10 +241,10 @@ TEST(SkiaTextEngineChecks, ASecondMeasureOfTheSameRunIsServedFromTheCache) {
 TEST(SkiaTextEngineChecks, ADifferentCeilingShapesAnotherRun) {
     // arrange
     SkiaTextEngine engine;
-    [[maybe_unused]] const auto discarded_244 = engine.measure("twice shaped", 200.0f);
+    (void)(engine.measure("twice shaped", 200.0f));
     const std::size_t shaped_before = engine.shaped_run_count();
     // act
-    [[maybe_unused]] const auto discarded_247 = engine.measure("twice shaped", 80.0f);
+    (void)(engine.measure("twice shaped", 80.0f));
     // assert the same text wrapped at another ceiling is another run, so the cache cannot serve the first (§9.1)
     EXPECT_EQ(engine.shaped_run_count(), shaped_before + 1);
 }
@@ -252,10 +252,10 @@ TEST(SkiaTextEngineChecks, ADifferentCeilingShapesAnotherRun) {
 TEST(SkiaTextEngineChecks, AnotherFontSizeShapesAnotherRun) {
     // arrange
     SkiaTextEngine engine;
-    [[maybe_unused]] const auto discarded_255 = engine.measure("twice shaped", 200.0f, 16.0f);
+    (void)(engine.measure("twice shaped", 200.0f, 16.0f));
     const std::size_t shaped_before = engine.shaped_run_count();
     // act
-    [[maybe_unused]] const auto discarded_258 = engine.measure("twice shaped", 200.0f, 32.0f);
+    (void)(engine.measure("twice shaped", 200.0f, 32.0f));
     // assert the same text shaped at another size is another run, so the cache cannot serve the first (§9.1)
     EXPECT_EQ(engine.shaped_run_count(), shaped_before + 1);
 }
@@ -264,8 +264,8 @@ TEST(SkiaTextEngineChecks, DistinctRunsEachTakeAnEntry) {
     // arrange
     SkiaTextEngine engine;
     // act
-    [[maybe_unused]] const auto discarded_267 = engine.measure("first", 0.0f);
-    [[maybe_unused]] const auto discarded_268 = engine.measure("second", 0.0f);
+    (void)(engine.measure("first", 0.0f));
+    (void)(engine.measure("second", 0.0f));
     // assert the cache holds every distinct run, because a tree lays out more than one label (§9.1)
     EXPECT_EQ(engine.cache_size(), 2u);
 }
@@ -273,8 +273,8 @@ TEST(SkiaTextEngineChecks, DistinctRunsEachTakeAnEntry) {
 TEST(SkiaTextEngineChecks, ClearingTheCacheDropsEveryRun) {
     // arrange
     SkiaTextEngine engine;
-    [[maybe_unused]] const auto discarded_276 = engine.measure("first", 0.0f);
-    [[maybe_unused]] const auto discarded_277 = engine.measure("second", 0.0f);
+    (void)(engine.measure("first", 0.0f));
+    (void)(engine.measure("second", 0.0f));
     // act
     engine.clear_cache();
     // assert a memory pressure policy empties the cache, because the ui thread can rebuild every run (§9.1)
@@ -286,7 +286,7 @@ TEST(SkiaTextEngineChecks, TheCacheStaysBoundedWhenNothingIsEverRepeated) {
     SkiaTextEngine engine;
     // act
     for (std::size_t index = 0; index < 600; index++)
-        [[maybe_unused]] const auto discarded_289 = engine.measure("run " + std::to_string(index), 0.0f);
+        (void)(engine.measure("run " + std::to_string(index), 0.0f));
     // assert the cache drops its runs once it is full, so a runaway application cannot grow it without bound (§9.1)
     EXPECT_LE(engine.cache_size(), 512u);
     EXPECT_EQ(engine.shaped_run_count(), 600u);
@@ -308,7 +308,7 @@ TEST(SkiaTextEngineChecks, AnEmptyRunIsNeverCached) {
     // arrange
     SkiaTextEngine engine;
     // act
-    [[maybe_unused]] const auto discarded_311 = engine.measure("", 100.0f);
+    (void)(engine.measure("", 100.0f));
     // assert a run with nothing to shape costs no cache entry (§9.1)
     EXPECT_EQ(engine.cache_size(), 0u);
     EXPECT_EQ(engine.shaped_run_count(), 0u);

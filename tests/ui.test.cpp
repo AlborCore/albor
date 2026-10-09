@@ -1897,7 +1897,7 @@ TEST(SceneBuilderLayoutDirtyChecks, AFirstBuildLaysTheTreeOut) {
     SceneBuilder builder;
     LayoutCountingNode root;
     // act
-    [[maybe_unused]] const auto discarded_1900 = builder.build(root, WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
+    (void)(builder.build(root, WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f)));
     // assert the first build measures and arranges, because the bounds have to come from somewhere (§8.2)
     EXPECT_EQ(root.measures, 1u);
     EXPECT_EQ(root.arranges, 1u);
@@ -1908,9 +1908,9 @@ TEST(SceneBuilderLayoutDirtyChecks, ASecondBuildOfAnUnchangedTreeSkipsTheLayoutP
     SceneBuilder builder;
     LayoutCountingNode root;
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
-    [[maybe_unused]] const auto discarded_1911 = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    (void)(builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f)));
     // act the same tree at the same metrics, which is what a steady state frame asks for (§6.1)
-    [[maybe_unused]] const auto discarded_1913 = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    (void)(builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f)));
     // assert nothing asked for a layout, so the passes do not run again (§8.2)
     EXPECT_EQ(root.measures, 1u);
     EXPECT_EQ(root.arranges, 1u);
@@ -1921,10 +1921,10 @@ TEST(SceneBuilderLayoutDirtyChecks, AVisualChangeSkipsTheLayoutPasses) {
     SceneBuilder builder;
     LayoutCountingNode root;
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
-    [[maybe_unused]] const auto discarded_1924 = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    (void)(builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f)));
     root.invalidate();
     // act a colour change moves no bound, so the layout has nothing to do (§8.2)
-    [[maybe_unused]] const auto discarded_1927 = builder.build(root, metrics, Color::rgb(0.1f, 0.2f, 0.3f));
+    (void)(builder.build(root, metrics, Color::rgb(0.1f, 0.2f, 0.3f)));
     // assert the record pass ran again while the layout stayed where it was (§6.1, §8.2)
     EXPECT_EQ(root.measures, 1u);
     EXPECT_EQ(root.arranges, 1u);
@@ -1935,10 +1935,10 @@ TEST(SceneBuilderLayoutDirtyChecks, ALayoutChangeRunsTheLayoutPassesAgain) {
     SceneBuilder builder;
     LayoutCountingNode root;
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
-    [[maybe_unused]] const auto discarded_1938 = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    (void)(builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f)));
     root.invalidate_layout();
     // act
-    [[maybe_unused]] const auto discarded_1941 = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    (void)(builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f)));
     // assert a layout change is exactly what the flag is for (§8.2)
     EXPECT_EQ(root.measures, 2u);
     EXPECT_EQ(root.arranges, 2u);
@@ -1948,9 +1948,9 @@ TEST(SceneBuilderLayoutDirtyChecks, AResizeLaysTheTreeOutWithoutAnInvalidation) 
     // arrange
     SceneBuilder builder;
     LayoutCountingNode root;
-    [[maybe_unused]] const auto discarded_1951 = builder.build(root, WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
+    (void)(builder.build(root, WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f)));
     // act the window moved, which changes what the tree fits into even though nothing invalidated (§8.2)
-    [[maybe_unused]] const auto discarded_1953 = builder.build(root, WindowMetrics::from_logical(Size{1024.0f, 768.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
+    (void)(builder.build(root, WindowMetrics::from_logical(Size{1024.0f, 768.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f)));
     // assert a resize is treated as a layout ask, so an app cannot get a stale tree by forgetting an invalidation (§8.2)
     EXPECT_EQ(root.measures, 2u);
     EXPECT_EQ(root.arranges, 2u);
@@ -1961,11 +1961,11 @@ TEST(SceneBuilderLayoutDirtyChecks, ASkippedLayoutKeepsTheBoundsTheLastBuildPlac
     SceneBuilder builder;
     LayoutCountingNode root;
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
-    [[maybe_unused]] const auto discarded_1964 = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    (void)(builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f)));
     const Rect placed = root.bounds();
     root.invalidate();
     // act
-    [[maybe_unused]] const auto discarded_1968 = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    (void)(builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f)));
     // assert the recorded frame still sits where the last layout put the node (§8.2)
     EXPECT_EQ(root.bounds(), placed);
 }
@@ -1975,7 +1975,7 @@ TEST(SceneBuilderLayoutDirtyChecks, ASkippedLayoutStillRecordsTheFrame) {
     SceneBuilder builder;
     LayoutCountingNode root;
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
-    [[maybe_unused]] const auto discarded_1978 = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    (void)(builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f)));
     root.invalidate();
     // act a visual change still has to be presented, which is what a skipped layout must not prevent (§6.1)
     const std::shared_ptr<const FrameScene> scene = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
@@ -1990,7 +1990,7 @@ TEST(FramePipelineDirtyChecks, ACleanTreeProducesNoScene) {
     FramePipeline pipeline(engine, std::make_unique<TestNode>());
     pipeline.set_background(Color::rgb(0.0f, 0.0f, 0.0f));
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
-    [[maybe_unused]] const auto discarded_1993 = pipeline.build(metrics);
+    (void)(pipeline.build(metrics));
     // act the tree is clean now, because the build cleared it (§6.1)
     const std::shared_ptr<const FrameScene> clean = pipeline.build_if_dirty(metrics);
     // assert nothing is drawn for a frame that changed nothing (§6.1)
@@ -2003,7 +2003,7 @@ TEST(FramePipelineDirtyChecks, AVisualChangeProducesAScene) {
     FramePipeline pipeline(engine, std::make_unique<TestNode>());
     pipeline.set_background(Color::rgb(0.0f, 0.0f, 0.0f));
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
-    [[maybe_unused]] const auto discarded_2006 = pipeline.build(metrics);
+    (void)(pipeline.build(metrics));
     pipeline.root().invalidate();
     // act
     const std::shared_ptr<const FrameScene> dirty = pipeline.build_if_dirty(metrics);

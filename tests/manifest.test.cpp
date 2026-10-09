@@ -121,8 +121,7 @@ TEST(ManifestParser, ReadsAnAssignablePropertyAsInOut) {
 TEST(ManifestParser, KeepsANestedBracketedDefaultWhole) {
     // arrange, act
     const ManifestFile file = parse("native component C { in property<vector<int>> items: vector<int>(1, 2); }");
-    // assert
-    // the default is re-emitted rather than reinterpreted, so its brackets must survive (§11.2)
+    // assert, the default is re-emitted rather than reinterpreted, so its brackets must survive (§11.2)
     EXPECT_EQ(file.components.at(0).properties.at(0).default_text, "vector<int>(1,2)");
 }
 
@@ -138,8 +137,7 @@ TEST(ManifestParser, ReadsASignalWithNoParameters) {
 TEST(ManifestParser, ReadsASignalWithParametersInOrder) {
     // arrange, act
     const ManifestFile file = parse("native component C { signal moved(float time_pos, int index); }");
-    // assert
-    // the facade signature follows declaration order, so the order has to be kept (§11.2)
+    // assert, the facade signature follows declaration order, so the order has to be kept (§11.2)
     const NativeSignal& signal = file.components.at(0).signals.at(0);
     ASSERT_EQ(signal.parameters.size(), 2U);
     EXPECT_EQ(signal.parameters.at(0).type, "float");
@@ -168,8 +166,7 @@ TEST(ManifestParser, ReportsASemanticRoleThatIsNotAString) {
     DiagnosticList diagnostics;
     // act
     parse("native component C { semantic role: chart; }", diagnostics);
-    // assert
-    // the runtime matches a role by name, so the manifest has to write it as a string (§10.1, §11.2)
+    // assert, the runtime matches a role by name, so the manifest has to write it as a string (§10.1, §11.2)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0303");
 }
@@ -179,8 +176,7 @@ TEST(ManifestParser, ReportsASemanticFieldThatIsNotARole) {
     DiagnosticList diagnostics;
     // act
     parse("native component C { semantic label: \"chart\"; }", diagnostics);
-    // assert
-    // a semantic declaration carries only a role, because that is all the facade publishes (§10.1, §11.2)
+    // assert, a semantic declaration carries only a role, because that is all the facade publishes (§10.1, §11.2)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0304");
 }
@@ -217,8 +213,7 @@ TEST(ManifestParser, ReadsSeveralComponentsInOneFile) {
 TEST(ManifestParser, ReadsAComponentDeclarationWithNoNativeKeyword) {
     // arrange, act
     const ManifestFile file = parse("component C {}");
-    // assert
-    // a manifest declares native types only, so the keyword is what distinguishes one (§11.2, AD-17)
+    // assert, a manifest declares native types only, so the keyword is what distinguishes one (§11.2, AD-17)
     ASSERT_EQ(file.components.size(), 1U);
     EXPECT_EQ(file.components.at(0).name, "C");
 }
@@ -300,8 +295,7 @@ TEST(ManifestParser, ReportsASignalParameterWithNoName) {
     DiagnosticList diagnostics;
     // act
     parse("native component C { signal moved(float); }", diagnostics);
-    // assert
-    // the facade could not emit a signature without a parameter name (§11.2)
+    // assert, the facade could not emit a signature without a parameter name (§11.2)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0303");
 }
@@ -321,8 +315,7 @@ TEST(ManifestParser, ReportsASignalWhoseParameterListRunsToTheEnd) {
     DiagnosticList diagnostics;
     // act
     const ManifestFile file = parse("native component C { signal moved(", diagnostics);
-    // assert
-    // the declaration was still read as far as the stream allowed (§11.2)
+    // assert, the declaration was still read as far as the stream allowed (§11.2)
     ASSERT_EQ(file.components.size(), 1U);
     EXPECT_EQ(file.components.at(0).signals.at(0).name, "moved");
     EXPECT_GE(diagnostics.count(), 1U);
@@ -333,8 +326,7 @@ TEST(ManifestParser, ReportsASignalWithATrailingComma) {
     DiagnosticList diagnostics;
     // act
     parse("native component C { signal moved(float time_pos,); }", diagnostics);
-    // assert
-    // the comma promises a parameter that is not there (§11.2)
+    // assert, the comma promises a parameter that is not there (§11.2)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0303");
 }
@@ -364,8 +356,7 @@ TEST(ManifestParser, RecoverySkipsTheBadMemberAndKeepsReadingTheComponent) {
     DiagnosticList diagnostics;
     // act
     const ManifestFile file = parse("native component C { 42 in property<int> n; }", diagnostics);
-    // assert
-    // the bad member is dropped, so the members beside it are still read (§11.2)
+    // assert, the bad member is dropped, so the members beside it are still read (§11.2)
     ASSERT_GE(diagnostics.count(), 1U);
     ASSERT_EQ(file.components.size(), 1U);
     ASSERT_EQ(file.components.at(0).properties.size(), 1U);
@@ -375,8 +366,7 @@ TEST(ManifestParser, RecoverySkipsTheBadMemberAndKeepsReadingTheComponent) {
 TEST(ManifestParser, RecoveryStepsOverANestedBodyWithoutEndingTheComponent) {
     // arrange
     DiagnosticList diagnostics;
-    // act
-    // the stray body opens and closes inside the broken member, so the scan continues past it (§11.2)
+    // act, the stray body opens and closes inside the broken member, so the scan continues past it (§11.2)
     const ManifestFile file = parse("native component C { 42 { } in property<int> n; }", diagnostics);
     // assert
     ASSERT_GE(diagnostics.count(), 1U);
@@ -387,8 +377,7 @@ TEST(ManifestParser, RecoveryStepsOverANestedBodyWithoutEndingTheComponent) {
 TEST(ManifestParser, RecoveryStopsAtTheEndOfTheComponent) {
     // arrange
     DiagnosticList diagnostics;
-    // act
-    // a closing brace at the top level ends the component, so the scan stops there (§11.2)
+    // act, a closing brace at the top level ends the component, so the scan stops there (§11.2)
     const ManifestFile file = parse("native component C { 42 } native component Other { in property<int> n; }", diagnostics);
     // assert
     ASSERT_GE(diagnostics.count(), 1U);
@@ -414,8 +403,7 @@ TEST(ManifestParser, ReadsAComponentWhoseMembersRunToTheEndOfTheStream) {
     DiagnosticList diagnostics;
     // act
     const ManifestFile file = parse("native component C { in property<int> n", diagnostics);
-    // assert
-    // the member was read as far as the stream allowed, and the terminator was reported (§11.2)
+    // assert, the member was read as far as the stream allowed, and the terminator was reported (§11.2)
     ASSERT_GE(diagnostics.count(), 1U);
     ASSERT_EQ(file.components.size(), 1U);
     ASSERT_EQ(file.components.at(0).properties.size(), 1U);
@@ -427,28 +415,24 @@ TEST(ManifestParser, ReportsTheEndOfFileWhereAUnitWasExpected) {
     DiagnosticList diagnostics;
     // act
     parse("native component C { in property<", diagnostics);
-    // assert
-    // the report names what was found, which at the end of the file is the file itself (§11.2)
+    // assert, the report names what was found, which at the end of the file is the file itself (§11.2)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_NE(first(diagnostics).message.find("the end of the file"), std::string::npos);
 }
 
 TEST(ManifestParser, TerminatesOnAStreamThatCarriesNoEndUnit) {
-    // arrange
-    // the scanner always appends an end unit, so this stream is one a caller must never build (§11.2)
+    // arrange, the scanner always appends an end unit, so this stream is one a caller must never build (§11.2)
     const std::vector<Token> tokens = {Token{.kind = Token::Kind::Identifier, .text = "native", .value = "native", .span = SourceSpan{}}};
     DiagnosticList diagnostics;
     // act
     const ManifestFile file = ManifestParser(tokens, diagnostics).parse("test.module");
-    // assert
-    // the parse terminated rather than running off the end of the stream (§11.2)
+    // assert, the parse terminated rather than running off the end of the stream (§11.2)
     EXPECT_TRUE(file.components.empty());
     EXPECT_GE(diagnostics.count(), 1U);
 }
 
 TEST(ManifestParser, TerminatesOnAnEmptyStream) {
-    // arrange
-    // an empty stream is the shape a caller must never build, and this proves the reader survives it (§11.2)
+    // arrange, an empty stream is the shape a caller must never build, and this proves the reader survives it (§11.2)
     const std::vector<Token> tokens;
     DiagnosticList diagnostics;
     // act
@@ -463,8 +447,7 @@ TEST(ManifestParser, TerminatesOnAnEmptyStream) {
 TEST(ManifestParser, ReportsAPropertyWhoseValueRunsIntoTheClosingBrace) {
     // arrange
     DiagnosticList diagnostics;
-    // act
-    // the value has no terminator, so it runs to the brace that ends the component (§11.2)
+    // act, the value has no terminator, so it runs to the brace that ends the component (§11.2)
     const ManifestFile file = parse("native component C { in property<int> n }", diagnostics);
     // assert
     ASSERT_GE(diagnostics.count(), 1U);
@@ -478,8 +461,7 @@ TEST(ManifestParser, ReportsAPropertyWhoseValueRunsIntoTheClosingBrace) {
 TEST(ManifestParser, ReadsAPropertyDefaultThatRunsIntoTheClosingBrace) {
     // arrange
     DiagnosticList diagnostics;
-    // act
-    // the default has no terminator, so it runs to the brace that ends the component (§11.2)
+    // act, the default has no terminator, so it runs to the brace that ends the component (§11.2)
     const ManifestFile file = parse("native component C { in property<int> n: 1 + 2 }", diagnostics);
     // assert
     ASSERT_GE(diagnostics.count(), 1U);
@@ -493,8 +475,7 @@ TEST(ManifestParser, ReadsAPropertyDefaultThatRunsIntoTheClosingBrace) {
 TEST(ManifestParser, KeepsReadingAfterAClosedCallInsideADefault) {
     // arrange
     DiagnosticList diagnostics;
-    // act
-    // the call closes, so the terminator behind it ends the declaration rather than the closer (§11.2)
+    // act, the call closes, so the terminator behind it ends the declaration rather than the closer (§11.2)
     const ManifestFile file = parse("native component C { in property<int> n: string(1) + 2; }", diagnostics);
     // assert
     EXPECT_EQ(diagnostics.count(), 0U);
@@ -507,8 +488,7 @@ TEST(ManifestParser, KeepsReadingAfterAClosedCallInsideADefault) {
 TEST(ManifestParser, ReadsADefaultWhoseCallRunsToTheEndOfTheStream) {
     // arrange
     DiagnosticList diagnostics;
-    // act
-    // the call is never closed, so the value reader reaches the end of the stream (§11.2)
+    // act, the call is never closed, so the value reader reaches the end of the stream (§11.2)
     const ManifestFile file = parse("native component C { in property<int> n: string(", diagnostics);
     // assert
     ASSERT_GE(diagnostics.count(), 1U);
@@ -522,8 +502,7 @@ TEST(ManifestParser, ReadsADefaultWhoseCallRunsToTheEndOfTheStream) {
 TEST(ManifestParser, ReportsAComponentThatEndsInsideABrokenMember) {
     // arrange
     DiagnosticList diagnostics;
-    // act
-    // the unit cannot start a member and nothing after it can either, so the reader reaches the end (§11.2)
+    // act, the unit cannot start a member and nothing after it can either, so the reader reaches the end (§11.2)
     const ManifestFile file = parse("native component C { 42", diagnostics);
     // assert
     ASSERT_GE(diagnostics.count(), 1U);
@@ -556,4 +535,84 @@ TEST(ManifestParser, CommentsAndWhitespaceDoNotChangeTheDeclarations) {
     ASSERT_EQ(file.components.size(), 1U);
     ASSERT_EQ(file.components.at(0).properties.size(), 1U);
     EXPECT_EQ(file.components.at(0).properties.at(0).name, "n");
+}
+
+TEST(ManifestParser, ReadsARecordWithItsFields) {
+    // arrange
+    const std::string_view source = R"(
+record Task {
+    key: string;
+    title: string;
+    done: bool = false;
+}
+)";
+    // act
+    const ManifestFile file = parse(source);
+    // assert
+    ASSERT_EQ(file.records.size(), 1U);
+    EXPECT_EQ(file.records.at(0).name, "Task");
+    ASSERT_EQ(file.records.at(0).fields.size(), 3U);
+}
+
+TEST(ManifestParser, TheKeyFieldCarriesTheRecordsIdentity) {
+    // arrange
+    const std::string_view source = R"(
+record Task {
+    key: string;
+    title: string;
+}
+)";
+    // act
+    const ManifestFile file = parse(source);
+    // assert the key field is marked, because a row is keyed by it (§18.1, AD-13)
+    ASSERT_EQ(file.records.at(0).fields.size(), 2U);
+    EXPECT_TRUE(file.records.at(0).fields.at(0).is_key);
+    EXPECT_FALSE(file.records.at(0).fields.at(1).is_key);
+}
+
+TEST(ManifestParser, ReadsARecordFieldWithADefault) {
+    // arrange
+    const std::string_view source = R"(
+record Task {
+    key: string;
+    done: bool = false;
+}
+)";
+    // act
+    const ManifestFile file = parse(source);
+    // assert the default is kept as written, because the glue re-emits rather than reinterprets (§11.2)
+    EXPECT_EQ(file.records.at(0).fields.at(1).default_value, "false");
+}
+
+TEST(ManifestParser, ARecordWithNoKeyFieldIsReported) {
+    // arrange
+    DiagnosticList diagnostics;
+    const std::string_view source = R"(
+record Task {
+    title: string;
+}
+)";
+    // act
+    (void)parse(source, diagnostics);
+    // assert the identity is explicit, so a record with none cannot be keyed (§18.1, AD-11)
+    EXPECT_EQ(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0308");
+}
+
+TEST(ManifestParser, ARecordAndAComponentCoexist) {
+    // arrange
+    const std::string_view source = R"(
+record Task {
+    key: string;
+}
+
+native component Gauge {
+    in property<float> value;
+}
+)";
+    // act
+    const ManifestFile file = parse(source);
+    // assert both declarations survive, because a manifest holds both kinds (§11.2, AD-17)
+    EXPECT_EQ(file.records.size(), 1U);
+    EXPECT_EQ(file.components.size(), 1U);
 }
