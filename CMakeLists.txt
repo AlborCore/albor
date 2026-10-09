@@ -144,6 +144,9 @@ add_subdirectory(input)
 # the per window focus manager of §8.3, which owns which node holds the caret (§3.2)
 add_subdirectory(focus)
 
+# the model views that materialize keyed rows, which is what a repeater owns (§3.2, §18.1, AD-13)
+add_subdirectory(model)
+
 # the skia metal backend that implements the rendering hal (§3.2, AD-05)
 add_subdirectory(render/render-skia)
 

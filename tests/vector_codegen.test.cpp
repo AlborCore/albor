@@ -6,6 +6,7 @@
 
 #include "record_panel.h"
 #include "runtime/binding_engine.h"
+#include "task_list.h"
 #include "text/text_engine.h"
 #include "vector_panel.h"
 
@@ -107,4 +108,75 @@ TEST(VectorCodegen, ANestedRecordCollectionCarriesItsStructs) {
     ASSERT_EQ(panel.grouped().size(), 1U);
     ASSERT_EQ(panel.grouped().at(0).size(), 1U);
     EXPECT_EQ(panel.grouped().at(0).at(0).title, "only");
+}
+
+TEST(RepeatCodegen, ARepeatMaterializesOneRowPerItem) {
+    // arrange a list over the engines its body reads, which is what an application constructs (§18.1, AD-13)
+    BindingEngine engine;
+    TaskList list(&engine, nullptr);
+    // act the host writes two tasks, which the repeat then materializes (§18.1, AD-13)
+    list.set_tasks(std::vector<Task>{Task{.key = "a", .title = "first", .done = false}, Task{.key = "b", .title = "second", .done = false}});
+    // act the engine settles, because a write marks the repeat dirty rather than running it (§7.3)
+    engine.settle();
+    // assert the column carries the two rows plus the siblings written around the repeat (§8.1, §18.1)
+    ASSERT_EQ(static_cast<UiNode&>(list).child_at(0)->child_count(), 4U);
+}
+
+TEST(RepeatCodegen, ARepeatKeepsItsRowsInItemOrder) {
+    // arrange
+    BindingEngine engine;
+    TaskList list(&engine, nullptr);
+    // act three tasks written in a known order (§18.1)
+    list.set_tasks(std::vector<Task>{Task{.key = "a", .title = "first", .done = false}, Task{.key = "b", .title = "second", .done = false}, Task{.key = "c", .title = "third", .done = false}});
+    // act the engine settles, because a write marks the repeat dirty rather than running it (§7.3)
+    engine.settle();
+    // assert the rows follow the item order, because the parent order is the item order (§8.1, §18.1)
+    ASSERT_EQ(static_cast<UiNode&>(list).child_at(0)->child_count(), 5U);
+}
+
+TEST(RepeatCodegen, ARemovedItemRemovesOnlyItsRow) {
+    // arrange
+    BindingEngine engine;
+    TaskList list(&engine, nullptr);
+    // act three tasks are shown
+    list.set_tasks(std::vector<Task>{Task{.key = "a", .title = "first", .done = false}, Task{.key = "b", .title = "second", .done = false}, Task{.key = "c", .title = "third", .done = false}});
+    // act the engine settles, because a write marks the repeat dirty rather than running it (§7.3)
+    engine.settle();
+    ASSERT_EQ(static_cast<UiNode&>(list).child_at(0)->child_count(), 5U);
+    // act the middle task is removed, which is the case a positional loop gets wrong (§18.1, AD-13)
+    list.set_tasks(std::vector<Task>{Task{.key = "a", .title = "first", .done = false}, Task{.key = "c", .title = "third", .done = false}});
+    // act the engine settles, because a write marks the repeat dirty rather than running it (§7.3)
+    engine.settle();
+    // assert only that row went, because a reconcile matches by identity and not by position (§18.1, AD-13)
+    EXPECT_EQ(static_cast<UiNode&>(list).child_at(0)->child_count(), 4U);
+}
+
+TEST(RepeatCodegen, AnEmptySourceMaterializesNoRows) {
+    // arrange
+    BindingEngine engine;
+    TaskList list(&engine, nullptr);
+    // act the source is emptied, which leaves only the siblings written around the repeat (§18.1)
+    list.set_tasks(std::vector<Task>{});
+    // act the engine settles, because a write marks the repeat dirty rather than running it (§7.3)
+    engine.settle();
+    // assert the two siblings survive, because a repeat owns no row of its own (§8.1, §18.1)
+    EXPECT_EQ(static_cast<UiNode&>(list).child_at(0)->child_count(), 2U);
+}
+
+TEST(RepeatCodegen, ARowSurvivesItsItemMoving) {
+    // arrange a list whose rows were materialized once, which is what a filled list is (§18.1, AD-13)
+    BindingEngine engine;
+    TaskList list(&engine, nullptr);
+    // act three tasks, whose rows are then shown (§18.1)
+    list.set_tasks(std::vector<Task>{Task{.key = "a", .title = "first", .done = false}, Task{.key = "b", .title = "second", .done = false}, Task{.key = "c", .title = "third", .done = false}});
+    // act the engine settles, because a write marks the repeat dirty rather than running it (§7.3)
+    engine.settle();
+    // act the first row is recorded, which is what the move must preserve (§18.1, AD-13)
+    UiNode* first = static_cast<UiNode&>(list).child_at(0)->child_at(1);
+    // act the order is reversed, which is the case that separates identity from position (§18.1, AD-13)
+    list.set_tasks(std::vector<Task>{Task{.key = "c", .title = "third", .done = false}, Task{.key = "b", .title = "second", .done = false}, Task{.key = "a", .title = "first", .done = false}});
+    // act
+    engine.settle();
+    // assert the same node now shows the last item, because the row moved rather than being rebuilt (§18.1, AD-13)
+    EXPECT_EQ(static_cast<UiNode&>(list).child_at(0)->child_at(3), first);
 }

@@ -345,6 +345,28 @@ namespace albor::compiler
 
                 // the index of the node that owns this one, which is the adoption target (§8.1)
                 std::size_t parent = 0;
+
+                // the child positions from the row root, which is how an update reaches this node (§18.1, AD-13)
+                std::vector<std::size_t> row_path;
+            };
+
+            // one repeat and the body it materializes per item, which is what a keyed view owns (§18.1, AD-13)
+            struct RepeatSlot
+            {
+                // the preorder index, which names the view member and the three row functions (§18.1)
+                std::size_t index = 0;
+
+                // the repeat node being emitted, which carries the source and the bindings (§8.1)
+                const CheckedNode* node = nullptr;
+
+                // the index of the container that holds this repeat, which is where its rows hang (§8.1, §18.1)
+                std::size_t parent = 0;
+
+                // the body nodes in preorder, which are the nodes one row is made of (§8.1, §18.1)
+                std::vector<NodeSlot> body;
+
+                // the child position the first row takes, which keeps rows where the repeat was written (§18.1)
+                std::size_t offset = 0;
             };
 
             // build the emitter over the component and the shared problem list (§11.3)
@@ -431,6 +453,54 @@ namespace albor::compiler
             // collect the manifest headers the given type needs, which is where a record struct is declared (§11.2, AD-17)
             void collect_record_headers(const ValueType& type);
 
+            // walk the body of a repeat into its own list, recording how a node is reached from the root (§18.1, AD-13)
+            void collect_body(const CheckedNode& node, std::size_t parent, std::vector<NodeSlot>& out, std::vector<std::size_t> path);
+
+            // emit the body members a repeat needs, which is the view and the three row functions (§18.1, AD-13)
+            void emit_repeat_members();
+
+            // emit the row functions of every repeat, which are appended once the tree is known (§18.1, AD-13)
+            void emit_repeat_row_functions_all();
+
+            // give each repeat the child position its first row takes, because rows keep the written place (§18.1)
+            void assign_repeat_offsets();
+
+            // render the source a repeat walks, which the evaluator reads (§8.1, §18.1)
+            std::string repeat_source_expression(const RepeatSlot& slot);
+
+            // collect the properties a repeat and its rows read, because a change to any of them reconciles (§18.1, AD-13)
+            std::vector<std::string> repeat_dependencies(const RepeatSlot& slot);
+
+            // emit the three row functions of one repeat, which build, update and key a row (§18.1, AD-13)
+            void emit_repeat_row_functions(const RepeatSlot& slot);
+
+            // emit the construction of one row body node, whose locals belong to the row (§18.1, AD-13)
+            void emit_row_node_block(const NodeSlot& slot);
+
+            // emit the rewrite of one row body node, which walks from the row root to reach it (§18.1, AD-13)
+            void emit_row_update_block(const NodeSlot& slot);
+
+            // emit the reconcile call of one repeat, which materializes the rows its source carries (§18.1, AD-13)
+            void emit_repeat_reconcile(const RepeatSlot& slot);
+
+            // emit the reconcile statement itself, which the builder and the source binding both call (§18.1, AD-13)
+            void reconcile(const RepeatSlot& slot);
+
+            // emit the walk that reaches one body node from the row root, which is how an update finds it (§18.1, AD-13)
+            void emit_row_walk(const NodeSlot& slot);
+
+            // the C++ type of the repeated item, which is the element of the source collection (§8.1, §18.1)
+            std::string item_type(const RepeatSlot& slot) const;
+
+            // the manifest field carrying an item's identity, which is null when the element is not a record (§18.1)
+            [[nodiscard]] const RecordFieldType* item_key_field(const RepeatSlot& slot) const;
+
+            // the element type a repeat walks, which is the collection element the checker resolved (§8.1, §18.1)
+            [[nodiscard]] ValueType repeat_element_type(const CheckedNode& node) const;
+
+            // the manifest field carrying an item's identity, which is what a row is keyed by (§18.1, AD-13)
+            [[nodiscard]] const RecordFieldType* item_key_field_for(const CheckedNode& node) const;
+
             // render one expression as C++, which the codegen re-emits the written shape (§11.3)
             std::string emit_expression(const Expression& expression);
 
@@ -502,6 +572,24 @@ namespace albor::compiler
 
             // the manifest modules the file imported, which name the directories the record headers live in (§11.1, AD-17)
             std::vector<std::string> m_modules;
+
+            // the repeats in preorder, each of which is a keyed view over its source (§18.1, AD-13)
+            std::vector<RepeatSlot> m_repeats;
+
+            // the next index a body node takes, which keeps row node names unique across repeats (§8.1, §18.1)
+            std::size_t m_body_count = 0;
+
+            // the name the item is bound to inside a row body, which is what an expression renders as (§11.1, §18.1)
+            std::string m_item;
+
+            // the name the index is bound to inside a row body, which is what an expression renders as (§11.1, §18.1)
+            std::string m_index;
+
+            // the author name of the item binding, which decides whether a reference is the row parameter (§11.1, §18.1)
+            std::string m_repeat_item_name;
+
+            // the author name of the index binding, which decides whether a reference is the row position (§11.1, §18.1)
+            std::string m_repeat_index_name;
 
             // whether the component translated anything, which is why the catalogue header is pulled (§9.2, §11.3)
             bool m_uses_i18n = false;
@@ -577,12 +665,22 @@ namespace albor::compiler
         }
 
         void ComponentEmitter::validate_node(const CheckedNode& node) {
-            // a repeat has no code yet, which is reported and blocks the output (§11.3)
+            // a repeat materializes keyed rows, so it is checked against what a row identity needs (§18.1, AD-13)
             if (node.kind == TreeNodeKind::Repeat) {
-                // the problem points at the whole node, because that is what cannot be generated (§11.3)
-                m_diagnostics.add(Diagnostic::Severity::Error, node.span, "E0500", "a repeat cannot be generated yet");
-                // the blocking flag is set, which empties the generated output (§11.3)
-                m_blocked = true;
+                // the source element must be a record, because a row is keyed by a declared field (§18.1, AD-13)
+                if (item_key_field_for(node) == nullptr) {
+                    // the problem points at the repeat, because that is what cannot be keyed (§18.1, AD-13)
+                    m_diagnostics.add(Diagnostic::Severity::Error, node.span, "E0503", "a repeat needs a record element, because a row is keyed by a field the manifest marks (§18.1, AD-13)");
+                    // the blocking flag is set, which empties the generated output (§11.3)
+                    m_blocked = true;
+                    return;
+                }
+                // the body is validated as a tree of its own, because a row is made of those nodes (§8.1, §18.1)
+                if (node.repeat_body != nullptr)
+                    validate_node(*node.repeat_body);
+                // the children are walked, because a nested problem matters just as much (§11.3)
+                for (const std::shared_ptr<CheckedNode>& child : node.children)
+                    validate_node(*child);
                 return;
             }
             // an element outside the widget set is native, which has no generated construction path (§11.3, AD-17)
@@ -726,6 +824,19 @@ namespace albor::compiler
         }
 
         void ComponentEmitter::collect(const CheckedNode& node, std::size_t parent) {
+            // a repeat is not a widget, so it becomes a keyed view rather than a node of its own (§18.1, AD-13)
+            if (node.kind == TreeNodeKind::Repeat) {
+                // the repeat takes the next index, which names its view member (§18.1)
+                const std::size_t index = m_repeats.size();
+                // the slot collects the repeat and the body it materializes (§18.1)
+                RepeatSlot slot{.index = index, .node = &node, .parent = parent};
+                // the body is walked into its own list, because a row is made of those nodes (§18.1)
+                if (node.repeat_body != nullptr)
+                    collect_body(*node.repeat_body, NO_PARENT, slot.body, {});
+                // the repeat is appended, which fixes its order against the other repeats (§18.1)
+                m_repeats.push_back(std::move(slot));
+                return;
+            }
             // the node takes the next index, which is its slot in the build order (§8.1)
             const std::size_t index = m_nodes.size();
             // the node is appended, so its children can reference its index (§8.1)
@@ -733,6 +844,59 @@ namespace albor::compiler
             // the children follow in order, which keeps their preorder contiguous (§8.1)
             for (const std::shared_ptr<CheckedNode>& child : node.children)
                 collect(*child, index);
+        }
+
+        ValueType ComponentEmitter::repeat_element_type(const CheckedNode& node) const {
+            // a vector source carries its element, because a row is built from one item (§8.1)
+            if (node.repeat_source_type.is(TypeKind::Vector))
+                return node.repeat_source_type.element();
+            // any other source is walked as a whole, which the checker required to be a collection (§11.1)
+            return node.repeat_source_type;
+        }
+
+        const RecordFieldType* ComponentEmitter::item_key_field_for(const CheckedNode& node) const {
+            // a non repeat node has no rows, so there is nothing to key (§18.1)
+            if (node.kind != TreeNodeKind::Repeat)
+                return nullptr;
+            // the item is the element, because that is what the body binds (§11.1, §18.1)
+            const ValueType item = repeat_element_type(node);
+            // only a record declares a key, because only a record has fields to mark (§18.1, AD-13)
+            if (!item.is(TypeKind::Native))
+                return nullptr;
+            // a caller that registered no catalog declares no records, which is not a keyable element (§11.2, AD-17)
+            if (m_catalog == nullptr)
+                return nullptr;
+            // the catalog resolves the name, because the manifest is the only source of a record (§11.2, AD-17)
+            const RecordType* record = m_catalog->find_record(item.native_name());
+            // an unknown name declares no fields, which the checker already reported (§11.2, AD-17)
+            if (record == nullptr)
+                return nullptr;
+            return record->key_field();
+        }
+
+        const RecordFieldType* ComponentEmitter::item_key_field(const RepeatSlot& slot) const {
+            // the slot carries the repeat, whose element decides the key (§18.1, AD-13)
+            return item_key_field_for(*slot.node);
+        }
+
+        std::string ComponentEmitter::item_type(const RepeatSlot& slot) const {
+            // the item is the element of the source, which is what one row is built from (§8.1, §18.1)
+            return cpp_type(repeat_element_type(*slot.node));
+        }
+
+        void ComponentEmitter::collect_body(const CheckedNode& node, std::size_t parent, std::vector<NodeSlot>& out, std::vector<std::size_t> path) {
+            // the body node takes the next index, which names its local inside one row (§8.1, §18.1)
+            const std::size_t index = m_body_count++;
+            // the slot carries the path from the row root, which is how an update reaches this node (§18.1, AD-13)
+            out.push_back({.index = index, .node = &node, .parent = parent, .row_path = path});
+            // the children follow in order, because a row nests exactly as the author wrote it (§8.1, §18.1)
+            for (std::size_t position = 0; position < node.children.size(); position++) {
+                // the extended path names this child under its parent, which is what an update walks (§18.1, AD-13)
+                std::vector<std::size_t> child_path = path;
+                // the position is appended, because the path is the chain of child positions (§8.1, §18.1)
+                child_path.push_back(position);
+                collect_body(*node.children.at(position), index, out, std::move(child_path));
+            }
         }
 
         const CheckedProperty* ComponentEmitter::property_named(std::string_view name) const {
@@ -818,6 +982,9 @@ namespace albor::compiler
             // a collection signature needs the vector header, which only a collection component has (§8.1, §14.1)
             if (m_uses_vector)
                 line(0, "#include <vector>");
+            // a repeat materializes keyed rows, so the facade names the view and the key (§18.1, AD-13)
+            if (!m_repeats.empty())
+                line(0, "#include \"model/keyed_view.h\"");
             line(0, "");
             // each record the component names pulls the manifest header the glue generator wrote (§11.2, AD-17)
             for (const std::string& header : m_record_headers)
@@ -946,6 +1113,35 @@ namespace albor::compiler
             emit_evaluators();
             emit_computes();
             emit_handlers();
+            // the row functions belong to this unit, which is why they are emitted inside it (§18.1, AD-13)
+            emit_repeat_row_functions_all();
+            // each repeat emits its evaluator, which is what a source change calls (§18.1, AD-13)
+            for (const RepeatSlot& slot : m_repeats) {
+                // the suffix names every member of this repeat, which keeps them unique across repeats (§18.1)
+                const std::string at = "_" + std::to_string(slot.index);
+                line(0, "");
+                line(1, "std::vector<" + item_type(slot) + "> " + m_class + "::Impl::evaluate_repeat" + at + "(void* raw) {");
+                line(2, "// the body is recovered from the context, which keeps the row path allocation free (§13.3)");
+                line(2, "auto* self = static_cast<Impl*>(raw);");
+                m_object = "self";
+                line(2, "// the source is read once, because the rows reconcile against that one value (§18.1)");
+                line(2, "const std::vector<" + item_type(slot) + "> value = " + repeat_source_expression(slot) + ";");
+                line(2, "// the rows are reconciled before the value is stored, because the binding settles after (§18.1)");
+                line(2, "self->reconcile" + at + "();");
+                line(2, "// the value is returned, which the engine stores as the bound value (§13.3)");
+                line(2, "return value;");
+                line(1, "}");
+                m_object.clear();
+            }
+            // each repeat emits its reconcile entry points, which are what the source binding calls (§18.1, AD-13)
+            for (const RepeatSlot& slot : m_repeats) {
+                // the suffix names every member of this repeat, which keeps them unique across repeats (§18.1)
+                const std::string at = "_" + std::to_string(slot.index);
+                line(0, "");
+                line(1, "void " + m_class + "::Impl::reconcile" + at + "() {");
+                reconcile(slot);
+                line(1, "}");
+            }
             if (m_uses_color_helper)
                 emit_color_helper();
             line(0, "} // namespace albor");
@@ -1030,6 +1226,23 @@ namespace albor::compiler
                 line(2, "std::function<void(" + params + ")> m_on_" + name + ";");
                 line(0, "");
             }
+            // each repeat declares its view and its row functions, which is what materializes a row (§18.1, AD-13)
+            if (!m_repeats.empty())
+                emit_repeat_members();
+            // each canvas body node declares row local tracks, because every row owns its own (§11.3, §18.1)
+            for (const RepeatSlot& slot : m_repeats) {
+                // the body is walked per node, because only a canvas publishes two dimensions (§11.3, §18.1)
+                for (const NodeSlot& body : slot.body) {
+                    // a canvas row needs the two tracks, because its setter takes one size (§11.3, §18.1)
+                    if (body.node->element_type != "Canvas")
+                        continue;
+                    line(0, "");
+                    line(2, "// the canvas tracks of this row node, which every row owns separately (§11.3, §18.1)");
+                    line(2, "float m_row_canvas_w_" + std::to_string(body.index) + " = 0.0f;");
+                    line(2, "float m_row_canvas_h_" + std::to_string(body.index) + " = 0.0f;");
+                }
+            }
+            line(0, "");
             line(2, "// build the whole tree and install the bindings, which runs once (§14.1)");
             line(2, "void build();");
             // a blank line separates each declaration, which keeps the body readable (§14.1)
@@ -1185,10 +1398,20 @@ namespace albor::compiler
                 line(2, "const PropertyId deps_" + name + "[] = {" + dep_list(property.default_dependencies) + "};");
                 line(2, "m_" + name + ".bind_static(&Impl::compute_" + name + ", this, deps_" + name + ");");
             }
+            // each repeat claims the position its rows occupy, which must precede its siblings (§18.1, AD-13)
+            assign_repeat_offsets();
             // the tree is built in preorder, which hangs every node of the facade together (§8.1)
             for (const NodeSlot& slot : m_nodes) {
                 line(0, "");
                 emit_node_block(slot);
+                // each repeat inside this container is created where it was written (§18.1, AD-13)
+                for (const RepeatSlot& repeat : m_repeats) {
+                    // a repeat belongs to this container, which is what makes its rows hang here (§8.1, §18.1)
+                    if (repeat.parent != slot.index)
+                        continue;
+                    line(0, "");
+                    emit_repeat_reconcile(repeat);
+                }
             }
             // the root is adopted last, which is the only owned node of the facade (§8.1)
             if (!m_nodes.empty())
@@ -1273,6 +1496,296 @@ namespace albor::compiler
             // the node is adopted by its parent, which is the only place the ownership moves (§8.1)
             if (slot.parent != NO_PARENT)
                 line(2, "n" + std::to_string(slot.parent) + "->add_child(std::move(node_" + std::to_string(slot.index) + "));");
+        }
+
+        void ComponentEmitter::emit_row_node_block(const NodeSlot& slot) {
+            // the class name decides the constructor, which the element carries (§8.1, §18.1)
+            const WidgetInfo& info = widget_info().at(std::string_view(slot.node->element_type));
+            // the constructor arguments depend on the engines the widget reads (§8.1, §18.1)
+            std::string arguments = "()";
+            // a widget construction pulls the engine, which the builder resolved above (§7.2, §18.1)
+            if (info.needs_engine && info.needs_text_engine)
+                arguments = "(engine, text_engine)";
+            // a widget without a label only pulls the engine, which the other widgets take (§7.2, §18.1)
+            else if (info.needs_engine)
+                arguments = "(engine)";
+            // the local is per row rather than per component, because every row owns its own nodes (§18.1, AD-13)
+            line(2, "// allocate the row node, which is local because every row owns its own (§18.1, AD-13)");
+            line(2, "auto node_" + std::to_string(slot.index) + " = std::make_unique<" + std::string(info.class_name) + ">" + arguments + ";");
+            line(2, "// the node is reached through the raw pointer, which the unique pointer moves later (§18.1)");
+            line(2, std::string(info.class_name) + "* const n" + std::to_string(slot.index) + " = node_" + std::to_string(slot.index) + ".get();");
+            // the author identity is applied, which makes the node addressable (AD-11)
+            if (!slot.node->explicit_id.empty()) {
+                line(2, "// assign the author identity, which everything selects by (AD-11)");
+                line(2, "n" + std::to_string(slot.index) + "->set_explicit_id(std::string(\"" + slot.node->explicit_id + "\"));");
+            }
+            // every assignment is written straight into the widget, because a row has no sink of its own (§18.1)
+            for (const CheckedAssignment& assignment : slot.node->assignments) {
+                // the canvas tracks are local too, because one row must not overwrite another's (§11.3, §18.1)
+                if (slot.node->element_type == "Canvas" && (assignment.name == "width" || assignment.name == "height")) {
+                    const bool width = assignment.name == "width";
+                    line(2, "// track the canvas " + assignment.name + ", which the intrinsic size reads (§11.3, §18.1)");
+                    line(2, std::string(width ? "m_row_canvas_w_" : "m_row_canvas_h_") + std::to_string(slot.index) + " = " + emit_expression(*assignment.value) + ";");
+                    continue;
+                }
+                // the setter is fetched by the element and the property, which the catalog named (§11.3)
+                const std::string_view setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
+                line(2, "// apply the " + assignment.name + ", which is what this row shows (§18.1)");
+                line(2, "n" + std::to_string(slot.index) + "->" + std::string(setter) + "(" + emit_expression(*assignment.value) + ");");
+            }
+            // a canvas row publishes its declared size once both tracks were written (§11.3, §18.1)
+            if (slot.node->element_type == "Canvas")
+                line(2, "n" + std::to_string(slot.index) + "->set_intrinsic_size(Size{m_row_canvas_w_" + std::to_string(slot.index) + ", m_row_canvas_h_" + std::to_string(slot.index) + "});");
+            // each handler wires its callback, because a row handler runs the written body (§11.3, §18.1)
+            for (const CheckedHandler& handler : slot.node->handlers) {
+                // the callback setter comes from the element and the signal, which the catalog named (§11.3)
+                const std::string_view setter = signal_setter_of(std::string_view(slot.node->element_type), handler.name);
+                // the lambda parameters match the widget signal, which the body never names (§11.3)
+                const std::string_view params = element_signal_params(handler.name);
+                // the handler body is the written one, which is what the row runs (§11.3, §18.1)
+                const std::string lambda = params.empty() ? std::string("[this] { handle_") + std::to_string(slot.index) + "_" + sanitize(handler.name) + "(this); }" : std::string("[this](") + std::string(params) + ") { handle_" + std::to_string(slot.index) + "_" + sanitize(handler.name) + "(this); }";
+                line(2, "// wire the " + handler.name + ", which runs the written handler for this row (§11.3, §18.1)");
+                line(2, "n" + std::to_string(slot.index) + "->" + std::string(setter) + "(" + lambda + ");");
+            }
+            // the node is adopted by its row parent, which is the only place the ownership moves (§8.1, §18.1)
+            if (slot.parent != NO_PARENT)
+                line(2, "n" + std::to_string(slot.parent) + "->add_child(std::move(node_" + std::to_string(slot.index) + "));");
+        }
+
+        void ComponentEmitter::emit_row_update_block(const NodeSlot& slot) {
+            // the canvas tracks are declared first, because a canvas publishes them together (§11.3, §18.1)
+            if (slot.node->element_type == "Canvas") {
+                line(2, "// the canvas tracks are row local, because one row must not overwrite another (§11.3, §18.1)");
+                line(2, "float m_row_canvas_w_" + std::to_string(slot.index) + " = 0.0f;");
+                line(2, "float m_row_canvas_h_" + std::to_string(slot.index) + " = 0.0f;");
+            }
+            // every assignment is rewritten, because a matched row must show the item it now holds (§18.1, AD-13)
+            for (const CheckedAssignment& assignment : slot.node->assignments) {
+                // the canvas tracks are rewritten first, because one setter combines them (§11.3, §18.1)
+                if (slot.node->element_type == "Canvas" && (assignment.name == "width" || assignment.name == "height")) {
+                    const bool width = assignment.name == "width";
+                    line(2, "// track the canvas " + assignment.name + ", which the intrinsic size reads (§11.3, §18.1)");
+                    line(2, std::string(width ? "m_row_canvas_w_" : "m_row_canvas_h_") + std::to_string(slot.index) + " = " + emit_expression(*assignment.value) + ";");
+                    continue;
+                }
+                // the setter is the same one the build used, because both paths write the same widget (§11.3)
+                const std::string_view setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
+                line(2, "// rewrite the " + assignment.name + ", because the row now shows another item (§18.1, AD-13)");
+                line(2, "n" + std::to_string(slot.index) + "->" + std::string(setter) + "(" + emit_expression(*assignment.value) + ");");
+            }
+            // a canvas row publishes its declared size once both tracks were written (§11.3, §18.1)
+            if (slot.node->element_type == "Canvas")
+                line(2, "n" + std::to_string(slot.index) + "->set_intrinsic_size(Size{m_row_canvas_w_" + std::to_string(slot.index) + ", m_row_canvas_h_" + std::to_string(slot.index) + "});");
+        }
+
+        std::string ComponentEmitter::repeat_source_expression(const RepeatSlot& slot) {
+            // the source is read through the body, because the evaluator runs inside it (§18.1, AD-13)
+            m_object = "self";
+            // the item binding is not in scope here, because the source is a component property (§8.1, §18.1)
+            m_repeat_item_name.clear();
+            m_repeat_index_name.clear();
+            // the rendered source is what the evaluator reads, which is the property the author named (§8.1, §18.1)
+            const std::string rendered = emit_expression(*slot.node->repeat_source);
+            m_object.clear();
+            return rendered;
+        }
+
+        std::vector<std::string> ComponentEmitter::repeat_dependencies(const RepeatSlot& slot) {
+            // the dependencies start as the source's own, because a change materializes rows (§18.1, AD-13)
+            std::vector<std::string> dependencies = slot.node->repeat_dependencies;
+            // a row body that reads a component property needs a reconcile when that property changes (§18.1, AD-13)
+            for (const NodeSlot& body : slot.body) {
+                // each assignment contributes, because a row shows whatever its bindings compute (§13.3, §18.1)
+                for (const CheckedAssignment& assignment : body.node->assignments) {
+                    // each source joins once, because the engine keeps a set (§7.3, AD-04a)
+                    for (const std::string& source : assignment.dependencies) {
+                        // a duplicate would register the same id twice (§7.3, AD-04a)
+                        if (std::find(dependencies.begin(), dependencies.end(), source) == dependencies.end())
+                            dependencies.push_back(source);
+                    }
+                }
+            }
+            return dependencies;
+        }
+
+        void ComponentEmitter::assign_repeat_offsets() {
+            // each repeat needs the child position its first row takes, which is where it was written (§18.1, AD-13)
+            for (RepeatSlot& repeat : m_repeats) {
+                // a repeat with no parent has no container to count, which the checker already refused (§11.1)
+                if (repeat.parent == NO_PARENT) {
+                    // the offset stays zero, because an orphan is reported rather than emitted (§18.1)
+                    repeat.offset = 0;
+                    continue;
+                }
+                // the parent is located, because its children decide where the rows begin (§8.1, §18.1)
+                const NodeSlot* parent = nullptr;
+                for (const NodeSlot& slot : m_nodes) {
+                    // the index decides, so the parent is the one this repeat hangs from (§8.1, §18.1)
+                    if (slot.index == repeat.parent)
+                        parent = &slot;
+                }
+                // a repeat whose parent is missing cannot place its rows, which would be a generator defect (§18.1)
+                if (parent == nullptr) {
+                    repeat.offset = 0;
+                    continue;
+                }
+                // the ordinary children before the repeat are counted, because the rows start after them (§8.1, §18.1)
+                std::size_t preceding = 0;
+                // the siblings are walked in order, which is what fixes the row position (§8.1, §18.1)
+                for (const std::shared_ptr<CheckedNode>& child : parent->node->children) {
+                    // the first repeat sibling ends the count, because that is where the rows begin (§18.1, AD-13)
+                    if (child->kind == TreeNodeKind::Repeat)
+                        break;
+                    preceding++;
+                }
+                repeat.offset = preceding;
+            }
+        }
+
+        void ComponentEmitter::emit_repeat_row_functions_all() {
+            // each repeat emits its own three functions, because they share the body node names (§18.1, AD-13)
+            for (const RepeatSlot& slot : m_repeats)
+                emit_repeat_row_functions(slot);
+        }
+
+        void ComponentEmitter::emit_repeat_row_functions(const RepeatSlot& slot) {
+            // the suffix names every function of this repeat, which keeps them unique across repeats (§18.1)
+            const std::string at = "_" + std::to_string(slot.index);
+            // the item type is the element of the source, which every row function receives (§8.1, §18.1)
+            const std::string item = item_type(slot);
+            // the key field is the manifest declaration the row is keyed by (§18.1, AD-13)
+            const RecordFieldType* key = item_key_field(slot);
+            // the author bindings decide which names render as the row parameters (§11.1, §18.1)
+            m_repeat_item_name = slot.node->repeat_item_name;
+            m_repeat_index_name = slot.node->repeat_index_name;
+
+            line(0, "");
+            line(1, "std::unique_ptr<UiNode> " + m_class + "::Impl::build_row" + at + "(void* raw, const " + item + "& item, std::size_t index) {");
+            line(2, "// the body is recovered from the context, which keeps the row path allocation free (§13.3)");
+            line(2, "auto* self = static_cast<Impl*>(raw);");
+            m_object = "self";
+            line(2, "// the engine is resolved once, because a widget construction takes it (§7.2, §18.1)");
+            line(2, "BindingEngine* const engine = self->owner->engine();");
+            line(2, "// the text engine is resolved once, because a label measures through it (§9.1, §18.1)");
+            line(2, "TextEngine* const text_engine = self->text_engine;");
+            // the index is marked used, because a body that binds no index would otherwise leave it unused (§11.1, §18.1)
+            if (slot.node->repeat_index_name.empty())
+                line(2, "(void)index;");
+            // the body is built in preorder, which hangs one row together exactly as written (§8.1, §18.1)
+            for (const NodeSlot& body : slot.body)
+                emit_row_node_block(body);
+            line(2, "// the row root is handed back, because the view owns it from here (§18.1)");
+            line(2, slot.body.empty() ? "return nullptr;" : "return std::move(node_" + std::to_string(slot.body.front().index) + ");");
+            line(1, "}");
+            m_object.clear();
+
+            line(0, "");
+            line(1, "void " + m_class + "::Impl::update_row" + at + "(void* raw, UiNode& row, const " + item + "& item, std::size_t index) {");
+            line(2, "// the body is recovered from the context, which keeps the row path allocation free (§13.3)");
+            line(2, "auto* self = static_cast<Impl*>(raw);");
+            m_object = "self";
+            line(2, "// the row root is the node the view owns, which every body node is reached from (§18.1, AD-13)");
+            line(2, "UiNode* const row_root = &row;");
+            // the index is marked used, because a body that binds no index would otherwise leave it unused (§11.1, §18.1)
+            if (slot.node->repeat_index_name.empty())
+                line(2, "(void)index;");
+            // each body node is reached by walking down from the row root, the root included (§18.1, AD-13)
+            for (const NodeSlot& body : slot.body)
+                emit_row_walk(body);
+            // every body assignment is rewritten, because a matched row shows the item it now holds (§18.1, AD-13)
+            for (const NodeSlot& body : slot.body)
+                emit_row_update_block(body);
+            line(2, "// the body is recovered only to keep the generated signature uniform (§13.3)");
+            line(2, "(void)self;");
+            line(1, "}");
+            m_object.clear();
+
+            line(0, "");
+            line(1, "albor::model::ItemKey " + m_class + "::Impl::key_of" + at + "(void* raw, const " + item + "& item) {");
+            line(2, "// the context is recovered only to keep the generated signature uniform (§13.3)");
+            line(2, "(void)static_cast<Impl*>(raw);");
+            // the identity is the manifest field, because a row is keyed by a declared field (§18.1, AD-13)
+            line(2, "// the identity is the manifest field the record marked, which is what a row is keyed by (§18.1, AD-13)");
+            line(2, "return albor::model::ItemKey(item." + key->name + ");");
+            line(1, "}");
+            m_repeat_item_name.clear();
+            m_repeat_index_name.clear();
+        }
+
+        void ComponentEmitter::emit_row_walk(const NodeSlot& slot) {
+            // the concrete class is what the walk casts to, because an assignment needs the widget setter (§11.3, §18.1)
+            const std::string cls(widget_info().at(std::string_view(slot.node->element_type)).class_name);
+            // the body root is the node the view handed back, so its walk is a cast rather than a descent (§18.1, AD-13)
+            if (slot.row_path.empty()) {
+                line(2, "// the body root is the row itself, which the view handed back (§18.1, AD-13)");
+                line(2, cls + "* const n" + std::to_string(slot.index) + " = static_cast<" + cls + "*>(row_root);");
+                return;
+            }
+            // the parent is the node one step up, because preorder guarantees it was reached already (§8.1, §18.1)
+            const std::size_t parent = slot.row_path.at(slot.row_path.size() - 2);
+            // the step is the child position under the parent, which the walk recorded (§8.1, §18.1)
+            const std::size_t position = slot.row_path.back();
+            // the node is reached by its child position, which keeps the shape the author wrote (§18.1)
+            line(2, cls + "* const n" + std::to_string(slot.index) + " = static_cast<" + cls + "*>(static_cast<UiNode*>(n" + std::to_string(parent) + ")->child_at(" + std::to_string(position) + "));");
+        }
+
+        void ComponentEmitter::emit_repeat_reconcile(const RepeatSlot& slot) {
+            // the suffix names every function of this repeat, which keeps them unique across repeats (§18.1)
+            const std::string at = "_" + std::to_string(slot.index);
+            // the view is built against the container, because its rows hang where the repeat was written (§8.1, §18.1)
+            line(2, "// the view owns the rows this repeat materializes, keyed by the manifest identity (§18.1, AD-13)");
+            line(2, "m_repeat" + at + " = std::make_unique<albor::model::KeyedView<" + item_type(slot) + ">>(n" + std::to_string(slot.parent) + ", " + std::to_string(slot.offset) + ");");
+            line(2, "// the rows are reconciled now, so the tree is complete at construction (§18.1)");
+            reconcile(slot);
+            // the sink joins the component scope, which gives the reconcile a unique id (§13.3, §18.1)
+            line(2, "owner->register_property(m_repeat_source" + at + ");");
+            // the binding is declared here, because the evaluator below writes through it (§13.3, §18.1)
+            line(2, "const PropertyId deps_repeat" + at + "[] = {" + dep_list(repeat_dependencies(slot)) + "};");
+            line(2, "m_repeat_source" + at + ".bind_static(&Impl::evaluate_repeat" + at + ", this, deps_repeat" + at + ");");
+        }
+
+        void ComponentEmitter::reconcile(const RepeatSlot& slot) {
+            // the suffix names every function of this repeat, which keeps them unique across repeats (§18.1)
+            const std::string at = "_" + std::to_string(slot.index);
+            // the source is read through the body, because the reconcile runs inside it (§18.1, AD-13)
+            m_object = "this";
+            // the item binding is not in scope here, because the source is a component property (§8.1, §18.1)
+            m_repeat_item_name.clear();
+            m_repeat_index_name.clear();
+            // the rows are reconciled against the source, matching by identity (§18.1, AD-13)
+            line(2, "m_repeat" + at + "->reconcile(this, " + emit_expression(*slot.node->repeat_source) + ", &Impl::build_row" + at + ", &Impl::update_row" + at + ", &Impl::key_of" + at + ");");
+            m_object.clear();
+        }
+
+        void ComponentEmitter::emit_repeat_members() {
+            // each repeat contributes a view and three row functions, which is what a keyed row needs (§18.1, AD-13)
+            for (const RepeatSlot& slot : m_repeats) {
+                // the suffix names every member of this repeat, which keeps them unique across repeats (§18.1)
+                const std::string at = "_" + std::to_string(slot.index);
+                // the item type is the element of the source, which the view is keyed over (§8.1, §18.1)
+                const std::string item = item_type(slot);
+                line(0, "");
+                line(2, "// the view over the rows this repeat materializes, which owns them keyed (§18.1, AD-13)");
+                line(2, "std::unique_ptr<albor::model::KeyedView<" + item + ">> m_repeat" + at + ";");
+                line(0, "");
+                line(2, "// materialize one row from its item, which is what a new key builds (§18.1, AD-13)");
+                line(2, "static std::unique_ptr<UiNode> build_row" + at + "(void* raw, const " + item + "& item, std::size_t index);");
+                line(0, "");
+                line(2, "// rewrite one matched row from the item it now shows, which is what a moved key does (§18.1, AD-13)");
+                line(2, "static void update_row" + at + "(void* raw, UiNode& row, const " + item + "& item, std::size_t index);");
+                line(0, "");
+                line(2, "// read the identity an item carries, which is the field the manifest marked (§18.1, AD-13)");
+                line(2, "static albor::model::ItemKey key_of" + at + "(void* raw, const " + item + "& item);");
+                line(0, "");
+                line(2, "// reconcile the rows against the source, which runs when the source changes (§18.1, AD-13)");
+                line(2, "void reconcile" + at + "();");
+                line(0, "");
+                line(2, "// the source the rows are reconciled against, which the engine keeps current (§18.1, §13.3)");
+                line(2, "Property<std::vector<" + item + ">> m_repeat_source" + at + ";");
+                line(0, "");
+                line(2, "// recompute the rows when any source they read changes, which is what keeps them live (§18.1)");
+                line(2, "static std::vector<" + item + "> evaluate_repeat" + at + "(void* raw);");
+            }
         }
 
         void ComponentEmitter::emit_evaluators() {
@@ -1401,8 +1914,15 @@ namespace albor::compiler
             if (const auto* translation = dynamic_cast<const TranslationExpression*>(&expression))
                 return "albor::i18n::translate(" + emit_string_literal(translation->text) + ")";
             // a reference reads the property member, which is the reactive value (§11.3)
-            if (const auto* reference = dynamic_cast<const PropertyExpression*>(&expression))
+            if (const auto* reference = dynamic_cast<const PropertyExpression*>(&expression)) {
+                // a repeat item is the row parameter, because the body binds it for the row being built (§11.1, §18.1)
+                if (!m_repeat_item_name.empty() && reference->name == m_repeat_item_name)
+                    return "item";
+                // a repeat index is the row position, because the body binds it for the row being built (§11.1, §18.1)
+                if (!m_repeat_index_name.empty() && reference->name == m_repeat_index_name)
+                    return "index";
                 return m_object + "->m_" + sanitize(reference->name) + ".get()";
+            }
             // a conversion renders through its operand, which the operand type decides (§11.3)
             if (const auto* conversion = dynamic_cast<const ConversionExpression*>(&expression))
                 return emit_conversion(*conversion);
@@ -1608,6 +2128,10 @@ namespace albor::compiler
             m_has_signals = !m_component.signals.empty();
             // the tree is walked into preorder, which is how the builder emits it (§8.1)
             m_nodes.clear();
+            // the repeats are cleared with the tree, because both are rebuilt per component (§18.1, AD-13)
+            m_repeats.clear();
+            // the body counter restarts, because body names need only be unique within one component (§18.1, AD-13)
+            m_body_count = 0;
             // the walk starts at the root, which has no parent (§8.1)
             if (m_component.root != nullptr)
                 collect(*m_component.root, NO_PARENT);

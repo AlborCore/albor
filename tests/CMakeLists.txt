@@ -84,4 +84,4 @@ add_subdirectory(scope)
 
 # the collection fixture generates its facade, which the test binary links so the generated code is compiled (§8.1)
 add_subdirectory(vectors)
-target_link_libraries(albor-tests PRIVATE albor-vector-fixture)
+target_link_libraries(albor-tests PRIVATE albor-vector-fixture albor-model)

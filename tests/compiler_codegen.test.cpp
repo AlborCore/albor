@@ -200,10 +200,10 @@ TEST(Codegen, WriteIfChangedLeavesAnIdenticalFileUntouched) {
     EXPECT_TRUE(third);
 }
 
-TEST(Codegen, ARepeatCannotBeGeneratedYet) {
+TEST(Codegen, ARepeatOverAScalarNeedsAnIdentityToKeyBy) {
     // arrange
     DiagnosticList diagnostics;
-    // a repeat is the one tree form the compiler cannot generate yet, which §11.3 reserves (§11.3)
+    // a scalar element carries no identity, which is what a row is keyed by (§18.1, AD-13)
     const std::string_view source = R"(
 component C {
     in property<vector<int>> items;
@@ -218,7 +218,7 @@ component C {
     const std::vector<GeneratedFile> files = generate(source, diagnostics);
     // assert
     EXPECT_TRUE(files.empty());
-    EXPECT_TRUE(has_code(diagnostics, "E0500"));
+    EXPECT_TRUE(has_code(diagnostics, "E0503"));
 }
 
 TEST(Codegen, APhysicalPixelLengthBlocksTheOutput) {
