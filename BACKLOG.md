@@ -139,15 +139,27 @@ The front end was already finished and is not the problem. The lexer accepts `ve
 parser parses `Repeat(item in source [, index]) { one element }`, and the type checker
 resolves the repeat's item name and index against the source's element type.
 
-**The three steps that remain**, in order, because each is written against the one before:
+**The three steps**, in order, because each is written against the one before. Steps 2 and 3
+remain; step 1 is still open and still blocks the example above, which uses a record:
 
 1. **Register records with the compiler catalog.** `Task` currently dies in
    `resolve_type_name` as `E0400`, because only scalars and manifest *components* are known
    types. Registering records makes `vector<Task>` resolve and lets `item.title` be typed as
    a field read rather than an unknown property. Nothing is generated yet at this step.
-2. **Lift `E0501` for collections.** `ComponentEmitter::validate_type` rejects every
-   non-scalar, so a `vector<T>` property blocks the whole translation unit. It needs a C++
-   spelling (`std::vector<Task>`) and a `cpp_type` branch to go with it.
+2. ~~**Lift `E0501` for collections.**~~ **Done.** `ArrayExpression` is the only way an
+   author writes a collection value, so the parser reads `[1, 2]` as one expression rather
+   than as three. The checker types a list as the element type its elements agree on, and
+   `E0408` reports a list that disagrees, once, because the first mismatch settles what the
+   list cannot be. An empty list has no element to infer from, so it types as a collection of
+   an unknown element and assigns into any collection: the declared target is the only
+   evidence of what an empty list holds.
+
+   Codegen spells `vector<T>` as `std::vector<T>` and recurses, so a nested collection needs
+   no special case. A collection accessor returns `const std::vector<T>&` rather than a copy,
+   because copying a list on every read would be a cost the read path should not carry.
+   `tests/vectors/vector_panel.ui` compiles through the real generator into
+   `tests/vector_codegen.test.cpp`, which constructs the facade and reads it back, so the
+   generated collection code is compiled and executed rather than only inspected.
 3. **Lift `E0500` for `Repeat`.** `validate_node` rejects the node outright. The emitter
    needs to materialize one row per element and reconcile rows by `key` rather than by
    position.

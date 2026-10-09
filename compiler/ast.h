@@ -241,6 +241,23 @@ namespace albor::compiler
         static ExpressionPtr make(ExpressionPtr inner, SourceSpan span);
     };
 
+    // a bracketed list of expressions, which is the only way an author writes a collection value (§8.1, §11.1)
+    class ArrayExpression : public Expression
+    {
+    public:
+        // the elements in written order, which is the order the collection preserves (§8.1)
+        std::vector<ExpressionPtr> elements;
+
+        // where the brackets were written (§11.1)
+        SourceSpan span;
+
+        // hand out where the brackets were written (§11.1)
+        [[nodiscard]] const SourceSpan& location() const override { return span; }
+
+        // build a bracketed list, which the parser makes once it has read the elements (§8.1)
+        static ExpressionPtr make(std::vector<ExpressionPtr> elements, SourceSpan span);
+    };
+
     // the statements a handler body may contain, which is a closed set of two forms (§11.1)
     enum class HandlerStatementKind
     {

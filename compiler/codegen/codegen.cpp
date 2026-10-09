@@ -225,12 +225,36 @@ namespace albor::compiler
                 return "std::string";
             case TypeKind::Color:
                 return "Color";
+            case TypeKind::Vector:
+                // a collection becomes the standard vector over its element, which recurses into a nested one (§8.1)
+                return "std::vector<" + cpp_type(type.element()) + ">";
             case TypeKind::Error:
                 return "std::string";
             default:
-                // a native or a collection type is blocked before it reaches here (§11.3)
+                // a native type is blocked before it reaches here (§11.3, AD-17)
                 return "std::string";
             }
+        }
+
+        // report whether a type carries a collection at any depth, which decides whether the header is needed (§8.1)
+        bool carries_vector(const ValueType& type) {
+            // a collection carries one at its own depth, and its element is where a nested one hides (§8.1)
+            if (type.is(TypeKind::Vector))
+                return true;
+            // a parameter form other than a collection has no element to look inside (§11.1)
+            if (type.kind() != TypeKind::Snapshot)
+                return false;
+            // the element is walked, because a snapshot may carry a collection of any depth (§8.1)
+            return carries_vector(type.element());
+        }
+
+        // the C++ spelling a read accessor returns, which is a reference for a large value and a copy otherwise (§14.1)
+        std::string read_return_type(const ValueType& type) {
+            // a string and a collection are both large enough that a copy on every read would be a cost (§14.1)
+            if (type.is(TypeKind::String) || type.is(TypeKind::Vector))
+                return "const " + cpp_type(type) + "&";
+            // every other value is cheap enough to return by value, which keeps the signature simple (§14.1)
+            return cpp_type(type);
         }
 
         // the kind of the target a property name maps to, which is the source of the C++ setter (§11.3)
@@ -407,6 +431,9 @@ namespace albor::compiler
             // render one literal, which the value decides (§11.3)
             std::string emit_literal(const LiteralExpression& literal);
 
+            // render one bracketed list as a braced initialiser, whose element type the checker decided (§8.1)
+            std::string emit_array(const ArrayExpression& array);
+
             // render one conversion, which the operand type decides (§11.3)
             std::string emit_conversion(const ConversionExpression& conversion);
 
@@ -458,6 +485,9 @@ namespace albor::compiler
             // whether any emission uses a colour, which decides the headers to include (§11.3)
             bool m_uses_color = false;
 
+            // whether any property carries a collection, which decides the vector header (§8.1)
+            bool m_uses_vector = false;
+
             // whether the component translated anything, which is why the catalogue header is pulled (§9.2, §11.3)
             bool m_uses_i18n = false;
 
@@ -476,13 +506,21 @@ namespace albor::compiler
 
         void ComponentEmitter::validate() {
             // the property types are rejected first, because every other pass reads them (§11.3)
-            for (const CheckedProperty& property : m_component.properties)
+            for (const CheckedProperty& property : m_component.properties) {
+                // a collection anywhere in a declared type pulls the vector header into the facade (§8.1, §14.1)
+                if (carries_vector(property.type))
+                    m_uses_vector = true;
                 validate_type(property.type, property.span);
+            }
             // the signal parameter types are rejected with them, because the facade signatures need them (§11.3)
             for (const CheckedSignal& signal : m_component.signals) {
                 // each parameter is rejected on its own, because one bad type must not hide the rest (§11.3)
-                for (const ValueType& parameter : signal.parameter_types)
+                for (const ValueType& parameter : signal.parameter_types) {
+                    // a collection parameter is spelled in the facade signature, so the header is needed (§8.1, §14.1)
+                    if (carries_vector(parameter))
+                        m_uses_vector = true;
                     validate_type(parameter, signal.span);
+                }
             }
             // each default is scanned for physical lengths, because their density is undefined (§11.3, AD-27)
             for (const CheckedProperty& property : m_component.properties) {
@@ -549,6 +587,11 @@ namespace albor::compiler
             // a scalar type translates directly, which is what every other check assumes (§11.3)
             if (type.is(TypeKind::Bool) || type.is(TypeKind::Int) || type.is(TypeKind::Float) || type.is(TypeKind::String) || type.is(TypeKind::Color) || type.is(TypeKind::Length))
                 return;
+            // a collection is generatable when its element is, which is the same rule applied one level in (§8.1)
+            if (type.is(TypeKind::Vector)) {
+                validate_type(type.element(), span);
+                return;
+            }
             // a native or a collection type has no C++ spell here, which is reported (§11.3)
             m_diagnostics.add(Diagnostic::Severity::Error, span, "E0501", "a value of type '" + type.to_string() + "' cannot be generated yet");
             // the blocking flag is set, which empties the generated output (§11.3)
@@ -581,6 +624,10 @@ namespace albor::compiler
             // a grouping has an inner expression, which is walked behind it (§11.3)
             if (const auto* grouping = dynamic_cast<const GroupingExpression*>(&expression))
                 scan_expression(*grouping->inner);
+            // a bracketed list has elements, each of which is walked because the whole expression is scanned (§8.1)
+            if (const auto* array = dynamic_cast<const ArrayExpression*>(&expression))
+                for (const ExpressionPtr& element : array->elements)
+                    scan_expression(*element);
         }
 
         void ComponentEmitter::scan_color(const Expression& expression) {
@@ -657,6 +704,14 @@ namespace albor::compiler
             // a translation always produces a string, because that is what the catalog holds (§11.3)
             if (dynamic_cast<const TranslationExpression*>(&expression) != nullptr)
                 return scalar(TypeKind::String);
+            // a bracketed list is the collection its first element declares, which is what the initialiser names (§8.1)
+            if (const auto* array = dynamic_cast<const ArrayExpression*>(&expression)) {
+                // an empty list names no element, and its value initialisation takes the type from the target (§8.1)
+                if (array->elements.empty())
+                    return ValueType::parameterized(TypeKind::Vector, error_type());
+                // the first element decides, because the checker rejected a list whose elements disagree (§8.1)
+                return ValueType::parameterized(TypeKind::Vector, type_of(*array->elements.front()));
+            }
             // a reference resolves against the component, which is what a generated read needs (§11.3)
             if (const auto* reference = dynamic_cast<const PropertyExpression*>(&expression)) {
                 // the declared property decides, which the checker already confirmed exists (§11.3)
@@ -697,6 +752,9 @@ namespace albor::compiler
             // the string signatures need the string header, which is in every header (§14.1)
             line(0, "#include <string>");
             line(0, "");
+            // a collection signature pulls the vector header, which only a collection component needs (§8.1, §14.1)
+            if (m_uses_vector)
+                line(0, "#include <vector>");
             // a colour signature pulls the paint header, which only a colour component needs (§14.1)
             if (m_uses_color)
                 line(0, "#include \"core/paint.h\"");
@@ -721,8 +779,8 @@ namespace albor::compiler
             for (const CheckedProperty& property : m_component.properties) {
                 // the accessor name is the shared C++ name of the property (§14.1)
                 const std::string& name = m_names.at(property.name);
-                // a string is handed out by reference, which avoids a copy on the read path (§14.1)
-                const std::string ret = property.type.is(TypeKind::String) ? "const std::string&" : cpp_type(property.type);
+                // a large value is handed out by reference, which avoids a copy on the read path (§14.1)
+                const std::string ret = read_return_type(property.type);
                 line(2, "// hand out the current value of the " + property.name + " property, which reads the reactive value (§14.1, §7.1)");
                 line(2, "[[nodiscard]] " + ret + " " + name + "() const;");
                 line(0, "");
@@ -975,8 +1033,8 @@ namespace albor::compiler
             for (const CheckedProperty& property : m_component.properties) {
                 // the accessor name is the shared C++ name of the property (§14.1)
                 const std::string& name = m_names.at(property.name);
-                // the read returns a reference for a string, which avoids a copy (§14.1)
-                const std::string ret = property.type.is(TypeKind::String) ? "const std::string&" : cpp_type(property.type);
+                // the read returns a reference for a large value, which avoids a copy (§14.1)
+                const std::string ret = read_return_type(property.type);
                 line(0, "");
                 line(1, ret + " " + m_class + "::" + name + "() const {");
                 line(2, "// the value is read through the body, which the facade hides (§14.1)");
@@ -1290,6 +1348,9 @@ namespace albor::compiler
             // a grouping re-emits its inner expression, which keeps the written parentheses (§11.3)
             if (const auto* grouping = dynamic_cast<const GroupingExpression*>(&expression))
                 return "(" + emit_expression(*grouping->inner) + ")";
+            // a bracketed list renders as a braced initialiser, whose element type comes from the checker (§8.1)
+            if (const auto* array = dynamic_cast<const ArrayExpression*>(&expression))
+                return emit_array(*array);
             // a form the checker rejected cannot render, which the empty literal stands in for (§11.3)
             return emit_string_literal({});
         }
@@ -1318,6 +1379,23 @@ namespace albor::compiler
             }
             // a truth literal is emitted as its keyword, which is the only spelling (§11.3)
             return literal.text;
+        }
+
+        std::string ComponentEmitter::emit_array(const ArrayExpression& array) {
+            // an empty list renders as braces, because the target property names the element type it needs (§8.1)
+            if (array.elements.empty())
+                return "{}";
+            // the collection is named so the initialiser lands in exactly that type rather than a deduced one (§8.1)
+            std::string out = cpp_type(type_of(array)) + "{";
+            // each element appends itself in written order, which is the order the collection preserves (§8.1)
+            for (std::size_t index = 0; index < array.elements.size(); index++) {
+                // a comma joins the earlier elements, which is how an initialiser list reads (§8.1)
+                if (index != 0)
+                    out += ", ";
+                out += emit_expression(*array.elements.at(index));
+            }
+            // the closing brace ends the initialiser (§8.1)
+            return out + "}";
         }
 
         std::string ComponentEmitter::emit_conversion(const ConversionExpression& conversion) {

@@ -484,10 +484,38 @@ namespace albor::compiler
         // a grouping contributes nothing, so its inner expression types the whole (§11.1)
         if (const auto* grouping = dynamic_cast<const GroupingExpression*>(&expression))
             return type_expression(*grouping->inner, scope, dependencies);
+        // a bracketed list types as the collection its elements agree on (§8.1)
+        if (const auto* array = dynamic_cast<const ArrayExpression*>(&expression))
+            return type_array(*array, scope, dependencies);
         // a form with no rule is reported, because typing it as nothing would let it through unchecked (§11.1)
         m_diagnostics.add(Diagnostic::Severity::Error, expression.location(), "E0415", "this expression form has no type rule");
         // the error type stands in, so nothing downstream raises a second complaint (§11.1)
         return error_type();
+    }
+
+    ValueType TypeChecker::type_array(const ArrayExpression& array, const Scope& scope, std::vector<std::string>& dependencies) {
+        // an empty list has no element to read a type from, so the element is left unknown for the target to fill (§8.1)
+        if (array.elements.empty())
+            return ValueType::parameterized(TypeKind::Vector, error_type());
+        // the first element decides the collection, because every other element must agree with it (§8.1)
+        ValueType element = type_expression(*array.elements.front(), scope, dependencies);
+        // a later element is compared against the first, and each disagreement is reported once (§8.1)
+        for (std::size_t index = 1; index < array.elements.size(); index++) {
+            // the element is typed in the same scope, and its sources are dependencies of the whole list (§11.1)
+            const ValueType other = type_expression(*array.elements.at(index), scope, dependencies);
+            // an element of unknown type decides nothing, because the error already raised is the real complaint (§8.1)
+            if (other.is_error())
+                element = error_type();
+            // a disagreement makes the collection untyped, so no second complaint follows from the default (§8.1)
+            else if (!element.is_error() && !element.equals(other)) {
+                // the problem points at the element that disagreed, because that is what the author must change (§8.1)
+                m_diagnostics.add(Diagnostic::Severity::Error, array.elements.at(index)->location(), "E0408", "a collection holds one element type, but '" + other.to_string() + "' does not match '" + element.to_string() + "'");
+                // the element type is left unknown, so the assignment check raises nothing further (§8.1)
+                element = error_type();
+            }
+        }
+        // the agreed element type is the collection, and an unknown one keeps the collection unknown (§8.1)
+        return ValueType::parameterized(TypeKind::Vector, element);
     }
 
     ValueType TypeChecker::type_literal(const LiteralExpression& literal) {

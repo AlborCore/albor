@@ -41,9 +41,10 @@ namespace albor::compiler
             // a translation is collected, because that is what the catalogue is keyed by (§9.2)
             if (const auto* translation = dynamic_cast<const TranslationExpression*>(&expression); translation != nullptr) {
                 // an empty source names nothing a reader would see (§9.2)
-                if (!translation->text.empty())
+                if (!translation->text.empty()) {
                     // the source joins the set, because a catalogue holds one entry per string (§9.2)
                     out.push_back(translation->text);
+                }
             }
             // a conversion wraps a value, which is walked behind it (§9.2)
             if (const auto* conversion = dynamic_cast<const ConversionExpression*>(&expression))
@@ -61,6 +62,12 @@ namespace albor::compiler
             // a grouping has an inner expression, which is walked behind it (§9.2)
             if (const auto* grouping = dynamic_cast<const GroupingExpression*>(&expression))
                 walk_expression(*grouping->inner, out);
+            // a bracketed list has elements, each of which may translate, and they are walked in order (§9.2)
+            if (const auto* array = dynamic_cast<const ArrayExpression*>(&expression)) {
+                // every element is walked, because a translation may sit anywhere in the list (§9.2)
+                for (const ExpressionPtr& element : array->elements)
+                    walk_expression(*element, out);
+            }
             // a property reference is a leaf, so nothing further is walked behind it (§9.2)
         }
 
@@ -75,12 +82,14 @@ namespace albor::compiler
                     // the character is escaped, which is what a quoted form needs (§9.2)
                     out.push_back('\\');
                 // a newline cannot appear inside a quoted template entry at all, so it becomes a space (§9.2)
-                if (c == '\n')
+                if (c == '\n') {
                     // a space keeps the entry on one line without changing what a reader sees (§9.2)
                     out.push_back(' ');
-                else
+                }
+                else {
                     // any other character is written as itself (§9.2)
                     out.push_back(c);
+                }
             }
             // the escaped text is returned (§9.2)
             return out;

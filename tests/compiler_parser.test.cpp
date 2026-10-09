@@ -344,7 +344,6 @@ TEST(Parser, ReportsAnIdentityThatIsNotABareName) {
     // act
     parse("component C { Button { id: 1; } }", diagnostics);
     // assert
-    // an id is the node's identity, so it must be a name automation can select by (§18.1, AD-11)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0200");
 }
@@ -394,7 +393,6 @@ TEST(Parser, ReportsAHandlerStatementThatIsNeitherForm) {
     // act
     parse("component C { B { on_x: { count + 1; } } }", diagnostics);
     // assert
-    // the body has exactly two forms, so anything else is reported rather than guessed at (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0201");
 }
@@ -509,7 +507,6 @@ TEST(Parser, ReportsATranslationOfAComputedValue) {
     // act
     parse("component C { B { text: @tr(name); } }", diagnostics);
     // assert
-    // a computed value has no source text, so it cannot go into a catalog (§9.2)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0202");
 }
@@ -520,7 +517,6 @@ TEST(Parser, ReportsAnUnknownMacroAsACallThatIsNotAConversion) {
     // act
     parse("component C { B { text: @unknown(\"x\"); } }", diagnostics);
     // assert
-    // only @tr is defined, so an unknown macro has no rule to parse it with (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0203");
 }
@@ -543,7 +539,6 @@ TEST(Parser, ReportsACallThatIsNotABuiltinConversion) {
     // act
     parse("component C { B { text: widget(1); } }", diagnostics);
     // assert
-    // the language has no general call form, so an unknown name is not a callable (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0203");
 }
@@ -552,7 +547,6 @@ TEST(Parser, ReadsAUnaryApplicationAndAGroupingAsTheirOwnForms) {
     // arrange, act
     const SourceFile file = parse("component C { B { a: !(1 + 2); } }");
     // assert
-    // both forms exist in the tree rather than being folded away, because the codegen re-emits them (§11.1)
     const ExpressionPtr& value = file.components.at(0).root->assignments.at(0).value;
     ASSERT_NE(dynamic_cast<UnaryExpression*>(value.get()), nullptr);
     const auto& unary = static_cast<const UnaryExpression&>(*value);
@@ -563,7 +557,6 @@ TEST(Parser, ReadsAGroupingAsItsOwnForm) {
     // arrange, act
     const SourceFile file = parse("component C { B { a: (1 + 2) * 3; } }");
     // assert
-    // the grouping is preserved so the codegen reproduces the written parentheses (§11.1)
     EXPECT_EQ(shape(file.components.at(0).root->assignments.at(0).value), "(((1 + 2)) * 3)");
 }
 
@@ -609,7 +602,6 @@ TEST(Parser, EqualityChainsToTheLeft) {
     // arrange, act
     const SourceFile file = parse("component C { B { a: 1 == 2 == 3; } }");
     // assert
-    // the operators do not associate, so a second one applies to the right operand only (§11.1)
     EXPECT_EQ(shape(file.components.at(0).root->assignments.at(0).value), "((1 == 2) == 3)");
 }
 
@@ -652,7 +644,6 @@ TEST(Parser, ReadsANumericNegationOfALiteral) {
     // arrange, act
     const SourceFile file = parse("component C { B { a: -1; } }");
     // assert
-    // a leading minus is a negation, because the language has no signed literal form (§11.1)
     EXPECT_EQ(shape(file.components.at(0).root->assignments.at(0).value), "-1");
 }
 
@@ -736,7 +727,6 @@ TEST(Parser, ReportsTheEndOfFileWhereAUnitWasExpected) {
     // act
     parse("import albor", diagnostics);
     // assert
-    // the report names what was found, which at the end of the file is the file itself (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_NE(first(diagnostics).message.find("the end of the file"), std::string::npos);
 }
@@ -747,7 +737,6 @@ TEST(Parser, RecoversAtTheNextDeclarationAfterABrokenOne) {
     // act
     const SourceFile file = parse("component Broken { 42 }\ncomponent Good { Label {} }", diagnostics);
     // assert
-    // the broken component is reported and kept as a partial tree, because a name was read for it (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     ASSERT_EQ(file.components.size(), 2U);
     EXPECT_EQ(file.components.at(0).name, "Broken");
@@ -761,7 +750,6 @@ TEST(Parser, RecoversAtTheNextDeclarationAfterABrokenImport) {
     // act
     const SourceFile file = parse("42 component Good { Label {} }", diagnostics);
     // assert
-    // the boundary is a declaration keyword at the top level, so the component survives (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     ASSERT_EQ(file.components.size(), 1U);
     EXPECT_EQ(file.components.at(0).name, "Good");
@@ -776,7 +764,6 @@ TEST(Parser, RecoverySkipsTheBadMemberAndKeepsReadingTheBody) {
     // act
     const SourceFile file = parse("component C { Column { 42 Label {} } }", diagnostics);
     // assert
-    // the bad member is dropped, so the members beside it are still read (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     ASSERT_TRUE(file.components.at(0).root != nullptr);
     ASSERT_EQ(file.components.at(0).root->children.size(), 1U);
@@ -789,7 +776,6 @@ TEST(Parser, RecoveryStepsOverNestedBracesToTheNextDeclaration) {
     // act
     const SourceFile file = parse("component C { Column { 42 { } } } component Other { Label {} }", diagnostics);
     // assert
-    // the brace at the top level ends the broken body, so the next declaration is parsed whole (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     ASSERT_EQ(file.components.size(), 2U);
     EXPECT_EQ(file.components.at(0).name, "C");
@@ -802,7 +788,6 @@ TEST(Parser, RecoveryStopsAtTheEndOfTheFile) {
     // act
     const SourceFile file = parse("component C { Column { 42", diagnostics);
     // assert
-    // the scan ends with the stream rather than reading past it (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     ASSERT_EQ(file.components.size(), 1U);
 }
@@ -813,21 +798,17 @@ TEST(Parser, DropsAComponentWhoseNameCouldNotBeRead) {
     // act
     const SourceFile file = parse("component { Label {} }", diagnostics);
     // assert
-    // a nameless component is a recovered fragment rather than a declaration (§11.1, AD-03a)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_TRUE(file.components.empty());
 }
 
 TEST(Parser, TerminatesOnAStreamThatCarriesNoEndUnit) {
     // arrange
-    // the scanner always appends an end unit, so this stream is one a caller must never build (§11.1)
     const std::vector<Token> tokens = {Token{.kind = Token::Kind::Identifier, .text = "import", .value = "import", .span = SourceSpan{}}};
     DiagnosticList diagnostics;
     // act
-    // the reader clamps every lookahead to an end unit, so the parse terminates instead of running off the stream (§11.1)
     const SourceFile file = Parser(tokens, diagnostics).parse();
     // assert
-    // the import was read as far as the stream allowed, and the missing name was reported rather than guessed (§11.1)
     ASSERT_EQ(file.imports.size(), 1U);
     EXPECT_TRUE(file.imports.at(0).module.empty());
     EXPECT_GE(diagnostics.count(), 1U);
@@ -835,13 +816,11 @@ TEST(Parser, TerminatesOnAStreamThatCarriesNoEndUnit) {
 
 TEST(Parser, TerminatesOnAnEmptyStream) {
     // arrange
-    // an empty stream is the shape a caller must never build, and this proves the reader survives it (§11.1)
     const std::vector<Token> tokens;
     DiagnosticList diagnostics;
     // act
     const SourceFile file = Parser(tokens, diagnostics).parse();
     // assert
-    // the parse returned nothing rather than reading outside the stream (§11.1)
     EXPECT_TRUE(file.imports.empty());
     EXPECT_TRUE(file.components.empty());
     EXPECT_EQ(diagnostics.count(), 0U);
@@ -853,7 +832,6 @@ TEST(Parser, ReportsAMissingComponentKeywordPart) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // the property keyword is absent, so the declaration rule reports it (§11.1)
     const SourceFile file = parse("component C { in int n; }", diagnostics);
     // assert
     ASSERT_GE(diagnostics.count(), 1U);
@@ -865,7 +843,6 @@ TEST(Parser, ReportsASignalParameterThatIsNotAName) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // the parameter has a type but no name, which the facade could not emit (§11.2)
     parse("component C { signal moved(float); }", diagnostics);
     // assert
     ASSERT_GE(diagnostics.count(), 1U);
@@ -876,7 +853,6 @@ TEST(Parser, ReportsASignalParameterWhoseTypeIsNotAName) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // the parameter starts with a literal, so it is not a type at all (§11.2)
     parse("component C { signal moved(42 time); }", diagnostics);
     // assert
     ASSERT_GE(diagnostics.count(), 1U);
@@ -887,7 +863,6 @@ TEST(Parser, ReportsAHandlerWrittenWithoutTheOnPrefix) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // the body is a brace, so the member is a handler, but the name carries no prefix (§11.1)
     const SourceFile file = parse("component C { B { clicked: { count = 1; } } }", diagnostics);
     // assert
     ASSERT_GE(diagnostics.count(), 1U);
@@ -901,7 +876,6 @@ TEST(Parser, ReadsTheLessEqualAndGreaterEqualForms) {
     // arrange, act
     const SourceFile file = parse("component C { B { a: 1 <= 2 >= 3; } }");
     // assert
-    // the two character forms are matched before the one character ones they start with (§11.1)
     EXPECT_EQ(shape(file.components.at(0).root->assignments.at(0).value), "((1 <= 2) >= 3)");
 }
 
@@ -916,7 +890,6 @@ TEST(Parser, RecoveryStepsOutOfANestedBodyWithoutEndingTheComponent) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // the stray brace opens and closes a body inside the broken element, so the scan continues past it (§11.1)
     const SourceFile file = parse("component C { Column { 42 { } } Label {} }", diagnostics);
     // assert
     ASSERT_GE(diagnostics.count(), 1U);
@@ -929,10 +902,8 @@ TEST(Parser, ReportsASignalWhoseParameterListRunsToTheEnd) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // the list is never closed, because the stream ends inside it (§11.1)
     const SourceFile file = parse("component C { signal moved(", diagnostics);
     // assert
-    // the declaration was still read as far as the stream allowed (§11.1)
     ASSERT_EQ(file.components.size(), 1U);
     EXPECT_EQ(file.components.at(0).signals.at(0).name, "moved");
     EXPECT_GE(diagnostics.count(), 1U);
@@ -942,7 +913,6 @@ TEST(Parser, ReportsAnArgumentListThatRunsToTheEnd) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // the invocation is never closed, because the stream ends inside its arguments (§11.1)
     const SourceFile file = parse("component C { B { on_x: { moved(1 } }", diagnostics);
     // assert
     ASSERT_GE(diagnostics.count(), 1U);
@@ -953,7 +923,6 @@ TEST(Parser, ReportsAnArgumentListThatEndsAtTheEndOfTheStream) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // the stream ends with the invocation still open and carrying no argument (§11.1)
     const SourceFile file = parse("component C { B { on_x: { moved(", diagnostics);
     // assert
     ASSERT_GE(diagnostics.count(), 1U);
@@ -968,7 +937,6 @@ TEST(Parser, ReportsAHandlerBodyThatRunsToTheEnd) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // the body is never closed, because the stream ends inside it (§11.1)
     const SourceFile file = parse("component C { B { on_x: { count = 1;", diagnostics);
     // assert
     ASSERT_GE(diagnostics.count(), 1U);
@@ -979,10 +947,8 @@ TEST(Parser, RecoverySkipsANestedDeclarationKeywordInsideABrokenBody) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // the keyword sits inside a body the scan is skipping, so it is not a boundary (§11.1)
     const SourceFile file = parse("42 { component Nested { Label {} } } component Good { Label {} }", diagnostics);
     // assert
-    // the scan stepped over the nested declaration and stopped at the one after the body closed (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     ASSERT_EQ(file.components.size(), 1U);
     EXPECT_EQ(file.components.at(0).name, "Good");
@@ -992,7 +958,6 @@ TEST(Parser, RecoveryStopsAtAnImportThatFollowsABrokenDeclaration) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // the import follows the broken unit, so it is the boundary the scan stops at (§11.1)
     const SourceFile file = parse("42 import albor.controls; component Good { Label {} }", diagnostics);
     // assert
     ASSERT_GE(diagnostics.count(), 1U);
@@ -1043,4 +1008,55 @@ TEST(Parser, CommentsAndWhitespaceDoNotChangeTheTree) {
     const TreeNode& root = *file.components.at(0).root;
     ASSERT_EQ(root.assignments.size(), 1U);
     EXPECT_EQ(root.assignments.at(0).name, "spacing");
+}
+
+TEST(Parser, ReadsABracketedListAsOneExpression) {
+    // arrange a list of numbers, which is the only way an author writes a collection (§8.1)
+    const SourceFile file = parse("component C { in property<vector<int>> items: [1, 2, 3]; Column {} }");
+    // act
+    const ExpressionPtr& value = file.components.at(0).properties.at(0).default_value;
+    // assert the brackets produced one expression rather than three, because a list is a single value (§8.1)
+    const ArrayExpression& array = dynamic_cast<const ArrayExpression&>(*value);
+    // assert each element was kept in written order (§8.1)
+    ASSERT_EQ(array.elements.size(), 3U);
+    EXPECT_EQ(dynamic_cast<const LiteralExpression&>(*array.elements.at(0)).text, "1");
+    EXPECT_EQ(dynamic_cast<const LiteralExpression&>(*array.elements.at(2)).text, "3");
+}
+
+TEST(Parser, ReadsAnEmptyListAsACollectionOfNothing) {
+    // arrange an empty list, which is a value with no elements (§8.1)
+    const SourceFile file = parse("component C { in property<vector<int>> items: []; Column {} }");
+    // act
+    const ArrayExpression& array = dynamic_cast<const ArrayExpression&>(*file.components.at(0).properties.at(0).default_value);
+    // assert
+    EXPECT_TRUE(array.elements.empty());
+}
+
+TEST(Parser, AllowsATrailingSeparatorInAList) {
+    // arrange a list with a trailing comma, which is how an author writes a growing list (§8.1)
+    const SourceFile file = parse("component C { in property<vector<int>> items: [1, 2,]; Column {} }");
+    // act
+    const ArrayExpression& array = dynamic_cast<const ArrayExpression&>(*file.components.at(0).properties.at(0).default_value);
+    // assert the separator added no element, because it ends the list (§8.1)
+    ASSERT_EQ(array.elements.size(), 2U);
+    EXPECT_EQ(dynamic_cast<const LiteralExpression&>(*array.elements.at(1)).text, "2");
+}
+
+TEST(Parser, ReadsANestedListAsAListOfLists) {
+    // arrange a list holding a list, whose element is itself bracketed (§8.1)
+    const SourceFile file = parse("component C { in property<vector<vector<int>>> grid: [[1], [2]]; Column {} }");
+    // act
+    const ArrayExpression& outer = dynamic_cast<const ArrayExpression&>(*file.components.at(0).properties.at(0).default_value);
+    // assert the inner brackets produced collections rather than being consumed by the outer list (§8.1)
+    ASSERT_EQ(outer.elements.size(), 2U);
+    EXPECT_NE(dynamic_cast<const ArrayExpression*>(&*outer.elements.at(0)), nullptr);
+}
+
+TEST(Parser, ReportsAListWhoseClosingBracketIsMissing) {
+    // arrange diagnostics, because a list is delimited and a missing bracket is a defect (§8.1)
+    DiagnosticList diagnostics;
+    // act the source opens a list and never closes it (§8.1)
+    parse("component C { in property<vector<int>> items: [1, 2; Column {} }", diagnostics);
+    // assert the problem is reported rather than the list absorbing the rest of the file (§11.1)
+    EXPECT_TRUE(diagnostics.count() > 0U);
 }

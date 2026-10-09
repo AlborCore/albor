@@ -162,6 +162,9 @@ namespace albor::compiler
         // a length is a pixel count, so it assigns into a float where the density is applied (§11.1, AD-27)
         if (from.is(TypeKind::Length) && to.is(TypeKind::Float))
             return true;
+        // a collection of unknown element type assigns into any collection, because only the target knows it (§8.1)
+        if (from.is(TypeKind::Vector) && to.is(TypeKind::Vector) && (from.element().is_error() || to.element().is_error()))
+            return true;
         // every other assignment must match exactly, because nothing widens implicitly (§11.1)
         return from.equals(to);
     }

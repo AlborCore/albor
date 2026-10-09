@@ -83,4 +83,14 @@ namespace albor::compiler
         node->span = span;
         return node;
     }
+
+    ExpressionPtr ArrayExpression::make(std::vector<ExpressionPtr> elements, SourceSpan span) {
+        // the node is allocated before it is filled, because the caller only holds the owning pointer (§11.1)
+        auto node = std::make_unique<ArrayExpression>();
+        // the elements are moved in, because only one tree may own them (§11.1)
+        node->elements = std::move(elements);
+        // the span covers the brackets, so a diagnostic about the list points at them (§8.1)
+        node->span = span;
+        return node;
+    }
 } // namespace albor::compiler

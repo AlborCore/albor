@@ -812,6 +812,9 @@ namespace albor::compiler
             // the grouping is kept, so the codegen can reproduce the written parentheses (§11.1)
             return GroupingExpression::make(std::move(inner), span);
         }
+        // an opening bracket starts a collection literal, which is the only way an author writes one (§8.1)
+        if (at_punctuation("["))
+            return parse_array();
         // a truth literal is spelled as an identifier, so it is recognised here (§11.1)
         if (peek().is("true") || peek().is("false")) {
             // the spelling is copied rather than moved, because the truth check needs the unit afterwards (§11.1)
@@ -841,6 +844,36 @@ namespace albor::compiler
         advance();
         // the placeholder is a literal, because the caller must receive something it can free (§11.1)
         return LiteralExpression::make(LiteralExpression::Kind::Integer, "", span);
+    }
+
+    ExpressionPtr Parser::parse_array() {
+        // the span starts at the bracket, so a diagnostic about the list covers it (§8.1)
+        const SourceSpan start = peek().span;
+        // the opening bracket is consumed, so the first element starts after it (§8.1)
+        advance();
+        // the elements are collected in written order, which is the order the collection preserves (§8.1)
+        std::vector<ExpressionPtr> elements;
+        // an empty bracket pair is an empty collection, which is legal and needs no element (§8.1)
+        if (!at_punctuation("]")) {
+            // a trailing separator after the last element is allowed, because an author writes lists that way (§8.1)
+            while (true) {
+                // each element follows the full precedence, so a list holds any value (§8.1)
+                elements.push_back(parse_expression());
+                // the separator ends the element unless the list is already closed (§8.1)
+                if (!at_punctuation(","))
+                    break;
+                // the separator is consumed, so the next element starts after it (§8.1)
+                advance();
+                // a separator directly before the bracket ends the list, which is the trailing comma (§8.1)
+                if (at_punctuation("]"))
+                    break;
+            }
+        }
+        // the span ends at the bracket, so the list covers exactly what was written (§8.1)
+        const SourceSpan span{.start = start.start, .end = peek().span.end};
+        // the closing bracket is required, because a list is delimited (§8.1)
+        expect_punctuation("]");
+        return ArrayExpression::make(std::move(elements), span);
     }
 
     ExpressionPtr Parser::parse_translation() {

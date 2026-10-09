@@ -77,12 +77,24 @@ namespace
         return false;
     }
 
+    // count the diagnostics carrying the given code, because a rule that must fire once is asserted by its count (§8.1)
+    std::size_t count_code(const DiagnosticList& diagnostics, std::string_view code) {
+        // the tally starts at zero, which is what a code the run never reported leaves behind (§8.1)
+        std::size_t count = 0;
+        // the problems are scanned, because a run reports everything it found (§8.1)
+        for (const Diagnostic& diagnostic : diagnostics.diagnostics()) {
+            // a match adds one, which is what turns the tally into a count (§8.1)
+            if (diagnostic.code == code)
+                count++;
+        }
+        return count;
+    }
+
     // the element catalog holding one native component, which is what a manifest contributes (§11.2, AD-17)
     ElementCatalog with_waveform() {
         // the builtins are always present, because a component mixes them with its own types (§11.1, §8)
         ElementCatalog catalog = ElementCatalog::with_builtins();
         // the native type is what the manifest declares, so the checker resolves against it (§11.2, AD-17)
-        // the data type is what the snapshot carries, and it is never an element itself (§11.2, AD-17)
         catalog.add_native_data("WaveformData");
         // the component is the element the ui file instantiates (§11.2, AD-17)
         catalog.add_native(ElementType{.name = "WaveformView", .properties = {ElementProperty{.name = "line_color", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "data", .type = ValueType::parameterized(TypeKind::Snapshot, ValueType::native("WaveformData")), .assignable = false, .scaled_by_density = false}}, .signals = {ElementSignal{.name = "selection_changed", .parameter_types = {scalar(TypeKind::Float)}}}, .accepts_children = false});
@@ -126,7 +138,6 @@ TEST(TypeChecker, ResolvesNestedAndNativePropertyTypes) {
     // act
     const CheckedFile file = check("component C { in property<Snapshot<WaveformData>> data; in property<vector<int>> items; Column {} }", diagnostics, with_waveform());
     // assert
-    // a nested type resolves element by element, because the manifest holds the inner name (§11.1, §11.2, AD-17)
     EXPECT_EQ(diagnostics.count(), 0U);
     const CheckedComponent& component = only(file);
     EXPECT_EQ(component.properties.at(0).type.to_string(), "Snapshot<WaveformData>");
@@ -169,7 +180,6 @@ TEST(TypeChecker, ReportsASignalThatCollidesWithAProperty) {
     // act
     check("component C { inout property<int> changed; signal changed(); Column {} }", diagnostics);
     // assert
-    // a name means one thing in a component, so a handler could not tell them apart (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0401");
 }
@@ -241,7 +251,6 @@ TEST(TypeChecker, AcceptsALengthIntoADensityScaledProperty) {
     // arrange, act
     const CheckedFile file = check("component C { Column { spacing: 12px; } }");
     // assert
-    // a length is a pixel count, so it fills a float the codegen scales (§11.1, AD-27)
     const CheckedAssignment& assignment = only(file).root->assignments.at(0);
     EXPECT_TRUE(assignment.type.is(TypeKind::Length));
     EXPECT_TRUE(assignment.scaled_by_density);
@@ -251,7 +260,6 @@ TEST(TypeChecker, RecordsTheDependenciesOfABinding) {
     // arrange, act
     const CheckedFile file = check("component C { in property<int> a: 1; in property<int> b: 2; Label { text: @tr(\"x\") + string(a + b); } }");
     // assert
-    // the codegen emits the binding with these as its declared dependencies (§7.3, AD-04a)
     const CheckedAssignment& assignment = only(file).root->assignments.at(0);
     ASSERT_EQ(assignment.dependencies.size(), 2U);
     EXPECT_EQ(assignment.dependencies.at(0), "a");
@@ -262,7 +270,6 @@ TEST(TypeChecker, RecordsTheDependenciesOfADefault) {
     // arrange, act
     const CheckedFile file = check("component C { in property<int> a: 1; in property<int> b: a + 1; Column {} }");
     // assert
-    // a default is a binding like any other, so it registers its reads (§7.3, AD-04a)
     const CheckedProperty& property = only(file).properties.at(1);
     ASSERT_EQ(property.default_dependencies.size(), 1U);
     EXPECT_EQ(property.default_dependencies.at(0), "a");
@@ -284,7 +291,6 @@ TEST(TypeChecker, ReportsAChildUnderALeaf) {
     // act
     check("component C { Label { Label {} } }", diagnostics);
     // assert
-    // a label takes no children, so one written under it cannot be built (§11.1, §8)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0407");
 }
@@ -293,7 +299,6 @@ TEST(TypeChecker, ResolvesAHandlerAgainstTheElementSignal) {
     // arrange, act
     const CheckedFile file = check("component C { Button { on_clicked: { } } }");
     // assert
-    // a handler with an empty body is legal, because it need not do anything yet (§11.1)
     ASSERT_EQ(only(file).root->handlers.size(), 1U);
     EXPECT_EQ(only(file).root->handlers.at(0).name, "clicked");
     EXPECT_TRUE(only(file).root->handlers.at(0).body.empty());
@@ -327,7 +332,6 @@ TEST(TypeChecker, ReportsAHandlerThatAssignsAnIncomingProperty) {
     // act
     check("component C { in property<int> count: 0; Button { on_clicked: { count = 1; } } }", diagnostics);
     // assert
-    // an incoming property is owned by a binding, so a handler may not write it (§11.1, §7)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0413");
 }
@@ -410,7 +414,6 @@ TEST(TypeChecker, RefusesAnIntegerIntoAFloatProperty) {
     // act
     check("component C { Slider { value: 1; } }", diagnostics);
     // assert
-    // nothing widens implicitly, so an integer needs a conversion first (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0410");
 }
@@ -442,7 +445,6 @@ TEST(TypeChecker, RefusesConcatenatingANumberWithoutAConversion) {
     // act
     check("component C { in property<string> a: \"x\"; in property<int> b: 1; Label { text: a + b; } }", diagnostics);
     // assert
-    // a number may join text only through string(), because nothing converts implicitly (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0410");
 }
@@ -453,7 +455,6 @@ TEST(TypeChecker, RefusesTheRemainderOnFloats) {
     // act
     check("component C { in property<float> a: 1.5; in property<float> b: 2.5; in property<float> c: a % b; Column {} }", diagnostics);
     // assert
-    // a float has no defined remainder, so the operator refuses it (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0410");
 }
@@ -474,7 +475,6 @@ TEST(TypeChecker, RefusesOrderingText) {
     // act
     check("component C { in property<string> a: \"x\"; in property<string> b: \"y\"; in property<bool> c: a < b; Column {} }", diagnostics);
     // assert
-    // text has no order, so the operator refuses it (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0410");
 }
@@ -511,7 +511,6 @@ TEST(TypeChecker, RefusesANumericConversionOfABool) {
     // act
     check("component C { in property<bool> b: true; Slider { value: float(b); } }", diagnostics);
     // assert
-    // a bool has no digits, so the conversion is refused (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0410");
 }
@@ -520,7 +519,6 @@ TEST(TypeChecker, ReportsAStaticDependencyCycle) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // each default reads the other, which the eager push graph could never order (§7.3, AD-04a)
     check("component C { in property<int> a: b; in property<int> b: a; Column {} }", diagnostics);
     // assert
     ASSERT_GE(diagnostics.count(), 1U);
@@ -529,7 +527,6 @@ TEST(TypeChecker, ReportsAStaticDependencyCycle) {
 
 TEST(TypeChecker, AcceptsAOneWayDependencyChain) {
     // arrange, act
-    // a chain of three has an order, so the graph walk finds no cycle (§7.3, AD-04a)
     const CheckedFile file = check("component C { in property<int> a: 1; in property<int> b: a; in property<int> c: b; Column {} }");
     // assert
     EXPECT_TRUE(only(file).properties.at(1).default_dependencies.at(0) == "a");
@@ -542,7 +539,6 @@ TEST(TypeChecker, ReportsASelfReferencingDefault) {
     // act
     check("component C { in property<int> a: a; Column {} }", diagnostics);
     // assert
-    // a property cannot feed itself, because there is nothing to compute from (§7.3, AD-04a)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0414");
 }
@@ -551,7 +547,6 @@ TEST(TypeChecker, ResolvesARepeatOverAVector) {
     // arrange, act
     const CheckedFile file = check("component C { in property<vector<int>> items; Column { Repeat(item in items) { Label { text: string(item); } } } }");
     // assert
-    // the item binding carries the element type, so string(item) resolves (§11.1)
     ASSERT_TRUE(only(file).root->children.size() >= 1U);
     EXPECT_TRUE(only(file).root->children.at(0)->kind == TreeNodeKind::Repeat);
     EXPECT_EQ(only(file).root->children.at(0)->repeat_source_type.to_string(), "vector<int>");
@@ -561,7 +556,6 @@ TEST(TypeChecker, ResolvesARepeatIndexBinding) {
     // arrange, act
     const CheckedFile file = check("component C { in property<vector<int>> items; Column { Repeat(item in items, i) { Label { text: string(item + i); } } } }");
     // assert
-    // the index is always an integer, so the addition stays an integer (§11.1)
     EXPECT_TRUE(only(file).root->children.at(0)->repeat_index_name == "i");
 }
 
@@ -581,7 +575,6 @@ TEST(TypeChecker, ReportsARepeatOverSomethingThatIsNotACollection) {
     // act
     check("component C { in property<int> count: 1; Column { Repeat(item in count) { Label {} } } }", diagnostics);
     // assert
-    // a repeat walks a collection, so an integer has nothing to walk (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0410");
 }
@@ -590,7 +583,6 @@ TEST(TypeChecker, KeepsTheAuthorIdentityOutOfTheBindingGraph) {
     // arrange, act
     const CheckedFile file = check("component C { Button { id: action; on_clicked: { } } }");
     // assert
-    // the identity is a node label, not a dependency, so the invalidation graph never sees it (§18.1, AD-11)
     EXPECT_EQ(only(file).root->explicit_id, "action");
     EXPECT_TRUE(only(file).root->handlers.at(0).writes.empty());
 }
@@ -630,7 +622,6 @@ component MainView {
     // act
     const CheckedFile file = check(source, diagnostics);
     // assert
-    // the whole example of §11.1 checks clean against the builtin catalog alone (§11.1, §8)
     EXPECT_EQ(diagnostics.count(), 0U);
     const CheckedComponent& component = only(file);
     EXPECT_EQ(component.name, "MainView");
@@ -655,7 +646,6 @@ TEST(TypeChecker, ReportsNothingForACleanComponent) {
     // arrange, act
     const std::string_view source = "component C { inout property<int> n: 0; Column { Label { text: @tr(\"hi\"); } Button { on_clicked: { n = n + 1; } } } }";
     // act, assert
-    // the whole shape of the design example resolves against the builtins alone (§11.1, §8)
     EXPECT_EQ(check(source).components.size(), 1U);
 }
 
@@ -663,7 +653,6 @@ TEST(TypeChecker, ReusesTheCheckerForASecondFile) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // the first file leaves no pass state behind, because the checker is reusable (§11.1)
     const CheckedFile first_file = check("component A { in property<int> a: 1; Column {} }", diagnostics);
     const CheckedFile second_file = check("component B { in property<int> b: 2; Column {} }", diagnostics);
     // assert
@@ -677,7 +666,6 @@ TEST(TypeChecker, SubtractsMultipliesAndDividesWithoutWidening) {
     // arrange, act
     const CheckedFile file = check("component C { in property<int> a: 4; in property<int> b: 2; in property<int> c: a - b; in property<int> d: a * b; in property<int> e: a / b; Column {} }");
     // assert
-    // two integers stay an integer through every arithmetic operator (§11.1)
     const CheckedComponent& component = only(file);
     EXPECT_TRUE(component.properties.at(2).type.is(TypeKind::Int));
     EXPECT_TRUE(component.properties.at(3).type.is(TypeKind::Int));
@@ -699,7 +687,6 @@ TEST(TypeChecker, RefusesArithmeticOnText) {
     // act
     check("component C { in property<string> a: \"x\"; in property<string> b: \"y\"; in property<int> c: a - b; Column {} }", diagnostics);
     // assert
-    // an arithmetic operator has no meaning over text, so it is reported (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0410");
 }
@@ -717,7 +704,6 @@ TEST(TypeChecker, RefusesAnEqualityAcrossIncomparableTypes) {
     // act
     check("component C { in property<string> s: \"x\"; in property<int> a: 1; in property<bool> c: s == a; Column {} }", diagnostics);
     // assert
-    // comparing across types has no meaning, so the operator is reported (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0410");
 }
@@ -735,7 +721,6 @@ TEST(TypeChecker, TypesANumericNegation) {
     // arrange, act
     const CheckedFile file = check("component C { in property<int> a: 1; in property<int> b: -a; in property<float> f: -1.5; Column {} }");
     // assert
-    // a sign keeps the operand's own numeric type (§11.1)
     const CheckedComponent& component = only(file);
     EXPECT_TRUE(component.properties.at(1).type.is(TypeKind::Int));
     EXPECT_TRUE(component.properties.at(2).type.is(TypeKind::Float));
@@ -747,7 +732,6 @@ TEST(TypeChecker, RefusesANegationOverText) {
     // act
     check("component C { in property<string> s: \"x\"; in property<int> a: -s; Column {} }", diagnostics);
     // assert
-    // a sign is arithmetic, so it has no meaning over text (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0410");
 }
@@ -758,7 +742,6 @@ TEST(TypeChecker, RefusesALogicalNegationOverANumber) {
     // act
     check("component C { in property<int> a: 1; in property<bool> b: !a; Column {} }", diagnostics);
     // assert
-    // a negation is a question, so it takes a bool (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0410");
 }
@@ -767,7 +750,6 @@ TEST(TypeChecker, TypesAGroupingAsItsInnerExpression) {
     // arrange, act
     const CheckedFile file = check("component C { in property<int> a: 1; in property<int> b: 2; Slider { value: (a + b) * 1.0; } }");
     // assert
-    // the parentheses contribute nothing to the type, so the grouping is transparent (§11.1)
     EXPECT_TRUE(only(file).root->assignments.at(0).type.is(TypeKind::Float));
 }
 
@@ -777,7 +759,6 @@ TEST(TypeChecker, ReportsASignalParameterWhoseTypeIsUnknown) {
     // act
     check("component C { signal moved(Nonsense t); Button { on_clicked: { moved(1); } } }", diagnostics);
     // assert
-    // a parameter type that resolves to nothing is reported against the declaration (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0400");
 }
@@ -788,7 +769,6 @@ TEST(TypeChecker, ResolvesASignalParameterToANativeType) {
     // act
     const CheckedFile file = check("component C { signal moved(WaveformData d); Button { on_clicked: { } } }", diagnostics, with_waveform());
     // assert
-    // the manifest holds the parameter type, so it resolves (§11.2, AD-17)
     EXPECT_EQ(diagnostics.count(), 0U);
     EXPECT_EQ(only(file).signals.at(0).parameter_types.at(0).to_string(), "WaveformData");
 }
@@ -797,7 +777,6 @@ TEST(TypeChecker, ResolvesADeclaredLengthType) {
     // arrange, act
     const CheckedFile file = check("component C { in property<length> gap: 1px; Column {} }");
     // assert
-    // a declared length and a literal length agree, so a gap may be declared as its own type (§11.1, AD-27)
     EXPECT_TRUE(only(file).properties.at(0).type.is(TypeKind::Length));
 }
 
@@ -805,10 +784,8 @@ TEST(TypeChecker, SuppressesTheOperatorRuleWhenAnOperandIsBroken) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // the right operand names nothing, so the rule has nothing to apply to (§11.1)
     check("component C { in property<int> a: 1; in property<int> c: a + missing; Column {} }", diagnostics);
     // assert
-    // one mistake produces one message, because the rule is suppressed rather than applied to an error (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0409");
 }
@@ -827,7 +804,6 @@ TEST(TypeChecker, ReportsAConversionOverAnUnknownName) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // the conversion target is not one the language defines, so the parser already refused it (§11.1)
     SourceFile file;
     ComponentDeclaration component;
     component.name = "C";
@@ -842,7 +818,6 @@ TEST(TypeChecker, ReportsAConversionOverAnUnknownName) {
     // act
     static_cast<void>(TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file));
     // assert
-    // the checker stays silent because the parser owns that message (§11.1)
     EXPECT_EQ(diagnostics.count(), 0U);
 }
 
@@ -850,10 +825,8 @@ TEST(TypeChecker, ReportsACycleOnlyOnceForAWholeGraph) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // two loops share a property, so one walk finds both and reports each once (§7.3, AD-04a)
     check("component C { in property<int> a: c; in property<int> b: a; in property<int> c: b; Column {} }", diagnostics);
     // assert
-    // the walk starts from every property, so the same loop must not be reported from each (§7.3, AD-04a)
     std::size_t cycles = 0;
     for (const Diagnostic& diagnostic : diagnostics.diagnostics()) {
         // the code is the stable handle, so the count is by code (§7.3, AD-04a)
@@ -869,7 +842,6 @@ TEST(TypeChecker, RefusesAnAdditionOfTwoColours) {
     // act
     check("component C { in property<color> a: #FF0000; in property<color> b: #00FF00; in property<color> c: a + b; Column {} }", diagnostics);
     // assert
-    // two colours have no addition, so the operator is refused (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0410");
 }
@@ -878,7 +850,6 @@ TEST(TypeChecker, ReportsACycleThatTwoChainsShare) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // one property feeds a loop that another loop also feeds, so the walk reports it once (§7.3, AD-04a)
     check("component C { in property<int> a: b; in property<int> b: c; in property<int> c: b; Column {} }", diagnostics);
     // assert
     std::size_t cycles = 0;
@@ -894,7 +865,6 @@ TEST(TypeChecker, ReportsEveryDistinctLoopOnce) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // two loops touch no common property, so each is its own finding (§7.3, AD-04a)
     check("component C { in property<int> a: b; in property<int> b: a; in property<int> c: d; in property<int> d: c; Column {} }", diagnostics);
     // assert
     std::size_t cycles = 0;
@@ -922,7 +892,6 @@ TEST(TypeChecker, ReportsAnExpressionFormTheCheckerHasNoRuleFor) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // a node kind outside the checked set is refused rather than guessed at, so a new node cannot slip through (§11.1)
     SourceFile file;
     ComponentDeclaration component;
     component.name = "C";
@@ -936,7 +905,6 @@ TEST(TypeChecker, ReportsAnExpressionFormTheCheckerHasNoRuleFor) {
     file.components.push_back(std::move(component));
     static_cast<void>(TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file));
     // assert
-    // the unknown form types as the error type, so nothing downstream raises a second complaint (§11.1)
     EXPECT_TRUE(diagnostics.has_errors());
 }
 
@@ -944,7 +912,6 @@ TEST(TypeChecker, ReportsALiteralKindTheCheckerHasNoRuleFor) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // an out of range literal kind is refused rather than guessed at, so a new kind cannot slip through (§11.1)
     SourceFile file;
     ComponentDeclaration component;
     component.name = "C";
@@ -960,7 +927,6 @@ TEST(TypeChecker, ReportsALiteralKindTheCheckerHasNoRuleFor) {
     file.components.push_back(std::move(component));
     static_cast<void>(TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file));
     // assert
-    // the unknown kind types as the error type, so the assignment is refused (§11.1)
     EXPECT_TRUE(diagnostics.has_errors());
 }
 
@@ -968,7 +934,6 @@ TEST(TypeChecker, ReportsABinaryOperatorTheCheckerHasNoRuleFor) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // an out of range operator is refused rather than guessed at, so a new operator cannot slip through (§11.1)
     SourceFile file;
     ComponentDeclaration component;
     component.name = "C";
@@ -990,7 +955,6 @@ TEST(TypeChecker, ReportsAUnaryOperatorTheCheckerHasNoRuleFor) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // an out of range operator takes the arithmetic rule, because a negation is the other form (§11.1)
     SourceFile file;
     ComponentDeclaration component;
     component.name = "C";
@@ -1012,7 +976,6 @@ TEST(TypeChecker, RefusesAConcatenationWhoseTextIsOnTheRight) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // the text is on the right, so the other operand is the one that cannot join it (§11.1)
     check("component C { in property<string> s: \"x\"; in property<int> a: 1; Label { text: a + s; } }", diagnostics);
     // assert
     ASSERT_GE(diagnostics.count(), 1U);
@@ -1033,7 +996,6 @@ TEST(TypeChecker, ComparesWithTheNumberOnTheRight) {
     // arrange, act
     const CheckedFile file = check("component C { in property<int> a: 1; in property<int> b: 2; in property<bool> e1: 2 == a; in property<bool> e2: 2 < a; Column {} }");
     // assert
-    // the operands may arrive in either order, so both sides of each rule are exercised (§11.1)
     const CheckedComponent& component = only(file);
     EXPECT_TRUE(component.properties.at(2).type.is(TypeKind::Bool));
     EXPECT_TRUE(component.properties.at(3).type.is(TypeKind::Bool));
@@ -1057,7 +1019,6 @@ TEST(TypeChecker, ResolvesARepeatOverANativeCollection) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // a manifest component is itself a collection, so a repeat may walk one (§11.1, §11.2, AD-17)
     const CheckedFile file = check("component C { in property<WaveformView> data; Column { Repeat(item in data) { Label { text: string(item); } } } }", diagnostics, with_waveform());
     // assert
     EXPECT_EQ(diagnostics.count(), 0U);
@@ -1069,10 +1030,8 @@ TEST(TypeChecker, ChecksARepeatThatHasNoBody) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // the parser already reported the missing body, so the checker still walks the node (§11.1)
     const CheckedFile file = check("component C { in property<vector<int>> items; Column { Repeat(item in items) { } } }", diagnostics);
     // assert
-    // the node survives so the codegen never sees a half built tree (§11.1)
     ASSERT_TRUE(only(file).root->children.size() >= 1U);
     EXPECT_TRUE(only(file).root->children.at(0)->repeat_body == nullptr);
 }
@@ -1081,10 +1040,8 @@ TEST(TypeChecker, ChecksATypeNameThatIsTooShortToNest) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // the name opens a parameter form but holds no element, so it is not one (§11.1)
     check("component C { in property<vector<> x; Column {} }", diagnostics);
     // assert
-    // the parser reports the missing type and the checker reports the unresolved name (§11.1)
     EXPECT_TRUE(has_code(diagnostics, "E0400"));
 }
 
@@ -1092,7 +1049,6 @@ TEST(TypeChecker, RecordsTheSameDependencyOnlyOncePerBinding) {
     // arrange, act
     const CheckedFile file = check("component C { in property<int> a: 1; Label { text: string(a) + string(a); } }");
     // assert
-    // a binding that reads one property twice declares it once, because the engine registers a set (§7.3, AD-04a)
     const CheckedAssignment& assignment = only(file).root->assignments.at(0);
     EXPECT_EQ(assignment.dependencies.size(), 1U);
 }
@@ -1161,10 +1117,8 @@ TEST(TypeChecker, ChecksADuplicateSignalNameInAComponentWithOneSignal) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // one signal has nothing to collide with, so the scan finds nothing (§11.1)
     check("component C { signal only(); Column {} }", diagnostics);
     // assert
-    // the scan reports nothing, because the component is already well formed (§11.1)
     EXPECT_EQ(diagnostics.count(), 0U);
 }
 
@@ -1172,7 +1126,6 @@ TEST(TypeChecker, RecordsOneDependencyPerReaderAcrossSeveralBindings) {
     // arrange, act
     const CheckedFile file = check("component C { in property<int> a: 1; Column { Label { text: string(a); } Button { text: string(a); } } }");
     // assert
-    // two bindings reading one property each declare it, because each is its own binding (§7.3, AD-04a)
     const CheckedNode& column = *only(file).root;
     ASSERT_EQ(column.children.size(), 2U);
     EXPECT_EQ(column.children.at(0)->assignments.at(0).dependencies.size(), 1U);
@@ -1183,10 +1136,8 @@ TEST(TypeChecker, ChecksASnapshotTypeNameThatIsTooShortToNest) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // the angle is never closed, so the name stops at the prefix (§11.1)
     check("component C { in property<Snapshot<", diagnostics);
     // assert
-    // a prefix without a body resolves to nothing, because Snapshot<T> needs its T (§10.5)
     EXPECT_TRUE(has_code(diagnostics, "E0400"));
 }
 
@@ -1194,10 +1145,8 @@ TEST(TypeChecker, ChecksAVectorTypeNameThatIsTooShortToNest) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // the angle is never closed, so the name stops at the prefix (§11.1)
     check("component C { in property<vector<", diagnostics);
     // assert
-    // a prefix without a body resolves to nothing, because vector<T> needs its T (§8.1)
     EXPECT_TRUE(has_code(diagnostics, "E0400"));
 }
 
@@ -1205,10 +1154,8 @@ TEST(TypeChecker, SkipsAnAssignmentWhoseValueDidNotParse) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // the value is missing, so the parser reports and the checker must not type what is not there (§11.1)
     check("component C { inout property<int> count: 0; Button { on_clicked: { count = ; } } }", diagnostics);
     // assert
-    // the parser owns the message and no second complaint follows a value that does not exist (§11.1)
     EXPECT_TRUE(has_code(diagnostics, "E0203"));
     EXPECT_FALSE(has_code(diagnostics, "E0410"));
     EXPECT_FALSE(has_code(diagnostics, "E0414"));
@@ -1218,7 +1165,6 @@ TEST(TypeChecker, ReportsADuplicateSignalNameAmongThreeSignals) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // the second name differs from the first, so only the third collides (§11.1)
     check("component C { signal a(); signal b(); signal b(); Column {} }", diagnostics);
     // assert
     ASSERT_GE(diagnostics.count(), 1U);
@@ -1229,7 +1175,6 @@ TEST(TypeChecker, InvokesTheSecondOfTwoSignals) {
     // arrange, act
     const CheckedFile file = check("component C { signal ping(); signal pong(); Button { on_clicked: { pong(); } } }");
     // assert
-    // the first declaration does not match, so the scan keeps looking before it resolves (§11.1)
     const CheckedStatement& statement = only(file).root->handlers.at(0).body.at(0);
     EXPECT_EQ(statement.kind, HandlerStatementKind::SignalInvocation);
     EXPECT_EQ(statement.target, "pong");
@@ -1241,7 +1186,6 @@ TEST(TypeChecker, ReportsARepeatSourceThatDoesNotResolve) {
     // act
     check("component C { Column { Repeat(item in missing) { Label {} } } }", diagnostics);
     // assert
-    // the source failed, so the collection rule stays silent rather than reporting twice (§11.1)
     EXPECT_TRUE(has_code(diagnostics, "E0409"));
     EXPECT_FALSE(has_code(diagnostics, "E0410"));
 }
@@ -1252,7 +1196,6 @@ TEST(TypeChecker, SuppressesTheOperatorWhenAnOperandFailed) {
     // act
     check("component C { in property<int> a: 1; in property<int> c: a + missing; Column {} }", diagnostics);
     // assert
-    // an operand with no type suppresses the rule, because its type is not known (§11.1)
     EXPECT_TRUE(has_code(diagnostics, "E0409"));
     EXPECT_FALSE(has_code(diagnostics, "E0410"));
 }
@@ -1263,7 +1206,6 @@ TEST(TypeChecker, RefusesAnAdditionOfAnIntAndABool) {
     // act
     check("component C { in property<int> a: 1; in property<bool> b: true; in property<int> c: a + b; Column {} }", diagnostics);
     // assert
-    // a bool is not a number, so the addition has no rule (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0410");
 }
@@ -1272,7 +1214,6 @@ TEST(TypeChecker, AddsAFloatOnTheLeft) {
     // arrange, act
     const CheckedFile file = check("component C { in property<float> f: 1.5; in property<int> a: 1; in property<float> c: f + a; Column {} }");
     // assert
-    // a float on either side decides, so the left position is enough (§11.1)
     EXPECT_TRUE(only(file).properties.at(2).type.is(TypeKind::Float));
 }
 
@@ -1280,7 +1221,6 @@ TEST(TypeChecker, SubtractsAFloatOnTheLeft) {
     // arrange, act
     const CheckedFile file = check("component C { in property<float> f: 1.5; in property<int> a: 1; in property<float> c: f - a; Column {} }");
     // assert
-    // the subtraction follows the same widening rule as the addition (§11.1)
     EXPECT_TRUE(only(file).properties.at(2).type.is(TypeKind::Float));
 }
 
@@ -1290,7 +1230,6 @@ TEST(TypeChecker, RefusesARemainderWithAFloatOperand) {
     // act
     check("component C { in property<int> a: 4; in property<float> f: 1.5; in property<int> c: a % f; Column {} }", diagnostics);
     // assert
-    // a float has no defined remainder rounding, so the operator is refused (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0410");
 }
@@ -1301,7 +1240,6 @@ TEST(TypeChecker, RefusesAnEqualityBetweenAnIntAndAString) {
     // act
     check("component C { in property<int> a: 1; in property<string> s: \"x\"; in property<bool> c: a == s; Column {} }", diagnostics);
     // assert
-    // the two sides are not the same kind, so comparing them is meaningless (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0410");
 }
@@ -1310,7 +1248,6 @@ TEST(TypeChecker, ComparesWithGreaterEqual) {
     // arrange, act
     const CheckedFile file = check("component C { in property<int> a: 1; in property<int> b: 2; in property<bool> c: a >= b; Column {} }");
     // assert
-    // the ordering operators all answer the same question (§11.1)
     EXPECT_TRUE(only(file).properties.at(2).type.is(TypeKind::Bool));
 }
 
@@ -1320,7 +1257,6 @@ TEST(TypeChecker, RefusesAnOrderingOfAnIntAndAString) {
     // act
     check("component C { in property<int> a: 1; in property<string> s: \"x\"; in property<bool> c: a < s; Column {} }", diagnostics);
     // assert
-    // text has no order, so an ordering against it is refused (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0410");
 }
@@ -1331,7 +1267,6 @@ TEST(TypeChecker, RefusesAConjunctionWithAnIntOnTheRight) {
     // act
     check("component C { in property<bool> b: true; in property<int> a: 1; in property<bool> c: b && a; Column {} }", diagnostics);
     // assert
-    // a conjunction combines questions, and a number is not one (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0410");
 }
@@ -1340,7 +1275,6 @@ TEST(TypeChecker, ReportsACycleThatDoesNotTouchTheFirstProperty) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // the first property is an ordinary value, so the loop lives among the later two (§7.3, AD-04a)
     check("component C { in property<int> a: 1; in property<int> b: c; in property<int> c: b; Column {} }", diagnostics);
     // assert
     ASSERT_GE(diagnostics.count(), 1U);
@@ -1351,10 +1285,8 @@ TEST(TypeChecker, ChecksASnapshotTypeNameThatNeverCloses) {
     // arrange
     DiagnosticList diagnostics;
     // act
-    // the name reaches the end of the file with no closing angle, so it is one long word (§10.5)
     check("component C { in property<Snapshot<int", diagnostics);
     // assert
-    // the prefix matches but the body is unwritten, so the type resolves to nothing (§11.1)
     EXPECT_TRUE(has_code(diagnostics, "E0400"));
 }
 
@@ -1364,7 +1296,6 @@ TEST(TypeChecker, SuppressesTheOperatorWhenTheLeftOperandFailed) {
     // act
     check("component C { in property<int> a: 1; in property<int> c: missing + a; Column {} }", diagnostics);
     // assert
-    // the left operand carries the failure, so the rule stays silent for both sides (§11.1)
     EXPECT_TRUE(has_code(diagnostics, "E0409"));
     EXPECT_FALSE(has_code(diagnostics, "E0410"));
 }
@@ -1373,6 +1304,51 @@ TEST(TypeChecker, ComparesWithGreater) {
     // arrange, act
     const CheckedFile file = check("component C { in property<int> a: 1; in property<int> b: 2; in property<bool> c: a > b; Column {} }");
     // assert
-    // the strict ordering answers the same question as the others (§11.1)
     EXPECT_TRUE(only(file).properties.at(2).type.is(TypeKind::Bool));
+}
+
+TEST(TypeChecker, TypesABracketedListAsTheCollectionItsElementsAgreeOn) {
+    // arrange a list of one element type, which is the only shape a collection has (§8.1)
+    const CheckedFile file = check("component C { in property<vector<int>> items: [1, 2]; Column {} }");
+    // act
+    const ValueType type = file.components.at(0).properties.at(0).type;
+    // assert the declared type and the literal agree, which is what makes the default legal (§8.1)
+    EXPECT_EQ(type.to_string(), "vector<int>");
+}
+
+TEST(TypeChecker, TypesAnEmptyListAsACollectionOfAnUnknownElement) {
+    // arrange an empty list, which has no element to read a type from (§8.1)
+    const CheckedFile file = check("component C { in property<vector<string>> items: []; Column {} }");
+    // act
+    const ValueType type = file.components.at(0).properties.at(0).type;
+    // assert the collection is still a collection, because the declared element fills in what the literal cannot (§8.1)
+    EXPECT_TRUE(type.is(TypeKind::Vector));
+}
+
+TEST(TypeChecker, TypesANestedListAsACollectionOfCollections) {
+    // arrange a list of lists, whose element is itself a collection (§8.1)
+    const CheckedFile file = check("component C { in property<vector<vector<int>>> grid: [[1]]; Column {} }");
+    // act
+    const ValueType type = file.components.at(0).properties.at(0).type;
+    // assert the nesting is carried, because a collection may hold a collection (§8.1)
+    ASSERT_TRUE(type.is(TypeKind::Vector));
+    EXPECT_EQ(type.element().to_string(), "vector<int>");
+}
+
+TEST(TypeChecker, RefusesAListWhoseElementsDisagree) {
+    // arrange diagnostics the expectation reads, because the checker reports rather than guesses (§8.1)
+    DiagnosticList diagnostics;
+    // the list mixes a number and a string, which no single element type can be (§8.1)
+    check("component C { in property<vector<int>> items: [1, \"two\"]; Column {} }", diagnostics);
+    // assert
+    EXPECT_TRUE(has_code(diagnostics, "E0408"));
+}
+
+TEST(TypeChecker, ReportsOnlyTheFirstDisagreementInAList) {
+    // arrange diagnostics, because a list that disagrees twice must not complain twice (§8.1)
+    DiagnosticList diagnostics;
+    // the two bad elements sit on either side of a good one, which is what the checker walks (§8.1)
+    check("component C { in property<vector<int>> items: [1, \"a\", \"b\"]; Column {} }", diagnostics);
+    // assert exactly one problem is raised, because the first disagreement settles what the list cannot be (§8.1)
+    EXPECT_EQ(count_code(diagnostics, "E0408"), 1U);
 }

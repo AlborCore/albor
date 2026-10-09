@@ -133,6 +133,9 @@ namespace albor::compiler
         // read a primary expression, which is a literal, a reference, a macro or a grouping (§11.1)
         [[nodiscard]] ExpressionPtr parse_primary();
 
+        // read a bracketed collection literal, whose elements follow the full precedence (§8.1)
+        [[nodiscard]] ExpressionPtr parse_array();
+
         // read a translatable string macro, which the catalog extractor finds in this one place (§11.1, §9.2)
         [[nodiscard]] ExpressionPtr parse_translation();
 

@@ -250,6 +250,9 @@ namespace albor::compiler
         // type a literal, which the kind of the literal decides (§11.1)
         ValueType type_literal(const LiteralExpression& literal);
 
+        // type a bracketed list, whose elements must agree because a collection has one element type (§8.1)
+        ValueType type_array(const ArrayExpression& array, const Scope& scope, std::vector<std::string>& dependencies);
+
         // type a reference, which resolves against the scope (§11.1)
         ValueType type_property(const PropertyExpression& reference, const Scope& scope, std::vector<std::string>& dependencies);
 

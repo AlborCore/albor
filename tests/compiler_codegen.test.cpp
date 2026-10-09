@@ -565,3 +565,78 @@ component Well {
     EXPECT_TRUE(contains(cpp.content, "set_intrinsic_size(Size{"));
     EXPECT_TRUE(contains(cpp.content, "self->m_canvas_w_"));
 }
+
+TEST(Codegen, ACollectionPropertyBecomesAStandardVectorFacade) {
+    // arrange a collection property, which is what a list becomes at the facade (§8.1, §11.3)
+    const std::vector<GeneratedFile> files = generate("component C { in property<vector<int>> items: [1, 2]; Column {} }");
+    // act the header is what declares the accessor a host reads (§14.1)
+    const GeneratedFile header = file_named(files, "c.h");
+    // assert the accessor hands out a reference, because copying a collection on every read would be a cost (§14.1)
+    EXPECT_TRUE(contains(header.content, "[[nodiscard]] const std::vector<int>& items() const;"));
+    // assert the setter takes the collection by value, because a write hands over its ownership (§14.1)
+    EXPECT_TRUE(contains(header.content, "void set_items(std::vector<int> value);"));
+}
+
+TEST(Codegen, ACollectionPropertyPullsTheVectorHeader) {
+    // arrange
+    const std::vector<GeneratedFile> files = generate("component C { in property<vector<int>> items: [1]; Column {} }");
+    // act
+    const GeneratedFile header = file_named(files, "c.h");
+    // assert the header carries what its own signature names, because a facade includes what it uses (§3.5, §14.1)
+    EXPECT_TRUE(contains(header.content, "#include <vector>"));
+}
+
+TEST(Codegen, AComponentWithNoCollectionDoesNotPullTheVectorHeader) {
+    // arrange a component with only scalars, which needs no collection header (§11.3)
+    const std::vector<GeneratedFile> files = generate("component C { in property<int> count: 1; Column {} }");
+    // act
+    const GeneratedFile header = file_named(files, "c.h");
+    // assert the include is absent, because a generated file carries only what it uses (§14.1)
+    EXPECT_FALSE(contains(header.content, "#include <vector>"));
+}
+
+TEST(Codegen, AListRendersAsABracedInitialiserOverItsElementType) {
+    // arrange a list of numbers, whose element type the checker decided (§8.1)
+    const std::vector<GeneratedFile> files = generate("component C { in property<vector<int>> items: [1, 2]; Column {} }");
+    // act the member initialiser is where the written list lands (§14.1)
+    const GeneratedFile source = file_named(files, "c.cpp");
+    // assert the collection is named, so the initialiser cannot deduce a different one (§8.1)
+    EXPECT_TRUE(contains(source.content, "Property<std::vector<int>> m_items{std::vector<int>{1, 2}};"));
+}
+
+TEST(Codegen, ANestedListRendersItsInnerCollections) {
+    // arrange a list of lists, whose inner element is itself a collection (§8.1)
+    const std::vector<GeneratedFile> files = generate("component C { in property<vector<vector<int>>> grid: [[1], [2]]; Column {} }");
+    // act
+    const GeneratedFile source = file_named(files, "c.cpp");
+    // assert each inner list names its own element type, which is what nesting means (§8.1)
+    EXPECT_TRUE(contains(source.content, "std::vector<std::vector<int>>{std::vector<int>{1}, std::vector<int>{2}}"));
+}
+
+TEST(Codegen, AnEmptyListRendersAsValueInitialisation) {
+    // arrange an empty list, which has no element to name (§8.1)
+    const std::vector<GeneratedFile> files = generate("component C { in property<vector<int>> items: []; Column {} }");
+    // act
+    const GeneratedFile source = file_named(files, "c.cpp");
+    // assert the braces carry no element, because the target property names the type instead (§8.1)
+    EXPECT_TRUE(contains(source.content, "Property<std::vector<int>> m_items{{}}"));
+}
+
+TEST(Codegen, ACollectionPropertyNoLongerBlocksTheOutput) {
+    // arrange diagnostics, because the property used to be the one type the generator refused (§11.3)
+    DiagnosticList diagnostics;
+    // the collection is generated now, so the run must be clean (§8.1, §11.3)
+    const std::vector<GeneratedFile> files = generate("component C { in property<vector<int>> items: [1]; Column {} }", diagnostics);
+    // assert the output exists and nothing blocked it, which is what landing this feature means (§11.3)
+    EXPECT_FALSE(files.empty());
+    EXPECT_EQ(diagnostics.count(), 0U);
+}
+
+TEST(Codegen, ATranslationInsideAListIsStillExtracted) {
+    // arrange a list of translated strings, because a translation may sit anywhere in a value (§9.2)
+    const std::vector<GeneratedFile> files = generate("component C { in property<vector<string>> titles: [@tr(\"first\")]; Column {} }");
+    // act
+    const GeneratedFile source = file_named(files, "c.cpp");
+    // assert the catalogue header is pulled, which is what proves the translation was reached (§9.2, §11.3)
+    EXPECT_TRUE(contains(source.content, "albor::i18n::translate"));
+}

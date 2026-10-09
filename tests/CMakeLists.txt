@@ -81,3 +81,7 @@ gtest_discover_tests(albor-tests DISCOVERY_TIMEOUT 60)
 
 # the build-scope fixture is its own product, which the §14.3 check compiles and observes (AGENTS.md, §14.3)
 add_subdirectory(scope)
+
+# the collection fixture generates its facade, which the test binary links so the generated code is compiled (§8.1)
+add_subdirectory(vectors)
+target_link_libraries(albor-tests PRIVATE albor-vector-fixture)
