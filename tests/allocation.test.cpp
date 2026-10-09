@@ -6,10 +6,8 @@
 #include <gtest/gtest.h>
 
 #include "render/frame_scene.h"
-#include "render/render_executor.h"
 #include "text/text-skia/skia_text_engine.h"
 #include "tools/alloc-probe/alloc_probe.h"
-#include "ui/frame_pipeline.h"
 #include "ui/scene_builder.h"
 
 using namespace albor;
