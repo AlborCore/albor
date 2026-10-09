@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstddef>
 #include <string>
 #include <vector>
@@ -185,4 +186,161 @@ TEST(LspServerChecks, ARequestForAClosedDocumentIsRefused) {
     // assert answering from nothing would be a guess, so it is refused (§12.2)
     ASSERT_TRUE(exchange.reply.has_value());
     EXPECT_NE(exchange.reply->find("not open"), std::string::npos);
+}
+
+namespace
+{
+    // ask for completions at a position, which is what an editor does when a person types (§12.2)
+    std::vector<std::string> complete_at(LspServer& server, int line, int character) {
+        // the document is open already, so the request names it (§12.2)
+        const std::string request = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"textDocument/completion\",\"params\":{\"textDocument\":{\"uri\":\"file:///panel.ui\"},\"position\":{\"line\":" + std::to_string(line) + ",\"character\":" + std::to_string(character) + "}}}";
+        // the request is handled, which is the whole of the exchange (§12.2)
+        const Exchange exchange = server.handle_line(request);
+        // a reply is always produced for a request (§12.2)
+        EXPECT_TRUE(exchange.reply.has_value());
+        // the reply is parsed, because a test asserts on the items (§12.2)
+        const std::optional<core::Json> parsed = core::Json::parse(*exchange.reply);
+        // a reply that does not parse is a defect, which the assertion catches (§12.2)
+        EXPECT_TRUE(parsed.has_value());
+        // the labels are what a person would read, which is what this collects (§12.2)
+        std::vector<std::string> labels;
+        // a reply wraps its answer in a result member, which is where the items live (§12.2)
+        const core::Json* result = parsed->member("result");
+        // a reply with no result carries nothing to read, which the assertion catches (§12.2)
+        if (result == nullptr || result->kind() != core::Json::Kind::Array)
+            return labels;
+        // the array is walked, which is where the items are (§12.2)
+        for (const core::Json& item : result->as_array()) {
+            // an item with no label carries nothing, so it contributes nothing (§12.2)
+            if (const core::Json* label = item.member("label"))
+                labels.push_back(label->as_string());
+        }
+        // the labels are returned whole (§12.2)
+        return labels;
+    }
+
+    // ask for a hover at a position, which is what an editor shows when a pointer rests (§12.2)
+    std::string hover_at(LspServer& server, int line, int character) {
+        // the request names the open document and the position (§12.2)
+        const std::string request = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":{\"uri\":\"file:///panel.ui\"},\"position\":{\"line\":" + std::to_string(line) + ",\"character\":" + std::to_string(character) + "}}}";
+        // the request is handled (§12.2)
+        const Exchange exchange = server.handle_line(request);
+        // a reply is always produced for a request (§12.2)
+        EXPECT_TRUE(exchange.reply.has_value());
+        // the reply is parsed, because a test asserts on the text (§12.2)
+        const std::optional<core::Json> parsed = core::Json::parse(*exchange.reply);
+        // a reply that does not parse is a defect (§12.2)
+        EXPECT_TRUE(parsed.has_value());
+        // a null result means the cursor was on nothing, which is the honest answer (§12.2)
+        const core::Json* result = parsed->member("result");
+        // a null result is the protocol's spelling for nothing to say, so it yields no text (§12.2)
+        if (result == nullptr || result->kind() != core::Json::Kind::Object)
+            return {};
+        // the contents carry the text a person reads (§12.2)
+        const core::Json* contents = result->member("contents");
+        // an answer without contents has nothing to say (§12.2)
+        if (contents == nullptr)
+            return {};
+        // the text is read, which is what a person would see (§12.2)
+        const core::Json* value = contents->member("value");
+        // an answer without text has nothing to say (§12.2)
+        return value == nullptr ? std::string() : value->as_string();
+    }
+} // namespace
+
+TEST(LspCompletionChecks, CompletionInsideAnElementBodyOffersElements) {
+    // arrange a file whose cursor sits where a child element may begin (§12.2)
+    LspServer server;
+    (void)did_open(server, "component Panel {\n    Column {\n        \n    }\n}");
+    // act
+    const std::vector<std::string> labels = complete_at(server, 2, 8);
+    // assert the builtins are offered, because any of them may be a child (§11.1, §8)
+    EXPECT_TRUE(std::find(labels.begin(), labels.end(), "Label") != labels.end());
+    EXPECT_TRUE(std::find(labels.begin(), labels.end(), "Button") != labels.end());
+}
+
+TEST(LspCompletionChecks, CompletionAfterAColonOffersThatElementsProperties) {
+    // arrange a file whose cursor sits after a property colon (§12.2)
+    LspServer server;
+    (void)did_open(server, "component Panel {\n    Column {\n        Label { text: \n    }\n}");
+    // act
+    const std::vector<std::string> labels = complete_at(server, 2, 21);
+    // assert only the label's own surface is offered, because that is what may follow the colon (§11.1)
+    EXPECT_TRUE(std::find(labels.begin(), labels.end(), "text") != labels.end());
+    EXPECT_TRUE(std::find(labels.begin(), labels.end(), "font_size") != labels.end());
+    // assert another element's property is not offered, because it may not be assigned here (§11.1)
+    EXPECT_TRUE(std::find(labels.begin(), labels.end(), "spacing") == labels.end());
+}
+
+TEST(LspCompletionChecks, CompletionAfterTheHandlerPrefixOffersSignals) {
+    // arrange a file whose cursor sits after on_ (§12.2)
+    LspServer server;
+    (void)did_open(server, "component Panel {\n    Column {\n        Button { on_\n    }\n}");
+    // act
+    const std::vector<std::string> labels = complete_at(server, 2, 20);
+    // assert the signal is offered with its prefix, which is how it is written (§11.1)
+    EXPECT_TRUE(std::find(labels.begin(), labels.end(), "on_clicked") != labels.end());
+}
+
+TEST(LspCompletionChecks, CompletionAtTopLevelOffersDeclarations) {
+    // arrange a file whose cursor sits at the component body (§12.2)
+    LspServer server;
+    (void)did_open(server, "component Panel {\n    \n}");
+    // act
+    const std::vector<std::string> labels = complete_at(server, 1, 4);
+    // assert the declaration keywords are offered, because each starts one (§11.1)
+    EXPECT_TRUE(std::find(labels.begin(), labels.end(), "signal") != labels.end());
+    EXPECT_TRUE(std::find(labels.begin(), labels.end(), "in") != labels.end());
+}
+
+TEST(LspCompletionChecks, CompletionInsideAStringOffersNothing) {
+    // arrange a file whose cursor sits inside a string literal (§12.2)
+    LspServer server;
+    (void)did_open(server, "component Panel {\n    Column {\n        Label { text: \"hello\"; }\n    }\n}");
+    // act the cursor is well inside the quoted text (§12.2)
+    const std::vector<std::string> labels = complete_at(server, 2, 26);
+    // assert a long list of irrelevant names inside a string would be worse than none (§12.2)
+    EXPECT_TRUE(labels.empty());
+}
+
+TEST(LspCompletionChecks, HoverOnAnElementNamesIt) {
+    // arrange a file whose cursor rests on an element name (§12.2)
+    LspServer server;
+    (void)did_open(server, "component Panel {\n    Column {\n        Label { text: \"hi\"; }\n    }\n}");
+    // act
+    const std::string described = hover_at(server, 2, 10);
+    // assert the hover says what the name is, which is what a pointer resting on it should (§12.2)
+    EXPECT_NE(described.find("Label"), std::string::npos);
+}
+
+TEST(LspCompletionChecks, HoverOnAPropertyNamesItsType) {
+    // arrange a file whose cursor rests on a property name (§12.2)
+    LspServer server;
+    (void)did_open(server, "component Panel {\n    Column {\n        Label { text: \"hi\"; }\n    }\n}");
+    // act
+    const std::string described = hover_at(server, 2, 17);
+    // assert the hover carries the property and its type, which is what is not obvious (§12.2)
+    EXPECT_NE(described.find("text"), std::string::npos);
+    EXPECT_NE(described.find("string"), std::string::npos);
+}
+
+TEST(LspCompletionChecks, HoverOnWhitespaceSaysNothing) {
+    // arrange a file whose cursor rests between words (§12.2)
+    LspServer server;
+    (void)did_open(server, "component Panel {\n    Column {\n    }\n}");
+    // act the cursor is on indentation (§12.2)
+    const std::string described = hover_at(server, 2, 2);
+    // assert silence is the honest answer, because a guess would be worse (§12.2)
+    EXPECT_TRUE(described.empty());
+}
+
+TEST(LspCompletionChecks, ACompletionRequestWithoutAPositionIsRefused) {
+    // arrange
+    LspServer server;
+    (void)did_open(server, "component Panel { }");
+    // act the position is missing, which answers from nowhere (§12.2)
+    const Exchange exchange = server.handle_line(R"({"jsonrpc":"2.0","id":4,"method":"textDocument/completion","params":{"textDocument":{"uri":"file:///panel.ui"}}})");
+    // assert it is refused rather than answered from nowhere (§12.2)
+    ASSERT_TRUE(exchange.reply.has_value());
+    EXPECT_NE(exchange.reply->find("no position"), std::string::npos);
 }

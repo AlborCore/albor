@@ -7,6 +7,7 @@
 #include "compiler/type_checker.h"
 #include "compiler/value_type.h"
 #include "core/json.h"
+#include "language-server/lsp_support.h"
 
 namespace albor::language_server
 {
@@ -260,8 +261,63 @@ namespace albor::language_server
             // a document that is not open is refused, because an editor should have opened it first (§12.2)
             if (m_documents.find(*uri) == nullptr)
                 return Exchange{.reply = failure(reply_id, INVALID_REQUEST, "the document is not open: " + *uri).to_string(), .notifications = {}};
-            // this server answers neither request yet, and says so rather than answering empty (§12.2)
-            return Exchange{.reply = failure(reply_id, METHOD_NOT_FOUND, "not supported yet: " + method->as_string()).to_string(), .notifications = {}};
+            // the position is read, because both requests answer from where the cursor is (§12.2)
+            const core::Json* position = params->member("position");
+            // a request with no position answers from nowhere, which is refused rather than guessed (§12.2)
+            if (position == nullptr || !position->is_object())
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the request carries no position").to_string(), .notifications = {}};
+            // the line is required, because it is the row the cursor is on (§12.2)
+            const core::Json* line_value = position->member("line");
+            // the character is required, because it is the column within that row (§12.2)
+            const core::Json* character_value = position->member("character");
+            // a request missing either answers from nowhere, which is refused (§12.2)
+            if (line_value == nullptr || character_value == nullptr)
+                return Exchange{.reply = failure(reply_id, INVALID_PARAMS, "the position is incomplete").to_string(), .notifications = {}};
+            // the document is read, because both requests answer from its text (§12.2)
+            const Document& document = *m_documents.find(*uri);
+            // the row is read as the protocol's zero based number, and a negative one clamps rather than wraps (§12.2)
+            const auto row = static_cast<std::size_t>(std::max(0.0, line_value->as_number()));
+            // the column is read the same way, because a negative position is a client bug (§12.2)
+            const auto column = static_cast<std::size_t>(std::max(0.0, character_value->as_number()));
+            // the catalog is the builtin one a ui file may use without a manifest (§11.1, §8)
+            const compiler::ElementCatalog catalog = compiler::ElementCatalog::with_builtins();
+            // a completion offers whatever may be written at this position (§12.2)
+            if (method->as_string() == "textDocument/completion") {
+                // the items are rendered as the protocol's item objects (§12.2)
+                std::vector<core::Json> rendered;
+                // each item carries its label, kind and detail, which is what an editor shows (§12.2)
+                for (const CompletionItem& item : completions_at(document, catalog, row, column)) {
+                    // an item is an object, because the protocol describes it that way (§12.2)
+                    core::Json entry;
+                    // the label is what a person accepts and inserts (§12.2)
+                    entry.set("label", core::Json(item.label));
+                    // the kind is what an editor picks an icon from (§12.2)
+                    entry.set("kind", core::Json(static_cast<double>(item.kind)));
+                    // the detail is what tells two same named things apart (§12.2)
+                    entry.set("detail", core::Json(item.detail));
+                    // the item joins the response (§12.2)
+                    rendered.push_back(std::move(entry));
+                }
+                // the response is a list, which is what the protocol describes for completions (§12.2)
+                return Exchange{.reply = envelope(reply_id, core::Json(std::move(rendered))).to_string(), .notifications = {}};
+            }
+            // a hover describes what the cursor is on, and says nothing when it is on nothing (§12.2)
+            const std::optional<std::string> described = hover_at(document, catalog, row, column);
+            // an empty hover is a null result, which is what the protocol spells for nothing to say (§12.2)
+            if (!described)
+                return Exchange{.reply = envelope(reply_id, core::Json()).to_string(), .notifications = {}};
+            // the contents carry the text a person reads beside the cursor (§12.2)
+            core::Json contents;
+            // the plain text form is one every editor renders (§12.2)
+            contents.set("kind", core::Json(std::string("plaintext")));
+            // the description is the text itself (§12.2)
+            contents.set("value", core::Json(*described));
+            // the result carries the contents, which is the protocol's shape (§12.2)
+            core::Json result;
+            // the contents join the result (§12.2)
+            result.set("contents", std::move(contents));
+            // the hover answers with the description (§12.2)
+            return Exchange{.reply = envelope(reply_id, std::move(result)).to_string(), .notifications = {}};
         }
 
         // a method this server does not answer is stated, because silence would hang an editor (§12.2)
