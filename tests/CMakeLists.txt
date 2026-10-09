@@ -1,14 +1,9 @@
 # the unit tests of every module, which mirror the source tree layout (STYLE-GUIDE.md)
 
-# gather cpp sources (all platforms)
-file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
-
-# two suites reach a module that only exists in some configurations, so they are held out of the main gather and added
-# back under their own condition. a release configure must not compile the automation suite at all, or the link fails
-# on symbols the release link does not have (AD-10)
-list(FILTER CPP_SOURCES EXCLUDE REGEX "/automation\.test\.cpp$")
-list(FILTER CPP_SOURCES EXCLUDE REGEX "/automation_transport\.test\.cpp$")
-list(FILTER CPP_SOURCES EXCLUDE REGEX "/render_skia\.test\.cpp$")
+# gather cpp sources (all platforms), without recursing: a suite that reaches a module only some configurations build
+# lives in conditional/ and is added under its own condition below. recursing here once compiled every conditional
+# suite unconditionally, which failed the release link on symbols the release link does not have (AD-10)
+file(GLOB CPP_SOURCES "./*.cpp")
 
 # the build-scope fixture only feeds a scripted check, so it never joins the test binary (§14.3)
 list(FILTER CPP_SOURCES EXCLUDE REGEX "/scope/")
@@ -56,8 +51,8 @@ target_link_libraries(albor-tests PRIVATE albor-layout albor-widgets albor-style
 # other suites never link because it reaches a platform surface (§3.2, AD-16). the backend is apple only, so the
 # suite is gathered and linked on apple platforms alone, and the raster canvas it draws into needs no window
 # server, so the binary still runs headless (§2.2)
-if(APPLE AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/render_skia.test.cpp")
-    target_sources(albor-tests PRIVATE "./render_skia.test.cpp")
+if(APPLE)
+    target_sources(albor-tests PRIVATE "./conditional/render_skia.test.cpp")
     target_link_libraries(albor-tests PRIVATE albor-render-skia)
 endif()
 
@@ -65,14 +60,9 @@ endif()
 # the automation suite reaches the automation core, which exists only when it is enabled, so the suite is gathered
 # under the same condition. a release configure has no such target, and referencing it would fail the link (AD-10)
 if(ALBOR_AUTOMATION)
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/automation.test.cpp")
-        target_sources(albor-tests PRIVATE "./automation.test.cpp")
-    endif()
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/semantic_commands.test.cpp")
-        target_sources(albor-tests PRIVATE "./semantic_commands.test.cpp")
-    endif()
-    if(APPLE AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/automation_transport.test.cpp")
-        target_sources(albor-tests PRIVATE "./automation_transport.test.cpp")
+    target_sources(albor-tests PRIVATE "./conditional/automation.test.cpp" "./conditional/semantic_commands.test.cpp")
+    if(APPLE)
+        target_sources(albor-tests PRIVATE "./conditional/automation_transport.test.cpp")
     endif()
     target_link_libraries(albor-tests PRIVATE albor-automation)
 endif()
