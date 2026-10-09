@@ -72,6 +72,17 @@ find_package(freetype CONFIG REQUIRED)
 add_library(albor-skia INTERFACE)
 target_link_libraries(albor-skia INTERFACE unofficial::skia::skia unofficial::skia::modules::skparagraph)
 
+# the skia headers self include as "skia/core/...", so every consumer needs the directory above include/skia as an
+# include root. it is resolved once here rather than in each module, because three modules reach skia and a copied
+# block is a block that drifts (AD-05, AD-28)
+if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+    set(ALBOR_SKIA_INCLUDE_ROOT "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include")
+else()
+    get_target_property(ALBOR_SKIA_TARGET_INCLUDES unofficial::skia::skia INTERFACE_INCLUDE_DIRECTORIES)
+    list(GET ALBOR_SKIA_TARGET_INCLUDES 0 ALBOR_SKIA_INCLUDE_ROOT)
+    string(REGEX REPLACE "/skia$" "" ALBOR_SKIA_INCLUDE_ROOT "${ALBOR_SKIA_INCLUDE_ROOT}")
+endif()
+
 enable_testing()
 
 # the shared value types every other module includes (§3.2)

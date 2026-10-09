@@ -3,15 +3,6 @@
 # find_package(skia) is deprecated by the port itself and raises an author warning, so the config package the port documents is used
 find_package(unofficial-skia CONFIG REQUIRED)
 
-# the skia headers self include as "skia/core/...", so the port needs the directory above include/skia as an include root
-if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
-    set(ALBOR_SKIA_INCLUDE_ROOT "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include")
-else()
-    get_target_property(ALBOR_SKIA_TARGET_INCLUDES unofficial::skia::skia INTERFACE_INCLUDE_DIRECTORIES)
-    list(GET ALBOR_SKIA_TARGET_INCLUDES 0 ALBOR_SKIA_INCLUDE_ROOT)
-    string(REGEX REPLACE "/skia$" "" ALBOR_SKIA_INCLUDE_ROOT "${ALBOR_SKIA_INCLUDE_ROOT}")
-endif()
-
 # gather cpp sources, which reach only the cpu rasterizer and therefore build on every platform (§3.5, AD-05)
 file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 

@@ -12,6 +12,7 @@
 
 #include "render/frame_scene.h"
 #include "render/render-skia/skia_render_context.h"
+#include "render/render-skia/skia_renderer_backend.h"
 #include "text/text-skia/skia_text_engine.h"
 #include "tools/alloc-probe/alloc_probe.h"
 
@@ -248,4 +249,26 @@ TEST(SkiaRenderContextTextChecks, DrawingManyLinesOfOneRunCostsNoAllocation) {
     probe::set_counting(false);
     // assert no line allocates, because the buffers are emptied and refilled rather than rebuilt (§6.3)
     EXPECT_EQ(repeat_allocations, 0u);
+}
+
+TEST(SkiaRendererBackendLifecycle, ConstructingAndDestroyingABackendReturns) {
+    // act the backend is constructed and destroyed in a scope, which is what an application does (§6.3)
+    {
+        SkiaRendererBackend backend;
+        // assert it came up, because a backend that did not is a different failure than the one guarded here (§6.3)
+        EXPECT_TRUE(backend.ready());
+    }
+    // assert reaching this line is the claim: the driver traps in the queue dealloc unless the queue is held (§6.3)
+    SUCCEED();
+}
+
+TEST(SkiaRendererBackendLifecycle, DestroyingABackendAfterItRecordedNothingStillReturns) {
+    // arrange a second backend in the same process, because the first test already exercised one queue (§6.3)
+    std::unique_ptr<SkiaRendererBackend> backend = std::make_unique<SkiaRendererBackend>();
+    // assert it came up, so the destruction below is not skipped by a null (§6.3)
+    ASSERT_TRUE(backend->ready());
+    // act
+    backend.reset();
+    // assert returning at all is the claim, because the teardown order is what the driver rejects (§6.3)
+    SUCCEED();
 }

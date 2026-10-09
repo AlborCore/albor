@@ -27,6 +27,14 @@ namespace albor
 
     namespace
     {
+        // one queue is kept for the process because the driver traps in its dealloc; see the defect record (§6.3)
+        id<MTLCommandQueue> hold_for_process_lifetime(id<MTLCommandQueue> queue) {
+            static id<MTLCommandQueue> held = nil;
+            if (queue != nil && held == nil)
+                held = queue;
+            return queue;
+        }
+
         std::unique_ptr<SkiaRendererBackendState> build_backend_state() {
             // a host without a metal device cannot present through skia at all (§6.3)
             id<MTLDevice> device = MTLCreateSystemDefaultDevice();
@@ -35,7 +43,7 @@ namespace albor
             // the state owns the device and the queue for as long as the backend records gpu work (§6.3)
             std::unique_ptr<SkiaRendererBackendState> state = std::make_unique<SkiaRendererBackendState>();
             state->device = device;
-            state->queue = [device newCommandQueue];
+            state->queue = hold_for_process_lifetime([device newCommandQueue]);
             // a device without a command queue has nowhere to submit frames, so the backend refuses it (§6.3)
             if (state->queue == nil)
                 return nullptr;
@@ -56,9 +64,9 @@ namespace albor
         m_state(build_backend_state()) {}
 
     SkiaRendererBackend::~SkiaRendererBackend() {
-        // the context holds gpu work that references the device, so it is abandoned before the state is dropped (§6.3)
+        // the context holds gpu work that references the device, so it is released before the state is dropped (§6.3)
         if (m_state && m_state->context)
-            m_state->context->abandonContext();
+            m_state->context->releaseResourcesAndAbandonContext();
     }
 
     bool SkiaRendererBackend::ready() const {
