@@ -86,6 +86,9 @@ add_subdirectory(runtime)
 # the semantic tree that accessibility and automation consume (§3.2, §10.1)
 add_subdirectory(semantics)
 
+# the platform accessibility bridge consumes the semantic tree, so it comes after it (§10.2)
+add_subdirectory(accessibility)
+
 # the rendering hal, the frame scene and the two stage pipeline (§3.2)
 add_subdirectory(render)
 

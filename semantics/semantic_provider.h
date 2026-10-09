@@ -32,8 +32,17 @@ namespace albor
         // build an empty tree, which a provider then populates
         SemanticTree();
 
+        // the parent an added node has when it is a root, because a tree needs one absent parent (§10.1)
+        static constexpr std::size_t NO_PARENT = static_cast<std::size_t>(-1);
+
         // add a node to the tree and hand back its index, which is where an adapter reads it from (§10.1)
-        std::size_t add(SemanticNode node);
+        std::size_t add(SemanticNode node, std::size_t parent = NO_PARENT);
+
+        // hand out the parent of a node, which an adapter needs because assistive technology walks a hierarchy (§10.2)
+        [[nodiscard]] std::size_t parent_of(std::size_t index) const;
+
+        // hand out the children of a node in order, which an adapter hands to assistive technology (§10.2)
+        [[nodiscard]] std::vector<std::size_t> children_of(std::size_t index) const;
 
         // build the tree from a provider, walking its children on demand (§10.1, AD-09)
         void build_from(const SemanticProvider& provider);
@@ -58,9 +67,12 @@ namespace albor
 
     private:
         // walk a provider and its children depth first, which flattens the virtualized tree (§10.1, AD-09)
-        void walk(const SemanticProvider& provider);
+        void walk(const SemanticProvider& provider, std::size_t parent);
 
         // the flattened nodes, in depth first order (§10.1)
         std::vector<SemanticNode> m_nodes;
+
+        // the parent of each node in the same order, because assistive technology walks a hierarchy (§10.2)
+        std::vector<std::size_t> m_parents;
     };
 } // namespace albor
