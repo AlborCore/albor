@@ -1192,19 +1192,77 @@ it makes the goal unreachable.
 
 ### The split between layout identity and rasterization identity
 
-These are different claims and conflating them is how this goal gets quietly missed.
+These are different claims, and conflating them is how this goal gets quietly missed. **The font
+engine is not measured in pixels.** Its output is a layout, and a layout is arithmetic.
 
-- **Layout identity is exact and achievable.** Glyph selection, glyph positions, advances, baseline
-  placement, line breaking and measured extents are deterministic arithmetic over the embedded font.
-  Once steps 1 through 4 hold, two platforms running the same build compute **the same numbers**,
-  bit for bit. This is a hard requirement and it is testable without a display.
-- **Rasterization identity is not achievable as bit equality across three backends.** Antialiasing,
-  hinting and subpixel positioning differ between CoreGraphics, DirectWrite and any FreeType
-  configuration, and between Skia's CPU and GPU paths. What is achievable, and what is required, is
-  that **every platform matches the reference rasterizer within a stated per-channel tolerance**.
+### The target for the font engine: exactness, and a total function of declared inputs
 
-The reference rasterizer is therefore the definition of correct output, and AD-26's software backend
-stops being a CI convenience: it becomes the thing every platform's output is measured against.
+The engine's target is stated as a property of the program, not as a measurement between engines:
+
+- **The engine is a total function of its declared inputs.** Text, wrapping width, font size,
+  direction, locale and the embedded font's content hash are the whole input set. If nothing else can
+  reach it, two platforms running the same build produce the same layout *by construction* and no
+  tolerance is involved at any point. This is the whole target, and it is a stronger claim than
+  "the engines agreed when we tested them".
+- **Therefore no platform reaches into the engine.** No platform font manager, no system DPI, no
+  ambient locale, no thread locale, no system text settings, no default font fallback. Anything an
+  engine needs must be an argument. A dependency that cannot be closed becomes an explicit parameter
+  rather than a silent input, because a silent input is the one thing that makes two platforms differ.
+- **The embedded font is identified by content hash.** A family name, a file name and a path all
+  resolve differently per platform; a hash of the font bytes cannot. The hash is part of the engine's
+  input, so a swapped font is a different input and shows up as a different result rather than as a
+  silent visual change.
+- **Geometry is quantized to a declared grid.** Glyph positions, advances and baseline origins are
+  expressed in **1/64 of a logical pixel**, which is a quarter-pixel subpixel position and is exactly
+  representable in a float. The layout is then a set of integers, so equality is exact and two runs
+  cannot differ by an amount too small to name.
+- **Verification is a golden layout corpus, not engine against engine.** The expected layouts are
+  checked-in data: for a set of inputs covering Latin, accents, combining marks, Arabic, Hebrew,
+  CJK, emoji, mixed scripts and long wrapped paragraphs, the corpus holds the exact glyph sequence,
+  positions, advances, baselines and extents. Every platform runs the corpus and must match it exactly.
+
+Two engines agreeing is weaker evidence than it looks: it proves they are alike, not that either is
+right. A golden corpus is the only formulation that can fail when the layout is genuinely wrong, and
+it is exact, so it needs no tolerance.
+
+### The target for rasterization: bounded, per content class, and derived
+
+Rasterization is where the platforms genuinely differ, and the requirement is deliberately narrower
+than the word "pixel perfect" suggests. **There is no single global tolerance.** A global number wide
+enough to cover glyph antialiasing would also cover a three pixel baseline error, which is how a
+failing suite becomes a passing one. The tolerance is therefore **per content class**:
+
+| content | required agreement | why |
+| :--- | :--- | :--- |
+| flat interior fills | **exact** | no antialiasing is involved, so any difference is a bug |
+| axis-aligned edges on integer positions | **exact** | likewise, the rasterizer has no freedom here |
+| axis-aligned edges on fractional positions | small, one device pixel band | only the sampling rule differs |
+| rounded rects and paths | small, per channel | curve flattening differs per rasterizer |
+| glyph rasters | measured budget, per channel | antialiasing and hinting genuinely differ |
+
+Two further rules make the numbers honest:
+
+- **Every budget is derived, not chosen.** Each is written as the maximum observed across the
+  backends under test, plus stated margin, and it is re-measured whenever a backend or a Skia version
+  changes. A budget with no measurement behind it is a guess wearing a number's clothes.
+- **The reference rasterizer defines correct output.** AD-26's software backend is the yardstick:
+  every platform's output is measured against it, so "correct" is a single well-defined image rather
+  than three plausible ones.
+
+### What the conformance suite therefore asserts
+
+1. **Layout: exact.** Every corpus entry reproduces its checked-in layout byte for byte on every
+   platform. This is the strong claim and it is the one AD-34 actually turns on.
+2. **Rasterization: bounded by class.** Flat interiors and integer-aligned edges are asserted exactly;
+   the remaining classes are asserted against the budgets in the table above.
+3. **No class is allowed a wider budget than the one above it.** The table is ordered by how much
+   freedom the rasterizer legitimately has, and a regression that widens a budget is a failure rather
+   than a re-baselining.
+
+The practical consequence for the work: an engine that is a total function of its inputs needs no
+cross-platform tolerance at all, so the expensive work — embedding the font and closing the input set —
+is what buys the guarantee. Tolerance appears only where a rasterizer genuinely has freedom, and it is
+narrower than "pixel perfect" implies.
 
 ### What this rules out
 
@@ -1218,12 +1276,19 @@ stops being a CI convenience: it becomes the thing every platform's output is me
 
 ### Honest limits
 
-Bit-exact identity of *rendered text* across three GPU backends is not a claim this document should
-make, because it is not one Skia can currently deliver. The defensible formulation, and the one the
-conformance suites enforce, is: **layout is exact; rasterization agrees with the reference within a
-written tolerance; and the tolerance is a number, not a judgement.** A tolerance wide enough to
-absorb a three pixel baseline error has defeated the purpose, which is why the baseline gap in
-`DEFECT-TEXT-VENDOR-BASELINE.md` is a blocker rather than a rounding difference.
+Bit-exact identity of *rendered glyphs* across three GPU backends is not a claim this document makes,
+because it is not one Skia can currently deliver. What is claimed instead is stronger where it matters
+and narrower where it does not:
+
+- **Layout is exact and the guarantee is structural**, not measured: an engine that is a total function
+  of declared inputs cannot differ between platforms, so there is no tolerance in the text pipeline at
+  all.
+- **Rasterization is bounded per content class**, with flat interiors and integer-aligned edges asserted
+  exactly and only genuinely antialiased content carrying a budget.
+
+A tolerance wide enough to absorb a three pixel baseline error has defeated the purpose, which is why
+the baseline gap in `DEFECT-TEXT-VENDOR-BASELINE.md` is a blocker and not a rounding difference. It
+sits in layout, where the budget is zero.
 
 ### Consequences for work already planned
 
