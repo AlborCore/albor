@@ -89,6 +89,11 @@ add_subdirectory(semantics)
 # the platform accessibility bridge consumes the semantic tree, so it comes after it (§10.2)
 add_subdirectory(accessibility)
 
+# the automation core exists only when it is explicitly enabled, and never in a release link (§10.3, AD-10)
+if(ALBOR_AUTOMATION)
+    add_subdirectory(automation)
+endif()
+
 # the rendering hal, the frame scene and the two stage pipeline (§3.2)
 add_subdirectory(render)
 

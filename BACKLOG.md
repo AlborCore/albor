@@ -89,6 +89,21 @@ the driver, which is where it ultimately sits.
 Before restoring the parity suite, land a lifecycle test that constructs and destroys a
 backend: a suite that traps takes the whole test binary down and hides every other failure.
 
+## The allocation probe measures nothing in a release build
+
+`tools/alloc-probe` replaces global `operator new`, which is how it counts. Under the
+optimizer a release build enables, a small allocation such as `std::make_unique<int>`
+is scalar-replaced and the operator is never called, so the count reads zero.
+`AllocationProbeChecks.TheProbeCountsWhatIsAllocated` fails in a release configure and
+has done since before the automation work; debug passes.
+
+This is pre-existing, verified by running the suite against the previous commit, and
+it is not fixed here. It matters because the probe is the only instrument the project
+has for the allocation questions in `ALLOCATION-REVIEW.md`. Either the probe needs a
+large enough allocation that the optimizer cannot elide it, or the suite needs to be
+skipped in release with the reason stated. Do not quote a release allocation number
+until one of those lands.
+
 ## A .ui file cannot express a list, so no application can show one
 
 **The target.** A component declares an ordered collection and renders one row per item,

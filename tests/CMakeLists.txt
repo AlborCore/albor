@@ -3,6 +3,12 @@
 # gather cpp sources (all platforms)
 file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 
+# two suites reach a module that only exists in some configurations, so they are held out of the main gather and added
+# back under their own condition. a release configure must not compile the automation suite at all, or the link fails
+# on symbols the release link does not have (AD-10)
+list(FILTER CPP_SOURCES EXCLUDE REGEX "/automation\.test\.cpp$")
+list(FILTER CPP_SOURCES EXCLUDE REGEX "/render_skia\.test\.cpp$")
+
 # the build-scope fixture only feeds a scripted check, so it never joins the test binary (§14.3)
 list(FILTER CPP_SOURCES EXCLUDE REGEX "/scope/")
 
@@ -55,6 +61,14 @@ if(APPLE)
     target_link_libraries(albor-tests PRIVATE albor-render-skia)
 endif()
 
+
+# the automation suite reaches the automation core, which exists only when it is enabled, so the suite is gathered
+# under the same condition. a release configure has no such target, and referencing it would fail the link (AD-10)
+if(ALBOR_AUTOMATION)
+    file(GLOB_RECURSE AUTOMATION_CPP_SOURCES "./automation.test.cpp")
+    target_sources(albor-tests PRIVATE ${AUTOMATION_CPP_SOURCES})
+    target_link_libraries(albor-tests PRIVATE albor-automation)
+endif()
 
 # the test binary is executed directly rather than through ctest, so it never needs a display (§2.2)
 include(GoogleTest)

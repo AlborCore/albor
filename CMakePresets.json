@@ -29,7 +29,7 @@
         "ALBOR_CONFIGURATION": "Dev",
         "ALBOR_DEV": "ON",
         "ALBOR_TEST": "OFF",
-        "ALBOR_AUTOMATION": "OFF"
+        "ALBOR_AUTOMATION": "ON"
       }
     },
     {

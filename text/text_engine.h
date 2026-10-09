@@ -4,7 +4,7 @@
 #include <memory>
 #include <string_view>
 
-#include "render/frame_scene.h"
+#include "render/text_layout.h"
 
 namespace albor
 {
