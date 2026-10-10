@@ -10,3 +10,6 @@ add_subdirectory(greeting)
 
 # the manifest chart, which shows a native facade generated from a manifest and implemented by the application (§14, phase 4)
 add_subdirectory(chart)
+
+# the widget form, which exercises every widget the framework ships and shows how a composition root links its backends (§14, §5.3)
+add_subdirectory(form)

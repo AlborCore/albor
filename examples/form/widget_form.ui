@@ -1,0 +1,71 @@
+// the widget form, which exercises every widget the framework ships and is compiled into a facade (§8, §11.3)
+
+// the form is the test bed and the showcase, so it is declarative and nothing here is hand written (§14)
+component WidgetForm {
+    inout property<int> presses: 0;
+    inout property<float> level: 0.5;
+    inout property<bool> armed: false;
+
+    Column {
+        spacing: 12px;
+        padding: 16px;
+
+        Label {
+            id: form_title;
+            text: "Widget Form";
+            font_size: 24px;
+        }
+
+        Label {
+            id: form_presses;
+            text: "presses " + string(presses);
+        }
+
+        Button {
+            id: form_press;
+            text: "press me";
+            disabled: armed;
+            on_clicked: {
+                presses = presses + 1;
+            }
+        }
+
+        Label {
+            id: form_value;
+            text: "value " + string(level);
+        }
+
+        Slider {
+            id: form_level;
+            value: level;
+            min: 0.0;
+            max: 1.0;
+            on_changed: {
+                level = value;
+            }
+        }
+
+        Canvas {
+            id: form_meter;
+            width: 380px;
+            height: 20px;
+            draw: {
+                fill_rect(0, 0, canvas_width, canvas_height, #1A1E26);
+                fill_rect(0, 0, canvas_width * level, canvas_height, #33BF73);
+            }
+        }
+
+        Label {
+            id: form_toggle;
+            text: "check to disable the button";
+        }
+
+        CheckBox {
+            id: form_armed;
+            checked: armed;
+            on_toggled: {
+                armed = checked;
+            }
+        }
+    }
+}

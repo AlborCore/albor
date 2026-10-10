@@ -17,4 +17,4 @@ target_include_directories(albor-hello-window PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_features(albor-hello-window PRIVATE cxx_std_23)
 
 # the framework modules arrive transitively through the two backends, which keeps the link line free of duplicates (AD-19)
-target_link_libraries(albor-hello-window PRIVATE albor-platform-macos albor-render-skia)
+target_link_libraries(albor-hello-window PRIVATE albor-platform-macos-auto albor-render-skia-auto)

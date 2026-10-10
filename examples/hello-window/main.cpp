@@ -3,9 +3,7 @@
 #include <vector>
 
 #include "application/application.h"
-#include "platform/macos/event_loop.h"
 #include "render/frame_scene.h"
-#include "render/render-skia/skia_renderer_backend.h"
 #include "render/render_executor.h"
 #include "window/window.h"
 
@@ -33,10 +31,7 @@ namespace
 } // namespace
 
 int main() {
-    // the example is the composition root, so it installs the macos platform and the skia backend (§6.3)
-    albor::macos::install_macos_platform();
-    albor::install_skia_renderer_backend();
-    // the renderer backend owns the metal device and the skia context (§6.3)
+    // the platform and the backends installed themselves at load, so the composition creates what they registered
     std::unique_ptr<albor::RendererBackend> renderer = albor::create_renderer_backend();
     if (!renderer || !renderer->ready()) {
         std::fprintf(stderr, "hello-window: the skia metal backend did not come up\n");
