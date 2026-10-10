@@ -587,6 +587,17 @@ namespace albor::compiler
     }
 
     ValueType TypeChecker::type_field_access(const FieldAccessExpression& access, const Scope& scope, std::vector<std::string>& dependencies) {
+        // a value set is written as a bare name, so it is resolved before the object is typed as a reference (§11.1)
+        if (const auto* set_name = dynamic_cast<const PropertyExpression*>(access.object.get()); set_name != nullptr) {
+            // the name decides, so a written value resolves to exactly one set (§11.1)
+            if (const NamedValueSet* set = find_named_value_set(set_name->name)) {
+                // a member the set does not carry is reported against the ones it does, which the author needs (§11.1)
+                if (set->find_member(access.field) == nullptr)
+                    report_unknown_value_member(access, *set);
+                // the set decides the kind, and a member that resolved types as that kind (§11.1)
+                return scalar(set->kind);
+            }
+        }
         // the object is typed first, because the field is only known once the record type is (§11.2)
         const ValueType object = type_expression(*access.object, scope, dependencies);
         // an object whose type failed names no record, so the field cannot resolve (§11.2)
@@ -843,6 +854,20 @@ namespace albor::compiler
     void TypeChecker::report_unknown_property(SourceSpan span, std::string_view element, std::string_view property_name) {
         // the problem names the element, because the property belongs to it (§11.1)
         m_diagnostics.add(Diagnostic::Severity::Error, span, "E0411", "'" + std::string(element) + "' has no property named '" + std::string(property_name) + "'");
+    }
+
+    void TypeChecker::report_unknown_value_member(const Expression& expression, const NamedValueSet& set) {
+        // the members are joined into one list, because the author needs every name they may write (§11.1)
+        std::string names;
+        for (const NamedValueMember& member : set.members) {
+            // the separator goes between the names, so the list never starts or ends with one (§11.1)
+            if (!names.empty())
+                names += ", ";
+            // the written form is listed, because that is what the author has to write (§11.1)
+            names += set.name + "." + member.written;
+        }
+        // the problem lists them, because a named value set is closed and the author cannot guess a member (§11.1)
+        m_diagnostics.add(Diagnostic::Severity::Error, expression.location(), "E0416", "this is not a member of " + set.name + ", which carries " + names);
     }
 
     void TypeChecker::report_unknown_signal(SourceSpan span, std::string_view element, std::string_view signal_name) {

@@ -5,6 +5,7 @@
 #include <memory>
 #include <vector>
 
+#include "core/align.h"
 #include "core/constraints.h"
 #include "core/geometry.h"
 #include "render/render_context.h"
@@ -67,6 +68,18 @@ namespace albor
 
         // hand out the size the node measured itself to (§8.2)
         [[nodiscard]] const Size& measured_size() const;
+
+        // set how the node sits on the horizontal axis inside the space its parent gives it (§8.2)
+        void set_horizontal_align(Align align);
+
+        // hand out how the node sits on the horizontal axis, which is inherited until an author sets it (§8.2)
+        [[nodiscard]] Align horizontal_align() const;
+
+        // set how the node sits on the vertical axis inside the space its parent gives it (§8.2)
+        void set_vertical_align(Align align);
+
+        // hand out how the node sits on the vertical axis, which is inherited until an author sets it (§8.2)
+        [[nodiscard]] Align vertical_align() const;
 
         // request a redraw of this node and of everything above it (§6.1)
         void invalidate();
@@ -146,5 +159,11 @@ namespace albor
 
         // whether the node draws at all (§6.1)
         bool m_visible = true;
+
+        // how the node sits on the horizontal axis, which a parent reads when it arranges (§8.2)
+        Align m_horizontal_align = Align::Inherit;
+
+        // how the node sits on the vertical axis, which a parent reads when it arranges (§8.2)
+        Align m_vertical_align = Align::Inherit;
     };
 } // namespace albor

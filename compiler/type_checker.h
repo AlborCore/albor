@@ -314,6 +314,9 @@ namespace albor::compiler
         // report that a name does not exist on an element type (§11.1)
         void report_unknown_property(SourceSpan span, std::string_view element, std::string_view property_name);
 
+        // report that a written value is not a member of a declared set, which lists the members it is (§11.1)
+        void report_unknown_value_member(const Expression& expression, const NamedValueSet& set);
+
         // report that a signal does not exist on an element type (§11.1)
         void report_unknown_signal(SourceSpan span, std::string_view element, std::string_view signal_name);
 

@@ -62,7 +62,7 @@ namespace albor::compiler
 
     std::string ValueType::to_string() const {
         // the spellings are a table indexed by kind, so a new kind cannot leave a path unhandled (§11.1)
-        static const char* const SPELLINGS[] = {"<error>", "void", "bool", "int", "float", "string", "color", "length", "Snapshot<", "vector<", ""};
+        static const char* const SPELLINGS[] = {"<error>", "void", "bool", "int", "float", "string", "color", "align", "length", "Snapshot<", "vector<", ""};
         // the two parameter forms append their element, so only their prefix comes from the table (§11.1)
         if (m_kind == TypeKind::Snapshot)
             return std::string(SPELLINGS[static_cast<std::size_t>(m_kind)]) + element().to_string() + ">";
@@ -167,6 +167,54 @@ namespace albor::compiler
             return true;
         // every other assignment must match exactly, because nothing widens implicitly (§11.1)
         return from.equals(to);
+    }
+
+    const NamedValueMember* NamedValueSet::find_member(std::string_view member_name) const {
+        // the members are scanned, because a set carries only a handful of them (§11.1)
+        for (const NamedValueMember& member : members) {
+            // the written name decides, because that is what the author wrote (§11.1)
+            if (member.written == member_name)
+                return &member;
+        }
+        // a name the set does not carry is an error the checker reports (§11.1)
+        return nullptr;
+    }
+
+    const NamedValueSet* find_named_value_set(std::string_view set_name) {
+        // the sets are declared apart, because the language namespaces the values it declares (§11.1)
+        static const std::vector<NamedValueSet> sets{
+            // the alignment set is what a layout property resolves a written member against (§8.2)
+            NamedValueSet{.name = "Align",
+                          .kind = TypeKind::Align,
+                          .members =
+                              {
+                                  // the written form is lower case and the enumerator capitalised (§11.3, §8.2)
+                                  NamedValueMember{.written = "start", .code = "Start"},
+                                  NamedValueMember{.written = "center", .code = "Center"},
+                                  NamedValueMember{.written = "end", .code = "End"},
+                                  NamedValueMember{.written = "stretch", .code = "Stretch"},
+                              }},
+        };
+        // the sets are scanned, because the language declares only a few of them (§11.1)
+        for (const NamedValueSet& set : sets) {
+            // the name decides, so a field read resolves to exactly one set (§11.1)
+            if (set.name == set_name)
+                return &set;
+        }
+        // a name the language does not declare is not a value set, so the checker falls through to a property read (§11.1)
+        return nullptr;
+    }
+
+    std::vector<ElementProperty> common_element_properties() {
+        // the alignment kind is the one a written member of the alignment set produces (§8.2)
+        const ValueType alignment = scalar(TypeKind::Align);
+        // every element type arranges inside a parent, so both axes are properties on all of them (§8.2)
+        return {
+            // the horizontal axis is a screen axis, so it means the same thing in every container (§8.2)
+            ElementProperty{.name = "horizontal_align", .type = alignment, .assignable = true, .scaled_by_density = false},
+            // the vertical axis is its independent counterpart, and neither one is the parent's main axis (§8.2)
+            ElementProperty{.name = "vertical_align", .type = alignment, .assignable = true, .scaled_by_density = false},
+        };
     }
 
     const ElementProperty* ElementType::find_property(std::string_view property_name) const {
@@ -284,7 +332,23 @@ namespace albor::compiler
                                               .signals = {},
                                               // a canvas is a leaf, so it takes no children (§8, §6.4)
                                               .accepts_children = false});
+        // every builtin arranges inside a parent, so the common properties are appended once (§8.2)
+        catalog.add_common_properties();
         return catalog;
+    }
+
+    void ElementCatalog::add_common_properties() {
+        // the common set is built once per call, because it is the same two properties on every type (§8.2)
+        const std::vector<ElementProperty> common = common_element_properties();
+        // every type is visited, because a native component arranges like a builtin one (§8.2, AD-17)
+        for (ElementType& type : m_types) {
+            // each common property is added on its own, because a manifest may already declare one of them (§11.2, AD-17)
+            for (const ElementProperty& property : common) {
+                // a type that already exposes the name keeps its own, because the manifest decides (§11.2, AD-17)
+                if (type.find_property(property.name) == nullptr)
+                    type.properties.push_back(property);
+            }
+        }
     }
 
     void ElementCatalog::add_native(const ElementType& type) {
@@ -293,6 +357,8 @@ namespace albor::compiler
             return;
         // a native type is appended, because the manifest is the single source of truth for it (§11.2, AD-17)
         m_types.push_back(type);
+        // a native component arranges inside a parent like a builtin one, so it takes the common properties (§8.2, AD-17)
+        add_common_properties();
     }
 
     void ElementCatalog::add_native_data(std::string name) {

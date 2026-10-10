@@ -225,6 +225,8 @@ namespace albor::compiler
                 return "std::string";
             case TypeKind::Color:
                 return "Color";
+            case TypeKind::Align:
+                return "Align";
             case TypeKind::Vector:
                 // a collection becomes the standard vector over its element, which recurses into a nested one (§8.1)
                 return "std::vector<" + cpp_type(type.element()) + ">";
@@ -295,8 +297,24 @@ namespace albor::compiler
             };
             // the lookup is a ready made key, because the pair is the identity (§11.3)
             const auto found = setters.find(key);
+            // a property every type carries has no per type entry, because it resolves against the common set (§8.2)
+            if (found != setters.end())
+                return found->second;
+            // the common set decides, because alignment is a property of every node a parent arranges (§8.2)
+            static const std::vector<std::pair<std::string, std::string>> common_setters = [] {
+                // the names come from the catalogue, held apart so a returned view outlives this call (§8.2, §11.3)
+                std::vector<std::pair<std::string, std::string>> built;
+                for (const ElementProperty& common : common_element_properties())
+                    built.emplace_back(common.name, "set_" + common.name);
+                return built;
+            }();
+            for (const auto& entry : common_setters) {
+                // the name decides, so a common property resolves to exactly one setter (§8.2)
+                if (entry.first == property)
+                    return std::string_view(entry.second);
+            }
             // an element with no setter carries none, which only the canvas reaches (§11.3)
-            return found == setters.end() ? std::string_view{} : found->second;
+            return std::string_view{};
         }
 
         // the callback setter an element signal wires to, keyed by the element and the signal (§11.3)
@@ -581,6 +599,8 @@ namespace albor::compiler
 
             // whether any emission uses a colour, which decides the headers to include (§11.3)
             bool m_uses_color = false;
+            // whether any alignment value reaches the generated units, which the align header follows (§14.1, §8.2)
+            bool m_uses_align = false;
 
             // whether any property carries a collection, which decides the vector header (§8.1)
             bool m_uses_vector = false;
@@ -750,7 +770,7 @@ namespace albor::compiler
 
         void ComponentEmitter::validate_type(const ValueType& type, const SourceSpan& span) {
             // a scalar type translates directly, which is what every other check assumes (§11.3)
-            if (type.is(TypeKind::Bool) || type.is(TypeKind::Int) || type.is(TypeKind::Float) || type.is(TypeKind::String) || type.is(TypeKind::Color) || type.is(TypeKind::Length))
+            if (type.is(TypeKind::Bool) || type.is(TypeKind::Int) || type.is(TypeKind::Float) || type.is(TypeKind::String) || type.is(TypeKind::Color) || type.is(TypeKind::Length) || type.is(TypeKind::Align))
                 return;
             // a collection is generatable when its element is, which is the same rule applied one level in (§8.1)
             if (type.is(TypeKind::Vector)) {
@@ -1108,6 +1128,9 @@ namespace albor::compiler
             // a colour emission needs the paint header, which only a colour component reaches (§14.1)
             if (m_uses_color)
                 project_headers.push_back("core/paint.h");
+            // an alignment emission names an enumerator, which the align header declares (§14.1, §8.2)
+            if (m_uses_align)
+                project_headers.push_back("core/align.h");
             // a translated emission resolves through the catalogue, which only a translated component needs (§9.2)
             if (m_uses_i18n)
                 project_headers.push_back("i18n/catalog.h");
@@ -2144,8 +2167,18 @@ namespace albor::compiler
             if (const auto* array = dynamic_cast<const ArrayExpression*>(&expression))
                 return emit_array(*array);
             // a field read renders as the member access the record declares (§11.2, AD-17)
-            if (const auto* access = dynamic_cast<const FieldAccessExpression*>(&expression))
+            if (const auto* access = dynamic_cast<const FieldAccessExpression*>(&expression)) {
+                // a written value renders as the enumerator the set declares, which the checker resolved (§11.1, §8.2)
+                if (const auto* set_name = dynamic_cast<const PropertyExpression*>(access->object.get()); set_name != nullptr) {
+                    // the name decides, so a written value resolves to exactly one set (§11.1)
+                    if (const NamedValueSet* set = find_named_value_set(set_name->name); set != nullptr) {
+                        // the member decides the enumerator, because the two spellings differ (§11.3, §8.2)
+                        if (const NamedValueMember* member = set->find_member(access->field); member != nullptr)
+                            return "albor::" + set->name + "::" + member->code;
+                    }
+                }
                 return emit_expression(*access->object) + "." + access->field;
+            }
             // a form the checker rejected cannot render, which the empty literal stands in for (§11.3)
             return emit_string_literal({});
         }
@@ -2354,6 +2387,12 @@ namespace albor::compiler
                 m_uses_text_engine = m_uses_text_engine || info.needs_text_engine;
                 // the canvas flag rises with each canvas, which adds the geometry header (§14.1)
                 m_uses_canvas = m_uses_canvas || slot.node->element_type == "Canvas";
+                // an alignment assignment reaches the generated unit, so the enumerator needs its header (§14.1, §8.2)
+                for (const CheckedAssignment& assignment : slot.node->assignments) {
+                    // only an alignment property raises the flag, because nothing else names an enumerator (§8.2)
+                    if (assignment.type.is(TypeKind::Align))
+                        m_uses_align = true;
+                }
             }
             // the colour flag rises with any colour surface, which the paint header then joins (§14.1)
             for (const CheckedProperty& property : m_component.properties)

@@ -150,6 +150,30 @@ namespace albor
         return m_measured_size;
     }
 
+    void UiNode::set_horizontal_align(Align align) {
+        // an unchanged alignment relayouts nothing, because the arrangement did not change (§8.2)
+        if (m_horizontal_align == align)
+            return;
+        // the alignment is stored first, so the invalidation walks a tree that already knows the new one (§8.2)
+        m_horizontal_align = align;
+        // a parent arranges from this, so the measure and arrange passes run again (§8.2)
+        invalidate_layout();
+    }
+
+    Align UiNode::horizontal_align() const { return m_horizontal_align; }
+
+    void UiNode::set_vertical_align(Align align) {
+        // an unchanged alignment relayouts nothing, because the arrangement did not change (§8.2)
+        if (m_vertical_align == align)
+            return;
+        // the alignment is stored first, so the invalidation walks a tree that already knows the new one (§8.2)
+        m_vertical_align = align;
+        // a parent arranges from this, so the measure and arrange passes run again (§8.2)
+        invalidate_layout();
+    }
+
+    Align UiNode::vertical_align() const { return m_vertical_align; }
+
     void UiNode::invalidate() {
         // the node itself asks for a redraw (§6.1)
         m_render_dirty = true;
