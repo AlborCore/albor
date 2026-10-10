@@ -32,6 +32,9 @@ namespace albor::compiler
         // a colour value, which a colour literal produces (§11.1)
         Color,
 
+        // an alignment, which a named member of a value set produces (§8.2)
+        Align,
+
         // a length in logical or physical pixels, which a length literal produces (§11.1, AD-27)
         Length,
 
@@ -169,6 +172,38 @@ namespace albor::compiler
         [[nodiscard]] const RecordFieldType* key_field() const;
     };
 
+    // one member of a named value set, which the language and the generated code spell differently (§11.1, §11.3)
+    struct NamedValueMember
+    {
+        // the name the author writes after the dot, which is the lower case form (§11.1)
+        std::string written;
+
+        // the enumerator the generated code names, which is the capitalised form (§11.3, §8.2)
+        std::string code;
+    };
+
+    // the closed set of named values an author may write, which a property of that kind resolves against (§11.1)
+    struct NamedValueSet
+    {
+        // the name the author writes before the dot, which is what the language namespaces its values by (§11.1)
+        std::string name;
+
+        // the kind every member of the set produces, which is what the set resolves to (§11.1)
+        TypeKind kind = TypeKind::Error;
+
+        // the members in written order, which is what a diagnostic lists (§11.1)
+        std::vector<NamedValueMember> members;
+
+        // find a member by its written name, which is what a field read resolves against (§11.1)
+        [[nodiscard]] const NamedValueMember* find_member(std::string_view member_name) const;
+    };
+
+    // find a named value set by name, which is what a field read resolves against (§11.1)
+    [[nodiscard]] const NamedValueSet* find_named_value_set(std::string_view set_name);
+
+    // the properties every element type exposes, because a parent arranges any node it holds (§8.2)
+    [[nodiscard]] std::vector<ElementProperty> common_element_properties();
+
     // one element type a ui file may instantiate, which is either a builtin widget or a manifest component (§11.1, §11.2)
     struct ElementType
     {
@@ -220,6 +255,9 @@ namespace albor::compiler
         [[nodiscard]] const std::vector<ElementType>& types() const;
 
     private:
+        // append the common properties to every type the catalog holds, which a parent arranges on (§8.2)
+        void add_common_properties();
+
         // the known element types, which are looked up by name (§11.1)
         std::vector<ElementType> m_types;
 

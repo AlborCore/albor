@@ -1,0 +1,79 @@
+// the alignment layouts, which exercise the two axes on their own and the spacer idiom (§8.2, §11.3)
+
+// the panel proves the patterns a real application form is built from: a toolbar that pushes its trailing
+// control to the far end, a row where a field absorbs the leftover, and a centred footer (§8.2)
+component AlignPanel {
+    Column {
+        spacing: 12px;
+        padding: 16px;
+
+        // a toolbar: the run button holds the leading edge, the filler absorbs the leftover, and the
+        // status label is pushed to the far end without either one carrying a width (§8.2)
+        Row {
+            spacing: 4px;
+
+            Button {
+                id: run_button;
+                text: "Run";
+            }
+
+            Label {
+                id: toolbar_filler;
+                horizontal_align: Align.stretch;
+            }
+
+            Label {
+                id: toolbar_status;
+                text: "ready";
+            }
+        }
+
+        // a parameter row: the name holds its natural width and the value takes everything that is left (§8.2)
+        Row {
+            spacing: 8px;
+
+            Label {
+                id: parameter_name;
+                text: "Frequency";
+            }
+
+            Label {
+                id: parameter_value;
+                horizontal_align: Align.stretch;
+                text: "1.0 kHz";
+            }
+        }
+
+        // a centred column: every child is narrower than the panel, so only the cross axis matters (§8.2)
+        Column {
+            spacing: 2px;
+            vertical_align: Align.center;
+
+            Label {
+                id: centred_title;
+                text: "Alignment";
+            }
+
+            Label {
+                id: centred_caption;
+                text: "centred on the vertical axis";
+            }
+        }
+
+        // a footer whose buttons sit in the middle, which a row could not express before (§8.2)
+        Row {
+            spacing: 8px;
+            horizontal_align: Align.center;
+
+            Button {
+                id: cancel_button;
+                text: "Cancel";
+            }
+
+            Button {
+                id: ok_button;
+                text: "OK";
+            }
+        }
+    }
+}

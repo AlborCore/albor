@@ -59,8 +59,37 @@ namespace albor
             const Point origin = cell_origin(bounds, column, row);
             // the extent covers every cell the span claims, which is what makes a wide child wide (§8.2)
             const Size extent{.width = cell.width * static_cast<float>(span_columns) + m_gap * static_cast<float>(span_columns - 1), .height = cell.height * static_cast<float>(span_rows) + m_gap * static_cast<float>(span_rows - 1)};
-            // the child receives the whole region its span claims (§8.2)
-            child_at(index)->arrange(Rect::from_origin_size(origin, extent));
+            // the child is read for alignment, because every cell honours both axes independently (§8.2)
+            UiNode& child = *child_at(index);
+            // the horizontal alignment is resolved against the default a cell implies, which is the whole cell (§8.2)
+            const Align horizontal = resolve_align(child.horizontal_align(), Align::Stretch);
+            // the vertical alignment is resolved against the default a cell implies, which is the whole cell (§8.2)
+            const Align vertical = resolve_align(child.vertical_align(), Align::Stretch);
+            // the width the child asked for, which every alignment except stretching keeps (§8.2)
+            const float child_width = child.measured_size().width;
+            // the origin is where the horizontal alignment puts the child inside the region its span claims (§8.2)
+            float child_x = origin.x;
+            // a centred child sits half the leftover in, which is what centring means inside a cell (§8.2)
+            if (horizontal == Align::Center)
+                child_x += (extent.width - child_width) * 0.5f;
+            // an end aligned child sits the whole leftover in, which pushes it to the right of its region (§8.2)
+            else if (horizontal == Align::End)
+                child_x += extent.width - child_width;
+            // the height the child asked for, which every alignment except stretching keeps (§8.2)
+            const float child_height = child.measured_size().height;
+            // the origin is where the vertical alignment puts the child inside the region its span claims (§8.2)
+            float child_y = origin.y;
+            // a vertically centred child sits half the leftover in, which is what centring means inside a cell (§8.2)
+            if (vertical == Align::Center)
+                child_y += (extent.height - child_height) * 0.5f;
+            // a vertically end aligned child sits the whole leftover in, pushing it to the bottom (§8.2)
+            else if (vertical == Align::End)
+                child_y += extent.height - child_height;
+            // the child receives the rectangle its two alignments resolved to inside the region (§8.2)
+            const float width = horizontal == Align::Stretch ? extent.width : child_width;
+            // the same rule applies on the other axis, so a cell honours both independently (§8.2)
+            const float height = vertical == Align::Stretch ? extent.height : child_height;
+            child.arrange(Rect::from_origin_size(Point{.x = child_x, .y = child_y}, Size{.width = width, .height = height}));
             // the cursor advances by every cell the span covered, which is what keeps the next child clear of them (§8.2)
             cursor += span_columns + (span_rows - 1) * m_columns;
             // a cursor past the last cell wraps to the first, because a fixed grid has no more room (§8.2)
