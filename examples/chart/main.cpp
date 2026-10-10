@@ -101,6 +101,8 @@ int main() {
             root.set_data(std::make_shared<const albor::WaveformData>(albor::WaveformData{.samples = std::move(samples)}));
             // the selection lands at the current time position, which the wired slot prints (§11.2)
             root.raise_selection(static_cast<float>(tick) / 2.0f);
+            // the counts are the bookkeeping of the retained path: a build per data change, a replay per frame (§6.4)
+            std::printf("chart: %zu traces built, %zu frames replayed the retained batch\n", root.trace_build_count(), root.replays());
             ++tick;
         },
         std::chrono::milliseconds(500));
@@ -114,6 +116,7 @@ int main() {
     });
     std::printf("chart: running, a new waveform and selection arrive every 500ms, close the window to quit\n");
     std::printf("chart: WaveformWidget generated from chart.ui-manifest, implemented by waveform_widget.cpp (§11.2, AD-17)\n");
+    std::printf("chart: the trace is a retained LineBatch rebuilt per data change and replayed per frame (§6.4, AD-06)\n");
     // the loop blocks until the window closes, which asks the application to quit (§4.1)
     return application.run();
 }
