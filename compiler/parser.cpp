@@ -432,9 +432,13 @@ namespace albor::compiler
     void Parser::parse_tree_member(TreeNode& node) {
         // an identifier followed by a colon is either a property assignment or a handler (§11.1)
         if (peek().kind == Token::Kind::Identifier && at_punctuation(":", 1)) {
-            // a body opens with a brace, so a member whose value is a brace is a handler (§11.1)
+            // a body opens with a brace, so a member whose value is a brace is a handler or a draw block (§11.1)
             if (at_punctuation("{", 2)) {
-                parse_handler(node);
+                // the draw keyword selects the drawing block, which is how a canvas declares its content (§6.4)
+                if (m_tokens[m_index].text == "draw")
+                    parse_draw_block(node);
+                else
+                    parse_handler(node);
                 return;
             }
             // anything else takes a value, so it is a property assignment (§11.1)
@@ -487,6 +491,45 @@ namespace albor::compiler
         assignment.span.end = last_consumed_end();
         // the assignment is kept, because it is what the checker resolves against the element type (§11.1)
         node.assignments.push_back(std::move(assignment));
+    }
+
+    void Parser::parse_draw_block(TreeNode& node) {
+        // the draw keyword is consumed first, because the colon and the body follow it (§6.4)
+        advance();
+        // the colon is required, because the block is written with one (§6.4)
+        expect_punctuation(":");
+        // the opening brace is required, because the block is a body (§6.4)
+        expect_punctuation("{");
+        // the calls run until the closing brace, because the block is a closed sequence (§6.4)
+        while (!at_punctuation("}") && peek().kind != Token::Kind::End) {
+            // the call is assembled locally, because one mistake must not hide the rest (§6.4)
+            DrawCall call;
+            // the span starts at the name, so a diagnostic points at the whole call (§11.1)
+            call.span.start = peek().span.start;
+            // a primitive is a bare name, because the vocabulary is closed (§6.4)
+            if (peek().kind != Token::Kind::Identifier) {
+                // anything else is reported, because no call can start with it (§6.4)
+                report_unexpected("a drawing primitive");
+                advance();
+                continue;
+            }
+            // the name decides which primitive is called, so it is read as written (§6.4)
+            call.primitive = expect_identifier();
+            // the argument list is parenthesised, which is how every call in the language reads (§11.1)
+            expect_punctuation("(");
+            // the arguments are read by the shared list, because a call and an invocation are written alike (§11.1)
+            call.arguments = parse_arguments();
+            // the terminator is required, because statements are separated (§11.1)
+            expect_punctuation(";");
+            // the span ends at the terminator, which the reader has already consumed (§11.1)
+            call.span.end = last_consumed_end();
+            // the call is kept, because the checker matches it against the vocabulary (§6.4)
+            node.draw_calls.push_back(std::move(call));
+        }
+        // the closing brace is required, because the block is a body (§6.4)
+        expect_punctuation("}");
+        // the node is marked, because a canvas is the only element that draws (§6.4)
+        node.has_draw = true;
     }
 
     void Parser::parse_handler(TreeNode& node) {

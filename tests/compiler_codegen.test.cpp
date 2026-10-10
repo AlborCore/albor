@@ -166,7 +166,7 @@ component MainView {
     EXPECT_TRUE(contains(source_file.content, "n3->set_explicit_id(std::string(\"action_button\"));"));
     EXPECT_TRUE(contains(source_file.content, "n3->set_label(albor::i18n::translate(std::string(\"Increment\")));"));
     // the click handler wires to the written body, which the lambda forwards without allocating (§11.3)
-    EXPECT_TRUE(contains(source_file.content, "n3->set_on_click([this] { handle_3_clicked(this); });"));
+    EXPECT_TRUE(contains(source_file.content, "n3->set_on_click([this]() { handle_3_clicked(this); });"));
     // the children join their parents in preorder, and the root is adopted last (§8.1)
     EXPECT_TRUE(contains(source_file.content, "n2->add_child(std::move(node_4));"));
     EXPECT_TRUE(contains(source_file.content, "owner->add_child(std::move(node_0));"));
@@ -551,10 +551,10 @@ component Well {
     EXPECT_TRUE(contains(cpp.content, "std::make_unique<Canvas>(engine);"));
     EXPECT_TRUE(contains(cpp.content, "std::make_unique<Button>(engine, text_engine);"));
     EXPECT_TRUE(contains(cpp.content, "std::make_unique<Label>(engine, text_engine);"));
-    // the wired callbacks carry the parameter lists of their signals (§11.3)
-    EXPECT_TRUE(contains(cpp.content, "set_on_change([this](float) { handle_"));
-    EXPECT_TRUE(contains(cpp.content, "set_on_toggle([this](bool) { handle_"));
-    EXPECT_TRUE(contains(cpp.content, "set_on_click([this] { handle_"));
+    // the wired callbacks carry the named parameters of their signals, which the body reads (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "set_on_change([this](float value) { handle_"));
+    EXPECT_TRUE(contains(cpp.content, "set_on_toggle([this](bool checked) { handle_"));
+    EXPECT_TRUE(contains(cpp.content, "set_on_click([this]() { handle_"));
     // the handler bodies run the written statements, which name the sanitized property (§11.3)
     EXPECT_TRUE(contains(cpp.content, "self->m_visible_.set((self->m_visible_.get() + 1));"));
     EXPECT_TRUE(contains(cpp.content, "self->m_visible_.set((-self->m_counter.get()));"));
@@ -702,4 +702,151 @@ TEST(Codegen, ADataTypeStillBlocksTheOutput) {
     // assert
     EXPECT_TRUE(files.empty());
     EXPECT_TRUE(has_code(diagnostics, "E0501"));
+}
+
+TEST(Codegen, AHandlerBodyReadsTheValueItsSignalCarries) {
+    // arrange a slider handler that publishes the value the widget raised (§11.1)
+    const std::string source = R"(component C {
+    inout property<float> level: 0.0;
+    Slider {
+        value: level;
+        on_changed: {
+            level = value;
+        }
+    }
+})";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert the lambda forwards the value, which is how the body reaches it (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "set_on_change([this](float value) { handle_"));
+    EXPECT_TRUE(contains(cpp.content, "handle_0_changed(this, value);"));
+    EXPECT_TRUE(contains(cpp.content, "static void handle_0_changed(void* raw, float value);"));
+    EXPECT_TRUE(contains(cpp.content, "self->m_level.set(value);"));
+}
+
+TEST(Codegen, ACheckboxHandlerReadsTheStateItToggledTo) {
+    // arrange a checkbox handler that publishes the state the widget toggled (§11.1)
+    const std::string source = R"(component C {
+    inout property<bool> armed: false;
+    CheckBox {
+        checked: armed;
+        on_toggled: {
+            armed = checked;
+        }
+    }
+})";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert the boolean parameter is named and forwarded, which the body assigns (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "set_on_toggle([this](bool checked) { handle_"));
+    EXPECT_TRUE(contains(cpp.content, "handle_0_toggled(this, checked);"));
+    EXPECT_TRUE(contains(cpp.content, "self->m_armed.set(checked);"));
+}
+
+TEST(Codegen, ACanvasDrawBlockBecomesADrawBody) {
+    // arrange a canvas that fills itself from a bound property, which is custom drawing (§6.4)
+    const std::string source = R"(component C {
+    inout property<float> level: 0.0;
+    Canvas {
+        width: 100px;
+        height: 20px;
+        draw: {
+            fill_rect(0, 0, canvas_width, canvas_height, #1A1E26);
+            fill_rect(0, 0, canvas_width * level, canvas_height, #33BF73);
+        }
+    }
+})";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert the body is installed and records the primitives the author wrote (§6.4)
+    EXPECT_TRUE(contains(cpp.content, "set_draw([this](RenderContext& context) { draw_0_body(this, context); });"));
+    EXPECT_TRUE(contains(cpp.content, "static void draw_0_body(void* raw, RenderContext& context);"));
+    EXPECT_TRUE(contains(cpp.content, "const float canvas_width = self->m_node_0->bounds().width;"));
+    EXPECT_TRUE(contains(cpp.content, "context.draw_rect(Rect::from_origin_size(Point{0, 0}, Size{canvas_width, canvas_height}), paint);"));
+    EXPECT_TRUE(contains(cpp.content, "(canvas_width*self->m_level.get())"));
+}
+
+TEST(Codegen, ADrawBlockIsRefusedOutsideACanvas) {
+    // arrange a button that tries to draw, which is not a thing a button does (§6.4)
+    const std::string source = R"(component C {
+    Button {
+        text: "x";
+        draw: {
+            fill_rect(0, 0, 1, 1, #000000);
+        }
+    }
+})";
+    // act
+    DiagnosticList diagnostics;
+    const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
+    const SourceFile file = Parser(tokens, diagnostics).parse();
+    const CheckedFile checked = TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file);
+    const std::vector<GeneratedFile> produced = CodeGenerator(diagnostics).generate(checked);
+    EXPECT_TRUE(produced.empty());
+    // assert the element that cannot draw is refused, which the checker reports (§6.4)
+    EXPECT_TRUE(has_code(diagnostics, "E0601"));
+}
+
+TEST(Codegen, ADrawPrimitiveOutsideTheVocabularyIsRefused) {
+    // arrange a canvas that calls a primitive the vocabulary does not hold (§6.4)
+    const std::string source = R"(component C {
+    Canvas {
+        width: 10px;
+        height: 10px;
+        draw: {
+            teleport(0, 0, 1, 1, #000000);
+        }
+    }
+})";
+    // act
+    DiagnosticList diagnostics;
+    const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
+    const SourceFile file = Parser(tokens, diagnostics).parse();
+    const CheckedFile checked = TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file);
+    const std::vector<GeneratedFile> produced = CodeGenerator(diagnostics).generate(checked);
+    EXPECT_TRUE(produced.empty());
+    // assert the unknown primitive is refused, because the vocabulary is closed (§6.4)
+    EXPECT_TRUE(has_code(diagnostics, "E0602"));
+}
+
+TEST(Codegen, ADrawPrimitiveWithTheWrongArityIsRefused) {
+    // arrange a rectangle that names too few numbers, which no primitive takes (§6.4)
+    const std::string source = R"(component C {
+    Canvas {
+        width: 10px;
+        height: 10px;
+        draw: {
+            fill_rect(0, 0, 1);
+        }
+    }
+})";
+    // act
+    DiagnosticList diagnostics;
+    const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
+    const SourceFile file = Parser(tokens, diagnostics).parse();
+    const CheckedFile checked = TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file);
+    const std::vector<GeneratedFile> produced = CodeGenerator(diagnostics).generate(checked);
+    EXPECT_TRUE(produced.empty());
+    // assert the arity is refused, because the setter cannot be emitted (§6.4)
+    EXPECT_TRUE(has_code(diagnostics, "E0603"));
+}
+
+TEST(Codegen, ASliderRangeBecomesOneSetterOverBothBounds) {
+    // arrange a slider whose bounds the author wrote, which the widget takes together (§8)
+    const std::string source = R"(component C {
+    Slider {
+        min: -1.0;
+        max: 1.0;
+    }
+})";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert both bounds are tracked and applied by one call, which is what the widget takes (§8)
+    EXPECT_TRUE(contains(cpp.content, "m_slider_min_0 = (-1.0f);"));
+    EXPECT_TRUE(contains(cpp.content, "m_slider_max_0 = 1.0f;"));
+    EXPECT_TRUE(contains(cpp.content, "n0->set_range(m_slider_min_0, m_slider_max_0);"));
 }

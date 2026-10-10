@@ -100,6 +100,9 @@ namespace albor::compiler
         // read a handler attachment with its body (§11.1)
         void parse_handler(TreeNode& node);
 
+        // read the drawing block of a canvas, which is a sequence of primitive calls (§6.4, §11.1)
+        void parse_draw_block(TreeNode& node);
+
         // read a handler body, whose statements are assignments and signal invocations only (§11.1)
         void parse_handler_body(std::vector<HandlerStatement>& body);
 
