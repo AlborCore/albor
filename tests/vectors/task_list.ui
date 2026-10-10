@@ -1,0 +1,19 @@
+import task;
+
+// the repeater fixture, which proves a keyed repeat materializes and reconciles rows (§18.1, AD-13)
+
+component TaskList {
+    inout property<vector<Task>> tasks;
+
+    Column {
+        spacing: 4px;
+
+        Label { text: "tasks"; }
+
+        Repeat(task in tasks) {
+            Label { text: task.title; }
+        }
+
+        Label { text: "end"; }
+    }
+}

@@ -1,0 +1,123 @@
+name: build
+
+on:
+  push:
+    branches:
+      - main
+      - framework-v1
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # a push to a branch that already has an open pull request would run the same
+  # build twice (once for the push, once for the pull_request event), and a
+  # cold skia build is an expensive thing to burn twice
+  check-pr:
+    if: github.event_name == 'push' && github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      has_pr: ${{ steps.check.outputs.has_pr }}
+    steps:
+      - name: check for an open pull request
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          response=$(curl -skf -H "Authorization: token $GITHUB_TOKEN" "${GITHUB_API_URL}/repos/${{ github.repository }}/pulls?head=${{ github.repository_owner }}:${{ github.ref_name }}&state=open&per_page=1")
+          count=$(echo "$response" | grep -c '"number"' || true)
+          echo "has_pr=$( [ "$count" -gt 0 ] && echo true || echo false )" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build (${{ matrix.name }})
+    needs: [check-pr]
+    if: |-
+      !cancelled() &&
+      (github.event_name != 'push' || github.ref == 'refs/heads/main' || needs.check-pr.outputs.has_pr != 'true')
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+            vcpkg-root: /usr/local/share/vcpkg
+            setup: |
+              # the vcpkg binary cache root must exist before vcpkg runs
+              mkdir -p .vcpkg-cache
+              # the release preset launches the compiler through ccache, which the runner image does not ship
+              HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
+              ccache --max-size 2G
+              # the preset is c++23, so take the newest xcode the image carries rather than its default
+              sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
+          # windows (win32 + direct3d) is disabled until a win32 platform backend exists:
+          # platform/macos is added unconditionally by the top level CMakeLists.txt
+          # - name: Windows
+          #   os: windows-latest
+          #   vcpkg-root: C:\vcpkg
+          #   setup: choco install ccache
+          # linux (wayland/x11 + vulkan) is disabled for the same reason as windows
+          # - name: Linux
+          #   os: ubuntu-latest
+          #   vcpkg-root: /usr/local/share/vcpkg
+          #   setup: sudo apt-get update && sudo apt-get install -y ccache
+    env:
+      VCPKG_ROOT: ${{ matrix.vcpkg-root }}
+      VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: platform setup
+        run: ${{ matrix.setup }}
+
+      - name: restore the vcpkg binary cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ github.workspace }}/.vcpkg-cache
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
+
+      - name: restore the ccache directory
+        uses: actions/cache@v5
+        with:
+          path: .ccache
+          key: ccache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-
+
+      - name: configure (release preset)
+        run: cmake --preset release
+
+      - name: build (release preset)
+        run: cmake --build --preset release --parallel 4
+
+  # coverage is a pull request signal only: a push never runs it, on any
+  # branch. fork pull requests are excluded as well, because they cannot
+  # receive the write token the coverage api upload needs
+  coverage:
+    name: C++ coverage
+    needs: [check-pr]
+    if: |-
+      !cancelled() &&
+      github.repository == 'AlborCore/albor' &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: read
+      pull-requests: read
+      code-quality: write
+    uses: ./.github/workflows/coverage.yml

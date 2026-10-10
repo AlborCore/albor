@@ -1,0 +1,32 @@
+{
+  "C_Cpp.intelliSenseEngine": "disabled",
+  "C_Cpp.clang_format_style": "file",
+  "editor.defaultFormatter": "ms-vscode.cpptools",
+  "clangd.arguments": [
+    "--compile-commands-dir=${workspaceFolder}/.build-debug"
+  ],
+  "[cpp]": {
+    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+  },
+  "[objective-cpp]": {
+    "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+  },
+  "cmake.ctest.testSuiteDelimiter": "\\.|/|:",
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.autopep8"
+  },
+  "[jsonc]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  },
+  "python.testing.unittestArgs": [
+    "discover",
+    "-s",
+    ".",
+    "-p",
+    "*_test.py"
+  ],
+  "python-envs.defaultEnvManager": "ms-python.python:venv",
+  "python.testing.pytestEnabled": false,
+  "python.testing.unittestEnabled": true,
+  "cmake.ignoreCMakeListsMissing": true
+}

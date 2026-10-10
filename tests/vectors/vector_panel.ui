@@ -1,0 +1,10 @@
+// the collection fixture, which proves that generated collection code compiles and behaves (§8.1, §11.3)
+
+component VectorPanel {
+    in property<vector<string>> titles: ["one", "two"];
+    in property<vector<int>> numbers: [1, 2, 3];
+    in property<vector<int>> nothing: [];
+    in property<vector<vector<int>>> grid: [[1, 2], [3]];
+
+    Column {}
+}

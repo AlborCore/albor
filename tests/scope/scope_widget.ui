@@ -1,0 +1,31 @@
+// the build-scope fixture, which the §14.3 check edits to observe the recompile set (§14.3)
+
+component ScopeWidget {
+    in property<string> user_name: "World";
+    inout property<int> click_count: 0;
+
+    signal run_clicked();
+
+    Column {
+        spacing: 21px;
+        padding: 12px;
+
+        Label {
+            text: @tr("Hello, ") + user_name + "!";
+            font_size: 17px;
+        }
+
+        Row {
+            spacing: 8px;
+
+            Button {
+                id: scope_button;
+                text: @tr("Press");
+                on_clicked: {
+                    click_count = click_count + 1;
+                    run_clicked();
+                }
+            }
+        }
+    }
+}

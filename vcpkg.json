@@ -1,0 +1,48 @@
+{
+  "name": "albor",
+  "version-string": "0.1.0",
+  "description": "Cross-platform declarative UI framework for C++",
+  "dependencies": [
+    {
+      "name": "gtest",
+      "version>=": "1.18.0",
+      "default-features": false
+    },
+    {
+      "name": "skia",
+      "version>=": "148",
+      "platform": "osx",
+      "default-features": false,
+      "features": [
+        "graphite",
+        "metal",
+        "harfbuzz",
+        "icu"
+      ]
+    },
+    {
+      "name": "skia",
+      "version>=": "148",
+      "platform": "windows",
+      "default-features": false,
+      "features": [
+        "graphite",
+        "direct3d",
+        "harfbuzz",
+        "icu"
+      ]
+    },
+    {
+      "name": "skia",
+      "version>=": "148",
+      "platform": "linux",
+      "default-features": false,
+      "features": [
+        "graphite",
+        "vulkan",
+        "harfbuzz",
+        "icu"
+      ]
+    }
+  ]
+}
