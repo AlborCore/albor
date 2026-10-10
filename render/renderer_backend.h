@@ -32,6 +32,13 @@ namespace albor
     // the signature a renderer backend implements to build itself (§6.2)
     using RendererBackendFactory = std::function<std::unique_ptr<RendererBackend>()>;
 
+    // the state the installed factory lives in, heap held behind a constant initialized pointer (§6.2)
+    struct RendererBackendFactoryState
+    {
+        // the installed factory, which is empty until a backend installs one (§6.2)
+        RendererBackendFactory factory;
+    };
+
     // install the renderer backend the framework draws with, which a backend calls once at startup (§6.2)
     void set_renderer_backend_factory(RendererBackendFactory factory);
 

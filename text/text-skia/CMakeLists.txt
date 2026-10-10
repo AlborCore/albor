@@ -44,3 +44,7 @@ target_link_libraries(albor-text-skia PUBLIC albor-text PRIVATE albor-skia)
 
 # the system font collection comes from core text, which is the platform half of shaping (§9.1)
 target_link_libraries(albor-text-skia PRIVATE "-framework CoreText" "-framework CoreFoundation")
+
+# the auto target links the archive whole, so the engine installs itself at load without a call (§9.1)
+add_library(albor-text-skia-auto INTERFACE)
+target_link_libraries(albor-text-skia-auto INTERFACE "$<LINK_LIBRARY:WHOLE_ARCHIVE,albor-text-skia>")

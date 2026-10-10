@@ -18,3 +18,7 @@ target_include_directories(albor-render-software SYSTEM PRIVATE ${ALBOR_SKIA_INC
 
 # the reference draws through the same portable context the gpu backend uses, so the two cannot drift (§6.3, AD-26)
 target_link_libraries(albor-render-software PUBLIC albor-render albor-render-skia PRIVATE albor-skia)
+
+# the auto target links the archive whole, so the cpu reference installs itself at load without a call (§6.3, AD-26)
+add_library(albor-render-software-auto INTERFACE)
+target_link_libraries(albor-render-software-auto INTERFACE "$<LINK_LIBRARY:WHOLE_ARCHIVE,albor-render-software>")

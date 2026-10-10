@@ -40,3 +40,7 @@ if(APPLE)
     set_source_files_properties("./harfbuzz_typeface_resolver.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(albor-text-harfbuzz PRIVATE "-framework CoreText" "-framework CoreFoundation")
 endif()
+
+# the auto target links the archive whole, so the vendored path installs itself at load without a call (§9.1)
+add_library(albor-text-harfbuzz-auto INTERFACE)
+target_link_libraries(albor-text-harfbuzz-auto INTERFACE "$<LINK_LIBRARY:WHOLE_ARCHIVE,albor-text-harfbuzz>")
