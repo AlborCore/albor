@@ -30,6 +30,8 @@ sections were amended because the text permitted a defect that was then found an
 section was added because the module it describes had no written contract at all. Every addition
 is marked "settled during implementation" in place, and AD-29 through AD-33 record them.
 
+Later amendments from the same rule are appended to the table below rather than gathered here.
+
 | Section | Change | Reason |
 | :--- | :--- | :--- |
 | §5.3 | Surface ownership rule; stale-metric frames are dropped | resize was running on a thread that did not own the layer |
@@ -45,6 +47,7 @@ is marked "settled during implementation" in place, and AD-29 through AD-33 reco
 | §6.3 | The CPU reference backend and its three contractual properties | AD-26 made the module mandatory, and its portability is the point |
 | §15 | **New.** Cross-platform pixel identity, and its dependency order | the objective was stated and mandated nowhere |
 | §16 | Renumbered from §15; the conformance suites the earlier revisions cited as §27 |
+| §4.1 | Engines are released when `run()` returns rather than by the destructor | a static singleton released its GPU backend inside `__cxa_finalize`, where Ganesh aborted because its allocator statics were gone |
 
 Two conventions are worth stating, because both were arrived at by correcting a mistake:
 
@@ -265,6 +268,19 @@ private:
 
 } // namespace albor
 ```
+
+**Engines are released when `run()` returns, not by the destructor.** `Application` owns the renderer
+backend and the text engine, and both are released at the end of `run()`, in one order: the window
+stages, then the windows, then the text engine, then the renderer. The destructor performs the same
+release for an application that never ran, and tolerates running it again.
+
+The reason is that `Application` is a static singleton, so a release left to its destructor executes
+inside `__cxa_finalize`, interleaved with the static globals of the third-party libraries the engine
+was built on. A GPU backend that allocates during its own teardown — Ganesh on Metal does — then
+aborts, because its allocator statics are already gone. Releasing at the end of `run()` keeps every
+native layer alive longer than the drawable drawn into it, and keeps the process alive while it
+happens. An application that links a new backend inherits this rule: **no engine owned by
+`Application` is destroyed after `run()` has returned.**
 
 ### 4.2 Lifetime Safety and Tokens
 
@@ -1294,7 +1310,9 @@ sits in layout, where the budget is zero.
 
 - **Compile time glyph embedding is on the critical path**, not optional.
 - **The Metal teardown trap blocks a stated objective**, because the reference cannot
-  be compared against a GPU backend that cannot be destroyed (§15, AD-26).
+  be compared against a GPU backend that cannot be destroyed (§15, AD-26). That trap is a
+  property of the driver and is distinct from the release-ordering rule of §4.1, which states when
+  the backend is destroyed at all.
 - **The vendored engine defines the metrics.** The open question in the vendored baseline issue
   is answered by this section: matching a platform paragraph engine was never the goal.
 
