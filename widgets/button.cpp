@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "commands/command.h"
 #include "text/text_engine.h"
 
 namespace albor
@@ -63,7 +64,7 @@ namespace albor
         if (!visible())
             return false;
         // a disabled button is not a hit, because it refuses input (§8.3)
-        if (m_disabled)
+        if (disabled())
             return false;
         // bounds
         const Rect& b = bounds();
@@ -82,18 +83,15 @@ namespace albor
         // a key that activates the button is a press, which the focused button receives (§8.3)
         if (event.kind == EventKind::KeyDown && (event.key == Key::Return || event.key == Key::Space)) {
             // a disabled button does not claim the key, because it refuses input (§8.3)
-            if (m_disabled)
+            if (disabled())
                 return;
             // a modified key is an application shortcut, so a plain activation ignores it (§8.3)
             if (!event.modifiers.none())
                 return;
             // the event is claimed, so no ancestor reacts to the same key (§8.3)
             event.handled = true;
-            // a button with no handler still claims the key, because it swallowed it (§8.3)
-            if (!m_on_click)
-                return;
-            // the handler runs once, which is what an activation means (§8.3)
-            m_on_click();
+            // the activation runs once, which is what a key press means (§8.3)
+            activate(InvocationSource::Pointer);
             return;
         }
         // a press is the only other event that activates a button (§8.3)
@@ -102,18 +100,15 @@ namespace albor
             return;
         }
         // a disabled button does not claim a press, because it refuses input (§8.3)
-        if (m_disabled)
+        if (disabled())
             return;
         // a press outside the plate belongs to whatever is behind the button (§8.3)
         if (!hit_test(event.position))
             return;
         // the event is claimed, so no ancestor reacts to the same press (§8.3)
         event.handled = true;
-        // a button with no handler still claims the press, because it swallowed it (§8.3)
-        if (!m_on_click)
-            return;
-        // the handler runs once, which is what a press means (§8.3)
-        m_on_click();
+        // the activation runs once, which is what a press means (§8.3)
+        activate(InvocationSource::Pointer);
     }
 
     SemanticNode Button::semantic_node() const {
@@ -126,16 +121,13 @@ namespace albor
         // the bounds travel with the node, because an adapter places the announcement where it was drawn (§10.1)
         node.set_bounds(bounds());
         // a disabled button reports the disabled state, which is what refuses activation (§10.1)
-        node.set_disabled(m_disabled);
+        node.set_disabled(disabled());
         // a button is not checkable, so the check state stays not checkable (§10.1)
         node.set_check(CheckState::NotCheckable);
         // the activate action runs the same handler a press does, and its identifier is discarded because a widget names actions by label (§10.1) the action body carries no disabled guard, because SemanticNode::invoke refuses every action while the node it belongs to is disabled, which is where that rule belongs (§10.1)
         (void)node.add_action("activate", [this] {
-            // a button with no handler exposes the action but does nothing, because there is no work (§10.1)
-            if (!m_on_click)
-                return;
-            // the handler runs, which is what invoking an action means (§10.1)
-            m_on_click();
+            // the activation routes through the shared command when one is bound, as a press does (§18.7)
+            mutable_owner(this)->activate(InvocationSource::Accessibility);
         });
         return node;
     }
@@ -168,15 +160,43 @@ namespace albor
         // an unchanged state redraws nothing, because the button looks the same (§6.1)
         if (m_disabled == disabled)
             return;
-        // the state is stored first, so the invalidation walks a button that already refuses input (§8.3)
+        // the state is stored first, so unbinding a command later restores what the form declared (§18.7)
         m_disabled = disabled;
+        // a bound command owns the state, so the imperative write is recorded and not applied (§18.7)
+        if (command() != nullptr)
+            return;
         // a disabled button fades and stops accepting presses, so the frame changes (§6.1)
         invalidate();
     }
 
     bool Button::disabled() const {
-        // the state is what the hit test and the dispatch both refuse on (§8.3)
+        // a bound command is the single answer, which is what three consumers reading one object means (§18.7)
+        if (command() != nullptr)
+            return !command()->state().enabled;
+        // without a command the state is what the hit test and the dispatch both refuse on (§8.3)
         return m_disabled;
+    }
+
+    void Button::apply_command_state(const CommandState& state) {
+        // the label is one of the three published fields, so a consumer never holds a copy of it (§18.2)
+        set_label(state.label);
+        // disabled reads the bound command, so applicability is the only field this control writes (§18.2)
+        UiNode::set_visible(state.visible);
+        // the plate and the label repaint through the disabled role, which the state resolver reads (§6.2)
+        invalidate();
+    }
+
+    void Button::activate(InvocationSource source) {
+        // a bound command is invoked through the shared object, so both routes record one entry (§18.4)
+        if (command() != nullptr) {
+            (void)command()->invoke(CommandInvocation{.command = command()->id(), .source = source});
+            return;
+        }
+        // a button with no handler swallows the event without doing anything, because there is no work (§10.1)
+        if (!m_on_click)
+            return;
+        // the handler runs once, which is what an activation means (§8.3)
+        m_on_click();
     }
 
     void Button::set_background(Color background) {
@@ -194,7 +214,7 @@ namespace albor
         if (theme() != nullptr)
             return resolve(plate_colors(), m_background);
         // an unthemed button keeps the inline fade, because it is the only visual it had (§6.1)
-        if (m_disabled)
+        if (disabled())
             return Color::rgba(m_background.red * 0.5f, m_background.green * 0.5f, m_background.blue * 0.5f, m_background.alpha);
         // the plate fill is what the base records before the label (§6.2)
         return m_background;

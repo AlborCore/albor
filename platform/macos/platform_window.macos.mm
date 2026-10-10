@@ -3,6 +3,7 @@
 #import <AppKit/AppKit.h>
 #import <QuartzCore/CAMetalLayer.h>
 
+#include <cstddef>
 #include <memory>
 #include <string>
 
@@ -48,9 +49,23 @@
 
 namespace
 {
+    // the portable key each ansi letter key code names, which the letters occupy as one contiguous range (§18.5)
+    constexpr albor::Key LETTER_KEYS[] = {albor::Key::A, albor::Key::S, albor::Key::D, albor::Key::F, albor::Key::H, albor::Key::G, albor::Key::Z, albor::Key::X, albor::Key::C, albor::Key::V, albor::Key::None, albor::Key::B, albor::Key::Q, albor::Key::W, albor::Key::E, albor::Key::R, albor::Key::Y, albor::Key::T};
+
+    // the portable key each ansi digit key code names, where two codes are punctuation and name nothing (§18.5)
+    constexpr albor::Key DIGIT_KEYS[] = {albor::Key::One, albor::Key::Two, albor::Key::Three, albor::Key::Four, albor::Key::Six, albor::Key::Five, albor::Key::None, albor::Key::Nine, albor::Key::Seven, albor::Key::None, albor::Key::Eight, albor::Key::Zero};
+
     albor::Key key_from_nsevent(NSEvent* event) {
+        // the key code is narrowed once, because every table below and the switch both index on it (§8.3)
+        const int code = static_cast<int>(event.keyCode);
+        // the ansi letters occupy the first contiguous range, so one table names every one of them (§18.5)
+        if (code >= 0 && code <= 17)
+            return LETTER_KEYS[static_cast<std::size_t>(code)];
+        // the ansi digits occupy the range right after them, where two codes are punctuation (§18.5)
+        if (code >= 18 && code <= 29)
+            return DIGIT_KEYS[static_cast<std::size_t>(code - 18)];
         // the named keys map one platform key code onto one portable name (§8.3)
-        switch (event.keyCode) {
+        switch (code) {
         // tab
         case 48:
             return albor::Key::Tab;
@@ -80,6 +95,42 @@ namespace
         case 51:
         case 117:
             return albor::Key::Delete;
+        // the first function key
+        case 122:
+            return albor::Key::F1;
+        // the second function key
+        case 120:
+            return albor::Key::F2;
+        // the third function key
+        case 99:
+            return albor::Key::F3;
+        // the fourth function key
+        case 118:
+            return albor::Key::F4;
+        // the fifth function key
+        case 96:
+            return albor::Key::F5;
+        // the sixth function key
+        case 97:
+            return albor::Key::F6;
+        // the seventh function key
+        case 98:
+            return albor::Key::F7;
+        // the eighth function key
+        case 100:
+            return albor::Key::F8;
+        // the ninth function key
+        case 105:
+            return albor::Key::F9;
+        // the tenth function key
+        case 109:
+            return albor::Key::F10;
+        // the eleventh function key
+        case 103:
+            return albor::Key::F11;
+        // the twelfth function key
+        case 111:
+            return albor::Key::F12;
         // every other key carries no portable name
         default:
             return albor::Key::None;

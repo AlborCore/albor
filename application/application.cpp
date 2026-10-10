@@ -134,6 +134,8 @@ namespace albor
         }
         // the stage wires the window's surface, pipeline, render thread and input once (§6.1, §8.3)
         std::unique_ptr<WindowStage> stage = std::make_unique<WindowStage>(*m_windows.find(handle), *m_renderer, *m_text, std::move(builder));
+        // the window routes keys through the application's commands, which is what one shared object means (§18.5)
+        stage->set_command_registry(&m_commands);
         // a stage the backend refused leaves nothing behind, because half a window cannot draw (§6.3)
         if (!stage->wired()) {
             std::fprintf(stderr, "application: the main window did not come up\n");
@@ -143,6 +145,11 @@ namespace albor
         // the stage lives as long as its window, which the closed notification drops (§6.1)
         m_stages[handle.id()] = std::move(stage);
         return handle;
+    }
+
+    CommandRegistry& Application::commands() {
+        // the registry is one per application, so every window and every control reads the same object (§18.1)
+        return m_commands;
     }
 
     Window* Application::window(WindowHandle handle) {

@@ -3,12 +3,14 @@
 
 #include <gtest/gtest.h>
 
+#include "commands/command.h"
 #include "core/constraints.h"
 #include "layout/column_layout.h"
 #include "layout/row_layout.h"
 #include "render/frame_scene.h"
 #include "render/render_context.h"
 #include "runtime/binding_engine.h"
+#include "semantics/semantic_node.h"
 #include "semantics/semantic_provider.h"
 #include "style/theme_builder.h"
 #include "ui/scene_builder.h"
@@ -3114,4 +3116,238 @@ TEST(ThemeChecks, AThemeWalkLeavesANonWidgetAlone) {
     apply_theme(root, theme);
     // assert the widget inside the plain node was still reached (§6.1)
     EXPECT_EQ(nested_ptr->theme(), &theme);
+}
+
+TEST(ButtonCommand, ABoundButtonTakesItsLabelFromTheSharedObject) {
+    // arrange
+    BindingEngine engine;
+    Command command{"file.save", "Save"};
+    Button button(&engine, nullptr, "Local");
+    button.set_command(&command);
+    // act and assert the label is published onto the control rather than copied into it (§18.7)
+    EXPECT_EQ(button.label(), "Save");
+    EXPECT_EQ(button.command(), &command);
+}
+
+TEST(ButtonCommand, ABoundButtonFollowsTheEnablementOfTheSharedObject) {
+    // arrange
+    BindingEngine engine;
+    Command command{"file.save", "Save"};
+    Button button(&engine, nullptr, "Save");
+    button.set_command(&command);
+    // act
+    command.set_enabled(false);
+    // assert the control refuses input because the one object it reads says so (§18.7)
+    EXPECT_TRUE(button.disabled());
+    EXPECT_FALSE(button.hit_test(Point{1.0f, 1.0f}));
+}
+
+TEST(ButtonCommand, ABoundButtonFollowsTheApplicabilityOfTheSharedObject) {
+    // arrange
+    BindingEngine engine;
+    Command command{"file.save", "Save"};
+    Button button(&engine, nullptr, "Save");
+    button.set_command(&command);
+    // act
+    command.set_visible(false);
+    // assert withdrawing applicability removes the control from layout and from focus traversal (§18.2)
+    EXPECT_FALSE(button.visible());
+    EXPECT_FALSE(button.hit_test(Point{1.0f, 1.0f}));
+}
+
+TEST(ButtonCommand, TheCommandWinsOverAnImperativeDisabledWriteWhileBound) {
+    // arrange
+    BindingEngine engine;
+    Command command{"file.save", "Save"};
+    Button button(&engine, nullptr, "Save");
+    button.set_command(&command);
+    // act
+    button.set_disabled(true);
+    // assert a bound control does not answer to two sources of enablement (§18.7)
+    EXPECT_FALSE(button.disabled());
+}
+
+TEST(ButtonCommand, UnbindingRestoresTheControlsOwnValue) {
+    // arrange
+    BindingEngine engine;
+    Command command{"file.save", "Save"};
+    Button button(&engine, nullptr, "Save");
+    button.set_disabled(true);
+    button.set_command(&command);
+    // act
+    button.set_command(nullptr);
+    // assert the control owns its state again, which is what the form declared (§18.7)
+    EXPECT_TRUE(button.disabled());
+    EXPECT_EQ(button.command(), nullptr);
+}
+
+TEST(ButtonCommand, TwoButtonsBoundToOneCommandShareEveryPublishedField) {
+    // arrange
+    BindingEngine engine;
+    Command command{"file.save", "Save"};
+    Button toolbar(&engine, nullptr, "toolbar");
+    Button menu(&engine, nullptr, "menu");
+    toolbar.set_command(&command);
+    menu.set_command(&command);
+    // act
+    command.set_label("Save As");
+    command.set_enabled(false);
+    // assert both consumers read one object, which is the entire point of the module (§18.2)
+    EXPECT_EQ(toolbar.label(), "Save As");
+    EXPECT_EQ(menu.label(), "Save As");
+    EXPECT_TRUE(toolbar.disabled());
+    EXPECT_TRUE(menu.disabled());
+}
+
+TEST(ButtonCommand, APressInvokesTheCommandThroughThePointerRoute) {
+    // arrange
+    BindingEngine engine;
+    Command command{"file.save", "Save"};
+    std::size_t runs = 0;
+    InvocationSource route = InvocationSource::Pointer;
+    command.set_action([&runs, &route](const CommandInvocation& invocation) {
+        runs++;
+        route = invocation.source;
+    });
+    Button button(&engine, nullptr, "Save", "save");
+    button.set_command(&command);
+    button.arrange(Rect{.x = 0.0f, .y = 0.0f, .width = 80.0f, .height = 24.0f});
+    // act
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    button.dispatch_event(press);
+    // assert the press reached the shared action rather than a local handler (§18.7)
+    EXPECT_EQ(runs, std::size_t{1});
+    EXPECT_EQ(route, InvocationSource::Pointer);
+    EXPECT_TRUE(press.handled);
+}
+
+TEST(ButtonCommand, ADisabledCommandRefusesThePressBeforeTheControlSeesIt) {
+    // arrange
+    BindingEngine engine;
+    Command command{"file.save", "Save"};
+    std::size_t runs = 0;
+    command.set_action([&runs](const CommandInvocation&) { runs++; });
+    Button button(&engine, nullptr, "Save", "save");
+    button.set_command(&command);
+    button.arrange(Rect{.x = 0.0f, .y = 0.0f, .width = 80.0f, .height = 24.0f});
+    command.set_enabled(false);
+    // act
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    button.dispatch_event(press);
+    // assert the control left the hit test entirely, which is what a disabled state means (§18.3)
+    EXPECT_EQ(runs, std::size_t{0});
+    EXPECT_FALSE(press.handled);
+}
+
+TEST(ButtonCommand, TheSemanticActivateActionRunsTheSameCommand) {
+    // arrange
+    BindingEngine engine;
+    Command command{"file.save", "Save"};
+    std::size_t runs = 0;
+    InvocationSource route = InvocationSource::Pointer;
+    command.set_action([&runs, &route](const CommandInvocation& invocation) {
+        runs++;
+        route = invocation.source;
+    });
+    Button button(&engine, nullptr, "Save", "save");
+    button.set_command(&command);
+    // act
+    SemanticNode node = button.semantic_node();
+    const bool invoked = node.invoke("activate");
+    // assert assistive technology performs the same action a pointer does, through the same object (§18.7)
+    EXPECT_TRUE(invoked);
+    EXPECT_EQ(runs, std::size_t{1});
+    EXPECT_EQ(route, InvocationSource::Accessibility);
+}
+
+TEST(ButtonCommand, TheSemanticNodeReportsTheSharedEnablement) {
+    // arrange
+    BindingEngine engine;
+    Command command{"file.save", "Save"};
+    Button button(&engine, nullptr, "Save", "save");
+    button.set_command(&command);
+    // act
+    command.set_enabled(false);
+    // assert the announcement follows the object, so assistive technology refuses what the control refuses (§10.1)
+    EXPECT_TRUE(button.semantic_node().disabled());
+}
+
+TEST(ButtonCommand, AnUnboundButtonKeepsItsOwnHandlerAndItsOwnState) {
+    // arrange
+    BindingEngine engine;
+    std::size_t presses = 0;
+    Button button(&engine, nullptr, "Local", "save");
+    button.set_on_click([&presses] { presses++; });
+    button.arrange(Rect{.x = 0.0f, .y = 0.0f, .width = 80.0f, .height = 24.0f});
+    // act
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    button.dispatch_event(press);
+    button.set_disabled(true);
+    // assert the pre-existing path a generated form uses is untouched by the module (§18.7)
+    EXPECT_EQ(presses, std::size_t{1});
+    EXPECT_TRUE(button.disabled());
+}
+
+TEST(CheckBoxCommand, AToggleInvokesTheCommandWithTheNewTruth) {
+    // arrange
+    BindingEngine engine;
+    Command command{"view.armed", "Armed"};
+    std::size_t runs = 0;
+    bool observed = false;
+    command.set_action([&runs, &observed](const CommandInvocation& invocation) {
+        runs++;
+        observed = std::get<bool>(invocation.argument);
+    });
+    CheckBox box(&engine, "armed");
+    box.set_command(&command);
+    box.arrange(Rect{.x = 0.0f, .y = 0.0f, .width = 24.0f, .height = 24.0f});
+    // act
+    Event press{.kind = EventKind::PointerDown, .position = Point{8.0f, 8.0f}};
+    box.dispatch_event(press);
+    // assert an action that carries a value receives it through the invocation (§18.3)
+    EXPECT_EQ(runs, std::size_t{1});
+    EXPECT_TRUE(observed);
+    EXPECT_TRUE(box.checked());
+}
+
+TEST(CheckBoxCommand, ACheckBoxFollowsTheApplicabilityOfTheSharedObject) {
+    // arrange
+    BindingEngine engine;
+    Command command{"view.armed", "Armed"};
+    CheckBox box(&engine, "armed");
+    box.set_command(&command);
+    // act
+    command.set_visible(false);
+    // assert withdrawing applicability removes the control from layout and from focus traversal (§18.2)
+    EXPECT_FALSE(box.visible());
+}
+
+TEST(SliderCommand, AStepInvokesTheCommandWithTheNewValue) {
+    // arrange
+    BindingEngine engine;
+    Command command{"level.set", "Level"};
+    double observed = 0.0;
+    command.set_action([&observed](const CommandInvocation& invocation) { observed = std::get<double>(invocation.argument); });
+    Slider slider(&engine, "level");
+    slider.set_command(&command);
+    // act
+    slider.step(0.25f);
+    // assert an action that carries a value receives it through the invocation (§18.3)
+    EXPECT_DOUBLE_EQ(observed, 0.25);
+}
+
+TEST(SliderCommand, ADisabledCommandRefusesTheStep) {
+    // arrange
+    BindingEngine engine;
+    Command command{"level.set", "Level"};
+    std::size_t runs = 0;
+    command.set_action([&runs](const CommandInvocation&) { runs++; });
+    Slider slider(&engine, "level");
+    slider.set_command(&command);
+    command.set_enabled(false);
+    // act
+    slider.step(0.25f);
+    // assert the control refuses input because the one object it reads says so (§18.7)
+    EXPECT_EQ(runs, std::size_t{0});
+    EXPECT_TRUE(slider.disabled());
 }

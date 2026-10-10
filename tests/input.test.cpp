@@ -3,6 +3,8 @@
 
 #include <gtest/gtest.h>
 
+#include "commands/command_registry.h"
+#include "commands/undo_stack.h"
 #include "focus/focus_manager.h"
 #include "input/event_filter.h"
 #include "input/input_controller.h"
@@ -1447,4 +1449,141 @@ TEST(HoverChecks, RemovingADeeplyNestedSubtreeExitsEveryDescendant) {
     EXPECT_EQ(grandchild_ptr->leaves, 1u);
     EXPECT_EQ(child_ptr->leaves, 1u);
     EXPECT_EQ(root.leaves, 0u);
+}
+
+TEST(ShortcutRoutingChecks, AWindowWithNoRegistryRoutesNoAccelerator) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event key{.kind = EventKind::KeyDown, .key = Key::S};
+    key.modifiers.command = true;
+    // act
+    controller.deliver(key);
+    // assert an application that declared nothing leaves the key to the tree (§18.5)
+    EXPECT_EQ(controller.command_registry(), nullptr);
+    EXPECT_EQ(controller.shortcut_invocations(), std::size_t{0});
+    EXPECT_FALSE(key.handled);
+}
+
+TEST(ShortcutRoutingChecks, AModifiedAcceleratorRunsBeforeTheFocusedNode) {
+    // arrange
+    CommandRegistry commands;
+    Command& save = commands.declare("file.save", "Save");
+    std::size_t runs = 0;
+    InvocationSource route = InvocationSource::Pointer;
+    save.set_action([&runs, &route](const CommandInvocation& invocation) {
+        runs++;
+        route = invocation.source;
+    });
+    commands.shortcuts().bind(Shortcut{.key = Key::S, .modifiers = Modifiers{.command = true}}, save.id());
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    controller.set_command_registry(&commands);
+    Event key{.kind = EventKind::KeyDown, .key = Key::S};
+    key.modifiers.command = true;
+    // act
+    controller.deliver(key);
+    // assert a modified key is an application shortcut, which the standards reserve before the caret (§18.5)
+    EXPECT_EQ(runs, std::size_t{1});
+    EXPECT_EQ(route, InvocationSource::Keyboard);
+    EXPECT_EQ(root.deliveries, std::size_t{0});
+    EXPECT_EQ(controller.shortcut_invocations(), std::size_t{1});
+}
+
+TEST(ShortcutRoutingChecks, AnUnmodifiedAcceleratorRunsOnlyAfterTheCaretDeclines) {
+    // arrange
+    CommandRegistry commands;
+    Command& save = commands.declare("file.save", "Save");
+    std::size_t runs = 0;
+    save.set_action([&runs](const CommandInvocation&) { runs++; });
+    commands.shortcuts().bind(Shortcut{.key = Key::S}, save.id());
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    controller.set_command_registry(&commands);
+    Event claimed{.kind = EventKind::KeyDown, .key = Key::S};
+    Event declined{.kind = EventKind::KeyDown, .key = Key::S};
+    // act
+    root.claims = true;
+    controller.deliver(claimed);
+    // the caret stops claiming the second key, which is what declining the key looks like to the route (§18.5)
+    root.claims = false;
+    controller.deliver(declined);
+    // assert a text control always wins over an unbound letter, because typing must not fire an action (§18.5)
+    EXPECT_EQ(runs, std::size_t{1});
+    EXPECT_TRUE(claimed.handled);
+    EXPECT_EQ(controller.shortcut_invocations(), std::size_t{1});
+}
+
+TEST(ShortcutRoutingChecks, ADisabledCommandStillConsumesItsKey) {
+    // arrange
+    CommandRegistry commands;
+    Command& save = commands.declare("file.save", "Save");
+    std::size_t runs = 0;
+    save.set_action([&runs](const CommandInvocation&) { runs++; });
+    commands.shortcuts().bind(Shortcut{.key = Key::S, .modifiers = Modifiers{.command = true}}, save.id());
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    controller.set_command_registry(&commands);
+    save.set_enabled(false);
+    Event key{.kind = EventKind::KeyDown, .key = Key::S};
+    key.modifiers.command = true;
+    // act
+    controller.deliver(key);
+    // assert the key does not fall through to another consumer, which would make a disabled item look live (§18.5)
+    EXPECT_EQ(runs, std::size_t{0});
+    EXPECT_EQ(root.deliveries, std::size_t{0});
+    EXPECT_EQ(controller.shortcut_invocations(), std::size_t{1});
+}
+
+TEST(ShortcutRoutingChecks, AnUnboundAcceleratorBelongsToTheCaret) {
+    // arrange
+    CommandRegistry commands;
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    controller.set_command_registry(&commands);
+    Event key{.kind = EventKind::KeyDown, .key = Key::S};
+    key.modifiers.command = true;
+    // act
+    controller.deliver(key);
+    // assert a registry with no binding leaves the key exactly where it was (§18.5)
+    EXPECT_TRUE(key.handled);
+    EXPECT_EQ(root.deliveries, std::size_t{1});
+    EXPECT_EQ(controller.shortcut_invocations(), std::size_t{0});
+}
+
+TEST(ShortcutRoutingChecks, TwoAcceleratorsIntoOneCommandContributeTwoHistoryEntries) {
+    // arrange
+    CommandRegistry commands;
+    Command& save = commands.declare("file.save", "Save");
+    save.set_action([](const CommandInvocation&) {});
+    save.set_undo_entry(UndoEntry{.label = "Save", .undo = [](const CommandInvocation&) {}, .redo = [](const CommandInvocation&) {}});
+    commands.shortcuts().bind(Shortcut{.key = Key::S, .modifiers = Modifiers{.command = true}}, save.id());
+    commands.shortcuts().bind(Shortcut{.key = Key::F1}, save.id());
+    InputController controller;
+    RecordingNode root;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    controller.set_command_registry(&commands);
+    // act
+    Event first{.kind = EventKind::KeyDown, .key = Key::S};
+    first.modifiers.command = true;
+    controller.deliver(first);
+    Event second{.kind = EventKind::KeyDown, .key = Key::F1};
+    controller.deliver(second);
+    // assert each route records through the one shared object, so the history sits behind the command (§18.4)
+    EXPECT_EQ(commands.undo_stack().depth(), std::size_t{2});
 }

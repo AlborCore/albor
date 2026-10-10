@@ -67,6 +67,14 @@ namespace albor
         m_input->deliver(event);
     }
 
+    void WindowStage::set_command_registry(CommandRegistry* registry) {
+        // a stage that never wired has no input to route a key through, which the window betrayed at creation (§18.5)
+        if (!m_input)
+            return;
+        // the registry is borrowed by the controller, which routes accelerators through it (§18.5)
+        m_input->set_command_registry(registry);
+    }
+
     std::uint64_t WindowStage::frame_count() const {
         // an unwired stage built nothing, which is the count it reports (§6.1)
         return m_pipeline ? m_pipeline->frame_count() : 0;

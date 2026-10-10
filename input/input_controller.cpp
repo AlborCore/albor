@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <utility>
 
+#include "commands/command_registry.h"
+
 namespace albor
 {
     void InputController::attach(UiNode& root) {
@@ -150,8 +152,30 @@ namespace albor
             event.handled = true;
             return;
         }
+        // a modified key is an application shortcut, which the standards reserve before the caret sees it (§8.3)
+        if (!event.modifiers.none() && deliver_shortcut(event))
+            return;
         // every other key reaches the caret and then its ancestors, which is the keyboard path of §8.3
         InputDispatcher::dispatch_to_focused(*m_root, event, m_focus.focused());
+        // an unmodified accelerator only runs when the caret declined the key, so text entry always wins (§18.5)
+        if (!event.handled)
+            (void)deliver_shortcut(event);
+    }
+
+    bool InputController::deliver_shortcut(const Event& event) {
+        // a window with no accelerators routes nothing, which is an application that declared none (§18.5)
+        if (m_commands == nullptr)
+            return false;
+        // the accelerator is the key plus the modifiers that were held, which is what the table indexed (§18.5)
+        Command* command = m_commands->find_shortcut(Shortcut{.key = event.key, .modifiers = event.modifiers});
+        // an unbound accelerator belongs to the caret, so the walk continues (§18.5)
+        if (command == nullptr)
+            return false;
+        // the key is claimed whether or not the command ran, so a disabled command cannot fall through (§18.5)
+        (void)command->invoke(CommandInvocation{.command = command->id(), .source = InvocationSource::Keyboard});
+        // the claim is counted, which is what the routing tests assert on (§18.5)
+        m_shortcut_invocations++;
+        return true;
     }
 
     FocusManager& InputController::focus() {
@@ -168,6 +192,16 @@ namespace albor
         // a capture exists exactly while a drag is alive (§8.3)
         return m_capture != nullptr;
     }
+
+    void InputController::set_command_registry(CommandRegistry* registry) {
+        // the registry is borrowed, because the application owns it and outlives every window (§18.5)
+        m_commands = registry;
+    }
+
+    CommandRegistry* InputController::command_registry() const { return m_commands; }
+
+    std::size_t InputController::shortcut_invocations() const { return m_shortcut_invocations; }
+
     void InputController::refresh_hover() {
         // a controller without a tree has nothing hovered, because the chain follows the tree (§8.3)
         if (m_root == nullptr) {

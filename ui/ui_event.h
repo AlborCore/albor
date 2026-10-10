@@ -69,7 +69,151 @@ namespace albor
         Space,
 
         // the delete key, which removes the selected content
-        Delete
+        Delete,
+
+        // the first letter key, which a plain key event names when no modifier is held (§18.5)
+        A,
+
+        // the second letter key, which a plain key event names when no modifier is held (§18.5)
+        B,
+
+        // the third letter key, which a plain key event names when no modifier is held (§18.5)
+        C,
+
+        // the fourth letter key, which a plain key event names when no modifier is held (§18.5)
+        D,
+
+        // the fifth letter key, which a plain key event names when no modifier is held (§18.5)
+        E,
+
+        // the sixth letter key, which a plain key event names when no modifier is held (§18.5)
+        F,
+
+        // the seventh letter key, which a plain key event names when no modifier is held (§18.5)
+        G,
+
+        // the eighth letter key, which a plain key event names when no modifier is held (§18.5)
+        H,
+
+        // the ninth letter key, which a plain key event names when no modifier is held (§18.5)
+        I,
+
+        // the tenth letter key, which a plain key event names when no modifier is held (§18.5)
+        J,
+
+        // the eleventh letter key, which a plain key event names when no modifier is held (§18.5)
+        K,
+
+        // the twelfth letter key, which a plain key event names when no modifier is held (§18.5)
+        L,
+
+        // the thirteenth letter key, which a plain key event names when no modifier is held (§18.5)
+        M,
+
+        // the fourteenth letter key, which a plain key event names when no modifier is held (§18.5)
+        N,
+
+        // the fifteenth letter key, which a plain key event names when no modifier is held (§18.5)
+        O,
+
+        // the sixteenth letter key, which a plain key event names when no modifier is held (§18.5)
+        P,
+
+        // the seventeenth letter key, which a plain key event names when no modifier is held (§18.5)
+        Q,
+
+        // the eighteenth letter key, which a plain key event names when no modifier is held (§18.5)
+        R,
+
+        // the nineteenth letter key, which a plain key event names when no modifier is held (§18.5)
+        S,
+
+        // the twentieth letter key, which a plain key event names when no modifier is held (§18.5)
+        T,
+
+        // the twenty first letter key, which a plain key event names when no modifier is held (§18.5)
+        U,
+
+        // the twenty second letter key, which a plain key event names when no modifier is held (§18.5)
+        V,
+
+        // the twenty third letter key, which a plain key event names when no modifier is held (§18.5)
+        W,
+
+        // the twenty fourth letter key, which a plain key event names when no modifier is held (§18.5)
+        X,
+
+        // the twenty fifth letter key, which a plain key event names when no modifier is held (§18.5)
+        Y,
+
+        // the twenty sixth letter key, which a plain key event names when no modifier is held (§18.5)
+        Z,
+
+        // the first digit key, which a plain key event names when no modifier is held (§18.5)
+        Zero,
+
+        // the second digit key, which a plain key event names when no modifier is held (§18.5)
+        One,
+
+        // the third digit key, which a plain key event names when no modifier is held (§18.5)
+        Two,
+
+        // the fourth digit key, which a plain key event names when no modifier is held (§18.5)
+        Three,
+
+        // the fifth digit key, which a plain key event names when no modifier is held (§18.5)
+        Four,
+
+        // the sixth digit key, which a plain key event names when no modifier is held (§18.5)
+        Five,
+
+        // the seventh digit key, which a plain key event names when no modifier is held (§18.5)
+        Six,
+
+        // the eighth digit key, which a plain key event names when no modifier is held (§18.5)
+        Seven,
+
+        // the ninth digit key, which a plain key event names when no modifier is held (§18.5)
+        Eight,
+
+        // the tenth digit key, which a plain key event names when no modifier is held (§18.5)
+        Nine,
+
+        // the first function key, which an accelerator binds without a letter (§18.5)
+        F1,
+
+        // the second function key, which an accelerator binds without a letter (§18.5)
+        F2,
+
+        // the third function key, which an accelerator binds without a letter (§18.5)
+        F3,
+
+        // the fourth function key, which an accelerator binds without a letter (§18.5)
+        F4,
+
+        // the fifth function key, which an accelerator binds without a letter (§18.5)
+        F5,
+
+        // the sixth function key, which an accelerator binds without a letter (§18.5)
+        F6,
+
+        // the seventh function key, which an accelerator binds without a letter (§18.5)
+        F7,
+
+        // the eighth function key, which an accelerator binds without a letter (§18.5)
+        F8,
+
+        // the ninth function key, which an accelerator binds without a letter (§18.5)
+        F9,
+
+        // the tenth function key, which an accelerator binds without a letter (§18.5)
+        F10,
+
+        // the eleventh function key, which an accelerator binds without a letter (§18.5)
+        F11,
+
+        // the twelfth function key, which an accelerator binds without a letter (§18.5)
+        F12
     };
 
     // the modifier keys held during an event, one flag per key (§8.3)
@@ -89,6 +233,9 @@ namespace albor
 
         // report whether no key modifier is held
         [[nodiscard]] bool none() const;
+
+        // compare two modifier sets field by field, which an accelerator key relies on (§18.5)
+        friend bool operator==(const Modifiers& lhs, const Modifiers& rhs) = default;
     };
 
     // one normalized input event, which platform adapters produce and the tree dispatches (§8.3)

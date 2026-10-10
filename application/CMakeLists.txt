@@ -11,4 +11,4 @@ target_include_directories(albor-application PUBLIC ${CMAKE_SOURCE_DIR})
 target_compile_features(albor-application PUBLIC cxx_std_23)
 
 # the host joins the window to the tree and the engines, so the wiring modules ride along (§2.2, issue 12)
-target_link_libraries(albor-application PUBLIC albor-core albor-window albor-render albor-ui albor-input albor-runtime albor-text)
+target_link_libraries(albor-application PUBLIC albor-core albor-window albor-render albor-ui albor-input albor-runtime albor-text albor-commands)

@@ -13,3 +13,6 @@ add_subdirectory(chart)
 
 # the widget form, which exercises every widget the framework ships and shows how a composition root links its backends (§14, §5.3)
 add_subdirectory(form)
+
+# the shared action object, which shows one command bound across a toolbar, a menu row and the keyboard (§14, §18)
+add_subdirectory(commands)

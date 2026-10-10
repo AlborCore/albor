@@ -3,6 +3,7 @@
 #include <functional>
 #include <utility>
 
+#include "commands/command_invocation.h"
 #include "widgets/widget.h"
 
 namespace albor
@@ -64,6 +65,10 @@ namespace albor
 
         // replace the thumb colour, which redraws without changing the extent (§6.1)
         void set_thumb_color(Color color);
+
+    protected:
+        // override: a slider presents no label of its own, so it follows the enablement and the applicability (§18.7)
+        void apply_command_state(const CommandState& state) override;
 
     private:
         // the track colours the slider resolves through, which are the installed palette when a theme is present (§6.1)

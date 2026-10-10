@@ -8,6 +8,7 @@
 #include "application/task_queue.h"
 #include "application/timer.h"
 #include "application/window_stage.h"
+#include "commands/command_registry.h"
 #include "ui/ui_event.h"
 #include "window/window.h"
 #include "window/window_handle.h"
@@ -150,6 +151,9 @@ namespace albor
         // report whether the application is currently running its loop
         [[nodiscard]] bool running() const;
 
+        // hand out the commands this application shares across every window, which is one registry per run (§18.1)
+        [[nodiscard]] CommandRegistry& commands();
+
     private:
         // attach the framework listeners to a window, which is what makes its events reach the application (§5.3)
         void bind_window(WindowHandle handle, Window& window);
@@ -165,6 +169,9 @@ namespace albor
 
         // release the stages, the windows and the engines in the order a layer outlives its drawable (§6.3)
         void shutdown();
+
+        // the commands every window of this run shares, which is one registry and one history (§18.1)
+        CommandRegistry m_commands;
 
         // the native loop the application pumps, which is never null for a live application
         std::unique_ptr<PlatformEventLoop> m_event_loop;

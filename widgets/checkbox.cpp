@@ -1,5 +1,7 @@
 #include <algorithm>
+#include <utility>
 
+#include "commands/command.h"
 #include "widgets/checkbox.h"
 
 namespace albor
@@ -59,7 +61,7 @@ namespace albor
         if (!visible())
             return false;
         // a disabled box is not a hit, because it refuses input (§8.3)
-        if (m_disabled)
+        if (disabled())
             return false;
         // the press must land on the square itself, which is what the eye sees as the control (§8.3)
         const Rect box = box_rect();
@@ -77,22 +79,15 @@ namespace albor
         // a key that toggles the box is a press, which the focused box receives (§8.3)
         if (event.kind == EventKind::KeyDown && event.key == Key::Space) {
             // a disabled box does not claim the key, because it refuses input (§8.3)
-            if (m_disabled)
+            if (disabled())
                 return;
             // a modified key is an application shortcut, so a plain toggle ignores it (§8.3)
             if (!event.modifiers.none())
                 return;
             // the event is claimed, so no ancestor reacts to the same key (§8.3)
             event.handled = true;
-            // the state flips before the handler runs, so the callback sees the new state (§8.3)
-            m_checked = !m_checked;
-            // a toggled box changes its fill, so the frame must be redrawn (§6.1)
-            invalidate();
-            // a box with no handler still toggles, because the state is the control (§8.3)
-            if (!m_on_toggle)
-                return;
-            // the handler receives the new state, which is what a toggle reports (§8.3)
-            m_on_toggle(m_checked);
+            // the toggle runs once, which is what a key press means (§8.3)
+            toggle();
             return;
         }
         // a press is the only other event that toggles a box (§8.3)
@@ -101,22 +96,15 @@ namespace albor
             return;
         }
         // a disabled box does not claim a press, because it refuses input (§8.3)
-        if (m_disabled)
+        if (disabled())
             return;
         // a press outside the box belongs to whatever is behind it (§8.3)
         if (!hit_test(event.position))
             return;
         // the event is claimed, so no ancestor reacts to the same press (§8.3)
         event.handled = true;
-        // the state flips before the handler runs, so the callback sees the state the box moved to (§8.3)
-        m_checked = !m_checked;
-        // a toggled box changes its fill, so the frame must be redrawn (§6.1)
-        invalidate();
-        // a box with no handler still toggles, because the state is the control (§8.3)
-        if (!m_on_toggle)
-            return;
-        // the handler receives the new state, which is what a toggle reports (§8.3)
-        m_on_toggle(m_checked);
+        // the toggle runs once, which is what a press means (§8.3)
+        toggle();
     }
 
     SemanticNode CheckBox::semantic_node() const {
@@ -129,20 +117,13 @@ namespace albor
         // the bounds travel with the node, because an adapter places the announcement where it was drawn (§10.1)
         node.set_bounds(bounds());
         // a disabled box reports the disabled state, which is what refuses activation (§10.1)
-        node.set_disabled(m_disabled);
+        node.set_disabled(disabled());
         // the check state mirrors the stored boolean, which is what a screen reader announces (§10.1)
         node.set_check(m_checked ? CheckState::Checked : CheckState::Unchecked);
         // the toggle action runs the same path a press does, and its identifier is discarded because a widget names actions by label (§10.1) the action body carries no disabled guard, because SemanticNode::invoke refuses every action while the node it belongs to is disabled, which is where that rule belongs (§10.1)
         (void)node.add_action("toggle", [control = mutable_owner(this)] {
-            // the state flips before the handler runs, so the callback sees the state the box moved to (§8.3)
-            control->m_checked = !control->m_checked;
-            // a toggled box changes its fill, so the frame must be redrawn (§6.1)
-            control->invalidate();
-            // a box with no handler still toggles, because the state is the control (§8.3)
-            if (!control->m_on_toggle)
-                return;
-            // the handler receives the new state, which is what a toggle reports (§8.3)
-            control->m_on_toggle(control->m_checked);
+            // the toggle runs through the shared command when one is bound, as a press does (§18.7)
+            control->toggle();
         });
         return node;
     }
@@ -171,15 +152,45 @@ namespace albor
         // an unchanged state redraws nothing, because the box looks the same (§6.1)
         if (m_disabled == disabled)
             return;
-        // the state is stored first, so the invalidation walks a box that already refuses input (§8.3)
+        // the state is stored first, so unbinding a command later restores what the form declared (§18.7)
         m_disabled = disabled;
+        // a bound command owns the state, so the imperative write is recorded and not applied (§18.7)
+        if (command() != nullptr)
+            return;
         // a disabled box stops accepting presses, so the frame changes (§6.1)
         invalidate();
     }
 
     bool CheckBox::disabled() const {
-        // the state is what the hit test and the dispatch both refuse on (§8.3)
+        // a bound command is the single answer, which is what three consumers reading one object means (§18.7)
+        if (command() != nullptr)
+            return !command()->state().enabled;
+        // without a command the state is what the hit test and the dispatch both refuse on (§8.3)
         return m_disabled;
+    }
+
+    void CheckBox::apply_command_state(const CommandState& state) {
+        // a box presents no label and disabled reads the command, so applicability is the only field to write (§18.2)
+        UiNode::set_visible(state.visible);
+        // the fill repaints through the disabled role, which the state resolver reads (§6.2)
+        invalidate();
+    }
+
+    void CheckBox::toggle() {
+        // the state flips before anything runs, so every observer sees the value the box moved to (§8.3)
+        m_checked = !m_checked;
+        // a toggled box changes its fill, so the frame must be redrawn (§6.1)
+        invalidate();
+        // a bound command is invoked with the new truth, which is what an action that carries a value receives (§18.3)
+        if (command() != nullptr) {
+            (void)command()->invoke(CommandInvocation{.command = command()->id(), .argument = m_checked, .source = InvocationSource::Pointer});
+            return;
+        }
+        // a box with no handler still toggles, because the state is the control (§8.3)
+        if (!m_on_toggle)
+            return;
+        // the handler receives the new state, which is what a toggle reports (§8.3)
+        m_on_toggle(m_checked);
     }
 
     void CheckBox::set_outline(Color outline) {

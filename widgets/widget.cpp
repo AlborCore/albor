@@ -1,5 +1,7 @@
 #include "widgets/widget.h"
 
+#include "commands/command.h"
+
 namespace albor
 {
     void apply_theme(UiNode& root, const Theme& theme) {
@@ -117,6 +119,43 @@ namespace albor
     bool Widget::pressed() const {
         // the flag is what the press set, and the tests read (§8.3)
         return m_pressed;
+    }
+
+    void Widget::set_command(Command* command) {
+        // a widget bound to a different command releases that one first, so it stops receiving (§18.1)
+        if (m_command != nullptr && m_command_observer != 0)
+            (void)m_command->unbind(m_command_observer);
+        // the binding handle is cleared with the command, so a later unbind finds nothing to remove (§18.1)
+        m_command_observer = 0;
+        // the new command replaces the old one, which the widget reads from here on (§18.1)
+        m_command = command;
+        // a widget with no command owns its own state again, which is what unbinding restores (§18.7)
+        if (m_command == nullptr)
+            return;
+        // the widget subscribes, and binding hands it the current state at once so it never starts stale (§18.1)
+        m_command_observer = m_command->bind_static(&Widget::command_observer, this);
+    }
+
+    Command* Widget::command() const { return m_command; }
+
+    void Widget::set_visible(bool visible) {
+        // a bound command owns applicability, so an imperative write does not apply while it is bound (§18.7)
+        if (m_command != nullptr)
+            return;
+        // an unbound widget hides itself, which is what the base node does (§6.1)
+        UiNode::set_visible(visible);
+    }
+
+    void Widget::apply_command_state(const CommandState& state) {
+        // the base widget presents no label and no disabled state of its own, so it only follows applicability (§18.7)
+        UiNode::set_visible(state.visible);
+    }
+
+    void Widget::command_observer(void* context, const CommandState& state) {
+        // the context is the widget that bound, so the publication reaches exactly the consumer that asked (§18.1)
+        auto* self = static_cast<Widget*>(context);
+        // the control shapes the state to what it can present, which is where the two published states land (§18.7)
+        self->apply_command_state(state);
     }
 
     Color Widget::resolve(const Color* theme_colors, Color own) const {

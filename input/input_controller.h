@@ -11,6 +11,9 @@
 
 namespace albor
 {
+    // the registry a key is looked up in, which is declared ahead of its definition so the header stays light (§18.5)
+    class CommandRegistry;
+
     // the per window input driver, which owns the focus ring and routes the events of §8.3 into one tree
     class InputController
     {
@@ -50,6 +53,15 @@ namespace albor
         // replay the exits for a subtree that is leaving the tree, which the tree reports before it goes (§8.3)
         void release_subtree(UiNode* node);
 
+        // point the controller at the accelerators of an application, which is null while it declares none (§18.5)
+        void set_command_registry(CommandRegistry* registry);
+
+        // hand out the accelerators the controller routes through, which is null while none were installed (§18.5)
+        [[nodiscard]] CommandRegistry* command_registry() const;
+
+        // hand out how many keys an accelerator has claimed, which the routing tests assert on (§18.5)
+        [[nodiscard]] std::size_t shortcut_invocations() const;
+
     private:
         // find the deepest focusable node under the point, which click to focus lands on (§8.3)
         [[nodiscard]] UiNode* focusable_under(UiNode& node, Point point) const;
@@ -69,6 +81,9 @@ namespace albor
         // route a keyboard event, which traverses the ring before the caret gets it (§8.3)
         void deliver_key(Event& event);
 
+        // offer the key to a bound accelerator, which returns whether one claimed it (§18.5)
+        [[nodiscard]] bool deliver_shortcut(const Event& event);
+
         // the tree the controller routes into, which the caller owns
         UiNode* m_root = nullptr;
 
@@ -80,5 +95,11 @@ namespace albor
 
         // the nodes the pointer is currently over, deepest first, which the transitions are diffed against (§8.3)
         std::vector<UiNode*> m_hover_chain;
+
+        // the accelerators this window routes keys through, which is null while the application declares none (§18.5)
+        CommandRegistry* m_commands = nullptr;
+
+        // how many keys an accelerator has claimed, which the routing tests assert on (§18.5)
+        std::size_t m_shortcut_invocations = 0;
     };
 } // namespace albor

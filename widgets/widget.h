@@ -3,12 +3,16 @@
 #include <memory>
 #include <utility>
 
+#include "commands/command_id.h"
+#include "commands/command_state.h"
 #include "semantics/semantic_provider.h"
 #include "style/theme.h"
 #include "ui/component.h"
 
 namespace albor
 {
+    // the shared action object a widget binds to, declared ahead of its definition to keep this header light (§18.1)
+    class Command;
     // hand back the mutable owner a const provider reads through, which an invoked action needs because it changes the control as a press does (§10.1)
     template <typename T>
     [[nodiscard]] T* mutable_owner(const T* provider) {
@@ -93,6 +97,15 @@ namespace albor
         // report whether a press is held on the widget, which is what the pressed paint reads (§8.3)
         [[nodiscard]] bool pressed() const;
 
+        // bind the widget to a shared command, which publishes its label and its two states (§18.7, AD-15)
+        void set_command(Command* command);
+
+        // hand out the bound command, which is null while the widget owns its own state (§18.1)
+        [[nodiscard]] Command* command() const;
+
+        // override: a bound command owns applicability, so an imperative write is recorded and not applied (§18.7)
+        void set_visible(bool visible) override;
+
     protected:
         // run the pointer transitions through the state flags, which every control calls before its own handling (§8.3)
         void handle_hover_transitions(const Event& event);
@@ -103,9 +116,21 @@ namespace albor
         // the fallback metrics, which are what a widget measures from while no theme is installed (§8.2)
         [[nodiscard]] static const ControlMetrics& default_metrics();
 
+        // apply a published state to the control, which every widget shapes to what it can present (§18.7)
+        virtual void apply_command_state(const CommandState& state);
+
     private:
+        // the publication a bound widget receives, which is a plain function pointer over this widget (§18.1)
+        static void command_observer(void* context, const CommandState& state);
+
         // the installed theme, which is null while the widget uses its own values (§6.1)
         const Theme* m_theme = nullptr;
+
+        // the shared command, which is null while the widget owns its own label, state and handler (§18.1)
+        Command* m_command = nullptr;
+
+        // the binding this widget registered on that command, which unbinding removes (§18.1)
+        ObserverHandle m_command_observer = 0;
 
         // whether the pointer is inside the widget, which the enter and leave events set (§8.3)
         bool m_hovered = false;

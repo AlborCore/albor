@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "commands/command.h"
+
 namespace albor
 {
     // the extent of the thumb along the track, which is what the user grabs (§6.1)
@@ -68,7 +70,7 @@ namespace albor
         if (!visible())
             return false;
         // a disabled slider is not a hit, because it refuses input (§8.3)
-        if (m_disabled)
+        if (disabled())
             return false;
         // the press must land inside the arranged bounds, with the far edge excluded so neighbours stay separate (§8.3)
         const bool inside = logical_point.x >= bounds().x && logical_point.x < bounds().x + bounds().width && logical_point.y >= bounds().y && logical_point.y < bounds().y + bounds().height;
@@ -85,7 +87,7 @@ namespace albor
         // a key that steers the value reaches the focused slider (§8.3)
         if (event.kind == EventKind::KeyDown && (event.key == Key::ArrowRight || event.key == Key::ArrowUp || event.key == Key::ArrowLeft || event.key == Key::ArrowDown)) {
             // a disabled slider does not claim the key, because it refuses input (§8.3)
-            if (m_disabled)
+            if (disabled())
                 return;
             // a modified key is an application shortcut, so a plain step ignores it (§8.3)
             if (!event.modifiers.none())
@@ -122,7 +124,7 @@ namespace albor
             return;
         }
         // a disabled slider does not claim a press, because it refuses input (§8.3)
-        if (m_disabled)
+        if (disabled())
             return;
         // a press outside the track belongs to whatever is behind the slider (§8.3)
         if (!hit_test(event.position))
@@ -168,7 +170,7 @@ namespace albor
         // the bounds travel with the node, because an adapter places the announcement where it was drawn (§10.1)
         node.set_bounds(bounds());
         // a disabled slider reports the disabled state, which is what refuses adjustment (§10.1)
-        node.set_disabled(m_disabled);
+        node.set_disabled(disabled());
         // a slider is not checkable, so the check state stays not checkable (§10.1)
         node.set_check(CheckState::NotCheckable);
         // the name carries the value, because the numeric value is what a screen reader must speak (§10.1)
@@ -236,7 +238,7 @@ namespace albor
 
     void Slider::step(float delta) {
         // a disabled slider refuses a step, because it refuses input (§8.3)
-        if (m_disabled)
+        if (disabled())
             return;
         // the value moves by the signed amount, which set_value clamps into the range (§8)
         const float before = m_value;
@@ -245,6 +247,11 @@ namespace albor
         // an unchanged value reports nothing, because a step past the end changed nothing (§8.3)
         if (m_value == before)
             return;
+        // a bound command is invoked with the new value, which is what an action that carries a value receives (§18.3)
+        if (command() != nullptr) {
+            (void)command()->invoke(CommandInvocation{.command = command()->id(), .argument = static_cast<double>(m_value), .source = InvocationSource::Pointer});
+            return;
+        }
         // the handler receives the new value, which is what a change reports (§8.3)
         if (m_on_change)
             m_on_change(m_value);
@@ -254,15 +261,28 @@ namespace albor
         // an unchanged state redraws nothing, because the slider looks the same (§6.1)
         if (m_disabled == disabled)
             return;
-        // the state is stored first, so the invalidation walks a slider that already refuses input (§8.3)
+        // the state is stored first, so unbinding a command later restores what the form declared (§18.7)
         m_disabled = disabled;
+        // a bound command owns the state, so the imperative write is recorded and not applied (§18.7)
+        if (command() != nullptr)
+            return;
         // a disabled slider stops accepting presses, so the frame changes (§6.1)
         invalidate();
     }
 
     bool Slider::disabled() const {
-        // the state is what the hit test and the dispatch both refuse on (§8.3)
+        // a bound command is the single answer, which is what three consumers reading one object means (§18.7)
+        if (command() != nullptr)
+            return !command()->state().enabled;
+        // without a command the state is what the hit test and the dispatch both refuse on (§8.3)
         return m_disabled;
+    }
+
+    void Slider::apply_command_state(const CommandState& state) {
+        // a slider presents no label and disabled reads the command, so applicability is the only field to write (§18.2)
+        UiNode::set_visible(state.visible);
+        // the track and the thumb repaint through the disabled role, which the state resolver reads (§6.2)
+        invalidate();
     }
 
     void Slider::set_track_color(Color color) {
