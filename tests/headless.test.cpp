@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 
+#include "layout/column_layout.h"
 #include "platform/headless/headless_event_loop.h"
 #include "platform/headless/headless_platform_window.h"
 #include "render/frame_scene.h"
@@ -18,6 +19,8 @@
 #include "text/text-skia/skia_text_engine.h"
 #include "ui/scene_builder.h"
 #include "ui/ui_node.h"
+#include "widgets/canvas.h"
+#include "widgets/checkbox.h"
 #include "window/window_metrics.h"
 #include "window/window_options.h"
 
@@ -368,4 +371,95 @@ TEST(HeadlessPipelineChecks, TheTwoEnginesDisagreeOnBaselinePlacement) {
     EXPECT_EQ(measured.run->glyph_count(), reference.run->glyph_count());
     // the baselines are recorded for the defect report rather than asserted, because they do not yet agree (§9.1)
     EXPECT_TRUE(true) << "oracle baseline " << reference.run->lines().front().origin.y << " against vendored " << measured.run->lines().front().origin.y;
+}
+
+TEST(HeadlessPipelineChecks, ACanvasDrawBodyLandsWhereItsNodeWasArranged) {
+    // arrange two canvases in one column, which is what a stack of them produces (§6.4, §8.2)
+    BindingEngine engine;
+    ColumnLayout column;
+    column.set_gap(0.0f);
+    column.set_padding(0.0f);
+    // the first canvas is red, so the row it occupies is distinguishable from the second (§6.3)
+    auto first = std::make_unique<Canvas>(&engine);
+    first->set_intrinsic_size(Size{40.0f, 20.0f});
+    Canvas* first_ptr = first.get();
+    first->set_draw([first_ptr](RenderContext& context) {
+        const Rect bounds = first_ptr->bounds();
+        context.draw_rect(bounds, {.fill = Color::rgb(0.8f, 0.1f, 0.1f)});
+    });
+    column.add_child(std::move(first));
+    // the second canvas is green, and it is the one whose position the bug moved to the origin (§6.2)
+    auto second = std::make_unique<Canvas>(&engine);
+    second->set_intrinsic_size(Size{40.0f, 20.0f});
+    Canvas* second_ptr = second.get();
+    second->set_draw([second_ptr](RenderContext& context) {
+        const Rect bounds = second_ptr->bounds();
+        context.draw_rect(bounds, {.fill = Color::rgb(0.2f, 0.75f, 0.45f)});
+    });
+    column.add_child(std::move(second));
+
+    // act the scene is built and drawn through the reference (§6.3)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{SURFACE_WIDTH, SURFACE_HEIGHT}, 1.0f);
+    SceneBuilder builder;
+    const std::shared_ptr<const FrameScene> scene = builder.build(column, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    ASSERT_NE(scene, nullptr);
+    auto surface = software::SoftwareRenderSurface::create(metrics);
+    ASSERT_NE(surface, nullptr);
+    software::SoftwareRendererBackend backend;
+    backend.execute_frame(*surface, *scene);
+
+    // assert the first canvas holds the first row, which is where the column placed it (§8.2)
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    ASSERT_FALSE(pixels.empty());
+    std::uint8_t red = 0;
+    std::uint8_t green = 0;
+    std::uint8_t blue = 0;
+    pixel_at(pixels, 4, red, green, blue);
+    EXPECT_GT(red, 150u);
+    EXPECT_LT(green, 60u);
+    // assert the second canvas holds its own row, which is what the draw origin fix restored (§6.2)
+    pixel_at(pixels, static_cast<std::size_t>(SURFACE_WIDTH) * 24u + 4u, red, green, blue);
+    EXPECT_GT(green, 150u);
+    EXPECT_LT(red, 60u);
+    // assert nothing drew below the two rows, which proves the second did not also land at the top (§6.2)
+    pixel_at(pixels, static_cast<std::size_t>(SURFACE_WIDTH) * 44u + 4u, red, green, blue);
+    EXPECT_LT(red, 60u);
+    EXPECT_LT(green, 60u);
+}
+
+TEST(HeadlessPipelineChecks, ACheckboxKeepsItsSquareWhenTheColumnIsWider) {
+    // arrange a column wider than the box, which is what a full window produces (§8.2)
+    BindingEngine engine;
+    ColumnLayout column;
+    column.set_gap(0.0f);
+    column.set_padding(0.0f);
+    auto box = std::make_unique<CheckBox>(&engine);
+    column.add_child(std::move(box));
+
+    // arrange the column, which hands the checkbox the full width (§8.2)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{SURFACE_WIDTH, SURFACE_HEIGHT}, 1.0f);
+    Size measured{};
+    column.measure(SizeConstraints::unconstrained(), measured);
+    column.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SURFACE_WIDTH, SURFACE_HEIGHT}));
+
+    // act the scene is built and drawn through the reference (§6.3)
+    SceneBuilder builder;
+    const std::shared_ptr<const FrameScene> scene = builder.build(column, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    ASSERT_NE(scene, nullptr);
+    auto surface = software::SoftwareRenderSurface::create(metrics);
+    ASSERT_NE(surface, nullptr);
+    software::SoftwareRendererBackend backend;
+    backend.execute_frame(*surface, *scene);
+
+    // assert the box did not stretch, which is the whole of the fix (§8.2)
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    ASSERT_FALSE(pixels.empty());
+    // the far right of the row carries nothing, because the square sits at the leading edge (§8.2)
+    std::uint8_t red = 0;
+    std::uint8_t green = 0;
+    std::uint8_t blue = 0;
+    pixel_at(pixels, static_cast<std::size_t>(SURFACE_WIDTH) - 4u, red, green, blue);
+    EXPECT_LT(red, 60u);
+    EXPECT_LT(green, 60u);
+    EXPECT_LT(blue, 60u);
 }

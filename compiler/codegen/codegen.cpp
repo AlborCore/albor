@@ -462,6 +462,9 @@ namespace albor::compiler
             // render the colour to text helper, which the string conversion needs (§11.3)
             void emit_color_helper();
 
+            // emit the float printing helper, which a readout reaches (§11.3)
+            void emit_float_helper();
+
             // collect the manifest headers the given type needs, which is where a record struct is declared (§11.2, AD-17)
             void collect_record_headers(const ValueType& type);
 
@@ -617,6 +620,9 @@ namespace albor::compiler
 
             // whether a colour needs the text helper, which adds the cstdio header (§11.3)
             bool m_uses_color_helper = false;
+
+            // whether a float renders as text, which the shortest form helper answers (§11.3)
+            bool m_uses_float_helper = false;
 
             // whether the component declares signals, which adds the slot types (§8.3)
             bool m_has_signals = false;
@@ -811,6 +817,9 @@ namespace albor::compiler
         }
 
         void ComponentEmitter::scan_color(const Expression& expression) {
+            // a string conversion of a float needs the shortest form helper, which prints it (§11.3)
+            if (const auto* conversion = dynamic_cast<const ConversionExpression*>(&expression); conversion != nullptr && conversion->target_type == "string" && type_of(*conversion->value).is(TypeKind::Float))
+                m_uses_float_helper = true;
             // a translation resolves through the catalogue, which needs its own header (§9.2, §11.3)
             if (dynamic_cast<const TranslationExpression*>(&expression) != nullptr)
                 m_uses_i18n = true;
@@ -1075,9 +1084,13 @@ namespace albor::compiler
             line(0, "");
             line(0, "#include \"" + m_stem + ".h\"");
             line(0, "");
-            // the channel printing helper needs it, which only a colour to text conversion reaches (§11.3)
-            if (m_uses_color_helper)
+            // the printing helpers need them, which only a number or colour to text conversion reaches (§11.3)
+            if (m_uses_color_helper || m_uses_float_helper) {
+                line(0, "#include <array>");
                 line(0, "#include <cstdio>");
+                line(0, "#include <cstdlib>");
+                line(0, "#include <cstring>");
+            }
             // the signal slots need the functional header, which a signal component reaches (§8.3)
             if (m_has_signals)
                 line(0, "#include <functional>");
@@ -1124,6 +1137,11 @@ namespace albor::compiler
             line(0, "");
             line(0, "namespace albor");
             line(0, "{");
+            // the printing helpers come first, because an evaluator below may call one (§11.3)
+            if (m_uses_float_helper)
+                emit_float_helper();
+            if (m_uses_color_helper)
+                emit_color_helper();
             emit_body();
             emit_lifecycle();
             emit_accessors();
@@ -1161,8 +1179,6 @@ namespace albor::compiler
                 reconcile(slot);
                 line(1, "}");
             }
-            if (m_uses_color_helper)
-                emit_color_helper();
             line(0, "} // namespace albor");
         }
 
@@ -1990,6 +2006,9 @@ namespace albor::compiler
                 line(2, "// the canvas extent is read here, because a drawing is laid out in the node (§6.4)");
                 line(2, "const float canvas_width = self->m_node_" + std::to_string(slot.index) + "->bounds().width;");
                 line(2, "const float canvas_height = self->m_node_" + std::to_string(slot.index) + "->bounds().height;");
+                // the origin is the node corner, because a recorded rect is absolute in the scene (§6.1, §6.2)
+                line(2, "const Rect canvas_bounds = self->m_node_" + std::to_string(slot.index) + "->bounds();");
+                line(2, "const Point canvas_origin{canvas_bounds.x, canvas_bounds.y};");
                 m_object = "self";
                 // the extent names resolve inside the body, because that is where the layout answers (§6.4)
                 m_draw_extent = true;
@@ -2018,7 +2037,8 @@ namespace albor::compiler
                     }
                     if (!current.empty())
                         numbers.push_back(current);
-                    const std::string rect_value = numbers.size() >= 4 ? "Rect::from_origin_size(Point{" + numbers[0] + ", " + numbers[1] + "}, Size{" + numbers[2] + ", " + numbers[3] + "})" : "Rect::from_origin_size(Point{0, 0}, Size{0, 0})";
+                    // the origin is the canvas corner plus the written offset, because the scene is absolute (§6.2)
+                    const std::string rect_value = numbers.size() >= 4 ? "Rect::from_origin_size(Point{canvas_origin.x + " + numbers[0] + ", canvas_origin.y + " + numbers[1] + "}, Size{" + numbers[2] + ", " + numbers[3] + "})" : "Rect::from_origin_size(canvas_origin, Size{0, 0})";
                     // the paint is declared once for the block, because a primitive fills and then draws (§6.2)
                     if (!painted) {
                         // the declaration reads before the first primitive, which is where the paint lives (§6.2)
@@ -2041,6 +2061,24 @@ namespace albor::compiler
                 m_object.clear();
                 line(1, "}");
             }
+        }
+
+        void ComponentEmitter::emit_float_helper() {
+            line(0, "");
+            line(1, "// render a float as the shortest text that reads it back, which is what a readout shows (§11.3)");
+            line(1, "std::string " + m_stem + "_float_to_text(float value) {");
+            line(2, "// six digits is the shortest form that reads a float back exactly, which is what %g guarantees (§11.3)");
+            line(2, "std::array<char, 32> buffer{};");
+            line(2, "const int written = std::snprintf(buffer.data(), buffer.size(), \"%g\", value);");
+            line(2, "if (written <= 0 || static_cast<std::size_t>(written) >= buffer.size())");
+            line(3, "return std::to_string(value);");
+            // the text ends where snprintf says, because the array may hold more (§11.3)
+            line(2, "std::string text(buffer.data(), static_cast<std::size_t>(written));");
+            line(2, "// a whole value renders without a decimal point, because a readout should not say 2 (§11.3)");
+            line(2, "if (text.find('.') == std::string::npos && text.find('e') == std::string::npos && text.find('E') == std::string::npos)");
+            line(3, "text += \".0\";");
+            line(2, "return text;");
+            line(1, "}");
         }
 
         void ComponentEmitter::emit_color_helper() {
@@ -2174,8 +2212,12 @@ namespace albor::compiler
                 // a text renders as itself, which is the identity of the conversion (§11.3)
                 if (from == TypeKind::String)
                     return "(" + operand + ")";
-                // a number renders through the runtime, which is the shortest decimal (§11.3)
-                return "std::to_string(" + operand + ")";
+                // a whole number renders without a decimal, because a readout should not say 2.000000 (§11.3)
+                if (from == TypeKind::Int)
+                    return "std::to_string(" + operand + ")";
+                // a float renders through the shortest round trip, which to_string lacks (§11.3)
+                m_uses_float_helper = true;
+                return m_stem + "_float_to_text(" + operand + ")";
             }
             // an integer target parses or narrows, which the operand type decides (§11.3)
             if (conversion.target_type == "int") {

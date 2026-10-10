@@ -59,6 +59,9 @@ namespace albor
         // the outline width the box strokes with, which comes from the theme when one is installed (§6.1)
         [[nodiscard]] float outline_width() const;
 
+        // the square the box paints and accepts presses on, which is the metric rather than the arranged bounds (§8.2)
+        [[nodiscard]] Rect box_rect() const;
+
         // the fill colours the box resolves through, which are the installed palette when a theme is present (§6.1)
         [[nodiscard]] const Color* fill_colors() const;
 

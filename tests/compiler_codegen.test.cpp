@@ -529,8 +529,8 @@ component Well {
     EXPECT_TRUE(contains(cpp.content, "(self->m_accent.get() != Color{})"));
     // the conversions render their shapes, which cover every arm of the rule (§11.3)
     EXPECT_TRUE(contains(cpp.content, "(self->m_enabled.get() ? std::string(\"true\") : std::string(\"false\"))"));
-    EXPECT_TRUE(contains(cpp.content, "std::to_string(self->m_ratio.get())"));
-    EXPECT_TRUE(contains(cpp.content, "std::to_string(self->m_lead.get())"));
+    EXPECT_TRUE(contains(cpp.content, "well_float_to_text(self->m_ratio.get())"));
+    EXPECT_TRUE(contains(cpp.content, "well_float_to_text(self->m_lead.get())"));
     EXPECT_TRUE(contains(cpp.content, "std::to_string(self->m_counter.get())"));
     EXPECT_TRUE(contains(cpp.content, "!self->m_named.get().empty()"));
     EXPECT_TRUE(contains(cpp.content, "(self->m_lead.get() != 0.0f)"));
@@ -541,7 +541,7 @@ component Well {
     EXPECT_TRUE(contains(cpp.content, "static_cast<int>(self->m_ratio.get())"));
     EXPECT_TRUE(contains(cpp.content, "(self->m_ratio.get())"));
     EXPECT_TRUE(contains(cpp.content, "(self->m_enabled.get())"));
-    EXPECT_TRUE(contains(cpp.content, "std::to_string(1.5f)"));
+    EXPECT_TRUE(contains(cpp.content, "well_float_to_text(1.5f)"));
     EXPECT_TRUE(contains(cpp.content, "well_color_to_hex(Color::rgb("));
     EXPECT_TRUE(contains(cpp.content, "(true ? std::string(\"true\") : std::string(\"false\"))"));
     EXPECT_TRUE(contains(cpp.content, "(self->m_counter.get() > 2)"));
@@ -765,8 +765,9 @@ TEST(Codegen, ACanvasDrawBlockBecomesADrawBody) {
     EXPECT_TRUE(contains(cpp.content, "set_draw([this](RenderContext& context) { draw_0_body(this, context); });"));
     EXPECT_TRUE(contains(cpp.content, "static void draw_0_body(void* raw, RenderContext& context);"));
     EXPECT_TRUE(contains(cpp.content, "const float canvas_width = self->m_node_0->bounds().width;"));
-    EXPECT_TRUE(contains(cpp.content, "context.draw_rect(Rect::from_origin_size(Point{0, 0}, Size{canvas_width, canvas_height}), paint);"));
+    EXPECT_TRUE(contains(cpp.content, "context.draw_rect(Rect::from_origin_size(Point{canvas_origin.x + 0, canvas_origin.y + 0}, Size{canvas_width, canvas_height}), paint);"));
     EXPECT_TRUE(contains(cpp.content, "(canvas_width*self->m_level.get())"));
+    EXPECT_TRUE(contains(cpp.content, "const Point canvas_origin{canvas_bounds.x, canvas_bounds.y};"));
 }
 
 TEST(Codegen, ADrawBlockIsRefusedOutsideACanvas) {
