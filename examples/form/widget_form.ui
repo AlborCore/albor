@@ -38,6 +38,7 @@ component WidgetForm {
         Slider {
             id: form_level;
             value: level;
+            disabled: armed;
             min: 0.0;
             max: 1.0;
             on_changed: {
@@ -57,7 +58,7 @@ component WidgetForm {
 
         Label {
             id: form_toggle;
-            text: "check to disable the button";
+            text: "check to disable the controls";
         }
 
         CheckBox {
