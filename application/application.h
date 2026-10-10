@@ -1,10 +1,13 @@
 #pragma once
 
+#include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 
 #include "application/task_queue.h"
 #include "application/timer.h"
+#include "application/window_stage.h"
 #include "ui/ui_event.h"
 #include "window/window.h"
 #include "window/window_handle.h"
@@ -41,11 +44,21 @@ namespace albor
     // the signature a platform backend implements to build the native loop
     using PlatformEventLoopFactory = std::function<std::unique_ptr<PlatformEventLoop>()>;
 
+    // the state the installed factory lives in, heap held behind a constant initialized pointer (§4.1)
+    struct PlatformEventLoopFactoryState
+    {
+        // the installed factory, which is empty until a platform backend installs one (§4.1)
+        PlatformEventLoopFactory factory;
+    };
+
     // install the factory the framework builds its native loop with
     void set_platform_event_loop_factory(PlatformEventLoopFactory factory);
 
     // hand out the installed factory, which is empty until a platform backend installs one
     [[nodiscard]] const PlatformEventLoopFactory& platform_event_loop_factory();
+
+    class RendererBackend;
+    class TextEngine;
 
     // the central singleton that owns the native loop, the window registry and the task dispatcher (§4.1)
     class Application
@@ -83,6 +96,9 @@ namespace albor
         // create a window on the UI thread and hand out the handle that names it (§4.1)
         WindowHandle create_window(const WindowOptions& options);
 
+        // create a main window whose tree the builder builds, wired for rendering (§6.1, §8.1)
+        WindowHandle create_window(const WindowOptions& options, RootBuilder builder);
+
         // find the window a handle names, returning null when the handle is stale (§5.2)
         [[nodiscard]] Window* window(WindowHandle handle);
 
@@ -94,6 +110,9 @@ namespace albor
 
         // hand out the number of open windows
         [[nodiscard]] std::size_t window_count() const;
+
+        // hand out how many frames a window's tree built, which a window without one never did (§6.1)
+        [[nodiscard]] std::uint64_t frame_count(WindowHandle handle) const;
 
         // hand out the task dispatcher, which an application posts work to
         [[nodiscard]] TaskQueue& tasks();
@@ -135,8 +154,27 @@ namespace albor
         // attach the framework listeners to a window, which is what makes its events reach the application (§5.3)
         void bind_window(WindowHandle handle, Window& window);
 
+        // build the renderer and the engine the main windows share, which only the first one pays for (§6.3, §9.1)
+        bool ensure_engines();
+
+        // drop the stage of a closed window, since nothing may touch its surface afterwards (§6.1)
+        void release_stage(WindowHandle handle);
+
+        // end the run when no window and no stage is left, which is the default lifetime (§4.1)
+        void end_run_when_no_windows();
+
+        // release the stages, the windows and the engines in the order a layer outlives its drawable (§6.3)
+        void shutdown();
+
         // the native loop the application pumps, which is never null for a live application
         std::unique_ptr<PlatformEventLoop> m_event_loop;
+
+        // the renderer and the text engine the main windows share, which the installed selection built (§6.3, §9.1)
+        std::unique_ptr<RendererBackend> m_renderer;
+        std::unique_ptr<TextEngine> m_text;
+
+        // the frame machinery of every main window, keyed by the id of the window that owns it (§6.1, AD-18)
+        std::map<std::uint64_t, std::unique_ptr<WindowStage>> m_stages;
 
         // the task queue that carries work from any thread to the ui thread (§4.1)
         TaskQueue m_tasks;

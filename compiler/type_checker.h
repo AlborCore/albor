@@ -99,6 +99,22 @@ namespace albor::compiler
         SourceSpan span;
     };
 
+    // one drawing call inside a canvas, resolved against the primitive vocabulary (§6.4)
+    struct CheckedDrawCall
+    {
+        // the primitive the author named, which the vocabulary decided (§6.4)
+        std::string primitive;
+
+        // the checked arguments in written order, which the primitive arity fixes (§6.4)
+        std::vector<SharedExpression> arguments;
+
+        // the component properties the call reads, which the draw body re-evaluates on (§13.3)
+        std::vector<std::string> dependencies;
+
+        // where the call was written (§11.1)
+        SourceSpan span;
+    };
+
     // one handler on an element, resolved against the element type (§11.1)
     struct CheckedHandler
     {
@@ -132,6 +148,9 @@ namespace albor::compiler
 
         // the resolved handlers (§11.1)
         std::vector<CheckedHandler> handlers;
+
+        // the resolved draw calls, which only a canvas carries (§6.4)
+        std::vector<CheckedDrawCall> draw_calls;
 
         // the checked children, which a container accepts (§11.1, §8)
         std::vector<std::shared_ptr<CheckedNode>> children;
@@ -210,9 +229,18 @@ namespace albor::compiler
             // the repeat the scope sits inside, which contributes the item and index bindings (§11.1)
             const CheckedNode* repeat = nullptr;
 
+            // the signal the handler body sits inside, whose parameters the body reads by name (§11.1)
+            const ElementSignal* handler_signal = nullptr;
+
+            // whether the scope sits inside a draw block, which is what exposes the canvas extent (§6.4)
+            bool in_draw = false;
+
             // find the type of a name the scope exposes, which answers both what a reference asks (§11.1)
             [[nodiscard]] std::optional<ValueType> lookup(std::string_view name) const;
         };
+
+        // resolve the draw calls of a canvas against the primitive vocabulary (§6.4)
+        void resolve_draw_calls(const TreeNode& node, const ElementType& type, const Scope& scope, CheckedNode& out);
 
         // resolve the declarations of one component, which is the first pass (§11.1)
         void resolve_declarations(const ComponentDeclaration& component, CheckedComponent& out);

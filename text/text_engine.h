@@ -33,6 +33,13 @@ namespace albor
     // the signature a text engine implements to build itself (§9.1)
     using TextEngineFactory = std::function<std::unique_ptr<TextEngine>()>;
 
+    // the state the installed factory lives in, heap held behind a constant initialized pointer (§9.1)
+    struct TextEngineFactoryState
+    {
+        // the installed factory, which is empty until a backend installs one (§9.1)
+        TextEngineFactory factory;
+    };
+
     // install the text engine the framework measures with, which a backend calls once at startup (§9.1)
     void set_text_engine_factory(TextEngineFactory factory);
 

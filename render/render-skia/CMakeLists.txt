@@ -45,3 +45,7 @@ target_include_directories(albor-render-skia SYSTEM PRIVATE ${ALBOR_SKIA_INCLUDE
 
 # the backend implements the rendering hal and reaches the metal device and the core animation layer (§6.3, AD-16)
 target_link_libraries(albor-render-skia PUBLIC albor-render PRIVATE albor-skia "-framework Metal" "-framework QuartzCore" "-framework Foundation")
+
+# the auto target links the archive whole, so the metal backend installs itself at load without a call (§6.3, AD-26)
+add_library(albor-render-skia-auto INTERFACE)
+target_link_libraries(albor-render-skia-auto INTERFACE "$<LINK_LIBRARY:WHOLE_ARCHIVE,albor-render-skia>")

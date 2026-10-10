@@ -62,6 +62,12 @@ namespace albor::compiler
     } // namespace
 
     std::optional<ValueType> TypeChecker::Scope::lookup(std::string_view name) const {
+        // a draw block reads the canvas extent, which is the node it paints into (§6.4)
+        if (in_draw) {
+            // the arranged width is the only width a drawing can be correct against (§6.4)
+            if (name == "canvas_width" || name == "canvas_height")
+                return scalar(TypeKind::Float);
+        }
         // the repeat bindings are checked first, because they are the nearest scope (§11.1)
         if (repeat != nullptr) {
             // the item binding carries the element type, which a vector source unwraps for its body (§11.1)
@@ -70,6 +76,15 @@ namespace albor::compiler
             // the index binding is always an integer, because it counts (§11.1)
             if (name == repeat->repeat_index_name)
                 return scalar(TypeKind::Int);
+        }
+        // the signal parameters are read before the component, because a handler shadows a property (§11.1)
+        if (handler_signal != nullptr) {
+            // each parameter is named by the catalog, so the body writes what the widget carries (§11.1)
+            for (std::size_t index = 0; index < handler_signal->parameter_names.size() && index < handler_signal->parameter_types.size(); index++) {
+                // the name decides, so a parameter resolves to exactly one type (§11.1)
+                if (handler_signal->parameter_names[index] == name)
+                    return handler_signal->parameter_types[index];
+            }
         }
         // the declarations are scanned, because every scope is built from a resolved component (§11.1)
         for (const CheckedProperty& property : *properties) {
@@ -279,6 +294,8 @@ namespace albor::compiler
         resolve_assignments(node, *type, scope, *out);
         // the handlers resolve against the element's signals (§11.1)
         resolve_handlers(node, *type, scope, *out);
+        // the draw calls resolve against the primitive vocabulary, which only a canvas writes (§6.4)
+        resolve_draw_calls(node, *type, scope, *out);
         // the children resolve against whether the element is a container (§11.1, §8)
         resolve_children(node, *type, scope, *out);
         return out;
@@ -312,6 +329,70 @@ namespace albor::compiler
             out->repeat_body = resolve_node(*node.repeat_body, inner);
         }
         return out;
+    }
+
+    void TypeChecker::resolve_draw_calls(const TreeNode& node, const ElementType& type, const Scope& scope, CheckedNode& out) {
+        // only a canvas draws, because every other widget paints itself (§6.4)
+        if (!node.has_draw)
+            return;
+        if (type.name != "Canvas") {
+            // the problem names the element, because the author must know which types draw (§6.4)
+            m_diagnostics.add(Diagnostic::Severity::Error, node.span, "E0601", "'" + type.name + "' does not draw; only a canvas writes a draw block");
+            return;
+        }
+        // the canvas extent is readable inside the block, because a drawing is laid out in it (§6.4)
+        const Scope draw_scope{.properties = scope.properties, .repeat = scope.repeat, .in_draw = true};
+        // each call resolves on its own, because one mistake must not hide the rest (§6.4)
+        for (const DrawCall& call : node.draw_calls) {
+            // the call is assembled locally, because the primitive decides its arity (§6.4)
+            CheckedDrawCall out_call;
+            // the name and the span come straight from the written call (§6.4)
+            out_call.primitive = call.primitive;
+            out_call.span = call.span;
+            // the vocabulary decides how many arguments the primitive takes (§6.4)
+            std::size_t expected = 0;
+            bool known = true;
+            // the arity is checked here, because a primitive with the wrong count cannot be emitted (§6.4)
+            if (call.primitive == "fill_rect" || call.primitive == "fill_rounded_rect")
+                expected = call.primitive == "fill_rect" ? 5u : 6u;
+            else
+                known = false;
+            if (!known) {
+                // the problem names the primitive, because the vocabulary is closed (§6.4)
+                m_diagnostics.add(Diagnostic::Severity::Error, call.span, "E0602", "'" + call.primitive + "' is not a drawing primitive; the vocabulary is fill_rect and fill_rounded_rect");
+                continue;
+            }
+            if (call.arguments.size() != expected) {
+                // the problem points at the call, because that is what the author must fix (§6.4)
+                m_diagnostics.add(Diagnostic::Severity::Error, call.span, "E0603", "'" + call.primitive + "' takes " + std::to_string(expected) + " arguments");
+                continue;
+            }
+            // each argument is typed in the draw scope, which reads the canvas extent (§6.4)
+            std::size_t index = 0;
+            bool arguments_ok = true;
+            for (const ExpressionPtr& argument : call.arguments) {
+                // the argument shares the parsed expression, because the tree owns it (§11.1)
+                SharedExpression shared(argument.get(), [](const Expression*) {});
+                // the colour argument is the only one that is not a number (§6.4)
+                const bool colour = index + 1 == expected;
+                // the type is checked against what the primitive expects, because nothing converts implicitly (§11.1)
+                const ValueType actual = type_expression(*shared, draw_scope, out_call.dependencies);
+                // a whole number is a coordinate, because a drawing is measured in pixels and no scale applies (§6.4)
+                const bool measure_ok = actual.is(TypeKind::Int) && !colour;
+                if (!actual.is_error() && !measure_ok && !assignable(actual, colour ? scalar(TypeKind::Color) : scalar(TypeKind::Float)))
+                    arguments_ok = false;
+                // the argument is kept, because the codegen emits it into the body (§6.4)
+                out_call.arguments.push_back(shared);
+                index++;
+            }
+            if (!arguments_ok) {
+                // the problem points at the call, because the mismatch is in one of its arguments (§6.4)
+                m_diagnostics.add(Diagnostic::Severity::Error, call.span, "E0604", "'" + call.primitive + "' takes numbers and a final colour");
+                continue;
+            }
+            // the call is kept, because the codegen emits it into the draw body (§6.4)
+            out.draw_calls.push_back(std::move(out_call));
+        }
     }
 
     void TypeChecker::resolve_assignments(const TreeNode& node, const ElementType& type, const Scope& scope, CheckedNode& out) {
@@ -364,13 +445,16 @@ namespace albor::compiler
         out_handler.name = handler.name;
         out_handler.span = handler.span;
         // the signal must exist on the element, because the codegen wires its callback to it (§11.1)
-        if (type.find_signal(handler.name) == nullptr) {
+        const ElementSignal* signal = type.find_signal(handler.name);
+        if (signal == nullptr) {
             // the problem names both sides, because the author needs to know what the type does raise (§11.1)
             report_unknown_signal(handler.span, type.name, handler.name);
         }
-        // the body resolves against the component, because a handler reads and writes the component (§11.1)
+        // the body resolves against the component plus the signal parameters, which the body reads by name (§11.1)
+        Scope body_scope = scope;
+        body_scope.handler_signal = signal;
         for (const HandlerStatement& statement : handler.body)
-            resolve_statement(statement, scope, out_handler);
+            resolve_statement(statement, body_scope, out_handler);
         // the handler is kept, because the codegen wires a callback to it (§11.1)
         out.handlers.push_back(std::move(out_handler));
     }

@@ -386,6 +386,19 @@ namespace albor::compiler
         Repeat
     };
 
+    // one drawing call inside a draw block, which the codegen emits into the canvas body (§6.4, §11.1)
+    struct DrawCall
+    {
+        // the primitive the author named, which the checker matches against the closed vocabulary (§6.4)
+        std::string primitive;
+
+        // the arguments in written order, which the primitive's arity fixes (§6.4)
+        std::vector<ExpressionPtr> arguments;
+
+        // where the call was written (§11.1)
+        SourceSpan span;
+    };
+
     // one child of an element, which is either a declared element or a repeated element (§11.1)
     class TreeNode
     {
@@ -404,6 +417,12 @@ namespace albor::compiler
 
         // the handlers of an element (§11.1)
         std::vector<HandlerAttachment> handlers;
+
+        // the drawing calls a canvas wrote, which the codegen emits as its draw body (§6.4, §11.1)
+        std::vector<DrawCall> draw_calls;
+
+        // whether the author wrote a draw block, which a canvas is the only element that accepts (§6.4)
+        bool has_draw = false;
 
         // the children of an element, which may themselves be repeats (§11.1)
         std::vector<std::unique_ptr<TreeNode>> children;

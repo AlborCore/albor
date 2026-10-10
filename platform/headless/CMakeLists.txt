@@ -14,3 +14,7 @@ target_compile_features(albor-platform-headless PUBLIC cxx_std_23)
 
 # the adapter implements the loop and the window interfaces, which arrive through the application (§3.2)
 target_link_libraries(albor-platform-headless PUBLIC albor-window albor-application)
+
+# the auto target links the archive whole, so the adapter installs itself at load without a call (§5.3, AD-16)
+add_library(albor-platform-headless-auto INTERFACE)
+target_link_libraries(albor-platform-headless-auto INTERFACE "$<LINK_LIBRARY:WHOLE_ARCHIVE,albor-platform-headless>")

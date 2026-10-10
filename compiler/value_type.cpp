@@ -261,9 +261,9 @@ namespace albor::compiler
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Slider",
                                               // the value and the disabled state and the two colours are what a slider exposes (§8)
-                                              .properties = {ElementProperty{.name = "value", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "track_color", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "thumb_color", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}},
-                                              // a slider raises a change when the user drags it (§8)
-                                              .signals = {ElementSignal{.name = "changed", .parameter_types = {scalar(TypeKind::Float)}}},
+                                              .properties = {ElementProperty{.name = "value", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "min", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "max", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "track_color", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "thumb_color", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}},
+                                              // a slider raises a change when the user drags it, and names the value (§8)
+                                              .signals = {ElementSignal{.name = "changed", .parameter_types = {scalar(TypeKind::Float)}, .parameter_names = {"value"}}},
                                               // a slider is a leaf, so it takes no children (§8)
                                               .accepts_children = false});
         // a leaf carries a truth value the user toggles (§8)
@@ -272,7 +272,7 @@ namespace albor::compiler
                                               // the checked and the disabled state and the two colours are what a checkbox exposes (§8)
                                               .properties = {ElementProperty{.name = "checked", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "outline", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "check_fill", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}},
                                               // a checkbox raises a toggle with its new value (§8)
-                                              .signals = {ElementSignal{.name = "toggled", .parameter_types = {scalar(TypeKind::Bool)}}},
+                                              .signals = {ElementSignal{.name = "toggled", .parameter_types = {scalar(TypeKind::Bool)}, .parameter_names = {"checked"}}},
                                               // a checkbox is a leaf, so it takes no children (§8)
                                               .accepts_children = false});
         // a leaf hands its surface to application code, which is custom drawing (§8, §6.4)

@@ -30,17 +30,28 @@ namespace albor
         Component::arrange(bounds);
     }
 
+    Rect CheckBox::box_rect() const {
+        // the metric is the control size, because the box is a fixed square whatever it is arranged into (§8.2)
+        const ControlMetrics& metrics = theme() != nullptr ? theme()->metrics() : default_metrics();
+        // a parent may arrange the control wider than the box, so the square sits at the leading edge (§8.2)
+        const float extent = std::min(bounds().width, metrics.checkbox_box.width);
+        // the height is the same value, because a checkbox is a square (§8)
+        return Rect::from_origin_size(Point{.x = bounds().x, .y = bounds().y}, Size{.width = extent, .height = metrics.checkbox_box.height});
+    }
+
     void CheckBox::paint_content(RenderContext& context) {
         // a box with no area draws nothing, because there is no outline to stroke (§6.2)
         if (bounds().empty())
             return;
+        // the square is the fixed metric, because the box does not stretch with its arranged bounds (§8.2)
+        const Rect box = box_rect();
         // a checked box carries a fill, which is the only way the state reads without a glyph (§6.1)
         if (m_checked) {
             // the fill resolves by state, so a hover and a press differ without a second literal (§6.1)
-            context.draw_rect(bounds(), {.fill = resolve(fill_colors(), m_check_fill)});
+            context.draw_rect(box, {.fill = resolve(fill_colors(), m_check_fill)});
         }
         // the outline resolves by state, so the border reads as part of the control (§6.1)
-        context.draw_rect(bounds(), {.stroke = resolve(outline_colors(), m_outline), .stroke_width = outline_width()});
+        context.draw_rect(box, {.stroke = resolve(outline_colors(), m_outline), .stroke_width = outline_width()});
     }
 
     bool CheckBox::hit_test(Point logical_point) const {
@@ -50,8 +61,9 @@ namespace albor
         // a disabled box is not a hit, because it refuses input (§8.3)
         if (m_disabled)
             return false;
-        // the press must land inside the arranged bounds, with the far edge excluded so neighbours stay separate (§8.3)
-        const bool inside = logical_point.x >= bounds().x && logical_point.x < bounds().x + bounds().width && logical_point.y >= bounds().y && logical_point.y < bounds().y + bounds().height;
+        // the press must land on the square itself, which is what the eye sees as the control (§8.3)
+        const Rect box = box_rect();
+        const bool inside = logical_point.x >= box.x && logical_point.x < box.x + box.width && logical_point.y >= box.y && logical_point.y < box.y + box.height;
         // a press outside the box falls through to whatever is behind it (§8.3)
         return inside && !bounds().empty();
     }

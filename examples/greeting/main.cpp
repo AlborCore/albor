@@ -6,21 +6,15 @@
 #include "drivability.h"
 #include "greeting_panel.h"
 #include "input/input_controller.h"
-#include "platform/macos/event_loop.h"
 #include "render/frame_scene.h"
-#include "render/render-skia/skia_renderer_backend.h"
 #include "render/render_executor.h"
 #include "runtime/binding_engine.h"
-#include "text/text-skia/skia_text_engine.h"
+#include "text/text_engine.h"
 #include "ui/frame_pipeline.h"
 #include "window/window.h"
 
 int main() {
-    // the example is the composition root, so it installs the macos platform, the skia backend and the text engine (§6.3, §9.1)
-    albor::macos::install_macos_platform();
-    albor::install_skia_renderer_backend();
-    albor::SkiaTextEngine::install();
-    // the renderer backend owns the metal device and the skia context (§6.3)
+    // the platform and the backends installed themselves at load, so the composition creates what they registered
     std::unique_ptr<albor::RendererBackend> renderer = albor::create_renderer_backend();
     if (!renderer || !renderer->ready()) {
         std::fprintf(stderr, "greeting: the skia metal backend did not come up\n");

@@ -315,16 +315,25 @@ namespace albor::compiler
             return found == setters.end() ? std::string_view{} : found->second;
         }
 
-        // the parameter list an element signal carries, which a generated lambda must match (§11.3)
-        std::string_view element_signal_params(std::string_view signal) {
-            // a button click carries nothing (§11.3)
-            if (signal == "clicked")
-                return {};
-            // a slider change carries the new value (§11.3)
-            if (signal == "changed")
-                return "float";
-            // a checkbox toggle carries the new state, which is every remaining wired signal (§11.3)
-            return "bool";
+        // the named parameters an element signal carries, which a generated lambda and its body both take (§11.3)
+        std::vector<std::pair<std::string, std::string>> named_signal_params(std::string_view element, std::string_view signal) {
+            // a slider change carries the new value, and the catalog names it (§11.3)
+            if (element == "Slider" && signal == "changed")
+                return {{"float", "value"}};
+            // a checkbox toggle carries the new state, which the catalog also names (§11.3)
+            if (element == "CheckBox" && signal == "toggled")
+                return {{"bool", "checked"}};
+            // a button click carries nothing, so its handler takes no parameter (§11.3)
+            return {};
+        }
+
+        // the signature fragment a handler takes after the context, which carries the raised parameters (§11.3)
+        std::string handler_signature(std::string_view element, std::string_view signal) {
+            // the named parameters decide the fragment, because the catalog declares them (§11.3)
+            std::string fragment;
+            for (const std::pair<std::string, std::string>& parameter : named_signal_params(element, signal))
+                fragment += ", " + parameter.first + " " + parameter.second;
+            return fragment;
         }
 
         // the emitter for one component, which produces the facade header and its implementation unit (§11.3)
@@ -447,8 +456,14 @@ namespace albor::compiler
             // render the handlers, which are the written bodies behind the callbacks (§11.3)
             void emit_handlers();
 
+            // emit the drawing bodies a canvas wrote, which the builder wires to set_draw (§6.4)
+            void emit_draw_bodies();
+
             // render the colour to text helper, which the string conversion needs (§11.3)
             void emit_color_helper();
+
+            // emit the float printing helper, which a readout reaches (§11.3)
+            void emit_float_helper();
 
             // collect the manifest headers the given type needs, which is where a record struct is declared (§11.2, AD-17)
             void collect_record_headers(const ValueType& type);
@@ -549,6 +564,12 @@ namespace albor::compiler
             // the C++ names of the declared properties and signals, keyed by the written names (§14.1)
             std::unordered_map<std::string, std::string> m_names;
 
+            // the signal parameters the handler body reads, which are the lambda arguments (§11.3)
+            std::vector<std::string> m_signal_parameters;
+
+            // whether the body being emitted is a draw block, which is what exposes the canvas extent (§6.4)
+            bool m_draw_extent = false;
+
             // the object the generated expressions read through, which is self in the functions (§13.3)
             std::string m_object;
 
@@ -599,6 +620,9 @@ namespace albor::compiler
 
             // whether a colour needs the text helper, which adds the cstdio header (§11.3)
             bool m_uses_color_helper = false;
+
+            // whether a float renders as text, which the shortest form helper answers (§11.3)
+            bool m_uses_float_helper = false;
 
             // whether the component declares signals, which adds the slot types (§8.3)
             bool m_has_signals = false;
@@ -793,6 +817,9 @@ namespace albor::compiler
         }
 
         void ComponentEmitter::scan_color(const Expression& expression) {
+            // a string conversion of a float needs the shortest form helper, which prints it (§11.3)
+            if (const auto* conversion = dynamic_cast<const ConversionExpression*>(&expression); conversion != nullptr && conversion->target_type == "string" && type_of(*conversion->value).is(TypeKind::Float))
+                m_uses_float_helper = true;
             // a translation resolves through the catalogue, which needs its own header (§9.2, §11.3)
             if (dynamic_cast<const TranslationExpression*>(&expression) != nullptr)
                 m_uses_i18n = true;
@@ -1057,9 +1084,13 @@ namespace albor::compiler
             line(0, "");
             line(0, "#include \"" + m_stem + ".h\"");
             line(0, "");
-            // the channel printing helper needs it, which only a colour to text conversion reaches (§11.3)
-            if (m_uses_color_helper)
+            // the printing helpers need them, which only a number or colour to text conversion reaches (§11.3)
+            if (m_uses_color_helper || m_uses_float_helper) {
+                line(0, "#include <array>");
                 line(0, "#include <cstdio>");
+                line(0, "#include <cstdlib>");
+                line(0, "#include <cstring>");
+            }
             // the signal slots need the functional header, which a signal component reaches (§8.3)
             if (m_has_signals)
                 line(0, "#include <functional>");
@@ -1106,6 +1137,11 @@ namespace albor::compiler
             line(0, "");
             line(0, "namespace albor");
             line(0, "{");
+            // the printing helpers come first, because an evaluator below may call one (§11.3)
+            if (m_uses_float_helper)
+                emit_float_helper();
+            if (m_uses_color_helper)
+                emit_color_helper();
             emit_body();
             emit_lifecycle();
             emit_accessors();
@@ -1113,6 +1149,7 @@ namespace albor::compiler
             emit_evaluators();
             emit_computes();
             emit_handlers();
+            emit_draw_bodies();
             // the row functions belong to this unit, which is why they are emitted inside it (§18.1, AD-13)
             emit_repeat_row_functions_all();
             // each repeat emits its evaluator, which is what a source change calls (§18.1, AD-13)
@@ -1142,8 +1179,6 @@ namespace albor::compiler
                 reconcile(slot);
                 line(1, "}");
             }
-            if (m_uses_color_helper)
-                emit_color_helper();
             line(0, "} // namespace albor");
         }
 
@@ -1193,6 +1228,24 @@ namespace albor::compiler
                 line(2, "float m_canvas_w_" + std::to_string(slot.index) + " = 0.0f;");
                 line(2, "// the declared canvas height, which the intrinsic size reads (§11.3)");
                 line(2, "float m_canvas_h_" + std::to_string(slot.index) + " = 0.0f;");
+                line(0, "");
+            }
+            // a slider tracks its two bounds, which the range setter combines (§11.3)
+            for (const NodeSlot& slot : m_nodes) {
+                // only a slider carries the tracks, because a range is written as bounds (§11.3)
+                if (slot.node->element_type != "Slider")
+                    continue;
+                // a bound the author did not write keeps the widget default, which is zero to one (§8)
+                bool wrote_min = false;
+                bool wrote_max = false;
+                for (const CheckedAssignment& assignment : slot.node->assignments) {
+                    wrote_min = wrote_min || assignment.name == "min";
+                    wrote_max = wrote_max || assignment.name == "max";
+                }
+                line(2, "// the lower bound, which defaults to the widget range when the author wrote none (§8)");
+                line(2, "float m_slider_min_" + std::to_string(slot.index) + " = 0.0f;");
+                line(2, "// the upper bound, which defaults to the widget range when the author wrote none (§8)");
+                line(2, "float m_slider_max_" + std::to_string(slot.index) + (wrote_max ? " = 0.0f;" : " = 1.0f;"));
                 line(0, "");
             }
             // each bound assignment becomes a sink property, which the engine keeps current (§13.3)
@@ -1279,8 +1332,18 @@ namespace albor::compiler
                     line(0, "");
                     const std::string handle = "handle_" + std::to_string(slot.index) + "_" + sanitize(handler.name);
                     line(2, "// run the " + handler.name + " body, which is what the written handler does (§11.3)");
-                    line(2, "static void " + handle + "(void* raw);");
+                    line(2, "static void " + handle + "(void* raw" + handler_signature(slot.node->element_type, handler.name) + ");");
                 }
+            }
+            // a canvas with a draw block declares its body, which the wiring runs (§6.4)
+            for (const NodeSlot& slot : m_nodes) {
+                // a node with no draw block declares nothing, because it paints itself (§6.4)
+                if (slot.node->draw_calls.empty())
+                    continue;
+                // the declaration reads after a blank, which separates it from the previous one (§14.1)
+                line(0, "");
+                line(2, "// draw the canvas content, which is what the written draw block does (§6.4)");
+                line(2, "static void draw_" + std::to_string(slot.index) + "_body(void* raw, RenderContext& context);");
             }
             line(1, "};");
         }
@@ -1443,6 +1506,8 @@ namespace albor::compiler
             }
             // the assignments are applied in order, which a constant reaches directly (§14.1)
             bool canvas_written = false;
+            // whether a slider range was written, which is applied after both bounds (§8)
+            bool range_written = false;
             // each assignment decides between a direct set and a bound sink (§13.3)
             for (const CheckedAssignment& assignment : slot.node->assignments) {
                 // the canvas width and height are tracked separately, because one setter combines them (§11.3)
@@ -1464,6 +1529,18 @@ namespace albor::compiler
                     canvas_written = true;
                     continue;
                 }
+                // the slider range is one setter for two properties, because the widget takes both bounds (§8)
+                if (slot.node->element_type == "Slider" && (assignment.name == "min" || assignment.name == "max")) {
+                    // the missing bound is the default the widget already carries, so one written bound is enough (§8)
+                    const std::string low = assignment.name == "min" ? emit_expression(*assignment.value) : "m_slider_min_" + std::to_string(slot.index);
+                    const std::string high = assignment.name == "max" ? emit_expression(*assignment.value) : "m_slider_max_" + std::to_string(slot.index);
+                    // the bounds are tracked per node, because set_range takes them together (§8)
+                    line(2, "// track the slider " + assignment.name + ", which the range reads (§11.3)");
+                    line(2, (assignment.name == "min" ? "m_slider_min_" : "m_slider_max_") + std::to_string(slot.index) + " = " + emit_expression(*assignment.value) + ";");
+                    // the range is applied after both bounds, which is what the setter needs (§8)
+                    range_written = true;
+                    continue;
+                }
                 // a constant reaches the widget setter directly, which what a static value is (§14.1)
                 if (assignment.dependencies.empty()) {
                     // the setter is fetched by the element and the property, which the catalog named (§11.3)
@@ -1482,14 +1559,29 @@ namespace albor::compiler
             // the canvas intrinsic size is applied once, after both tracks were written (§11.3)
             if (canvas_written)
                 line(2, "n" + std::to_string(slot.index) + "->set_intrinsic_size(Size{m_canvas_w_" + std::to_string(slot.index) + ", m_canvas_h_" + std::to_string(slot.index) + "});");
+            // the slider range is applied once, after both bounds were written (§8)
+            if (range_written)
+                line(2, "n" + std::to_string(slot.index) + "->set_range(m_slider_min_" + std::to_string(slot.index) + ", m_slider_max_" + std::to_string(slot.index) + ");");
+            // a canvas with a draw block installs its body, which the callback runs every frame (§6.4)
+            if (!slot.node->draw_calls.empty()) {
+                line(2, "// install the drawn body, which records the canvas content into the context (§6.4)");
+                line(2, "n" + std::to_string(slot.index) + "->set_draw([this](RenderContext& context) { draw_" + std::to_string(slot.index) + "_body(this, context); });");
+            }
             // each handler wires its callback, which a widget signal triggers (§11.3)
             for (const CheckedHandler& handler : slot.node->handlers) {
                 // the callback setter comes from the element and the signal, which the catalog named (§11.3)
                 const std::string_view setter = signal_setter_of(std::string_view(slot.node->element_type), handler.name);
-                // the lambda parameters match the widget signal, which the body never names (§11.3)
-                const std::string_view params = element_signal_params(handler.name);
-                // the lambda is parameterless unless the signal carries a value, which the setter takes (§11.3)
-                const std::string lambda = params.empty() ? std::string("[this] { handle_") + std::to_string(slot.index) + "_" + sanitize(handler.name) + "(this); }" : std::string("[this](") + std::string(params) + ") { handle_" + std::to_string(slot.index) + "_" + sanitize(handler.name) + "(this); }";
+                // the lambda carries the signal parameters by name, so the body reads what the widget raised (§11.3)
+                const std::vector<std::pair<std::string, std::string>> named = named_signal_params(slot.node->element_type, handler.name);
+                std::string lambda_parameters;
+                std::string lambda_arguments;
+                // each parameter joins both lists, because a lambda declares and forwards the same names (§11.3)
+                for (const std::pair<std::string, std::string>& parameter : named) {
+                    lambda_parameters += (lambda_parameters.empty() ? "" : ", ") + parameter.first + " " + parameter.second;
+                    lambda_arguments += (lambda_arguments.empty() ? "" : ", ") + parameter.second;
+                }
+                // the wiring forwards every parameter, which is how the body reads the raised value (§11.3)
+                const std::string lambda = "[this](" + lambda_parameters + ") { handle_" + std::to_string(slot.index) + "_" + sanitize(handler.name) + "(this" + (lambda_arguments.empty() ? "" : ", " + lambda_arguments) + "); }";
                 line(2, "// wire the " + handler.name + " to the generated handler, which runs the written body (§11.3)");
                 line(2, "n" + std::to_string(slot.index) + "->" + std::string(setter) + "(" + lambda + ");");
             }
@@ -1540,10 +1632,17 @@ namespace albor::compiler
             for (const CheckedHandler& handler : slot.node->handlers) {
                 // the callback setter comes from the element and the signal, which the catalog named (§11.3)
                 const std::string_view setter = signal_setter_of(std::string_view(slot.node->element_type), handler.name);
-                // the lambda parameters match the widget signal, which the body never names (§11.3)
-                const std::string_view params = element_signal_params(handler.name);
+                // the lambda carries the signal parameters by name, so the body reads what the widget raised (§11.3)
+                const std::vector<std::pair<std::string, std::string>> named = named_signal_params(slot.node->element_type, handler.name);
+                std::string lambda_parameters;
+                std::string lambda_arguments;
+                // each parameter joins both lists, because a lambda declares and forwards the same names (§11.3)
+                for (const std::pair<std::string, std::string>& parameter : named) {
+                    lambda_parameters += (lambda_parameters.empty() ? "" : ", ") + parameter.first + " " + parameter.second;
+                    lambda_arguments += (lambda_arguments.empty() ? "" : ", ") + parameter.second;
+                }
                 // the handler body is the written one, which is what the row runs (§11.3, §18.1)
-                const std::string lambda = params.empty() ? std::string("[this] { handle_") + std::to_string(slot.index) + "_" + sanitize(handler.name) + "(this); }" : std::string("[this](") + std::string(params) + ") { handle_" + std::to_string(slot.index) + "_" + sanitize(handler.name) + "(this); }";
+                const std::string lambda = "[this](" + lambda_parameters + ") { handle_" + std::to_string(slot.index) + "_" + sanitize(handler.name) + "(this" + (lambda_arguments.empty() ? "" : ", " + lambda_arguments) + "); }";
                 line(2, "// wire the " + handler.name + ", which runs the written handler for this row (§11.3, §18.1)");
                 line(2, "n" + std::to_string(slot.index) + "->" + std::string(setter) + "(" + lambda + ");");
             }
@@ -1855,10 +1954,14 @@ namespace albor::compiler
                 for (const CheckedHandler& handler : slot.node->handlers) {
                     const std::string handle = "handle_" + std::to_string(slot.index) + "_" + sanitize(handler.name);
                     line(0, "");
-                    line(1, "void " + m_class + "::Impl::" + handle + "(void* raw) {");
+                    line(1, "void " + m_class + "::Impl::" + handle + "(void* raw" + handler_signature(slot.node->element_type, handler.name) + ") {");
                     line(2, "// the body is recovered from the context, which keeps the path allocation free (§13.3)");
                     line(2, "auto* self = static_cast<Impl*>(raw);");
                     m_object = "self";
+                    // the signal parameters are readable as names, because they are the arguments this body took (§11.1)
+                    m_signal_parameters.clear();
+                    for (const std::pair<std::string, std::string>& parameter : named_signal_params(slot.node->element_type, handler.name))
+                        m_signal_parameters.push_back(parameter.second);
                     // each statement is emitted as a property write or a signal invocation (§11.3)
                     for (const CheckedStatement& statement : handler.body) {
                         // an assignment writes the target property, which the engine settles (§11.3)
@@ -1883,8 +1986,99 @@ namespace albor::compiler
                     }
                     line(1, "}");
                     m_object.clear();
+                    m_signal_parameters.clear();
                 }
             }
+        }
+
+        void ComponentEmitter::emit_draw_bodies() {
+            // the draw output is one function per canvas, which the builder wired above (§6.4)
+            for (const NodeSlot& slot : m_nodes) {
+                // a node with no draw block contributes nothing, because it paints itself (§6.4)
+                if (slot.node->draw_calls.empty())
+                    continue;
+                // the body is named after the node, because a canvas may write several (§6.4)
+                const std::string body = "draw_" + std::to_string(slot.index) + "_body";
+                line(0, "");
+                line(1, "void " + m_class + "::Impl::" + body + "(void* raw, RenderContext& context) {");
+                line(2, "// the body is recovered from the context, which keeps the path allocation free (§13.3)");
+                line(2, "auto* self = static_cast<Impl*>(raw);");
+                line(2, "// the canvas extent is read here, because a drawing is laid out in the node (§6.4)");
+                line(2, "const float canvas_width = self->m_node_" + std::to_string(slot.index) + "->bounds().width;");
+                line(2, "const float canvas_height = self->m_node_" + std::to_string(slot.index) + "->bounds().height;");
+                // the origin is the node corner, because a recorded rect is absolute in the scene (§6.1, §6.2)
+                line(2, "const Rect canvas_bounds = self->m_node_" + std::to_string(slot.index) + "->bounds();");
+                line(2, "const Point canvas_origin{canvas_bounds.x, canvas_bounds.y};");
+                m_object = "self";
+                // the extent names resolve inside the body, because that is where the layout answers (§6.4)
+                m_draw_extent = true;
+                // the paint is declared once, because a block fills and then draws with it (§6.2)
+                bool painted = false;
+                // each call emits one primitive, which is the vocabulary the checker matched (§6.4)
+                for (const CheckedDrawCall& call : slot.node->draw_calls) {
+                    // the colour is the last argument, because every primitive ends with its paint (§6.4)
+                    std::string arguments;
+                    for (std::size_t index = 0; index + 1 < call.arguments.size(); index++)
+                        arguments += (arguments.empty() ? "" : ", ") + emit_expression(*call.arguments[index]);
+                    const std::string colour = emit_expression(*call.arguments.back());
+                    // the numbers are split into origin and size, which is what the rect is built from (§6.4)
+                    std::vector<std::string> numbers;
+                    std::string current;
+                    for (const char character : arguments) {
+                        // a comma closes one number, because the list is written flat (§6.4)
+                        if (character == ',') {
+                            numbers.push_back(current);
+                            current.clear();
+                            continue;
+                        }
+                        // every other character belongs to the number being read (§6.4)
+                        if (character != ' ')
+                            current.push_back(character);
+                    }
+                    if (!current.empty())
+                        numbers.push_back(current);
+                    // the origin is the canvas corner plus the written offset, because the scene is absolute (§6.2)
+                    const std::string rect_value = numbers.size() >= 4 ? "Rect::from_origin_size(Point{canvas_origin.x + " + numbers[0] + ", canvas_origin.y + " + numbers[1] + "}, Size{" + numbers[2] + ", " + numbers[3] + "})" : "Rect::from_origin_size(canvas_origin, Size{0, 0})";
+                    // the paint is declared once for the block, because a primitive fills and then draws (§6.2)
+                    if (!painted) {
+                        // the declaration reads before the first primitive, which is where the paint lives (§6.2)
+                        line(2, "// the paint every primitive records, which the draw block writes (§6.2)");
+                        line(2, "Paint paint;");
+                        painted = true;
+                    }
+                    line(2, "// the " + call.primitive + " primitive records its rect and paint (§6.4)");
+                    line(2, "paint.fill = " + colour + ";");
+                    if (call.primitive == "fill_rect") {
+                        line(2, "context.draw_rect(" + rect_value + ", paint);");
+                    }
+                    else {
+                        // the radius is the fifth number, because the rounded primitive takes one more (§6.4)
+                        const std::string radius = numbers.size() >= 5 ? numbers[4] : "0.0f";
+                        line(2, "context.draw_rounded_rect(" + rect_value + ", " + radius + ", paint);");
+                    }
+                }
+                m_draw_extent = false;
+                m_object.clear();
+                line(1, "}");
+            }
+        }
+
+        void ComponentEmitter::emit_float_helper() {
+            line(0, "");
+            line(1, "// render a float as the shortest text that reads it back, which is what a readout shows (§11.3)");
+            line(1, "std::string " + m_stem + "_float_to_text(float value) {");
+            line(2, "// six digits is the shortest form that reads a float back exactly, which is what %g guarantees (§11.3)");
+            line(2, "std::array<char, 32> buffer{};");
+            line(2, "const int written = std::snprintf(buffer.data(), buffer.size(), \"%g\", value);");
+            line(2, "if (written <= 0 || static_cast<std::size_t>(written) >= buffer.size())");
+            line(3, "return std::to_string(value);");
+            // the text ends where snprintf says, because the array may hold more (§11.3)
+            line(2, "std::string text(buffer.data(), static_cast<std::size_t>(written));");
+            line(2, "// a whole value renders without a decimal point, because a readout should not say 2 (§11.3)");
+            line(2, "if (text.find('.') == std::string::npos && text.find('e') == std::string::npos && text.find('E') == std::string::npos)");
+            line(3, "text += \".0\";");
+            line(2, "return text;");
+            line(1, "}");
         }
 
         void ComponentEmitter::emit_color_helper() {
@@ -1921,6 +2115,17 @@ namespace albor::compiler
                 // a repeat index is the row position, because the body binds it for the row being built (§11.1, §18.1)
                 if (!m_repeat_index_name.empty() && reference->name == m_repeat_index_name)
                     return "index";
+                // the canvas extent is the arranged node, which only a draw body reads (§6.4)
+                if (m_draw_extent && reference->name == "canvas_width")
+                    return "canvas_width";
+                if (m_draw_extent && reference->name == "canvas_height")
+                    return "canvas_height";
+                // a signal parameter is the handler argument, which the catalog names for the body (§11.1)
+                for (const std::string& parameter : m_signal_parameters) {
+                    // the name decides, so a parameter resolves to the argument the lambda forwarded (§11.3)
+                    if (parameter == reference->name)
+                        return parameter;
+                }
                 return m_object + "->m_" + sanitize(reference->name) + ".get()";
             }
             // a conversion renders through its operand, which the operand type decides (§11.3)
@@ -2007,8 +2212,12 @@ namespace albor::compiler
                 // a text renders as itself, which is the identity of the conversion (§11.3)
                 if (from == TypeKind::String)
                     return "(" + operand + ")";
-                // a number renders through the runtime, which is the shortest decimal (§11.3)
-                return "std::to_string(" + operand + ")";
+                // a whole number renders without a decimal, because a readout should not say 2.000000 (§11.3)
+                if (from == TypeKind::Int)
+                    return "std::to_string(" + operand + ")";
+                // a float renders through the shortest round trip, which to_string lacks (§11.3)
+                m_uses_float_helper = true;
+                return m_stem + "_float_to_text(" + operand + ")";
             }
             // an integer target parses or narrows, which the operand type decides (§11.3)
             if (conversion.target_type == "int") {
