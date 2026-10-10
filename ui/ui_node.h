@@ -100,7 +100,7 @@ namespace albor
         [[nodiscard]] bool visible() const;
 
         // show or hide the node, which invalidates it so the change reaches the screen (§6.1)
-        void set_visible(bool visible);
+        virtual void set_visible(bool visible);
 
         // report whether the node refuses input, which a focus traversal and a hit test rely on (§8.3)
         [[nodiscard]] virtual bool disabled() const;

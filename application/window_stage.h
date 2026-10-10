@@ -11,6 +11,7 @@
 
 namespace albor
 {
+    class CommandRegistry;
     class FramePipeline;
     class InputController;
     class RendererBackend;
@@ -48,6 +49,9 @@ namespace albor
 
         // route one normalized event into the tree, which is where the widgets answer (§8.3)
         void deliver(Event& event);
+
+        // point the window's input at the accelerators of an application, which is borrowed and outlives the stage (§18.5)
+        void set_command_registry(CommandRegistry* registry);
 
         // hand out how many frames the stage built, which a test asserts on (§6.1)
         [[nodiscard]] std::uint64_t frame_count() const;

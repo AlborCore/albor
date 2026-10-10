@@ -1083,7 +1083,7 @@ Every architectural decision from Phase 0 is formally settled for production imp
 | **AD-12** | Live Reload Model | **Decided** | Out-of-process dev service emits serialized IR/patches; in-app reload adapter updates live UI tree. |
 | **AD-13** | Virtualization & Keys | **Decided** | Model views virtualize materialized nodes; rows keyed by stable `ItemKey` identifiers. |
 | **AD-14** | Text/Layout Dependency | **Decided** | Text measurement via `TextEngine` is a prerequisite contract for layout calculation. |
-| **AD-15** | Command Abstraction | **Decided** | `Command` objects bind actions across buttons, shortcuts, menus, and automation. |
+| **AD-15** | Command Abstraction | **Decided** | `Command` objects bind actions across buttons, shortcuts, menus, and automation. Enablement is observed from one object rather than copied per consumer; enabled and visible are two published states that route differently; the undo stack sits behind the object so one invocation contributes one entry. See §18. |
 | **AD-16** | Platform Strategy | **Decided** | Direct platform adapters behind `PlatformWindow`. macOS AppKit + Metal + `CVDisplayLink` first. |
 | **AD-17** | Native Manifest | **Decided** | Single source of truth for native components; compiler generates C++ glue and never parses C++. |
 | **AD-18a**| Stage Division | **Decided** | UI thread produces `FrameScene`; render thread executes GPU drawing commands. |
@@ -1353,3 +1353,351 @@ deterministic: the same metrics and the same immutable scene produce the same by
 ## 17. Conclusion
 
 Albor Design Version 4 closes the era of speculative prototyping and equips the project with a clean, decoupled, and actionable blueprint. By relying on strict modular abstractions and pragmatic, battle-tested defaults—starting with Skia for rendering and Eager-Push for reactive bindings—Albor is now ready for immediate production implementation.
+
+---
+
+## 18. Action and Command Abstraction (AD-15, settled during implementation)
+
+**Why this section exists.** AD-15 is a settled decision carried by a single row of the register, and no
+other section of this document wrote the text it depends on. §3.2 reserves a module for it and the
+phases never filled it, so the framework shipped with three unrelated actuation paths and no shared
+object between them. This section is that missing text, written the way AD-29 through AD-34 were:
+after the fact, and marked as settled so a later reader can tell clarified text from original intent.
+
+The defect the text was missing is concrete. Before this section an action could be attached to exactly
+one widget, because the only thing that existed was a `std::function` member inside the widget that
+consumed it. An application that runs an action from a toolbar button, a menu item and a keyboard
+equivalent therefore owned three copies of the enablement state, and an action that disabled itself
+left two of the three enabled. The value of a command object was never that the invocation is shared;
+it is that **enablement is observed from one place** and each consumer binds to it.
+
+### 18.1 The Shared Command Object
+
+A `Command` is one application action, published as one object, which every consumer binds to rather
+than reimplements.
+
+```cpp
+namespace albor {
+
+// the runtime identity of a command inside its registry, where zero names no command (§18.1)
+using CommandId = std::uint64_t;
+
+// the state a command publishes, which every consumer reads from the same object (§18.2)
+struct CommandState
+{
+    // whether the command may be invoked right now, which leaves the consumer in place (§18.2)
+    bool enabled = true;
+
+    // whether the command applies at all, which removes the consumer from layout and focus (§18.2)
+    bool visible = true;
+
+    // the text every consumer presents, read from one place so three consumers cannot disagree (§18.2)
+    std::string label;
+};
+
+// report whether an invocation may run against this state, which is the gate every route reads (§18.3)
+[[nodiscard]] constexpr bool invocable(const CommandState& state) {
+    // a command that is not applicable is not invocable, and neither is one that is not permitted (§18.2)
+    return state.enabled && state.visible;
+}
+
+// where an invocation came from, which is what a handler branches on and what automation reports (§18.3)
+enum class InvocationSource
+{
+    Pointer,
+    Keyboard,
+    Menu,
+    Automation,
+    Accessibility,
+    UndoRedo
+};
+
+// one invocation, carrying whatever the action needs at the moment it runs (§18.3, §18.4)
+struct CommandInvocation
+{
+    CommandId command = 0;
+    CommandArgument argument;
+    SelectionSpan selection;
+    InvocationSource source = InvocationSource::Pointer;
+};
+
+// why an invocation did or did not run, which automation reports and a consumer may ignore (§18.3)
+enum class InvocationOutcome { Invoked, Disabled, Hidden, NoSelection, NoAction };
+
+// the shared action object that buttons, shortcuts, menus and automation all bind to (AD-15)
+class Command
+{
+public:
+    explicit Command(std::string explicit_id, std::string label = {});
+
+    CommandId id() const;
+
+    // the author assigned id, which is the only selector automation may use (AD-11, §18.1)
+    const std::string& explicit_id() const;
+
+    const CommandState& state() const;
+    void set_state(CommandState state);
+    void set_label(std::string label);
+    void set_enabled(bool enabled);
+    void set_visible(bool visible);
+
+    // a consumer binds as a plain function pointer over its own context, with no per-binding allocation (§13.3)
+    using ObserverFn = void (*)(void* context, const CommandState& state);
+    ObserverHandle bind_static(ObserverFn observer, void* context);
+    bool unbind(ObserverHandle handle);
+
+    // invocation refuses rather than degrades, so automation can never drive a state a user cannot (§18.3)
+    InvocationOutcome invoke(CommandInvocation invocation);
+    InvocationOutcome invoke();
+
+    void set_action(CommandAction action);
+    void set_undo_entry(UndoEntry entry);
+    void bind_undo_stack(UndoStack* stack);
+};
+}
+```
+
+Four rules are load-bearing, and each of them is a boundary rather than a convenience:
+
+1. **The author assigned id is the only identity (AD-11).** `explicit_id()` is empty when the author
+   named nothing, and an unnamed command is unaddressable by automation, exactly as an unnamed
+   `SemanticNode` is. A registry-assigned sequence number is a correlation hint and is never a
+   selector.
+2. **Enablement is observed, not copied.** A consumer binds to the command; it does not cache the
+   state. `set_enabled(false)` publishes to every bound consumer in one pass, so three consumers
+   cannot disagree (§18.2).
+3. **Refusal is a first-class outcome.** `invoke` returns why it did nothing. There is no force path,
+   no "invoke anyway" overload, and no way for a caller to bypass the gate. This is what lets an
+   automation client observe exactly the enablement a user would (§19.6, AD-10).
+4. **Bindings are plain function pointers.** A command outlives any single component and is shared
+   across windows, while a `PropertyId` of §7.2 is component-scoped against one `BindingEngine` per
+   `WindowStage`. The command therefore publishes through its own observer list with the same
+   `bind_static` shape §13.3 mandates for generated bindings, rather than through a property it
+   cannot own.
+
+### 18.2 Enablement and Visibility Are Two Published States
+
+A control that is **not applicable** is hidden. A control that is **not permitted right now** is
+disabled and visible. The two route differently, and collapsing them into one boolean forces every
+consumer to choose one behaviour on the shared object's behalf.
+
+| State | Consumes | Layout | Focus traversal | Hit testing |
+| --- | --- | --- | --- | --- |
+| `visible = false` | nothing — the command does not apply | the consumer is removed | out | out |
+| `enabled = false` | nothing — permission is withheld | the consumer stays | out | refused |
+| both `true` | normal | normal | in | in |
+
+`FocusManager::focusable` (§8.3) already refuses both an invisible and a disabled node, so the
+distinction costs the focus ring nothing; it is the layout and the paint that differ. A hidden
+command calls `UiNode::set_visible`, which marks layout dirty (§8.2). A disabled command calls the
+control's own `set_disabled`, which repaints through the `ControlState::Disabled` role palette of
+§6.2 and leaves the extent alone.
+
+### 18.3 Invocation
+
+Most actions take nothing. Two kinds do not, and both are carried by the invocation rather than by
+the object:
+
+- **an argument**, where one action is bound to many rows and each invocation carries that row's
+  identity;
+- **a range**, where one action runs over the current selection — copy a selected range of a log
+  view, remove the selected rows.
+
+The second decides the shape. An action bound to a selection needs the selection **at invocation
+time**, which rules out a plain function pointer over a `void` argument and rules out caching the
+range on the command, because one command is bound to many controls with different selections at
+once. The selection is therefore resolved from an installed `SelectionSource` immediately before the
+action runs, and the resolved span travels in the invocation.
+
+```cpp
+namespace albor {
+
+// the half open range a selection scoped action runs over, which is a value and never a view (§18.4)
+struct SelectionSpan
+{
+    std::size_t first = 0;
+    std::size_t last = 0;
+
+    [[nodiscard]] bool empty() const { return first >= last; }
+    [[nodiscard]] std::size_t count() const { return empty() ? 0 : last - first; }
+
+    friend bool operator==(const SelectionSpan& lhs, const SelectionSpan& rhs) = default;
+};
+
+// where a command reads the current selection from, which the application installs (§18.4)
+using SelectionSource = std::function<SelectionSpan()>;
+
+// the work one command performs, which receives everything the invocation carries (§18.3)
+using CommandAction = std::function<void(const CommandInvocation&)>;
+}
+```
+
+`commands/` declares the span and the injection point and implements no selection model. The
+selection model belongs to the list control that owns one, so this module stays below the widget
+layer and a selection scoped command composes with whatever view supplies the range.
+
+A command that is declared selection-scoped refuses with `NoSelection` rather than running over an
+empty range, because a command that runs when it must not is worse than one that does not run.
+
+### 18.4 Undo and Redo
+
+Undo/redo belongs to this module and could not be deferred to a widget, for a reason that is
+structural rather than convenient: **an action invoked from three consumers contributes one undo
+entry, not three.** That requires the undo stack to sit behind the shared object, which means the
+module's shape has to accommodate it before the widgets are built rather than after.
+
+```cpp
+namespace albor {
+
+// one reversible step, which the stack owns until it is undone or dropped (§18.5)
+struct UndoEntry
+{
+    std::string label;
+    std::function<void()> undo;
+    std::function<void()> redo;
+};
+
+// the coalescing scope, which folds consecutive steps into one entry (§18.5)
+class UndoGroup;
+
+// the undo stack behind the shared command, which one invocation contributes exactly one entry to (§18.5)
+class UndoStack
+{
+public:
+    void push(UndoEntry entry);
+    UndoGroup open_group(std::string label);
+    [[nodiscard]] bool can_undo() const;
+    [[nodiscard]] bool can_redo() const;
+    [[nodiscard]] bool undo();
+    [[nodiscard]] bool redo();
+    void clear();
+    [[nodiscard]] std::size_t depth() const;
+    void set_depth_limit(std::size_t limit);
+};
+}
+```
+
+Three properties are specified rather than suggested:
+
+1. **One invocation, one entry.** The entry is pushed from inside `Command::invoke`, never from a
+   widget, so the route the invocation arrived by is irrelevant to the history. A pointer press, a
+   keyboard equivalent and an automation call that perform the same action produce one entry.
+2. **Coalescing is explicit, not heuristic.** A repeated action — a slider drag, a held arrow key —
+   opens an `UndoGroup`, and the entries pushed while it is open are folded into one entry whose undo
+   runs them in reverse and whose redo runs them in forward order. A group is an RAII scope, so it
+   closes on every path including an exception.
+3. **Undo and redo are themselves commands.** `UndoCommand` and `RedoCommand` publish
+   `can_undo()` and `can_redo()` as their enabled state. They are the smallest complete demonstration
+   of AD-15: the enablement of one shared object decides what three consumers do, and no consumer
+   holds a copy of the answer.
+
+The stack is bounded. `set_depth_limit` caps the retained history and drops the oldest entry when it
+is reached, because an unbounded stack in a long-lived editor is a leak the user pays for.
+
+### 18.5 Shortcuts
+
+A keyboard equivalent binds a `Shortcut` to a `CommandId` in the registry's table. It is not a
+second copy of the command; it is a route into the same object.
+
+```cpp
+namespace albor {
+
+// one normalized accelerator, which is a key plus the modifiers it requires (§18.3)
+struct Shortcut
+{
+    Key key = Key::None;
+    Modifiers modifiers;
+
+    friend bool operator==(const Shortcut& lhs, const Shortcut& rhs) = default;
+};
+
+// the table a window routes keys through, which maps an accelerator onto a command (AD-15)
+class ShortcutTable
+{
+public:
+    void bind(Shortcut shortcut, CommandId command);
+    [[nodiscard]] bool unbind(Shortcut shortcut);
+    [[nodiscard]] CommandId lookup(Shortcut shortcut) const;
+    [[nodiscard]] std::vector<Shortcut> for_command(CommandId command) const;
+
+    // the text a menu item or a tooltip presents beside the label (§18.1)
+    [[nodiscard]] std::string display(Shortcut shortcut) const;
+};
+}
+```
+
+Two ordering rules make the routing unambiguous, and both exist because the alternative is a
+shortcut that fires while a user is typing:
+
+1. **A binding with at least one modifier is global** and is consulted before the focused node. The
+   standard widgets already reserve this: a button, a checkbox and a slider each refuse a modified
+   key with the note that a modified key is an application shortcut (§8.3).
+2. **A binding with no modifier is consulted only after the focused node declined the key**, so a
+   text control always wins over an unbound letter.
+
+A matched binding **consumes the key whether or not the command ran**. A disabled command therefore
+does not fall through to another consumer, which is the behaviour that would otherwise make a
+disabled menu item look live.
+
+The normalized `Key` of §8.3 carries the named keys only, which is sufficient for traversal and
+activation and insufficient for an accelerator. `Key` therefore also carries `A`–`Z`, `0`–`9` and
+`F1`–`F12`, without which no accelerator can be written at all. Each platform adapter translates
+its own key codes onto the extended set; the headless adapter translates nothing and simply never
+produces one.
+
+### 18.6 Binding Precedence
+
+A control bound to a command and also configured imperatively has two sources of enablement. The
+resolution is stated so that a `.ui` form that still writes `disabled:` on a command-bound control
+behaves predictably rather than fighting the command.
+
+- **While a command is bound, the command wins.** An imperative `set_disabled` or a declarative
+  `disabled:` binding records the control's own value and does not apply it.
+- **Unbinding restores the control's own value**, so a form that declares `disabled: armed` still
+  behaves as written once the command is removed.
+
+This keeps one source of truth, which is the entire point of AD-15, and it means the decision can be
+made in one place rather than at every consumer.
+
+### 18.7 Module Placement and Boundaries
+
+`commands/` sits above `core/` and `ui/`, and below `widgets/`, `input/`, `application/` and
+`automation/`. It links `albor-core` and `albor-ui`, the second only because an accelerator is written in
+the normalized key vocabulary of §8.3 and no lower module declares it. Every other module reaches the
+command object downward, and this placement is what keeps the boundaries intact:
+
+- **`AD-02` (layout invariance)** is preserved because enablement is pushed into the controls that
+  already own `set_disabled` and `set_visible`. `FocusManager::focusable` of §8.3 is a static
+  predicate over a `const UiNode&` and cannot consult a registry, so a pull-based design would have
+  forced either a signature change across the focus ring or a virtual on `UiNode`. Pushing costs one
+  notification and changes no vtable in any configuration.
+- **`AD-13` and §13.3** are preserved because a consumer binds a plain function pointer over its own
+  context, and because no `Command` allocates per invocation on the frame path.
+- **`AD-10`** is preserved because `commands/` is production code containing no Dev or Test source,
+  and `automation/` is its only Dev/Test consumer. The dependency points downward, so excluding the
+  automation core from a Release link still fails the link rather than compiling away (§19.6).
+- **`AD-20`** is preserved because the automation command surface is an ordinary `CommandHandler`
+  registered in the existing registry, so the MCP tool list of §19.7 continues to be derived from the
+  allow-list and gains nothing by default.
+- **`AD-18` (two-stage frame)** is preserved because a command's label and enablement are read at
+  scene-record time and baked into the immutable `FrameScene`. Nothing on the render thread invokes a
+  command, and a command is never reachable from a `DrawCommand` replay (§6.1).
+
+### 18.8 What This Section Deliberately Does Not Settle
+
+Stating the boundary is part of the decision, because each of these was reachable from the module's
+name and would have pulled a second concern into it:
+
+- **Menu widgets.** `MenuBar`, `Menu`, `MenuItem` and `ToolBar` are a widget project of the same
+  weight as the rest of §8. This section fixes the contract they consume — a label, an enabled
+  state, a visible state, an invocation, and `ShortcutTable::display` for the accelerator text — and
+  leaves their construction to the widget layer.
+- **Language exposure.** A `.ui` file cannot declare a command. Exposing one requires an entry in the
+  element catalogue (§11.1), a setter in the codegen tables (§11.3) and a native type in the
+  manifest (§11.2, AD-17). Until those exist, a command is a C++-side object and a form that mixes
+  one with a generated tree builds the command-bound control imperatively.
+- **A selection model.** §18.3 defines the span and the injection point; the model that fills them
+  belongs to the control that owns a selection.
+- **Automation-driven enablement.** There is deliberately no such path. An automation client observes
+  the same enablement a user would, and enabling a command from a test would be exactly the
+  test-only path §2.1 and AD-10 forbid.

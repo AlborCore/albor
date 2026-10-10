@@ -135,6 +135,9 @@ add_subdirectory(animation)
 add_subdirectory(style)
 add_subdirectory(resources)
 
+# the shared action object of AD-15, whose accelerators, selection contract and undo history every consumer binds to (§3.2, §18)
+add_subdirectory(commands)
+
 # the standard widgets of §8, which are ui components that also expose semantics (§3.2)
 add_subdirectory(widgets)
 

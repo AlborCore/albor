@@ -4,6 +4,7 @@
 #include <string>
 #include <utility>
 
+#include "commands/command_invocation.h"
 #include "text/text_engine.h"
 #include "widgets/widget.h"
 
@@ -55,7 +56,14 @@ namespace albor
         // override: hand out the plate fill, which the base records before the label and which resolves by state (§6.2)
         [[nodiscard]] Color background() const override;
 
+    protected:
+        // override: a button presents the label, the enablement and the applicability a command publishes (§18.7)
+        void apply_command_state(const CommandState& state) override;
+
     private:
+        // perform the action, which runs the bound command when there is one and the handler otherwise (§8.3, §18.7)
+        void activate(InvocationSource source);
+
         // the text engine that measures the label, which the application owns (§9.1, AD-14)
         TextEngine* m_text_engine = nullptr;
 

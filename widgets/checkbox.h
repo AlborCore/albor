@@ -2,6 +2,7 @@
 
 #include <functional>
 
+#include "commands/command_invocation.h"
 #include "widgets/widget.h"
 
 namespace albor
@@ -55,7 +56,14 @@ namespace albor
         // replace the fill a checked box carries, which redraws without changing the extent (§6.1)
         void set_check_fill(Color check_fill);
 
+    protected:
+        // override: a checkbox presents no label of its own, so it follows the enablement and the applicability (§18.7)
+        void apply_command_state(const CommandState& state) override;
+
     private:
+        // flip the state and report it, which a press and a semantic action share (§8.3, §10.1)
+        void toggle();
+
         // the outline width the box strokes with, which comes from the theme when one is installed (§6.1)
         [[nodiscard]] float outline_width() const;
 
