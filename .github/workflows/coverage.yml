@@ -70,8 +70,10 @@ jobs:
             ./.build-coverage/tests/albor-tests > coverage.lcov
           # the export carries absolute source paths, and the coverage api matches on repository relative ones
           sed -i '' "s|^SF:$PWD/|SF:|" coverage.lcov
-          python3 -m pip install lcov_cobertura
-          lcov_cobertura coverage.lcov --output cobertura.xml
+          # the runner's python3 is homebrew managed (pep 668), so the converter lives in a venv
+          python3 -m venv .venv-lcov
+          .venv-lcov/bin/pip install lcov_cobertura
+          .venv-lcov/bin/lcov_cobertura coverage.lcov --output cobertura.xml
 
       - name: upload the report artifact
         uses: actions/upload-artifact@v7
