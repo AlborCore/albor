@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <limits>
 
+#include "commands/command.h"
+
 namespace albor
 {
     // the extent one wheel notch moves the content when no theme is installed (§8.3)
@@ -302,6 +304,27 @@ namespace albor
         return std::max(0.0f, m_content_extent.height - viewport_rect().height);
     }
 
+    void ScrollView::set_disabled(bool disabled) {
+        // an unchanged state redraws nothing, because the viewport looks the same (§8.3)
+        if (m_disabled == disabled)
+            return;
+        // the state is stored first, so unbinding a command later restores what the form declared (§18.7)
+        m_disabled = disabled;
+        // a bound command owns the state, so the imperative write is recorded and not applied (§18.7)
+        if (command() != nullptr)
+            return;
+        // a disabled viewport stops answering the wheel and the keys, so the frame changes (§8.3)
+        invalidate();
+    }
+
+    bool ScrollView::disabled() const {
+        // a bound command is the single answer, which is what three consumers reading one object means (§18.7)
+        if (command() != nullptr)
+            return !command()->state().enabled;
+        // without a command the state is what the dispatch and the hit test both refuse on (§8.3)
+        return m_disabled;
+    }
+
     Size ScrollView::content_extent() const { return m_content_extent; }
 
     bool ScrollView::scrollable() const { return m_content_extent.height > viewport_rect().height + 0.0f; }
@@ -340,9 +363,6 @@ namespace albor
     Rect ScrollView::viewport_rect() const { return m_bounds; }
 
     void ScrollView::paint_scrollbar(RenderContext& context) const {
-        // a hidden view draws no bar, because there is nothing behind it (§6.2)
-        if (m_bounds.empty())
-            return;
         // the policy decides whether a bar is drawn at all, which is a per instance decision (§8)
         if (!scrollbar_visible())
             return;

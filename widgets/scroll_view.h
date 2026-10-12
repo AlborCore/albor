@@ -88,6 +88,12 @@ namespace albor
         // hand out how far the content can still move, which is zero while it fits (§8.2)
         [[nodiscard]] float maximum_offset() const;
 
+        // set whether the viewport refuses scrolling, which is what a form writes (§8.3)
+        void set_disabled(bool disabled);
+
+        // override: report whether the viewport refuses input, which a bound command owns (§8.3, §18.7)
+        [[nodiscard]] bool disabled() const override;
+
         // hand out the extent of the content being scrolled, which the container owns (§8.2)
         [[nodiscard]] Size content_extent() const;
 
@@ -169,5 +175,8 @@ namespace albor
 
         // the handler told about every change of the offset, which is what the signal reports (§8.3)
         std::function<void(float)> m_on_scroll;
+
+        // whether the viewport refuses input, which a bound command takes over from (§8.3, §18.7)
+        bool m_disabled = false;
     };
 } // namespace albor

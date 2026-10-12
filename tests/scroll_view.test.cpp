@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include "commands/command.h"
 #include "core/constraints.h"
 #include "core/scrollable_content.h"
 #include "runtime/binding_engine.h"
@@ -600,4 +601,499 @@ TEST(ScrollViewChecks, AnUnchangedRowHeightDoesNotReachTheContent) {
     // assert an unchanged height reaches the content anyway, because the measure is where the extent is read (§8.2)
     EXPECT_FLOAT_EQ(content_ptr->row_height, 20.0f);
     EXPECT_FLOAT_EQ(view.content_extent().height, 2000.0f);
+}
+
+TEST(ScrollViewChecks, AnUnarrangedViewClipsNothing) {
+    // arrange a view that was never placed, so it has no viewport to clip to
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    RecordingContext context;
+    // act
+    view.render(context);
+    // assert a viewport with no area clips nothing, because there is nothing to scissor to (§6.2)
+    EXPECT_TRUE(context.clips.empty());
+}
+
+TEST(ScrollViewChecks, AHiddenViewTakesNoEventAndIsNotAHit) {
+    // arrange
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    view.set_visible(false);
+    Event wheel{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = 40.0f, .precision = ScrollPrecision::Point};
+    // act
+    view.dispatch_event(wheel);
+    // assert a hidden view draws nothing to aim at, so it neither claims nor hits (§8.3)
+    EXPECT_FALSE(wheel.handled);
+    EXPECT_FALSE(view.hit_test(Point{10.0f, 10.0f}));
+}
+
+TEST(ScrollViewChecks, ADisabledViewRefusesTheWheelTheKeysAndTheHitTest) {
+    // arrange
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    view.set_disabled(true);
+    Event wheel{.kind = EventKind::Wheel, .position = Point{10.0f, 10.0f}, .scroll = 40.0f, .precision = ScrollPrecision::Point};
+    Event page{.kind = EventKind::KeyDown, .key = Key::PageDown};
+    // act
+    view.dispatch_event(wheel);
+    view.dispatch_event(page);
+    // assert a disabled viewport refuses input, so it claims none of it (§8.3)
+    EXPECT_FALSE(wheel.handled);
+    EXPECT_FALSE(page.handled);
+    EXPECT_FLOAT_EQ(view.offset(), 0.0f);
+    EXPECT_FALSE(view.hit_test(Point{10.0f, 10.0f}));
+}
+
+TEST(ScrollViewChecks, AModifiedKeyIsLeftToTheApplication) {
+    // arrange
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    Event shortcut{.kind = EventKind::KeyDown, .key = Key::ArrowDown};
+    shortcut.modifiers.command = true;
+    // act
+    view.dispatch_event(shortcut);
+    // assert a modified key belongs to the application, which the standards reserve first (§8.3)
+    EXPECT_FALSE(shortcut.handled);
+    EXPECT_FLOAT_EQ(view.offset(), 0.0f);
+}
+
+TEST(ScrollViewChecks, AKeyTheViewportDoesNotAnswerIsLeftAlone) {
+    // arrange
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    Event letter{.kind = EventKind::KeyDown, .key = Key::A};
+    // act
+    view.dispatch_event(letter);
+    // assert only the paging keys are the viewport's business (§8.3)
+    EXPECT_FALSE(letter.handled);
+}
+
+TEST(ScrollViewChecks, AnArrowKeyMovesOneLine) {
+    // arrange
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    Event down{.kind = EventKind::KeyDown, .key = Key::ArrowDown};
+    // act
+    view.dispatch_event(down);
+    // assert a line key moves one line, which is the themed distance a notch moves (§8.3)
+    EXPECT_FLOAT_EQ(view.offset(), 40.0f);
+    // act the other arrow moves the same distance the other way
+    Event up{.kind = EventKind::KeyDown, .key = Key::ArrowUp};
+    view.dispatch_event(up);
+    EXPECT_FLOAT_EQ(view.offset(), 0.0f);
+}
+
+TEST(ScrollViewChecks, APageUpKeyMovesBackOneViewport) {
+    // arrange
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    view.scroll_to(500.0f);
+    // act
+    Event page_up{.kind = EventKind::KeyDown, .key = Key::PageUp};
+    view.dispatch_event(page_up);
+    // assert the paging key is named for the viewport it moves (§8.3)
+    EXPECT_TRUE(page_up.handled);
+    EXPECT_FLOAT_EQ(view.offset(), 200.0f);
+}
+
+TEST(ScrollViewChecks, DraggingTheThumbMovesTheOffset) {
+    // arrange a viewport whose thumb sits at the leading edge (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // act the press lands on the thumb, which is the hundred points at the trailing edge (§6.1)
+    Event press{.kind = EventKind::PointerDown, .position = Point{195.0f, 50.0f}};
+    view.dispatch_event(press);
+    // assert the drag begins, because only the thumb is draggable (§8.3)
+    EXPECT_TRUE(press.handled);
+    // act the pointer moves to the trailing end of the travel
+    Event move{.kind = EventKind::PointerMove, .position = Point{195.0f, 250.0f}};
+    view.dispatch_event(move);
+    // assert the offset follows the thumb, which is the whole of what the bar reports (§8.3)
+    EXPECT_TRUE(move.handled);
+    EXPECT_FLOAT_EQ(view.offset(), 600.0f);
+    // act the release ends the drag, leaving the offset where it was put
+    Event release{.kind = EventKind::PointerUp, .position = Point{195.0f, 250.0f}};
+    view.dispatch_event(release);
+    EXPECT_TRUE(release.handled);
+    EXPECT_FLOAT_EQ(view.offset(), 600.0f);
+}
+
+TEST(ScrollViewChecks, APressOnTheGrooveOrOutsideTheBarIsNotAClaim) {
+    // arrange
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // act a press on the groove below the thumb, which has no draggable part (§8.3)
+    Event groove{.kind = EventKind::PointerDown, .position = Point{195.0f, 200.0f}};
+    view.dispatch_event(groove);
+    // act a press past the trailing edge, which is not this viewport at all (§8.3)
+    Event outside{.kind = EventKind::PointerDown, .position = Point{400.0f, 50.0f}};
+    view.dispatch_event(outside);
+    // assert neither is claimed, because only the thumb drags (§8.3)
+    EXPECT_FALSE(groove.handled);
+    EXPECT_FALSE(outside.handled);
+}
+
+TEST(ScrollViewChecks, ADragOnAViewportThatCannotScrollMovesNothing) {
+    // arrange a viewport whose content fits, so there is no thumb to drag (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 200.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    view.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOn);
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // act
+    Event press{.kind = EventKind::PointerDown, .position = Point{195.0f, 50.0f}};
+    view.dispatch_event(press);
+    Event move{.kind = EventKind::PointerMove, .position = Point{195.0f, 250.0f}};
+    view.dispatch_event(move);
+    // assert nothing moved, because a viewport with no travel has no draggable thumb (§8.2)
+    EXPECT_FLOAT_EQ(view.offset(), 0.0f);
+}
+
+TEST(ScrollViewChecks, TheAccessorsReadBackWhatWasWritten) {
+    // arrange
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    view.add_child(std::move(content));
+    // act, assert every written value has a reader, because the codegen path reads them back (§11.3)
+    view.set_viewport_extent(Size{320.0f, 240.0f});
+    EXPECT_EQ(view.viewport_extent(), (Size{320.0f, 240.0f}));
+    view.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOn);
+    EXPECT_EQ(view.scrollbar_visibility(), ScrollbarVisibility::AlwaysOn);
+    view.set_overscan(48.0f);
+    EXPECT_FLOAT_EQ(view.overscan(), 48.0f);
+    view.set_row_height(24.0f);
+    EXPECT_FLOAT_EQ(view.row_height(), 24.0f);
+}
+
+TEST(ScrollViewChecks, AnUnwrittenChangeChangesNothing) {
+    // arrange
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{320.0f, 240.0f});
+    view.set_overscan(48.0f);
+    view.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOn);
+    view.set_disabled(true);
+    view.set_row_height(24.0f);
+    view.clear_dirty();
+    // act every setter is given the value it already holds (§8.2, §8.3)
+    view.set_viewport_extent(Size{320.0f, 240.0f});
+    view.set_overscan(48.0f);
+    view.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOn);
+    view.set_disabled(true);
+    view.set_row_height(24.0f);
+    // assert nothing asked for a frame, because nothing about the viewport changed (§8.2)
+    EXPECT_FALSE(view.render_dirty());
+    EXPECT_FALSE(view.layout_dirty());
+}
+
+TEST(ScrollViewChecks, AnUnwatchedScrollViewReportsNoHandler) {
+    // arrange
+    BindingEngine engine;
+    ScrollView view(&engine);
+    // act, assert the handler is absent until one is installed, which is what the signal is (§8.3)
+    EXPECT_FALSE(view.watches());
+    view.set_on_scroll([](float) {});
+    EXPECT_TRUE(view.watches());
+}
+
+TEST(ScrollViewChecks, TheOffsetSetterIsTheSameWriteAUserScrollMakes) {
+    // arrange
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // act the setter writes through the same clamped path a user scroll takes (§7.3, AD-24)
+    view.set_offset(100000.0f);
+    // assert
+    EXPECT_FLOAT_EQ(view.offset(), 600.0f);
+    EXPECT_TRUE(view.user_scrolled());
+    // act an unchanged destination writes nothing, which is what the guard is for (§8.2)
+    view.clear_dirty();
+    view.set_offset(600.0f);
+    EXPECT_FALSE(view.render_dirty());
+}
+
+TEST(ScrollViewChecks, AThemeResolvesTheScrollbarPaintAndTheLineStep) {
+    // arrange a viewport whose bar is drawn through an installed theme (§6.1)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Theme theme;
+    theme.set_scrollbar_extent(14.0f);
+    theme.set_scrollbar_thumb_minimum(30.0f);
+    theme.set_scroll_line_extent(25.0f);
+    apply_theme(view, theme);
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    RecordingContext context;
+    // act
+    view.render(context);
+    // assert the track spans the viewport height at the themed width, against the trailing edge (§6.1)
+    Rect track{};
+    for (const Rect& rect : context.rects)
+        if (rect.height == 300.0f && rect.width == 14.0f)
+            track = rect;
+    EXPECT_FLOAT_EQ(track.x, 186.0f);
+    // assert the thumb is the band narrower than the viewport, because it is the draggable part (§6.1)
+    Rect thumb{};
+    for (const Rect& rect : context.rounded)
+        if (rect.height < 300.0f)
+            thumb = rect;
+    // assert the thumb takes the viewport share of the content, which is what the ratio means (§8.2)
+    EXPECT_FLOAT_EQ(thumb.height, 100.0f);
+    // act the themed line step moves a key press, because the policy is the theme's (§8.3)
+    Event down{.kind = EventKind::KeyDown, .key = Key::ArrowDown};
+    view.dispatch_event(down);
+    EXPECT_FLOAT_EQ(view.offset(), 25.0f);
+}
+
+TEST(ScrollViewChecks, AThemedActionScrollsByTheThemedStep) {
+    // arrange
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Theme theme;
+    theme.set_scroll_line_extent(15.0f);
+    apply_theme(view, theme);
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // act the assistive technology action moves down by the themed line (§10.1)
+    const SemanticNode node = view.semantic_node();
+    EXPECT_TRUE(node.invoke("scroll_up"));
+    EXPECT_TRUE(node.invoke("scroll_down"));
+    // assert the two steps cancel, because the themed step is the same either way (§10.1)
+    EXPECT_FLOAT_EQ(view.offset(), 15.0f);
+}
+
+TEST(ScrollViewChecks, ADisabledPressOnTheBarIsNotAClaim) {
+    // arrange
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    view.set_disabled(true);
+    Event press{.kind = EventKind::PointerDown, .position = Point{195.0f, 50.0f}};
+    // act
+    view.dispatch_event(press);
+    // assert a disabled viewport claims no press, so no ancestor reacts to one either (§8.3)
+    EXPECT_FALSE(press.handled);
+}
+
+TEST(ScrollViewChecks, ABoundCommandOwnsTheDisabledState) {
+    // arrange a viewport bound to a command, which is what makes one applicable (§18.7)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Command command{"log.scroll", "Log"};
+    command.set_enabled(false);
+    view.set_command(&command);
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // act a write the command does not own is recorded but not applied, because the command is the answer (§18.7)
+    view.set_disabled(true);
+    EXPECT_TRUE(view.disabled());
+    // assert the command is the single answer, whatever the widget's own flag says (§18.7)
+    view.set_disabled(false);
+    EXPECT_TRUE(view.disabled());
+    // act the command becomes applicable again
+    command.set_enabled(true);
+    EXPECT_FALSE(view.disabled());
+}
+
+TEST(ScrollViewChecks, APlainContentIsToldNoRowHeight) {
+    // arrange a scroll view over a container that does not build itself (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    view.set_row_height(20.0f);
+    Size measured{};
+    // act, assert a container with no window still measures as its own extent (§8.2)
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    EXPECT_FLOAT_EQ(view.content_extent().height, 900.0f);
+}
+
+TEST(ScrollViewChecks, AnUnplacedViewportDrawsNoBar) {
+    // arrange a viewport measured but placed with no area (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    view.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOn);
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{0.0f, 0.0f}));
+    RecordingContext context;
+    // act
+    view.render(context);
+    // assert no band, because a viewport with no area has nowhere to put one (§6.2)
+    for (const Rect& rect : context.rects)
+        EXPECT_NE(rect.width, 10.0f);
+    for (const Rect& rect : context.rounded)
+        EXPECT_NE(rect.width, 10.0f);
+}
+
+TEST(ScrollViewChecks, AViewportThatFitsDrawsNoBarUnderTheAutomaticPolicy) {
+    // arrange content that fits, so there is no travel to show (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 200.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    RecordingContext context;
+    // act, assert the automatic policy draws nothing, because a bar would advertise a travel that is not there (§8)
+    view.render(context);
+    for (const Rect& rect : context.rects)
+        EXPECT_NE(rect.width, 10.0f);
+    for (const Rect& rect : context.rounded)
+        EXPECT_NE(rect.width, 10.0f);
+}
+
+TEST(ScrollViewChecks, AForcedBarOverFittingContentDrawsATrackWithoutAThumb) {
+    // arrange the always-on policy over content that fits (§8)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 200.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    view.set_scrollbar_visibility(ScrollbarVisibility::AlwaysOn);
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    RecordingContext context;
+    // act
+    view.render(context);
+    // assert the track is drawn at the trailing edge, because the policy insists on a bar (§8)
+    Rect track{};
+    for (const Rect& rect : context.rects)
+        if (rect.width == 10.0f)
+            track = rect;
+    EXPECT_FLOAT_EQ(track.x, 190.0f);
+    EXPECT_FLOAT_EQ(track.height, 300.0f);
+    // assert the thumb is left off, because a viewport with no travel has no position to reach (§6.2)
+    for (const Rect& rect : context.rounded)
+        EXPECT_NE(rect.width, 10.0f);
+}
+
+TEST(ScrollViewChecks, AThumbAsTallAsItsViewportDoesNotDrag) {
+    // arrange a themed floor that swallows the whole track, so no travel is left (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Theme theme;
+    theme.set_scrollbar_thumb_minimum(400.0f);
+    theme.set_scrollbar_extent(14.0f);
+    apply_theme(view, theme);
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // act the press lands on the thumb and the pointer moves along it
+    Event press{.kind = EventKind::PointerDown, .position = Point{193.0f, 100.0f}};
+    view.dispatch_event(press);
+    Event move{.kind = EventKind::PointerMove, .position = Point{193.0f, 260.0f}};
+    view.dispatch_event(move);
+    // assert the drag moves nothing, because the thumb already fills the track (§8.2)
+    EXPECT_FLOAT_EQ(view.offset(), 0.0f);
 }
