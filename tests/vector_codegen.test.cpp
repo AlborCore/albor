@@ -280,3 +280,32 @@ TEST(VectorCodegen, AVirtualizedLogSurvivesAScrollThatRebuildsTheWindow) {
     // assert rows were measured again, which is what a rebuilt window needs (§8.2, AD-13)
     EXPECT_GT(text.measurements, measured_first);
 }
+
+TEST(VectorCodegen, ADoubledRowHeightResizesTheScrollbarThumb) {
+    // arrange a log laid out at one row height, with the bar visible so its geometry is recorded (§8, §8.2)
+    std::vector<Task> tasks;
+    tasks.reserve(100);
+    for (std::size_t index = 0; index < 100; index++)
+        tasks.push_back(Task{.key = "task" + std::to_string(index), .title = "line " + std::to_string(index)});
+    BindingEngine engine;
+    CountingTextEngine text;
+    ScrollLog log(&engine, &text);
+    log.set_line_height(20.0f);
+    log.set_tasks(tasks);
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
+    SceneBuilder builder;
+    (void)engine.settle();
+    (void)builder.build(log, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    // act the bound row height settles at double the value, which is what a form resize does (§7.3, AD-13)
+    log.set_line_height(40.0f);
+    (void)engine.settle();
+    const std::shared_ptr<const FrameScene> scene = builder.build(log, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    // the thumb is the one rounded command, and its height is the viewport share of the content (§6.1)
+    std::vector<float> thumb_heights;
+    for (const DrawCommand& command : scene->commands())
+        if (command.kind() == DrawCommandKind::RoundedRect)
+            thumb_heights.push_back(command.rect_geometry().rect.height);
+    // assert the thumb is shorter, because the content the extent cache reports is twice as tall (§8.2)
+    ASSERT_EQ(thumb_heights.size(), 1u);
+    EXPECT_LT(thumb_heights.at(0), 120.0f);
+}

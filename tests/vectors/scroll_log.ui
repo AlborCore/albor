@@ -11,7 +11,7 @@ component ScrollLog {
         viewport_height: 160px;
         row_height: line_height;
         overscan: 40px;
-        scrollbar: Scrollbar.off;
+        scrollbar: Scrollbar.on;
         offset: line_height;
 
         Repeat(task in tasks) {

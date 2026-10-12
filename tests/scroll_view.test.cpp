@@ -535,25 +535,27 @@ TEST(ScrollViewChecks, NoActionIsOfferedThatTakesNoTarget) {
     EXPECT_FALSE(node.has_action("scroll_to"));
 }
 
-TEST(ScrollViewChecks, AChangedRowHeightReachesTheContent) {
-    // arrange
+TEST(ScrollViewChecks, AChangedRowHeightReachesTheContentExtent) {
+    // arrange a content whose extent is arithmetic over the height it was given (§8.2, AD-13)
     BindingEngine engine;
     ScrollView view(&engine);
-    auto content = std::make_unique<WindowedContent>();
-    content->total = Size{200.0f, 2000.0f};
-    WindowedContent* content_ptr = content.get();
+    auto content = std::make_unique<HeightDrivenContent>();
     view.add_child(std::move(content));
     view.set_viewport_extent(Size{200.0f, 300.0f});
     Size measured{};
+    // act the height is bound and settles twice, as a form resize does (§7.3, AD-13)
+    view.set_row_height(20.0f);
     view.measure(SizeConstraints::unconstrained(), measured);
     view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
-    // act the row height is bound and settles twice, as a binding does (§7.3, AD-13)
-    view.set_row_height(20.0f);
-    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // assert the hundred rows are two hundred tall at twenty each (§8.2, AD-13)
+    ASSERT_FLOAT_EQ(view.content_extent().height, 2000.0f);
+    // act the height settles again, which is what a later binding does (§7.3, AD-13)
     view.set_row_height(40.0f);
-    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
-    // assert the content is told twice, because the container owns the height the rows divide by (§8.2, AD-13)
-    EXPECT_FLOAT_EQ(content_ptr->row_height, 40.0f);
+    view.measure(SizeConstraints::unconstrained(), measured);
+    // assert the cached extent is the one the new height produces, which is the whole contract (§8.2)
+    EXPECT_FLOAT_EQ(view.content_extent().height, 4000.0f);
+    // assert the scroll range followed, because that is what a thumb is measured against (§8.2)
+    EXPECT_FLOAT_EQ(view.maximum_offset(), 3700.0f);
 }
 
 TEST(ScrollViewChecks, ARowHeightSettlesTheContentExtentInTheSameFrame) {
