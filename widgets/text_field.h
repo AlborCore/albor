@@ -59,6 +59,12 @@ namespace albor
         // override: report whether the field refuses everything, which the hit test and the dispatch both refuse on (§8.3)
         [[nodiscard]] bool disabled() const override;
 
+        // set or clear the multi line mode, which remeasures because the runs wrap and the plate grows (§8.2)
+        void set_multiline(bool multiline);
+
+        // report whether the field edits more than one line (§8.3)
+        [[nodiscard]] bool multiline() const;
+
         // replace the font size the value is measured at, which remeasures because the metrics changed (§9.1)
         void set_font_size(float font_size);
 
@@ -153,6 +159,27 @@ namespace albor
         // move the caret without collapsing the selection, which is what a drag or a shift key does (§8.3)
         void extend_caret(std::size_t byte);
 
+        // hand out the byte one caret step lands before the given one, which crosses a line break (§9.1)
+        [[nodiscard]] std::size_t step_backward_byte(std::size_t byte) const;
+
+        // hand out the byte one caret step lands after the given one, which crosses a line break (§9.1)
+        [[nodiscard]] std::size_t step_forward_byte(std::size_t byte) const;
+
+        // hand out the byte one line above the caret, which keeps the column goal (§8.3)
+        [[nodiscard]] std::size_t step_up_byte(std::size_t byte) const;
+
+        // hand out the byte one line below the caret, which keeps the column goal (§8.3)
+        [[nodiscard]] std::size_t step_down_byte(std::size_t byte) const;
+
+        // hand out the byte the line of the caret begins at, which is what a home key hits (§8.3)
+        [[nodiscard]] std::size_t line_start_byte(std::size_t byte) const;
+
+        // hand out the byte the line of the caret ends at, which is what an end key hits (§8.3)
+        [[nodiscard]] std::size_t line_end_byte(std::size_t byte) const;
+
+        // the x coordinate of the caret within the line it stands on, which a vertical move keeps (§8.3)
+        [[nodiscard]] float caret_goal_x() const;
+
         // paint the selection over the value, which the value paints over (§6.1)
         void paint_selection(RenderContext& context);
 
@@ -198,8 +225,14 @@ namespace albor
         // the byte offset a selection is anchored at, which the caret moves away from (§8.3)
         std::size_t m_anchor = 0;
 
+        // the x the caret aims for within its line, which a vertical move carries between lines (§8.3)
+        float m_goal_x = 0.0f;
+
         // whether a press drag is extending the selection, which a release or a caret placement ends (§8.3)
         bool m_dragging = false;
+
+        // whether the field edits more than one line, which wraps the runs and grows the plate (§8.2)
+        bool m_multiline = false;
 
         // the size the runs are measured at (§9.1)
         float m_font_size = TextEngine::DEFAULT_FONT_SIZE;

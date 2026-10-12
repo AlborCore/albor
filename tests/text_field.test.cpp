@@ -72,10 +72,12 @@ namespace
             // an empty run carries no glyphs, so the double measures it as nothing (§9.1)
             if (text.empty())
                 return TextLayout{};
-            // the double shapes one glyph per character, which is what a shaper merges multi bytes into (§9.1)
-            ShapedRun::Line line;
-            // the line origin is the baseline the synthesized glyphs hang from (§9.1)
-            line.origin = Point{.x = 0.0f, .y = HEIGHT * 0.8f};
+            // the lines the run is laid out into, which the ceiling and the breaks decide (§9.1)
+            std::vector<ShapedRun::Line> lines;
+            // the current line is built as the walk goes, because a break opens the next one (§9.1)
+            lines.push_back(ShapedRun::Line{});
+            // how many characters sit on the line so far, which is what the ceiling counts against (§9.1)
+            float pen = 0.0f;
             // every character becomes one glyph placed a fixed advance apart, carrying the byte it starts at (§9.1)
             for (std::size_t index = 0; index < text.size();) {
                 // the lead byte opens a character, which the double resolves as the spans utf8 uses (§9.1)
@@ -83,20 +85,56 @@ namespace
                 // a two byte lead is the shape the test corpus needs (§9.1)
                 if ((text[index] & 0xE0) == 0xC0)
                     span = 2;
+                // a hard break shapes no glyph, which is what the real engines drop (§9.1)
+                if (text[index] == '\n') {
+                    // the line ends past the break, which is the byte a caret stops at (§9.1)
+                    lines.back().end_byte = index;
+                    // the next line begins past the break byte (§9.1)
+                    lines.push_back(ShapedRun::Line{});
+                    lines.back().start_byte = index + 1;
+                    pen = 0.0f;
+                    index += 1;
+                    continue;
+                }
+                // a ceiling that no longer fits breaks the line, which is what wrapping is (§9.1)
+                if (max_width > 0.0f && pen + ADVANCE > max_width) {
+                    // the line ends where its last glyph fits (§9.1)
+                    lines.back().end_byte = index;
+                    // the next line begins at this character (§9.1)
+                    lines.push_back(ShapedRun::Line{});
+                    lines.back().start_byte = index;
+                    pen = 0.0f;
+                }
                 // the glyph hangs where a fixed advance places it, and carries its own byte (§9.1)
-                line.glyphs.push_back(ShapedGlyph{.id = static_cast<std::uint32_t>(text[index]), .position = Point{.x = static_cast<float>(line.glyphs.size()) * ADVANCE, .y = 0.0f}, .cluster = static_cast<std::uint32_t>(index)});
+                ShapedRun::Line& line = lines.back();
+                // the baseline of the line is the one every run line hangs from (§9.1)
+                if (line.glyphs.empty())
+                    line.origin = Point{.x = 0.0f, .y = HEIGHT * 0.8f + static_cast<float>(lines.size() - 1) * HEIGHT};
+                // the glyph sits a fixed advance apart, and carries its own byte (§9.1)
+                line.glyphs.push_back(ShapedGlyph{.id = static_cast<std::uint32_t>(text[index]), .position = Point{.x = pen, .y = 0.0f}, .cluster = static_cast<std::uint32_t>(index)});
+                // the pen advances by one character, which is what the next glyph reads (§9.1)
+                pen += ADVANCE;
                 // the double steps the whole character, because a cluster is one character (§9.1)
                 index += span;
             }
-            // the line spans its text and carries the advance a caret stops at, which one per character is (§9.1)
-            line.width = static_cast<float>(line.glyphs.size()) * ADVANCE;
-            // the span is written whole, which is what the caret queries read (§9.1)
-            line.start_byte = 0;
-            line.end_byte = text.size();
-            // the extents are computed before the run moves the line, because the move takes its glyphs (§9.1)
-            const float width = static_cast<float>(line.glyphs.size()) * ADVANCE;
+            // the last line ends at the whole text, which the walk left behind (§9.1)
+            lines.back().end_byte = text.size();
+            // every line carries its span, its baseline and its advance (§9.1)
+            float width = 0.0f;
+            // the extents are computed before the run moves the lines, because the move takes their glyphs (§9.1)
+            for (ShapedRun::Line& line : lines) {
+                // the advance a caret stops at is what the line is (§9.1)
+                line.width = static_cast<float>(line.glyphs.size()) * ADVANCE;
+                // the pair is what every line box ties the paint to (§9.1)
+                line.ascent = HEIGHT * 0.8f;
+                line.descent = HEIGHT * 0.2f;
+                // the longest line is what the run width reports (§9.1)
+                width = std::max(width, line.width);
+            }
+            // the run height is what every line adds up to (§9.1)
+            const float height = static_cast<float>(lines.size()) * HEIGHT;
             // the shaped run travels beside the extents the layout reports, which are the character extents (§9.1)
-            return TextLayout{.run = ShapedRun::make({std::move(line)}, font_size), .size = Size{.width = width, .height = HEIGHT}, .ascent = HEIGHT * 0.8f, .descent = HEIGHT * 0.2f};
+            return TextLayout{.run = ShapedRun::make({std::move(lines)}, font_size), .size = Size{.width = width, .height = height}, .ascent = HEIGHT * 0.8f, .descent = HEIGHT * 0.2f};
         }
 
         [[nodiscard]] bool ready() const override {
@@ -1382,4 +1420,317 @@ TEST(TextFieldUndoChecks, AReversalSignalsTheChangeHandlerOnce) {
     field.undo();
     // assert a reversal is an edit a validation reads, and it is the one edit it was (§18)
     EXPECT_EQ(changes, 1u);
+}
+
+TEST(TextFieldMultiLineChecks, AMultiLineFieldWrapsAtTheOfferedWidth) {
+    // arrange a field whose value is wider than the plate it is given (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("abcdefghijklmnopqrstuvwxyz");
+    // act
+    Size wrapped{};
+    field.measure(SizeConstraints::at_most(Size{80.0f, 400.0f}), wrapped);
+    // assert the run broke at the ceiling, which is three lines of the double (§9.1)
+    ASSERT_EQ(field.layout().run->lines().size(), 4u);
+    // assert every line spans its own bytes, which is what the caret maps against (§9.1)
+    EXPECT_EQ(field.layout().run->lines().front().start_byte, 0u);
+    EXPECT_EQ(field.layout().run->lines()[1].start_byte, 7u);
+}
+
+TEST(TextFieldMultiLineChecks, AWrappedRunGrowsThePlateHeight) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("abcdefghijklmnopqrstuvwxyz");
+    // act
+    Size wrapped{};
+    field.measure(SizeConstraints::at_most(Size{80.0f, 400.0f}), wrapped);
+    // assert the plate is as tall as the lines the run needs (§8.2)
+    EXPECT_GE(wrapped.height, EditingTextEngine::HEIGHT * 4.0f);
+}
+
+TEST(TextFieldMultiLineChecks, ReturnInsertsABreakOnAMultiLineField) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abcd");
+    field.set_multiline(true);
+    field.set_caret(2);
+    std::size_t commits = 0;
+    field.set_on_commit([&commits](const std::string&) { commits++; });
+    Event event{.kind = EventKind::KeyDown, .key = Key::Return};
+    // act
+    field.dispatch_event(event);
+    // assert the break split the value at the caret (§8)
+    EXPECT_EQ(field.value(), "ab\ncd");
+    EXPECT_EQ(field.caret(), 3u);
+    EXPECT_EQ(commits, 0u);
+    EXPECT_TRUE(event.handled);
+}
+
+TEST(TextFieldMultiLineChecks, AReturnChordStillCommitsAMultiLineField) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "ab\ncd");
+    field.set_multiline(true);
+    std::string committed;
+    field.set_on_commit([&committed](const std::string& value) { committed = value; });
+    Event event{.kind = EventKind::KeyDown, .key = Key::Return};
+    event.modifiers.command = true;
+    // act
+    field.dispatch_event(event);
+    // assert the explicit commit is the chord, which plain return is not (§8)
+    EXPECT_EQ(committed, "ab\ncd");
+    EXPECT_TRUE(event.handled);
+}
+
+TEST(TextFieldMultiLineChecks, AReadOnlyMultiLineFieldRefusesTheBreak) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "ab\ncd");
+    field.set_multiline(true);
+    field.set_read_only(true);
+    field.set_caret(3);
+    Event event{.kind = EventKind::KeyDown, .key = Key::Return};
+    // act
+    field.dispatch_event(event);
+    // assert a break is an edit, which a read only field refuses (§8.3)
+    EXPECT_EQ(field.value(), "ab\ncd");
+    EXPECT_FALSE(event.handled);
+}
+
+TEST(TextFieldMultiLineChecks, TheCaretDescendsToTheLineBelow) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("ab\ncd");
+    field.set_caret(1);
+    Event event{.kind = EventKind::KeyDown, .key = Key::ArrowDown};
+    // act
+    field.dispatch_event(event);
+    // assert the caret kept its column, which is byte one of the line below (§8.3)
+    EXPECT_EQ(field.caret(), 4u);
+    EXPECT_TRUE(event.handled);
+}
+
+TEST(TextFieldMultiLineChecks, TheCaretAscendsToTheLineAbove) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("ab\ncdefgh");
+    field.set_caret(5);
+    Event event{.kind = EventKind::KeyDown, .key = Key::ArrowUp};
+    // act
+    field.dispatch_event(event);
+    // assert the caret kept the column as far as the line above goes, which is two bytes (§8.3)
+    EXPECT_EQ(field.caret(), 2u);
+    EXPECT_TRUE(event.handled);
+}
+
+TEST(TextFieldMultiLineChecks, TheColumnGoalSurvivesTheLineWalk) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("ab\ncd\nefghij");
+    field.set_caret(4);
+    Event down{.kind = EventKind::KeyDown, .key = Key::ArrowDown};
+    field.dispatch_event(down);
+    // assert the descent landed on the byte the column goal maps to (§8.3)
+    EXPECT_EQ(field.caret(), 7u);
+    // act
+    Event up{.kind = EventKind::KeyDown, .key = Key::ArrowUp};
+    field.dispatch_event(up);
+    // assert the walk down and back lands on the byte it left, because the column was kept (§8.3)
+    EXPECT_EQ(field.caret(), 4u);
+    EXPECT_TRUE(up.handled);
+}
+
+TEST(TextFieldMultiLineChecks, AnUpOnTheFirstLineClampsToItsStart) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("ab\ncd");
+    field.set_caret(3);
+    Event event{.kind = EventKind::KeyDown, .key = Key::ArrowUp};
+    // act
+    field.dispatch_event(event);
+    // assert the caret stepped to the start of the first line, which is what clamping gives (§8.3)
+    EXPECT_EQ(field.caret(), 0u);
+}
+
+TEST(TextFieldMultiLineChecks, ADownOnTheLastLineStaysPut) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("ab\ncd");
+    field.set_caret(4);
+    Event event{.kind = EventKind::KeyDown, .key = Key::ArrowDown};
+    // act
+    field.dispatch_event(event);
+    // assert
+    EXPECT_EQ(field.caret(), 4u);
+}
+
+TEST(TextFieldMultiLineChecks, HomeAndEndParkTheCaretOnItsOwnLine) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("ab\ncd");
+    field.set_caret(4);
+    Event home{.kind = EventKind::KeyDown, .key = Key::Home};
+    // act
+    field.dispatch_event(home);
+    Event end{.kind = EventKind::KeyDown, .key = Key::End};
+    field.dispatch_event(end);
+    // assert the line is the one the key answered (§8.3)
+    EXPECT_EQ(field.caret(), 5u);
+}
+
+TEST(TextFieldMultiLineChecks, ABackspaceJoinsTwoLines) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("ab\ncd");
+    field.set_caret(3);
+    Event event{.kind = EventKind::KeyDown, .key = Key::Backspace};
+    // act
+    field.dispatch_event(event);
+    // assert the break went and the lines joined (§8.3)
+    EXPECT_EQ(field.value(), "abcd");
+    EXPECT_EQ(field.caret(), 2u);
+}
+
+TEST(TextFieldMultiLineChecks, ABlankLineIsARealLineToTheCaret) {
+    // arrange a value whose middle row is blank (§9.1)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\n\nb");
+    field.set_caret(1);
+    // act
+    Event down{.kind = EventKind::KeyDown, .key = Key::ArrowDown};
+    field.dispatch_event(down);
+    const std::size_t below_blank = field.caret();
+    Event up{.kind = EventKind::KeyDown, .key = Key::ArrowUp};
+    field.dispatch_event(up);
+    // assert the blank row holds a caret stop, which the byte map places (§9.1)
+    EXPECT_EQ(below_blank, 3u);
+    // assert the way back to the blank row stands on the byte the row begins at (§9.1)
+    EXPECT_EQ(field.caret(), 2u);
+}
+
+TEST(TextFieldMultiLineChecks, ASelectionSpansTwoLinesAndPaintsBoth) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("ab\ncd");
+    field.set_selection(1, 4);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 60.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 80.0f}, 1.0f));
+    // act
+    field.render(recorder);
+    // assert each crossed line contributed its own highlight, which two lines are (§8.3)
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    EXPECT_GE(rects.size(), 2u);
+}
+
+TEST(TextFieldMultiLineChecks, TheCaretRectFollowsTheLineItHangsOn) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("ab\ncd");
+    field.set_caret(3);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 60.0f}));
+    // act
+    const Rect on_second = field.caret_rect();
+    // assert the caret hung from the second line, which the byte resolves to (§9.1)
+    EXPECT_EQ(field.caret(), 3u);
+    // assert the x is the pen of the byte within its line, which the inset offsets (§9.1)
+    EXPECT_FLOAT_EQ(on_second.x, 4.0f);
+    // assert the bar sits on the second line box, which is a baseline below the first (§9.1)
+    EXPECT_NEAR(on_second.y, 30.0f, 0.001f);
+}
+
+TEST(TextFieldMultiLineChecks, SingleLineFieldsOwnTheirHeightAndPlainReturn) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abcd");
+    std::string committed;
+    field.set_on_commit([&committed](const std::string& value) { committed = value; });
+    Event event{.kind = EventKind::KeyDown, .key = Key::Return};
+    // act
+    field.dispatch_event(event);
+    // assert a single line field kept the W5 answer exactly (§8)
+    EXPECT_EQ(committed, "abcd");
+    EXPECT_EQ(field.value(), "abcd");
+}
+
+TEST(TextFieldMultiLineChecks, ASetOnAMultiLineFieldKeepsTheBreaks) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    // act
+    field.set_value("ab\ncd");
+    // assert the value was taken as written, which a multi line field is for (§8)
+    EXPECT_EQ(field.value(), "ab\ncd");
+}
+
+TEST(TextFieldMultiLineChecks, ASetStripsBreaksRightBackOnASingleLineField) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    // act
+    field.set_value("ab\ncd");
+    // assert a single line field edits one line, so the value kept no break (§8.3)
+    EXPECT_EQ(field.value(), "abcd");
+}
+
+TEST(TextFieldMultiLineChecks, PasteKeepsBreaksOnAMultiLineField) {
+    // arrange
+    EditingTextEngine engine;
+    HoldingClipboard clipboard;
+    clipboard.carried = "x\ny";
+    TextField field(nullptr, &engine, "ab");
+    field.set_multiline(true);
+    field.set_clipboard(&clipboard);
+    field.set_caret(1);
+    // act
+    field.paste();
+    // assert the break was pasted, because the field edits lines (§8.3)
+    EXPECT_EQ(field.value(), "ax\nyb");
+}
+
+TEST(TextFieldMultiLineChecks, AMultiLineFieldIsAnnouncedMultiLine) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "ab\ncd", "notes");
+    field.set_multiline(true);
+    // act
+    const SemanticNode node = field.semantic_node();
+    // assert the state reaches assistive technology, which is what announces a document (§10.1)
+    EXPECT_TRUE(node.multiline());
+    EXPECT_EQ(node.role(), SemanticRole::TextField);
+}
+
+TEST(TextFieldMultiLineChecks, SetMultilineRedrawsAndRemeasures) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abcd");
+    field.clear_dirty();
+    // act
+    field.set_multiline(true);
+    // assert both passes must run, because the plate may change size (§8.2)
+    EXPECT_TRUE(field.measure_dirty());
+    EXPECT_TRUE(field.render_dirty());
 }

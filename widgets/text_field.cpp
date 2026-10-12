@@ -16,6 +16,14 @@ namespace albor
     void TextField::measure(const SizeConstraints& constraints, Size& out_size) {
         // the metrics are asked for once, because every dimension reads them (§8.2)
         const ControlMetrics& m = metrics();
+        // a multi line field wraps at the width the parent offers, which is the ceiling the measure phase carries (§8.2)
+        if (m_multiline && m_text_engine != nullptr) {
+            // the ceiling is honoured in run space, because the inset sits outside the run (§8.2)
+            const float ceiling = constraints.maximum.width > 0.0f ? std::max(0.0f, constraints.maximum.width - m.text_field_padding * 2.0f) : 0.0f;
+            // both runs are laid out at that ceiling, because the hint wraps like the value (§8.2)
+            m_layout = m_text_engine->measure(m_value, ceiling, m_font_size);
+            m_placeholder_layout = m_text_engine->measure(m_placeholder, ceiling, m_font_size);
+        }
         // the content is the widest of the value run and the hint run, because an empty field shows the hint (§8.2)
         const float run_width = std::max(m_layout.size.width, m_placeholder_layout.size.width) + m.text_field_padding * 2.0f;
         // the height is the run height, because a field vertically centres the line it draws (§8.2)
@@ -78,15 +86,29 @@ namespace albor
             return;
         // the metrics carry the inset, which is where the run starts (§8.2)
         const ControlMetrics& m = metrics();
-        // the highlights are measured over the one line a single line field places (§9.1)
-        const ShapedRun::Line& line = m_layout.run->lines().front();
-        // the spans are resolved in run coordinates, which the origin of the line ties to the plate (§9.1)
-        const float start_x = bounds().x + m.text_field_padding + line.origin.x + m_layout.run->x_at_byte(0, selection_start());
-        const float end_x = bounds().x + m.text_field_padding + line.origin.x + m_layout.run->x_at_byte(0, selection_end());
-        // the line box ties the highlight to the pair the run was measured at (§9.1)
-        const float top = bounds().y + std::max(0.0f, (bounds().height - m_layout.size.height) * 0.5f);
-        // the highlight is one rect over the span, which is what a selection is (§6.2)
-        context.draw_rect(Rect{.x = start_x, .y = top, .width = std::max(0.0f, end_x - start_x), .height = m_layout.size.height}, {.fill = resolve(selection_colors(), m_selection_foreground)});
+        // the span is resolved once, because every line reads the same pair (§8.3)
+        const std::size_t span_start = selection_start();
+        const std::size_t span_end = selection_end();
+        // the run hangs vertically centred, which is the same decision the text paint makes (§8.2)
+        const float draw_y = bounds().y + std::max(0.0f, (bounds().height - m_layout.size.height) * 0.5f);
+        // every line the span crosses contributes its own highlight, which is what a selection over lines is (§8.3)
+        for (std::size_t index = 0; index < m_layout.run->lines().size(); index++) {
+            // the line is read for its own bytes, which is what the span clamps against (§9.1)
+            const ShapedRun::Line& line = m_layout.run->lines()[index];
+            // a line the span does not touch highlights nothing (§8.3)
+            if (line.end_byte <= span_start || line.start_byte >= span_end)
+                continue;
+            // the highlight covers the span within the line, which the bytes of this line bound (§8.3)
+            const std::size_t first = std::max(span_start, line.start_byte);
+            const std::size_t last = std::min(span_end, line.end_byte);
+            // the highlight runs from the first byte's pen and stops at the last one's (§9.1)
+            const float start_x = bounds().x + m.text_field_padding + line.origin.x + m_layout.run->x_at_byte(index, first);
+            const float end_x = bounds().x + m.text_field_padding + line.origin.x + m_layout.run->x_at_byte(index, last);
+            // the line box ties the highlight to the ascent and descent the line was measured at (§9.1)
+            const float top = draw_y + line.origin.y - line.ascent;
+            // the highlight is one rect over the covered span of the line (§6.2)
+            context.draw_rect(Rect{.x = start_x, .y = top, .width = std::max(0.0f, end_x - start_x), .height = line.ascent + line.descent}, {.fill = resolve(selection_colors(), m_selection_foreground)});
+        }
     }
 
     void TextField::paint_caret(RenderContext& context) {
@@ -125,18 +147,22 @@ namespace albor
         // the keyboard edits come through the key kind, which the focused walk delivers (§8.3)
         if (event.kind == EventKind::KeyDown) {
             // a shift arrow is a selection extension, which the plain caret keys do not collapse (§8.3)
-            if (event.modifiers.shift && !event.modifiers.control && !event.modifiers.option && !event.modifiers.command && (event.key == Key::ArrowLeft || event.key == Key::ArrowRight || event.key == Key::Home || event.key == Key::End)) {
+            if (event.modifiers.shift && !event.modifiers.control && !event.modifiers.option && !event.modifiers.command && (event.key == Key::ArrowLeft || event.key == Key::ArrowRight || event.key == Key::Home || event.key == Key::End || event.key == Key::ArrowUp || event.key == Key::ArrowDown)) {
                 // the event is claimed, so no ancestor reacts to the same key (§8.3)
                 event.handled = true;
                 // the caret is the active end, which stays where it is while the anchor holds (§8.3)
                 if (event.key == Key::ArrowLeft)
-                    extend_caret(m_layout.run != nullptr ? m_layout.run->previous_boundary_byte(0, std::min(m_caret, m_value.size())) : (m_caret > 0 ? m_caret - 1 : m_caret));
+                    extend_caret(step_backward_byte(m_caret));
                 else if (event.key == Key::ArrowRight)
-                    extend_caret(m_layout.run != nullptr ? m_layout.run->next_boundary_byte(0, std::min(m_caret, m_value.size())) : std::min(m_caret + 1, m_value.size()));
+                    extend_caret(step_forward_byte(m_caret));
+                else if (event.key == Key::ArrowUp)
+                    extend_caret(step_up_byte(m_caret));
+                else if (event.key == Key::ArrowDown)
+                    extend_caret(step_down_byte(m_caret));
                 else if (event.key == Key::Home)
-                    extend_caret(0);
+                    extend_caret(line_start_byte(m_caret));
                 else
-                    extend_caret(m_value.size());
+                    extend_caret(line_end_byte(m_caret));
                 return;
             }
             // the clipboard and undo keys are the bindings a field answers when no shortcut took them (§18.5, §18)
@@ -177,6 +203,15 @@ namespace albor
                         undo();
                     return;
                 }
+                // the return chord is the explicit commit of a multi line field, which plain return is not (§8)
+                if (event.key == Key::Return && m_multiline) {
+                    // the event is claimed, so no ancestor reacts to the same key (§8.3)
+                    event.handled = true;
+                    // the handler runs only when one was installed, because a bare field commits to nothing (§8)
+                    if (m_on_commit)
+                        m_on_commit(m_value);
+                    return;
+                }
                 // any other chord belongs to the application, so the field refuses to claim it (§18.5)
                 return;
             }
@@ -189,11 +224,8 @@ namespace albor
                     set_caret(selection_start());
                     return;
                 }
-                // the caret steps back over one character, which the run maps (§9.1)
-                if (m_layout.run != nullptr)
-                    set_caret(m_layout.run->previous_boundary_byte(0, std::min(m_caret, m_value.size())));
-                else if (m_caret > 0)
-                    set_caret(m_caret - 1);
+                // the caret steps back over one character, which the line map crosses (§9.1)
+                set_caret(step_backward_byte(m_caret));
                 return;
             }
             if (event.key == Key::ArrowRight) {
@@ -204,31 +236,69 @@ namespace albor
                     set_caret(selection_end());
                     return;
                 }
-                // the caret steps forward over one character, which the run maps (§9.1)
-                if (m_layout.run != nullptr)
-                    set_caret(m_layout.run->next_boundary_byte(0, std::min(m_caret, m_value.size())));
-                else if (m_caret < m_value.size())
-                    set_caret(m_caret + 1);
+                // the caret steps forward over one character, which the line map crosses (§9.1)
+                set_caret(step_forward_byte(m_caret));
                 return;
             }
-            // the home key puts the caret at the start, which a read only field still moves (§8.3)
+            // the up key moves the caret one line above, which a multi line field answers (§8.3)
+            if (event.key == Key::ArrowUp && m_multiline) {
+                // the event is claimed, so no ancestor reacts to the same key (§8.3)
+                event.handled = true;
+                // the move collapses at the byte above, which the column goal is searched at (§8.3)
+                const std::size_t next = step_up_byte(std::min(m_caret, m_value.size()));
+                if (next != std::min(m_caret, m_value.size())) {
+                    m_caret = next;
+                    m_anchor = next;
+                    invalidate();
+                }
+                return;
+            }
+            // the down key moves the caret one line below, which a multi line field answers (§8.3)
+            if (event.key == Key::ArrowDown && m_multiline) {
+                // the event is claimed, so no ancestor reacts to the same key (§8.3)
+                event.handled = true;
+                // the move collapses at the byte below, which the column goal is searched at (§8.3)
+                const std::size_t next = step_down_byte(std::min(m_caret, m_value.size()));
+                if (next != std::min(m_caret, m_value.size())) {
+                    m_caret = next;
+                    m_anchor = next;
+                    invalidate();
+                }
+                return;
+            }
+            // the home key puts the caret where its own line begins, which a read only field still moves (§8.3)
             if (event.key == Key::Home) {
                 // the event is claimed, so no ancestor reacts to the same key (§8.3)
                 event.handled = true;
-                set_caret(0);
+                set_caret(line_start_byte(m_caret));
                 return;
             }
-            // the end key puts the caret at the end of the value, which a read only field still moves (§8.3)
+            // the end key puts the caret where its own line ends, which a read only field still moves (§8.3)
             if (event.key == Key::End) {
                 // the event is claimed, so no ancestor reacts to the same key (§8.3)
                 event.handled = true;
-                set_caret(m_value.size());
+                set_caret(line_end_byte(m_caret));
                 return;
             }
             // the return key is the explicit commit, which is what a form field is finalised by (§8)
             if (event.key == Key::Return) {
-                // the event is claimed, so no ancestor reacts to the same key (§8.3)
+                // a read only multi line field takes no break, because a break is an edit (§8.3)
+                if (m_multiline && m_read_only)
+                    return;
+                // the event is claimed, because the key answers either way from here (§8.3)
                 event.handled = true;
+                // a multi line field inserts the break the line count needs, which plain return means there (§8)
+                if (m_multiline) {
+                    // the break replaces the selection when one is active, and splits at the caret when none is (§8.3)
+                    const std::size_t start = has_selection() ? selection_start() : m_caret;
+                    const std::size_t end = has_selection() ? selection_end() : m_caret;
+                    // the break is one edit, which records as one step (§18)
+                    replace_range(start, end, "\n");
+                    return;
+                }
+                // a read only multi line field takes no break, because a break is an edit (§8.3)
+                if (m_multiline)
+                    return;
                 // the handler runs only when one was installed, because a bare field commits to nothing (§8)
                 if (m_on_commit)
                     m_on_commit(m_value);
@@ -246,8 +316,8 @@ namespace albor
                     remove_range(selection_start(), selection_end());
                     return;
                 }
-                // the removal is over the character the step lands before, which an empty value has none of (§9.1)
-                const std::size_t step = m_layout.run != nullptr ? m_layout.run->previous_boundary_byte(0, m_caret) : (m_caret > 0 ? m_caret - 1 : m_caret);
+                // the removal is over the character or the break the step lands before (§9.1)
+                const std::size_t step = step_backward_byte(m_caret);
                 remove_range(step, m_caret);
                 return;
             }
@@ -260,8 +330,8 @@ namespace albor
                     remove_range(selection_start(), selection_end());
                     return;
                 }
-                // the removal is over the character the step lands after, which at the end removes nothing (§9.1)
-                const std::size_t step = m_layout.run != nullptr ? m_layout.run->next_boundary_byte(0, m_caret) : std::min(m_caret + 1, m_value.size());
+                // the removal is over the character or the break the step lands after (§9.1)
+                const std::size_t step = std::min(step_forward_byte(m_caret), m_value.size());
                 remove_range(m_caret, step);
                 return;
             }
@@ -338,10 +408,17 @@ namespace albor
         node.mutable_states().disabled = disabled();
         // the read only state travels beside disabled, because the two refuse different things (§10.1)
         node.set_read_only(m_read_only);
+        // the multi line state travels beside the value, because a reader announces a document (§10.1)
+        node.set_multiline(m_multiline);
         return node;
     }
 
     void TextField::set_value(std::string value) {
+        // a single line field strips the breaks it was handed, because it edits one line (§8.3)
+        if (!m_multiline) {
+            const auto is_line_break = [](char c) { return c == '\n' || c == '\r'; };
+            value.erase(std::remove_if(value.begin(), value.end(), is_line_break), value.end());
+        }
         // an unchanged value changes nothing, because the field looks and reads the same (§9.1)
         if (m_value == value)
             return;
@@ -411,6 +488,21 @@ namespace albor
         return m_disabled;
     }
 
+    void TextField::set_multiline(bool multiline) {
+        // an unchanged mode remeasures nothing, because the runs and the plate are the same (§8.2)
+        if (m_multiline == multiline)
+            return;
+        // the mode is stored first, so the layout pass sees a field that already wraps (§6.1)
+        m_multiline = multiline;
+        // a new run shape remeasures, because the plate may grow past its single line (§8.2, §9.1)
+        remeasure();
+    }
+
+    bool TextField::multiline() const {
+        // the mode is what the caret lines and the return key answer (§8.3)
+        return m_multiline;
+    }
+
     void TextField::set_font_size(float font_size) {
         // an unchanged size remeasures nothing, because the metrics did not change (§9.1)
         if (m_font_size == font_size)
@@ -436,8 +528,110 @@ namespace albor
         m_caret = clamped;
         // a placement dissolves the selection, because the anchor follows the caret to it (§8.3)
         m_anchor = clamped;
+        // a placement also aims the column at the byte's own x, which is what a vertical move keeps (§8.3)
+        m_goal_x = caret_goal_x();
         // a caret move is visual only, because the value did not change (§6.1)
         invalidate();
+    }
+
+    std::size_t TextField::step_backward_byte(std::size_t byte) const {
+        // an offset past the value clamps to its end, because there is no character to step from (§8.3)
+        const std::size_t clamped = std::min(byte, m_value.size());
+        // a run the engine did not shape steps by raw byte, which keeps a plain value honest (§9.1)
+        if (m_layout.run == nullptr || m_layout.run->lines().empty())
+            return clamped > 0 ? clamped - 1 : clamped;
+        // the line the caret stands on is what the boundary is taken within (§9.1)
+        const std::size_t line = m_layout.run->line_at_byte(clamped);
+        // the boundary the step lands before is the next step down (§9.1)
+        const std::size_t candidate = m_layout.run->previous_boundary_byte(line, clamped);
+        // a step that moved stands where the boundary is (§9.1)
+        if (candidate != clamped)
+            return candidate;
+        // a line with nothing before it steps past the break that ended the line behind it (§9.1)
+        if (line > 0)
+            return m_layout.run->lines()[line - 1].end_byte;
+        // a caret at the very start has nothing to step to (§9.1)
+        return clamped;
+    }
+
+    std::size_t TextField::step_forward_byte(std::size_t byte) const {
+        // an offset past the value clamps to its end, because there is no character to step from (§8.3)
+        const std::size_t clamped = std::min(byte, m_value.size());
+        // a run the engine did not shape steps by raw byte, which keeps a plain value honest (§9.1)
+        if (m_layout.run == nullptr || m_layout.run->lines().empty())
+            return std::min(clamped + 1, m_value.size());
+        // the line the caret stands on is what the boundary is taken within (§9.1)
+        const std::size_t line = m_layout.run->line_at_byte(clamped);
+        // the boundary the step lands after is where the caret goes (§9.1)
+        const std::size_t candidate = m_layout.run->next_boundary_byte(line, clamped);
+        // a step that moved stands where the boundary is (§9.1)
+        if (candidate != clamped)
+            return candidate;
+        // a line with nothing after it steps past the break that ended the line itself (§9.1)
+        if (line + 1 < m_layout.run->lines().size())
+            return m_layout.run->lines()[line + 1].start_byte;
+        // a caret at the very end has nothing to step to (§9.1)
+        return clamped;
+    }
+
+    std::size_t TextField::step_up_byte(std::size_t byte) const {
+        // an offset past the value clamps to its end, because there is no line to leave (§8.3)
+        const std::size_t clamped = std::min(byte, m_value.size());
+        // a run the engine did not shape has no line to move across (§9.1)
+        if (m_layout.run == nullptr || m_layout.run->lines().empty())
+            return clamped;
+        // the line the caret stands on is the one the move leaves (§8.3)
+        const std::size_t line = m_layout.run->line_at_byte(clamped);
+        // a caret on the first line clamps to where that line begins (§8.3)
+        if (line == 0)
+            return m_layout.run->lines().front().start_byte;
+        // the column goal is what the line above is searched at (§8.3)
+        return m_layout.run->byte_at_x(line - 1, m_goal_x);
+    }
+
+    std::size_t TextField::step_down_byte(std::size_t byte) const {
+        // an offset past the value clamps to its end, because there is no line to leave (§8.3)
+        const std::size_t clamped = std::min(byte, m_value.size());
+        // a run the engine did not shape has no line to move across (§9.1)
+        if (m_layout.run == nullptr || m_layout.run->lines().empty())
+            return clamped;
+        // the line the caret stands on is the one the move leaves (§8.3)
+        const std::size_t line = m_layout.run->line_at_byte(clamped);
+        // a caret on the last line has nothing below to reach (§8.3)
+        if (line + 1 >= m_layout.run->lines().size())
+            return clamped;
+        // the column goal is what the line below is searched at (§8.3)
+        return m_layout.run->byte_at_x(line + 1, m_goal_x);
+    }
+
+    std::size_t TextField::line_start_byte(std::size_t byte) const {
+        // a run the engine did not shape begins at the start of the text (§9.1)
+        if (m_layout.run == nullptr || m_layout.run->lines().empty())
+            return 0;
+        // the line the caret stands on is the one the key answers (§8.3)
+        const std::size_t line = m_layout.run->line_at_byte(std::min(byte, m_value.size()));
+        // the line begins at the byte its first character carries (§9.1)
+        return m_layout.run->lines()[line].start_byte;
+    }
+
+    std::size_t TextField::line_end_byte(std::size_t byte) const {
+        // a run the engine did not shape ends at the end of the text (§9.1)
+        if (m_layout.run == nullptr || m_layout.run->lines().empty())
+            return m_value.size();
+        // the line the caret stands on is the one the key answers (§8.3)
+        const std::size_t line = m_layout.run->line_at_byte(std::min(byte, m_value.size()));
+        // the line ends where the break that ended it starts (§9.1)
+        return std::min(m_layout.run->lines()[line].end_byte, m_value.size());
+    }
+
+    float TextField::caret_goal_x() const {
+        // a run the engine did not shape has no x to read, so the goal stays at the origin (§9.1)
+        if (m_layout.run == nullptr || m_layout.run->lines().empty())
+            return 0.0f;
+        // the goal is the x of the caret within the line it stands on (§8.3)
+        const std::size_t clamped = std::min(m_caret, m_value.size());
+        const std::size_t line = m_layout.run->line_at_byte(clamped);
+        return m_layout.run->x_at_byte(line, clamped);
     }
 
     std::size_t TextField::caret() const {
@@ -521,10 +715,12 @@ namespace albor
         // a clipboard the field was never handed has nothing to paste, which is the absent surface (§3.5)
         if (m_clipboard == nullptr || !m_clipboard->has_text())
             return;
-        // the paste is stripped of line breaks, because a single line field edits one line (§8.3)
+        // the paste is stripped of line breaks only on a single line field, because a multi line one edits lines (§8.3)
         std::string text = m_clipboard->text();
-        const auto is_line_break = [](char c) { return c == '\n' || c == '\r'; };
-        text.erase(std::remove_if(text.begin(), text.end(), is_line_break), text.end());
+        if (!m_multiline) {
+            const auto is_line_break = [](char c) { return c == '\n' || c == '\r'; };
+            text.erase(std::remove_if(text.begin(), text.end(), is_line_break), text.end());
+        }
         // an empty paste inserts nothing, which is not an edit (§8.3)
         if (text.empty())
             return;
@@ -597,16 +793,20 @@ namespace albor
         const ControlMetrics& m = metrics();
         // the caret cannot live past the value, so it is clamped before any geometry is computed (§8.3)
         const std::size_t clamped = std::min(m_caret, m_value.size());
-        // the line is where the caret hangs, which a single line field places first (§9.1)
-        const ShapedRun::Line* line = nullptr;
-        if (m_layout.run != nullptr && !m_layout.run->lines().empty())
-            line = &m_layout.run->lines().front();
+        // a run the engine did not shape gives the bar the plate height, because there is no line to hang from (§9.1)
+        if (m_layout.run == nullptr || m_layout.run->lines().empty())
+            return Rect{.x = bounds().x + m.text_field_padding, .y = bounds().y, .width = m.text_field_caret_width, .height = bounds().height};
+        // the line the caret hangs on is the one its byte resolves to, which is what a caret crosses lines by (§9.1)
+        const std::size_t index = m_layout.run->line_at_byte(clamped);
+        const ShapedRun::Line& line = m_layout.run->lines()[index];
         // the x is one inset in plus the run offset, which is where the caret stands over the value (§9.1)
-        const float x = bounds().x + m.text_field_padding + (line != nullptr ? line->origin.x + m_layout.run->x_at_byte(0, clamped) : 0.0f);
-        // the line box is the ascent and descent of the run, which a run with none keeps at the plate height (§9.1)
-        const float top = bounds().y + std::max(0.0f, (bounds().height - m_layout.size.height) * 0.5f);
+        const float x = bounds().x + m.text_field_padding + line.origin.x + m_layout.run->x_at_byte(index, clamped);
+        // the run hangs vertically centred, which is the same decision the paint makes (§8.2)
+        const float draw_y = bounds().y + std::max(0.0f, (bounds().height - m_layout.size.height) * 0.5f);
+        // the line box is the ascent and descent of the caret's own line, which a line above the first hangs lower (§9.1)
+        const float top = draw_y + line.origin.y - line.ascent;
         // the rect is the bar the caret draws at (§9.1)
-        return Rect{.x = x, .y = top, .width = m.text_field_caret_width, .height = m_layout.size.height > 0.0f ? m_layout.size.height : bounds().height};
+        return Rect{.x = x, .y = top, .width = m.text_field_caret_width, .height = line.ascent + line.descent > 0.0f ? line.ascent + line.descent : bounds().height};
     }
 
     Point TextField::text_origin() const {
@@ -697,8 +897,18 @@ namespace albor
         // an unchanged caret draws nothing new, because the span is the same (§6.1)
         if (m_caret == clamped)
             return;
+        // a step that stays on its own line refreshes the column, which a horizontal move chooses (§8.3)
+        std::size_t old_line = 0;
+        std::size_t new_line = 0;
+        if (m_layout.run != nullptr && !m_layout.run->lines().empty()) {
+            old_line = m_layout.run->line_at_byte(std::min(m_caret, m_value.size()));
+            new_line = m_layout.run->line_at_byte(clamped);
+        }
         // the caret is the active end, which the anchor stays away from (§8.3)
         m_caret = clamped;
+        // the column follows the byte only when the line did not change, which is what a vertical move keeps (§8.3)
+        if (m_layout.run != nullptr && old_line == new_line)
+            m_goal_x = m_layout.run->x_at_byte(new_line, clamped);
         // a drag extension is visual only, because the value did not change (§6.1)
         invalidate();
     }
