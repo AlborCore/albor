@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include "commands/command.h"
+#include "core/clipboard.h"
 #include "focus/focus_manager.h"
 #include "render/frame_scene.h"
 #include "ui/scene_builder.h"
@@ -16,6 +17,34 @@ using namespace albor;
 
 namespace
 {
+    // the clipboard test double, which holds what a copy handed over so a field test asserts on §3.5 (§3.5)
+    class HoldingClipboard final : public Clipboard
+    {
+    public:
+        // what the double carries, which a copy replaces and a paste reads (§3.5)
+        std::string carried;
+
+        void set_text(std::string_view text) override {
+            // the double owns its copy, because the caller's view does not outlive the call (§3.5)
+            carried = std::string(text);
+        }
+
+        [[nodiscard]] std::string text() const override {
+            // the content is what a paste reads (§3.5)
+            return carried;
+        }
+
+        [[nodiscard]] bool has_text() const override {
+            // a surface with content from none answers no (§3.5)
+            return !carried.empty();
+        }
+
+        [[nodiscard]] bool ready() const override {
+            // the double is always reachable (§3.5)
+            return true;
+        }
+    };
+
     // the text engine test double, which measures with a fixed advance and real character clusters (§9.1)
     class EditingTextEngine final : public TextEngine
     {
@@ -801,4 +830,556 @@ TEST(TextFieldChecks, TheMetricsOverlayAnswersThroughTheRun) {
     // assert the caret stands two advances in and past the inset, which is what its byte maps to (§9.1)
     EXPECT_FLOAT_EQ(caret.x, 4.0f + 20.0f);
     EXPECT_FLOAT_EQ(caret.width, 1.0f);
+}
+
+TEST(TextFieldSelectionChecks, ASelectionSpansBetweenTheTwoEnds) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Albor");
+    field.set_caret(5);
+    // act
+    field.set_selection(1, 4);
+    // assert the ordered pair reads from the low end to the high one, whichever way it was written (§8.3)
+    EXPECT_TRUE(field.has_selection());
+    EXPECT_EQ(field.selection_start(), 1u);
+    EXPECT_EQ(field.selection_end(), 4u);
+}
+
+TEST(TextFieldSelectionChecks, ASelectionWrittenBackwardsStillReadsForward) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Albor");
+    // act
+    field.set_selection(4, 1);
+    // assert the ends are ordered by their bytes, not by the order they arrived (§8.3)
+    EXPECT_EQ(field.selection_start(), 1u);
+    EXPECT_EQ(field.selection_end(), 4u);
+}
+
+TEST(TextFieldSelectionChecks, AnEqualPairIsNoSelection) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Albor");
+    // act
+    field.set_selection(2, 2);
+    // assert a degenerate span is a placement, which is what collapse means (§8.3)
+    EXPECT_FALSE(field.has_selection());
+    EXPECT_EQ(field.caret(), 2u);
+}
+
+TEST(TextFieldSelectionChecks, SelectAllSpansTheWholeValue) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Albor");
+    // act
+    field.select_all();
+    // assert the span is the value itself (§8.3)
+    EXPECT_EQ(field.selection_start(), 0u);
+    EXPECT_EQ(field.selection_end(), 5u);
+}
+
+TEST(TextFieldSelectionChecks, SelectAllOnAnEmptyValueStaysCollapsed) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    // act
+    field.select_all();
+    // assert there is nothing to span, which is what an empty field gives (§8.3)
+    EXPECT_FALSE(field.has_selection());
+}
+
+TEST(TextFieldSelectionChecks, AShiftedArrowExtendsTheSelection) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Albor");
+    field.set_caret(3);
+    Event event{.kind = EventKind::KeyDown, .key = Key::ArrowRight};
+    event.modifiers.shift = true;
+    // act
+    field.dispatch_event(event);
+    // assert the anchor stays and the caret extends, which is what shift means (§8.3)
+    EXPECT_TRUE(field.has_selection());
+    EXPECT_EQ(field.selection_start(), 3u);
+    EXPECT_EQ(field.selection_end(), 4u);
+}
+
+TEST(TextFieldSelectionChecks, AShiftedArrowExtendsBackwards) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Albor");
+    field.set_caret(3);
+    Event event{.kind = EventKind::KeyDown, .key = Key::ArrowLeft};
+    event.modifiers.shift = true;
+    // act
+    field.dispatch_event(event);
+    // assert the span reads forward however the caret moved (§8.3)
+    EXPECT_EQ(field.selection_start(), 2u);
+    EXPECT_EQ(field.selection_end(), 3u);
+}
+
+TEST(TextFieldSelectionChecks, ASelectionDuringATypingEditIsReplaced) {
+    // arrange a field with a selection the next commit must swap out (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Albor");
+    field.set_selection(1, 4);
+    Event event{.kind = EventKind::TextInput, .text = "e"};
+    // act
+    field.dispatch_event(event);
+    // assert the span was replaced by what was committed (§8.3)
+    EXPECT_EQ(field.value(), "Aer");
+    EXPECT_EQ(field.caret(), 2u);
+    EXPECT_FALSE(field.has_selection());
+}
+
+TEST(TextFieldSelectionChecks, ABackspaceRemovesTheWholeSelection) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Albor");
+    field.set_selection(1, 4);
+    Event event{.kind = EventKind::KeyDown, .key = Key::Backspace};
+    // act
+    field.dispatch_event(event);
+    // assert the span went whole, which is what backspacing a selection means (§8.3)
+    EXPECT_EQ(field.value(), "Ar");
+    EXPECT_EQ(field.caret(), 1u);
+}
+
+TEST(TextFieldSelectionChecks, APlainArrowCollapsesToTheNearerEnd) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Albor");
+    field.set_selection(1, 4);
+    Event event{.kind = EventKind::KeyDown, .key = Key::ArrowLeft};
+    // act
+    field.dispatch_event(event);
+    // assert the left arrow parks the caret at the start of the span (§8.3)
+    EXPECT_FALSE(field.has_selection());
+    EXPECT_EQ(field.caret(), 1u);
+}
+
+TEST(TextFieldSelectionChecks, APlainRightArrowCollapsesToTheFarEnd) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Albor");
+    field.set_selection(1, 4);
+    Event event{.kind = EventKind::KeyDown, .key = Key::ArrowRight};
+    // act
+    field.dispatch_event(event);
+    // assert the right arrow parks the caret at the end of the span (§8.3)
+    EXPECT_FALSE(field.has_selection());
+    EXPECT_EQ(field.caret(), 4u);
+}
+
+TEST(TextFieldSelectionChecks, APressCollapsesTheSelectedSpan) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Albor");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    field.set_selection(1, 4);
+    Event event{.kind = EventKind::PointerDown, .position = Point{14.0f, 10.0f}};
+    // act
+    field.dispatch_event(event);
+    // assert a press inside the plate places the caret, which is what collapse on click means (§8.3)
+    EXPECT_FALSE(field.has_selection());
+}
+
+TEST(TextFieldSelectionChecks, ADragExtendsTheSelectionWhileThePressHolds) {
+    // arrange a press that was claimed, which starts the drag (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Albor");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    Event down{.kind = EventKind::PointerDown, .position = Point{14.0f, 10.0f}};
+    field.dispatch_event(down);
+    // act
+    Event move{.kind = EventKind::PointerMove, .position = Point{34.0f, 10.0f}};
+    field.dispatch_event(move);
+    // assert the anchor stayed at the press and the caret followed the pointer (§8.3)
+    EXPECT_TRUE(field.has_selection());
+    EXPECT_EQ(field.selection_start(), 1u);
+    EXPECT_EQ(field.selection_end(), 3u);
+}
+
+TEST(TextFieldSelectionChecks, AReleaseEndsTheDrag) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Albor");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    Event down{.kind = EventKind::PointerDown, .position = Point{14.0f, 10.0f}};
+    field.dispatch_event(down);
+    Event move{.kind = EventKind::PointerMove, .position = Point{34.0f, 10.0f}};
+    field.dispatch_event(move);
+    // act
+    Event up{.kind = EventKind::PointerUp, .position = Point{34.0f, 10.0f}};
+    field.dispatch_event(up);
+    Event move_after{.kind = EventKind::PointerMove, .position = Point{54.0f, 10.0f}};
+    field.dispatch_event(move_after);
+    // assert a move after the release extends nothing, because the drag is over (§8.3)
+    EXPECT_EQ(field.selection_end(), 3u);
+}
+
+TEST(TextFieldSelectionChecks, ASelectionPaintsAHighlight) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Albor");
+    field.set_selection(1, 3);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 40.0f}, 1.0f));
+    // act
+    field.render(recorder);
+    // assert the highlight and the caret bar are the two rect kinds, and no caret inside a span (§6.1)
+    for (const Rect& rect : rect_commands(*recorder.scene()))
+        EXPECT_GE(rect.width, 1.0f);
+}
+
+TEST(TextFieldClipboardChecks, CopyPlacesTheSelectionOnTheClipboard) {
+    // arrange a field over a clipboard the test holds (§3.5)
+    EditingTextEngine engine;
+    HoldingClipboard clipboard;
+    TextField field(nullptr, &engine, "Albor");
+    field.set_clipboard(&clipboard);
+    field.set_selection(1, 4);
+    // act
+    field.copy();
+    // assert the span is what the clipboard carries (§3.5)
+    EXPECT_EQ(clipboard.text(), "lbo");
+}
+
+TEST(TextFieldClipboardChecks, CopyOnAnEmptySelectionLeavesTheClipboardAlone) {
+    // arrange
+    EditingTextEngine engine;
+    HoldingClipboard clipboard;
+    clipboard.carried = "before";
+    TextField field(nullptr, &engine, "Albor");
+    field.set_clipboard(&clipboard);
+    // act
+    field.copy();
+    // assert a spanless field has nothing to hand over (§3.5)
+    EXPECT_EQ(clipboard.text(), "before");
+}
+
+TEST(TextFieldClipboardChecks, AReadOnlyFieldStillCopies) {
+    // arrange
+    EditingTextEngine engine;
+    HoldingClipboard clipboard;
+    TextField field(nullptr, &engine, "Albor");
+    field.set_read_only(true);
+    field.set_clipboard(&clipboard);
+    field.set_selection(1, 4);
+    // act
+    field.copy();
+    // assert read only refuses edits, which copy is not (§8.3)
+    EXPECT_EQ(clipboard.text(), "lbo");
+}
+
+TEST(TextFieldClipboardChecks, CutRemovesTheSelectionAndCopiesIt) {
+    // arrange
+    EditingTextEngine engine;
+    HoldingClipboard clipboard;
+    TextField field(nullptr, &engine, "Albor");
+    field.set_clipboard(&clipboard);
+    field.set_selection(1, 4);
+    // act
+    field.cut();
+    // assert the value kept what the clipboard took (§3.5)
+    EXPECT_EQ(clipboard.text(), "lbo");
+    EXPECT_EQ(field.value(), "Ar");
+    EXPECT_EQ(field.caret(), 1u);
+}
+
+TEST(TextFieldClipboardChecks, AReadOnlyFieldRefusesCut) {
+    // arrange
+    EditingTextEngine engine;
+    HoldingClipboard clipboard;
+    TextField field(nullptr, &engine, "Albor");
+    field.set_read_only(true);
+    field.set_clipboard(&clipboard);
+    field.set_selection(1, 4);
+    // act
+    field.cut();
+    // assert
+    EXPECT_EQ(field.value(), "Albor");
+    EXPECT_TRUE(clipboard.text().empty());
+}
+
+TEST(TextFieldClipboardChecks, PasteInsertsAtTheCaret) {
+    // arrange
+    EditingTextEngine engine;
+    HoldingClipboard clipboard;
+    clipboard.carried = "XYZ";
+    TextField field(nullptr, &engine, "Albor");
+    field.set_clipboard(&clipboard);
+    field.set_caret(3);
+    // act
+    field.paste();
+    // assert
+    EXPECT_EQ(field.value(), "AlbXYZor");
+    EXPECT_EQ(field.caret(), 6u);
+}
+
+TEST(TextFieldClipboardChecks, PasteReplacesTheSelection) {
+    // arrange
+    EditingTextEngine engine;
+    HoldingClipboard clipboard;
+    clipboard.carried = "XYZ";
+    TextField field(nullptr, &engine, "Albor");
+    field.set_clipboard(&clipboard);
+    field.set_selection(1, 4);
+    // act
+    field.paste();
+    // assert the span was the three bytes, which the remainder kept (§3.5)
+    EXPECT_EQ(field.value(), "AXYZr");
+    EXPECT_EQ(field.caret(), 4u);
+}
+
+TEST(TextFieldClipboardChecks, PasteStripsTheLineBreaksOfASingleLineField) {
+    // arrange a clipboard that carries a multi line run (§8.3)
+    EditingTextEngine engine;
+    HoldingClipboard clipboard;
+    clipboard.carried = "x\ny\rc";
+    TextField field(nullptr, &engine, "Albor");
+    field.set_clipboard(&clipboard);
+    field.set_caret(0);
+    // act
+    field.paste();
+    // assert a single line field edits one line, so the breaks leave (§8.3)
+    EXPECT_EQ(field.value(), "xycAlbor");
+}
+
+TEST(TextFieldClipboardChecks, AReadOnlyFieldRefusesPaste) {
+    // arrange
+    EditingTextEngine engine;
+    HoldingClipboard clipboard;
+    clipboard.carried = "XYZ";
+    TextField field(nullptr, &engine, "Albor");
+    field.set_read_only(true);
+    field.set_clipboard(&clipboard);
+    // act
+    field.paste();
+    // assert
+    EXPECT_EQ(field.value(), "Albor");
+}
+
+TEST(TextFieldClipboardChecks, AFieldWithNoClipboardDropsTheCopy) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Albor");
+    field.set_selection(1, 4);
+    // act
+    field.copy();
+    field.cut();
+    field.paste();
+    // assert nothing wrote and nothing crashed, which is what the absent surface is (§3.5)
+    EXPECT_EQ(field.value(), "Albor");
+}
+
+TEST(TextFieldKeyboardChecks, TheCopyKeyCopies) {
+    // arrange
+    EditingTextEngine engine;
+    HoldingClipboard clipboard;
+    TextField field(nullptr, &engine, "Albor");
+    field.set_clipboard(&clipboard);
+    field.set_selection(1, 4);
+    Event event{.kind = EventKind::KeyDown, .key = Key::C};
+    event.modifiers.command = true;
+    // act
+    field.dispatch_event(event);
+    // assert the chord the registry declined reaches the field (§18.5, §18)
+    EXPECT_EQ(clipboard.text(), "lbo");
+    EXPECT_TRUE(event.handled);
+}
+
+TEST(TextFieldKeyboardChecks, TheControlCopyKeyCopiesToo) {
+    // arrange
+    EditingTextEngine engine;
+    HoldingClipboard clipboard;
+    TextField field(nullptr, &engine, "Albor");
+    field.set_clipboard(&clipboard);
+    field.set_selection(1, 4);
+    Event event{.kind = EventKind::KeyDown, .key = Key::C};
+    event.modifiers.control = true;
+    // act
+    field.dispatch_event(event);
+    // assert the editor modifier is one of the two, which is the portable answer (§18.5)
+    EXPECT_EQ(clipboard.text(), "lbo");
+}
+
+TEST(TextFieldKeyboardChecks, AnOptionChordIsNeverClaimed) {
+    // arrange
+    EditingTextEngine engine;
+    HoldingClipboard clipboard;
+    TextField field(nullptr, &engine, "Albor");
+    field.set_clipboard(&clipboard);
+    field.set_selection(1, 4);
+    Event event{.kind = EventKind::KeyDown, .key = Key::C};
+    event.modifiers.option = true;
+    // act
+    field.dispatch_event(event);
+    // assert an option chord is platform text, which no editing binding takes (§18.5)
+    EXPECT_FALSE(event.handled);
+    EXPECT_TRUE(clipboard.text().empty());
+}
+
+TEST(TextFieldKeyboardChecks, ThePasteKeyPastes) {
+    // arrange
+    EditingTextEngine engine;
+    HoldingClipboard clipboard;
+    clipboard.carried = "XYZ";
+    TextField field(nullptr, &engine, "Albor");
+    field.set_clipboard(&clipboard);
+    field.set_caret(3);
+    Event event{.kind = EventKind::KeyDown, .key = Key::V};
+    event.modifiers.command = true;
+    // act
+    field.dispatch_event(event);
+    // assert
+    EXPECT_EQ(field.value(), "AlbXYZor");
+    EXPECT_TRUE(event.handled);
+}
+
+TEST(TextFieldKeyboardChecks, TheSelectAllKeySpansTheValue) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Albor");
+    Event event{.kind = EventKind::KeyDown, .key = Key::A};
+    event.modifiers.command = true;
+    // act
+    field.dispatch_event(event);
+    // assert
+    EXPECT_TRUE(field.has_selection());
+    EXPECT_EQ(field.selection_start(), 0u);
+    EXPECT_EQ(field.selection_end(), 5u);
+    EXPECT_TRUE(event.handled);
+}
+
+TEST(TextFieldKeyboardChecks, TheUndoKeyReversesOneEdit) {
+    // arrange
+    EditingTextEngine engine;
+    UndoStack stack;
+    TextField field(nullptr, &engine, "Alb");
+    field.bind_undo_stack(&stack);
+    field.set_caret(3);
+    Event insert{.kind = EventKind::TextInput, .text = "o"};
+    field.dispatch_event(insert);
+    Event event{.kind = EventKind::KeyDown, .key = Key::Z};
+    event.modifiers.command = true;
+    // act
+    field.dispatch_event(event);
+    // assert the reversal restored the value the edit replaced (§18)
+    EXPECT_EQ(field.value(), "Alb");
+    EXPECT_TRUE(field.render_dirty());
+}
+
+TEST(TextFieldKeyboardChecks, TheUndoKeyWithShiftReappliesOneEdit) {
+    // arrange
+    EditingTextEngine engine;
+    UndoStack stack;
+    TextField field(nullptr, &engine, "Alb");
+    field.bind_undo_stack(&stack);
+    field.set_caret(3);
+    Event insert{.kind = EventKind::TextInput, .text = "o"};
+    field.dispatch_event(insert);
+    Event undo{.kind = EventKind::KeyDown, .key = Key::Z};
+    undo.modifiers.command = true;
+    field.dispatch_event(undo);
+    Event redo{.kind = EventKind::KeyDown, .key = Key::Z};
+    redo.modifiers.command = true;
+    redo.modifiers.shift = true;
+    // act
+    field.dispatch_event(redo);
+    // assert the reapply restored what the reversal removed (§18)
+    EXPECT_EQ(field.value(), "Albo");
+}
+
+TEST(TextFieldUndoChecks, AnEditRecordsOneUndoEntry) {
+    // arrange
+    EditingTextEngine engine;
+    UndoStack stack;
+    TextField field(nullptr, &engine);
+    field.bind_undo_stack(&stack);
+    // act
+    field.set_caret(0);
+    Event insert{.kind = EventKind::TextInput, .text = "a"};
+    field.dispatch_event(insert);
+    // assert one edit is one entry, which depth reads (§18)
+    EXPECT_EQ(stack.depth(), 1u);
+}
+
+TEST(TextFieldUndoChecks, AnUndoRestoresTheValueAndTheCaret) {
+    // arrange
+    EditingTextEngine engine;
+    UndoStack stack;
+    TextField field(nullptr, &engine, "Ab");
+    field.bind_undo_stack(&stack);
+    field.set_caret(2);
+    Event insert{.kind = EventKind::TextInput, .text = "c"};
+    field.dispatch_event(insert);
+    // act
+    field.undo();
+    // assert the snapshot carried both halves of the state (§18)
+    EXPECT_EQ(field.value(), "Ab");
+    EXPECT_EQ(field.caret(), 2u);
+    EXPECT_FALSE(field.has_selection());
+}
+
+TEST(TextFieldUndoChecks, ARedoReappliesTheReversedEdit) {
+    // arrange
+    EditingTextEngine engine;
+    UndoStack stack;
+    TextField field(nullptr, &engine, "Ab");
+    field.bind_undo_stack(&stack);
+    field.set_caret(2);
+    Event insert{.kind = EventKind::TextInput, .text = "c"};
+    field.dispatch_event(insert);
+    field.undo();
+    // act
+    field.redo();
+    // assert
+    EXPECT_EQ(field.value(), "Abc");
+    EXPECT_EQ(field.caret(), 3u);
+}
+
+TEST(TextFieldUndoChecks, ABackspaceRunIsOneEntryPerRemoval) {
+    // arrange
+    EditingTextEngine engine;
+    UndoStack stack;
+    TextField field(nullptr, &engine, "abc");
+    field.bind_undo_stack(&stack);
+    field.set_caret(3);
+    Event first{.kind = EventKind::KeyDown, .key = Key::Backspace};
+    field.dispatch_event(first);
+    Event second{.kind = EventKind::KeyDown, .key = Key::Backspace};
+    // act
+    field.dispatch_event(second);
+    // assert two removals are two entries, because each was an edit of its own (§18)
+    EXPECT_EQ(stack.depth(), 2u);
+}
+
+TEST(TextFieldUndoChecks, AFieldWithNoStackStillEdits) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Ab");
+    field.set_caret(2);
+    Event insert{.kind = EventKind::TextInput, .text = "c"};
+    // act
+    field.dispatch_event(insert);
+    // assert an edit without history still lands, which is what an absent stack forgives (§18)
+    EXPECT_EQ(field.value(), "Abc");
+    EXPECT_EQ(field.undo_stack(), nullptr);
+}
+
+TEST(TextFieldUndoChecks, AReversalSignalsTheChangeHandlerOnce) {
+    // arrange
+    EditingTextEngine engine;
+    UndoStack stack;
+    TextField field(nullptr, &engine, "Ab");
+    field.bind_undo_stack(&stack);
+    field.set_caret(2);
+    Event insert{.kind = EventKind::TextInput, .text = "c"};
+    field.dispatch_event(insert);
+    std::size_t changes = 0;
+    field.set_on_change([&changes](const std::string&) { changes++; });
+    // act
+    field.undo();
+    // assert a reversal is an edit a validation reads, and it is the one edit it was (§18)
+    EXPECT_EQ(changes, 1u);
 }

@@ -102,6 +102,9 @@ namespace albor
         // the caret an editable field draws, per state, which is the bar the user edits between (§6.1)
         Color text_field_caret[4] = {Color{0.94f, 0.96f, 0.98f, 1.0f}, Color{1.0f, 1.0f, 1.0f, 1.0f}, Color{0.86f, 0.89f, 0.93f, 1.0f}, Color{0.52f, 0.55f, 0.60f, 1.0f}};
 
+        // the highlight a selection draws, per state, which the value sits over (§6.1)
+        Color text_field_selection[4] = {Color{0.20f, 0.55f, 0.90f, 0.35f}, Color{0.26f, 0.62f, 0.96f, 0.42f}, Color{0.14f, 0.42f, 0.74f, 0.40f}, Color{0.42f, 0.46f, 0.52f, 0.30f}};
+
         // the groove a scrollbar thumb rides in, per state, which is what shows the travel (§6.1)
         Color scrollbar_track[4] = {Color{0.16f, 0.18f, 0.22f, 0.0f}, Color{0.18f, 0.20f, 0.24f, 0.0f}, Color{0.16f, 0.18f, 0.22f, 0.0f}, Color{0.24f, 0.26f, 0.30f, 0.0f}};
 
@@ -181,6 +184,12 @@ namespace albor
 
         // replace one state of the entry, which is what a derived palette writes (§6.1)
         void set_text_field_caret(ControlState state, Color value);
+
+        // replace the selection colour of the normal state of an editable field (§6.1)
+        void set_text_field_selection(Color value);
+
+        // replace one state of the entry, which is what a derived palette writes (§6.1)
+        void set_text_field_selection(ControlState state, Color value);
 
         // replace the smallest push control extent, which is a sizing decision rather than a colour (§8.2)
         void set_button_minimum(Size value);

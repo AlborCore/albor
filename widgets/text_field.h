@@ -3,6 +3,8 @@
 #include <functional>
 #include <string>
 
+#include "commands/undo_stack.h"
+#include "core/clipboard.h"
 #include "text/text_engine.h"
 #include "widgets/widget.h"
 
@@ -54,8 +56,8 @@ namespace albor
         // set or clear the disabled state, which refuses everything a field would answer (§18.7)
         void set_disabled(bool disabled);
 
-        // report whether the field refuses everything, which the hit test and the dispatch both refuse on (§8.3)
-        [[nodiscard]] bool disabled() const;
+        // override: report whether the field refuses everything, which the hit test and the dispatch both refuse on (§8.3)
+        [[nodiscard]] bool disabled() const override;
 
         // replace the font size the value is measured at, which remeasures because the metrics changed (§9.1)
         void set_font_size(float font_size);
@@ -66,8 +68,50 @@ namespace albor
         // place the caret at a byte offset, clamped into the value, which is where it draws (§8.3)
         void set_caret(std::size_t byte);
 
-        // hand out the byte offset the caret stands at (§8.3)
+        // hand out the byte offset the caret stands at, which is the active end of a selection (§8.3)
         [[nodiscard]] std::size_t caret() const;
+
+        // set the selection over a byte span, which collapses when the offsets meet (§8.3)
+        void set_selection(std::size_t start, std::size_t end);
+
+        // hand out the first byte of the selection, which is where an edit replaces (§8.3)
+        [[nodiscard]] std::size_t selection_start() const;
+
+        // hand out the last byte of the selection, which is where an edit stops (§8.3)
+        [[nodiscard]] std::size_t selection_end() const;
+
+        // report whether a non empty selection is active, which is what copy and cut read (§8.3)
+        [[nodiscard]] bool has_selection() const;
+
+        // select the whole value, which is what select all means on a field (§8.3)
+        void select_all();
+
+        // place the selection onto the clipboard, which a read only field still answers (§8.3)
+        void copy();
+
+        // cut the selection to the clipboard, which an edit a read only field refuses (§8.3)
+        void cut();
+
+        // insert the clipboard at the caret over the selection, which is what a paste is (§8.3)
+        void paste();
+
+        // reverse the last edit, which the bound stack answers when one is bound (§18)
+        void undo();
+
+        // reapply the last reversed edit, which the bound stack answers when one is bound (§18)
+        void redo();
+
+        // bind the stack the edits record into, which is borrowed and outlives the edits it records (§18)
+        void bind_undo_stack(UndoStack* stack);
+
+        // hand out the bound stack, which is null while edits record nothing (§18)
+        [[nodiscard]] UndoStack* undo_stack() const;
+
+        // install the clipboard the copy and paste reach through, which is borrowed and may be null (§3.5)
+        void set_clipboard(Clipboard* clipboard);
+
+        // hand out the installed clipboard, which is null while copy and paste have no surface (§3.5)
+        [[nodiscard]] Clipboard* clipboard() const;
 
         // hand out the ascent of the line the field draws, which is what an overlay places content by (§9.1)
         [[nodiscard]] float line_ascent() const;
@@ -94,11 +138,23 @@ namespace albor
         [[nodiscard]] const TextLayout& layout() const;
 
     private:
-        // run one edit over the value, which is what every mutation goes through to signal once (§8)
-        void edit(std::string replacement, std::size_t caret_byte);
+        // replace the bytes of a span with the text given, which is what every mutation goes through to signal once (§8)
+        void replace_range(std::size_t start, std::size_t end, std::string_view text);
 
         // remove the bytes between two offsets, which is what a removal edit is (§8)
         void remove_range(std::size_t start, std::size_t end);
+
+        // record the edit that just ran, which the bound stack reverses by (§18)
+        void record_edit(std::string before_value, std::size_t before_caret);
+
+        // restore a snapshot, which is what an undo and a redo both arrive through (§18)
+        void restore(std::string value, std::size_t caret);
+
+        // move the caret without collapsing the selection, which is what a drag or a shift key does (§8.3)
+        void extend_caret(std::size_t byte);
+
+        // paint the selection over the value, which the value paints over (§6.1)
+        void paint_selection(RenderContext& context);
 
         // paint the caret of the field, which the value and the hint both sit beside (§6.1)
         void paint_caret(RenderContext& context);
@@ -114,6 +170,9 @@ namespace albor
 
         // the colours the caret resolves through, which are the palette when a theme is installed (§6.1)
         [[nodiscard]] const Color* caret_colors() const;
+
+        // the colours the selection resolves through, which are the palette when a theme is installed (§6.1)
+        [[nodiscard]] const Color* selection_colors() const;
 
         // hand out the metrics the field measures from, which the theme sets and the default answers (§8.2)
         [[nodiscard]] const ControlMetrics& metrics() const;
@@ -133,8 +192,14 @@ namespace albor
         // the hint an empty field draws (§8)
         std::string m_placeholder;
 
-        // the byte offset the caret stands at, which is where an edit lands (§8.3)
+        // the byte offset the caret stands at, which is the active end of a selection (§8.3)
         std::size_t m_caret = 0;
+
+        // the byte offset a selection is anchored at, which the caret moves away from (§8.3)
+        std::size_t m_anchor = 0;
+
+        // whether a press drag is extending the selection, which a release or a caret placement ends (§8.3)
+        bool m_dragging = false;
 
         // the size the runs are measured at (§9.1)
         float m_font_size = TextEngine::DEFAULT_FONT_SIZE;
@@ -154,10 +219,19 @@ namespace albor
         // the fill of the caret, which is the bar the value hangs beside (§6.1)
         Color m_caret_foreground{0.94f, 0.96f, 0.98f, 1.0f};
 
+        // the fill of the selection, which the value sits over (§6.1)
+        Color m_selection_foreground{0.20f, 0.55f, 0.90f, 0.35f};
+
         // the handler every edit reaches, which carries the value (§8)
         std::function<void(const std::string&)> m_on_change;
 
         // the handler an explicit commit reaches, which carries the value (§8)
         std::function<void(const std::string&)> m_on_commit;
+
+        // the clipboard the copy and paste reach through, which is null while none is installed (§3.5)
+        Clipboard* m_clipboard = nullptr;
+
+        // the stack the edits record into, which is null while edits record nothing (§18)
+        UndoStack* m_undo_stack = nullptr;
     };
 } // namespace albor

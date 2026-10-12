@@ -86,6 +86,11 @@ namespace albor
         theme.set_text_field_caret(ControlState::Hovered, lighten(on_surface, 0.1f));
         theme.set_text_field_caret(ControlState::Pressed, on_surface);
         theme.set_text_field_caret(ControlState::Disabled, Color::rgba(on_surface.red, on_surface.green, on_surface.blue, 0.4f));
+        // a selection sits behind the value, so it is the accent at a strength that leaves the text readable (§6.1)
+        theme.set_text_field_selection(ControlState::Normal, Color::rgba(accent.red, accent.green, accent.blue, 0.35f));
+        theme.set_text_field_selection(ControlState::Hovered, Color::rgba(accent.red, accent.green, accent.blue, 0.42f));
+        theme.set_text_field_selection(ControlState::Pressed, Color::rgba(accent.red, accent.green, accent.blue, 0.40f));
+        theme.set_text_field_selection(ControlState::Disabled, Color::rgba(accent.red, accent.green, accent.blue, 0.30f));
 
         // the surface is offered so an application can read it back, which a frame background needs (§6.1)
         theme.set_surface(surface);

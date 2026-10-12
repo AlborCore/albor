@@ -187,6 +187,16 @@ namespace albor
         m_palette.text_field_caret[state_index(state)] = value;
     }
 
+    void Theme::set_text_field_selection(Color value) {
+        // the normal state is the common case, which is the shorthand (§6.1)
+        m_palette.text_field_selection[state_index(ControlState::Normal)] = value;
+    }
+
+    void Theme::set_text_field_selection(ControlState state, Color value) {
+        // the entry is written by its state index, which is what the resolver reads (§6.1)
+        m_palette.text_field_selection[state_index(state)] = value;
+    }
+
     void Theme::set_text_field_minimum(Size value) {
         // the extent is stored whole, because a field takes one minimum for both axes (§8.2)
         m_metrics.text_field_minimum = value;
