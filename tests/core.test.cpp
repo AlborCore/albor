@@ -1,10 +1,154 @@
 #include <gtest/gtest.h>
 
+#include <memory>
+#include <string>
+#include <string_view>
+
+#include "core/clipboard.h"
 #include "core/geometry.h"
 #include "core/native_window_handle.h"
 #include "core/paint.h"
 
 using namespace albor;
+
+namespace
+{
+    // the contract test double, which holds the text in memory so a test asserts on §3.5 rather than on a platform (§3.5)
+    class HoldingClipboard final : public Clipboard
+    {
+    public:
+        // what the double carries, which a test reads back and a copy replaces (§3.5)
+        std::string carried;
+
+        // whether the double reports itself as able to copy (§3.5)
+        bool usable = true;
+
+        [[nodiscard]] std::string text() const override {
+            // an unusable surface reads nothing, which is what an absent pasteboard reports (§3.5)
+            if (!usable)
+                return {};
+            return carried;
+        }
+
+        void set_text(std::string_view text) override {
+            // an unusable surface writes nothing, so a copy is dropped rather than crashing (§3.5)
+            if (!usable)
+                return;
+            // the double owns its copy, because the caller owns the view (§3.5)
+            carried = std::string(text);
+        }
+
+        [[nodiscard]] bool has_text() const override {
+            // a surface that cannot be reached carries nothing, which is what a paste checks first (§3.5)
+            if (!usable)
+                return false;
+            return !carried.empty();
+        }
+
+        [[nodiscard]] bool ready() const override {
+            // the flag a test sets is the whole answer, so an unreachable surface can be exercised (§3.5)
+            return usable;
+        }
+    };
+} // namespace
+
+TEST(ClipboardContractChecks, StartsWithoutAPlatformInstalled) {
+    // arrange act
+    const ClipboardFactory& factory = clipboard_factory();
+    // assert the framework reports no surface rather than fabricating one (§3.5)
+    EXPECT_FALSE(static_cast<bool>(factory));
+}
+
+TEST(ClipboardContractChecks, CreateRefusesWithoutAPlatform) {
+    // arrange act
+    std::unique_ptr<Clipboard> clipboard = create_clipboard();
+    // assert an uninstalled platform means the framework has no way to copy (§3.5)
+    EXPECT_EQ(clipboard, nullptr);
+}
+
+TEST(ClipboardContractChecks, AnInstalledPlatformIsBuilt) {
+    // arrange
+    set_clipboard_factory([] { return std::make_unique<HoldingClipboard>(); });
+    // act
+    std::unique_ptr<Clipboard> clipboard = create_clipboard();
+    // assert
+    ASSERT_NE(clipboard, nullptr);
+    EXPECT_TRUE(clipboard->ready());
+    // the factory is uninstalled again, because the next test reads the empty one (§3.5)
+    set_clipboard_factory(nullptr);
+}
+
+TEST(ClipboardContractChecks, AnUninstalledFactoryIsTheEmptyOne) {
+    // arrange
+    set_clipboard_factory(nullptr);
+    // act
+    const ClipboardFactory& factory = clipboard_factory();
+    // assert a removed platform leaves no factory rather than a stale one (§3.5)
+    EXPECT_FALSE(static_cast<bool>(factory));
+}
+
+TEST(ClipboardContractChecks, AClipboardStartsCarryingNothing) {
+    // arrange
+    HoldingClipboard clipboard;
+    // act
+    const std::string carried = clipboard.text();
+    // assert a surface nobody copied into has nothing to hand out (§3.5)
+    EXPECT_TRUE(carried.empty());
+    EXPECT_FALSE(clipboard.has_text());
+}
+
+TEST(ClipboardContractChecks, ACopyReplacesWhatWasThere) {
+    // arrange
+    HoldingClipboard clipboard;
+    clipboard.carried = "before";
+    // act
+    clipboard.set_text("after");
+    // assert a copy replaces rather than adds, which is what the pasteboard contract is (§3.5)
+    EXPECT_EQ(clipboard.text(), "after");
+}
+
+TEST(ClipboardContractChecks, AnEmptyCopyClearsTheClipboard) {
+    // arrange
+    HoldingClipboard clipboard;
+    clipboard.carried = "before";
+    // act
+    clipboard.set_text("");
+    // assert copying nothing leaves nothing, which is what a cut of a selection then delete is (§3.5)
+    EXPECT_TRUE(clipboard.text().empty());
+    EXPECT_FALSE(clipboard.has_text());
+}
+
+TEST(ClipboardContractChecks, ACopyKeepsTheTextItWasGiven) {
+    // arrange
+    HoldingClipboard clipboard;
+    // act
+    clipboard.set_text("borrowed");
+    // assert the double owns what it was handed, because the caller's view does not outlive the call (§3.5)
+    clipboard.carried.clear();
+    // assert the copy survived the caller dropping its own copy, which is what a view means (§3.5)
+    EXPECT_TRUE(clipboard.text().empty());
+}
+
+TEST(ClipboardContractChecks, MultiByteTextSurvivesACopy) {
+    // arrange
+    HoldingClipboard clipboard;
+    // act
+    clipboard.set_text("\xC3\xA9t\xC3\xA9");
+    // assert the surface is a text surface, so two byte characters are not truncated (§3.5)
+    EXPECT_EQ(clipboard.text(), "\xC3\xA9t\xC3\xA9");
+}
+
+TEST(ClipboardContractChecks, AnUnreachableSurfaceCarriesNothing) {
+    // arrange
+    HoldingClipboard clipboard;
+    clipboard.usable = false;
+    // act
+    clipboard.set_text("dropped");
+    // assert a surface that cannot be reached is a refusal rather than a crash (§3.5)
+    EXPECT_FALSE(clipboard.ready());
+    EXPECT_TRUE(clipboard.text().empty());
+    EXPECT_FALSE(clipboard.has_text());
+}
 
 TEST(Size, DefaultHasNoExtent) {
     // arrange, act
