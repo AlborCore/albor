@@ -6,12 +6,13 @@
 #include "commands/undo_stack.h"
 #include "core/clipboard.h"
 #include "text/text_engine.h"
+#include "ui/caret_target.h"
 #include "widgets/widget.h"
 
 namespace albor
 {
-    // the widget that edits a single line of text, which is what a form field or a search box is (§8)
-    class TextField final : public Widget
+    // the widget that edits one or more lines of text, which is what a form field or a search box is (§8)
+    class TextField final : public Widget, public CaretTarget
     {
     public:
         // build a field over the engines it reads, with an empty value (§8) the text engine is borrowed, not owned (§9.1)
@@ -129,7 +130,13 @@ namespace albor
         [[nodiscard]] float byte_advance() const;
 
         // hand out the rect the caret draws at, in bounds coordinates, which an anchor resolves relatives against (§9.1)
-        [[nodiscard]] Rect caret_rect() const;
+        [[nodiscard]] Rect caret_rect() const override;
+
+        // report whether a composition is active, which is what an input method paints (§8.3)
+        [[nodiscard]] bool has_marked_text() const;
+
+        // hand out the marked string a composition holds, which is empty when none is (§8.3)
+        [[nodiscard]] const std::string& marked_text() const;
 
         // hand out where the field places the first byte of its text, which is what an overlay aligns to (§9.1)
         [[nodiscard]] Point text_origin() const;
@@ -183,6 +190,9 @@ namespace albor
         // paint the selection over the value, which the value paints over (§6.1)
         void paint_selection(RenderContext& context);
 
+        // paint the underline a composition marks its provisional string with (§8.3)
+        void paint_mark_underline(RenderContext& context);
+
         // paint the caret of the field, which the value and the hint both sit beside (§6.1)
         void paint_caret(RenderContext& context);
 
@@ -212,6 +222,12 @@ namespace albor
 
         // the run the placeholder was measured at, which an empty field draws instead (§9.1)
         TextLayout m_placeholder_layout;
+
+        // the run the composed text was measured at, which a mark paints instead of the value (§9.1)
+        TextLayout m_marked_layout;
+
+        // the marked string a composition holds, which a commit resolves (§8.3)
+        std::string m_marked;
 
         // the edited text, which is the value a handler reads as well (§8)
         std::string m_value;

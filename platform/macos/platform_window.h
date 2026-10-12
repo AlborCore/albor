@@ -53,6 +53,9 @@ namespace albor
         // override: ask the display link for another frame (§4.3, AD-16)
         void request_frame() override;
 
+        // override: hand the text anchor over, which the content view holds for the input system (§8.3)
+        void set_text_anchor(Rect anchor) override;
+
         // override: report whether a frame was requested and not yet drawn (AD-18b)
         [[nodiscard]] bool frame_requested() const override;
 

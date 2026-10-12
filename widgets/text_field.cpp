@@ -56,10 +56,10 @@ namespace albor
         const ControlMetrics& m = metrics();
         // the text starts one inset in, because the value never touches the plate edge (§8.2)
         const Point origin{.x = bounds().x + m.text_field_padding, .y = 0.0f};
-        // the value is what the field shows when it has one, and the hint is what shows beside nothing (§8)
-        const bool shows_placeholder = m_value.empty() && !m_placeholder.empty();
+        // the value is what the field shows when it has one, the hint beside nothing, and the mark over both (§8.3)
+        const bool shows_placeholder = !has_marked_text() && m_value.empty() && !m_placeholder.empty();
         // the run that paints is the one the present state displays (§6.1)
-        const TextLayout& displayed = shows_placeholder ? m_placeholder_layout : m_layout;
+        const TextLayout& displayed = has_marked_text() ? m_marked_layout : (shows_placeholder ? m_placeholder_layout : m_layout);
         // the line hangs vertically centred, because a field is fixed height and the run is its guest (§8.2)
         const float centered_y = bounds().y + std::max(0.0f, (bounds().height - displayed.size.height) * 0.5f);
         // the content is clipped into the plate, because a run wider than the field must not bleed over it (§6.2)
@@ -67,9 +67,12 @@ namespace albor
         context.clip_rect(bounds());
         // the selection is painted under the value, because a highlight sits behind the text it covers (§6.1)
         paint_selection(context);
-        // the hint or the value records at the inset and the centre (§6.1)
+        // the hint or the value or the mark records at the inset and the centre (§6.1)
         if (!displayed.empty())
-            context.draw_text(displayed, Point{.x = origin.x, .y = centered_y}, {.fill = resolve(shows_placeholder ? placeholder_colors() : value_colors(), shows_placeholder ? m_placeholder_foreground : m_foreground)});
+            context.draw_text(displayed, Point{.x = origin.x, .y = centered_y}, {.fill = resolve(has_marked_text() ? value_colors() : (shows_placeholder ? placeholder_colors() : value_colors()), has_marked_text() ? m_foreground : (shows_placeholder ? m_placeholder_foreground : m_foreground))});
+        // the mark rides under the provisional string, which is what a composition announces with (§8.3)
+        if (has_marked_text())
+            paint_mark_underline(context);
         // the caret is drawn only over an editable field with no selection (§8.3)
         if (!m_read_only && !has_selection())
             paint_caret(context);
@@ -351,8 +354,35 @@ namespace albor
             // the insertion spans the selection when one is active, and the caret when none is (§8.3)
             const std::size_t start = has_selection() ? selection_start() : m_caret;
             const std::size_t end = has_selection() ? selection_end() : m_caret;
+            // the commit resolves the mark, because the provisional string never entered the value (§8.3)
+            m_marked.clear();
+            m_marked_layout = TextLayout{};
             // the replacement is one edit, which signals once (§8)
             replace_range(start, end, event.text);
+            return;
+        }
+        // the marked text a composition holds shows at the caret, which the value keeps holding (§8.3)
+        if (event.kind == EventKind::Composing) {
+            // a read only field takes no composition, because it refuses every edit (§8.3)
+            if (m_read_only)
+                return;
+            // the event is claimed, so no ancestor reacts to the same mark (§8.3)
+            event.handled = true;
+            // the mark replaces the held one, which an empty one renounces (§8.3)
+            m_marked = event.text;
+            // the display run is what the composed text measures as one (§9.1)
+            if (m_text_engine != nullptr) {
+                // the composed string is the value with the mark in place of nothing (§8.3)
+                std::string composed = m_value;
+                composed.insert(std::min(m_caret, m_value.size()), m_marked);
+                // the composed run shapes over an unbounded width, which is what a mark draws against (§9.1)
+                m_marked_layout = m_text_engine->measure(composed, 0.0f, m_font_size);
+            } else {
+                // no engine means no display run, which is what an unmeasurable mark is (§9.1)
+                m_marked_layout = TextLayout{};
+            }
+            // a mark is visual only, because the value it did not touch did not change (§8.3)
+            invalidate();
             return;
         }
         // a press inside the plate puts the caret on the byte it lands over (§8.3, §9.1)
@@ -708,8 +738,37 @@ namespace albor
         remove_range(selection_start(), selection_end());
     }
 
-    void TextField::paste() {
-        // a read only field refuses every edit, which a paste is (§8.3)
+    bool TextField::has_marked_text() const {
+        // a composition is active when a string is still pending, which an empty one renounced (§8.3)
+        return !m_marked.empty();
+    }
+
+    const std::string& TextField::marked_text() const {
+        // the marked string is what the display shows in place of the value (§8.3)
+        return m_marked;
+    }
+
+    void TextField::paint_mark_underline(RenderContext& context) {
+        // an empty mark has no bar to paint, which is what renouncing is (§8.3)
+        if (m_marked_layout.run == nullptr || m_marked_layout.run->lines().empty() || m_marked.empty())
+            return;
+        // the metrics carry the inset, which is where the run starts (§8.2)
+        const ControlMetrics& m = metrics();
+        // the one line a composed display is shaped into is what the mark rides under (§9.1)
+        const ShapedRun::Line& line = m_marked_layout.run->lines().front();
+        // the mark covers the bytes the caret commit opened in the composed string (§8.3)
+        const std::size_t from = std::min(m_caret, m_value.size());
+        const std::size_t to = std::min(from + m_marked.size(), m_value.size() + m_marked.size());
+        // the underline starts where the caret held the composed run's bytes (§8.3)
+        const float start_x = bounds().x + m.text_field_padding + line.origin.x + m_marked_layout.run->x_at_byte(0, from);
+        const float end_x = bounds().x + m.text_field_padding + line.origin.x + m_marked_layout.run->x_at_byte(0, to);
+        // the composed run hangs vertically centred, which is the same decision the paint makes (§8.2)
+        const float draw_y = bounds().y + std::max(0.0f, (bounds().height - m_marked_layout.size.height) * 0.5f);
+        // the bar is one thin line under the baseline, which is where a mark reads (§8.3)
+        context.draw_rect(Rect{.x = start_x, .y = draw_y + line.origin.y + 1.0f, .width = std::max(0.0f, end_x - start_x), .height = 1.0f}, {.fill = resolve(caret_colors(), m_caret_foreground)});
+    }
+
+    void TextField::paste() {        // a read only field refuses every edit, which a paste is (§8.3)
         if (m_read_only)
             return;
         // a clipboard the field was never handed has nothing to paste, which is the absent surface (§3.5)
@@ -927,6 +986,9 @@ namespace albor
         m_layout = m_text_engine->measure(m_value, 0.0f, m_font_size);
         // the hint run is measured too, because an empty field shows it (§8)
         m_placeholder_layout = m_text_engine->measure(m_placeholder, 0.0f, m_font_size);
+        // a fresh base run invalidates the composed one, because the mark is measured against a new value (§8.3)
+        m_marked_layout = TextLayout{};
+        m_marked.clear();
         // a text change is a size change, so the layout passes must run again (§8.2)
         invalidate_layout();
         // the value paint changed either way, which is what an edit means (§6.1)

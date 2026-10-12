@@ -9,6 +9,7 @@
 #include "core/paint.h"
 #include "runtime/binding_engine.h"
 #include "text/text_engine.h"
+#include "ui/caret_target.h"
 #include "ui/ui_event.h"
 
 namespace albor
@@ -64,6 +65,9 @@ namespace albor
     private:
         // the renderer that owns the surface, which the resize needs (§6.3)
         RendererBackend* m_renderer = nullptr;
+
+        // the window the stage drives, which the text anchor reaches through (§8.3)
+        Window* m_window = nullptr;
 
         // the engine the stage settles before every frame, which the tree declares properties over (§7.3)
         BindingEngine m_engine;

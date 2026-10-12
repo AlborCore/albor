@@ -7,6 +7,8 @@
 #include "ui/frame_pipeline.h"
 #include "window/window.h"
 
+#include <algorithm>
+
 namespace albor
 {
     namespace
@@ -16,7 +18,7 @@ namespace albor
     } // namespace
 
     WindowStage::WindowStage(Window& window, RendererBackend& renderer, TextEngine& text, RootBuilder builder) :
-        m_renderer(&renderer) {
+        m_renderer(&renderer), m_window(&window) {
         // the tree is built once over the engines, because the widgets read them for the whole run (§8.1)
         std::unique_ptr<UiNode> root = builder ? builder(m_engine, text) : std::make_unique<UiNode>();
         // stage one owns the tree and the layout and record passes (§6.1)
@@ -83,7 +85,14 @@ namespace albor
         // an unwired stage has no input to deliver, which the window betrayed at creation time (§8.3)
         if (!m_input)
             return;
+        // the event routes first, which is what the caret the anchor follows answers (§8.3)
         m_input->deliver(event);
+        // the focused node is where the caret lives, which the anchor is read against (§8.3)
+        const UiNode* focused = m_input->focus().focused();
+        const CaretTarget* target = dynamic_cast<const CaretTarget*>(focused);
+        // a focus with no caret has no anchor to update, which is what keeps the last one (§8.3)
+        if (target != nullptr)
+            m_window->set_text_anchor(target->caret_rect());
     }
 
     void WindowStage::set_command_registry(CommandRegistry* registry) {

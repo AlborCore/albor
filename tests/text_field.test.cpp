@@ -1734,3 +1734,166 @@ TEST(TextFieldMultiLineChecks, SetMultilineRedrawsAndRemeasures) {
     EXPECT_TRUE(field.measure_dirty());
     EXPECT_TRUE(field.render_dirty());
 }
+
+TEST(TextFieldImeChecks, ACompositionShowsTheMarkedString) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 40.0f}, 1.0f));
+    // act
+    Event composing{.kind = EventKind::Composing, .text = "a\xE3\x81\x82" "b"};
+    field.dispatch_event(composing);
+    field.render(recorder);
+    // assert the mark reached the display, because the value kept holding nothing (§8.3)
+    EXPECT_TRUE(field.value().empty());
+    EXPECT_EQ(text_command_count(*recorder.scene()), 1u);
+    EXPECT_TRUE(field.has_marked_text());
+    EXPECT_EQ(field.marked_text(), "a\xE3\x81\x82" "b");
+}
+
+TEST(TextFieldImeChecks, TheMarkIsProvisionalAndSignalsNothing) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    std::size_t changes = 0;
+    field.set_on_change([&changes](const std::string&) { changes++; });
+    Event composing{.kind = EventKind::Composing, .text = "abc"};
+    // act
+    field.dispatch_event(composing);
+    // assert the value is untouched and no validation ran, which is what provisional means (§8.3)
+    EXPECT_TRUE(field.value().empty());
+    EXPECT_EQ(changes, 0u);
+    EXPECT_EQ(field.caret(), 0u);
+}
+
+TEST(TextFieldImeChecks, AnEmptyMarkRenouncesTheComposition) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    Event mark{.kind = EventKind::Composing, .text = "abc"};
+    field.dispatch_event(mark);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 40.0f}, 1.0f));
+    // act
+    Event unmark{.kind = EventKind::Composing};
+    field.dispatch_event(unmark);
+    field.render(recorder);
+    // assert the display went back to the value, which an empty value draws nothing of (§8.3)
+    EXPECT_FALSE(field.has_marked_text());
+    EXPECT_EQ(text_command_count(*recorder.scene()), 0u);
+}
+
+TEST(TextFieldImeChecks, ACommitResolvesTheMarkIntoTheValue) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    Event mark{.kind = EventKind::Composing, .text = "ab"};
+    field.dispatch_event(mark);
+    // act
+    Event commit{.kind = EventKind::TextInput, .text = "XYZ"};
+    field.dispatch_event(commit);
+    // assert the final text entered at the caret and the mark is gone (§8.3)
+    EXPECT_EQ(field.value(), "XYZ");
+    EXPECT_EQ(field.caret(), 3u);
+    EXPECT_FALSE(field.has_marked_text());
+}
+
+TEST(TextFieldImeChecks, TheDisplayRunReturnsToTheValueAfterACommit) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Albor");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    Event mark{.kind = EventKind::Composing, .text = "x"};
+    field.dispatch_event(mark);
+    // act
+    Event commit{.kind = EventKind::TextInput, .text = "x"};
+    field.dispatch_event(commit);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 40.0f}, 1.0f));
+    field.render(recorder);
+    // assert the value alone is what draws after a commit (§8.3)
+    EXPECT_FALSE(field.has_marked_text());
+    EXPECT_EQ(1, text_command_count(*recorder.scene()));
+}
+
+TEST(TextFieldImeChecks, ACommitWithAMarkRecordsOneUndoStep) {
+    // arrange
+    EditingTextEngine engine;
+    UndoStack stack;
+    TextField field(nullptr, &engine);
+    field.bind_undo_stack(&stack);
+    Event mark{.kind = EventKind::Composing, .text = "ab"};
+    field.dispatch_event(mark);
+    // act
+    Event commit{.kind = EventKind::TextInput, .text = "XYZ"};
+    field.dispatch_event(commit);
+    // assert the mark cost no history and the commit is the one entry (§8.3, §18)
+    EXPECT_EQ(stack.depth(), 1u);
+    field.undo();
+    EXPECT_TRUE(field.value().empty());
+}
+
+TEST(TextFieldImeChecks, AnEmptyFieldKeepsTheHintUnderTheMark) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_placeholder("Type here");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    SceneRecorder before(WindowMetrics::from_logical(Size{200.0f, 40.0f}, 1.0f));
+    field.render(before);
+    // act
+    Event mark{.kind = EventKind::Composing, .text = "a"};
+    field.dispatch_event(mark);
+    SceneRecorder after(WindowMetrics::from_logical(Size{200.0f, 40.0f}, 1.0f));
+    field.render(after);
+    // assert the hint gives way to the mark, which is what composition shows instead (§8.3)
+    EXPECT_EQ(1u, text_command_count(*before.scene()));
+    EXPECT_EQ(1u, text_command_count(*after.scene()));
+    EXPECT_TRUE(field.has_marked_text());
+}
+
+TEST(TextFieldImeChecks, TheMarkDrawsTheUnderlineBar) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    // act
+    Event mark{.kind = EventKind::Composing, .text = "abc"};
+    field.dispatch_event(mark);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 40.0f}, 1.0f));
+    field.render(recorder);
+    // assert the underline is the one rect the mark records (§8.3)
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_GE(rects.size(), 1u);
+    EXPECT_FLOAT_EQ(rects.front().height, 1.0f);
+    // assert the underline spans the mark's bytes, which start at the caret (§8.3)
+    EXPECT_FLOAT_EQ(rects.front().width, static_cast<float>(field.marked_text().size()) * EditingTextEngine::ADVANCE);
+}
+
+TEST(TextFieldImeChecks, AReadOnlyFieldRefusesCompose) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_read_only(true);
+    Event event{.kind = EventKind::Composing, .text = "abc"};
+    // act
+    field.dispatch_event(event);
+    // assert
+    EXPECT_FALSE(field.has_marked_text());
+    EXPECT_FALSE(event.handled);
+}
+
+TEST(TextFieldImeChecks, TheCaretRectStaysAtTheMarkStart) {
+    // arrange
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Albor");
+    field.set_caret(3);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    // act
+    const Rect before = field.caret_rect();
+    Event mark{.kind = EventKind::Composing, .text = "XYZ"};
+    field.dispatch_event(mark);
+    const Rect during = field.caret_rect();
+    // assert the caret held its byte, which is where the mark is being composed at (§8.3)
+    EXPECT_FLOAT_EQ(during.x, before.x);
+}
