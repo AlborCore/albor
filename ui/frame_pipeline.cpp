@@ -98,6 +98,9 @@ namespace albor
     void FramePipeline::set_animation_engine(AnimationEngine* engine) {
         // the engine is owned by the caller, because an application may outlive or outlive its window either way (§7.3)
         m_animations = engine;
+        // the tree is handed the engine too, because a widget schedules through it (§7.3)
+        if (m_root)
+            m_root->set_animation_engine(engine);
     }
 
     AnimationEngine* FramePipeline::animation_engine() const {

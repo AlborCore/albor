@@ -1,5 +1,7 @@
 #include "ui/ui_node.h"
 
+#include "animation/animation_engine.h"
+
 #include <algorithm>
 #include <utility>
 
@@ -299,7 +301,20 @@ namespace albor
         m_identity.node = node;
     }
 
-    void UiNode::visit(const std::function<void(UiNode&)>& visitor) {
+    void UiNode::set_animation_engine(AnimationEngine* engine) {
+        // the engine is borrowed, because the pipeline and the stage own it (§7.3)
+        m_animations = engine;
+        // every child is handed the same engine, so a widget nested anywhere can schedule (§7.3)
+        for (const std::unique_ptr<UiNode>& child : m_children)
+            child->set_animation_engine(engine);
+    }
+
+    AnimationEngine* UiNode::animation_engine() const {
+        // the engine is the one the pipeline handed down, which is null when none was (§7.3)
+        return m_animations;
+    }
+
+void UiNode::visit(const std::function<void(UiNode&)>& visitor) {
         // the node itself comes before its children, which is the order a depth first walk uses (§8.1)
         visitor(*this);
         for (const auto& child : m_children)

@@ -3,10 +3,17 @@
 #include <algorithm>
 #include <utility>
 
+#include "animation/animation_engine.h"
 #include "commands/command.h"
 
 namespace albor
 {
+    namespace
+    {
+        // how long one half of a caret blink lasts, which is the platform rhythm (§8.3)
+        constexpr long CARET_BLINK_MS = 530;
+    } // namespace
+
     TextField::TextField(BindingEngine* engine, TextEngine* text_engine, std::string value, std::string explicit_id) :
         Widget(engine, std::move(explicit_id)), m_text_engine(text_engine), m_value(std::move(value)) {
         // the runs are laid out once up front, so a field is sized before the first layout pass reaches it (§9.1)
@@ -73,14 +80,97 @@ namespace albor
         // the mark rides under the provisional string, which is what a composition announces with (§8.3)
         if (has_marked_text())
             paint_mark_underline(context);
-        // the caret is drawn only over an editable field with no selection (§8.3)
-        if (!m_read_only && !has_selection())
+        // the caret is drawn only where a focused field shows one, because an unfocused field has no caret to show (§8.3)
+        if (shows_caret())
             paint_caret(context);
         // the clip is restored, so nothing after the field paints clipped by it (§6.2)
         context.restore();
     }
 
-    void TextField::paint_selection(RenderContext& context) {
+    bool TextField::focused() const {
+        // the state is what the focus manager last reported, which is the whole of it (§8.3)
+        return m_focused;
+    }
+
+bool TextField::shows_caret() const {
+        // a hidden or disabled field is not edited, so it shows no caret (§8.3)
+        if (disabled() || !visible())
+            return false;
+        // a read only field takes a caret for navigation but edits nothing, so it shows none (§8.3)
+        if (m_read_only)
+            return false;
+        // a field with a selection shows the highlight rather than a bar (§8.3)
+        if (has_selection())
+            return false;
+        // a field the focus has not reached shows no caret, because that is where a caret means something (§8.3)
+        if (!m_focused)
+            return false;
+        // a blink that is in its hidden phase shows nothing this frame (§8.3)
+        return m_caret_visible;
+    }
+
+    void TextField::set_focused(bool focused) {
+        // an unchanged focus changes nothing, because the caret is already in that state (§8.3)
+        if (m_focused == focused)
+            return;
+        // the state is stored first, because the blink is started against it (§8.3)
+        m_focused = focused;
+        // losing the focus ends the blink and hides the caret, because nothing is editing any more (§8.3)
+        if (!m_focused) {
+            stop_blink();
+            m_caret_visible = false;
+            invalidate();
+            return;
+        }
+        // taking the focus shows the caret at once, because a caret that appears a frame later reads as absent (§8.3)
+        m_caret_visible = true;
+        // the blink starts on the engine the tree was handed, because time is its to advance (§7.3)
+        start_blink();
+        invalidate();
+    }
+
+    void TextField::start_blink() {
+        // the blink is stopped first, because a fresh phase owns the old handle (§7.3)
+        stop_blink();
+        // a field with no engine has no clock to run against, so the caret stays solid (§7.3)
+        AnimationEngine* engine = animation_engine();
+        if (engine == nullptr)
+            return;
+        // the blink alternates the caret for as long as the field holds the focus, which is a repeating animation (§7.3)
+        m_blink = engine->schedule_repeating(
+            [this](float) {
+                // the phase flips, which is the whole of a blink (§8.3)
+                m_caret_visible = !m_caret_visible;
+                // the flip is a visual change, so the tree is asked for a frame (§6.1)
+                invalidate();
+                // the blink keeps running until the focus leaves, which cancel is for (§7.3)
+                return true;
+            },
+            std::chrono::milliseconds(CARET_BLINK_MS));
+    }
+
+    void TextField::stop_blink() {
+        // a field that never blinked holds no handle, so there is nothing to end (§7.3)
+        if (m_blink == 0)
+            return;
+        // the engine is asked only when the tree was handed one, because the handle came from there (§7.3)
+        if (AnimationEngine* engine = animation_engine())
+            (void)engine->cancel(m_blink);
+        // the handle is spent, so the next blink schedules a fresh one (§7.3)
+        m_blink = 0;
+    }
+
+    void TextField::restart_blink() {
+        // the caret shows again, because a move or an edit brings it back (§8.3)
+        m_caret_visible = true;
+        // a field that holds no focus is not blinking at all (§8.3)
+        if (!m_focused)
+            return;
+        // the phase restarts, which is what makes typing hold the caret solid (§7.3)
+        start_blink();
+    }
+
+void TextField::paint_selection(RenderContext& context) {
         // an empty selection has no span to highlight, which is what collapse means (§8.3)
         if (!has_selection())
             return;
@@ -405,9 +495,8 @@ namespace albor
                 set_caret(0);
                 return;
             }
-            // the press is resolved against the whole line, which a single line field places in one row (§9.1)
-            const float caret_x = event.position.x - (bounds().x + metrics().text_field_padding);
-            set_caret(m_layout.run->byte_at_x(0, std::max(0.0f, caret_x)));
+            // the press is resolved against the row it landed on, because a multi line field has more than one (§9.1)
+            set_caret(byte_at_point(event.position));
             return;
         }
         // a move while a press drag is alive extends the selection, which is what dragging means (§8.3)
@@ -415,9 +504,8 @@ namespace albor
             // a move over a run the engine did not shape extends nothing, which an empty value gives (§9.1)
             if (m_layout.run == nullptr || m_layout.run->lines().empty() || m_value.empty())
                 return;
-            // the move is resolved against the whole line, which clamps past both ends (§9.1)
-            const float caret_x = event.position.x - (bounds().x + metrics().text_field_padding);
-            extend_caret(m_layout.run->byte_at_x(0, std::max(0.0f, caret_x)));
+            // the move is resolved against the row it landed on, which is what a drag across rows means (§9.1)
+            extend_caret(byte_at_point(event.position));
             return;
         }
         // a release ends the drag, whether or not it landed over the plate (§8.3)
@@ -446,6 +534,28 @@ namespace albor
         node.set_read_only(m_read_only);
         // the multi line state travels beside the value, because a reader announces a document (§10.1)
         node.set_multiline(m_multiline);
+        // the select all action is the selection a reader can ask for, which the keyboard reaches the same way (§10.1)
+        (void)node.add_action("select_all", [this] {
+            // the action body carries no read only guard, because the state belongs to the node it belongs to (§10.1)
+            mutable_owner(this)->select_all();
+        });
+        // the caret movements are the four moves a reader drives, which are the keys that make them (§10.1)
+        (void)node.add_action("move_caret_left", [this] {
+            // the action steps the caret the way the left key does, across lines included (§10.1, §8.3)
+            mutable_owner(this)->set_caret(step_backward_byte(std::min(m_caret, m_value.size())));
+        });
+        (void)node.add_action("move_caret_right", [this] {
+            // the action steps the caret the way the right key does, across lines included (§10.1, §8.3)
+            mutable_owner(this)->set_caret(step_forward_byte(std::min(m_caret, m_value.size())));
+        });
+        (void)node.add_action("move_caret_up", [this] {
+            // the action climbs a line the way the up key does, keeping the column goal (§10.1, §8.3)
+            mutable_owner(this)->set_caret(step_up_byte(std::min(m_caret, m_value.size())));
+        });
+        (void)node.add_action("move_caret_down", [this] {
+            // the action descends a line the way the down key does, keeping the column goal (§10.1, §8.3)
+            mutable_owner(this)->set_caret(step_down_byte(std::min(m_caret, m_value.size())));
+        });
         return node;
     }
 
@@ -563,6 +673,8 @@ namespace albor
         m_anchor = clamped;
         // a placement also aims the column at the byte's own x, which is what a vertical move keeps (§8.3)
         m_goal_x = caret_goal_x();
+        // the caret comes back into view, which is what every move does on every platform (§8.3)
+        restart_blink();
         // a caret move is visual only, because the value did not change (§6.1)
         invalidate();
     }
@@ -607,7 +719,38 @@ namespace albor
         return clamped;
     }
 
-    std::size_t TextField::step_up_byte(std::size_t byte) const {
+    std::size_t TextField::line_at_y(float pointer_y) const {
+        // a run the engine did not shape has no row to resolve against, so the first one stands (§9.1)
+        if (m_layout.run == nullptr || m_layout.run->lines().empty())
+            return 0;
+        // the run hangs vertically centred, which is the same decision the text paint makes (§8.2)
+        const float top = bounds().y + std::max(0.0f, (bounds().height - m_layout.size.height) * 0.5f);
+        // every row is asked which band of the run the pointer fell in (§8.3)
+        const std::vector<ShapedRun::Line>& lines = m_layout.run->lines();
+        for (std::size_t index = 0; index < lines.size(); index++) {
+            // the band runs from above the ascent to below the descent of the row (§9.1)
+            const float band_top = top + lines[index].origin.y - lines[index].ascent;
+            // a pointer above this band belongs to an earlier row (§8.3)
+            if (pointer_y < band_top)
+                return index == 0 ? 0 : index - 1;
+        }
+        // a pointer past the last band clamps to the last row, because the plate ends there (§8.3)
+        return lines.size() - 1;
+    }
+
+    std::size_t TextField::byte_at_point(Point logical_point) const {
+        // the row the pointer fell in is resolved first, because x means nothing on another row (§8.3)
+        const std::size_t index = line_at_y(logical_point.y);
+        // a run the engine did not shape resolves nothing, so the start of the value stands (§9.1)
+        if (m_layout.run == nullptr || m_layout.run->lines().empty())
+            return 0;
+        // the row hangs at its own origin inside the inset, which is where x is measured from (§8.2)
+        const float x = logical_point.x - (bounds().x + metrics().text_field_padding + m_layout.run->lines()[index].origin.x);
+        // the run maps the position on that row to a byte, clamping past both ends (§9.1)
+        return m_layout.run->byte_at_x(index, std::max(0.0f, x));
+    }
+
+std::size_t TextField::step_up_byte(std::size_t byte) const {
         // an offset past the value clamps to its end, because there is no line to leave (§8.3)
         const std::size_t clamped = std::min(byte, m_value.size());
         // a run the engine did not shape has no line to move across (§9.1)
@@ -920,6 +1063,8 @@ namespace albor
         m_anchor = m_caret;
         // the run is remeasured, because the value changed (§9.1)
         remeasure();
+        // the caret comes back into view, because typing holds it solid (§8.3)
+        restart_blink();
         // the edit is recorded after the state, which is what the entry needs from both ends (§18)
         record_edit(before, before_caret);
         // the handler runs after the state, so a validation reads the value that was kept (§8)
@@ -987,6 +1132,8 @@ namespace albor
         // the column follows the byte only when the line did not change, which is what a vertical move keeps (§8.3)
         if (m_layout.run != nullptr && old_line == new_line)
             m_goal_x = m_layout.run->x_at_byte(new_line, clamped);
+        // the caret comes back into view, which is what every move does (§8.3)
+        restart_blink();
         // a drag extension is visual only, because the value did not change (§6.1)
         invalidate();
     }

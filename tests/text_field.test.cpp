@@ -347,8 +347,22 @@ TEST(TextFieldChecks, ThePlaceholderDisappearsAfterTheFirstEdit) {
     EXPECT_FALSE(field.value().empty());
 }
 
-TEST(TextFieldChecks, TheCaretDrawsOverAnEditableField) {
-    // arrange
+TEST(TextFieldChecks, TheCaretDrawsOverAFocusedEditableField) {
+    // arrange a field the focus has reached, which is what makes its caret mean something (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Albor");
+    field.set_caret(2);
+    field.set_focused(true);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 40.0f}, 1.0f));
+    // act
+    field.render(recorder);
+    // assert the caret is the one filled bar the focused field records (§6.1)
+    EXPECT_GE(rect_commands(*recorder.scene()).size(), 1u);
+}
+
+TEST(TextFieldChecks, AnUnfocusedFieldDrawsNoCaret) {
+    // arrange a field the focus never reached, which is most of them in a form (§8.3)
     EditingTextEngine engine;
     TextField field(nullptr, &engine, "Albor");
     field.set_caret(2);
@@ -356,8 +370,35 @@ TEST(TextFieldChecks, TheCaretDrawsOverAnEditableField) {
     SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 40.0f}, 1.0f));
     // act
     field.render(recorder);
-    // assert the caret is the one filled bar the editable field records (§6.1)
-    EXPECT_GE(rect_commands(*recorder.scene()).size(), 1u);
+    // assert no bar draws, because a caret on every field is not a caret (§8.3)
+    EXPECT_EQ(rect_commands(*recorder.scene()).size(), 0u);
+    EXPECT_FALSE(field.shows_caret());
+}
+
+TEST(TextFieldChecks, ADisabledFieldDrawsNoCaretEvenWhenItHoldsTheFocus) {
+    // arrange a disabled field, which refuses input and therefore cannot be focused (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Albor");
+    field.set_focused(true);
+    field.set_disabled(true);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 40.0f}, 1.0f));
+    // act
+    field.render(recorder);
+    // assert the bar is gone, because a refused field is not being edited (§8.3)
+    EXPECT_EQ(rect_commands(*recorder.scene()).size(), 0u);
+}
+
+TEST(TextFieldChecks, LosingTheFocusHidesTheCaret) {
+    // arrange a focused field whose focus is then taken elsewhere (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Albor");
+    field.set_focused(true);
+    // act
+    field.set_focused(false);
+    // assert the field no longer claims to hold it, and its caret is hidden (§8.3)
+    EXPECT_FALSE(field.focused());
+    EXPECT_FALSE(field.shows_caret());
 }
 
 TEST(TextFieldChecks, AReadOnlyFieldDrawsNoCaret) {
@@ -896,6 +937,7 @@ TEST(TextFieldChecks, AThemeResolvesTheFieldRoles) {
     theme.set_text_field_caret(Color::rgb(0.0f, 1.0f, 0.0f));
     TextField field(nullptr, &engine, "Albor");
     field.set_caret(2);
+    field.set_focused(true);
     field.set_theme(&theme);
     field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
     SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 40.0f}, 1.0f));
@@ -2063,4 +2105,199 @@ TEST(TextFieldChecks, TheOverlayXIsZeroWhereThereIsNoRun) {
     field.set_value("abcd");
     // act, assert
     EXPECT_FLOAT_EQ(field.x_at_byte(2), 0.0f);
+}
+
+TEST(TextFieldChecks, AFocusedFieldWithAnEngineStartsABlinkThatTheEngineRuns) {
+    // arrange a field that was handed an engine, which is how a blink has a clock (§7.3)
+    EditingTextEngine text;
+    AnimationEngine animations;
+    TextField field(nullptr, &text, "Albor");
+    field.set_animation_engine(&animations);
+    field.set_caret(2);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    // act the focus arrives
+    field.set_focused(true);
+    // assert a blink is running, because a caret that never blinks is a bar (§7.3, §8.3)
+    EXPECT_EQ(animations.active_count(), 1u);
+    EXPECT_TRUE(field.shows_caret());
+    // act a whole blink period passes
+    (void)animations.advance(0.53f);
+    // assert the caret went into its hidden phase, which is what a blink is (§8.3)
+    EXPECT_FALSE(field.shows_caret());
+    // act the next half period passes
+    (void)animations.advance(0.53f);
+    // assert the caret came back, because a blink repeats rather than ending (§7.3)
+    EXPECT_TRUE(field.shows_caret());
+}
+
+TEST(TextFieldChecks, LosingTheFocusCancelsTheBlink) {
+    // arrange a focused field with a running blink (§7.3)
+    EditingTextEngine text;
+    AnimationEngine animations;
+    TextField field(nullptr, &text, "Albor");
+    field.set_animation_engine(&animations);
+    field.set_focused(true);
+    // act the focus leaves
+    field.set_focused(false);
+    // assert the engine holds nothing, because a blink without a caret would spin (§7.3)
+    EXPECT_EQ(animations.active_count(), 0u);
+    EXPECT_FALSE(field.shows_caret());
+}
+
+TEST(TextFieldChecks, AFieldWithNoEngineShowsASolidCaret) {
+    // arrange a field with no clock at all, which is what a headless or a test tree has (§7.3)
+    EditingTextEngine text;
+    TextField field(nullptr, &text, "Albor");
+    field.set_caret(2);
+    // act
+    field.set_focused(true);
+    // assert the caret is visible, because a field with no engine cannot blink (§8.3)
+    EXPECT_TRUE(field.shows_caret());
+    EXPECT_FALSE(field.focused() == false);
+}
+
+TEST(TextFieldChecks, ACaretMoveBringsTheBlinkBackIntoItsVisiblePhase) {
+    // arrange a field whose caret has faded, which is where a blink leaves it (§8.3)
+    EditingTextEngine text;
+    AnimationEngine animations;
+    TextField field(nullptr, &text, "Albor");
+    field.set_animation_engine(&animations);
+    field.set_focused(true);
+    (void)animations.advance(0.53f);
+    ASSERT_FALSE(field.shows_caret());
+    // act the caret moves
+    field.set_caret(3);
+    // assert the caret is back, because typing and moving hold it solid (§8.3)
+    EXPECT_TRUE(field.shows_caret());
+    // assert exactly one blink runs, because a move restarts the phase rather than adding one (§7.3)
+    EXPECT_EQ(animations.active_count(), 1u);
+}
+
+TEST(TextFieldMultiLineChecks, AClickOnTheSecondRowPutsTheCaretOnThatRow) {
+    // arrange a field over two rows, arranged so the second row has a known band (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("ab\ncd");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    // act a press on the second row, which the double draws one height below the first (§9.1)
+    Event press{.kind = EventKind::PointerDown, .position = Point{.x = 8.0f, .y = 24.0f}};
+    field.dispatch_event(press);
+    // assert the caret landed on the second row's first character rather than the first row's (§8.3)
+    EXPECT_EQ(field.caret(), 3u);
+    EXPECT_TRUE(press.handled);
+}
+
+TEST(TextFieldMultiLineChecks, AClickBelowTheLastRowClampsToTheLastRow) {
+    // arrange the same field, with the plate ending below the second row (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("ab\ncd");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    // act a press past the end of the text (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{.x = 100.0f, .y = 39.0f}};
+    field.dispatch_event(press);
+    // assert the caret clamped to the end of the last row rather than resolving past the value (§8.3)
+    EXPECT_EQ(field.caret(), 5u);
+}
+
+TEST(TextFieldMultiLineChecks, ADragFromTheFirstRowOntoTheSecondExtendsTheSelection) {
+    // arrange a press on the first row, which anchors the selection (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("ab\ncd");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    Event press{.kind = EventKind::PointerDown, .position = Point{.x = 0.0f, .y = 4.0f}};
+    field.dispatch_event(press);
+    // act the drag crosses onto the second row, which is what a vertical drag means (§8.3)
+    Event drag{.kind = EventKind::PointerMove, .position = Point{.x = 26.0f, .y = 24.0f}};
+    field.dispatch_event(drag);
+    // assert the selection spans both rows, because the caret followed the pointer across the break (§8.3)
+    EXPECT_EQ(field.selection_start(), 0u);
+    EXPECT_EQ(field.selection_end(), 5u);
+    // assert the drag claimed nothing else, because the field is the one being dragged (§8.3)
+    Event release{.kind = EventKind::PointerUp, .position = Point{.x = 26.0f, .y = 24.0f}};
+    field.dispatch_event(release);
+    EXPECT_FALSE(release.handled);
+}
+
+TEST(TextFieldMultiLineChecks, AClickAboveTheFirstRowClampsToTheFirstRow) {
+    // arrange a press over the plate's top edge, which belongs to the first row (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("ab\ncd");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    // act
+    Event press{.kind = EventKind::PointerDown, .position = Point{.x = 0.0f, .y = 0.0f}};
+    field.dispatch_event(press);
+    // assert the caret stayed on the first row rather than resolving nowhere (§8.3)
+    EXPECT_EQ(field.caret(), 0u);
+}
+
+TEST(TextFieldChecks, TheSemanticNodeExposesTheSelectionAndCaretActions) {
+    // arrange a field a reader can drive, which is what the actions are for (§10.1)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abc");
+    // act
+    const SemanticNode node = field.semantic_node();
+    // assert the four caret moves and select all are there, because the keys that make them are (§10.1)
+    EXPECT_TRUE(node.has_action("select_all"));
+    EXPECT_TRUE(node.has_action("move_caret_left"));
+    EXPECT_TRUE(node.has_action("move_caret_right"));
+    EXPECT_TRUE(node.has_action("move_caret_up"));
+    EXPECT_TRUE(node.has_action("move_caret_down"));
+}
+
+TEST(TextFieldChecks, TheSelectAllActionSelectsTheWholeValue) {
+    // arrange a field with no selection, which the action creates (§10.1)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abc");
+    field.set_caret(1);
+    // act
+    const bool invoked = field.semantic_node().invoke("select_all");
+    // assert the selection covers the value, because that is what select all means (§8.3)
+    EXPECT_TRUE(invoked);
+    EXPECT_TRUE(field.has_selection());
+    EXPECT_EQ(field.selection_start(), 0u);
+    EXPECT_EQ(field.selection_end(), 3u);
+}
+
+TEST(TextFieldChecks, TheCaretActionsMoveTheCaretTheWayTheKeysDo) {
+    // arrange a caret in the middle of the value (§10.1)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abc");
+    field.set_caret(2);
+    // act the right action, then the left one
+    EXPECT_TRUE(field.semantic_node().invoke("move_caret_right"));
+    EXPECT_EQ(field.caret(), 3u);
+    EXPECT_TRUE(field.semantic_node().invoke("move_caret_left"));
+    // assert the caret walked the bytes the keys walk (§8.3)
+    EXPECT_EQ(field.caret(), 2u);
+}
+
+TEST(TextFieldChecks, TheVerticalCaretActionsClampAtTheEndsOfTheValue) {
+    // arrange a single line value, where up and down have nowhere to go (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abc");
+    field.set_caret(2);
+    // act
+    EXPECT_TRUE(field.semantic_node().invoke("move_caret_down"));
+    // assert the caret stayed where it was, because there is no row below (§8.3)
+    EXPECT_EQ(field.caret(), 2u);
+}
+
+TEST(TextFieldChecks, TheVerticalCaretActionsWalkTheRowsOfAMultiLineValue) {
+    // arrange a field over two rows, which the vertical actions climb (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("ab\ncd");
+    field.set_caret(1);
+    // act
+    EXPECT_TRUE(field.semantic_node().invoke("move_caret_down"));
+    // assert the caret descended into the second row (§8.3)
+    EXPECT_EQ(field.caret(), 4u);
 }

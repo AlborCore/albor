@@ -6,6 +6,7 @@
 #include "commands/command_registry.h"
 #include "commands/undo_stack.h"
 #include "focus/focus_manager.h"
+#include "ui/focus_target.h"
 #include "input/event_filter.h"
 #include "input/input_controller.h"
 #include "input/input_dispatcher.h"
@@ -74,6 +75,35 @@ namespace
                 event.handled = true;
         }
     };
+    // the focus tracking test double, which records what the manager told it (§8.3)
+    class FocusRecordingNode final : public UiNode, public FocusTarget
+    {
+    public:
+        // whether the node believes it holds the focus (§8.3)
+        bool focused = false;
+
+        // how many times the manager told this node about the focus (§8.3)
+        std::size_t told = 0;
+
+        void set_focused(bool focused) override {
+            // the state is stored, because that is what the assertion reads (§8.3)
+            this->focused = focused;
+            // the count rises on every report, so a test can see it happened at all (§8.3)
+            told++;
+        }
+
+        void measure(const SizeConstraints& constraints, Size& out_size) override {
+            // the node fills whatever it is offered, because the focus tests do not exercise layout (§8.2)
+            out_size = constraints.constrain(Size{10.0f, 10.0f});
+            m_measured_size = out_size;
+        }
+
+        [[nodiscard]] bool hit_test(Point logical_point) const override {
+            // the node hits anywhere inside its bounds, so a test controls the point (§8.3)
+            return logical_point.x >= 0.0f && logical_point.y >= 0.0f;
+        }
+    };
+
 } // namespace
 
 TEST(EventFilterChecks, PointerDownIsAPointerEvent) {
@@ -442,6 +472,57 @@ TEST(InputDispatcherChecks, AnAlreadyClaimedEventIsNotRoutedToFocus) {
     InputDispatcher::dispatch_to_focused(root, event, &root);
     // assert
     EXPECT_EQ(root.deliveries, 0u);
+}
+
+TEST(FocusManagerChecks, AFocusTargetIsToldWhenTheFocusMovesOntoIt) {
+    // arrange a node that tracks the focus, which is what a caret is (§8.3)
+    FocusManager manager;
+    FocusRecordingNode node;
+    node.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    // act
+    manager.request_focus(&node);
+    // assert the node knows it holds the focus, because a caret follows it (§8.3)
+    EXPECT_TRUE(node.focused);
+    EXPECT_EQ(node.told, 1u);
+}
+
+TEST(FocusManagerChecks, AFocusTargetIsToldWhenTheFocusMovesOffIt) {
+    // arrange two tracked nodes, one holding the focus (§8.3)
+    FocusManager manager;
+    FocusRecordingNode first;
+    FocusRecordingNode second;
+    first.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    second.arrange(Rect::from_origin_size(Point{20.0f, 0.0f}, Size{10.0f, 10.0f}));
+    manager.request_focus(&first);
+    // act the focus moves to the other node
+    manager.request_focus(&second);
+    // assert the first was told it lost the focus, which is what ends a blink (§8.3)
+    EXPECT_FALSE(first.focused);
+    EXPECT_TRUE(second.focused);
+}
+
+TEST(FocusManagerChecks, LosingTheFocusTellsTheTargetToo) {
+    // arrange a tracked node holding the focus (§8.3)
+    FocusManager manager;
+    FocusRecordingNode node;
+    node.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    manager.request_focus(&node);
+    // act the window loses its focus
+    manager.clear_focus();
+    // assert the node was told, because a caret must not keep blinking (§8.3)
+    EXPECT_FALSE(node.focused);
+    EXPECT_EQ(manager.focused(), nullptr);
+}
+
+TEST(FocusManagerChecks, ANodeThatDoesNotTrackTheFocusIsUntouched) {
+    // arrange an ordinary node, which the manager focuses without knowing anything else (§8.3)
+    FocusManager manager;
+    RecordingNode node;
+    node.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    // act
+    manager.request_focus(&node);
+    // assert the focus landed, which is all an ordinary node is asked (§8.3)
+    EXPECT_EQ(manager.focused(), &node);
 }
 
 TEST(FocusManagerChecks, StartsWithNothingFocused) {

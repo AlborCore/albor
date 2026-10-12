@@ -3,16 +3,18 @@
 #include <functional>
 #include <string>
 
+#include "animation/animation_engine.h"
 #include "commands/undo_stack.h"
 #include "core/clipboard.h"
 #include "text/text_engine.h"
 #include "ui/caret_target.h"
+#include "ui/focus_target.h"
 #include "widgets/widget.h"
 
 namespace albor
 {
     // the widget that edits one or more lines of text, which is what a form field or a search box is (§8)
-    class TextField final : public Widget, public CaretTarget
+    class TextField final : public Widget, public CaretTarget, public FocusTarget
     {
     public:
         // build a field over the engines it reads, with an empty value (§8) the text engine is borrowed, not owned (§9.1)
@@ -132,6 +134,15 @@ namespace albor
         // hand out the rect the caret draws at, in bounds coordinates, which an anchor resolves relatives against (§9.1)
         [[nodiscard]] Rect caret_rect() const override;
 
+        // override: take or drop the focus, which starts or ends the blink a caret is (§8.3)
+        void set_focused(bool focused) override;
+
+        // report whether the field holds the focus, which is what a caret answers (§8.3)
+        [[nodiscard]] bool focused() const;
+
+        // report whether the field shows a caret at this instant, which the blink decides (§8.3)
+        [[nodiscard]] bool shows_caret() const;
+
         // report whether a composition is active, which is what an input method paints (§8.3)
         [[nodiscard]] bool has_marked_text() const;
 
@@ -175,6 +186,12 @@ namespace albor
         // hand out the byte one caret step lands after the given one, which crosses a line break (§9.1)
         [[nodiscard]] std::size_t step_forward_byte(std::size_t byte) const;
 
+        // hand out the row a y coordinate falls in, which a press on a multi line field resolves against (§8.3)
+        [[nodiscard]] std::size_t line_at_y(float pointer_y) const;
+
+        // hand out the byte a point resolves to, which is the row it landed on and the x within it (§8.3)
+        [[nodiscard]] std::size_t byte_at_point(Point logical_point) const;
+
         // hand out the byte one line above the caret, which keeps the column goal (§8.3)
         [[nodiscard]] std::size_t step_up_byte(std::size_t byte) const;
 
@@ -189,6 +206,15 @@ namespace albor
 
         // the x coordinate of the caret within the line it stands on, which a vertical move keeps (§8.3)
         [[nodiscard]] float caret_goal_x() const;
+
+        // schedule the blink on the engine the tree was handed, because time is the engine's to advance (§7.3)
+        void start_blink();
+
+        // cancel the blink that is running, which losing the focus or a new phase does (§7.3)
+        void stop_blink();
+
+        // show the caret and start its phase again, which a move or an edit does (§8.3)
+        void restart_blink();
 
         // paint the selection over the value, which the value paints over (§6.1)
         void paint_selection(RenderContext& context);
@@ -258,6 +284,15 @@ namespace albor
 
         // whether the field refuses edits but still takes focus (§8.3)
         bool m_read_only = false;
+
+        // whether the focus has reached the field, which is what decides whether a caret is shown (§8.3)
+        bool m_focused = false;
+
+        // whether the caret is in its visible blink phase, which a focused field alternates (§8.3)
+        bool m_caret_visible = false;
+
+        // the running blink, which the engine hands out and a focus change ends (§7.3)
+        AnimationHandle m_blink = 0;
 
         // whether the field refuses everything, which a bound command wins over (§18.7)
         bool m_disabled = false;
