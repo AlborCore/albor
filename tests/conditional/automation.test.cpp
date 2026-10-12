@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include "automation/automation_platform.h"
 #include "automation/automation_protocol.h"
 #include "automation/automation_registry.h"
 #include "automation/automation_session.h"
@@ -109,6 +110,23 @@ TEST(AutomationRegistry, TheAllowedListReadsBackInAStableOrder) {
     ASSERT_EQ(allowed.size(), 2U);
     EXPECT_EQ(allowed.at(0), "another");
     EXPECT_EQ(allowed.at(1), "probe");
+}
+
+TEST(AutomationTransport, ThePortableFactoryAgreesWithWhatThePlatformReports) {
+    // arrange, because the factory asks the platform before it builds anything (§10.3, AD-10)
+    AutomationRegistry registry;
+    // act
+    const std::unique_ptr<AutomationTransport> transport = create_transport(registry);
+    // assert a build with no transport hands back null rather than something that pretends to listen (§10.3, AD-10)
+    EXPECT_EQ(transport != nullptr, platform::available());
+}
+
+TEST(AutomationTransport, APlatformThatReportsNoTransportBuildsNone) {
+    // arrange, because a registry is what a transport would serve out of (§10.3, AD-10)
+    AutomationRegistry registry;
+    // act, assert the seam hands back nothing where there is none, so a caller can tell absence from a listener (§10.3)
+    const std::unique_ptr<AutomationTransport> transport = platform::build(registry);
+    EXPECT_EQ(transport != nullptr, platform::available());
 }
 
 TEST(AutomationSession, TwoSessionsHoldDifferentTokens) {

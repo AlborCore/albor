@@ -14,6 +14,13 @@
 
 namespace
 {
+    std::string utf8_path(const std::filesystem::path& path) {
+        // the u8 spelling is the portable one, because std::filesystem makes a path wide on windows alone (§11.2)
+        const std::u8string encoded = path.u8string();
+        // the bytes are taken as they stand, because the u8 form is already utf-8 and no locale is involved (§11.2)
+        return std::string(reinterpret_cast<const char*>(encoded.data()), encoded.size());
+    }
+
     // write every generated file under the output directory, which is the compile step of a manifest (§11.2)
     void write_files(const std::vector<albor::compiler::GeneratedFile>& files, const std::filesystem::path& output) {
         // each file needs its parent directory, which is the module directory of its facade (§11.1, §11.2)
@@ -23,7 +30,7 @@ namespace
             const std::filesystem::path relative = file.path;
             std::filesystem::create_directories(output / relative.parent_path(), error);
             if (error) {
-                std::fprintf(stderr, "albor-manifest-glue: cannot create '%s'\n", (output / relative.parent_path()).c_str());
+                std::fprintf(stderr, "albor-manifest-glue: cannot create '%s'\n", utf8_path(output / relative.parent_path()).c_str());
                 return;
             }
             error.clear();
@@ -74,7 +81,7 @@ int main(int argc, char** argv) {
     // the manifest is read whole, because the scanner takes the complete unit (§11.1)
     std::ifstream stream(input, std::ios::binary);
     if (!stream) {
-        std::fprintf(stderr, "albor-manifest-glue: cannot open '%s'\n", input.c_str());
+        std::fprintf(stderr, "albor-manifest-glue: cannot open '%s'\n", utf8_path(input).c_str());
         return 1;
     }
     std::string source((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
@@ -88,19 +95,19 @@ int main(int argc, char** argv) {
     const albor::manifest::ManifestFile file = albor::manifest::ManifestParser(tokens, diagnostics).parse(module);
     // a blocking problem stops the driver before any generation, which is what a console compile reports (§11.1)
     if (diagnostics.has_errors()) {
-        print_diagnostics(diagnostics, input.c_str());
+        print_diagnostics(diagnostics, utf8_path(input));
         return 1;
     }
     // the generator turns the manifest into the facade units the application subclasses (§11.2, AD-17)
     const std::vector<albor::compiler::GeneratedFile> files = albor::manifest::GlueGenerator(diagnostics).generate(file);
     // the generator adds its own blocking problems, which are reported the same way (§11.2)
     if (files.empty() || diagnostics.has_errors()) {
-        print_diagnostics(diagnostics, input.c_str());
+        print_diagnostics(diagnostics, utf8_path(input));
         return 1;
     }
     // the non blocking warnings still reach the console, because they are worth reading (§11.1)
     if (diagnostics.count() != 0U)
-        print_diagnostics(diagnostics, input.c_str());
+        print_diagnostics(diagnostics, utf8_path(input));
     // the generated files land under the output directory, which is the compile result of the manifest (§11.2)
     write_files(files, output);
     return 0;

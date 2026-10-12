@@ -66,6 +66,12 @@ namespace albor
                 // the ceiling and the size have to agree, because the same text wraps differently (§9.1)
                 return owned.max_width == lookup.max_width && owned.font_size == lookup.font_size && owned.text == lookup.text;
             }
+
+            // an owned key and a lookup compare the same way round, because the map asks in either direction (§9.1)
+            bool operator()(const CacheLookup& lookup, const CacheKey& owned) const {
+                // the pair delegates to the overload above, because equality of a pair does not depend on the order (§9.1)
+                return (*this)(owned, lookup);
+            }
         };
 
         // hash a key into a bucket, which is what the cache looks the run up by (§9.1)

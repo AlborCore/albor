@@ -302,13 +302,13 @@ TEST(ScrollableRowsChecks, AChangedBuilderDropsTheRowsItCannotRead) {
     rows.set_items(items);
     rows.set_view(&counting_row, &counting_update, &key_of, nullptr);
     rows.set_scroll_viewport(ScrollViewport{.viewport = Size{200.0f, 200.0f}, .content = Size{200.0f, 2000.0f}, .offset = 0.0f, .overscan = 0.0f});
-    UiNode* before = rows.child_at(0);
     builds = 0;
     // act the view is swapped for a different updater, which cannot read rows the old one made (§18.1, AD-13)
     rows.set_view(&counting_row, &counting_update_2, &key_of, nullptr);
     // assert the rows are rebuilt rather than reused, because a new updater would cast them wrongly (§18.1, AD-13)
     EXPECT_EQ(rows.materialized(), 10u);
-    EXPECT_NE(rows.child_at(0), before);
+    // assert no replaced row was held back, because a pooled row carries the old updater's expectations (§18.1, AD-13)
+    EXPECT_EQ(rows.recycled(), 0u);
     // assert all ten were rebuilt, because a pooled row carries the old updater's expectations (§18.1, AD-13)
     EXPECT_EQ(builds, 10u);
 }

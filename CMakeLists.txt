@@ -42,7 +42,14 @@ if(ALBOR_AUTOMATION AND ALBOR_RELEASE)
 endif()
 
 # the phase 1 modules are warning free, so the checks the prototype tree already ran stay in force
-add_compile_options(-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion)
+if(MSVC)
+    # msvc reads -Wall as /Wall and -Wextra as /Wextra, and /W demands a numeric level, so the gcc and clang
+    # spelling is a hard error there rather than a weaker warning level. /W4 is the closest equivalent strictness,
+    # because it covers the conversion and shadowing diagnostics that -Wconversion and -Wshadow ask for (§5.3, AD-19)
+    add_compile_options(/W4 /permissive- /Zc:__cplusplus /EHsc)
+else()
+    add_compile_options(-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion)
+endif()
 
 # the coverage build instruments every module, because a profile that only covers the test sources
 # cannot report on the module code the suites exercise (§2.2)

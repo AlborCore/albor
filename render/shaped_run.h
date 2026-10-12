@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -61,8 +62,17 @@ namespace albor
         // how many glyphs the run carries across every line, which a test asserts on (§9.1)
         [[nodiscard]] std::size_t glyph_count() const;
 
-        // compare two runs field by field (§9.1)
-        friend bool operator==(const ShapedRun& lhs, const ShapedRun& rhs) = default;
+        // compare two runs by shape, which is ids and positions; a handle is not the face's identity (§9.1, AD-34)
+        bool operator==(const ShapedRun& rhs) const {
+            // the size and the hash gate first, because another font or size shapes another run (§9.1, AD-34)
+            if (m_font_size != rhs.m_font_size || m_font_hash != rhs.m_font_hash)
+                return false;
+            // the lines are compared at their own shape, which is origins and glyphs (§9.1)
+            return m_lines.size() == rhs.m_lines.size() && std::equal(m_lines.begin(), m_lines.end(), rhs.m_lines.begin(), [](const Line& lhs, const Line& rhs) {
+                       // the origin is where the line hangs from, and the glyphs are the shape the run is (§9.1)
+                       return lhs.origin == rhs.origin && lhs.glyphs == rhs.glyphs;
+                   });
+        }
 
     private:
         // a run is only ever built through make, because it is shared as an immutable snapshot (§10.5, AD-18)

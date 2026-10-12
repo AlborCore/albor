@@ -68,6 +68,11 @@ if(APPLE)
     target_sources(albor-tests PRIVATE "./conditional/accessibility_role.macos.mm")
     set_source_files_properties("./conditional/accessibility_role.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(albor-tests PRIVATE "-framework AppKit" "-framework Foundation")
+
+    # the bridge suite is apple only too, because every case in it needs a live bridge and windows has none until
+    # the ui automation adapter lands. it asserts availability rather than working around it, because a platform that
+    # reported a bridge it does not have would be the defect (§10.2, #42, AD-16)
+    target_sources(albor-tests PRIVATE "./conditional/accessibility.test.cpp")
 endif()
 
 
