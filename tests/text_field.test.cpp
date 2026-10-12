@@ -2301,3 +2301,138 @@ TEST(TextFieldChecks, TheVerticalCaretActionsWalkTheRowsOfAMultiLineValue) {
     // assert the caret descended into the second row (§8.3)
     EXPECT_EQ(field.caret(), 4u);
 }
+
+TEST(TextFieldClipboardChecks, AFieldWithNoClipboardOfItsOwnCopiesThroughTheProcessOne) {
+    // arrange a platform clipboard installed behind the factory, which is how an application arrives (§3.5)
+    set_clipboard_factory([] { return std::make_unique<HoldingClipboard>(); });
+    EditingTextEngine engine;
+    // the field was handed no clipboard at all, which is what a generated field looks like (§8)
+    TextField field(nullptr, &engine, "abcdef");
+    field.select_all();
+    // act
+    field.copy();
+    // assert the text reached the process surface, because a field with no clipboard of its own still copies (§3.5)
+    Clipboard* surface = process_clipboard();
+    ASSERT_NE(surface, nullptr);
+    EXPECT_EQ(surface->text(), "abcdef");
+    // act again the platform goes away, so the next test sees no surface
+    set_clipboard_factory(nullptr);
+}
+
+TEST(TextFieldClipboardChecks, AFieldWithNoClipboardOfItsOwnPastesThroughTheProcessOne) {
+    // arrange a platform clipboard holding text, which a paste reads (§3.5)
+    set_clipboard_factory([] { return std::make_unique<HoldingClipboard>(); });
+    process_clipboard()->set_text("pasted");
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "ab");
+    field.set_caret(2);
+    // act
+    field.paste();
+    // assert the value took the clipboard text, because a generated field can paste without wiring (§3.5)
+    EXPECT_EQ(field.value(), "abpasted");
+    set_clipboard_factory(nullptr);
+}
+
+TEST(TextFieldClipboardChecks, AHandedClipboardWinsOverTheProcessOne) {
+    // arrange both a process clipboard and one of the field's own, which is what a test installs (§3.5)
+    set_clipboard_factory([] { return std::make_unique<HoldingClipboard>(); });
+    process_clipboard()->set_text("process");
+    HoldingClipboard own;
+    own.carried = "own";
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_clipboard(&own);
+    field.set_value("xy");
+    field.select_all();
+    // act
+    field.copy();
+    // assert the copy went to the surface the field was handed, because an explicit surface wins (§3.5)
+    EXPECT_EQ(own.carried, "xy");
+    EXPECT_EQ(process_clipboard()->text(), "process");
+    set_clipboard_factory(nullptr);
+}
+
+TEST(TextFieldImeChecks, ThePublishedSelectionIsInUtf16Units) {
+    // arrange a field holding a two byte character, which counts as one unit (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "\u00E9ab");
+    field.set_selection(0, 2);
+    // act
+    const TextInputRange range = field.selection_range();
+    // assert the range speaks the unit an input method addresses the document in (§8.3)
+    EXPECT_EQ(range.location, 0u);
+    EXPECT_EQ(range.length, 1u);
+}
+
+TEST(TextFieldImeChecks, ACollapsedSelectionPublishesACaret) {
+    // arrange a field with no selection, which is a caret at its own byte (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abc");
+    field.set_caret(2);
+    // act
+    const TextInputRange range = field.selection_range();
+    // assert the range is a caret rather than a selection (§8.3)
+    EXPECT_EQ(range.location, 2u);
+    EXPECT_EQ(range.length, 0u);
+}
+
+TEST(TextFieldImeChecks, ACommitReplacesTheRangeTheInputSystemNamed) {
+    // arrange a field with no selection of its own, so only the named range can place the text (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abcdef");
+    field.set_caret(0);
+    Event commit{.kind = EventKind::TextInput, .text = "X", .replacement = TextInputRange{.location = 2, .length = 2}};
+    // act
+    field.dispatch_event(commit);
+    // assert the named span went, which is what a reconversion means (§8.3)
+    EXPECT_EQ(field.value(), "abXef");
+    EXPECT_EQ(field.caret(), 3u);
+}
+
+TEST(TextFieldImeChecks, ACompositionShowsOverTheRangeTheCommitWillReplace) {
+    // arrange the same named range, composed over (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abcdef");
+    field.set_caret(0);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 20.0f}));
+    Event mark{.kind = EventKind::Composing, .text = "Z", .replacement = TextInputRange{.location = 2, .length = 2}};
+    // act
+    field.dispatch_event(mark);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 40.0f}, 1.0f));
+    field.render(recorder);
+    // assert the provisional display replaced the named span, so it matches what the commit will do (§8.3)
+    std::string painted;
+    for (const DrawCommand& command : recorder.scene()->commands()) {
+        if (command.kind() != DrawCommandKind::Text)
+            continue;
+        const TextGeometry& geometry = command.text_geometry();
+        if (geometry.layout.run == nullptr)
+            continue;
+        for (const ShapedGlyph& glyph : geometry.layout.run->lines().front().glyphs)
+            painted += static_cast<char>(glyph.id);
+    }
+    EXPECT_EQ(painted, "abZef");
+}
+
+TEST(TextFieldImeChecks, ANamedRangeIsClampedIntoTheValue) {
+    // arrange a range that runs past the end, which an input method may name (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abc");
+    Event commit{.kind = EventKind::TextInput, .text = "X", .replacement = TextInputRange{.location = 1, .length = 99}};
+    // act
+    field.dispatch_event(commit);
+    // assert the whole tail went and nothing crashed, because the field clamps (§8.3)
+    EXPECT_EQ(field.value(), "aX");
+}
+
+TEST(TextFieldImeChecks, ACommitWithNoRangeStillReplacesTheSelection) {
+    // arrange a selected field, which is the ordinary insertion path (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abcdef");
+    field.set_selection(1, 3);
+    Event commit{.kind = EventKind::TextInput, .text = "X"};
+    // act
+    field.dispatch_event(commit);
+    // assert the selection went, because a commit with no range means the caret's own span (§8.3)
+    EXPECT_EQ(field.value(), "aXdef");
+}

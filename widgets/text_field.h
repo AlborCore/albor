@@ -1,7 +1,9 @@
 #pragma once
 
 #include <functional>
+#include <optional>
 #include <string>
+#include <utility>
 
 #include "animation/animation_engine.h"
 #include "commands/undo_stack.h"
@@ -14,7 +16,7 @@
 namespace albor
 {
     // the widget that edits one or more lines of text, which is what a form field or a search box is (§8)
-    class TextField final : public Widget, public CaretTarget, public FocusTarget
+    class TextField final : public Widget, public CaretTarget, public FocusTarget, public TextInputTarget
     {
     public:
         // build a field over the engines it reads, with an empty value (§8) the text engine is borrowed, not owned (§9.1)
@@ -119,7 +121,7 @@ namespace albor
         // install the clipboard the copy and paste reach through, which is borrowed and may be null (§3.5)
         void set_clipboard(Clipboard* clipboard);
 
-        // hand out the installed clipboard, which is null while copy and paste have no surface (§3.5)
+        // hand out the clipboard the field copies through, which is the one handed over or the process one (§3.5)
         [[nodiscard]] Clipboard* clipboard() const;
 
         // hand out the ascent of the line the field draws, which is what an overlay places content by (§9.1)
@@ -139,6 +141,9 @@ namespace albor
 
         // report whether the field holds the focus, which is what a caret answers (§8.3)
         [[nodiscard]] bool focused() const;
+
+        // override: hand out the selection in utf16 units, which is what an input method replaces by range (§8.3)
+        [[nodiscard]] TextInputRange selection_range() const override;
 
         // report whether the field shows a caret at this instant, which the blink decides (§8.3)
         [[nodiscard]] bool shows_caret() const;
@@ -185,6 +190,9 @@ namespace albor
 
         // hand out the byte one caret step lands after the given one, which crosses a line break (§9.1)
         [[nodiscard]] std::size_t step_forward_byte(std::size_t byte) const;
+
+        // hand out the byte span an event asks to replace, which an input method names in its own units (§8.3)
+        [[nodiscard]] std::pair<std::size_t, std::size_t> replacement_span(const std::optional<TextInputRange>& range) const;
 
         // hand out the row a y coordinate falls in, which a press on a multi line field resolves against (§8.3)
         [[nodiscard]] std::size_t line_at_y(float pointer_y) const;

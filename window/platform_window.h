@@ -4,6 +4,7 @@
 #include <string_view>
 
 #include "core/geometry.h"
+#include "core/text_range.h"
 #include "core/native_window_handle.h"
 #include "ui/ui_event.h"
 #include "window/window_metrics.h"
@@ -67,6 +68,12 @@ namespace albor
         virtual void set_text_anchor(Rect anchor) {
             // the anchor is a no-op where no input method exists, which is the portable default (§8.3)
             (void)anchor;
+        }
+
+        // hand the document selection over, which is what an input method replaces by range (§8.3)
+        virtual void set_text_selection(TextInputRange selection) {
+            // the selection is a no-op where no input method exists, which is the portable default (§8.3)
+            (void)selection;
         }
 
         // report whether a frame was requested and not yet drawn, which is per window pacing (AD-18b)

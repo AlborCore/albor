@@ -87,7 +87,18 @@ namespace albor
         context.restore();
     }
 
-    bool TextField::focused() const {
+    TextInputRange TextField::selection_range() const {
+        // the span is resolved first, because a collapsed selection is a caret at its own byte (§8.3)
+        const std::size_t start = selection_start();
+        // the document is addressed in utf16 units, so the first end is converted once (§8.3)
+        const std::size_t location = utf16_offset_for_byte(m_value, start);
+        // the length is the difference of the two converted ends, which is what an input method replaces (§8.3)
+        const std::size_t length = utf16_offset_for_byte(m_value, selection_end()) - location;
+        // the range travels whole, because the platform stores it as it is given (§8.3)
+        return TextInputRange{.location = location, .length = length};
+    }
+
+bool TextField::focused() const {
         // the state is what the focus manager last reported, which is the whole of it (§8.3)
         return m_focused;
     }
@@ -441,9 +452,12 @@ void TextField::paint_selection(RenderContext& context) {
                 return;
             // the event is claimed, so no ancestor reacts to the same text (§8.3)
             event.handled = true;
-            // the insertion spans the selection when one is active, and the caret when none is (§8.3)
-            const std::size_t start = has_selection() ? selection_start() : m_caret;
-            const std::size_t end = has_selection() ? selection_end() : m_caret;
+            // a replacement range an input method asked for wins, because reconversion names the span it means (§8.3)
+            const std::pair<std::size_t, std::size_t> asked = replacement_span(event.replacement);
+            // the insertion spans the range the input system asked for, else the selection, else the caret (§8.3)
+            const std::size_t start = asked.first;
+            // the span ends where the range ends, which a collapsed range shares with its start (§8.3)
+            const std::size_t end = asked.second;
             // the commit resolves the mark, because the provisional string never entered the value (§8.3)
             m_marked.clear();
             m_marked_layout = TextLayout{};
@@ -463,8 +477,11 @@ void TextField::paint_selection(RenderContext& context) {
             // the display run is what the composed text measures as one (§9.1)
             if (m_text_engine != nullptr) {
                 // the composed string is the value with the mark over the span the commit replaces (§8.3)
-                const std::size_t span_start = has_selection() ? selection_start() : m_caret;
-                const std::size_t span_end = has_selection() ? selection_end() : m_caret;
+                const std::pair<std::size_t, std::size_t> asked = replacement_span(event.replacement);
+                // the span the mark replaces is the one the commit will replace, which the two must agree on (§8.3)
+                const std::size_t span_start = asked.first;
+                // the span ends where the range ends (§8.3)
+                const std::size_t span_end = asked.second;
                 // the value before the span, which the mark follows (§8.3)
                 std::string composed = m_value.substr(0, span_start);
                 // the value after the span, which the mark precedes (§8.3)
@@ -719,7 +736,24 @@ void TextField::paint_selection(RenderContext& context) {
         return clamped;
     }
 
-    std::size_t TextField::line_at_y(float pointer_y) const {
+    std::pair<std::size_t, std::size_t> TextField::replacement_span(const std::optional<TextInputRange>& range) const {
+        // a range the input system named is the span, converted back into the bytes the field edits in (§8.3)
+        if (range.has_value()) {
+            // the start is the named location in the unit the document is addressed in (§8.3)
+            const std::size_t start = std::min(byte_for_utf16_offset(m_value, range->location), m_value.size());
+            // the end is the start plus the named length, clamped into the value (§8.3)
+            const std::size_t end = std::min(start + byte_for_utf16_offset(std::string_view(m_value).substr(start), range->length), m_value.size());
+            // the pair is returned in reading order, because an input method may name it either way round (§8.3)
+            return {start, end};
+        }
+        // without a range the selection is the span, and a collapsed one is the caret (§8.3)
+        if (has_selection())
+            return {selection_start(), selection_end()};
+        // a caret is a span of no length at its own byte (§8.3)
+        return {std::min(m_caret, m_value.size()), std::min(m_caret, m_value.size())};
+    }
+
+std::size_t TextField::line_at_y(float pointer_y) const {
         // a run the engine did not shape has no row to resolve against, so the first one stands (§9.1)
         if (m_layout.run == nullptr || m_layout.run->lines().empty())
             return 0;
@@ -861,11 +895,13 @@ std::size_t TextField::step_up_byte(std::size_t byte) const {
         // an empty selection copies nothing, which is the answer a spanless field gives (§8.3)
         if (!has_selection())
             return;
-        // a clipboard the field was never handed drops the copy, which is the absent surface (§3.5)
-        if (m_clipboard == nullptr)
+        // the clipboard the field copies through is the one handed over or the process one (§3.5)
+        Clipboard* surface = clipboard();
+        // without a surface the copy drops, which is what a platform with no clipboard does (§3.5)
+        if (surface == nullptr)
             return;
         // the span is copied as text, which is what a clipboard carries (§3.5)
-        m_clipboard->set_text(std::string_view(m_value).substr(selection_start(), selection_end() - selection_start()));
+        surface->set_text(std::string_view(m_value).substr(selection_start(), selection_end() - selection_start()));
     }
 
     void TextField::cut() {
@@ -875,8 +911,8 @@ std::size_t TextField::step_up_byte(std::size_t byte) const {
         // an empty selection cuts nothing, which is the answer a spanless field gives (§8.3)
         if (!has_selection())
             return;
-        // a clipboard the field was never handed cannot both hold and lose, so the cut is refused (§3.5)
-        if (m_clipboard == nullptr)
+        // without a surface the cut cannot both hold and lose, so it is refused (§3.5)
+        if (clipboard() == nullptr)
             return;
         // the span is copied first, because a cut is a copy that also removes (§8.3)
         copy();
@@ -918,11 +954,13 @@ std::size_t TextField::step_up_byte(std::size_t byte) const {
         // a read only field refuses every edit, which a paste is (§8.3)
         if (m_read_only)
             return;
-        // a clipboard the field was never handed has nothing to paste, which is the absent surface (§3.5)
-        if (m_clipboard == nullptr || !m_clipboard->has_text())
+        // the clipboard the field copies through is the one handed over or the process one (§3.5)
+        Clipboard* surface = clipboard();
+        // a surface with no text has nothing to paste, which is what an empty clipboard is (§3.5)
+        if (surface == nullptr || !surface->has_text())
             return;
         // the paste goes through the same break rule every other write path does (§8.3)
-        const std::string text = strip_line_breaks(m_clipboard->text());
+        const std::string text = strip_line_breaks(surface->text());
         // an empty paste inserts nothing, which is not an edit (§8.3)
         if (text.empty())
             return;
@@ -965,8 +1003,11 @@ std::size_t TextField::step_up_byte(std::size_t byte) const {
     }
 
     Clipboard* TextField::clipboard() const {
-        // the clipboard is the one that was installed, which is null while copy has no surface (§3.5)
-        return m_clipboard;
+        // a surface handed to this field wins, because a test or an application may own its own (§3.5)
+        if (m_clipboard != nullptr)
+            return m_clipboard;
+        // the process clipboard is the fallback, so a generated field can copy without being wired (§3.5)
+        return process_clipboard();
     }
 
     float TextField::line_ascent() const {

@@ -96,6 +96,9 @@ namespace albor
         // a focus with no caret has no anchor to update, which is what keeps the last one (§8.3)
         if (target != nullptr)
             m_window->set_text_anchor(target->caret_rect());
+        // a focus that edits a document publishes its selection, which is what an input method replaces by range (§8.3)
+        if (const auto* document = dynamic_cast<const TextInputTarget*>(focused); document != nullptr)
+            m_window->set_text_selection(document->selection_range());
     }
 
     void WindowStage::set_command_registry(CommandRegistry* registry) {

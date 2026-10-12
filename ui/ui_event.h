@@ -1,9 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 #include "core/geometry.h"
+#include "core/text_range.h"
 
 namespace albor
 {
@@ -292,6 +294,9 @@ namespace albor
 
         // the utf8 text a text or composing event carries, which is the marked string while composing (§8.3)
         std::string text;
+
+        // the document range an input method asked to replace, which is absent when it asked for none (§8.3)
+        std::optional<TextInputRange> replacement;
 
         // whether a handler claimed the event, which stops the walk at this node (§8.3)
         bool handled = false;

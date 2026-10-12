@@ -176,6 +176,12 @@ namespace
 
     // whether an anchor was pushed at all, which the candidate query answers through (§8.3)
     BOOL m_anchor_valid;
+
+    // the document selection the framework pushed, in the utf16 units the input system speaks (§8.3)
+    NSRange m_selection;
+
+    // whether a selection was pushed at all, which the selected query answers through (§8.3)
+    BOOL m_selection_valid;
 }
 
 // the view owns the caret, so it accepts first responder for the key events to reach it (§8.3)
@@ -265,8 +271,6 @@ namespace
 
 // the committed text the input method finalised, which is what a commit REPLACED the mark with (§8.3)
 - (void)insertText:(id)string replacementRange:(NSRange)replacementRange {
-    // the replacement range is read, because the protocol contract names it (§8.3)
-    (void)replacementRange;
     // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
     if (self.listener == nullptr)
         return;
@@ -282,14 +286,16 @@ namespace
     albor::Event message;
     message.kind = albor::EventKind::TextInput;
     message.text = std::string(utf8);
+    // a range the input system named travels with the event, so a reconversion replaces what it meant (§8.3)
+    if (replacementRange.location != NSNotFound)
+        message.replacement = albor::TextInputRange{static_cast<std::size_t>(replacementRange.location), static_cast<std::size_t>(replacementRange.length)};
     self.listener->on_platform_event(message);
 }
 
 // the marked string a composition produces, which is what a candidate window edits before a commit (§8.3)
 - (void)setMarkedText:(id)string selectedRange:(NSRange)selectedRange replacementRange:(NSRange)replacementRange {
-    // the ranges are read, because the protocol contract names them (§8.3)
+    // the marked range is derived from the mark, which is the only thing this side of the protocol holds (§8.3)
     (void)selectedRange;
-    (void)replacementRange;
     // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
     if (self.listener == nullptr)
         return;
@@ -306,6 +312,9 @@ namespace
     albor::Event message;
     message.kind = albor::EventKind::Composing;
     message.text = std::string(utf8);
+    // a range the input system named travels with the event, because a composition may replace a span (§8.3)
+    if (replacementRange.location != NSNotFound)
+        message.replacement = albor::TextInputRange{static_cast<std::size_t>(replacementRange.location), static_cast<std::size_t>(replacementRange.length)};
     self.listener->on_platform_event(message);
 }
 
@@ -337,10 +346,13 @@ namespace
 
 // hand out the range the field edits, which sits where the mark held while one is alive (§8.3)
 - (NSRange)selectedRange {
-    // the mark is the edit the input system reads, because the field moves its own caret (§8.3)
+    // the mark is the edit the input system reads while one is alive (§8.3)
     if (m_marked_range.location != NSNotFound)
         return m_marked_range;
-    // a field with no mark reads as an empty selection at nothing (§8.3)
+    // the selection the framework pushed is the document range, which is what a reconversion replaces (§8.3)
+    if (m_selection_valid)
+        return m_selection;
+    // a field that published no selection reads as an empty selection at the origin (§8.3)
     return NSMakeRange(0, 0);
 }
 
@@ -390,6 +402,12 @@ namespace
 - (void)setTextAnchor:(NSRect)anchor {
     m_anchor = anchor;
     m_anchor_valid = YES;
+}
+
+// the document selection the framework pushed, which the selected query answers through (§8.3)
+- (void)setTextSelection:(NSRange)selection {
+    m_selection = selection;
+    m_selection_valid = YES;
 }
 
 @end
@@ -611,6 +629,17 @@ namespace albor
     void MacosPlatformWindow::request_frame() {
         // the pacing source is owned by the event loop, so a window only records that it wants a frame (§4.3)
         m_state->frame_requested = true;
+    }
+
+    void MacosPlatformWindow::set_text_selection(TextInputRange selection) {
+        // a window with no native window has no input method to address a document through (§8.3)
+        if (m_state->window == nil)
+            return;
+        // the view the input system talks to is the one that stores the range (§8.3)
+        AlborContentView* content = static_cast<AlborContentView*>(m_state->content_view);
+        if (content == nil)
+            return;
+        [content setTextSelection:NSMakeRange(selection.location, selection.length)];
     }
 
     void MacosPlatformWindow::set_text_anchor(Rect anchor) {

@@ -34,6 +34,9 @@ namespace albor
     {
         // the installed factory, which is empty until a platform adapter installs one (§3.5)
         ClipboardFactory factory;
+
+        // the clipboard the process copies through, which is built once from the factory (§3.5)
+        std::unique_ptr<Clipboard> held;
     };
 
     // install the clipboard the framework copies through, which a platform adapter calls once at load (§3.5)
@@ -44,4 +47,7 @@ namespace albor
 
     // build the installed clipboard, returning null when no platform adapter is installed (§3.5)
     [[nodiscard]] std::unique_ptr<Clipboard> create_clipboard();
+
+    // hand out the process clipboard, which is what a control copies through by default (§3.5)
+    [[nodiscard]] Clipboard* process_clipboard();
 } // namespace albor

@@ -7,6 +7,7 @@
 #include "core/clipboard.h"
 #include "core/geometry.h"
 #include "core/native_window_handle.h"
+#include "core/text_range.h"
 #include "core/paint.h"
 
 using namespace albor;
@@ -50,6 +51,35 @@ namespace
             return usable;
         }
     };
+    // the process clipboard test double, which stands in for a platform pasteboard behind the installed factory (§3.5)
+    class ProcessClipboard final : public Clipboard
+    {
+    public:
+        void set_text(std::string_view text) override {
+            // the double owns its copy, because the caller owns the view (§3.5)
+            carried = std::string(text);
+        }
+
+        [[nodiscard]] std::string text() const override {
+            // the content is what a copy reads back (§3.5)
+            return carried;
+        }
+
+        [[nodiscard]] bool has_text() const override {
+            // a surface with content from none answers no (§3.5)
+            return !carried.empty();
+        }
+
+        [[nodiscard]] bool ready() const override {
+            // the double is always reachable, because it is a test double (§3.5)
+            return true;
+        }
+
+    private:
+        // what the surface carries, which a copy replaces (§3.5)
+        std::string carried;
+    };
+
 } // namespace
 
 TEST(ClipboardContractChecks, StartsWithoutAPlatformInstalled) {
@@ -682,4 +712,76 @@ TEST(NativeWindowHandle, DefaultEqualsAHandleWrappingNull) {
     const NativeWindowHandle null_object = NativeWindowHandle::from_object(nullptr);
     // assert
     EXPECT_EQ(empty, null_object);
+}
+
+TEST(ClipboardContractChecks, TheProcessClipboardIsBuiltOnceAndKept) {
+    // arrange a factory that counts how many clipboards it built (§3.5)
+    auto built = std::make_shared<std::size_t>(0);
+    set_clipboard_factory([built] {
+        // the count rises per build, which is what the reuse assertion reads (§3.5)
+        (*built)++;
+        return std::make_unique<ProcessClipboard>();
+    });
+    // act the process clipboard is asked for twice
+    Clipboard* first = process_clipboard();
+    Clipboard* second = process_clipboard();
+    // assert the same surface came back, because a pasteboard is a resource to hold rather than to churn (§3.5)
+    EXPECT_NE(first, nullptr);
+    EXPECT_EQ(first, second);
+    EXPECT_EQ(*built, 1u);
+    // act again the platform installs a different clipboard
+    set_clipboard_factory(nullptr);
+}
+
+TEST(ClipboardContractChecks, TheProcessClipboardIsNullWithoutAPlatform) {
+    // arrange no installed factory, which is what a build without an adapter has (§3.5)
+    set_clipboard_factory(nullptr);
+    // act assert
+    EXPECT_EQ(process_clipboard(), nullptr);
+}
+
+TEST(TextRangeChecks, AnAsciiDocumentAddressesItselfInUtf16Units) {
+    // arrange a plain ascii document, where both encodings count the same (§8.3)
+    const std::string text = "abc";
+    // act assert
+    EXPECT_EQ(utf16_offset_for_byte(text, 0), 0u);
+    EXPECT_EQ(utf16_offset_for_byte(text, 2), 2u);
+    EXPECT_EQ(utf16_length(text), 3u);
+    EXPECT_EQ(byte_for_utf16_offset(text, 2), 2u);
+}
+
+TEST(TextRangeChecks, AMultiByteCharacterCountsAsOneOrMoreUtf16Units) {
+    // arrange a document holding two and three byte characters (§8.3)
+    const std::string text = "\xC3\xA9\xE6\x97\xA5";
+    // act assert the two byte character is two bytes and one unit, and the three byte one is three and one (§8.3)
+    EXPECT_EQ(utf16_offset_for_byte(text, 0), 0u);
+    EXPECT_EQ(utf16_offset_for_byte(text, 2), 1u);
+    EXPECT_EQ(utf16_offset_for_byte(text, 5), 2u);
+    EXPECT_EQ(utf16_length(text), 2u);
+}
+
+TEST(TextRangeChecks, AFourByteCharacterCountsAsTwoUtf16Units) {
+    // arrange a document holding one astral character, which utf16 spells as a surrogate pair (§8.3)
+    const std::string text = "\xF0\x9F\x98\x80";
+    // act assert
+    EXPECT_EQ(utf16_length(text), 2u);
+    EXPECT_EQ(utf16_offset_for_byte(text, 4), 2u);
+    EXPECT_EQ(byte_for_utf16_offset(text, 2), 4u);
+}
+
+TEST(TextRangeChecks, AnOffsetInsideACharacterClampsToItsStart) {
+    // arrange a document whose second character is two bytes wide in utf8 (§8.3)
+    const std::string text = "a\u00E9b";
+    // act assert an offset inside the character lands on it, because a caret cannot stand inside (§8.3)
+    EXPECT_EQ(byte_for_utf16_offset(text, 1), 1u);
+    EXPECT_EQ(byte_for_utf16_offset(text, 0), 0u);
+    EXPECT_EQ(byte_for_utf16_offset(text, 99), 4u);
+}
+
+TEST(TextRangeChecks, AnOffsetPastTheEndLandsAtTheEnd) {
+    // arrange a short document and an offset beyond it (§8.3)
+    const std::string text = "abc";
+    // act assert
+    EXPECT_EQ(byte_for_utf16_offset(text, 50), 3u);
+    EXPECT_EQ(utf16_offset_for_byte(text, 50), 3u);
 }

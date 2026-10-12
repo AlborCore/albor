@@ -21,6 +21,8 @@ namespace albor
     void set_clipboard_factory(ClipboardFactory factory) {
         // the factory replaces the previous one, because the framework copies through exactly one clipboard (§3.5)
         state().factory = std::move(factory);
+        // the clipboard built from the old factory is dropped, because a new platform owns a new surface (§3.5)
+        state().held.reset();
     }
 
     const ClipboardFactory& clipboard_factory() {
@@ -35,5 +37,13 @@ namespace albor
         if (!factory)
             return nullptr;
         return factory();
+    }
+
+    Clipboard* process_clipboard() {
+        // the clipboard is built once and kept, because a pasteboard is a resource to hold rather than to churn (§3.5)
+        if (state().held == nullptr)
+            state().held = create_clipboard();
+        // the raw pointer is what a control borrows, because the process owns the clipboard (§3.5)
+        return state().held.get();
     }
 } // namespace albor
