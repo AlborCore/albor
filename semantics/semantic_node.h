@@ -82,6 +82,15 @@ namespace albor
         // the check state of the node, which a non checkable node reports as not checkable
         CheckState check = CheckState::NotCheckable;
 
+        // the text the node carries, which an editable node reports and every other role leaves empty (§10.1)
+        std::string value;
+
+        // whether the node refuses edits but still takes focus and still permits a copy (§10.1)
+        bool read_only = false;
+
+        // whether the node edits more than one line, which assistive technology announces (§10.1)
+        bool multiline = false;
+
         // compare two state sets field by field
         friend bool operator==(const SemanticStates& lhs, const SemanticStates& rhs) = default;
     };
@@ -146,6 +155,24 @@ namespace albor
 
         // report whether the node is currently checked (§10.1)
         [[nodiscard]] bool checked() const;
+
+        // hand out the text the node carries, which an editable node fills and every other role leaves empty (§10.1)
+        [[nodiscard]] const std::string& value() const;
+
+        // replace the text the node carries, which is what an editable control publishes (§10.1)
+        void set_value(std::string value);
+
+        // report whether the node refuses edits but still takes focus and still permits a copy (§10.1)
+        [[nodiscard]] bool read_only() const;
+
+        // set or clear the read only state, which is distinct from disabled because focus is still taken (§10.1)
+        void set_read_only(bool read_only);
+
+        // report whether the node edits more than one line (§10.1)
+        [[nodiscard]] bool multiline() const;
+
+        // set or clear the multi line state, which assistive technology announces (§10.1)
+        void set_multiline(bool multiline);
 
         // hand out the bounds the node occupies in logical pixels (§10.1)
         [[nodiscard]] const Rect& bounds() const;

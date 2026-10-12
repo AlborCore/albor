@@ -78,6 +78,36 @@ namespace albor
         return m_states.check == CheckState::Checked;
     }
 
+    const std::string& SemanticNode::value() const {
+        // the value is what an editable node publishes, and it is empty for every role that has none (§10.1)
+        return m_states.value;
+    }
+
+    void SemanticNode::set_value(std::string value) {
+        // the value is owned by the node, because the adapters read it long after the control published it (§10.1)
+        m_states.value = std::move(value);
+    }
+
+    bool SemanticNode::read_only() const {
+        // read only is announced separately from disabled, because a read only node still takes focus (§10.1)
+        return m_states.read_only;
+    }
+
+    void SemanticNode::set_read_only(bool read_only) {
+        // the state is independent of disabled, because the two refuse different things (§10.1)
+        m_states.read_only = read_only;
+    }
+
+    bool SemanticNode::multiline() const {
+        // a single line node is the default, so the state reads false until an editable control sets it (§10.1)
+        return m_states.multiline;
+    }
+
+    void SemanticNode::set_multiline(bool multiline) {
+        // the state is independent of the value, because a read only node may still span lines (§10.1)
+        m_states.multiline = multiline;
+    }
+
     const Rect& SemanticNode::bounds() const {
         // the bounds let an adapter place the accessibility frame (§10.1)
         return m_bounds;

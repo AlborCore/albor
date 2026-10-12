@@ -329,3 +329,89 @@ TEST(SemanticCommands, AViewportAppearsInTheTreeDumpWithItsRole) {
     ASSERT_TRUE(result.ok);
     EXPECT_NE(result.payload.find("scroll_view log_view Log"), std::string::npos);
 }
+
+TEST(SemanticCommands, AnEditableNodeAppearsInTheDumpWithTheValueItPublishes) {
+    // arrange a tree whose root is an editable field carrying text (§10.1)
+    AutomationRegistry registry;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::TextField});
+    tree.mutable_at(0)->set_explicit_id("field");
+    tree.mutable_at(0)->set_name("Notes");
+    tree.mutable_at(0)->set_value("Albor");
+    register_semantic_commands(registry, [&tree] { return &tree; });
+    // every command is permitted, because these tests are about the answering, not the allow list (§10.3, AD-10)
+    for (const std::string& name : semantic_command_names())
+        registry.allow(name);
+    AutomationSession session(registry);
+    (void)session.handle(encode_handshake(session.token()));
+    // act
+    const AutomationResult result = session.handle("semantic.tree");
+    // assert the value reaches the client, because a text assertion must be possible without a tree walk (§10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_NE(result.payload.find("textfield field Notes value=Albor"), std::string::npos);
+}
+
+TEST(SemanticCommands, AnEditableNodeWithNoValueCarriesNoValueToken) {
+    // arrange a tree whose root is an editable field that published nothing (§10.1)
+    AutomationRegistry registry;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::TextField});
+    tree.mutable_at(0)->set_explicit_id("field");
+    tree.mutable_at(0)->set_name("Notes");
+    register_semantic_commands(registry, [&tree] { return &tree; });
+    // every command is permitted, because these tests are about the answering, not the allow list (§10.3, AD-10)
+    for (const std::string& name : semantic_command_names())
+        registry.allow(name);
+    AutomationSession session(registry);
+    (void)session.handle(encode_handshake(session.token()));
+    // act
+    const AutomationResult result = session.handle("semantic.tree");
+    // assert an emptied field announces no value rather than an empty one, because the token is the value (§10.1)
+    ASSERT_TRUE(result.ok);
+    EXPECT_EQ(result.payload.find("value="), std::string::npos);
+    EXPECT_NE(result.payload.find("textfield field Notes"), std::string::npos);
+}
+
+TEST(SemanticCommands, TheEditableStatesAppearInTheDumpWhenTheyHold) {
+    // arrange a tree whose field is read only and spans lines (§10.1)
+    AutomationRegistry registry;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::TextField});
+    tree.mutable_at(0)->set_explicit_id("field");
+    tree.mutable_at(0)->set_name("Notes");
+    tree.mutable_at(0)->set_read_only(true);
+    tree.mutable_at(0)->set_multiline(true);
+    register_semantic_commands(registry, [&tree] { return &tree; });
+    // every command is permitted, because these tests are about the answering, not the allow list (§10.3, AD-10)
+    for (const std::string& name : semantic_command_names())
+        registry.allow(name);
+    AutomationSession session(registry);
+    (void)session.handle(encode_handshake(session.token()));
+    // act
+    const AutomationResult result = session.handle("semantic.tree");
+    // assert both states reach the client, because the states are what a client must respect (§10.1, §10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_NE(result.payload.find(" read_only"), std::string::npos);
+    EXPECT_NE(result.payload.find(" multiline"), std::string::npos);
+}
+
+TEST(SemanticCommands, TheEditableStatesCarryNoTokenWhenTheyDoNotHold) {
+    // arrange a tree whose field is a plain editable single line one (§10.1)
+    AutomationRegistry registry;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::TextField});
+    tree.mutable_at(0)->set_explicit_id("field");
+    tree.mutable_at(0)->set_name("Notes");
+    register_semantic_commands(registry, [&tree] { return &tree; });
+    // every command is permitted, because these tests are about the answering, not the allow list (§10.3, AD-10)
+    for (const std::string& name : semantic_command_names())
+        registry.allow(name);
+    AutomationSession session(registry);
+    (void)session.handle(encode_handshake(session.token()));
+    // act
+    const AutomationResult result = session.handle("semantic.tree");
+    // assert the default states are silent, because a dump without them stays parseable as before (§10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_EQ(result.payload.find(" read_only"), std::string::npos);
+    EXPECT_EQ(result.payload.find(" multiline"), std::string::npos);
+}

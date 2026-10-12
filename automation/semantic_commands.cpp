@@ -100,7 +100,18 @@ namespace albor::automation
                 // an unidentified node still appears, because a screen reader reaches it though automation cannot (AD-11)
                 const std::string id = node->identified() ? node->explicit_id() : std::string("-");
                 // the line carries role, id and name, which is what identifies a control to a reader (§10.1)
-                out << role_name(node->role()) << ' ' << id << ' ' << node->name() << '\n';
+                out << role_name(node->role()) << ' ' << id << ' ' << node->name();
+                // an editable node appends the text it carries, which is what a client reads back (§10.1)
+                if (!node->value().empty())
+                    out << " value=" << node->value();
+                // a read only node marks itself, because the state is what a client must respect (§10.1)
+                if (node->read_only())
+                    out << " read_only";
+                // a multi line node marks itself, because the state is what a reader announces with (§10.1)
+                if (node->multiline())
+                    out << " multiline";
+                // the line ends, which is what separates one node from the next (§10.3)
+                out << '\n';
             }
             // the whole dump is one payload, which the transport frames as a single line (§10.3)
             return AutomationResult::answered(out.str());

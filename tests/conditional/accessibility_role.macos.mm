@@ -136,3 +136,52 @@ TEST(AccessibilityRole, ADetachedBridgeTakesItsTreeOutOfTheWindow) {
     // assert the window announces nothing, because a reader must not see a dead tree (§10.2)
     EXPECT_EQ(announced_children(fixture.window).count, 0U);
 }
+TEST(AccessibilityRole, ATextFieldAnnouncesItsValue) {
+    // arrange a tree whose root is an editable field carrying text (§10.1)
+    WindowFixture fixture;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::TextField});
+    // the node needs the identity the tree walk keeps, and the text a reader would edit (§10.1)
+    SemanticNode* field = tree.mutable_at(0);
+    field->set_value("Albor");
+    // act
+    fixture.adapter->publish(tree);
+    // assert the window announces the field, whose value is what assistive technology edits (§10.1, §10.2)
+    NSArray* children = announced_children(fixture.window);
+    ASSERT_EQ(children.count, 1U);
+    NSView* element = (NSView*)children.firstObject;
+    EXPECT_EQ(element.accessibilityRole, NSAccessibilityTextFieldRole);
+    // the value is read back as a string, because the protocol hands it over untyped (§10.2)
+    NSString* value = (NSString*)element.accessibilityValue;
+    // assert the value reaches the element rather than only the tree it was published from (§10.2)
+    EXPECT_STREQ(value.UTF8String, "Albor");
+}
+
+TEST(AccessibilityRole, ACheckboxStillAnnouncesItsCheckStateAsItsValue) {
+    // arrange a tree whose root is a checkable node, which already had a value (§10.1)
+    WindowFixture fixture;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::Checkbox});
+    tree.mutable_at(0)->set_check(CheckState::Checked);
+    // act
+    fixture.adapter->publish(tree);
+    // assert the check state is still announced as the value, because the text branch is role scoped (§10.1)
+    NSArray* children = announced_children(fixture.window);
+    ASSERT_EQ(children.count, 1U);
+    // the value is read back as a string, because the protocol hands it over untyped (§10.2)
+    NSString* value = (NSString*)[(NSView*)children.firstObject accessibilityValue];
+    EXPECT_STREQ(value.UTF8String, "1");
+}
+
+TEST(AccessibilityRole, APlainLabelAnnouncesNoValue) {
+    // arrange a tree whose root carries no value of any kind (§10.1)
+    WindowFixture fixture;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::Label});
+    // act
+    fixture.adapter->publish(tree);
+    // assert a role with nothing to report announces nothing rather than an empty string (§10.2)
+    NSArray* children = announced_children(fixture.window);
+    ASSERT_EQ(children.count, 1U);
+    EXPECT_EQ([(NSView*)children.firstObject accessibilityValue], nil);
+}
