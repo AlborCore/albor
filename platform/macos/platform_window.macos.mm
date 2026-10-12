@@ -91,8 +91,10 @@ namespace
         // the space bar
         case 49:
             return albor::Key::Space;
-        // the backspace and the forward delete both remove
+        // the backspace key removes before the caret, and the forward delete removes at it (§8.3)
         case 51:
+            return albor::Key::Backspace;
+        // the forward delete key
         case 117:
             return albor::Key::Delete;
         // the home key, which a scroll viewport answers with its start (§8.3)

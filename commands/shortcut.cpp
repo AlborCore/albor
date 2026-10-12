@@ -136,6 +136,8 @@ namespace albor
             return "Space";
         case Key::Delete:
             return "Delete";
+        case Key::Backspace:
+            return "Backspace";
         // an accelerator never names no key, so the sentinel has no spelling (§18.5)
         case Key::None:
         default:

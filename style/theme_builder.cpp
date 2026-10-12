@@ -71,6 +71,22 @@ namespace albor
         theme.set_label_foreground(ControlState::Pressed, on_surface);
         theme.set_label_foreground(ControlState::Disabled, Color::rgba(on_surface.red, on_surface.green, on_surface.blue, 0.45f));
 
+        // an editable field draws the surface text, which is the value the contrast is chosen for (§6.1)
+        theme.set_text_field_text(ControlState::Normal, on_surface);
+        theme.set_text_field_text(ControlState::Hovered, on_surface);
+        theme.set_text_field_text(ControlState::Pressed, on_surface);
+        theme.set_text_field_text(ControlState::Disabled, Color::rgba(on_surface.red, on_surface.green, on_surface.blue, 0.45f));
+        // a placeholder sits de-emphasised, so it draws the text colour at half strength (§6.1)
+        theme.set_text_field_placeholder(ControlState::Normal, Color::rgba(on_surface.red, on_surface.green, on_surface.blue, 0.55f));
+        theme.set_text_field_placeholder(ControlState::Hovered, Color::rgba(on_surface.red, on_surface.green, on_surface.blue, 0.62f));
+        theme.set_text_field_placeholder(ControlState::Pressed, Color::rgba(on_surface.red, on_surface.green, on_surface.blue, 0.55f));
+        theme.set_text_field_placeholder(ControlState::Disabled, Color::rgba(on_surface.red, on_surface.green, on_surface.blue, 0.35f));
+        // a caret reads as a bar of the text itself, so it follows the same family (§6.1)
+        theme.set_text_field_caret(ControlState::Normal, on_surface);
+        theme.set_text_field_caret(ControlState::Hovered, lighten(on_surface, 0.1f));
+        theme.set_text_field_caret(ControlState::Pressed, on_surface);
+        theme.set_text_field_caret(ControlState::Disabled, Color::rgba(on_surface.red, on_surface.green, on_surface.blue, 0.4f));
+
         // the surface is offered so an application can read it back, which a frame background needs (§6.1)
         theme.set_surface(surface);
         // exit

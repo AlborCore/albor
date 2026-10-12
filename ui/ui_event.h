@@ -74,6 +74,9 @@ namespace albor
         // the delete key, which removes the selected content
         Delete,
 
+        // the backspace key, which removes the character before the caret (§8.3)
+        Backspace,
+
         // the home key, which reaches the start of the content a viewport scrolls
         Home,
 
