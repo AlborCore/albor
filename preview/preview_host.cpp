@@ -24,6 +24,7 @@
 #include "widgets/label.h"
 #include "widgets/scroll_view.h"
 #include "widgets/slider.h"
+#include "widgets/text_field.h"
 
 namespace albor::preview
 {
@@ -93,6 +94,8 @@ namespace albor::preview
                 built = std::make_unique<Canvas>(&engine);
             else if (node.element_type == "ScrollView")
                 built = std::make_unique<ScrollView>(&engine);
+            else if (node.element_type == "TextField")
+                built = std::make_unique<TextField>(&engine, text_engine);
             else {
                 // an element this build does not know produces nothing, which the diagnostics already reported (§12.2)
                 return nullptr;
@@ -154,6 +157,32 @@ namespace albor::preview
                     // the checkbox is the only widget that carries the state (§8)
                     if (auto* box = dynamic_cast<CheckBox*>(built.get()))
                         box->set_checked(numeric->text == "true");
+                }
+                // a written value or hint, which a field shows as the author wrote it (§8)
+                else if (assignment.name == "value" || assignment.name == "placeholder") {
+                    // the field is the only widget that edits a string (§8)
+                    if (auto* field = dynamic_cast<TextField*>(built.get())) {
+                        // the value is what the field edits, and the hint is what an empty one shows (§8)
+                        if (assignment.name == "value")
+                            field->set_value(text_of(*assignment.value));
+                        else
+                            field->set_placeholder(text_of(*assignment.value));
+                    }
+                }
+                // a read only or multi line state, which a preview shows as written (§8)
+                else if ((assignment.name == "read_only" || assignment.name == "multiline") && numeric != nullptr) {
+                    // the field is the only widget that carries the states (§8)
+                    if (auto* field = dynamic_cast<TextField*>(built.get())) {
+                        // read only refuses edits but still takes focus, and multiline wraps (§8)
+                        field->set_read_only(assignment.name == "read_only" && numeric->text == "true");
+                        field->set_multiline(assignment.name == "multiline" && numeric->text == "true");
+                    }
+                }
+                // a font size, which a field carries beside a label (§9.1)
+                else if (assignment.name == "font_size" && numeric != nullptr) {
+                    // the label was answered above, so the field takes the size here (§9.1)
+                    if (auto* field = dynamic_cast<TextField*>(built.get()))
+                        field->set_font_size(static_cast<float>(number_of(*numeric)));
                 }
             }
             // each child is built and adopted, which is the preorder a compiled build uses (§11.3)

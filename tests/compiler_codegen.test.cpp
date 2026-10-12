@@ -755,6 +755,68 @@ TEST(Codegen, ACheckboxHandlerReadsTheStateItToggledTo) {
     EXPECT_TRUE(contains(cpp.content, "self->m_armed.set(checked);"));
 }
 
+TEST(Codegen, ATextFieldIsConstructedOverBothEnginesAndOwnsItsHeader) {
+    // arrange a field the author declared over the value and the hint (§11.1)
+    const std::string source = R"(component C {
+    TextField {
+        value: "Albor";
+        placeholder: "type here";
+        multiline: true;
+    }
+})";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert the field is one of the engine and text engine widgets (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<TextField>(engine, text_engine);"));
+    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/text_field.h\""));
+    // assert both runs reach the widget through the setters the catalog names (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "set_value("));
+    EXPECT_TRUE(contains(cpp.content, "set_placeholder("));
+    // assert the mode reaches the widget as the author wrote it (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "set_multiline("));
+}
+
+TEST(Codegen, AReversedBooleanAndABoolStateReachTheirSetters) {
+    // arrange a field whose states the author wrote as bools (§11.1)
+    const std::string source = R"(component C {
+    TextField {
+        read_only: true;
+        disabled: false;
+    }
+})";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert both states reach the widget (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "set_read_only("));
+    EXPECT_TRUE(contains(cpp.content, "set_disabled(false)"));
+}
+
+TEST(Codegen, ATextFieldSignalsCarryTheStringTheyChangedTo) {
+    // arrange a field whose two signals a form wires (§11.1)
+    const std::string source = R"(component C {
+    inout property<string> name: "";
+    TextField {
+        value: name;
+        placeholder: "type a name";
+        on_changed: {
+            name = value;
+        }
+        on_committed: {
+            name = value;
+        }
+    }
+})";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert the string parameter is named on both handlers, which the bodies assign (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "set_on_change([this](std::string value) { handle_"));
+    EXPECT_TRUE(contains(cpp.content, "set_on_commit([this](std::string value) { handle_"));
+    EXPECT_TRUE(contains(cpp.content, "self->m_name.set(value);"));
+}
+
 TEST(Codegen, ACanvasDrawBlockBecomesADrawBody) {
     // arrange a canvas that fills itself from a bound property, which is custom drawing (§6.4)
     const std::string source = R"(component C {
