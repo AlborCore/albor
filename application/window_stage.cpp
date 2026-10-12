@@ -59,7 +59,10 @@ namespace albor
         // the instant is read first, because the delta is measured against the frame before this one (§7.3)
         const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
         // an idle tree skips the advance, which is what keeps a window with no animations cheap (§7.3)
-        if (m_animations.active_count() > 0) {
+        if (m_animations.active_count() == 0) {
+            // the engine is told the gap happened, so an animation scheduled during it starts at the next frame (§7.3)
+            m_animations.begin_idle();
+        } else {
             // the animations run before the scene is recorded, so the frame carries the values they wrote (§7.3, AD-04d)
             m_pipeline->advance_animations(std::chrono::duration<float>(now - m_last_frame).count());
         }

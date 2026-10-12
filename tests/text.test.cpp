@@ -16,7 +16,7 @@ using namespace albor;
 
 namespace
 {
-    // the contract test double, which measures with a fixed advance so a test asserts on §9.1 rather than on a backend (§9.1)
+    // the contract test double, which measures with a fixed advance so a test asserts on §9.1 (§9.1)
     class FixedAdvanceEngine final : public TextEngine
     {
     public:
@@ -467,7 +467,7 @@ TEST(SkiaTextEngineChecks, AnEngineWithoutAUnicodeMeasuresNothing) {
     SkiaTextEngine engine(services);
     // act
     const TextLayout layout = engine.measure("Albor", 1000.0f);
-    // assert skparagraph dereferences the unicode without checking, so the engine refuses instead of passing a null through (§9.1)
+    // assert skparagraph dereferences the unicode unchecked, so the engine refuses (§9.1)
     EXPECT_TRUE(layout.empty());
     EXPECT_EQ(layout.run, nullptr);
     EXPECT_FLOAT_EQ(layout.size.width, 0.0f);
@@ -940,4 +940,90 @@ TEST(SkiaTextEngineChecks, AMultiByteCharacterIsOneCaretStep) {
     const std::size_t stepped = layout.run->next_boundary_byte(0, 0);
     // assert the step is the width of the two byte character, because a cluster is one character (§9.1)
     EXPECT_EQ(stepped, 2u);
+}
+
+TEST(SkiaTextEngineChecks, AFallbackFontSplitIsOneRowRatherThanThree) {
+    // arrange text whose glyphs the default face does not hold, which is what a fallback run is (§9.1)
+    SkiaTextEngine engine;
+    // the corpus is latin around three ideographs, which a macOS default face shapes with a fallback (§9.1)
+    const std::string text = "a\u65E5\u672C\u8A9Eb";
+    // act
+    const TextLayout layout = engine.measure(text, 1000.0f, 20.0f);
+    // assert the run carries one entry per visual row, because a fallback split one row into several runs (§9.1)
+    ASSERT_EQ(layout.run->lines().size(), 1u);
+    // assert every byte of the text is shaped on that row, which is what one row means (§9.1)
+    EXPECT_EQ(layout.run->lines().front().start_byte, 0u);
+    EXPECT_EQ(layout.run->lines().front().end_byte, text.size());
+    // assert the row holds one cluster per character, which is what a caret steps over (§9.1)
+    EXPECT_EQ(layout.run->lines().front().glyphs.size(), 5u);
+}
+
+TEST(SkiaTextEngineChecks, EveryByteOfAFallbackSplitRowResolvesToThatRow) {
+    // arrange the same corpus measured at an unbounded width, so one row holds all of it (§9.1)
+    SkiaTextEngine engine;
+    const std::string text = "a\u65E5\u672C\u8A9Eb";
+    const TextLayout layout = engine.measure(text, 1000.0f, 20.0f);
+    // act assert every byte resolves to the only row, because a fallback run is not a row (§9.1)
+    for (std::size_t byte = 0; byte <= text.size(); byte++)
+        EXPECT_EQ(layout.run->line_at_byte(byte), 0u);
+}
+
+TEST(SkiaTextEngineChecks, ACaretStepsBackOverAFallbackRunBoundary) {
+    // arrange a caret standing where the fallback run begins, which is not a row boundary (§9.1)
+    SkiaTextEngine engine;
+    const std::string text = "a\u65E5\u672C\u8A9Eb";
+    const TextLayout layout = engine.measure(text, 1000.0f, 20.0f);
+    // act the step back from the byte after the first cluster
+    const std::size_t back = layout.run->previous_boundary_byte(0, 1);
+    // assert the step lands on the cluster before it, because a split row holds no row boundary (§9.1)
+    EXPECT_EQ(back, 0u);
+}
+
+TEST(SkiaTextEngineChecks, ABlankRowOwnsTheByteItBeginsAt) {
+    // arrange text whose middle row shaped no glyph, which is what a blank line is (§9.1)
+    SkiaTextEngine engine;
+    const TextLayout layout = engine.measure("a\n\nb", 1000.0f, 20.0f);
+    // act assert the blank row is a row of its own with a byte range that is not inverted (§9.1)
+    ASSERT_EQ(layout.run->lines().size(), 3u);
+    EXPECT_EQ(layout.run->lines()[1].start_byte, 2u);
+    EXPECT_EQ(layout.run->lines()[1].end_byte, 2u);
+    // assert the byte the blank row begins at resolves to that row, because a caret stops on a blank row (§9.1)
+    EXPECT_EQ(layout.run->line_at_byte(2), 1u);
+    // assert a press on the blank row resolves to the byte it begins at (§9.1)
+    EXPECT_EQ(layout.run->byte_at_x(1, 0.0f), 2u);
+    // assert the rows still tile forward, which is what makes the run span the whole text (§9.1)
+    EXPECT_EQ(layout.run->lines()[0].start_byte, 0u);
+    EXPECT_EQ(layout.run->lines()[2].end_byte, 4u);
+}
+
+TEST(SkiaTextEngineChecks, ABlankRowKeepsTheAscentOfTheLineItOccupies) {
+    // arrange a run with a blank row, which still occupies a real baseline (§9.1)
+    SkiaTextEngine engine;
+    // act
+    const TextLayout layout = engine.measure("a\n\nb", 1000.0f, 20.0f);
+    // assert the blank row carries the same ascent as the rows around it (§9.1)
+    ASSERT_EQ(layout.run->lines().size(), 3u);
+    EXPECT_GT(layout.run->lines()[1].ascent, 0.0f);
+    EXPECT_FLOAT_EQ(layout.run->lines()[1].ascent, layout.run->lines()[0].ascent);
+}
+
+TEST(SkiaTextEngineChecks, AWrappedRowIsStillOneRowAfterTheRewrite) {
+    // arrange a run that wraps, which is the ordinary case the rewrite must not disturb (§9.1)
+    SkiaTextEngine engine;
+    const std::string text = "the quick brown fox jumps over the lazy dog";
+    // act
+    const TextLayout layout = engine.measure(text, 80.0f, 20.0f);
+    // assert more than one row came back, because the ceiling wrapped the text (§8.2)
+    ASSERT_GT(layout.run->lines().size(), 1u);
+    // assert every row carries the ascent of its own line, which is what a caret hangs from (§9.1)
+    for (const ShapedRun::Line& line : layout.run->lines())
+        EXPECT_GT(line.ascent, 0.0f);
+    // assert the rows rise through the text and end at its end (§9.1)
+    std::size_t previous_end = 0;
+    for (const ShapedRun::Line& line : layout.run->lines()) {
+        EXPECT_GE(line.start_byte, previous_end);
+        EXPECT_GE(line.end_byte, line.start_byte);
+        previous_end = line.end_byte;
+    }
+    EXPECT_EQ(previous_end, text.size());
 }

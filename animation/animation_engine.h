@@ -61,6 +61,9 @@ namespace albor
         // hand out the callback a running or finished animation asks for, which drives another frame (§6.1, §7.3)
         void set_invalidation_handler(std::function<void()> handler);
 
+        // report that nothing ran since the last frame, so the next advance opens a clock (§7.3)
+        void begin_idle();
+
         // end every running animation, which a teardown does before the tree is destroyed (§7.3)
         void cancel_all();
 
@@ -104,5 +107,8 @@ namespace albor
 
         // the callback an animation asks for, which is what drives the next frame (§6.1, §7.3)
         std::function<void()> m_invalidation;
+
+        // whether the next advance opens a run, which an idle frame raised (§7.3)
+        bool m_opening_run = false;
     };
 } // namespace albor

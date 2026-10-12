@@ -5,6 +5,11 @@
 
 namespace albor
 {
+    namespace
+    {
+        // the passes one frame may account for at once, which bounds a delta of hours (§7.3)
+        constexpr std::size_t MAX_PASSES_PER_FRAME = 4096;
+    } // namespace
     AnimationHandle AnimationEngine::schedule(AnimationTick tick, AnimationDuration duration) {
         // an animation with no work cannot be advanced, so the registration is refused (§7.3)
         if (!tick)
@@ -67,6 +72,11 @@ namespace albor
     }
 
     std::size_t AnimationEngine::advance(float delta_seconds) {
+        // a frame that opens a run measures from now, because a scheduled animation starts here (§7.3)
+        if (m_opening_run)
+            delta_seconds = 0.0f;
+        // the flag is spent by the frame it opened (§7.3)
+        m_opening_run = false;
         // the finished entries are dropped, which is the whole cleanup of an advance (§7.3)
         m_animations.erase(std::remove_if(m_animations.begin(), m_animations.end(), [](const Running& running) { return !running.active; }), m_animations.end());
         // a frame with nothing running does no work, which is what keeps an idle tree cheap (§7.3)
@@ -79,7 +89,21 @@ namespace albor
             running.elapsed += delta_seconds;
             // the duration is read per entry because each animation may have its own (§7.3)
             const float span = static_cast<float>(std::chrono::duration<float>(running.duration).count());
-            // schedule refused a non positive duration, so the divisor is always usable and the clamp is what keeps a frame that outran the animation from reporting past the end (§7.3)
+            // every whole pass the delta covered is accounted for before the tick (§7.3)
+            for (std::size_t pass = 0; pass < MAX_PASSES_PER_FRAME; pass++) {
+                // a pass that is not yet over changes nothing (§7.3)
+                if (!(running.elapsed > span))
+                    break;
+                // an animation with no pass left keeps its time, so the tick reports the end (§7.3)
+                if (running.repeats == 0)
+                    break;
+                // a finite count is spent by every pass the frame covered, a forever one never (§7.3)
+                if (running.repeats != ANIMATION_FOREVER)
+                    running.repeats--;
+                // the elapsed time rewinds by that pass, which is what restarts the progress from zero (§7.3)
+                running.elapsed -= span;
+            }
+            // schedule refused a non positive duration, so the clamp keeps a frame from reporting past the end (§7.3)
             const float normalized = std::clamp(running.elapsed / span, 0.0f, 1.0f);
             // the work runs, which is what writes through the animation channel of §7.3 (AD-04d)
             const bool continues = running.tick(normalized);
@@ -92,14 +116,6 @@ namespace albor
             // an animation out of passes is finished, which the drop below removes (§7.3)
             if (normalized >= 1.0f && running.repeats == 0)
                 running.active = false;
-            // an animation with a pass left rewinds instead, so the next frame reports the progress of that pass (§7.3)
-            if (normalized >= 1.0f && running.repeats > 0) {
-                // a finite repeat count is spent by the pass it just ran, while the forever count is never spent (§7.3)
-                if (running.repeats != ANIMATION_FOREVER)
-                    running.repeats--;
-                // the elapsed time rewinds by one span, which is what restarts the progress from zero (§7.3)
-                running.elapsed -= span;
-            }
         }
         // the finished entries are dropped immediately, so active_count never reports a finished animation (§7.3)
         m_animations.erase(std::remove_if(m_animations.begin(), m_animations.end(), [](const Running& running) { return !running.active; }), m_animations.end());
@@ -115,7 +131,7 @@ namespace albor
         // a handle that names no animation reports no progress (§7.3)
         if (running == nullptr)
             return 0.0f;
-        // the duration is read as seconds, because the elapsed time is kept in seconds, and schedule already refused a non positive one, so the divisor is always usable (§7.3)
+        // both times are seconds, and schedule refused a non positive duration, so the divisor is usable (§7.3)
         const float span = static_cast<float>(std::chrono::duration<float>(running->duration).count());
         // the running animation has not finished, so the ratio is inside the unit interval without a clamp (§7.3)
         return running->elapsed / span;
@@ -124,6 +140,11 @@ namespace albor
     void AnimationEngine::set_invalidation_handler(std::function<void()> handler) {
         // the handler is installed on the engine, which the frame pipeline drives (§6.1, §7.3)
         m_invalidation = std::move(handler);
+    }
+
+    void AnimationEngine::begin_idle() {
+        // the flag is raised, because nothing was running since the last frame and the next delta spans a gap (§7.3)
+        m_opening_run = true;
     }
 
     void AnimationEngine::cancel_all() {

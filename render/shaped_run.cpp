@@ -48,9 +48,13 @@ namespace albor
         if (m_lines.empty())
             return 0;
         // the lines are in reading order, so the first line ending past the offset is the one holding it (§9.1)
-        for (std::size_t index = 0; index < m_lines.size(); index++)
+        for (std::size_t index = 0; index < m_lines.size(); index++) {
+            // a line that shaped nothing owns the byte it begins at, because a blank row is a caret stop (§9.1)
+            if (m_lines[index].glyphs.empty() && m_lines[index].start_byte == m_lines[index].end_byte && byte == m_lines[index].start_byte)
+                return index;
             if (byte < m_lines[index].end_byte)
                 return index;
+        }
         // an offset past every line resolves to the last, because a run never reports a line it did not shape (§9.1)
         return m_lines.size() - 1;
     }

@@ -654,3 +654,106 @@ TEST(RepeatingAnimationChecks, ARunningBlinkKeepsAskingForFrames) {
     // assert a repeating animation never empties the engine, so the frame loop keeps ticking (§6.1, §7.3)
     EXPECT_GT(requests, after_scheduling);
 }
+
+TEST(RepeatingAnimationChecks, ALongFrameAccountsForEveryPassItCovered) {
+    // arrange a blink measured over a frame covering two and a half of its passes (§7.3)
+    AnimationEngine engine;
+    std::vector<float> seen;
+    const AnimationHandle handle = engine.schedule_repeating(
+        [&seen](float t) {
+            // the tick records what the frame reported, which is what a stalled frame gets wrong (§7.3)
+            seen.push_back(t);
+            return true;
+        },
+        std::chrono::milliseconds(100));
+    // act
+    engine.advance(0.25f);
+    // assert the reported progress is the phase that is really running, not a clamp at the end of the first pass (§7.3)
+    EXPECT_NEAR(engine.progress(handle), 0.5f, 0.01f);
+    // assert the tick saw a progress inside the unit interval, because a stalled frame still reports one (§7.3)
+    ASSERT_FALSE(seen.empty());
+    EXPECT_GE(seen.back(), 0.0f);
+    EXPECT_LE(seen.back(), 1.0f);
+    // assert the animation is still alive, because repeating forever has no pass that ends it (§7.3)
+    EXPECT_TRUE(engine.running(handle));
+}
+
+TEST(RepeatingAnimationChecks, AStallOfManyDurationsDoesNotLeaveTheProgressManyPassesAhead) {
+    // arrange a blink stalled for a hundred of its durations, which is what a busy main thread looks like (§7.3)
+    AnimationEngine engine;
+    const AnimationHandle handle = engine.schedule_repeating([](float) { return true; }, std::chrono::milliseconds(100));
+    // act
+    engine.advance(10.0f);
+    // assert the progress is inside the pass running, not a hundred passes along (§7.3)
+    EXPECT_LT(engine.progress(handle), 1.0f);
+    // assert the animation is still alive, because a blink has no pass that ends it (§7.3)
+    EXPECT_TRUE(engine.running(handle));
+}
+
+TEST(RepeatingAnimationChecks, ALongFrameSpendsSeveralRepeatsAtOnce) {
+    // arrange three passes asked for, of which two and a half the frame covers (§7.3)
+    AnimationEngine engine;
+    const AnimationHandle handle = engine.schedule_repeating([](float) { return true; }, std::chrono::milliseconds(100), 2);
+    // act
+    engine.advance(0.25f);
+    // assert the animation is in its last pass, because the frame spent every pass (§7.3)
+    EXPECT_TRUE(engine.running(handle));
+    // assert the reported progress is that of the pass running, which is halfway (§7.3)
+    EXPECT_NEAR(engine.progress(handle), 0.5f, 0.001f);
+}
+
+TEST(RepeatingAnimationChecks, AFrameThatCoversTheLastPassEndsTheAnimation) {
+    // arrange a single pass with a frame that covers several of its durations (§7.3)
+    AnimationEngine engine;
+    const AnimationHandle handle = engine.schedule_repeating([](float) { return true; }, std::chrono::milliseconds(100), 0);
+    // act
+    engine.advance(0.5f);
+    // assert the animation is over, because the frame covered more passes than it was given (§7.3)
+    EXPECT_EQ(engine.active_count(), 0u);
+    EXPECT_FALSE(engine.running(handle));
+}
+
+TEST(RepeatingAnimationChecks, AFrameThatOpensARunMeasuresFromNow) {
+    // arrange an animation scheduled while the engine was idle, which inherits none of the idle time (§7.3)
+    AnimationEngine engine;
+    std::vector<float> seen;
+    engine.begin_idle();
+    const AnimationHandle handle = engine.schedule_repeating(
+        [&seen](float t) {
+            // the tick records the progress of the opening frame, which is the start of the run (§7.3)
+            seen.push_back(t);
+            return true;
+        },
+        std::chrono::milliseconds(100));
+    // act
+    engine.advance(10.0f);
+    // assert the opening frame reports the beginning rather than the end, because the blink starts now (§7.3)
+    ASSERT_EQ(seen.size(), 1u);
+    EXPECT_FLOAT_EQ(seen.front(), 0.0f);
+    // assert the animation survives the frame, which a blink measured from the idle gap would not (§7.3)
+    EXPECT_TRUE(engine.running(handle));
+}
+
+TEST(RepeatingAnimationChecks, TheFrameAfterTheOpeningOneIsMeasuredLikeAnyOther) {
+    // arrange the same engine one frame later, which must not lose the delta (§7.3)
+    AnimationEngine engine;
+    engine.begin_idle();
+    const AnimationHandle handle = engine.schedule_repeating([](float) { return true; }, std::chrono::milliseconds(100));
+    (void)engine.advance(0.0f);
+    // act
+    engine.advance(0.05f);
+    // assert the second frame carries its own delta, because the opening rule is spent by the frame it opened (§7.3)
+    EXPECT_NEAR(engine.progress(handle), 0.5f, 0.001f);
+}
+
+TEST(RepeatingAnimationChecks, ABeginIdleWithNothingRunningStillOpensTheNextRun) {
+    // arrange an idle report on an empty engine, which is what a window with no animations does every frame (§7.3)
+    AnimationEngine engine;
+    engine.begin_idle();
+    const AnimationHandle handle = engine.schedule_repeating([](float) { return true; }, std::chrono::milliseconds(100));
+    // act
+    engine.advance(1.0f);
+    // assert the animation started at this frame rather than ten durations ago (§7.3)
+    EXPECT_TRUE(engine.running(handle));
+    EXPECT_NEAR(engine.progress(handle), 0.0f, 0.001f);
+}
