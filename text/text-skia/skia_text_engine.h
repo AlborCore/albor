@@ -34,6 +34,9 @@ namespace albor
         // override: measure a run at an explicit font size (§9.1)
         [[nodiscard]] TextLayout measure(std::string_view text, float max_width, float font_size) const override;
 
+        // measure a run with a family named outright, which pins the face a conformance comparison needs (§9.1, AD-25)
+        [[nodiscard]] TextLayout measure(std::string_view text, float max_width, float font_size, std::string_view family) const;
+
         // override: report whether the collection and the unicode both resolved (§9.1)
         [[nodiscard]] bool ready() const override;
 

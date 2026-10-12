@@ -82,16 +82,6 @@ namespace
     }
 } // namespace
 
-TEST(DualEngineConformanceChecks, TheVendoredEngineLoadsAFont) {
-    // arrange, act
-    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create(font_path(), FONT_FAMILY);
-    // assert the vendored engine is usable, because a suite that skips silently proves nothing (§15, §9.1)
-    if (!has_font())
-        GTEST_SKIP() << "no conformance font on this host";
-    ASSERT_NE(engine, nullptr);
-    EXPECT_TRUE(engine->ready());
-}
-
 TEST(DualEngineConformanceChecks, BothEnginesAgreeOnGlyphCount) {
     // arrange both engines shaping the same text at the same size (§15, AD-25)
     if (!has_font())
@@ -99,8 +89,8 @@ TEST(DualEngineConformanceChecks, BothEnginesAgreeOnGlyphCount) {
     const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> vendored = harfbuzz::HarfbuzzTextEngine::create(font_path(), FONT_FAMILY);
     ASSERT_NE(vendored, nullptr);
     SkiaTextEngine oracle;
-    // act the same string through both shapers, which is the dual engine comparison of AD-25 (§15)
-    const TextLayout reference = oracle.measure("Albor framework", 0.0f, 20.0f);
+    // act the same string through both shapers over the same family, which is the comparison (§15, AD-25)
+    const TextLayout reference = oracle.measure("Albor framework", 0.0f, 20.0f, FONT_FAMILY);
     const TextLayout measured = vendored->measure("Albor framework", 0.0f, 20.0f);
     // assert both shaped something, because an empty run would agree with anything (§15)
     ASSERT_NE(reference.run, nullptr);
@@ -110,18 +100,14 @@ TEST(DualEngineConformanceChecks, BothEnginesAgreeOnGlyphCount) {
 }
 
 TEST(DualEngineConformanceChecks, BothEnginesAgreeOnGlyphPositions) {
-    // the tolerances were calibrated on the macos font stack, and windows shapes through another rasterizer (§15, AD-25)
-#if defined(_WIN32)
-    GTEST_SKIP() << "the windows oracle shapes through a different rasterizer, tracked with DEFECT-TEXT-VENDOR-BASELINE";
-#endif
-#if !defined(_WIN32)
-    // arrange the same text through both shapers (§15, AD-25)
+    // arrange the same text through both shapers, which is the same family so the comparison is of shapers (§15, AD-25)
     if (!has_font())
         GTEST_SKIP() << "no conformance font on this host";
     const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> vendored = harfbuzz::HarfbuzzTextEngine::create(font_path(), FONT_FAMILY);
     ASSERT_NE(vendored, nullptr);
     SkiaTextEngine oracle;
-    const TextLayout reference = oracle.measure("Albor framework", 0.0f, 20.0f);
+    // act the same string through both shapers over the same family, which is the comparison of shapers (§15, AD-25)
+    const TextLayout reference = oracle.measure("Albor framework", 0.0f, 20.0f, FONT_FAMILY);
     const TextLayout measured = vendored->measure("Albor framework", 0.0f, 20.0f);
     // assert both produced one line, because a differing line count is a failure before any position (§15)
     ASSERT_EQ(reference.run->lines().size(), 1u);
@@ -136,27 +122,20 @@ TEST(DualEngineConformanceChecks, BothEnginesAgreeOnGlyphPositions) {
         // assert each glyph lands within the tolerance, which is what makes one shaper gate the other (§15)
         EXPECT_LE(distance, POSITION_TOLERANCE) << "glyph " << index << " differed by " << distance;
     }
-#endif
 }
 
 TEST(DualEngineConformanceChecks, BothEnginesAgreeOnMeasuredWidth) {
-    // the tolerances were calibrated on the macos font stack, and windows shapes through another rasterizer (§15, AD-25)
-#if defined(_WIN32)
-    GTEST_SKIP() << "the windows oracle shapes through a different rasterizer, tracked with DEFECT-TEXT-VENDOR-BASELINE";
-#endif
-#if !defined(_WIN32)
-    // arrange
+    // arrange the same string over the same family, which is what makes this a shaper comparison (§15, AD-25)
     if (!has_font())
         GTEST_SKIP() << "no conformance font on this host";
     const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> vendored = harfbuzz::HarfbuzzTextEngine::create(font_path(), FONT_FAMILY);
     ASSERT_NE(vendored, nullptr);
     SkiaTextEngine oracle;
     // act the same string is measured by both (§15, AD-25)
-    const TextLayout reference = oracle.measure("Albor framework", 0.0f, 20.0f);
+    const TextLayout reference = oracle.measure("Albor framework", 0.0f, 20.0f, FONT_FAMILY);
     const TextLayout measured = vendored->measure("Albor framework", 0.0f, 20.0f);
     // assert the widths agree, because a width drives every layout decision downstream (§8.2, AD-25)
     EXPECT_NEAR(measured.size.width, reference.size.width, WIDTH_TOLERANCE);
-#endif
 }
 
 TEST(DualEngineConformanceChecks, BothEnginesAgreeOnAccentsAndPunctuation) {
@@ -167,8 +146,8 @@ TEST(DualEngineConformanceChecks, BothEnginesAgreeOnAccentsAndPunctuation) {
     ASSERT_NE(vendored, nullptr);
     SkiaTextEngine oracle;
     const std::string text = "café naïve (résumé) 1,234.56";
-    // act
-    const TextLayout reference = oracle.measure(text, 0.0f, 18.0f);
+    // act the accented run through both shapers over the same family as the one above (§15, AD-25)
+    const TextLayout reference = oracle.measure(text, 0.0f, 18.0f, FONT_FAMILY);
     const TextLayout measured = vendored->measure(text, 0.0f, 18.0f);
     // assert both shaped the run, which is the case a naive shaper gets wrong (§9.1)
     ASSERT_NE(reference.run, nullptr);

@@ -486,6 +486,38 @@ TEST(ShapedRun, EqualityComparesTheGlyphsAndTheSize) {
     EXPECT_NE(*first, *other_glyphs);
 }
 
+TEST(ShapedRun, EqualityExcludesTheFontHandle) {
+    // arrange two one glyph runs whose handles name different objects entirely (§9.1, AD-34)
+    int source = 0;
+    int other = 0;
+    ShapedRun::Line mine;
+    mine.font = FontHandle::from_object(&source);
+    mine.glyphs.push_back(ShapedGlyph{.id = 3, .position = Point{.x = 1.0f, .y = 0.0f}});
+    ShapedRun::Line theirs;
+    theirs.font = FontHandle::from_object(&other);
+    theirs.glyphs.push_back(ShapedGlyph{.id = 3, .position = Point{.x = 1.0f, .y = 0.0f}});
+    // act
+    const std::shared_ptr<const ShapedRun> first = ShapedRun::make({mine}, 16.0f, 7);
+    const std::shared_ptr<const ShapedRun> second = ShapedRun::make({theirs}, 16.0f, 7);
+    // assert the shape is the identity, because the handle is where the shape came from rather than it (§9.1, AD-34)
+    ASSERT_EQ(first->lines().front().font.object(), &source);
+    ASSERT_EQ(second->lines().front().font.object(), &other);
+    EXPECT_EQ(*first, *second);
+}
+
+TEST(ShapedRun, EqualityRejectsADifferentFontHash) {
+    // arrange the same glyphs shaped from two identities, which is what a different font is (§15, AD-34)
+    ShapedRun::Line mine;
+    mine.glyphs.push_back(ShapedGlyph{.id = 3, .position = Point{.x = 1.0f, .y = 0.0f}});
+    // act
+    const std::shared_ptr<const ShapedRun> first = ShapedRun::make({mine}, 16.0f, 7);
+    const std::shared_ptr<const ShapedRun> second = ShapedRun::make({mine}, 16.0f, 8);
+    // assert the hash is part of the identity, because two fonts shaped the same text are not one run (§15, AD-34)
+    ASSERT_EQ(first->font_hash(), 7u);
+    ASSERT_EQ(second->font_hash(), 8u);
+    EXPECT_NE(*first, *second);
+}
+
 TEST(TextLayout, AnUnmeasuredLayoutIsEmpty) {
     // arrange, act
     const TextLayout layout;

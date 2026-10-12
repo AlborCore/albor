@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <skia/core/SkFont.h>
+#include <skia/core/SkString.h>
 #include <skia/modules/skparagraph/include/FontCollection.h>
 #include <skia/modules/skparagraph/include/Metrics.h>
 #include <skia/modules/skparagraph/include/Paragraph.h>
@@ -29,6 +30,9 @@ namespace albor
             // the text the run was shaped from (§9.1)
             std::string text;
 
+            // the family the run was shaped with, which is empty for the platform default one (§9.1)
+            std::string family;
+
             // the ceiling the run was wrapped at, where a non positive one means no wrapping at all (§8.2)
             float max_width = 0.0f;
 
@@ -41,6 +45,9 @@ namespace albor
         {
             // the text the caller measured, which the cache never copies (§9.1)
             std::string_view text;
+
+            // the family the run is shaped with, which views the caller's value (§9.1)
+            std::string_view family;
 
             // the ceiling the run was wrapped at (§8.2)
             float max_width = 0.0f;
@@ -55,16 +62,16 @@ namespace albor
             // the transparent marker is what tells the map a lookup may carry a different key type (§9.1)
             using is_transparent = void;
 
-            // two owned keys are the same run when all three fields agree (§9.1)
+            // two owned keys are the same run when every field agrees (§9.1)
             bool operator()(const CacheKey& lhs, const CacheKey& rhs) const {
-                // the three fields are the whole key, so anything else would serve a run shaped for other inputs (§9.1)
-                return lhs.text == rhs.text && lhs.max_width == rhs.max_width && lhs.font_size == rhs.font_size;
+                // the four fields are the whole key, so anything else would serve a run shaped for other inputs (§9.1)
+                return lhs.text == rhs.text && lhs.family == rhs.family && lhs.max_width == rhs.max_width && lhs.font_size == rhs.font_size;
             }
 
-            // a lookup and an owned key are the same run when the view matches the owned text (§9.1)
+            // a lookup and an owned key are the same run when the views match the owned values (§9.1)
             bool operator()(const CacheKey& owned, const CacheLookup& lookup) const {
-                // the ceiling and the size have to agree, because the same text wraps differently (§9.1)
-                return owned.max_width == lookup.max_width && owned.font_size == lookup.font_size && owned.text == lookup.text;
+                // the family, the ceiling and the size have to agree, because the same text shapes differently (§9.1)
+                return owned.max_width == lookup.max_width && owned.font_size == lookup.font_size && owned.family == lookup.family && owned.text == lookup.text;
             }
 
             // an owned key and a lookup compare the same way round, because the map asks in either direction (§9.1)
@@ -80,10 +87,12 @@ namespace albor
             // the transparent marker is what tells the map a lookup may carry a different key type (§9.1)
             using is_transparent = void;
 
-            // fold three fields into one hash, because a run shaped for other metrics must not share an entry (§9.1)
-            static std::size_t fold(std::string_view text, float max_width, float font_size) {
+            // fold the whole key into one hash, because a run shaped for other metrics must not share an entry (§9.1)
+            static std::size_t fold(std::string_view text, std::string_view family, float max_width, float font_size) {
                 // the text seeds the hash, because the text is what distinguishes one run from another (§9.1)
                 std::size_t seed = std::hash<std::string_view>{}(text);
+                // the family is folded in, because the same text at another family is another run (§9.1)
+                seed ^= std::hash<std::string_view>{}(family) + 0x9e3779b9U + (seed << 6) + (seed >> 2);
                 // the ceiling is folded in, because the same text wrapped differently is another run (§9.1)
                 seed ^= std::hash<float>{}(max_width) + 0x9e3779b9U + (seed << 6) + (seed >> 2);
                 // the font size is folded in, because the same text shaped at another size is another run (§9.1)
@@ -91,11 +100,11 @@ namespace albor
                 return seed;
             }
 
-            // an owned key hashes by the text it owns (§9.1)
-            std::size_t operator()(const CacheKey& key) const { return fold(key.text, key.max_width, key.font_size); }
+            // an owned key hashes by the values it owns (§9.1)
+            std::size_t operator()(const CacheKey& key) const { return fold(key.text, key.family, key.max_width, key.font_size); }
 
-            // a lookup hashes by the text it views, so both shapes agree on a bucket (§9.1)
-            std::size_t operator()(const CacheLookup& lookup) const { return fold(lookup.text, lookup.max_width, lookup.font_size); }
+            // a lookup hashes by the values it views, so both shapes agree on a bucket (§9.1)
+            std::size_t operator()(const CacheLookup& lookup) const { return fold(lookup.text, lookup.family, lookup.max_width, lookup.font_size); }
         };
     } // namespace
 
@@ -148,8 +157,16 @@ namespace albor
         // an engine without unicode cannot shape, so it refuses rather than passing a null through (§9.1)
         if (!ready() || text.empty())
             return TextLayout{};
+        // the platform default family is what a caller that names none gets, which is the production behaviour (§9.1)
+        return measure(text, max_width, font_size, std::string_view{});
+    }
+
+    TextLayout SkiaTextEngine::measure(std::string_view text, float max_width, float font_size, std::string_view family) const {
+        // an engine without unicode cannot shape, so it refuses rather than passing a null through (§9.1)
+        if (!ready() || text.empty())
+            return TextLayout{};
         // the lookup views the caller's text, because copying it would allocate on every measure (§9.1)
-        const CacheLookup lookup{.text = text, .max_width = max_width, .font_size = font_size};
+        const CacheLookup lookup{.text = text, .family = family, .max_width = max_width, .font_size = font_size};
         // a cached run is handed back as it was measured, so a steady state frame pays no shaping (§9.1)
         const auto cached = m_state->cache.find(lookup);
         if (cached != m_state->cache.end())
@@ -158,6 +175,9 @@ namespace albor
         skia::textlayout::TextStyle text_style;
         // the font size is the only typography the engine exposes, so it is set and nothing else (§9.1)
         text_style.setFontSize(font_size);
+        // a family the caller named is set beside the size, because the default one belongs to the platform (§9.1)
+        if (!family.empty())
+            text_style.setFontFamilies(std::vector<SkString>{SkString(family.data(), family.size())});
         // the paragraph style wraps the text style, because the builder takes one not the other (§9.1)
         skia::textlayout::ParagraphStyle style;
         style.setTextStyle(text_style);
@@ -217,8 +237,8 @@ namespace albor
         // a full cache drops its runs, because an unbounded cache is a leak an application cannot see (§9.1)
         if (m_state->cache.size() >= MAXIMUM_CACHED_RUNS)
             m_state->cache.clear();
-        // the run is cached under a key that owns the text, which only a miss ever builds (§9.1)
-        m_state->cache.emplace(CacheKey{.text = std::string(text), .max_width = max_width, .font_size = font_size}, layout);
+        // the run is cached under a key that owns the text and the family, which only a miss ever builds (§9.1)
+        m_state->cache.emplace(CacheKey{.text = std::string(text), .family = std::string(family), .max_width = max_width, .font_size = font_size}, layout);
         return layout;
     }
 

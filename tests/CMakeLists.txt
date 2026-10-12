@@ -58,6 +58,7 @@ if(ALBOR_DEV)
     target_link_libraries(albor-tests PRIVATE albor-inspector)
 endif()
 
+# the aligning suite is skipped on every non apple platform, and the renderer arrives through the backend (§3.2)
 if(APPLE)
     target_sources(albor-tests PRIVATE "./conditional/render_skia.test.cpp")
     target_link_libraries(albor-tests PRIVATE albor-render-skia)
