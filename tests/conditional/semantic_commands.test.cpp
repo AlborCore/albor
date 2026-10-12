@@ -61,6 +61,25 @@ namespace
         std::unique_ptr<SemanticProvider> semantic_child(std::size_t) const override { return nullptr; }
     };
 
+    // the viewport the scene publishes, which a client addresses by the id the author wrote (§10.1, AD-11)
+    class ViewportNode final : public SemanticProvider
+    {
+    public:
+        SemanticNode semantic_node() const override {
+            // the role is the viewport, which is what a screen reader needs to offer scrolling (§10.1, AD-08)
+            SemanticNode node{SemanticRole::ScrollView};
+            // the id is the author written one, because that is the only selector automation offers (§18.1, AD-11)
+            node.set_explicit_id("log_view");
+            // the name is what a reader announces, so it carries the heading (§10.1)
+            node.set_name("Log");
+            return node;
+        }
+
+        std::size_t semantic_child_count() const override { return 0; }
+
+        std::unique_ptr<SemanticProvider> semantic_child(std::size_t) const override { return nullptr; }
+    };
+
     // the provider a suite drives, which publishes a button and a label with author ids (§10.1, AD-11)
     class SceneProvider final : public SemanticProvider
     {
@@ -79,7 +98,7 @@ namespace
             return node;
         }
 
-        std::size_t semantic_child_count() const override { return 2; }
+        std::size_t semantic_child_count() const override { return 3; }
 
         std::unique_ptr<SemanticProvider> semantic_child(std::size_t index) const override {
             // the first child is the identified button, which is what most commands target (§18.1, AD-11)
@@ -88,6 +107,9 @@ namespace
             // the second child is a node with no author id, which no selector may reach (AD-11)
             if (index == 1)
                 return std::make_unique<AnonymousNode>();
+            // the third child is the viewport, which a reader reaches by its own role (§10.1)
+            if (index == 2)
+                return std::make_unique<ViewportNode>();
             // an index past the end names no child (§10.1)
             return nullptr;
         }
@@ -286,4 +308,24 @@ TEST(SemanticCommands, EverySemanticCommandIsRefusedUntilItIsPermitted) {
         EXPECT_FALSE(result.ok) << name;
         EXPECT_NE(result.error.find("not allowed"), std::string::npos) << name;
     }
+}
+
+TEST(SemanticCommands, AViewportIsNamedByItsOwnRole) {
+    // arrange
+    Fixture fixture;
+    // act
+    const AutomationResult result = fixture.run("semantic.find log_view");
+    // assert the answer names the viewport with the role a screen reader expects, not a generic group (§10.1, AD-08)
+    ASSERT_TRUE(result.ok);
+    EXPECT_EQ(result.payload, "scroll_view Log");
+}
+
+TEST(SemanticCommands, AViewportAppearsInTheTreeDumpWithItsRole) {
+    // arrange
+    Fixture fixture;
+    // act
+    const AutomationResult result = fixture.run("semantic.tree");
+    // assert the dump reaches the viewport, because a reader walks the same tree (§10.1, §10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_NE(result.payload.find("scroll_view log_view Log"), std::string::npos);
 }

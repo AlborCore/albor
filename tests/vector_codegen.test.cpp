@@ -6,9 +6,12 @@
 
 #include "record_panel.h"
 #include "runtime/binding_engine.h"
+#include "scroll_log.h"
 #include "task_list.h"
 #include "text/text_engine.h"
+#include "ui/scene_builder.h"
 #include "vector_panel.h"
+#include "window/window_metrics.h"
 
 using namespace albor;
 
@@ -179,4 +182,130 @@ TEST(RepeatCodegen, ARowSurvivesItsItemMoving) {
     engine.settle();
     // assert the same node now shows the last item, because the row moved rather than being rebuilt (§18.1, AD-13)
     EXPECT_EQ(static_cast<UiNode&>(list).child_at(0)->child_at(3), first);
+}
+
+namespace
+{
+    // the text engine the generated labels measure through, which stands in for a font backend (§9.1)
+    class CountingTextEngine final : public TextEngine
+    {
+    public:
+        // the advance one character contributes, in logical pixels (§9.1)
+        static constexpr float ADVANCE = 10.0f;
+
+        // the height the double reports for any run, in logical pixels (§9.1)
+        static constexpr float HEIGHT = 16.0f;
+
+        // how many runs were measured, which is what proves the rows were measured at all (§9.1)
+        mutable std::size_t measurements = 0;
+
+        [[nodiscard]] TextLayout measure(std::string_view text, float max_width) const override {
+            // the default size overload forwards to the explicit one, which is the whole implementation (§9.1)
+            return measure(text, max_width, 16.0f);
+        }
+
+        [[nodiscard]] TextLayout measure(std::string_view text, float max_width, float font_size) const override {
+            // an empty run carries no glyphs, so the double measures it as nothing (§9.1)
+            if (text.empty())
+                return TextLayout{};
+            // the measurement is counted, because a row nobody measured never reaches the engine (§9.1)
+            measurements++;
+            // the double shapes one glyph per character, which stands in for shaping (§9.1)
+            ShapedRun::Line line;
+            // the line origin is the baseline the synthesized glyphs hang from (§9.1)
+            line.origin = Point{.x = 0.0f, .y = HEIGHT * 0.8f};
+            // every character becomes one glyph placed a fixed advance apart (§9.1)
+            for (const char character : text)
+                line.glyphs.push_back(ShapedGlyph{.id = static_cast<std::uint32_t>(character), .position = Point{.x = static_cast<float>(line.glyphs.size()) * ADVANCE, .y = 0.0f}});
+            // the advance counts characters, and the ceiling clamps the result as a container expects (§8.2)
+            const float advanced = static_cast<float>(text.size()) * ADVANCE;
+            // the shaped run travels beside the extents, which is what a measurement hands over (§9.1)
+            return TextLayout{.run = ShapedRun::make({std::move(line)}, font_size), .size = Size{.width = max_width > 0.0f ? std::min(advanced, max_width) : advanced, .height = HEIGHT}, .ascent = HEIGHT * 0.8f, .descent = HEIGHT * 0.2f};
+        }
+
+        [[nodiscard]] bool ready() const override { return true; }
+    };
+
+    // a hundred keyed rows, which is the scale the window exists to bound (§8.2, AD-13)
+    std::vector<Task> many_tasks() {
+        // the rows are numbered, so every key is distinct (§18.1, AD-13)
+        std::vector<Task> tasks;
+        // the list is reserved, because a scroll view is about lists this size (§8.2, AD-13)
+        tasks.reserve(100);
+        for (std::size_t index = 0; index < 100; index++)
+            tasks.push_back(Task{.key = "task" + std::to_string(index), .title = "line " + std::to_string(index)});
+        return tasks;
+    }
+} // namespace
+
+TEST(VectorCodegen, AVirtualizedLogBuildsOnlyItsWindowAndDrawsIt) {
+    // arrange
+    BindingEngine engine;
+    CountingTextEngine text;
+    ScrollLog log(&engine, &text);
+    log.set_line_height(20.0f);
+    log.set_tasks(many_tasks());
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
+    // act the stage settles the graph and then records, which is the frame path of §6.1
+    (void)engine.settle();
+    SceneBuilder builder;
+    const std::shared_ptr<const FrameScene> scene = builder.build(log, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    // assert the whole list was not built, which is the whole point of the window (§8.2, AD-13)
+    EXPECT_GT(text.measurements, 0u);
+    EXPECT_LT(text.measurements, 100u);
+    // assert the built rows reached the scene, which is what a measured row draws from (§6.1, §9.1)
+    std::size_t text_commands = 0;
+    for (const DrawCommand& command : scene->commands())
+        if (command.kind() == DrawCommandKind::Text)
+            text_commands++;
+    EXPECT_GT(text_commands, 0u);
+}
+
+TEST(VectorCodegen, AVirtualizedLogSurvivesAScrollThatRebuildsTheWindow) {
+    // arrange
+    BindingEngine engine;
+    CountingTextEngine text;
+    ScrollLog log(&engine, &text);
+    log.set_line_height(20.0f);
+    log.set_tasks(many_tasks());
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
+    SceneBuilder builder;
+    (void)engine.settle();
+    (void)builder.build(log, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    const std::size_t measured_first = text.measurements;
+    // act the log settles again, which re-evaluates the source and rebuilds the window (§7.3, §8.2)
+    log.set_line_height(21.0f);
+    (void)engine.settle();
+    (void)builder.build(log, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    // assert rows were measured again, which is what a rebuilt window needs (§8.2, AD-13)
+    EXPECT_GT(text.measurements, measured_first);
+}
+
+TEST(VectorCodegen, ADoubledRowHeightResizesTheScrollbarThumb) {
+    // arrange a log laid out at one row height, with the bar visible so its geometry is recorded (§8, §8.2)
+    std::vector<Task> tasks;
+    tasks.reserve(100);
+    for (std::size_t index = 0; index < 100; index++)
+        tasks.push_back(Task{.key = "task" + std::to_string(index), .title = "line " + std::to_string(index)});
+    BindingEngine engine;
+    CountingTextEngine text;
+    ScrollLog log(&engine, &text);
+    log.set_line_height(20.0f);
+    log.set_tasks(tasks);
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
+    SceneBuilder builder;
+    (void)engine.settle();
+    (void)builder.build(log, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    // act the bound row height settles at double the value, which is what a form resize does (§7.3, AD-13)
+    log.set_line_height(40.0f);
+    (void)engine.settle();
+    const std::shared_ptr<const FrameScene> scene = builder.build(log, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    // the thumb is the one rounded command, and its height is the viewport share of the content (§6.1)
+    std::vector<float> thumb_heights;
+    for (const DrawCommand& command : scene->commands())
+        if (command.kind() == DrawCommandKind::RoundedRect)
+            thumb_heights.push_back(command.rect_geometry().rect.height);
+    // assert the thumb is shorter, because the content the extent cache reports is twice as tall (§8.2)
+    ASSERT_EQ(thumb_heights.size(), 1u);
+    EXPECT_LT(thumb_heights.at(0), 120.0f);
 }

@@ -1,7 +1,5 @@
 #include "devrt/ir.h"
 
-#include <algorithm>
-
 namespace albor::devrt
 {
     namespace

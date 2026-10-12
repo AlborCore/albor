@@ -49,6 +49,15 @@ namespace albor
 
         // the corner radius a plate is drawn with, which is what makes a hover state read as a plate (§6.1)
         float corner_radius = 6.0f;
+
+        // how wide a scrollbar is drawn, which overlays the content rather than insetting it (§6.1)
+        float scrollbar_extent = 10.0f;
+
+        // the smallest thumb a scrollbar draws, which is what keeps a very long content grabbable (§6.1)
+        float scrollbar_thumb_minimum = 24.0f;
+
+        // how far one wheel notch moves the content, which is the policy the scroll container owns (§8.2, §8.3)
+        float scroll_line_extent = 40.0f;
     };
 
     // the colours a theme resolves by role, which is what lets a widget ask instead of carry a literal (§6.1)
@@ -74,6 +83,12 @@ namespace albor
 
         // the text colour of a plain label, per state, which a label has no press of its own (§6.1)
         Color label_foreground[4] = {Color{0.92f, 0.94f, 0.96f, 1.0f}, Color{0.96f, 0.97f, 0.99f, 1.0f}, Color{0.92f, 0.94f, 0.96f, 1.0f}, Color{0.58f, 0.60f, 0.64f, 1.0f}};
+
+        // the groove a scrollbar thumb rides in, per state, which is what shows the travel (§6.1)
+        Color scrollbar_track[4] = {Color{0.16f, 0.18f, 0.22f, 0.0f}, Color{0.18f, 0.20f, 0.24f, 0.0f}, Color{0.16f, 0.18f, 0.22f, 0.0f}, Color{0.24f, 0.26f, 0.30f, 0.0f}};
+
+        // the thumb of a scrollbar, per state, which is what the user drags (§6.1)
+        Color scrollbar_thumb[4] = {Color{0.42f, 0.46f, 0.52f, 1.0f}, Color{0.58f, 0.62f, 0.68f, 1.0f}, Color{0.72f, 0.76f, 0.82f, 1.0f}, Color{0.28f, 0.30f, 0.34f, 1.0f}};
     };
 
     // the theme that binds a palette to control metrics, which the widget base resolves through (§6.1, §8.2)
@@ -160,6 +175,21 @@ namespace albor
 
         // replace the amount one key press moves a slider value (§10.1)
         void set_slider_step(float value);
+
+        // replace how wide a scrollbar is drawn, which is the gutter a scroll container reserves (§6.1)
+        void set_scrollbar_extent(float value);
+
+        // replace the smallest thumb a scrollbar draws (§6.1)
+        void set_scrollbar_thumb_minimum(float value);
+
+        // replace how far one wheel notch moves the content, which is the policy the scroll container owns (§8.2, §8.3)
+        void set_scroll_line_extent(float value);
+
+        // replace one state of the scrollbar groove, which is what the travel is drawn with (§6.1)
+        void set_scrollbar_track(ControlState state, Color value);
+
+        // replace one state of the scrollbar thumb, which is what the user drags (§6.1)
+        void set_scrollbar_thumb(ControlState state, Color value);
 
     private:
         // the colours, which the overrides above write (§6.1)

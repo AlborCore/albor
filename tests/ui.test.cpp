@@ -67,9 +67,8 @@ namespace
             arranges++;
             // the assigned bounds are recorded before the children see them (§8.2)
             m_bounds = bounds;
-            m_measured_size = Size{.width = bounds.width, .height = bounds.height};
             for (const auto& child : children())
-                child->arrange(bounds);
+                arrange_if_changed(*child, bounds);
         }
 
         void render(RenderContext& context) override {
@@ -549,13 +548,100 @@ TEST(UiNode, ArrangingAssignsTheBounds) {
     EXPECT_EQ(node.arranges, 1u);
 }
 
-TEST(UiNode, ArrangingFollowsTheMeasuredSize) {
+TEST(UiNode, ArrangingLeavesTheMeasuredSizeAlone) {
     // arrange
     TestNode node;
+    Size size{};
+    node.measure(SizeConstraints::tight(Size{30.0f, 40.0f}), size);
     // act
     node.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{70.0f, 80.0f}));
+    // assert the measure result stands, because a container distributes leftover against it (§8.2)
+    EXPECT_FLOAT_EQ(node.measured_size().height, 40.0f);
+}
+
+TEST(UiNode, AnInvalidateLayoutMarksBothPasses) {
+    // arrange
+    TestNode node;
+    node.clear_dirty();
+    // act
+    node.invalidate_layout();
     // assert
-    EXPECT_FLOAT_EQ(node.measured_size().height, 80.0f);
+    EXPECT_TRUE(node.measure_dirty());
+    EXPECT_TRUE(node.arrange_dirty());
+}
+
+TEST(UiNode, AnInvalidateArrangeMarksOnlyTheArrange) {
+    // arrange
+    TestNode node;
+    node.clear_dirty();
+    // act
+    node.invalidate_arrange();
+    // assert a change of position reuses the extent the last measure settled on (§8.2)
+    EXPECT_FALSE(node.measure_dirty());
+    EXPECT_TRUE(node.arrange_dirty());
+}
+
+TEST(UiNode, AnInvalidateArrangeWalksUpToTheRoot) {
+    // arrange
+    TestNode root;
+    auto child = std::make_unique<TestNode>();
+    TestNode* child_ptr = child.get();
+    root.add_child(std::move(child));
+    root.clear_dirty();
+    int scheduled = 0;
+    root.set_invalidation_handler([&scheduled] { scheduled++; });
+    // act
+    child_ptr->invalidate_arrange();
+    // assert the request reaches the root, which is what owns the frame scheduling (§8.2)
+    EXPECT_TRUE(root.arrange_dirty());
+    // assert the root schedules exactly one frame for a change this deep, so a frame is not queued twice (§6.1)
+    EXPECT_EQ(scheduled, 1);
+}
+
+TEST(UiNode, ACleanChildThatWouldNotMoveKeepsItsPlacement) {
+    // arrange
+    TestNode parent;
+    auto child = std::make_unique<TestNode>();
+    TestNode* child_ptr = child.get();
+    parent.add_child(std::move(child));
+    const Rect bounds = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f});
+    parent.arrange(bounds);
+    parent.clear_dirty();
+    // act
+    parent.arrange(bounds);
+    // assert the child was not arranged again, because nothing about it changed (§8.2)
+    EXPECT_EQ(child_ptr->arranges, 1u);
+}
+
+TEST(UiNode, AChildWhoseBoundsWouldMoveIsArrangedAgain) {
+    // arrange
+    TestNode parent;
+    auto child = std::make_unique<TestNode>();
+    TestNode* child_ptr = child.get();
+    parent.add_child(std::move(child));
+    parent.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    parent.clear_dirty();
+    // act
+    parent.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{70.0f, 50.0f}));
+    // assert the moved rectangle is what the child is owed, even though it asked for nothing (§8.2)
+    EXPECT_EQ(child_ptr->arranges, 2u);
+    EXPECT_FLOAT_EQ(child_ptr->bounds().width, 70.0f);
+}
+
+TEST(UiNode, ADirtyChildIsArrangedEvenWhenItWouldNotMove) {
+    // arrange
+    TestNode parent;
+    auto child = std::make_unique<TestNode>();
+    TestNode* child_ptr = child.get();
+    parent.add_child(std::move(child));
+    const Rect bounds = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f});
+    parent.arrange(bounds);
+    parent.clear_dirty();
+    child_ptr->invalidate_arrange();
+    // act
+    parent.arrange(bounds);
+    // assert the child asked for a pass, so the parent owes it one (§8.2)
+    EXPECT_EQ(child_ptr->arranges, 2u);
 }
 
 TEST(UiNode, ArrangingPushesTheSameBoundsIntoChildren) {
@@ -1059,6 +1145,44 @@ TEST(SceneRecorder, ARoundedClipRecordsItsRectangle) {
     EXPECT_FLOAT_EQ(recorder.clip().height, 40.0f);
 }
 
+TEST(SceneRecorder, ANestedClipNarrowsRatherThanWidens) {
+    // arrange
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    // act
+    recorder.clip_rect(Rect::from_origin_size(Point{100.0f, 100.0f}, Size{200.0f, 200.0f}));
+    recorder.clip_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{800.0f, 600.0f}));
+    // assert the inner container cannot hand content back to the area its parent cut away (§6.2)
+    EXPECT_EQ(recorder.clip(), (Rect::from_origin_size(Point{100.0f, 100.0f}, Size{200.0f, 200.0f})));
+}
+
+TEST(SceneRecorder, ANestedClipStampsTheOverlapOnEveryCommand) {
+    // arrange
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    recorder.save();
+    recorder.clip_rect(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{100.0f, 100.0f}));
+    // act
+    recorder.draw_rect(Rect::from_origin_size(Point{20.0f, 20.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    recorder.clip_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{800.0f, 600.0f}));
+    recorder.draw_rect(Rect::from_origin_size(Point{300.0f, 300.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // assert the second command carries the overlap, so stage two scissors it inside the first clip (§6.2)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_EQ(scene->commands().size(), 2u);
+    EXPECT_EQ(scene->commands().at(1).clip(), (Rect::from_origin_size(Point{10.0f, 10.0f}, Size{100.0f, 100.0f})));
+}
+
+TEST(SceneRecorder, AClipThatCutsEverythingAwayCullsTheCommand) {
+    // arrange
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    recorder.save();
+    recorder.clip_rect(Rect::from_origin_size(Point{100.0f, 100.0f}, Size{50.0f, 50.0f}));
+    // act two clips with no overlap leave nothing inside, which is what an empty clip means (§6.2)
+    recorder.clip_rect(Rect::from_origin_size(Point{300.0f, 300.0f}, Size{50.0f, 50.0f}));
+    recorder.draw_rect(Rect::from_origin_size(Point{100.0f, 100.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // assert a command under an empty clip can put no ink down, so the recorder culls it (§6.2)
+    EXPECT_TRUE(recorder.clip().empty());
+    EXPECT_TRUE(recorder.scene()->commands().empty());
+}
+
 TEST(SceneRecorder, AnEmptyRectangleIsNotRecorded) {
     // arrange
     SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
@@ -1334,6 +1458,59 @@ TEST(SceneBuilder, BuildingProducesAnImmutableScene) {
     // assert
     ASSERT_NE(scene, nullptr);
     EXPECT_FLOAT_EQ(scene->metrics().logical_size.width, 800.0f);
+}
+
+TEST(SceneBuilder, AChangeOfPositionSkipsTheMeasurePass) {
+    // arrange
+    SceneBuilder builder;
+    TestNode root;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
+    // the first build settles the tree, so the counts below read from a measured state (§8.2)
+    std::shared_ptr<const FrameScene> scene = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    const std::size_t measured = root.measures;
+    const std::size_t arranged = root.arranges;
+    root.invalidate_arrange();
+    // act
+    scene = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    // assert the extent did not change, so the measure pass is skipped while the tree is placed again (§8.2)
+    ASSERT_NE(scene, nullptr);
+    EXPECT_EQ(root.measures, measured);
+    EXPECT_EQ(root.arranges, arranged + 1);
+}
+
+TEST(SceneBuilder, AChangeOfExtentRunsBothPasses) {
+    // arrange
+    SceneBuilder builder;
+    TestNode root;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
+    // the first build settles the tree, so the counts below read from a measured state (§8.2)
+    std::shared_ptr<const FrameScene> scene = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    const std::size_t measured = root.measures;
+    const std::size_t arranged = root.arranges;
+    root.invalidate_layout();
+    // act
+    scene = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    // assert a new extent asks for the measure as well, because the placement follows it (§8.2)
+    ASSERT_NE(scene, nullptr);
+    EXPECT_EQ(root.measures, measured + 1);
+    EXPECT_EQ(root.arranges, arranged + 1);
+}
+
+TEST(SceneBuilder, ACleanTreeIsNeitherMeasuredNorArranged) {
+    // arrange
+    SceneBuilder builder;
+    TestNode root;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
+    // the first build settles the tree, so the counts below read from a measured state (§8.2)
+    std::shared_ptr<const FrameScene> scene = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    const std::size_t measured = root.measures;
+    const std::size_t arranged = root.arranges;
+    // act
+    scene = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    // assert a second build at the same metrics asks neither pass of anything (§8.2)
+    ASSERT_NE(scene, nullptr);
+    EXPECT_EQ(root.measures, measured);
+    EXPECT_EQ(root.arranges, arranged);
 }
 
 TEST(SceneBuilder, BuildingNumbersTheRootFirst) {

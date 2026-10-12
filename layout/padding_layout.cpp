@@ -38,10 +38,8 @@ namespace albor
     }
 
     void PaddingLayout::arrange(const Rect& bounds) {
-        // the assigned bounds replace the previous ones (§8.2)
+        // the assigned bounds replace the previous ones, while the measured size stands as the measure settled it (§8.2)
         m_bounds = bounds;
-        // the measured size follows the assigned one, so a later measure starts from the truth (§8.2)
-        m_measured_size = Size{.width = bounds.width, .height = bounds.height};
         // a wrapper with no child arranges nothing, because there is no child to inset (§8.2)
         UiNode* child = child_at(0);
         if (child == nullptr)
@@ -53,7 +51,7 @@ namespace albor
         const float right = std::min(m_padding.right, std::max(0.0f, bounds.width - left));
         const float bottom = std::min(m_padding.bottom, std::max(0.0f, bounds.height - top));
         // the child fills whatever the insets leave, which is the arrange phase of §8.2
-        child->arrange(Rect::from_origin_size(Point{.x = bounds.x + left, .y = bounds.y + top}, Size{.width = bounds.width - left - right, .height = bounds.height - top - bottom}));
+        arrange_if_changed(*child, Rect::from_origin_size(Point{.x = bounds.x + left, .y = bounds.y + top}, Size{.width = bounds.width - left - right, .height = bounds.height - top - bottom}));
     }
 
     void PaddingLayout::set_padding(float uniform) {

@@ -26,6 +26,8 @@ namespace
             return NSAccessibilityStaticTextRole;
         case albor::SemanticRole::Slider:
             return NSAccessibilitySliderRole;
+        case albor::SemanticRole::ScrollView:
+            return NSAccessibilityScrollAreaRole;
         case albor::SemanticRole::Canvas:
         case albor::SemanticRole::Group:
         case albor::SemanticRole::ListItem:
@@ -56,6 +58,19 @@ namespace
         // the element assistive technology holds, which the bridge owns (§10.2)
         AlborAccessibilityElement* element = nil;
     };
+
+    // hand out the elements published as the children of one, which is what the hierarchy query answers (§10.2)
+    NSArray* child_elements_of(const std::vector<Published>& published, const albor::SemanticTree& tree, std::size_t index) {
+        // the children are collected in tree order, which is the order a reader announces them (§10.2)
+        NSMutableArray* children = [NSMutableArray array];
+        // the flat tree carries the shape in its parent links, so every node is scanned (§10.1)
+        for (std::size_t child : tree.children_of(index)) {
+            // a child that was not published has no element, which the tree never produces for a child it linked (§10.2)
+            if (child < published.size())
+                [children addObject:published[child].element];
+        }
+        return children;
+    }
 
 } // namespace
 
@@ -168,11 +183,18 @@ namespace albor::accessibility::platform
             // the conforming object the protocol is answered through, which objective c requires (§10.2)
             AlborAccessibilityBridge* m_owner = [[AlborAccessibilityBridge alloc] init];
 
+            MacosAccessibilityAdapter() {
+                // the bridge is told how to answer a child query, or every element reports no children (§10.2)
+                m_owner.children_provider = ^NSArray*(std::size_t index) {
+                    return child_elements_of(m_published, m_tree, index);
+                };
+            }
+
             void attach_window(NativeWindowHandle window) override {
+                // the old publication is dropped first, because the window still points at its elements (§10.2)
+                clear();
                 // the window this bridge publishes into, which the caller owns and the bridge does not (§5.2)
                 m_window = (__bridge NSWindow*)window.object();
-                // the publication is dropped, because a new window starts with nothing published (§10.2)
-                clear();
             }
 
             void publish(const SemanticTree& tree) override {
@@ -195,13 +217,15 @@ namespace albor::accessibility::platform
                 }
                 // the count is what a coverage test asserts on (§10.2)
                 m_count = m_published.size();
+                // the tree is handed to the window, which is how assistive technology reaches it at all (§10.2)
+                attach_to_window();
             }
 
             void detach_window() override {
-                // the window reference is dropped first, because the native window is going away (§5.2)
-                m_window = nil;
-                // the publication goes with it, because assistive technology must not read a dead tree (§10.2)
+                // the publication goes first, because the window must not keep elements that are going away (§10.2)
                 clear();
+                // the window reference is dropped last, because clearing empties the window it still points at (§5.2)
+                m_window = nil;
             }
 
             [[nodiscard]] std::size_t published_node_count() const override { return m_count; }
@@ -209,6 +233,8 @@ namespace albor::accessibility::platform
         private:
             // drop every publication, which a rebuild and a detach both need (§10.2)
             void clear() {
+                // the window is emptied before the elements go, because a reader must not see a released element (§10.2)
+                detach_from_window();
                 // the set is cleared, which releases each element and each node copy (§10.2)
                 m_published.clear();
                 // the tree goes with it, because a cleared bridge publishes nothing (§10.2)
@@ -228,6 +254,47 @@ namespace albor::accessibility::platform
 
             // how many nodes the last publication held, which a coverage test reads (§10.2)
             std::size_t m_count = 0;
+
+            // the root index of the published tree, which is the node assistive technology enters by (§10.1)
+            [[nodiscard]] std::size_t root_index() const {
+                // the root is the node with no parent, which is the only one a tree has (§10.1)
+                for (std::size_t index = 0; index < m_tree.size(); index++)
+                    if (m_tree.parent_of(index) == SemanticTree::NO_PARENT)
+                        return index;
+                // a tree with no root has nothing to announce, which is the quiet default (§10.2)
+                return SemanticTree::NO_PARENT;
+            }
+
+            // hand the published root to the window, which is what makes the tree reachable (§10.2)
+            void attach_to_window() {
+                // a bridge with no window publishes into nothing, which is the quiet default (§10.2)
+                NSView* view = content_view();
+                if (view == nil)
+                    return;
+                // an empty publication leaves the view empty, because a reader must not see a dead tree (§10.2)
+                const std::size_t root = root_index();
+                if (root == SemanticTree::NO_PARENT || root >= m_published.size()) {
+                    view.accessibilityChildren = @[];
+                    return;
+                }
+                // the content view announces the published root, so the reader walks the tree from there (§10.2)
+                view.accessibilityChildren = @[m_published[root].element];
+            }
+
+            // take the tree back out of the window, which a rebuild and a detach both need (§10.2)
+            void detach_from_window() {
+                // a bridge with no window has nothing to empty, which is the quiet default (§10.2)
+                NSView* view = content_view();
+                if (view == nil)
+                    return;
+                // the view is emptied, because the elements it held are about to be released (§10.2)
+                view.accessibilityChildren = @[];
+            }
+
+            // the view the window announces, which is where the published tree is handed to assistive technology (§10.2)
+            [[nodiscard]] NSView* content_view() const {
+                return m_window == nil ? nil : m_window.contentView;
+            }
         };
     } // namespace
 

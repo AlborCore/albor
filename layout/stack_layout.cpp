@@ -23,13 +23,11 @@ namespace albor
     }
 
     void StackLayout::arrange(const Rect& bounds) {
-        // the assigned bounds replace the previous ones (§8.2)
+        // the assigned bounds replace the previous ones, while the measured size stands as the measure settled it (§8.2)
         m_bounds = bounds;
-        // the measured size follows the assigned one, so a later measure starts from the truth (§8.2)
-        m_measured_size = Size{.width = bounds.width, .height = bounds.height};
         for (const auto& child : children()) {
             // every child receives the whole of the stack, which is what makes them overlap (§8.2)
-            child->arrange(bounds);
+            arrange_if_changed(*child, bounds);
         }
     }
 } // namespace albor

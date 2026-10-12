@@ -25,5 +25,8 @@ target_link_libraries(albor-automation-objects PUBLIC albor-commands albor-seman
 # the linkable name the consumers use, which carries every unit so a cycle inside the library still resolves (§10.3)
 add_library(albor-automation INTERFACE)
 
-# the objects join the link line whole, which is what makes the cycle resolvable (§10.3)
-target_link_libraries(albor-automation INTERFACE $<TARGET_OBJECTS:albor-automation-objects>)
+# the object library is named so a consumer built by name rather than through all still has a rule that
+# produces its units; $<TARGET_OBJECTS:> alone puts them on the link line without that dependency. an
+# interface library does not forward an object library's units, so the two forms carry different halves
+# and neither duplicates what the other adds (§10.3)
+target_link_libraries(albor-automation INTERFACE albor-automation-objects $<TARGET_OBJECTS:albor-automation-objects>)

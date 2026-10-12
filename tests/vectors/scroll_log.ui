@@ -1,0 +1,21 @@
+import task;
+
+// the virtualized repeater fixture, which proves a repeat under a viewport builds only the window (§8.2, AD-13)
+
+component ScrollLog {
+    inout property<vector<Task>> tasks;
+    inout property<float> line_height;
+
+    ScrollView {
+        viewport_width: 240px;
+        viewport_height: 160px;
+        row_height: line_height;
+        overscan: 40px;
+        scrollbar: Scrollbar.on;
+        offset: line_height;
+
+        Repeat(task in tasks) {
+            Label { text: task.title; }
+        }
+    }
+}

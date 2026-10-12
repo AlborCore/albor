@@ -36,6 +36,8 @@ namespace albor::automation
                 return "listitem";
             case SemanticRole::Group:
                 return "group";
+            case SemanticRole::ScrollView:
+                return "scroll_view";
             case SemanticRole::Window:
                 return "window";
             }

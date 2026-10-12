@@ -39,13 +39,13 @@ namespace albor
     }
 
     void SceneRecorder::clip_rect(const Rect& rect) {
-        // the clip is stamped rather than intersected, because a command carries the clip it draws under (§6.2)
-        m_clip = rect;
+        // the clip narrows rather than replaces, because a nested clip may only ever cut more away (§6.2)
+        m_clip = m_clip.intersect(rect);
     }
 
     void SceneRecorder::clip_rounded_rect(const Rect& rect, float) {
         // a rounded clip reduces to its rectangle, which is what the replay scissors to (§6.2)
-        m_clip = rect;
+        m_clip = m_clip.intersect(rect);
     }
 
     const Rect& SceneRecorder::clip() const {
@@ -163,10 +163,12 @@ namespace albor
     }
 
     void SceneRecorder::record(DrawCommand command) {
+        // the clip is stamped first, because a command carries the clip it was recorded under (§6.2)
+        command.set_clip(m_clip);
         // the command is refused when it would draw nothing, so the scene carries no dead draw (§6.2)
         if (command.draws_nothing())
             return;
-        // the scene holds the recorded commands in paint order, which is what stage two replays (§6.1, AD-18)
+        // the scene holds the recorded commands in paint order, which is what stage two replays (§6.1)
         m_commands.push_back(std::move(command));
     }
 
@@ -198,11 +200,18 @@ namespace albor
         const bool resized = metrics != m_built_metrics;
         // the metrics of this build are remembered, so the next one can tell whether the window moved (§8.2)
         m_built_metrics = metrics;
-        // the layout passes run when something asked for them, and a resize is such an ask (§8.2)
-        if (root.layout_dirty() || resized) {
+        // the measure pass runs when something asked for an extent, and a resize is such an ask (§8.2)
+        const bool measure = root.measure_dirty() || resized;
+        // the arrange pass runs when the measure ran or something only asked to move, because both place (§8.2)
+        const bool arrange = measure || root.arrange_dirty();
+        // the measure settles what every node asks for, and it travels top down from the window (§8.2)
+        if (measure) {
             // the root is measured against the window, which is the whole of the available space (§8.2)
             Size measured{};
             root.measure(SizeConstraints::tight(metrics.logical_size), measured);
+        }
+        // the arrange places every node, and it reuses the last measure wherever the extent did not change (§8.2)
+        if (arrange) {
             // the root is arranged to the full window, because a ui tree covers its surface (§8.2)
             root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size));
         }

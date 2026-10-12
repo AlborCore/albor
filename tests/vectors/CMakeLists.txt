@@ -21,5 +21,8 @@ albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/vecto
 # the facade units are generated through the shared rule, with the manifest that declares the records it names (§11.2, AD-17)
 albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/record_panel.ui" --manifest "${CMAKE_CURRENT_SOURCE_DIR}/task.manifest")
 
+# the virtualized facade is generated with the manifest, which declares the records it repeats (§8.2, AD-13)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/scroll_log.ui" --manifest "${CMAKE_CURRENT_SOURCE_DIR}/task.manifest")
+
 # the generated header reaches the test binary, because the suite includes the facade it exercises (§11.3)
 target_include_directories(albor-tests PRIVATE "${CMAKE_BINARY_DIR}/generated/albor-vector-fixture")

@@ -131,4 +131,29 @@ namespace albor
         // the radius is one value because a plate has no per corner override in this first theme (§6.1)
         m_metrics.corner_radius = value;
     }
+
+    void Theme::set_scrollbar_extent(float value) {
+        // the width is one value because a bar has the same thickness on both edges (§6.1)
+        m_metrics.scrollbar_extent = value;
+    }
+
+    void Theme::set_scrollbar_thumb_minimum(float value) {
+        // the floor is one value because a thumb has no per state minimum (§6.1)
+        m_metrics.scrollbar_thumb_minimum = value;
+    }
+
+    void Theme::set_scroll_line_extent(float value) {
+        // the policy is one value because every notch moves the content the same distance (§8.2, §8.3)
+        m_metrics.scroll_line_extent = value;
+    }
+
+    void Theme::set_scrollbar_track(ControlState state, Color value) {
+        // the entry is written by its state index, which is what the resolver reads (§6.1)
+        m_palette.scrollbar_track[state_index(state)] = value;
+    }
+
+    void Theme::set_scrollbar_thumb(ControlState state, Color value) {
+        // the entry is written by its state index, which is what the resolver reads (§6.1)
+        m_palette.scrollbar_thumb[state_index(state)] = value;
+    }
 } // namespace albor

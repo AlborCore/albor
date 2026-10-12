@@ -49,6 +49,9 @@ namespace albor
         // build a rectangle from an origin and an extent
         [[nodiscard]] static Rect from_origin_size(Point origin, Size size);
 
+        // build the overlap of two rectangles, which is what narrowing a clip to a rectangle settles for (§6.2)
+        [[nodiscard]] Rect intersect(const Rect& other) const;
+
         // compare two rectangles component wise
         friend bool operator==(const Rect& lhs, const Rect& rhs) = default;
     };

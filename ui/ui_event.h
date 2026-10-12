@@ -71,6 +71,18 @@ namespace albor
         // the delete key, which removes the selected content
         Delete,
 
+        // the home key, which reaches the start of the content a viewport scrolls
+        Home,
+
+        // the end key, which reaches the end of the content a viewport scrolls
+        End,
+
+        // the page up key, which reaches one viewport back
+        PageUp,
+
+        // the page down key, which reaches one viewport forward
+        PageDown,
+
         // the first letter key, which a plain key event names when no modifier is held (§18.5)
         A,
 
@@ -238,6 +250,16 @@ namespace albor
         friend bool operator==(const Modifiers& lhs, const Modifiers& rhs) = default;
     };
 
+    // the unit a wheel delta arrives in, which the platform knows and the scroll container converts (§8.3)
+    enum class ScrollPrecision
+    {
+        // the delta counts notches, which is what a notched wheel with momentum already applied reports (§8.3)
+        Line,
+
+        // the delta counts points, which is what a trackpad or a precision wheel reports (§8.3)
+        Point
+    };
+
     // one normalized input event, which platform adapters produce and the tree dispatches (§8.3)
     struct Event
     {
@@ -252,6 +274,9 @@ namespace albor
 
         // the wheel delta a wheel event carries, which is zero for every other kind
         float scroll = 0.0f;
+
+        // the unit the wheel delta arrives in, which is what lets a scroll container own the conversion (§8.3)
+        ScrollPrecision precision = ScrollPrecision::Line;
 
         // the key a keyboard event carries, which is None for every other kind (§8.3)
         Key key = Key::None;

@@ -61,6 +61,13 @@ endif()
 if(APPLE)
     target_sources(albor-tests PRIVATE "./conditional/render_skia.test.cpp")
     target_link_libraries(albor-tests PRIVATE albor-render-skia)
+
+    # the accessibility suite walks the application kit hierarchy the macos bridge publishes into, because the
+    # role mapping is only reachable once the bridge hands its tree to that hierarchy (§10.2, AD-16). the suite is
+    # an objective c++ source and links the framework itself, because the bridge keeps its platform link private (§3.2)
+    target_sources(albor-tests PRIVATE "./conditional/accessibility_role.macos.mm")
+    set_source_files_properties("./conditional/accessibility_role.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(albor-tests PRIVATE "-framework AppKit" "-framework Foundation")
 endif()
 
 

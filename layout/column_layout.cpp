@@ -34,10 +34,8 @@ namespace albor
     }
 
     void ColumnLayout::arrange(const Rect& bounds) {
-        // the assigned bounds replace the previous ones (§8.2)
+        // the assigned bounds replace the previous ones, while the measured size stands as the measure settled it (§8.2)
         m_bounds = bounds;
-        // the measured size follows the assigned one, so a later measure starts from the truth (§8.2)
-        m_measured_size = Size{.width = bounds.width, .height = bounds.height};
         // the leading inset is capped at the extent, so a padding wider than the column still keeps the children inside (§8.2)
         const float left = std::min(m_padding, bounds.width);
         const float top = std::min(m_padding, bounds.height);
@@ -106,7 +104,7 @@ namespace albor
             // the horizontal extent is the whole column for a stretching child and what it asked for otherwise (§8.2)
             const float width = horizontal == Align::Stretch ? inner.width : child_width;
             // the child receives the rectangle its two alignments resolved to (§8.2)
-            child->arrange(Rect::from_origin_size(Point{.x = child_x, .y = child_y}, Size{.width = width, .height = height}));
+            arrange_if_changed(*child, Rect::from_origin_size(Point{.x = child_x, .y = child_y}, Size{.width = width, .height = height}));
             // the pen moves past the child just placed, so the next one starts after it (§8.2)
             offset += height;
             placed++;

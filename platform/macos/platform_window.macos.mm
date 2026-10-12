@@ -95,6 +95,18 @@ namespace
         case 51:
         case 117:
             return albor::Key::Delete;
+        // the home key, which a scroll viewport answers with its start (§8.3)
+        case 115:
+            return albor::Key::Home;
+        // the page up key, which scrolls back one viewport (§8.3)
+        case 116:
+            return albor::Key::PageUp;
+        // the end key, which a scroll viewport answers with its end (§8.3)
+        case 119:
+            return albor::Key::End;
+        // the page down key, which scrolls forward one viewport (§8.3)
+        case 121:
+            return albor::Key::PageDown;
         // the first function key
         case 122:
             return albor::Key::F1;
@@ -207,6 +219,8 @@ namespace
     message.kind = albor::EventKind::Wheel;
     message.position = [self logicalPointOf:event];
     message.scroll = static_cast<float>(event.scrollingDeltaY);
+    // the unit travels with the delta, because a notched wheel counts notches and a trackpad counts points (§8.3)
+    message.precision = event.hasPreciseScrollingDeltas ? albor::ScrollPrecision::Point : albor::ScrollPrecision::Line;
     self.listener->on_platform_event(message);
 }
 

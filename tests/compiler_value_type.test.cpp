@@ -68,7 +68,6 @@ TEST(ValueType, ParameterizedElementIsSharedRatherThanCopied) {
     // arrange, act
     const ValueType element = ValueType::parameterized(TypeKind::Snapshot, scalar(TypeKind::Int));
     // assert
-    // two parameter types over the same element are equal, because the element is what they describe (§11.1)
     const ValueType same = ValueType::parameterized(TypeKind::Snapshot, scalar(TypeKind::Int));
     EXPECT_TRUE(element.equals(same));
     EXPECT_FALSE(element.equals(ValueType::parameterized(TypeKind::Vector, scalar(TypeKind::Int))));
@@ -88,7 +87,6 @@ TEST(ValueType, ComparesTheElementsOfAParameterForm) {
     const ValueType strings = ValueType::parameterized(TypeKind::Vector, scalar(TypeKind::String));
     const ValueType ints = ValueType::parameterized(TypeKind::Vector, scalar(TypeKind::Int));
     // act, assert
-    // a vector is equal only to a vector over an equal element (§11.1)
     EXPECT_TRUE(strings.equals(ValueType::parameterized(TypeKind::Vector, scalar(TypeKind::String))));
     EXPECT_FALSE(strings.equals(ints));
 }
@@ -137,7 +135,6 @@ TEST(BuiltinConversion, RefusesAnyOtherName) {
     // arrange
     TypeKind kind = TypeKind::Bool;
     // act, assert
-    // the language defines four conversions and no others (§11.1)
     EXPECT_FALSE(builtin_conversion_target("length", kind));
     EXPECT_FALSE(builtin_conversion_target("color", kind));
     EXPECT_FALSE(builtin_conversion_target("", kind));
@@ -148,7 +145,6 @@ TEST(BuiltinConversion, EveryDefinedNameIsReachable) {
     // arrange, act
     std::size_t found = 0;
     // assert
-    // the rule set and the parser must agree, so each written name resolves (§11.1)
     for (const std::string& name : CONVERSION_NAMES) {
         TypeKind kind = TypeKind::Error;
         if (builtin_conversion_target(name, kind))
@@ -180,7 +176,6 @@ TEST(ConversionRules, OnlyANumberOrTextMayBecomeANumber) {
 
 TEST(ConversionRules, EveryScalarMayBecomeABool) {
     // arrange, act, assert
-    // presence is a reasonable reading of any value, so every scalar converts (§11.1)
     EXPECT_TRUE(conversion_allowed(TypeKind::Bool, TypeKind::Bool));
     EXPECT_TRUE(conversion_allowed(TypeKind::String, TypeKind::Bool));
     EXPECT_TRUE(conversion_allowed(TypeKind::Color, TypeKind::Bool));
@@ -189,7 +184,6 @@ TEST(ConversionRules, EveryScalarMayBecomeABool) {
 
 TEST(ConversionRules, TheErrorTypeConvertsToAndFromAnything) {
     // arrange, act, assert
-    // a value whose type failed has nothing left to report, so a conversion over it is silent (§11.1)
     EXPECT_TRUE(conversion_allowed(TypeKind::Error, TypeKind::String));
     EXPECT_TRUE(conversion_allowed(TypeKind::Bool, TypeKind::Error));
     EXPECT_TRUE(conversion_allowed(TypeKind::Error, TypeKind::Error));
@@ -197,7 +191,6 @@ TEST(ConversionRules, TheErrorTypeConvertsToAndFromAnything) {
 
 TEST(ConversionRules, NoTargetExistsBeyondTheFourKinds) {
     // arrange, act, assert
-    // a colour or a length has no conversion form, so both are refused (§11.1)
     EXPECT_FALSE(conversion_allowed(TypeKind::Int, TypeKind::Color));
     EXPECT_FALSE(conversion_allowed(TypeKind::Int, TypeKind::Length));
     EXPECT_FALSE(conversion_allowed(TypeKind::Bool, TypeKind::Void));
@@ -212,7 +205,6 @@ TEST(Assignability, MatchesExactlyWhenTheTypesAgree) {
 
 TEST(Assignability, NeverWidensNumericsImplicitly) {
     // arrange, act, assert
-    // an integer does not become a float and a float does not become an integer without a conversion (§11.1)
     EXPECT_FALSE(assignable(scalar(TypeKind::Int), scalar(TypeKind::Float)));
     EXPECT_FALSE(assignable(scalar(TypeKind::Float), scalar(TypeKind::Int)));
 }
@@ -227,7 +219,6 @@ TEST(Assignability, RefusesEveryOtherMismatch) {
 
 TEST(Assignability, ALengthAssignsIntoAFloatWhereTheDensityApplies) {
     // arrange, act, assert
-    // a length is a pixel count, so it fills a float scaled by the surface density (§11.1, AD-27)
     EXPECT_TRUE(assignable(scalar(TypeKind::Length), scalar(TypeKind::Float)));
     EXPECT_FALSE(assignable(scalar(TypeKind::Length), scalar(TypeKind::Int)));
 }
@@ -272,7 +263,6 @@ TEST(ElementCatalog, HoldsEveryBuiltinWidget) {
     // arrange, act
     const ElementCatalog catalog = ElementCatalog::with_builtins();
     // assert
-    // the builtin set is closed, so each of these resolves (§11.1, §8)
     EXPECT_TRUE(catalog.find("Column") != nullptr);
     EXPECT_TRUE(catalog.find("Row") != nullptr);
     EXPECT_TRUE(catalog.find("Padding") != nullptr);
@@ -289,7 +279,6 @@ TEST(ElementCatalog, ReportsAnAbsentElementType) {
     // arrange, act
     const ElementCatalog catalog = ElementCatalog::with_builtins();
     // assert
-    // a name the framework does not define is only valid when a manifest declares it (§11.1, §11.2, AD-17)
     EXPECT_TRUE(catalog.find("WaveformView") == nullptr);
     EXPECT_TRUE(catalog.find("") == nullptr);
 }
@@ -298,7 +287,6 @@ TEST(ElementCatalog, HoldsTheContainersAndTheLeavesApart) {
     // arrange, act
     const ElementCatalog catalog = ElementCatalog::with_builtins();
     // assert
-    // a container takes children and a leaf does not, which is what the checker enforces (§8)
     EXPECT_TRUE(catalog.find("Column")->accepts_children);
     EXPECT_TRUE(catalog.find("Padding")->accepts_children);
     EXPECT_TRUE(catalog.find("Stack")->accepts_children);
@@ -314,7 +302,6 @@ TEST(ElementCatalog, ScalesTheLengthPropertiesAndNothingElse) {
     // arrange, act
     const ElementCatalog catalog = ElementCatalog::with_builtins();
     // assert
-    // a length scales with the surface density and a text or a colour does not (§11.1, AD-27)
     EXPECT_TRUE(catalog.find("Column")->find_property("spacing")->scaled_by_density);
     EXPECT_TRUE(catalog.find("Padding")->find_property("padding")->scaled_by_density);
     EXPECT_TRUE(catalog.find("Label")->find_property("font_size")->scaled_by_density);
@@ -327,7 +314,6 @@ TEST(ElementCatalog, ExposesTheHandledSignals) {
     // arrange, act
     const ElementCatalog catalog = ElementCatalog::with_builtins();
     // assert
-    // a control that responds to the user raises the signal a handler attaches to (§8)
     EXPECT_TRUE(catalog.find("Button")->find_signal("clicked") != nullptr);
     EXPECT_TRUE(catalog.find("Slider")->find_signal("changed") != nullptr);
     EXPECT_TRUE(catalog.find("CheckBox")->find_signal("toggled") != nullptr);
@@ -342,30 +328,27 @@ TEST(ElementCatalog, AddsANativeTypeFromAManifest) {
     // act
     catalog.add_native(native);
     // assert
-    // the manifest is the single source of truth for a native type (§11.2, AD-17)
     ASSERT_TRUE(catalog.find("WaveformView") != nullptr);
     EXPECT_TRUE(catalog.find("WaveformView")->find_property("line_color") != nullptr);
     EXPECT_TRUE(catalog.find("WaveformView")->find_signal("selection_changed") != nullptr);
-    EXPECT_EQ(catalog.types().size(), 11U);
+    EXPECT_EQ(catalog.types().size(), 12U);
 }
 
 TEST(ElementCatalog, StartsWithNothingBeyondTheBuiltins) {
     // arrange, act
     const ElementCatalog catalog = ElementCatalog::with_builtins();
     // assert
-    EXPECT_EQ(catalog.types().size(), 10U);
+    EXPECT_EQ(catalog.types().size(), 11U);
 }
 
 TEST(ElementCatalog, RefusesToShadowABuiltinWithAManifest) {
     // arrange
     ElementCatalog catalog = ElementCatalog::with_builtins();
     // act
-    // a manifest declaring a builtin name would give a ui file two shapes for one keyword (§11.2, AD-17)
     catalog.add_native(ElementType{.name = "Label", .properties = {}, .signals = {}, .accepts_children = true});
     // assert
-    // the builtin is still the one that resolves, because the manifest could not redefine it (§11.2, AD-17)
     EXPECT_FALSE(catalog.find("Label")->accepts_children);
-    EXPECT_EQ(catalog.types().size(), 10U);
+    EXPECT_EQ(catalog.types().size(), 11U);
 }
 
 TEST(ElementCatalog, RefusesToRedefineANativeDataType) {
@@ -375,6 +358,5 @@ TEST(ElementCatalog, RefusesToRedefineANativeDataType) {
     catalog.add_native_data("WaveformData");
     catalog.add_native_data("WaveformData");
     // assert
-    // a repeated declaration resolves to one shape, so the second is ignored (§11.2, AD-17)
     EXPECT_TRUE(catalog.holds_native("WaveformData"));
 }

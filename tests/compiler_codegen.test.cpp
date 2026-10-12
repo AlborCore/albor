@@ -59,6 +59,16 @@ namespace
         return text.find(fragment) != std::string_view::npos;
     }
 
+    std::string all_text(const std::vector<GeneratedFile>& files) {
+        // the bodies are joined, because a shape can land in any one of the generated files (§14.2)
+        std::string joined;
+        for (const GeneratedFile& file : files) {
+            joined += file.content;
+            joined += '\n';
+        }
+        return joined;
+    }
+
     bool has_file(const std::vector<GeneratedFile>& files, std::string_view name) {
         for (const GeneratedFile& file : files) {
             // the name decides, so the lookup resolves to at least one file (§14.2)
@@ -850,4 +860,193 @@ TEST(Codegen, ASliderRangeBecomesOneSetterOverBothBounds) {
     EXPECT_TRUE(contains(cpp.content, "m_slider_min_0 = (-1.0f);"));
     EXPECT_TRUE(contains(cpp.content, "m_slider_max_0 = 1.0f;"));
     EXPECT_TRUE(contains(cpp.content, "n0->set_range(m_slider_min_0, m_slider_max_0);"));
+}
+
+TEST(Codegen, AScrollViewIsConstructedAndItsViewportExtentIsCombined) {
+    // arrange
+    const std::string_view source = R"(
+component LogPanel {
+    ScrollView {
+        viewport_width: 200px;
+        viewport_height: 120px;
+        scrollbar: Scrollbar.off;
+        overscan: 32px;
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the viewport is one setter, because the two halves are written as an extent (§8.2, §11.3)
+    const GeneratedFile& unit = file_named(files, "log_panel.cpp");
+    EXPECT_TRUE(contains(unit.content, "std::make_unique<ScrollView>(engine)"));
+    EXPECT_TRUE(contains(unit.content, "set_viewport_extent(Size{m_viewport_w_0, m_viewport_h_0})"));
+    // assert the policy renders as the enumeration the widget takes, not the language spelling (§11.3, §8)
+    EXPECT_TRUE(contains(unit.content, "set_scrollbar_visibility(albor::ScrollbarVisibility::AlwaysOff)"));
+    EXPECT_TRUE(contains(unit.content, "set_overscan(32.0f)"));
+}
+
+TEST(Codegen, ABoundScrollOffsetBindsOntoTheWidgetProperty) {
+    // arrange the offset written as an expression, which is how a log view pins itself (§7.3, AD-24)
+    const std::string_view source = R"(
+component LogPanel {
+    inout property<float> extent;
+    ScrollView {
+        offset: extent;
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the binding lands on the widget property, which is what lets a user scroll outrank it (§7.3, AD-24)
+    const GeneratedFile& unit = file_named(files, "log_panel.cpp");
+    EXPECT_TRUE(contains(unit.content, "bind_offset(&Impl::evaluate_0_offset"));
+    // assert no sink was created, because a sink would call the setter and detach the binding every frame (§7.3, AD-24)
+    EXPECT_FALSE(contains(unit.content, "m_sink_0_offset"));
+}
+
+TEST(Codegen, AScrollViewCarriesItsHeaderAndItsSemanticInclude) {
+    // arrange
+    const std::string_view source = R"(
+component LogPanel {
+    ScrollView {
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the facade includes the widget header, which is what the constructed class needs (§14.1)
+    EXPECT_TRUE(contains(file_named(files, "log_panel.cpp").content, "#include \"widgets/scroll_view.h\""));
+}
+
+TEST(Codegen, AVirtualizedRepeatBorrowsStorageThatOutlivesTheEvaluator) {
+    // arrange a repeat under a viewport, whose items come from a component property (§8.2, AD-13)
+    const std::string source = R"(import task;
+component LogPanel {
+    inout property<vector<Task>> items;
+    ScrollView {
+        row_height: 20px;
+        Repeat(task in items) {
+            Label { text: task.title; }
+        }
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // the record carries the key a row is matched on, which the manifest declares (§18.1, AD-13)
+    catalog.add_record(RecordType{.name = "Task", .fields = {RecordFieldType{.name = "id", .type = scalar(TypeKind::String), .is_key = true}, RecordFieldType{.name = "title", .type = scalar(TypeKind::String), .is_key = false}}});
+    // the scanner runs first, because the parser takes units (§11.1)
+    const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
+    // the parser builds the untyped tree (§11.1)
+    const SourceFile file = Parser(tokens, diagnostics).parse();
+    // the checker resolves it against the catalog, which is where the record comes from (§11.1, AD-17)
+    const CheckedFile checked = TypeChecker(catalog, diagnostics).check(file);
+    // act
+    CodeGenerator generator(diagnostics);
+    // the catalog is what tells the generator a record is generatable and where its header lives (§11.2, AD-17)
+    generator.set_catalog(&catalog);
+    const std::vector<GeneratedFile> files = generator.generate(checked);
+    // assert
+    ASSERT_EQ(diagnostics.count(), 0U);
+    ASSERT_EQ(files.size(), 2U);
+    const std::string unit = file_named(files, "log_panel.cpp").content;
+    // assert the body owns the source, because the rows borrow it past the frame that produced it (§8.2, AD-13)
+    EXPECT_TRUE(contains(unit, "std::vector<Task> m_repeat_items_0;"));
+    // assert the evaluator stores into that member before the rows are pointed at it (§8.2, AD-13)
+    EXPECT_TRUE(contains(unit, "self->m_repeat_items_0 = value;"));
+    EXPECT_TRUE(contains(unit, "self->m_repeat_0->set_items(self->m_repeat_items_0);"));
+    // assert the rows are never pointed at the evaluator's local, which dies with the call (§8.2, AD-13)
+    EXPECT_FALSE(contains(unit, "set_items(value)"));
+}
+
+TEST(Codegen, ABoundViewportExtentBindsAndReappliesThePair) {
+    // arrange the viewport written as expressions, which is what a responsive form writes (§8.2)
+    const std::string_view source = R"(
+component LogPanel {
+    inout property<float> wide;
+    inout property<float> tall;
+    ScrollView {
+        viewport_width: wide;
+        viewport_height: tall;
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const std::string unit = file_named(files, "log_panel.cpp").content;
+    // assert each half is bound over its source, so the pair follows the form (§13.3, §8.2)
+    EXPECT_TRUE(contains(unit, "m_sink_0_viewport_width.bind_static("));
+    EXPECT_TRUE(contains(unit, "m_sink_0_viewport_height.bind_static("));
+    // assert the evaluator updates the track and re-applies the pair, rather than calling an empty setter (§11.3)
+    EXPECT_TRUE(contains(unit, "self->m_viewport_w_0 = value;"));
+    EXPECT_TRUE(contains(unit, "set_viewport_extent(Size{self->m_viewport_w_0, self->m_viewport_h_0})"));
+    // assert no call is emitted with no setter name, which is what the unhandled form produced (§11.3)
+    EXPECT_FALSE(contains(unit, "->(value)"));
+}
+
+TEST(CodegenScrollShapes, AViewportShapeReachesEveryGeneratedForm) {
+    // arrange a source writing the viewport properties the generated facade has to name (§8.2, §8.3)
+    const std::string source = R"UI(component Panel {
+    inout property<float> total;
+
+    Column {
+        ScrollView {
+            scrollbar: Scrollbar.on;
+            offset: total;
+
+            on_scrolled: {
+                total = offset;
+            }
+        }
+    }
+})UI";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the scrollbar policy is emitted as the generated enum, because the catalog names the type (§11.3)
+    EXPECT_TRUE(contains(all_text(files), "ScrollbarVisibility"));
+    // assert the scrolled handler takes the offset it reports, because the catalog names the parameter (§8.3)
+    EXPECT_TRUE(contains(all_text(files), "float offset"));
+}
+
+TEST(Codegen, AnUnwindowedRepeatOwnsItsRowsKeyed) {
+    // arrange a repeat written without a viewport, so the container owns the rows itself (§18.1, AD-13)
+    const std::string source = R"(
+component task_board {
+    inout property<vector<Task>> tasks;
+
+    Column {
+        Repeat(task in tasks) {
+            Label {
+                text: task.title;
+                horizontal_align: Align.center;
+            }
+        }
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // the record carries the key a row is matched on, which the manifest declares (§18.1, AD-13)
+    catalog.add_record(RecordType{.name = "Task", .fields = {RecordFieldType{.name = "id", .type = scalar(TypeKind::String), .is_key = true}, RecordFieldType{.name = "title", .type = scalar(TypeKind::String), .is_key = false}}});
+    // the scanner runs first, because the parser takes units (§11.1)
+    const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
+    // the parser builds the untyped tree (§11.1)
+    const SourceFile file = Parser(tokens, diagnostics).parse();
+    // the checker resolves it against the catalog, which is where the record comes from (§11.1, AD-17)
+    const CheckedFile checked = TypeChecker(catalog, diagnostics).check(file);
+    // act
+    CodeGenerator generator(diagnostics);
+    // the catalog is what tells the generator a record is generatable and where its header lives (§11.2, AD-17)
+    generator.set_catalog(&catalog);
+    const std::vector<GeneratedFile> files = generator.generate(checked);
+    // assert
+    ASSERT_EQ(diagnostics.count(), 0U);
+    ASSERT_EQ(files.size(), 2U);
+    const std::string unit = file_named(files, "task_board.cpp").content;
+    // assert the container owns a keyed view, because no viewport owns the rows here (§18.1, AD-13)
+    EXPECT_TRUE(contains(unit, "KeyedView<Task>"));
+    // assert the view is owned by the body rather than the rows living in a windowed member (§8.2)
+    EXPECT_FALSE(contains(unit, "ScrollableRows<Task>"));
+    // assert an alignment written in the row reaches the generated unit, because the row is its own function (§8.2)
+    EXPECT_TRUE(contains(unit, "Align::"));
 }

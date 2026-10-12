@@ -37,10 +37,8 @@ namespace albor
     }
 
     void GridLayout::arrange(const Rect& bounds) {
-        // the assigned bounds replace the previous ones (§8.2)
+        // the assigned bounds replace the previous ones, while the measured size stands as the measure settled it (§8.2)
         m_bounds = bounds;
-        // the measured size follows the assigned one, so a later measure starts from the truth (§8.2)
-        m_measured_size = Size{.width = bounds.width, .height = bounds.height};
         // the cell is the assigned extent divided by the count, which is what every child is placed in (§8.2)
         const Size cell = cell_size(bounds);
         // the cursor is a linear cell index, because a span advances by whole cells on a grid read in rows (§8.2)
@@ -89,7 +87,7 @@ namespace albor
             const float width = horizontal == Align::Stretch ? extent.width : child_width;
             // the same rule applies on the other axis, so a cell honours both independently (§8.2)
             const float height = vertical == Align::Stretch ? extent.height : child_height;
-            child.arrange(Rect::from_origin_size(Point{.x = child_x, .y = child_y}, Size{.width = width, .height = height}));
+            arrange_if_changed(child, Rect::from_origin_size(Point{.x = child_x, .y = child_y}, Size{.width = width, .height = height}));
             // the cursor advances by every cell the span covered, which is what keeps the next child clear of them (§8.2)
             cursor += span_columns + (span_rows - 1) * m_columns;
             // a cursor past the last cell wraps to the first, because a fixed grid has no more room (§8.2)

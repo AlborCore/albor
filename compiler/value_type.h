@@ -35,6 +35,9 @@ namespace albor::compiler
         // an alignment, which a named member of a value set produces (§8.2)
         Align,
 
+        // when a scrollbar is drawn, which a named member of a value set produces (§8)
+        Scrollbar,
+
         // a length in logical or physical pixels, which a length literal produces (§11.1, AD-27)
         Length,
 
@@ -190,6 +193,9 @@ namespace albor::compiler
 
         // the kind every member of the set produces, which is what the set resolves to (§11.1)
         TypeKind kind = TypeKind::Error;
+
+        // the C++ enumeration the set renders to, which is the name unless the language spells it differently (§11.3)
+        std::string cpp_name;
 
         // the members in written order, which is what a diagnostic lists (§11.1)
         std::vector<NamedValueMember> members;
