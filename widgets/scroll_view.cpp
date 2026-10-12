@@ -35,6 +35,8 @@ namespace albor
         out_size = m_measured_size;
         // the content is measured with no height ceiling, because a tall content scrolls (§8.2)
         const SizeConstraints content_constraints = SizeConstraints::at_most(Size{.width = viewport.width, .height = std::numeric_limits<float>::infinity()});
+        // the row height reaches the content first, because the extent below is arithmetic over it (§8.2, AD-13)
+        apply_row_extent();
         // the reported extent wins, because only it knows the rows it did not build (§8.2)
         Size measured_extent{};
         for (const auto& child : children()) {
@@ -423,7 +425,7 @@ namespace albor
         if (scrollable == nullptr)
             return;
         // the row height travels first, because the window it produces is arithmetic over that height (§8.2, AD-13)
-        scrollable->set_row_extent(m_row_height);
+        apply_row_extent();
         // the window carries the viewport, the content extent, the offset and the overscan (§8.2)
         const ScrollViewport window{.viewport = viewport_rect().empty() ? Size{} : Size{.width = m_bounds.width, .height = m_bounds.height}, .content = m_content_extent, .offset = offset(), .overscan = m_overscan};
         // the content builds against the window, which is what keeps only the visible rows materialized (§8.2, AD-13)
@@ -435,5 +437,15 @@ namespace albor
         const UiNode* child = child_at(0);
         // content that is not scrollable has no window, which is what a plain column is (§8.2)
         return child == nullptr ? nullptr : dynamic_cast<ScrollableContent*>(const_cast<UiNode*>(child));
+    }
+
+    void ScrollView::apply_row_extent() const {
+        // content that does not build itself divides by no row height, so nothing is told (§8.2)
+        ScrollableContent* scrollable = scrollable_content();
+        // a plain container is measured as a whole, which is the path a non virtualizing scroll view takes (§8.2)
+        if (scrollable == nullptr)
+            return;
+        // the height settles the content extent, so it has to arrive before the measure that reads it (§8.2, AD-13)
+        scrollable->set_row_extent(m_row_height);
     }
 } // namespace albor

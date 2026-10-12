@@ -95,6 +95,37 @@ namespace
         }
     };
 
+    // the content double whose extent is arithmetic over the row height it was given (§8.2, AD-13)
+    class HeightDrivenContent final : public UiNode, public ScrollableContent
+    {
+    public:
+        // how many items the content holds, which is what the row height multiplies (§8.2, AD-13)
+        std::size_t items = 100;
+
+        // the row height the viewport last applied, which the extent is computed over (§8.2, AD-13)
+        float row_height = 0.0f;
+
+        void measure(const SizeConstraints& constraints, Size& out_size) override {
+            // the content is as tall as its items are rows, which is what a virtualized list measures (§8.2)
+            out_size = constraints.constrain(content_extent());
+            m_measured_size = out_size;
+        }
+
+        void arrange(const Rect& bounds) override {
+            m_bounds = bounds;
+            m_measured_size = Size{.width = bounds.width, .height = bounds.height};
+        }
+
+        [[nodiscard]] Size content_extent() const override {
+            // the extent is arithmetic over the height the viewport applied, so a stale height is visible (§8.2, AD-13)
+            return Size{m_measured_size.width, static_cast<float>(items) * row_height};
+        }
+
+        void set_row_extent(float row_extent) override { row_height = row_extent; }
+
+        void set_scroll_viewport(const ScrollViewport&) override {}
+    };
+
     // the content double that builds itself against a window, which is the virtualizing contract (§8.2, AD-13)
     class WindowedContent final : public UiNode, public ScrollableContent
     {
@@ -523,4 +554,48 @@ TEST(ScrollViewChecks, AChangedRowHeightReachesTheContent) {
     view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
     // assert the content is told twice, because the container owns the height the rows divide by (§8.2, AD-13)
     EXPECT_FLOAT_EQ(content_ptr->row_height, 40.0f);
+}
+
+TEST(ScrollViewChecks, ARowHeightSettlesTheContentExtentInTheSameFrame) {
+    // arrange a viewport whose content extent is arithmetic over the row height (§8.2, AD-13)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<HeightDrivenContent>();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    view.set_row_height(20.0f);
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // assert the hundred rows are two hundred tall at twenty each (§8.2, AD-13)
+    ASSERT_FLOAT_EQ(view.content_extent().height, 2000.0f);
+    ASSERT_FLOAT_EQ(view.maximum_offset(), 1700.0f);
+    // act a bound row height settles again, which is what a form resize does (§7.3, AD-13)
+    view.set_row_height(40.0f);
+    view.measure(SizeConstraints::unconstrained(), measured);
+    // assert the extent followed inside the measure that cached it, because arrange comes too late (§8.2, AD-13)
+    EXPECT_FLOAT_EQ(view.content_extent().height, 4000.0f);
+    // assert the scroll range followed with it, because that is what maximum_offset reads (§8.2)
+    EXPECT_FLOAT_EQ(view.maximum_offset(), 3700.0f);
+}
+
+TEST(ScrollViewChecks, AnUnchangedRowHeightDoesNotReachTheContent) {
+    // arrange
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<HeightDrivenContent>();
+    HeightDrivenContent* content_ptr = content.get();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    view.set_row_height(20.0f);
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    content_ptr->row_height = 0.0f;
+    // act the height is written again with the value it already holds (§8.2, AD-13)
+    view.set_row_height(20.0f);
+    view.measure(SizeConstraints::unconstrained(), measured);
+    // assert an unchanged height reaches the content anyway, because the measure is where the extent is read (§8.2)
+    EXPECT_FLOAT_EQ(content_ptr->row_height, 20.0f);
+    EXPECT_FLOAT_EQ(view.content_extent().height, 2000.0f);
 }

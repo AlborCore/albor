@@ -131,6 +131,9 @@ namespace albor
         // hand the content its window, which is what builds only the rows that intersect the viewport (§8.2, AD-13)
         void push_viewport() const;
 
+        // hand the content the current row height, which is what its extent is arithmetic over (§8.2, AD-13)
+        void apply_row_extent() const;
+
         // the scrollable content the viewport is showing, which is null until one is adopted (§8.2)
         [[nodiscard]] ScrollableContent* scrollable_content() const;
 
