@@ -588,10 +588,14 @@ TEST(UiNode, AnInvalidateArrangeWalksUpToTheRoot) {
     TestNode* child_ptr = child.get();
     root.add_child(std::move(child));
     root.clear_dirty();
+    int scheduled = 0;
+    root.set_invalidation_handler([&scheduled] { scheduled++; });
     // act
     child_ptr->invalidate_arrange();
     // assert the request reaches the root, which is what owns the frame scheduling (§8.2)
     EXPECT_TRUE(root.arrange_dirty());
+    // assert the root schedules exactly one frame for a change this deep, so a frame is not queued twice (§6.1)
+    EXPECT_EQ(scheduled, 1);
 }
 
 TEST(UiNode, ACleanChildThatWouldNotMoveKeepsItsPlacement) {

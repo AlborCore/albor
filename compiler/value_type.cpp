@@ -180,34 +180,41 @@ namespace albor::compiler
         return nullptr;
     }
 
+    namespace
+    {
+        // every value set the language declares, because the checker and the generator both resolve against them
+        const std::vector<NamedValueSet>& named_value_sets() {
+            static const std::vector<NamedValueSet> sets{
+                // the alignment set is what a layout property resolves a written member against (§8.2)
+                NamedValueSet{.name = "Align",
+                              .kind = TypeKind::Align,
+                              .members =
+                                  {
+                                      // the written form is lower case and the enumerator capitalised (§11.3, §8.2)
+                                      NamedValueMember{.written = "start", .code = "Start"},
+                                      NamedValueMember{.written = "center", .code = "Center"},
+                                      NamedValueMember{.written = "end", .code = "End"},
+                                      NamedValueMember{.written = "stretch", .code = "Stretch"},
+                                  }},
+                // the scrollbar set is what the scrollbar policy resolves a written member against (§8)
+                NamedValueSet{.name = "Scrollbar",
+                              .kind = TypeKind::Scrollbar,
+                              .cpp_name = "ScrollbarVisibility",
+                              .members =
+                                  {
+                                      // the written form is lower case and the enumerator capitalised (§11.3, §8)
+                                      NamedValueMember{.written = "as_needed", .code = "AsNeeded"},
+                                      NamedValueMember{.written = "off", .code = "AlwaysOff"},
+                                      NamedValueMember{.written = "on", .code = "AlwaysOn"},
+                                  }},
+            };
+            return sets;
+        }
+    } // namespace
+
     const NamedValueSet* find_named_value_set(std::string_view set_name) {
-        // the sets are declared apart, because the language namespaces the values it declares (§11.1)
-        static const std::vector<NamedValueSet> sets{
-            // the alignment set is what a layout property resolves a written member against (§8.2)
-            NamedValueSet{.name = "Align",
-                          .kind = TypeKind::Align,
-                          .members =
-                              {
-                                  // the written form is lower case and the enumerator capitalised (§11.3, §8.2)
-                                  NamedValueMember{.written = "start", .code = "Start"},
-                                  NamedValueMember{.written = "center", .code = "Center"},
-                                  NamedValueMember{.written = "end", .code = "End"},
-                                  NamedValueMember{.written = "stretch", .code = "Stretch"},
-                              }},
-            // the scrollbar set is what the scrollbar policy resolves a written member against (§8)
-            NamedValueSet{.name = "Scrollbar",
-                          .kind = TypeKind::Scrollbar,
-                          .cpp_name = "ScrollbarVisibility",
-                          .members =
-                              {
-                                  // the written form is lower case and the enumerator capitalised (§11.3, §8)
-                                  NamedValueMember{.written = "as_needed", .code = "AsNeeded"},
-                                  NamedValueMember{.written = "off", .code = "AlwaysOff"},
-                                  NamedValueMember{.written = "on", .code = "AlwaysOn"},
-                              }},
-        };
         // the sets are scanned, because the language declares only a few of them (§11.1)
-        for (const NamedValueSet& set : sets) {
+        for (const NamedValueSet& set : named_value_sets()) {
             // the name decides, so a field read resolves to exactly one set (§11.1)
             if (set.name == set_name)
                 return &set;

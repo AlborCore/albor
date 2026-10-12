@@ -226,8 +226,10 @@ namespace albor::compiler
             case TypeKind::Color:
                 return "Color";
             case TypeKind::Align:
+                // the language spells alignment as the framework enumeration, which the generated code names (§11.3)
                 return "Align";
             case TypeKind::Scrollbar:
+                // the policy set renders as the enumeration the viewport takes, which names itself (§11.3, §8)
                 return "ScrollbarVisibility";
             case TypeKind::Vector:
                 // a collection becomes the standard vector over its element, which recurses into a nested one (§8.1)
