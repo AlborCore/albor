@@ -415,3 +415,69 @@ TEST(SemanticCommands, TheEditableStatesCarryNoTokenWhenTheyDoNotHold) {
     EXPECT_EQ(result.payload.find(" read_only"), std::string::npos);
     EXPECT_EQ(result.payload.find(" multiline"), std::string::npos);
 }
+
+TEST(SemanticCommands, AMultiLineValueDoesNotSplitTheDumpIntoMoreLines) {
+    // arrange a multi line field whose value carries the breaks that make the tree multi line (§10.1)
+    AutomationRegistry registry;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::TextField});
+    tree.mutable_at(0)->set_explicit_id("notes");
+    tree.mutable_at(0)->set_name("Notes");
+    tree.mutable_at(0)->set_value("first\nsecond");
+    register_semantic_commands(registry, [&tree] { return &tree; });
+    // every command is permitted, because these tests are about the answering, not the allow list (§10.3, AD-10)
+    for (const std::string& name : semantic_command_names())
+        registry.allow(name);
+    AutomationSession session(registry);
+    (void)session.handle(encode_handshake(session.token()));
+    // act
+    const AutomationResult result = session.handle("semantic.tree");
+    // assert the payload holds one line per node, which is what a client splits on (§10.3)
+    ASSERT_TRUE(result.ok);
+    const std::size_t lines = std::count(result.payload.begin(), result.payload.end(), '\n');
+    EXPECT_EQ(lines, 1u);
+    // assert the break is spelled as an escape, so a client reads the value back whole (§10.3)
+    EXPECT_NE(result.payload.find("value=first\\nsecond"), std::string::npos);
+}
+
+TEST(SemanticCommands, AMultiByteValueSurvivesTheDumpUnchanged) {
+    // arrange a field whose value is not ascii, which an escape must leave byte identical (§10.3)
+    AutomationRegistry registry;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::TextField});
+    tree.mutable_at(0)->set_explicit_id("notes");
+    tree.mutable_at(0)->set_name("Notes");
+    tree.mutable_at(0)->set_value("été");
+    register_semantic_commands(registry, [&tree] { return &tree; });
+    // every command is permitted, because these tests are about the answering, not the allow list (§10.3, AD-10)
+    for (const std::string& name : semantic_command_names())
+        registry.allow(name);
+    AutomationSession session(registry);
+    (void)session.handle(encode_handshake(session.token()));
+    // act
+    const AutomationResult result = session.handle("semantic.tree");
+    // assert the two byte characters passed through, because an escape is about control characters only (§10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_NE(result.payload.find("value=été"), std::string::npos);
+}
+
+TEST(SemanticCommands, ANameCarryingALineBreakDoesNotSplitTheDumpIntoMoreLines) {
+    // arrange a node whose accessible name carries a break, which the dump must escape as well (§10.1, §10.3)
+    AutomationRegistry registry;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::Label});
+    tree.mutable_at(0)->set_explicit_id("caption");
+    tree.mutable_at(0)->set_name("two\nlines");
+    register_semantic_commands(registry, [&tree] { return &tree; });
+    // every command is permitted, because these tests are about the answering, not the allow list (§10.3, AD-10)
+    for (const std::string& name : semantic_command_names())
+        registry.allow(name);
+    AutomationSession session(registry);
+    (void)session.handle(encode_handshake(session.token()));
+    // act
+    const AutomationResult result = session.handle("semantic.tree");
+    // assert the payload is still one line, because a name is text rather than a protocol delimiter (§10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_EQ(std::count(result.payload.begin(), result.payload.end(), '\n'), 1u);
+    EXPECT_NE(result.payload.find("two\\nlines"), std::string::npos);
+}

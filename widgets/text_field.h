@@ -126,8 +126,8 @@ namespace albor
         // hand out the descent of the line the field draws, which is the pair member (§9.1)
         [[nodiscard]] float line_descent() const;
 
-        // hand out the advance one byte of the value takes, which is what an overlay aligns a run to (§9.1)
-        [[nodiscard]] float byte_advance() const;
+        // hand out the x the given byte offset sits at within its own line, which is what an overlay aligns to (§9.1)
+        [[nodiscard]] float x_at_byte(std::size_t byte) const;
 
         // hand out the rect the caret draws at, in bounds coordinates, which an anchor resolves relatives against (§9.1)
         [[nodiscard]] Rect caret_rect() const override;
@@ -156,6 +156,9 @@ namespace albor
 
         // remove the bytes between two offsets, which is what a removal edit is (§8)
         void remove_range(std::size_t start, std::size_t end);
+
+        // strip the line breaks a single line field cannot hold, which every write path goes through (§8.3)
+        [[nodiscard]] std::string strip_line_breaks(std::string text) const;
 
         // record the edit that just ran, which the bound stack reverses by (§18)
         void record_edit(std::string before_value, std::size_t before_caret);

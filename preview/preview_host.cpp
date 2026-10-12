@@ -146,11 +146,14 @@ namespace albor::preview
                     else if (auto* button = dynamic_cast<Button*>(built.get()))
                         button->set_label(text_of(*assignment.value));
                 }
-                // the size a run was written at, which only a label carries (§9.1)
+                // the size a run was written at, which a label and a field both carry (§9.1)
                 else if (assignment.name == "font_size" && numeric != nullptr) {
-                    // the label that carries a size is the only one that takes it (§9.1)
+                    // the label that shows text takes the size it was written at (§9.1)
                     if (auto* label = dynamic_cast<Label*>(built.get()))
                         label->set_font_size(static_cast<float>(number_of(*numeric)));
+                    // the field that edits text takes the same size, because one number names one widget (§9.1)
+                    else if (auto* field = dynamic_cast<TextField*>(built.get()))
+                        field->set_font_size(static_cast<float>(number_of(*numeric)));
                 }
                 // a checked state, which a preview shows as the author wrote it (§8)
                 else if (assignment.name == "checked" && numeric != nullptr) {
@@ -169,20 +172,17 @@ namespace albor::preview
                             field->set_placeholder(text_of(*assignment.value));
                     }
                 }
-                // a read only or multi line state, which a preview shows as written (§8)
-                else if ((assignment.name == "read_only" || assignment.name == "multiline") && numeric != nullptr) {
-                    // the field is the only widget that carries the states (§8)
-                    if (auto* field = dynamic_cast<TextField*>(built.get())) {
-                        // read only refuses edits but still takes focus, and multiline wraps (§8)
-                        field->set_read_only(assignment.name == "read_only" && numeric->text == "true");
-                        field->set_multiline(assignment.name == "multiline" && numeric->text == "true");
-                    }
-                }
-                // a font size, which a field carries beside a label (§9.1)
-                else if (assignment.name == "font_size" && numeric != nullptr) {
-                    // the label was answered above, so the field takes the size here (§9.1)
+                // a read only state, which a preview shows as written (§8)
+                else if (assignment.name == "read_only" && numeric != nullptr) {
+                    // the field is the only widget that carries it, and one assignment touches one state (§8)
                     if (auto* field = dynamic_cast<TextField*>(built.get()))
-                        field->set_font_size(static_cast<float>(number_of(*numeric)));
+                        field->set_read_only(numeric->text == "true");
+                }
+                // a multi line state, which a preview shows as written beside the read only one (§8)
+                else if (assignment.name == "multiline" && numeric != nullptr) {
+                    // the field is the only widget that carries it, and writing it leaves read only alone (§8)
+                    if (auto* field = dynamic_cast<TextField*>(built.get()))
+                        field->set_multiline(numeric->text == "true");
                 }
             }
             // each child is built and adopted, which is the preorder a compiled build uses (§11.3)

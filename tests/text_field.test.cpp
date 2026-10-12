@@ -164,6 +164,62 @@ namespace
         return count;
     }
 
+    // the proportional text engine double, where each character has its own advance (§9.1)
+    class ProportionalTextEngine final : public TextEngine
+    {
+    public:
+        // the advance one character takes, in logical pixels, which a fixed one cannot (§9.1)
+        static constexpr float ADVANCE = 10.0f;
+
+        [[nodiscard]] TextLayout measure(std::string_view text, float max_width) const override {
+            // the default size overload forwards to the explicit one, which is the whole implementation (§9.1)
+            return measure(text, max_width, DEFAULT_FONT_SIZE);
+        }
+
+        [[nodiscard]] TextLayout measure(std::string_view text, float max_width, float font_size) const override {
+            // the ceiling is read and ignored, because this double never wraps (§9.1)
+            (void)max_width;
+            // an empty run carries no line, which is what an engine reports for nothing (§9.1)
+            if (text.empty())
+                return TextLayout{};
+            // the single line every run of this double occupies, which is what a per character advance builds (§9.1)
+            ShapedRun::Line line;
+            // the baseline the line hangs from, which is what the run draws at (§9.1)
+            line.origin = Point{.x = 0.0f, .y = 13.0f};
+            // the pen walks the characters, so the first glyph is narrow and the second is wide (§9.1)
+            float pen = 0.0f;
+            // the ascent and the descent the double reports for its one line (§9.1)
+            const float ascent = 13.0f;
+            const float descent = 4.0f;
+            // every character becomes one glyph, which is the cluster the caret steps over (§9.1)
+            for (std::size_t index = 0; index < text.size(); index++) {
+                // the first character is twice as wide as the rest, so a prefix differs from the mean (§9.1)
+                const float advance = index == 0 ? 2.0f * ADVANCE : ADVANCE;
+                // the glyph sits where the pen left off and carries its own byte (§9.1)
+                line.glyphs.push_back(ShapedGlyph{.id = static_cast<std::uint32_t>(text[index]), .position = Point{.x = pen, .y = 0.0f}, .cluster = static_cast<std::uint32_t>(index)});
+                // the pen moves by that character's own advance (§9.1)
+                pen += advance;
+            }
+            // the line spans the whole text, because the double wraps nothing (§9.1)
+            line.start_byte = 0;
+            // the line ends at the text end, which is what a caret past the last glyph resolves to (§9.1)
+            line.end_byte = text.size();
+            // the line is as wide as the pen walked, which is what a prefix of it is measured against (§9.1)
+            line.width = pen;
+            // the metrics sit on the line, because a caller places content by the pair (§9.1)
+            line.ascent = ascent;
+            // the descent is the pair member (§9.1)
+            line.descent = descent;
+            // the run holds that one line, which is the whole shaped result (§9.1)
+            return TextLayout{.run = ShapedRun::make(std::vector<ShapedRun::Line>{line}, font_size), .size = Size{.width = pen, .height = ascent + descent}, .ascent = ascent, .descent = descent};
+        }
+
+        [[nodiscard]] bool ready() const override {
+            // the double always measures, because its shapes are fixed (§9.1)
+            return true;
+        }
+    };
+
 } // namespace
 
 TEST(TextFieldChecks, MeasuresToAtLeastTheMinimumExtent) {
@@ -1896,4 +1952,115 @@ TEST(TextFieldImeChecks, TheCaretRectStaysAtTheMarkStart) {
     const Rect during = field.caret_rect();
     // assert the caret held its byte, which is where the mark is being composed at (§8.3)
     EXPECT_FLOAT_EQ(during.x, before.x);
+}
+
+TEST(TextFieldImeChecks, ACompositionOverASelectionShowsWhatTheCommitWillReplace) {
+    // arrange a field whose whole value is selected, which a composition lands over (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abc");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    field.select_all();
+    Event mark{.kind = EventKind::Composing, .text = "ab"};
+    field.dispatch_event(mark);
+    // act
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 40.0f}, 1.0f));
+    field.render(recorder);
+    // assert the provisional display is the value with the selection replaced (§8.3)
+    std::string painted;
+    for (const DrawCommand& command : recorder.scene()->commands()) {
+        if (command.kind() != DrawCommandKind::Text)
+            continue;
+        const TextGeometry& geometry = command.text_geometry();
+        if (geometry.layout.run == nullptr)
+            continue;
+        // the double shapes one glyph per character, so the ids spell the run (§9.1)
+        for (const ShapedGlyph& glyph : geometry.layout.run->lines().front().glyphs)
+            painted += static_cast<char>(glyph.id);
+    }
+    EXPECT_EQ(painted, "ab");
+}
+
+TEST(TextFieldImeChecks, ACompositionOverASelectionCommitsOverTheSameSpan) {
+    // arrange the same selection composed over, which is what the provisional display showed (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abc");
+    field.select_all();
+    Event mark{.kind = EventKind::Composing, .text = "ab"};
+    field.dispatch_event(mark);
+    Event commit{.kind = EventKind::TextInput, .text = "ab"};
+    // act
+    field.dispatch_event(commit);
+    // assert the value is the composed string alone, because the replaced span went with it (§8.3)
+    EXPECT_EQ(field.value(), "ab");
+    EXPECT_EQ(field.caret(), 2u);
+}
+
+TEST(TextFieldChecks, ACommittedTextCarryingALineBreakIsStrippedByASingleLineField) {
+    // arrange a field that edits one line, whatever the committing input method hands it (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    Event commit{.kind = EventKind::TextInput, .text = "a\nb\rc"};
+    // act
+    field.dispatch_event(commit);
+    // assert the breaks are gone, because the field has no row to put them on (§8.3)
+    EXPECT_EQ(field.value(), "abc");
+    EXPECT_EQ(field.caret(), 3u);
+}
+
+TEST(TextFieldMultiLineChecks, ACommittedTextCarryingALineBreakIsKeptByAMultiLineField) {
+    // arrange a field that edits rows, which is where a break is a character (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    Event commit{.kind = EventKind::TextInput, .text = "a\nb"};
+    // act
+    field.dispatch_event(commit);
+    // assert the break stayed, because the field edits more than one line (§8.3)
+    EXPECT_EQ(field.value(), "a\nb");
+    EXPECT_EQ(field.layout().run->lines().size(), 2u);
+}
+
+TEST(TextFieldUndoChecks, AReversalCannotRestoreALineBreakIntoASingleLineField) {
+    // arrange an edit recorded in a field that edits one line (§18, §8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "ab");
+    UndoStack stack;
+    field.bind_undo_stack(&stack);
+    Event commit{.kind = EventKind::TextInput, .text = "\n"};
+    field.dispatch_event(commit);
+    // act
+    field.undo();
+    // assert the reversed value holds no break, because the invariant belongs to the field rather than to one path (§8.3)
+    EXPECT_EQ(field.value(), "ab");
+    EXPECT_EQ(field.layout().run->lines().size(), 1u);
+}
+
+TEST(TextFieldChecks, TheOverlayXIsThePositionOfTheOffsetAndNotAnAverage) {
+    // arrange a field measured with proportional advances, where a prefix is not the mean (§9.1)
+    ProportionalTextEngine engine;
+    TextField field(nullptr, &engine, "abc");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 20.0f}));
+    // act
+    const float at_first = field.x_at_byte(1);
+    const float at_second = field.x_at_byte(2);
+    const float at_end = field.x_at_byte(3);
+    // assert the first offset sits past the wide glyph, which an average of the whole run would not (§9.1)
+    EXPECT_FLOAT_EQ(at_first, 2.0f * ProportionalTextEngine::ADVANCE);
+    // assert the second offset adds only that character's own advance (§9.1)
+    EXPECT_FLOAT_EQ(at_second, 3.0f * ProportionalTextEngine::ADVANCE);
+    // assert the end of the value sits at the line advance, the last right edge (§9.1)
+    EXPECT_FLOAT_EQ(at_end, 4.0f * ProportionalTextEngine::ADVANCE);
+    // assert the mean of the run is not what it reports, because that is the mistake (§9.1)
+    EXPECT_NE(at_first, 40.0f / 3.0f);
+}
+
+TEST(TextFieldChecks, TheOverlayXIsZeroWhereThereIsNoRun) {
+    // arrange a field the engine could not measure, which has no position to report (§9.1)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abc");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 20.0f}));
+    engine.usable = false;
+    field.set_value("abcd");
+    // act, assert
+    EXPECT_FLOAT_EQ(field.x_at_byte(2), 0.0f);
 }

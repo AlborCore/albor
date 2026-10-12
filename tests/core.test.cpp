@@ -119,14 +119,16 @@ TEST(ClipboardContractChecks, AnEmptyCopyClearsTheClipboard) {
 }
 
 TEST(ClipboardContractChecks, ACopyKeepsTheTextItWasGiven) {
-    // arrange
+    // arrange a source the caller owns, which the surface is handed as a view (§3.5)
+    std::string source = "borrowed";
     HoldingClipboard clipboard;
     // act
-    clipboard.set_text("borrowed");
-    // assert the double owns what it was handed, because the caller's view does not outlive the call (§3.5)
-    clipboard.carried.clear();
-    // assert the copy survived the caller dropping its own copy, which is what a view means (§3.5)
-    EXPECT_TRUE(clipboard.text().empty());
+    clipboard.set_text(source);
+    // act again the caller drops its own copy, which is what a view means (§3.5)
+    source.clear();
+    // assert the copy survived the caller dropping its own copy, because the surface owns what it was handed (§3.5)
+    EXPECT_EQ(clipboard.text(), "borrowed");
+    EXPECT_TRUE(clipboard.has_text());
 }
 
 TEST(ClipboardContractChecks, MultiByteTextSurvivesACopy) {

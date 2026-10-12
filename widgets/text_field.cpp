@@ -372,9 +372,15 @@ namespace albor
             m_marked = event.text;
             // the display run is what the composed text measures as one (§9.1)
             if (m_text_engine != nullptr) {
-                // the composed string is the value with the mark in place of nothing (§8.3)
-                std::string composed = m_value;
-                composed.insert(std::min(m_caret, m_value.size()), m_marked);
+                // the composed string is the value with the mark over the span the commit replaces (§8.3)
+                const std::size_t span_start = has_selection() ? selection_start() : m_caret;
+                const std::size_t span_end = has_selection() ? selection_end() : m_caret;
+                // the value before the span, which the mark follows (§8.3)
+                std::string composed = m_value.substr(0, span_start);
+                // the value after the span, which the mark precedes (§8.3)
+                composed.append(m_value, span_end, std::string::npos);
+                // the mark sits where the replaced span stood, which is what an insertion method does (§8.3)
+                composed.insert(span_start, m_marked);
                 // the composed run shapes over an unbounded width, which is what a mark draws against (§9.1)
                 m_marked_layout = m_text_engine->measure(composed, 0.0f, m_font_size);
             } else {
@@ -445,10 +451,7 @@ namespace albor
 
     void TextField::set_value(std::string value) {
         // a single line field strips the breaks it was handed, because it edits one line (§8.3)
-        if (!m_multiline) {
-            const auto is_line_break = [](char c) { return c == '\n' || c == '\r'; };
-            value.erase(std::remove_if(value.begin(), value.end(), is_line_break), value.end());
-        }
+        value = strip_line_breaks(std::move(value));
         // an unchanged value changes nothing, because the field looks and reads the same (§9.1)
         if (m_value == value)
             return;
@@ -768,18 +771,15 @@ namespace albor
         context.draw_rect(Rect{.x = start_x, .y = draw_y + line.origin.y + 1.0f, .width = std::max(0.0f, end_x - start_x), .height = 1.0f}, {.fill = resolve(caret_colors(), m_caret_foreground)});
     }
 
-    void TextField::paste() {        // a read only field refuses every edit, which a paste is (§8.3)
+    void TextField::paste() {
+        // a read only field refuses every edit, which a paste is (§8.3)
         if (m_read_only)
             return;
         // a clipboard the field was never handed has nothing to paste, which is the absent surface (§3.5)
         if (m_clipboard == nullptr || !m_clipboard->has_text())
             return;
-        // the paste is stripped of line breaks only on a single line field, because a multi line one edits lines (§8.3)
-        std::string text = m_clipboard->text();
-        if (!m_multiline) {
-            const auto is_line_break = [](char c) { return c == '\n' || c == '\r'; };
-            text.erase(std::remove_if(text.begin(), text.end(), is_line_break), text.end());
-        }
+        // the paste goes through the same break rule every other write path does (§8.3)
+        const std::string text = strip_line_breaks(m_clipboard->text());
         // an empty paste inserts nothing, which is not an edit (§8.3)
         if (text.empty())
             return;
@@ -836,12 +836,19 @@ namespace albor
         return m_layout.descent;
     }
 
-    float TextField::byte_advance() const {
-        // a run the engine did not shape has no advance, so the answer is nothing (§9.1)
+    float TextField::x_at_byte(std::size_t byte) const {
+        // an unarranged field has no place to put a caret, so the answer is the origin (§6.2)
+        if (bounds().empty())
+            return 0.0f;
+        // a run the engine did not shape has no position to read, so the answer is the origin (§9.1)
         if (m_layout.run == nullptr || m_layout.run->lines().empty())
             return 0.0f;
-        // the advance of one byte is the run width over the value length, which is what the tests assume (§9.1)
-        return m_value.empty() ? 0.0f : m_layout.run->lines().front().width / static_cast<float>(m_value.size());
+        // the offset is clamped into the value, because a caret cannot live past it (§8.3)
+        const std::size_t clamped = std::min(byte, m_value.size());
+        // the line the offset resolves against is the one it belongs to, which is where the glyphs of that row are (§9.1)
+        const std::size_t index = m_layout.run->line_at_byte(clamped);
+        // the run measures the offset itself, because an average over the whole value misplaces every row but one (§9.1)
+        return m_layout.run->x_at_byte(index, clamped);
     }
 
     Rect TextField::caret_rect() const {
@@ -894,19 +901,21 @@ namespace albor
         // the offsets are clamped into the value, because a stray byte past the end replaces nothing (§8.3)
         const std::size_t first = std::min(start, m_value.size());
         const std::size_t last = std::min(std::max(end, first), m_value.size());
+        // the text a single line field takes never carries a break, whatever path handed it over (§8.3)
+        const std::string insertion = strip_line_breaks(std::string(text));
         // an identity replacement is not an edit to answer, which an empty span with empty text is (§8.3)
-        if (first == last && text.empty())
+        if (first == last && insertion.empty())
             return;
         // the state before the edit is captured, which is what the entry reverses to (§18)
         const std::string before = m_value;
         const std::size_t before_caret = m_caret;
         // the span is erased and the text inserted where it stood, which is the whole replacement (§8)
         std::string after = m_value;
-        after.replace(first, last - first, text);
+        after.replace(first, last - first, insertion);
         // the value is swapped whole, because replacing in place over the same string aliases (§8)
         m_value = std::move(after);
         // the caret stands past what the edit left, which is where the next edit lands (§8.3)
-        m_caret = first + text.size();
+        m_caret = first + insertion.size();
         // a placement collapses the selection, which is what replacement always means (§8.3)
         m_anchor = m_caret;
         // the run is remeasured, because the value changed (§9.1)
@@ -921,6 +930,16 @@ namespace albor
     void TextField::remove_range(std::size_t start, std::size_t end) {
         // the removal is a replacement with nothing, which keeps every edit on one funnel (§8)
         replace_range(start, end, {});
+    }
+
+    std::string TextField::strip_line_breaks(std::string text) const {
+        // a multi line field keeps its breaks, because a break is one of the characters it edits (§8.3)
+        if (m_multiline)
+            return text;
+        // the breaks are removed, because one line field has no row for them (§8.3)
+        const auto is_line_break = [](char c) { return c == '\n' || c == '\r'; };
+        text.erase(std::remove_if(text.begin(), text.end(), is_line_break), text.end());
+        return text;
     }
 
     void TextField::record_edit(std::string before_value, std::size_t before_caret) {
@@ -938,7 +957,7 @@ namespace albor
 
     void TextField::restore(std::string value, std::size_t caret) {
         // the value is written directly, because a reversal is not an edit to record (§18)
-        m_value = std::move(value);
+        m_value = strip_line_breaks(std::move(value));
         // the caret cannot live past the value, so it is pulled back first (§8.3)
         m_caret = std::min(caret, m_value.size());
         // a restored state collapsed, because the snapshot carries none (§8.3)

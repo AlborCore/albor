@@ -73,6 +73,37 @@ namespace albor::automation
             // the argument is present and empty is still an id a caller may have meant, so it is returned (§10.3)
             return request.arguments[index];
         }
+
+        // the text a client parses out of one dump line, which may not carry a line break of its own (§10.3)
+        std::string escape_for_line(std::string_view text) {
+            // the escaped form is built once and only grows when a character needs it (§10.3)
+            std::string escaped;
+            escaped.reserve(text.size());
+            // every byte is walked, because a multi byte character passes through as itself (§10.3)
+            for (const char c : text) {
+                // a backslash is escaped first, because it is the escape character itself (§10.3)
+                if (c == '\\') {
+                    escaped += "\\\\";
+                    continue;
+                }
+                // the three control characters a line cannot hold each get their own spelling (§10.3)
+                if (c == '\n') {
+                    escaped += "\\n";
+                    continue;
+                }
+                if (c == '\r') {
+                    escaped += "\\r";
+                    continue;
+                }
+                if (c == '\t') {
+                    escaped += "\\t";
+                    continue;
+                }
+                // every other byte is the byte itself, so plain text stays byte identical (§10.3)
+                escaped += c;
+            }
+            return escaped;
+        }
     } // namespace
 
     std::vector<std::string> semantic_command_names() {
@@ -100,10 +131,10 @@ namespace albor::automation
                 // an unidentified node still appears, because a screen reader reaches it though automation cannot (AD-11)
                 const std::string id = node->identified() ? node->explicit_id() : std::string("-");
                 // the line carries role, id and name, which is what identifies a control to a reader (§10.1)
-                out << role_name(node->role()) << ' ' << id << ' ' << node->name();
+                out << role_name(node->role()) << ' ' << id << ' ' << escape_for_line(node->name());
                 // an editable node appends the text it carries, which is what a client reads back (§10.1)
                 if (!node->value().empty())
-                    out << " value=" << node->value();
+                    out << " value=" << escape_for_line(node->value());
                 // a read only node marks itself, because the state is what a client must respect (§10.1)
                 if (node->read_only())
                     out << " read_only";
