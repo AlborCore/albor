@@ -5,6 +5,10 @@
 # exits non-zero when .clang-format itself is not the pinned style file
 # exits non-zero when a comment rule of STYLE-GUIDE.md is violated in what the change touched
 # set ALBOR_COMMENT_BASE=<ref> to measure the comment rules against a branch point instead of HEAD
+#
+# the tool is part of the style, because a clang-format major can change how it formats objective c++
+# literals and one line blocks: the tree is formatted with clang-format 22, so run this same major
+# before trusting a failure, which is what keeps one style on every platform
 
 # root of the repository, independent of the current working directory
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
