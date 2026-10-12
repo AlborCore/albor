@@ -102,6 +102,9 @@ namespace
         // the extent the whole content would take if all of it were built (§8.2)
         Size total{0.0f, 0.0f};
 
+        // the row height the viewport pushed, which a test reads back (§8.2, AD-13)
+        float row_height = 0.0f;
+
         // the window the viewport last pushed, which a test reads back (§8.2)
         ScrollViewport window;
 
@@ -120,6 +123,8 @@ namespace
         }
 
         [[nodiscard]] Size content_extent() const override { return total; }
+
+        void set_row_extent(float row_extent) override { row_height = row_extent; }
 
         void set_scroll_viewport(const ScrollViewport& viewport) override {
             window = viewport;
@@ -477,4 +482,45 @@ TEST(ScrollViewChecks, AScrollReportsEveryChangeToItsHandler) {
     ASSERT_EQ(reported.size(), 2u);
     EXPECT_FLOAT_EQ(reported.at(0), 40.0f);
     EXPECT_FLOAT_EQ(reported.at(1), 80.0f);
+}
+
+TEST(ScrollViewChecks, NoActionIsOfferedThatTakesNoTarget) {
+    // arrange
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_explicit_id("log");
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // act
+    const SemanticNode node = view.semantic_node();
+    // assert a step action is offered, and an absolute jump is not, because a semantic action carries no target (§10.1)
+    EXPECT_TRUE(node.has_action("scroll_down"));
+    EXPECT_TRUE(node.has_action("scroll_up"));
+    EXPECT_FALSE(node.has_action("scroll_to"));
+}
+
+TEST(ScrollViewChecks, AChangedRowHeightReachesTheContent) {
+    // arrange
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<WindowedContent>();
+    content->total = Size{200.0f, 2000.0f};
+    WindowedContent* content_ptr = content.get();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // act the row height is bound and settles twice, as a binding does (§7.3, AD-13)
+    view.set_row_height(20.0f);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    view.set_row_height(40.0f);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // assert the content is told twice, because the container owns the height the rows divide by (§8.2, AD-13)
+    EXPECT_FLOAT_EQ(content_ptr->row_height, 40.0f);
 }

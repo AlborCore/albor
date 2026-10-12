@@ -4,7 +4,6 @@
 #include <cmath>
 #include <cstddef>
 #include <memory>
-#include <span>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -82,8 +81,8 @@ namespace albor::model
             }
         }
 
-        // set the height one row takes, which is what makes a row index a position (§8.2, AD-13)
-        void set_row_extent(float row_extent) {
+        // override: take the height the container settled on, which is what the window divides by (§8.2, AD-13)
+        void set_row_extent(float row_extent) override {
             // an unchanged height lays the same rows out, so nothing is rebuilt (§8.2)
             if (m_row_extent == row_extent)
                 return;
@@ -106,6 +105,11 @@ namespace albor::model
 
         // install the three plain functions the rows are built and matched through (§13.3)
         void set_view(Builder builder, Updater updater, KeyReader key_reader, void* context) {
+            // a changed builder or updater cannot read rows the previous one made (§13.3, §18.1)
+            const bool incompatible = m_builder != builder || m_updater != updater;
+            // the built rows are released first, because the new updater would cast them wrongly (§18.1)
+            if (incompatible)
+                release_rows();
             // the view is swapped in place, so a window after this point uses the new functions (§13.3)
             m_builder = builder;
             m_updater = updater;
@@ -135,6 +139,17 @@ namespace albor::model
             // the item index this row shows, which is its place in the content (§8.2, AD-13)
             std::size_t index = 0;
         };
+
+        // release every built row and every pooled one, which is what an incompatible view change needs (§18.1, AD-13)
+        void release_rows() {
+            // the built rows leave the tree first, because the tree owns what it walks (§8.1)
+            while (child_count() > 0)
+                (void)remove_child(child_at(0));
+            // the slots go with them, because no row stands behind a slot any more (§18.1)
+            m_slots.clear();
+            // the pool is released too, because a pooled row carries the old updater's expectations (§18.1)
+            m_pool.clear();
+        }
 
         // hand back the index range the window intersects, which is what virtualization decides (§8.2, AD-13)
         [[nodiscard]] std::pair<std::size_t, std::size_t> window_range() const {
@@ -235,8 +250,13 @@ namespace albor::model
                 m_updater(m_context, *row, item, index);
                 // the row joins the fresh order, which is what the arrange pass walks (§8.1)
                 slots.push_back(Slot{.key = key, .index = index});
+                // the row is read before it moves, because add_child hands back the parent (§8.1)
+                UiNode* adopted = row.get();
                 // the view adopts the row, because the tree owns what it walks (§8.1)
                 add_child(std::move(row));
+                // the row is measured here, because the frame that built it has already passed its measure pass (§8.2)
+                Size measured{};
+                adopted->measure(SizeConstraints::tight(Size{.width = m_window.viewport.width, .height = m_row_extent}), measured);
             }
             // the slots are the ones the adopted rows stand for, which is what the arrange pass reads (§8.2)
             m_slots = std::move(slots);

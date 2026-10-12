@@ -31,5 +31,8 @@ namespace albor
 
         // take the window the container is showing, which is what a virtualizing content builds against (§8.2)
         virtual void set_scroll_viewport(const ScrollViewport& viewport) = 0;
+
+        // take the height one row takes, which is what turns an item index into a position (§8.2, AD-13)
+        virtual void set_row_extent(float row_extent) = 0;
     };
 } // namespace albor

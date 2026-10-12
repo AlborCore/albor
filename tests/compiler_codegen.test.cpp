@@ -907,3 +907,69 @@ component LogPanel {
     // assert the facade includes the widget header, which is what the constructed class needs (§14.1)
     EXPECT_TRUE(contains(file_named(files, "log_panel.cpp").content, "#include \"widgets/scroll_view.h\""));
 }
+
+TEST(Codegen, AVirtualizedRepeatBorrowsStorageThatOutlivesTheEvaluator) {
+    // arrange a repeat under a viewport, whose items come from a component property (§8.2, AD-13)
+    const std::string source = R"(import task;
+component LogPanel {
+    inout property<vector<Task>> items;
+    ScrollView {
+        row_height: 20px;
+        Repeat(task in items) {
+            Label { text: task.title; }
+        }
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // the record carries the key a row is matched on, which the manifest declares (§18.1, AD-13)
+    catalog.add_record(RecordType{.name = "Task", .fields = {RecordFieldType{.name = "id", .type = scalar(TypeKind::String), .is_key = true}, RecordFieldType{.name = "title", .type = scalar(TypeKind::String), .is_key = false}}});
+    // the scanner runs first, because the parser takes units (§11.1)
+    const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
+    // the parser builds the untyped tree (§11.1)
+    const SourceFile file = Parser(tokens, diagnostics).parse();
+    // the checker resolves it against the catalog, which is where the record comes from (§11.1, AD-17)
+    const CheckedFile checked = TypeChecker(catalog, diagnostics).check(file);
+    // act
+    CodeGenerator generator(diagnostics);
+    // the catalog is what tells the generator a record is generatable and where its header lives (§11.2, AD-17)
+    generator.set_catalog(&catalog);
+    const std::vector<GeneratedFile> files = generator.generate(checked);
+    // assert
+    ASSERT_EQ(diagnostics.count(), 0U);
+    ASSERT_EQ(files.size(), 2U);
+    const std::string unit = file_named(files, "log_panel.cpp").content;
+    // assert the body owns the source, because the rows borrow it past the frame that produced it (§8.2, AD-13)
+    EXPECT_TRUE(contains(unit, "std::vector<Task> m_repeat_items_0;"));
+    // assert the evaluator stores into that member before the rows are pointed at it (§8.2, AD-13)
+    EXPECT_TRUE(contains(unit, "self->m_repeat_items_0 = value;"));
+    EXPECT_TRUE(contains(unit, "self->m_repeat_0->set_items(self->m_repeat_items_0);"));
+    // assert the rows are never pointed at the evaluator's local, which dies with the call (§8.2, AD-13)
+    EXPECT_FALSE(contains(unit, "set_items(value)"));
+}
+
+TEST(Codegen, ABoundViewportExtentBindsAndReappliesThePair) {
+    // arrange the viewport written as expressions, which is what a responsive form writes (§8.2)
+    const std::string_view source = R"(
+component LogPanel {
+    inout property<float> wide;
+    inout property<float> tall;
+    ScrollView {
+        viewport_width: wide;
+        viewport_height: tall;
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const std::string unit = file_named(files, "log_panel.cpp").content;
+    // assert each half is bound over its source, so the pair follows the form (§13.3, §8.2)
+    EXPECT_TRUE(contains(unit, "m_sink_0_viewport_width.bind_static("));
+    EXPECT_TRUE(contains(unit, "m_sink_0_viewport_height.bind_static("));
+    // assert the evaluator updates the track and re-applies the pair, rather than calling an empty setter (§11.3)
+    EXPECT_TRUE(contains(unit, "self->m_viewport_w_0 = value;"));
+    EXPECT_TRUE(contains(unit, "set_viewport_extent(Size{self->m_viewport_w_0, self->m_viewport_h_0})"));
+    // assert no call is emitted with no setter name, which is what the unhandled form produced (§11.3)
+    EXPECT_FALSE(contains(unit, "->(value)"));
+}

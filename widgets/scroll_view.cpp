@@ -213,11 +213,7 @@ namespace albor
             const float line = control->theme() != nullptr ? control->theme()->metrics().scroll_line_extent : SCROLL_LINE_EXTENT;
             control->scroll_by(-line);
         });
-        // the third action jumps to an absolute offset, which is how a screen reader reaches a known place (§10.1)
-        (void)node.add_action("scroll_to", [control = mutable_owner(this)] {
-            // with nowhere to go the action reports the current offset (§10.1)
-            control->scroll_to(control->offset());
-        });
+        // no absolute jump is offered, because a semantic action carries no target to jump to (§10.1)
         return node;
     }
 
@@ -426,6 +422,8 @@ namespace albor
         // a plain container is measured as a whole, which is the path a non virtualizing scroll view takes (§8.2)
         if (scrollable == nullptr)
             return;
+        // the row height travels first, because the window it produces is arithmetic over that height (§8.2, AD-13)
+        scrollable->set_row_extent(m_row_height);
         // the window carries the viewport, the content extent, the offset and the overscan (§8.2)
         const ScrollViewport window{.viewport = viewport_rect().empty() ? Size{} : Size{.width = m_bounds.width, .height = m_bounds.height}, .content = m_content_extent, .offset = offset(), .overscan = m_overscan};
         // the content builds against the window, which is what keeps only the visible rows materialized (§8.2, AD-13)

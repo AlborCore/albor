@@ -55,6 +55,12 @@ namespace
         return std::make_unique<UiNode>();
     }
 
+    // a second updater, which exists so a view change is observable (§18.1, AD-13)
+    void counting_update_2(void*, UiNode&, const Recorded&, std::size_t) {
+        // the count rises once per row the replacement updater rewrote (§18.1, AD-13)
+        writes++;
+    }
+
     // rewrite a row and count it, because a matched item is updated rather than rebuilt (§18.1, AD-13)
     void counting_update(void*, UiNode&, const Recorded&, std::size_t) {
         // the count rises once per row the view rewrote (§18.1, AD-13)
@@ -284,4 +290,79 @@ TEST(ScrollableRowsChecks, AWindowThatReachesPastTheLastItemStopsThere) {
     // assert there is no row past the last item, because there is no item there (§8.2, AD-13)
     EXPECT_EQ(rows.materialized(), 12u);
     EXPECT_FLOAT_EQ(rows.content_extent().height, 240.0f);
+}
+
+TEST(ScrollableRowsChecks, AChangedBuilderDropsTheRowsItCannotRead) {
+    // arrange
+    std::vector<Recorded> items;
+    items.reserve(100);
+    for (std::size_t index = 0; index < 100; index++)
+        items.push_back(Recorded{.key = "row" + std::to_string(index), .text = "line " + std::to_string(index)});
+    ScrollableRows<Recorded> rows{20.0f, 64};
+    rows.set_items(items);
+    rows.set_view(&counting_row, &counting_update, &key_of, nullptr);
+    rows.set_scroll_viewport(ScrollViewport{.viewport = Size{200.0f, 200.0f}, .content = Size{200.0f, 2000.0f}, .offset = 0.0f, .overscan = 0.0f});
+    UiNode* before = rows.child_at(0);
+    builds = 0;
+    // act the view is swapped for a different updater, which cannot read rows the old one made (§18.1, AD-13)
+    rows.set_view(&counting_row, &counting_update_2, &key_of, nullptr);
+    // assert the rows are rebuilt rather than reused, because a new updater would cast them wrongly (§18.1, AD-13)
+    EXPECT_EQ(rows.materialized(), 10u);
+    EXPECT_NE(rows.child_at(0), before);
+    // assert all ten were rebuilt, because a pooled row carries the old updater's expectations (§18.1, AD-13)
+    EXPECT_EQ(builds, 10u);
+}
+
+TEST(ScrollableRowsChecks, AnUnchangedBuilderKeepsTheRowsItCanRead) {
+    // arrange
+    std::vector<Recorded> items;
+    items.reserve(100);
+    for (std::size_t index = 0; index < 100; index++)
+        items.push_back(Recorded{.key = "row" + std::to_string(index), .text = "line " + std::to_string(index)});
+    ScrollableRows<Recorded> rows{20.0f, 64};
+    rows.set_items(items);
+    rows.set_view(&counting_row, &counting_update, &key_of, nullptr);
+    rows.set_scroll_viewport(ScrollViewport{.viewport = Size{200.0f, 200.0f}, .content = Size{200.0f, 2000.0f}, .offset = 0.0f, .overscan = 0.0f});
+    UiNode* before = rows.child_at(0);
+    builds = 0;
+    // act the same three functions are installed again, which changes nothing (§13.3)
+    rows.set_view(&counting_row, &counting_update, &key_of, nullptr);
+    // assert the rows survive, because the new updater is the one that made them (§18.1, AD-13)
+    EXPECT_EQ(rows.child_at(0), before);
+    EXPECT_EQ(builds, 0u);
+}
+
+TEST(ScrollableRowsChecks, EveryBuiltRowIsMeasuredAsItIsAdopted) {
+    // arrange
+    std::vector<Recorded> items;
+    items.reserve(100);
+    for (std::size_t index = 0; index < 100; index++)
+        items.push_back(Recorded{.key = "row" + std::to_string(index), .text = "line " + std::to_string(index)});
+    ScrollableRows<Recorded> rows{20.0f, 64};
+    rows.set_items(items);
+    rows.set_view(&counting_row, &counting_update, &key_of, nullptr);
+    // act the window is pushed with no measure pass before it, which is what arrange does (§8.2)
+    rows.set_scroll_viewport(ScrollViewport{.viewport = Size{200.0f, 200.0f}, .content = Size{200.0f, 2000.0f}, .offset = 0.0f, .overscan = 0.0f});
+    // assert each row was measured on adoption, because the frame that built it had already measured (§8.2)
+    ASSERT_EQ(rows.materialized(), 10u);
+    EXPECT_EQ(rows.child_at(0)->measured_size().height, 20.0f);
+    EXPECT_FLOAT_EQ(rows.child_at(0)->measured_size().width, 200.0f);
+}
+
+TEST(ScrollableRowsChecks, ARowThatEntersOnALaterScrollIsMeasuredToo) {
+    // arrange
+    std::vector<Recorded> items;
+    items.reserve(100);
+    for (std::size_t index = 0; index < 100; index++)
+        items.push_back(Recorded{.key = "row" + std::to_string(index), .text = "line " + std::to_string(index)});
+    ScrollableRows<Recorded> rows{20.0f, 64};
+    rows.set_items(items);
+    rows.set_view(&counting_row, &counting_update, &key_of, nullptr);
+    rows.set_scroll_viewport(ScrollViewport{.viewport = Size{200.0f, 200.0f}, .content = Size{200.0f, 2000.0f}, .offset = 0.0f, .overscan = 0.0f});
+    // act a scroll past every row the window held, so every built row is a recycled one (§8.2, AD-13)
+    rows.set_scroll_viewport(ScrollViewport{.viewport = Size{200.0f, 200.0f}, .content = Size{200.0f, 2000.0f}, .offset = 1000.0f, .overscan = 0.0f});
+    // assert the rows that arrived were measured, because nothing measured them afterwards (§8.2)
+    ASSERT_EQ(rows.materialized(), 10u);
+    EXPECT_EQ(rows.first_index(), 50u);
+    EXPECT_FLOAT_EQ(rows.child_at(0)->measured_size().height, 20.0f);
 }

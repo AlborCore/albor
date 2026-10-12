@@ -1207,9 +1207,12 @@ namespace albor::compiler
                 m_object = "self";
                 line(2, "// the source is read once, because the rows reconcile against that one value (§18.1)");
                 line(2, "const std::vector<" + item_type(slot) + "> value = " + repeat_source_expression(slot) + ";");
-                // a windowed repeat borrows the source, so the rows are told rather than reconciled (§8.2, AD-13)
-                if (slot.virtualized)
-                    line(2, "self->m_repeat" + at + "->set_items(value);");
+                // a windowed repeat borrows a body member, because the rows outlive this frame's local (§8.2, AD-13)
+                if (slot.virtualized) {
+                    line(2, "// the source is stored in the body, because the rows borrow it past this call (§8.2)");
+                    line(2, "self->m_repeat_items" + at + " = value;");
+                    line(2, "self->m_repeat" + at + "->set_items(self->m_repeat_items" + at + ");");
+                }
                 // an unwindowed repeat reconciles the whole container, because every item has a row (§18.1, AD-13)
                 else
                     line(2, "self->reconcile" + at + "();");
@@ -1604,6 +1607,14 @@ namespace albor::compiler
                     line(2, "// track the " + assignment.name + ", which the viewport extent reads (§11.3)");
                     line(2, member + " = " + emit_expression(*assignment.value) + ";");
                     viewport_written = true;
+                    // a constant extent is settled here, while a bound one needs a sink (§13.3)
+                    if (assignment.dependencies.empty())
+                        continue;
+                    // a bound extent runs through a sink, which the evaluator keeps current (§13.3)
+                    const std::string sink = "m_sink_" + std::to_string(slot.index) + "_" + sanitize(assignment.name);
+                    line(2, "// bind the " + assignment.name + " over its sources, which recomputes it when one changes (§13.3)");
+                    line(2, "const PropertyId deps_" + std::to_string(slot.index) + "_" + sanitize(assignment.name) + "[] = {" + dep_list(assignment.dependencies) + "};");
+                    line(2, sink + ".bind_static(&Impl::evaluate_" + std::to_string(slot.index) + "_" + sanitize(assignment.name) + ", this, deps_" + std::to_string(slot.index) + "_" + sanitize(assignment.name) + ");");
                     continue;
                 }
                 // a bound offset attaches to the widget property, which a user scroll outranks (§7.3, AD-24)
@@ -1920,23 +1931,28 @@ namespace albor::compiler
             const std::string at = "_" + std::to_string(slot.index);
             // a windowed repeat hangs under a viewport, so it owns its own rows (§8.2, AD-13)
             if (slot.virtualized) {
+                // the view is built in a local, because the tree owns it once it is adopted (§8.2, AD-13)
+                const std::string rows = "rows" + at;
                 line(2, "// the windowed view owns the rows, keyed by the manifest identity (§8.2, AD-13)");
-                line(2, "m_repeat" + at + " = std::make_unique<albor::model::ScrollableRows<" + item_type(slot) + ">>(0.0f, 64);");
-                line(2, "// the row height comes from the viewport, which makes an index a position (§8.2)");
-                line(2, "m_repeat" + at + "->set_row_extent(n" + std::to_string(slot.parent) + "->row_height());");
-                line(2, "// the viewport adopts the view as its one content child (§8.2)");
-                line(2, "n" + std::to_string(slot.parent) + "->add_child(std::move(m_repeat" + at + "));");
+                line(2, "auto " + rows + " = std::make_unique<albor::model::ScrollableRows<" + item_type(slot) + ">>(0.0f, 64);");
+                line(2, "// the row height comes from the viewport, which makes an index a position (§8.2, AD-13)");
+                line(2, rows + "->set_row_extent(n" + std::to_string(slot.parent) + "->row_height());");
                 line(2, "// the three plain functions the rows are built and matched through (§13.3, §18.1)");
-                line(2, "m_repeat" + at + "->set_view(&Impl::build_row" + at + ", &Impl::update_row" + at + ", &Impl::key_of" + at + ", this);");
+                line(2, rows + "->set_view(&Impl::build_row" + at + ", &Impl::update_row" + at + ", &Impl::key_of" + at + ", this);");
                 line(2, "// the rows are reconciled now, so the tree is complete at construction (§18.1)");
-                reconcile(slot);
+                line(2, "m_repeat_items" + at + " = m_repeat_source" + at + ".get();");
+                line(2, rows + "->set_items(m_repeat_items" + at + ");");
                 line(2, "// the sink joins the component scope, which gives the reconcile a unique id (§13.3, §18.1)");
                 line(2, "owner->register_property(m_repeat_source" + at + ");");
                 line(2, "// the binding is declared here, because the evaluator below writes through it (§13.3, §18.1)");
                 line(2, "const PropertyId deps_repeat" + at + "[] = {" + dep_list(repeat_dependencies(slot)) + "};");
                 line(2, "m_repeat_source" + at + ".bind_static(&Impl::evaluate_repeat" + at + ", this, deps_repeat" + at + ");");
-                line(2, "// the source reaches the rows, which borrow it rather than copy it (§8.2, AD-13)");
-                line(2, "m_repeat" + at + "->set_items(m_repeat_source" + at + ".get());");
+                line(2, "// the source reaches the rows, which borrow a member that outlives them (§8.2, AD-13)");
+                line(2, rows + "->set_items(m_repeat_items" + at + ");");
+                line(2, "// the viewport adopts the view, which is what hands ownership to the tree (§8.2, AD-13)");
+                line(2, "n" + std::to_string(slot.parent) + "->add_child(std::move(" + rows + "));");
+                line(2, "// the body keeps a view onto the rows, because the tree owns them from here (§8.2, AD-13)");
+                line(2, "m_repeat" + at + " = static_cast<albor::model::ScrollableRows<" + item_type(slot) + ">*>(n" + std::to_string(slot.parent) + "->child_at(0));");
                 return;
             }
             // the view is built against the container, because its rows hang where the repeat was written (§8.1, §18.1)
@@ -1961,7 +1977,8 @@ namespace albor::compiler
             m_repeat_index_name.clear();
             // the rows are reconciled against the source, matching by identity (§18.1, AD-13)
             if (slot.virtualized) {
-                line(2, "m_repeat" + at + "->set_items(m_repeat_source" + at + ".get());");
+                line(2, "m_repeat_items" + at + " = m_repeat_source" + at + ".get();");
+                line(2, "m_repeat" + at + "->set_items(m_repeat_items" + at + ");");
                 m_object.clear();
                 return;
             }
@@ -1977,10 +1994,13 @@ namespace albor::compiler
                 // the item type is the element of the source, which the view is keyed over (§8.1, §18.1)
                 const std::string item = item_type(slot);
                 line(0, "");
-                // a windowed repeat owns its rows directly, because only the window is built (§8.2, AD-13)
+                // a windowed repeat views the rows the tree owns, because only the window is built (§8.2, AD-13)
                 if (slot.virtualized) {
-                    line(2, "// the windowed view over the rows this repeat materializes (§8.2, AD-13)");
-                    line(2, "std::unique_ptr<albor::model::ScrollableRows<" + item + ">> m_repeat" + at + ";");
+                    line(2, "// the view onto the windowed rows, which the tree owns as the viewport's child (§8.2, AD-13)");
+                    line(2, "albor::model::ScrollableRows<" + item + ">* m_repeat" + at + " = nullptr;");
+                    line(0, "");
+                    line(2, "// the source the rows borrow, which the body owns so it outlives every frame (§8.2, AD-13)");
+                    line(2, "std::vector<" + item + "> m_repeat_items" + at + ";");
                 }
                 // an unwindowed repeat hangs its rows from the container it was written in (§18.1, AD-13)
                 else {
@@ -2032,6 +2052,14 @@ namespace albor::compiler
                         line(2, "self->m_canvas_" + std::string(width ? "w" : "h") + "_" + std::to_string(slot.index) + " = value;");
                         line(2, "// the canvas resizes, which is what the binding changes (§11.3)");
                         line(2, "self->m_node_" + std::to_string(slot.index) + "->set_intrinsic_size(Size{self->m_canvas_w_" + std::to_string(slot.index) + ", self->m_canvas_h_" + std::to_string(slot.index) + "});");
+                    }
+                    // a bound viewport extent updates its track and re-applies the pair (§8.2, §11.3)
+                    else if (slot.node->element_type == "ScrollView" && (assignment.name == "viewport_width" || assignment.name == "viewport_height")) {
+                        // the width track updates first, which the viewport extent then combines (§11.3)
+                        const bool width = assignment.name == "viewport_width";
+                        line(2, "// the " + std::string(width ? "width" : "height") + " track updates, which the viewport reads (§11.3)");
+                        line(2, "self->m_viewport_" + std::string(width ? "w" : "h") + "_" + std::to_string(slot.index) + " = value;");
+                        line(2, "self->m_node_" + std::to_string(slot.index) + "->set_viewport_extent(Size{self->m_viewport_w_" + std::to_string(slot.index) + ", self->m_viewport_h_" + std::to_string(slot.index) + "});");
                     }
                     // a bound offset writes the widget property, so the evaluator only produces the value (§7.3)
                     else if (slot.node->element_type == "ScrollView" && assignment.name == "offset") {

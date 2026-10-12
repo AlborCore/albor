@@ -50,7 +50,7 @@ namespace albor
         // the corner radius a plate is drawn with, which is what makes a hover state read as a plate (§6.1)
         float corner_radius = 6.0f;
 
-        // how wide a scrollbar is drawn, which is the gutter a scroll container reserves (§6.1)
+        // how wide a scrollbar is drawn, which overlays the content rather than insetting it (§6.1)
         float scrollbar_extent = 10.0f;
 
         // the smallest thumb a scrollbar draws, which is what keeps a very long content grabbable (§6.1)
