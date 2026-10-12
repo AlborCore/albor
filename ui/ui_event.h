@@ -34,6 +34,9 @@ namespace albor
         // a key came up
         KeyUp,
 
+        // pre-edit text arrived from the input method, which is the marked string before it is committed (§8.3)
+        Composing,
+
         // committed text arrived from the input method
         TextInput
     };
@@ -284,7 +287,7 @@ namespace albor
         // the modifier keys held during the event, which distinguishes shift tab (§8.3)
         Modifiers modifiers;
 
-        // the utf8 text a text input event carries, which is empty for every other kind
+        // the utf8 text a text or composing event carries, which is the marked string while composing (§8.3)
         std::string text;
 
         // whether a handler claimed the event, which stops the walk at this node (§8.3)

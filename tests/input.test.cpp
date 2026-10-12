@@ -138,14 +138,16 @@ TEST(EventFilterChecks, WheelIsTheOnlyScrollEvent) {
     EXPECT_FALSE(EventFilter::is_scroll(text));
 }
 
-TEST(EventFilterChecks, TextInputIsTheOnlyTextEvent) {
+TEST(EventFilterChecks, CommittedAndPreEditTextAreTheTextEvents) {
     // arrange
     Event text{.kind = EventKind::TextInput};
+    Event composing{.kind = EventKind::Composing};
     Event move{.kind = EventKind::PointerMove};
     Event key{.kind = EventKind::KeyUp};
     Event wheel{.kind = EventKind::Wheel};
     // act assert
     EXPECT_TRUE(EventFilter::is_text(text));
+    EXPECT_TRUE(EventFilter::is_text(composing));
     EXPECT_FALSE(EventFilter::is_text(move));
     EXPECT_FALSE(EventFilter::is_text(key));
     EXPECT_FALSE(EventFilter::is_text(wheel));
@@ -169,10 +171,12 @@ TEST(EventFilterChecks, KeyAndTextEventsCarryNoPosition) {
     Event key_down{.kind = EventKind::KeyDown};
     Event key_up{.kind = EventKind::KeyUp};
     Event text{.kind = EventKind::TextInput};
+    Event composing{.kind = EventKind::Composing};
     // act assert
     EXPECT_FALSE(EventFilter::positioned(key_down));
     EXPECT_FALSE(EventFilter::positioned(key_up));
     EXPECT_FALSE(EventFilter::positioned(text));
+    EXPECT_FALSE(EventFilter::positioned(composing));
 }
 
 TEST(InputDispatcherChecks, RoutesToTheRootWhenItHasNoChildren) {
@@ -1011,6 +1015,36 @@ TEST(InputControllerChecks, ATextEventReachesTheFocusedWalk) {
     // assert the text channel routes through the focused walk, which the dispatcher serves (§8.3)
     EXPECT_EQ(root.deliveries, 1u);
     EXPECT_TRUE(event.handled);
+}
+
+TEST(InputControllerChecks, AComposingEventReachesTheFocusedWalk) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    controller.attach(root);
+    // act
+    Event event{.kind = EventKind::Composing, .text = "\xE3\x81\x82"};
+    controller.deliver(event);
+    // assert a pre-edit walks the same channel as a commit, because the field the focus names answers both (§8.3)
+    EXPECT_EQ(root.deliveries, 1u);
+    EXPECT_TRUE(event.handled);
+}
+
+TEST(InputControllerChecks, AComposingEventIsClaimedSeparatelyFromACommit) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    controller.attach(root);
+    // act
+    Event marked{.kind = EventKind::Composing, .text = "\xE3\x81\x82"};
+    controller.deliver(marked);
+    Event committed{.kind = EventKind::TextInput, .text = "\xE3\x81\x82"};
+    controller.deliver(committed);
+    // assert the pre-edit and the commit arrive as two events, which is what makes the two states distinct (§8.3)
+    EXPECT_EQ(root.deliveries, 2u);
+    EXPECT_TRUE(committed.handled);
 }
 
 TEST(InputControllerChecks, ASecondPressWhileCapturingIsDropped) {
