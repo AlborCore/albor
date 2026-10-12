@@ -1,9 +1,11 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
 
+#include "animation/animation_engine.h"
 #include "core/paint.h"
 #include "runtime/binding_engine.h"
 #include "text/text_engine.h"
@@ -56,12 +58,21 @@ namespace albor
         // hand out how many frames the stage built, which a test asserts on (§6.1)
         [[nodiscard]] std::uint64_t frame_count() const;
 
+        // hand out the animation engine the frame tick advances, which a widget drives its animations on (§7.3, AD-04d)
+        [[nodiscard]] AnimationEngine& animations();
+
     private:
         // the renderer that owns the surface, which the resize needs (§6.3)
         RendererBackend* m_renderer = nullptr;
 
         // the engine the stage settles before every frame, which the tree declares properties over (§7.3)
         BindingEngine m_engine;
+
+        // the animations the frame tick advances, which the tree schedules its own on (§7.3, AD-04d)
+        AnimationEngine m_animations;
+
+        // the instant the last frame was dated at, which the next frame delta is measured from (§7.3)
+        std::chrono::steady_clock::time_point m_last_frame;
 
         // the wiring, declared so the destructor releases the pipeline first and the surface last (§6.1)
         std::unique_ptr<RenderSurface> m_surface;

@@ -12,10 +12,26 @@ namespace albor
         // a zero duration would complete on the first frame without a usable progress, so it is refused (§7.3)
         if (duration <= AnimationDuration::zero())
             return 0;
+        // the single pass animation is the repeating one with nothing left to repeat (§7.3)
+        return register_animation(std::move(tick), duration, 0);
+    }
+
+    AnimationHandle AnimationEngine::schedule_repeating(AnimationTick tick, AnimationDuration duration, AnimationRepeats repeats) {
+        // a repeating animation refuses exactly what a single pass one refuses, because a pass is still a pass (§7.3)
+        if (!tick)
+            return 0;
+        // a zero duration would restart on every frame without a usable progress, so it is refused (§7.3)
+        if (duration <= AnimationDuration::zero())
+            return 0;
+        // the animation is registered over the passes it was asked for (§7.3)
+        return register_animation(std::move(tick), duration, repeats);
+    }
+
+    AnimationHandle AnimationEngine::register_animation(AnimationTick tick, AnimationDuration duration, AnimationRepeats repeats) {
         // the handle is taken before the entry is stored, because the entry records its own handle (§7.3)
         const AnimationHandle handle = m_next_handle++;
         // the entry starts at zero elapsed and active, which is what a just scheduled animation is (§7.3)
-        m_animations.push_back(Running{.handle = handle, .tick = std::move(tick), .duration = duration, .elapsed = 0.0f, .active = true});
+        m_animations.push_back(Running{.handle = handle, .tick = std::move(tick), .duration = duration, .elapsed = 0.0f, .repeats = repeats, .active = true});
         // the first frame is requested, because nothing has been drawn yet at the starting progress (§6.1, §7.3)
         if (m_invalidation)
             m_invalidation();
@@ -73,9 +89,17 @@ namespace albor
             // a tick that refuses ends the animation immediately, which is the early exit of §7.3
             if (!continues)
                 running.active = false;
-            // an animation past its duration is finished, which the drop below removes (§7.3)
-            if (normalized >= 1.0f)
+            // an animation out of passes is finished, which the drop below removes (§7.3)
+            if (normalized >= 1.0f && running.repeats == 0)
                 running.active = false;
+            // an animation with a pass left rewinds instead, so the next frame reports the progress of that pass (§7.3)
+            if (normalized >= 1.0f && running.repeats > 0) {
+                // a finite repeat count is spent by the pass it just ran, while the forever count is never spent (§7.3)
+                if (running.repeats != ANIMATION_FOREVER)
+                    running.repeats--;
+                // the elapsed time rewinds by one span, which is what restarts the progress from zero (§7.3)
+                running.elapsed -= span;
+            }
         }
         // the finished entries are dropped immediately, so active_count never reports a finished animation (§7.3)
         m_animations.erase(std::remove_if(m_animations.begin(), m_animations.end(), [](const Running& running) { return !running.active; }), m_animations.end());

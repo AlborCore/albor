@@ -1,5 +1,7 @@
 #include "application/window_stage.h"
 
+#include <chrono>
+
 #include "input/input_controller.h"
 #include "render/render_executor.h"
 #include "ui/frame_pipeline.h"
@@ -28,6 +30,14 @@ namespace albor
         if (!m_surface)
             return;
         m_pipeline->set_surface(m_surface.get());
+        // the frame tick advances the animations, and their writes settle before the scene is recorded (§7.3, AD-04d)
+        m_pipeline->set_animation_engine(&m_animations);
+        // an animation asks the window for the frame its next pass needs, which is the window's pacing tick (§6.1, §7.3)
+        m_animations.set_invalidation_handler([&window] { window.request_frame(); });
+        // a settled graph reaches the same tick, because an invalidation is what a frame request means (§6.1, §7.3)
+        m_pipeline->set_frame_request([&window] { window.request_frame(); });
+        // the first delta is measured from now, because no frame has been built yet (§7.3)
+        m_last_frame = std::chrono::steady_clock::now();
         // the controller routes the normalized events into the tree (§8.3)
         m_input = std::make_unique<InputController>();
         m_input->attach(m_pipeline->root());
@@ -44,6 +54,15 @@ namespace albor
         // an unwired stage has nothing to build, which the window betrayed at creation time (§6.1)
         if (!wired())
             return;
+        // the instant is read first, because the delta is measured against the frame before this one (§7.3)
+        const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+        // an idle tree skips the advance, which is what keeps a window with no animations cheap (§7.3)
+        if (m_animations.active_count() > 0) {
+            // the animations run before the scene is recorded, so the frame carries the values they wrote (§7.3, AD-04d)
+            m_pipeline->advance_animations(std::chrono::duration<float>(now - m_last_frame).count());
+        }
+        // the frame is dated, because the next delta is measured from it (§7.3)
+        m_last_frame = now;
         // stage one settles the graph and records the scene, stage two executes it (§6.1, AD-18)
         m_pipeline->submit(m_pipeline->build(window.metrics()));
     }
@@ -78,5 +97,10 @@ namespace albor
     std::uint64_t WindowStage::frame_count() const {
         // an unwired stage built nothing, which is the count it reports (§6.1)
         return m_pipeline ? m_pipeline->frame_count() : 0;
+    }
+
+    AnimationEngine& WindowStage::animations() {
+        // the engine is a member, so a widget holding this reference never sees it replaced (§7.3)
+        return m_animations;
     }
 } // namespace albor

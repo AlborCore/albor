@@ -167,29 +167,85 @@ namespace albor
         paragraph->layout(layout_width);
         // the shaped lines are collected before the paragraph goes away (§9.1, AD-18)
         std::vector<ShapedRun::Line> lines;
+        // the half open range of runs each text line occupies, which folds a fallback split back into one ascent (§9.1)
+        std::vector<std::pair<std::size_t, std::size_t>> spans;
         // the visitor reports every line in reading order and names the font each line was shaped with (§9.1)
-        paragraph->visit([&lines](int, const skia::textlayout::Paragraph::VisitorInfo* info) {
-            // a null visit info marks the end of a line, which carries nothing to record (§9.1)
-            if (info == nullptr || info->count <= 0)
+        paragraph->visit([&lines, &spans](int line_number, const skia::textlayout::Paragraph::VisitorInfo* info) {
+            // the end of a line carries nothing to record, but a line that shaped no glyph still owns a run (§9.1)
+            if (info == nullptr) {
+                // a line with no glyph reports no run, so an empty one stands in for it (§9.1)
+                if (spans.size() <= static_cast<std::size_t>(line_number)) {
+                    // the empty line is the one the caret of a blank row is placed on (§9.1)
+                    lines.push_back(ShapedRun::Line{});
+                    // the span records that the line shaped nothing, which is what its byte range says (§9.1)
+                    spans.push_back(std::make_pair(lines.size() - 1, lines.size()));
+                }
                 return;
-            // the line is built aside because the visitor reports one line at a time (§9.1)
+            }
+            // a line carrying no glyph has no advance to record, but it still ends its span (§9.1)
+            if (info->count <= 0)
+                return;
+            // the run is built aside because the visitor reports one at a time (§9.1)
             ShapedRun::Line line;
-            // the typeface the line was shaped with, which the renderer draws from (§9.1)
+            // the typeface the run was shaped with, which the renderer draws from (§9.1)
             line.font = FontHandle::from_object(info->font.getTypeface());
-            // the line origin is the baseline the glyph positions of the line hang from (§9.1)
+            // the line origin is the baseline the glyph positions of the run hang from (§9.1)
             line.origin = Point{.x = info->origin.x(), .y = info->origin.y()};
             // the glyphs are reserved, because the visitor reports how many there are (§9.1)
             line.glyphs.reserve(static_cast<std::size_t>(info->count));
-            // every glyph contributes its index and its position beside the line origin (§9.1)
+            // every glyph contributes its index, its position and the byte it carries (§9.1)
             for (int index = 0; index < info->count; index++)
-                line.glyphs.push_back(ShapedGlyph{.id = static_cast<std::uint32_t>(info->glyphs[index]), .position = Point{.x = info->positions[index].x(), .y = info->positions[index].y()}});
-            // the line joins the run in the order the visitor reported it (§9.1)
+                line.glyphs.push_back(ShapedGlyph{.id = static_cast<std::uint32_t>(info->glyphs[index]), .position = Point{.x = info->positions[index].x(), .y = info->positions[index].y()}, .cluster = info->utf8Starts[index]});
+            // the run's own advance is where a caret stands past its last glyph (§9.1)
+            line.width = static_cast<float>(info->advanceX);
+            // the byte span of the run, which is what a caret inside this fallback resolves against (§9.1)
+            line.start_byte = static_cast<std::size_t>(info->utf8Starts[0]);
+            // the span ends past the last cluster, which is where the caret of a split line rests (§9.1)
+            line.end_byte = static_cast<std::size_t>(info->utf8Starts[info->count]);
+            // the run joins the run in the order the visitor reported it (§9.1)
             lines.push_back(std::move(line));
+            // a line already collecting runs extends the span it opened, because the metrics are per line (§9.1)
+            if (spans.size() <= static_cast<std::size_t>(line_number))
+                spans.push_back(std::make_pair(lines.size() - 1, lines.size()));
+            // otherwise the span covers this run too, because the line shaped more than one (§9.1)
+            else
+                spans[static_cast<std::size_t>(line_number)].second = lines.size();
         });
         // the line metrics carry the ascent and descent the caller places content by (§9.1)
         std::vector<skia::textlayout::LineMetrics> line_metrics;
         // the metrics are read per line, because a wrapped run carries one ascent per line (§9.1)
         paragraph->getLineMetrics(line_metrics);
+        // every line the metrics cover is folded onto its runs, because a fallback split one line into several (§9.1)
+        for (std::size_t index = 0; index < spans.size() && index < line_metrics.size(); index++) {
+            // the runs of the line are addressed through the span the visitor opened for it (§9.1)
+            const std::pair<std::size_t, std::size_t>& span = spans[index];
+            // the ascent of the line is what every one of its runs is measured against (§9.1)
+            const float ascent = static_cast<float>(line_metrics[index].fAscent);
+            // the descent is read beside it, because a caller places content by the pair (§9.1)
+            const float descent = static_cast<float>(line_metrics[index].fDescent);
+            // a run of the line carries the ascent and the descent of the line it belongs to (§9.1)
+            for (std::size_t run = span.first; run < span.second && run < lines.size(); run++) {
+                // the ascent belongs to the line, so a caret sits on the same baseline in either run (§9.1)
+                lines[run].ascent = ascent;
+                // the descent is the pair member, so a caller places the same pair on either run (§9.1)
+                lines[run].descent = descent;
+            }
+            // a line that shaped nothing has no run to fold onto, so it is addressed by its own index (§9.1)
+            if (span.first == span.second && span.first < lines.size()) {
+                // the empty line still carries the ascent, because a blank row occupies a real baseline (§9.1)
+                lines[span.first].ascent = ascent;
+                // the descent is the pair member, for the same reason (§9.1)
+                lines[span.first].descent = descent;
+            }
+            // the first run of the line carries where the line begins, because a caret resolves against it (§9.1)
+            if (span.first < lines.size()) {
+                // the byte the line starts at is what a press on its left edge resolves to (§9.1)
+                lines[span.first].start_byte = static_cast<std::size_t>(line_metrics[index].fStartIndex);
+                // a line shaped nothing ends where it began, because it advanced no byte (§9.1)
+                if (span.first == span.second)
+                    lines[span.first].end_byte = static_cast<std::size_t>(line_metrics[index].fStartIndex);
+            }
+        }
         // the layout starts as an unmeasured default, so a run that shaped no line reports nothing (§9.1)
         TextLayout layout;
         // the shaped run is what the render stage replays verbatim (§9.1, AD-18)

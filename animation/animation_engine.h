@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <vector>
 
 namespace albor
@@ -13,6 +14,12 @@ namespace albor
 
     // how long an animation runs, which the frame delta accumulates against (§7.3)
     using AnimationDuration = std::chrono::milliseconds;
+
+    // how many further passes an animation runs after its first, which a blink counts in (§7.3)
+    using AnimationRepeats = std::uint32_t;
+
+    // the repeat count that names an animation running until it is cancelled, which is how a caret blink drives (§7.3)
+    inline constexpr AnimationRepeats ANIMATION_FOREVER = std::numeric_limits<AnimationRepeats>::max();
 
     // the work one animation performs, which receives the progress from zero to one and reports whether it continues (§7.3)
     using AnimationTick = std::function<bool(float)>;
@@ -32,6 +39,9 @@ namespace albor
 
         // register a time based animation and hand back its handle, which cancel and running then key on (§7.3)
         [[nodiscard]] AnimationHandle schedule(AnimationTick tick, AnimationDuration duration);
+
+        // register an animation that runs its passes over and over, which is what a caret blink is (§7.3)
+        [[nodiscard]] AnimationHandle schedule_repeating(AnimationTick tick, AnimationDuration duration, AnimationRepeats repeats = ANIMATION_FOREVER);
 
         // end an animation early, which reports whether the handle named a running animation (§7.3)
         bool cancel(AnimationHandle handle);
@@ -70,9 +80,15 @@ namespace albor
             // how much of the duration has elapsed, which the frame delta accumulates (§7.3)
             float elapsed = 0.0f;
 
+            // how many further passes the animation runs, which the forever value never exhausts (§7.3)
+            AnimationRepeats repeats = 0;
+
             // whether the animation is still running, which cancel clears (§7.3)
             bool active = true;
         };
+
+        // register an animation over the fields every pass shares, which schedule and schedule_repeating both fill (§7.3)
+        [[nodiscard]] AnimationHandle register_animation(AnimationTick tick, AnimationDuration duration, AnimationRepeats repeats);
 
         // locate a running animation by handle, returning null when the handle names none (§7.3)
         [[nodiscard]] Running* find(AnimationHandle handle);
