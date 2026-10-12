@@ -460,6 +460,9 @@ namespace albor::compiler
     }
 
     void TypeChecker::resolve_statement(const HandlerStatement& statement, const Scope& scope, CheckedHandler& out) {
+        // a statement the parser could not read carries no value, and the parser already reported it (§11.1)
+        if (statement.kind == HandlerStatementKind::Assignment && statement.value == nullptr)
+            return;
         // the statement is assembled locally, because one mistake must not hide the rest (§11.1)
         CheckedStatement out_statement;
         // the kind, the target and the span come straight from the declaration (§11.1)

@@ -1435,3 +1435,31 @@ TEST(TypeChecker, ReportsAKeyFieldExactlyOnce) {
     ASSERT_NE(record->key_field(), nullptr);
     EXPECT_EQ(record->key_field()->name, "key");
 }
+
+TEST(TypeCheckerHandlers, ABodyTheParserCouldNotReadIsReportedNotFollowed) {
+    // arrange a handler body holding an element, which the language does not allow in a body (§11.1)
+    DiagnosticList diagnostics;
+    const std::string source = R"UI(component Panel {
+    inout property<float> total;
+
+    Column {
+        Button {
+            text: "grow";
+
+            on_clicked: {
+                Label { text: "not a statement"; }
+            }
+        }
+    }
+})UI";
+    // act, assert the run finishes and reports rather than reading the value the parser never produced
+    const CheckedFile file = check(source, diagnostics);
+    // assert the parser named the problem, because a body takes only an assignment or an invocation (§11.1)
+    bool reported = false;
+    for (const Diagnostic& diagnostic : diagnostics.diagnostics())
+        if (diagnostic.code == "E0201")
+            reported = true;
+    EXPECT_TRUE(reported);
+    // assert the checker still produced a file to describe, because a crash reports nothing (§11.1)
+    EXPECT_EQ(file.components.size(), 1U);
+}
