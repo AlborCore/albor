@@ -22,6 +22,7 @@
 #include "widgets/canvas.h"
 #include "widgets/checkbox.h"
 #include "widgets/label.h"
+#include "widgets/scroll_view.h"
 #include "widgets/slider.h"
 
 namespace albor::preview
@@ -90,6 +91,8 @@ namespace albor::preview
                 built = std::make_unique<CheckBox>(&engine);
             else if (node.element_type == "Canvas")
                 built = std::make_unique<Canvas>(&engine);
+            else if (node.element_type == "ScrollView")
+                built = std::make_unique<ScrollView>(&engine);
             else {
                 // an element this build does not know produces nothing, which the diagnostics already reported (§12.2)
                 return nullptr;

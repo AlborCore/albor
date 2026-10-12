@@ -26,6 +26,8 @@ namespace
             return NSAccessibilityStaticTextRole;
         case albor::SemanticRole::Slider:
             return NSAccessibilitySliderRole;
+        case albor::SemanticRole::ScrollView:
+            return NSAccessibilityScrollAreaRole;
         case albor::SemanticRole::Canvas:
         case albor::SemanticRole::Group:
         case albor::SemanticRole::ListItem:

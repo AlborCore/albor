@@ -1558,16 +1558,26 @@ TEST(PictureRecorder, RestoreWithoutASavedStateKeepsTheTransform) {
     EXPECT_EQ(recorder.transform(), (Transform::translation(5.0f, 6.0f)));
 }
 
-TEST(PictureRecorder, EachClipKindStoresItsRectangle) {
+TEST(PictureRecorder, EachClipKindNarrowsToTheRectangleItWasGiven) {
     // arrange
     PictureRecorder recorder;
     // act
     recorder.clip_rect(Rect::from_origin_size(Point{1.0f, 2.0f}, Size{10.0f, 10.0f}));
     const Rect first_clip = recorder.clip();
     recorder.clip_rounded_rect(Rect::from_origin_size(Point{4.0f, 5.0f}, Size{20.0f, 20.0f}), 3.0f);
-    // assert
+    // assert the second clip is the overlap, because a nested clip may only cut more away (§6.2)
     EXPECT_EQ(first_clip, (Rect::from_origin_size(Point{1.0f, 2.0f}, Size{10.0f, 10.0f})));
-    EXPECT_EQ(recorder.clip(), (Rect::from_origin_size(Point{4.0f, 5.0f}, Size{20.0f, 20.0f})));
+    EXPECT_EQ(recorder.clip(), (Rect::from_origin_size(Point{4.0f, 5.0f}, Size{7.0f, 7.0f})));
+}
+
+TEST(PictureRecorder, AClipWiderThanTheOneItNarrowsCannotWidenIt) {
+    // arrange
+    PictureRecorder recorder;
+    // act
+    recorder.clip_rect(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{10.0f, 10.0f}));
+    recorder.clip_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    // assert a container inside a narrower clip never lets the content back out (§6.2)
+    EXPECT_EQ(recorder.clip(), (Rect::from_origin_size(Point{10.0f, 10.0f}, Size{10.0f, 10.0f})));
 }
 
 TEST(PictureRecorder, AnEmptyRoundedRectDoesNotRecord) {

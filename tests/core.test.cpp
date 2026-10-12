@@ -105,6 +105,39 @@ TEST(Rect, FromOriginSizeKeepsTheExtent) {
     EXPECT_FLOAT_EQ(rect.height, 40.0f);
 }
 
+TEST(Rect, IntersectKeepsTheOverlapOfTwoOverlappingRectangles) {
+    // arrange
+    const Rect outer = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    const Rect inner = Rect::from_origin_size(Point{20.0f, 30.0f}, Size{100.0f, 100.0f});
+    // act
+    const Rect overlap = outer.intersect(inner);
+    // assert the overlap starts where the inner starts and ends where the outer ends (§6.2)
+    EXPECT_FLOAT_EQ(overlap.x, 20.0f);
+    EXPECT_FLOAT_EQ(overlap.y, 30.0f);
+    EXPECT_FLOAT_EQ(overlap.width, 80.0f);
+    EXPECT_FLOAT_EQ(overlap.height, 70.0f);
+}
+
+TEST(Rect, IntersectOfDisjointRectanglesIsEmpty) {
+    // arrange
+    const Rect left = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f});
+    const Rect right = Rect::from_origin_size(Point{50.0f, 50.0f}, Size{10.0f, 10.0f});
+    // act
+    const Rect overlap = left.intersect(right);
+    // assert a rectangle that only touches reports no area rather than a negative extent (§6.2)
+    EXPECT_TRUE(overlap.empty());
+}
+
+TEST(Rect, IntersectWithAContainerIsTheContainedRectangle) {
+    // arrange
+    const Rect narrow = Rect::from_origin_size(Point{10.0f, 10.0f}, Size{10.0f, 10.0f});
+    const Rect wide = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    // act
+    const Rect overlap = narrow.intersect(wide);
+    // assert a wider clip cannot widen a narrower one, which is what keeps a nested container inside its parent (§6.2)
+    EXPECT_EQ(overlap, narrow);
+}
+
 TEST(Rect, FromOriginSizeWithAPositiveExtentIsNotEmpty) {
     // arrange
     const Point origin{0.0f, 0.0f};

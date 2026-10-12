@@ -6,6 +6,7 @@
 
 #include "model/item_key.h"
 #include "model/keyed_view.h"
+#include "model/scrollable_rows.h"
 #include "ui/ui_node.h"
 
 using namespace albor;
@@ -39,6 +40,25 @@ namespace
     ItemKey key_of(void*, const Recorded& item) {
         // the key is read, because that is what the view matches on (§18.1, AD-13)
         return ItemKey(item.key);
+    }
+
+    // how many rows the counting builder has materialized, which is what proves a scroll recycles (§8.2, AD-13)
+    std::size_t builds = 0;
+
+    // how many rows the counting updater has rewritten, which proves a match is updated in place (§18.1, AD-13)
+    std::size_t writes = 0;
+
+    // build a row and count it, because a rebuild is what recycling avoids (§8.2, AD-13)
+    std::unique_ptr<UiNode> counting_row(void*, const Recorded&, std::size_t) {
+        // the count rises before the node is handed back, so a test reads what the scroll allocated (§8.2, AD-13)
+        builds++;
+        return std::make_unique<UiNode>();
+    }
+
+    // rewrite a row and count it, because a matched item is updated rather than rebuilt (§18.1, AD-13)
+    void counting_update(void*, UiNode&, const Recorded&, std::size_t) {
+        // the count rises once per row the view rewrote (§18.1, AD-13)
+        writes++;
     }
 } // namespace
 
@@ -119,4 +139,149 @@ TEST(ItemKey, AnIntKeyAndItsTextSpellingNameTheSameItem) {
     const ItemKey from_text("42");
     // assert the two name the same item, because a key is compared as text (§18.1, AD-13)
     EXPECT_TRUE(from_int == from_text);
+}
+
+TEST(ScrollableRowsChecks, OnlyTheWindowIsMaterialized) {
+    // arrange a thousand rows, which is the scale the requirement names (§8.2, AD-13)
+    std::vector<Recorded> items;
+    items.reserve(1000);
+    for (std::size_t index = 0; index < 1000; index++)
+        items.push_back(Recorded{.key = "row" + std::to_string(index), .text = "line " + std::to_string(index)});
+    ScrollableRows<Recorded> rows{20.0f, 64};
+    rows.set_items(items);
+    rows.set_view(&counting_row, &counting_update, &key_of, nullptr);
+    builds = 0;
+    writes = 0;
+    // act a window showing the top of the content
+    rows.set_scroll_viewport(ScrollViewport{.viewport = Size{200.0f, 200.0f}, .content = Size{200.0f, 20000.0f}, .offset = 0.0f, .overscan = 0.0f});
+    // assert the whole list is not built, which is the whole point of the requirement (§8.2, AD-13)
+    EXPECT_EQ(rows.materialized(), 10u);
+    EXPECT_EQ(rows.first_index(), 0u);
+    EXPECT_EQ(builds, 10u);
+    EXPECT_FLOAT_EQ(rows.content_extent().height, 20000.0f);
+}
+
+TEST(ScrollableRowsChecks, TheOverscanKeepsRowsPastTheViewportBuilt) {
+    // arrange
+    std::vector<Recorded> items;
+    items.reserve(1000);
+    for (std::size_t index = 0; index < 1000; index++)
+        items.push_back(Recorded{.key = "row" + std::to_string(index), .text = "line " + std::to_string(index)});
+    ScrollableRows<Recorded> rows{20.0f, 64};
+    rows.set_items(items);
+    rows.set_view(&counting_row, &counting_update, &key_of, nullptr);
+    builds = 0;
+    writes = 0;
+    // act a window with a margin above and below the visible area
+    rows.set_scroll_viewport(ScrollViewport{.viewport = Size{200.0f, 200.0f}, .content = Size{200.0f, 20000.0f}, .offset = 200.0f, .overscan = 100.0f});
+    // assert the window starts before the offset and reaches past the viewport (§8.2, AD-13)
+    EXPECT_EQ(rows.first_index(), 5u);
+    EXPECT_EQ(rows.materialized(), 20u);
+}
+
+TEST(ScrollableRowsChecks, ScrollingOneRowRecyclesRatherThanRebuilds) {
+    // arrange
+    std::vector<Recorded> items;
+    items.reserve(1000);
+    for (std::size_t index = 0; index < 1000; index++)
+        items.push_back(Recorded{.key = "row" + std::to_string(index), .text = "line " + std::to_string(index)});
+    ScrollableRows<Recorded> rows{20.0f, 64};
+    rows.set_items(items);
+    rows.set_view(&counting_row, &counting_update, &key_of, nullptr);
+    rows.set_scroll_viewport(ScrollViewport{.viewport = Size{200.0f, 200.0f}, .content = Size{200.0f, 20000.0f}, .offset = 0.0f, .overscan = 0.0f});
+    builds = 0;
+    writes = 0;
+    // act a scroll that moves the window by exactly one row
+    rows.set_scroll_viewport(ScrollViewport{.viewport = Size{200.0f, 200.0f}, .content = Size{200.0f, 20000.0f}, .offset = 20.0f, .overscan = 0.0f});
+    // assert the window moved one row (§8.2, AD-13)
+    EXPECT_EQ(rows.first_index(), 1u);
+    EXPECT_EQ(rows.materialized(), 10u);
+    // assert nothing was allocated, because the row that left was recycled into the one that entered (§8.2, AD-13)
+    EXPECT_EQ(builds, 0u);
+    // assert every row in the window was rewritten, because its item moved to a different index (§8.2, AD-13)
+    EXPECT_EQ(writes, 10u);
+}
+
+TEST(ScrollableRowsChecks, AScrollPastTheWindowAllocatesOnlyTheNewRows) {
+    // arrange
+    std::vector<Recorded> items;
+    items.reserve(1000);
+    for (std::size_t index = 0; index < 1000; index++)
+        items.push_back(Recorded{.key = "row" + std::to_string(index), .text = "line " + std::to_string(index)});
+    ScrollableRows<Recorded> rows{20.0f, 64};
+    rows.set_items(items);
+    rows.set_view(&counting_row, &counting_update, &key_of, nullptr);
+    rows.set_scroll_viewport(ScrollViewport{.viewport = Size{200.0f, 200.0f}, .content = Size{200.0f, 20000.0f}, .offset = 0.0f, .overscan = 0.0f});
+    builds = 0;
+    writes = 0;
+    // act a scroll that moves the window past every row it holds
+    rows.set_scroll_viewport(ScrollViewport{.viewport = Size{200.0f, 200.0f}, .content = Size{200.0f, 20000.0f}, .offset = 1000.0f, .overscan = 0.0f});
+    // assert the window moved far past the rows it held (§8.2, AD-13)
+    EXPECT_EQ(rows.first_index(), 50u);
+    EXPECT_EQ(rows.materialized(), 10u);
+    // assert nothing was allocated, because the ten rows that left are exactly the ten that entered (§8.2, AD-13)
+    EXPECT_EQ(builds, 0u);
+    // assert the ten rows that left are held ready for a later scroll (§8.2, AD-13)
+    EXPECT_EQ(rows.recycled(), 0u);
+}
+
+TEST(ScrollableRowsChecks, EachRowSitsAtItsOwnPlaceInTheContent) {
+    // arrange
+    std::vector<Recorded> items;
+    items.reserve(100);
+    for (std::size_t index = 0; index < 100; index++)
+        items.push_back(Recorded{.key = "row" + std::to_string(index), .text = "line " + std::to_string(index)});
+    ScrollableRows<Recorded> rows{20.0f, 64};
+    rows.set_items(items);
+    rows.set_view(&counting_row, &counting_update, &key_of, nullptr);
+    rows.set_scroll_viewport(ScrollViewport{.viewport = Size{200.0f, 200.0f}, .content = Size{200.0f, 2000.0f}, .offset = 200.0f, .overscan = 0.0f});
+    Size measured{};
+    rows.measure(SizeConstraints::at_most(Size{200.0f, 2000.0f}), measured);
+    // act the viewport already moved the content, so the first built row starts a hundred in (§8.2)
+    rows.arrange(Rect::from_origin_size(Point{0.0f, -200.0f}, Size{200.0f, 2000.0f}));
+    // assert the content origin is already the scrolled place, so the tenth row lands at the viewport top (§8.2, AD-13)
+    EXPECT_FLOAT_EQ(rows.child_at(0)->bounds().y, 0.0f);
+    // assert the tenth built row is the nineteenth item, which is what puts it a hundred and eighty down (§8.2, AD-13)
+    EXPECT_FLOAT_EQ(rows.child_at(9)->bounds().y, 180.0f);
+    // assert a row is exactly as tall as the uniform height the view was built with (§8.2, AD-13)
+    EXPECT_FLOAT_EQ(rows.child_at(9)->bounds().height, 20.0f);
+}
+
+TEST(ScrollableRowsChecks, ASurvivingRowIsUpdatedRatherThanRebuilt) {
+    // arrange
+    std::vector<Recorded> items;
+    items.reserve(100);
+    for (std::size_t index = 0; index < 100; index++)
+        items.push_back(Recorded{.key = "row" + std::to_string(index), .text = "line " + std::to_string(index)});
+    ScrollableRows<Recorded> rows{20.0f, 64};
+    rows.set_items(items);
+    rows.set_view(&counting_row, &counting_update, &key_of, nullptr);
+    rows.set_scroll_viewport(ScrollViewport{.viewport = Size{200.0f, 200.0f}, .content = Size{200.0f, 2000.0f}, .offset = 0.0f, .overscan = 0.0f});
+    builds = 0;
+    writes = 0;
+    // act the item a built row shows is renamed, which is a content change rather than a scroll (§18.1, AD-13)
+    items.at(2).text = "rewritten";
+    rows.set_items(items);
+    // assert nothing was allocated, because every identity in the window matched (§18.1, AD-13)
+    EXPECT_EQ(rows.materialized(), 10u);
+    EXPECT_EQ(builds, 0u);
+    EXPECT_EQ(writes, 10u);
+}
+
+TEST(ScrollableRowsChecks, AWindowThatReachesPastTheLastItemStopsThere) {
+    // arrange
+    std::vector<Recorded> items;
+    items.reserve(12);
+    for (std::size_t index = 0; index < 12; index++)
+        items.push_back(Recorded{.key = "row" + std::to_string(index), .text = "line " + std::to_string(index)});
+    ScrollableRows<Recorded> rows{20.0f, 64};
+    rows.set_items(items);
+    rows.set_view(&counting_row, &counting_update, &key_of, nullptr);
+    builds = 0;
+    writes = 0;
+    // act a window that reaches well past the last item
+    rows.set_scroll_viewport(ScrollViewport{.viewport = Size{200.0f, 1000.0f}, .content = Size{200.0f, 240.0f}, .offset = 0.0f, .overscan = 0.0f});
+    // assert there is no row past the last item, because there is no item there (§8.2, AD-13)
+    EXPECT_EQ(rows.materialized(), 12u);
+    EXPECT_FLOAT_EQ(rows.content_extent().height, 240.0f);
 }

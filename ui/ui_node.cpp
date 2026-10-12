@@ -50,7 +50,8 @@ namespace albor
         child->m_parent = this;
         // a fresh child has never drawn, so it starts dirty (§6.1)
         child->m_render_dirty = true;
-        child->m_layout_dirty = true;
+        child->m_measure_dirty = true;
+        child->m_arrange_dirty = true;
         m_children.push_back(std::move(child));
         // adding a subtree changes what the parent draws, so the parent asks for a frame (§6.1)
         invalidate_layout();
@@ -65,7 +66,8 @@ namespace albor
         const std::size_t position = std::min(index, m_children.size());
         child->m_parent = this;
         child->m_render_dirty = true;
-        child->m_layout_dirty = true;
+        child->m_measure_dirty = true;
+        child->m_arrange_dirty = true;
         m_children.insert(m_children.begin() + static_cast<std::ptrdiff_t>(position), std::move(child));
         // reordering a subtree changes what the parent draws (§6.1)
         invalidate_layout();
@@ -108,13 +110,11 @@ namespace albor
     }
 
     void UiNode::arrange(const Rect& bounds) {
-        // the assigned bounds replace the previous ones (§8.2)
+        // the assigned bounds replace the previous ones, while the measured size stands as the measure settled it (§8.2)
         m_bounds = bounds;
-        // the measured size follows the assigned one, so a later measure starts from the truth (§8.2)
-        m_measured_size = Size{.width = bounds.width, .height = bounds.height};
         // the arrange phase pushes the same bounds into every child, which a container overrides (§8.2)
         for (const auto& child : m_children)
-            child->arrange(bounds);
+            arrange_if_changed(*child, bounds);
     }
 
     void UiNode::render(RenderContext& context) {
@@ -188,8 +188,10 @@ namespace albor
     void UiNode::invalidate_layout() {
         // a layout change also changes what the node draws (§8.2)
         m_render_dirty = true;
-        // the measure and arrange passes run from the root, so the dirty flag bubbles (§8.2)
-        m_layout_dirty = true;
+        // the measure and arrange passes both run, because a changed extent moves the node (§8.2)
+        m_measure_dirty = true;
+        // the arrange runs as well, because the measure may settle on new bounds (§8.2)
+        m_arrange_dirty = true;
         // the request walks up to the root, which owns the frame scheduling (§8.2)
         if (m_parent != nullptr)
             m_parent->invalidate_layout();
@@ -198,14 +200,42 @@ namespace albor
             m_invalidation_handler();
     }
 
+    void UiNode::invalidate_arrange() {
+        // a change of position also changes what the node draws (§8.2)
+        m_render_dirty = true;
+        // only the arrange is marked, because the extent the last measure settled on is unchanged (§8.2)
+        m_arrange_dirty = true;
+        // the request walks up to the root, which owns the frame scheduling (§8.2)
+        if (m_parent != nullptr)
+            m_parent->invalidate_arrange();
+        // only the root schedules a frame, so a deep change requests exactly one (§6.1)
+        if (m_invalidation_handler && m_parent == nullptr)
+            m_invalidation_handler();
+    }
+
+    void UiNode::arrange_if_changed(UiNode& child, const Rect& bounds) {
+        // a child that asked for no pass and would not move keeps the placement it already has (§8.2)
+        if (!child.m_measure_dirty && !child.m_arrange_dirty && child.m_bounds == bounds)
+            return;
+        // anything else is arranged, because the pass or the move is what the child is owed (§8.2)
+        child.arrange(bounds);
+    }
+
     bool UiNode::render_dirty() const { return m_render_dirty; }
 
-    bool UiNode::layout_dirty() const { return m_layout_dirty; }
+    bool UiNode::layout_dirty() const { return m_measure_dirty || m_arrange_dirty; }
+
+    bool UiNode::measure_dirty() const { return m_measure_dirty; }
+
+    bool UiNode::arrange_dirty() const { return m_arrange_dirty; }
 
     void UiNode::clear_dirty() {
         // the flags clear after a frame, so the next invalidation is distinguishable (§6.1)
         m_render_dirty = false;
-        m_layout_dirty = false;
+        // both layout flags clear together, because a finished frame settled both passes (§6.1)
+        m_measure_dirty = false;
+        // the arrange flag clears with them, because the same frame placed every node (§6.1)
+        m_arrange_dirty = false;
         // the children cleared as well, because a frame covers the whole subtree (§6.1)
         for (const auto& child : m_children)
             child->clear_dirty();

@@ -34,10 +34,8 @@ namespace albor
     }
 
     void RowLayout::arrange(const Rect& bounds) {
-        // the assigned bounds replace the previous ones (§8.2)
+        // the assigned bounds replace the previous ones, while the measured size stands as the measure settled it (§8.2)
         m_bounds = bounds;
-        // the measured size follows the assigned one, so a later measure starts from the truth (§8.2)
-        m_measured_size = Size{.width = bounds.width, .height = bounds.height};
         // the children occupy the row less its padding, which is what the padding insets (§8.2)
         const Rect content = content_rect(bounds);
         // the width the children and the gaps ask for, which the leftover is the difference from (§8.2)
@@ -90,7 +88,7 @@ namespace albor
             // the vertical extent is the whole row for a stretching child and what it asked for otherwise (§8.2)
             const float height = vertical == Align::Stretch ? content.height : child_height;
             // the child receives the rectangle its two alignments resolved to (§8.2)
-            child->arrange(Rect::from_origin_size(Point{.x = child_x, .y = child_y}, Size{.width = width, .height = height}));
+            arrange_if_changed(*child, Rect::from_origin_size(Point{.x = child_x, .y = child_y}, Size{.width = width, .height = height}));
             // the pen moves past the child just placed, so the next one starts after it (§8.2)
             offset += width;
             placed++;

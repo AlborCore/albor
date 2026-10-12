@@ -48,6 +48,11 @@ namespace albor
         // the content is drawn over the background, because that is the order a composite paints in (§6.1)
         paint_content(context);
         // the children draw over both, in insertion order, which is what a composite tree needs (§6.1)
+        paint_children(context);
+    }
+
+    void Component::paint_children(RenderContext& context) {
+        // a component with no viewport of its own records its children as they are (§6.1)
         UiNode::render(context);
     }
 

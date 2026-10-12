@@ -227,6 +227,8 @@ namespace albor::compiler
                 return "Color";
             case TypeKind::Align:
                 return "Align";
+            case TypeKind::Scrollbar:
+                return "ScrollbarVisibility";
             case TypeKind::Vector:
                 // a collection becomes the standard vector over its element, which recurses into a nested one (§8.1)
                 return "std::vector<" + cpp_type(type.element()) + ">";
@@ -282,7 +284,7 @@ namespace albor::compiler
         const std::map<std::string_view, WidgetInfo>& widget_info() {
             // the table is built once, because the builtin set is closed (§11.3)
             static const std::map<std::string_view, WidgetInfo> table{
-                {"Column", {.header = "layout/column_layout.h", .class_name = "ColumnLayout", .needs_engine = false, .needs_text_engine = false}}, {"Row", {.header = "layout/row_layout.h", .class_name = "RowLayout", .needs_engine = false, .needs_text_engine = false}}, {"Padding", {.header = "layout/padding_layout.h", .class_name = "PaddingLayout", .needs_engine = false, .needs_text_engine = false}}, {"Stack", {.header = "layout/stack_layout.h", .class_name = "StackLayout", .needs_engine = false, .needs_text_engine = false}}, {"Grid", {.header = "layout/grid_layout.h", .class_name = "GridLayout", .needs_engine = false, .needs_text_engine = false}}, {"Label", {.header = "widgets/label.h", .class_name = "Label", .needs_engine = true, .needs_text_engine = true}}, {"Button", {.header = "widgets/button.h", .class_name = "Button", .needs_engine = true, .needs_text_engine = true}}, {"Slider", {.header = "widgets/slider.h", .class_name = "Slider", .needs_engine = true, .needs_text_engine = false}}, {"CheckBox", {.header = "widgets/checkbox.h", .class_name = "CheckBox", .needs_engine = true, .needs_text_engine = false}}, {"Canvas", {.header = "widgets/canvas.h", .class_name = "Canvas", .needs_engine = true, .needs_text_engine = false}},
+                {"Column", {.header = "layout/column_layout.h", .class_name = "ColumnLayout", .needs_engine = false, .needs_text_engine = false}}, {"Row", {.header = "layout/row_layout.h", .class_name = "RowLayout", .needs_engine = false, .needs_text_engine = false}}, {"Padding", {.header = "layout/padding_layout.h", .class_name = "PaddingLayout", .needs_engine = false, .needs_text_engine = false}}, {"Stack", {.header = "layout/stack_layout.h", .class_name = "StackLayout", .needs_engine = false, .needs_text_engine = false}}, {"Grid", {.header = "layout/grid_layout.h", .class_name = "GridLayout", .needs_engine = false, .needs_text_engine = false}}, {"Label", {.header = "widgets/label.h", .class_name = "Label", .needs_engine = true, .needs_text_engine = true}}, {"Button", {.header = "widgets/button.h", .class_name = "Button", .needs_engine = true, .needs_text_engine = true}}, {"Slider", {.header = "widgets/slider.h", .class_name = "Slider", .needs_engine = true, .needs_text_engine = false}}, {"CheckBox", {.header = "widgets/checkbox.h", .class_name = "CheckBox", .needs_engine = true, .needs_text_engine = false}}, {"Canvas", {.header = "widgets/canvas.h", .class_name = "Canvas", .needs_engine = true, .needs_text_engine = false}}, {"ScrollView", {.header = "widgets/scroll_view.h", .class_name = "ScrollView", .needs_engine = true, .needs_text_engine = false}},
             };
             return table;
         }
@@ -293,7 +295,7 @@ namespace albor::compiler
             const std::string key = std::string(element) + "." + std::string(property);
             // the property to setter map is the closed catalogue of §8 (§11.3)
             static const std::unordered_map<std::string, std::string_view> setters{
-                {"Column.spacing", "set_gap"}, {"Column.padding", "set_padding"}, {"Row.spacing", "set_gap"}, {"Padding.padding", "set_padding"}, {"Grid.spacing", "set_gap"}, {"Label.text", "set_text"}, {"Label.foreground", "set_foreground"}, {"Label.font_size", "set_font_size"}, {"Button.text", "set_label"}, {"Button.background", "set_background"}, {"Button.disabled", "set_disabled"}, {"Slider.value", "set_value"}, {"Slider.disabled", "set_disabled"}, {"Slider.track_color", "set_track_color"}, {"Slider.thumb_color", "set_thumb_color"}, {"CheckBox.checked", "set_checked"}, {"CheckBox.disabled", "set_disabled"}, {"CheckBox.outline", "set_outline"}, {"CheckBox.check_fill", "set_check_fill"},
+                {"Column.spacing", "set_gap"}, {"Column.padding", "set_padding"}, {"Row.spacing", "set_gap"}, {"Padding.padding", "set_padding"}, {"Grid.spacing", "set_gap"}, {"Label.text", "set_text"}, {"Label.foreground", "set_foreground"}, {"Label.font_size", "set_font_size"}, {"Button.text", "set_label"}, {"Button.background", "set_background"}, {"Button.disabled", "set_disabled"}, {"Slider.value", "set_value"}, {"Slider.disabled", "set_disabled"}, {"Slider.track_color", "set_track_color"}, {"Slider.thumb_color", "set_thumb_color"}, {"CheckBox.checked", "set_checked"}, {"CheckBox.disabled", "set_disabled"}, {"CheckBox.outline", "set_outline"}, {"CheckBox.check_fill", "set_check_fill"}, {"ScrollView.overscan", "set_overscan"}, {"ScrollView.scrollbar", "set_scrollbar_visibility"}, {"ScrollView.row_height", "set_row_height"},
             };
             // the lookup is a ready made key, because the pair is the identity (§11.3)
             const auto found = setters.find(key);
@@ -326,6 +328,7 @@ namespace albor::compiler
                 {"Button.clicked", "set_on_click"},
                 {"Slider.changed", "set_on_change"},
                 {"CheckBox.toggled", "set_on_toggle"},
+                {"ScrollView.scrolled", "set_on_scroll"},
             };
             // the lookup is a ready made key, because the pair is the identity (§11.3)
             const auto found = setters.find(key);
@@ -341,6 +344,9 @@ namespace albor::compiler
             // a checkbox toggle carries the new state, which the catalog also names (§11.3)
             if (element == "CheckBox" && signal == "toggled")
                 return {{"bool", "checked"}};
+            // a scroll reports the offset it moved to, which is the one value a viewport raises (§8.3)
+            if (element == "ScrollView" && signal == "scrolled")
+                return {{"float", "offset"}};
             // a button click carries nothing, so its handler takes no parameter (§11.3)
             return {};
         }
@@ -394,6 +400,9 @@ namespace albor::compiler
 
                 // the child position the first row takes, which keeps rows where the repeat was written (§18.1)
                 std::size_t offset = 0;
+
+                // whether the repeat hangs directly under a viewport, which decides a windowed view (§8.2, AD-13)
+                bool virtualized = false;
             };
 
             // build the emitter over the component and the shared problem list (§11.3)
@@ -770,7 +779,7 @@ namespace albor::compiler
 
         void ComponentEmitter::validate_type(const ValueType& type, const SourceSpan& span) {
             // a scalar type translates directly, which is what every other check assumes (§11.3)
-            if (type.is(TypeKind::Bool) || type.is(TypeKind::Int) || type.is(TypeKind::Float) || type.is(TypeKind::String) || type.is(TypeKind::Color) || type.is(TypeKind::Length) || type.is(TypeKind::Align))
+            if (type.is(TypeKind::Bool) || type.is(TypeKind::Int) || type.is(TypeKind::Float) || type.is(TypeKind::String) || type.is(TypeKind::Color) || type.is(TypeKind::Length) || type.is(TypeKind::Align) || type.is(TypeKind::Scrollbar))
                 return;
             // a collection is generatable when its element is, which is the same rule applied one level in (§8.1)
             if (type.is(TypeKind::Vector)) {
@@ -877,6 +886,9 @@ namespace albor::compiler
                 const std::size_t index = m_repeats.size();
                 // the slot collects the repeat and the body it materializes (§18.1)
                 RepeatSlot slot{.index = index, .node = &node, .parent = parent};
+                // a repeat whose container is a viewport builds only the window, which is virtualization (§8.2, AD-13)
+                if (parent != NO_PARENT && m_nodes.at(parent).node->element_type == "ScrollView")
+                    slot.virtualized = true;
                 // the body is walked into its own list, because a row is made of those nodes (§18.1)
                 if (node.repeat_body != nullptr)
                     collect_body(*node.repeat_body, NO_PARENT, slot.body, {});
@@ -1032,6 +1044,9 @@ namespace albor::compiler
             // a repeat materializes keyed rows, so the facade names the view and the key (§18.1, AD-13)
             if (!m_repeats.empty())
                 line(0, "#include \"model/keyed_view.h\"");
+            // a repeat under a viewport names the windowed view as well (§8.2, AD-13)
+            if (std::any_of(m_repeats.begin(), m_repeats.end(), [](const RepeatSlot& slot) { return slot.virtualized; }))
+                line(0, "#include \"model/scrollable_rows.h\"");
             line(0, "");
             // each record the component names pulls the manifest header the glue generator wrote (§11.2, AD-17)
             for (const std::string& header : m_record_headers)
@@ -1141,6 +1156,12 @@ namespace albor::compiler
                 // the header is added once, because the set deduplicates (§14.1)
                 project_headers.push_back(std::string(info.header));
             }
+            // a repeat body builds widgets inside the row functions, so its headers join the set (§18.1, AD-13)
+            for (const RepeatSlot& repeat : m_repeats)
+                // each body node contributes its header, because the row functions construct it (§11.3)
+                for (const NodeSlot& slot : repeat.body)
+                    // the widget info of the element names the header to include (§14.1)
+                    project_headers.push_back(std::string(widget_info().at(std::string_view(slot.node->element_type)).header));
             // the engine type needs its header, which every widget body uses (§14.1)
             project_headers.push_back("runtime/binding_engine.h");
             // the property type needs its header, which every body uses (§14.1)
@@ -1186,8 +1207,12 @@ namespace albor::compiler
                 m_object = "self";
                 line(2, "// the source is read once, because the rows reconcile against that one value (§18.1)");
                 line(2, "const std::vector<" + item_type(slot) + "> value = " + repeat_source_expression(slot) + ";");
-                line(2, "// the rows are reconciled before the value is stored, because the binding settles after (§18.1)");
-                line(2, "self->reconcile" + at + "();");
+                // a windowed repeat borrows the source, so the rows are told rather than reconciled (§8.2, AD-13)
+                if (slot.virtualized)
+                    line(2, "self->m_repeat" + at + "->set_items(value);");
+                // an unwindowed repeat reconciles the whole container, because every item has a row (§18.1, AD-13)
+                else
+                    line(2, "self->reconcile" + at + "();");
                 line(2, "// the value is returned, which the engine stores as the bound value (§13.3)");
                 line(2, "return value;");
                 line(1, "}");
@@ -1253,6 +1278,17 @@ namespace albor::compiler
                 line(2, "float m_canvas_h_" + std::to_string(slot.index) + " = 0.0f;");
                 line(0, "");
             }
+            // a scroll view tracks its two viewport extents, which one setter combines (§11.3)
+            for (const NodeSlot& slot : m_nodes) {
+                // only a scroll view carries the tracks, because its viewport is written as an extent (§11.3)
+                if (slot.node->element_type != "ScrollView")
+                    continue;
+                line(2, "// the declared viewport width, which the viewport extent combines (§11.3)");
+                line(2, "float m_viewport_w_" + std::to_string(slot.index) + " = 0.0f;");
+                line(2, "// the declared viewport height, which the viewport extent combines (§11.3)");
+                line(2, "float m_viewport_h_" + std::to_string(slot.index) + " = 0.0f;");
+                line(0, "");
+            }
             // a slider tracks its two bounds, which the range setter combines (§11.3)
             for (const NodeSlot& slot : m_nodes) {
                 // only a slider carries the tracks, because a range is written as bounds (§11.3)
@@ -1277,6 +1313,9 @@ namespace albor::compiler
                 for (const CheckedAssignment& assignment : slot.node->assignments) {
                     // an assignment with no sources is applied directly, so it needs no sink (§13.3)
                     if (assignment.dependencies.empty())
+                        continue;
+                    // a bound offset writes the widget's own property, so a sink would only detach it (§7.3, AD-24)
+                    if (slot.node->element_type == "ScrollView" && assignment.name == "offset")
                         continue;
                     // the sink name is the composite of the node and the property (§13.3)
                     const std::string sink = "m_sink_" + std::to_string(slot.index) + "_" + sanitize(assignment.name);
@@ -1456,6 +1495,9 @@ namespace albor::compiler
                     // a constant assignment has no sink, because the builder applies it directly (§13.3)
                     if (assignment.dependencies.empty())
                         continue;
+                    // a bound offset has no sink, because it is the widget property that is bound (§7.3, AD-24)
+                    if (slot.node->element_type == "ScrollView" && assignment.name == "offset")
+                        continue;
                     const std::string sink = "m_sink_" + std::to_string(slot.index) + "_" + sanitize(assignment.name);
                     line(2, "// the sink joins the component scope, which gives the binding a unique id (§13.3)");
                     line(2, "owner->register_property(" + sink + ");");
@@ -1531,6 +1573,8 @@ namespace albor::compiler
             bool canvas_written = false;
             // whether a slider range was written, which is applied after both bounds (§8)
             bool range_written = false;
+            // whether a viewport extent was written, which is applied after both halves (§8.2)
+            bool viewport_written = false;
             // each assignment decides between a direct set and a bound sink (§13.3)
             for (const CheckedAssignment& assignment : slot.node->assignments) {
                 // the canvas width and height are tracked separately, because one setter combines them (§11.3)
@@ -1550,6 +1594,23 @@ namespace albor::compiler
                         line(2, sink + ".bind_static(&Impl::evaluate_" + std::to_string(slot.index) + "_" + sanitize(assignment.name) + ", this, deps_" + std::to_string(slot.index) + "_" + sanitize(assignment.name) + ");");
                     }
                     canvas_written = true;
+                    continue;
+                }
+                // the viewport extent is one setter for two properties, because the widget takes the pair (§8.2)
+                if (slot.node->element_type == "ScrollView" && (assignment.name == "viewport_width" || assignment.name == "viewport_height")) {
+                    // the identity decision is the member to write, which the two extents share (§11.3)
+                    const std::string member = assignment.name == "viewport_width" ? "m_viewport_w_" + std::to_string(slot.index) : "m_viewport_h_" + std::to_string(slot.index);
+                    // the extent is tracked per node, because set_viewport_extent takes the pair (§8.2)
+                    line(2, "// track the " + assignment.name + ", which the viewport extent reads (§11.3)");
+                    line(2, member + " = " + emit_expression(*assignment.value) + ";");
+                    viewport_written = true;
+                    continue;
+                }
+                // a bound offset attaches to the widget property, which a user scroll outranks (§7.3, AD-24)
+                if (slot.node->element_type == "ScrollView" && assignment.name == "offset" && !assignment.dependencies.empty()) {
+                    line(2, "// bind the offset onto the widget property, which a user scroll outranks (§7.3, AD-24)");
+                    line(2, "const PropertyId deps_" + std::to_string(slot.index) + "_offset[] = {" + dep_list(assignment.dependencies) + "};");
+                    line(2, "n" + std::to_string(slot.index) + "->bind_offset(&Impl::evaluate_" + std::to_string(slot.index) + "_offset, this, deps_" + std::to_string(slot.index) + "_offset);");
                     continue;
                 }
                 // the slider range is one setter for two properties, because the widget takes both bounds (§8)
@@ -1582,6 +1643,9 @@ namespace albor::compiler
             // the canvas intrinsic size is applied once, after both tracks were written (§11.3)
             if (canvas_written)
                 line(2, "n" + std::to_string(slot.index) + "->set_intrinsic_size(Size{m_canvas_w_" + std::to_string(slot.index) + ", m_canvas_h_" + std::to_string(slot.index) + "});");
+            // the viewport extent is applied once, after both halves were written (§8.2)
+            if (viewport_written)
+                line(2, "n" + std::to_string(slot.index) + "->set_viewport_extent(Size{m_viewport_w_" + std::to_string(slot.index) + ", m_viewport_h_" + std::to_string(slot.index) + "});");
             // the slider range is applied once, after both bounds were written (§8)
             if (range_written)
                 line(2, "n" + std::to_string(slot.index) + "->set_range(m_slider_min_" + std::to_string(slot.index) + ", m_slider_max_" + std::to_string(slot.index) + ");");
@@ -1854,6 +1918,27 @@ namespace albor::compiler
         void ComponentEmitter::emit_repeat_reconcile(const RepeatSlot& slot) {
             // the suffix names every function of this repeat, which keeps them unique across repeats (§18.1)
             const std::string at = "_" + std::to_string(slot.index);
+            // a windowed repeat hangs under a viewport, so it owns its own rows (§8.2, AD-13)
+            if (slot.virtualized) {
+                line(2, "// the windowed view owns the rows, keyed by the manifest identity (§8.2, AD-13)");
+                line(2, "m_repeat" + at + " = std::make_unique<albor::model::ScrollableRows<" + item_type(slot) + ">>(0.0f, 64);");
+                line(2, "// the row height comes from the viewport, which makes an index a position (§8.2)");
+                line(2, "m_repeat" + at + "->set_row_extent(n" + std::to_string(slot.parent) + "->row_height());");
+                line(2, "// the viewport adopts the view as its one content child (§8.2)");
+                line(2, "n" + std::to_string(slot.parent) + "->add_child(std::move(m_repeat" + at + "));");
+                line(2, "// the three plain functions the rows are built and matched through (§13.3, §18.1)");
+                line(2, "m_repeat" + at + "->set_view(&Impl::build_row" + at + ", &Impl::update_row" + at + ", &Impl::key_of" + at + ", this);");
+                line(2, "// the rows are reconciled now, so the tree is complete at construction (§18.1)");
+                reconcile(slot);
+                line(2, "// the sink joins the component scope, which gives the reconcile a unique id (§13.3, §18.1)");
+                line(2, "owner->register_property(m_repeat_source" + at + ");");
+                line(2, "// the binding is declared here, because the evaluator below writes through it (§13.3, §18.1)");
+                line(2, "const PropertyId deps_repeat" + at + "[] = {" + dep_list(repeat_dependencies(slot)) + "};");
+                line(2, "m_repeat_source" + at + ".bind_static(&Impl::evaluate_repeat" + at + ", this, deps_repeat" + at + ");");
+                line(2, "// the source reaches the rows, which borrow it rather than copy it (§8.2, AD-13)");
+                line(2, "m_repeat" + at + "->set_items(m_repeat_source" + at + ".get());");
+                return;
+            }
             // the view is built against the container, because its rows hang where the repeat was written (§8.1, §18.1)
             line(2, "// the view owns the rows this repeat materializes, keyed by the manifest identity (§18.1, AD-13)");
             line(2, "m_repeat" + at + " = std::make_unique<albor::model::KeyedView<" + item_type(slot) + ">>(n" + std::to_string(slot.parent) + ", " + std::to_string(slot.offset) + ");");
@@ -1875,6 +1960,11 @@ namespace albor::compiler
             m_repeat_item_name.clear();
             m_repeat_index_name.clear();
             // the rows are reconciled against the source, matching by identity (§18.1, AD-13)
+            if (slot.virtualized) {
+                line(2, "m_repeat" + at + "->set_items(m_repeat_source" + at + ".get());");
+                m_object.clear();
+                return;
+            }
             line(2, "m_repeat" + at + "->reconcile(this, " + emit_expression(*slot.node->repeat_source) + ", &Impl::build_row" + at + ", &Impl::update_row" + at + ", &Impl::key_of" + at + ");");
             m_object.clear();
         }
@@ -1887,8 +1977,16 @@ namespace albor::compiler
                 // the item type is the element of the source, which the view is keyed over (§8.1, §18.1)
                 const std::string item = item_type(slot);
                 line(0, "");
-                line(2, "// the view over the rows this repeat materializes, which owns them keyed (§18.1, AD-13)");
-                line(2, "std::unique_ptr<albor::model::KeyedView<" + item + ">> m_repeat" + at + ";");
+                // a windowed repeat owns its rows directly, because only the window is built (§8.2, AD-13)
+                if (slot.virtualized) {
+                    line(2, "// the windowed view over the rows this repeat materializes (§8.2, AD-13)");
+                    line(2, "std::unique_ptr<albor::model::ScrollableRows<" + item + ">> m_repeat" + at + ";");
+                }
+                // an unwindowed repeat hangs its rows from the container it was written in (§18.1, AD-13)
+                else {
+                    line(2, "// the view over the rows this repeat materializes, which owns them keyed (§18.1, AD-13)");
+                    line(2, "std::unique_ptr<albor::model::KeyedView<" + item + ">> m_repeat" + at + ";");
+                }
                 line(0, "");
                 line(2, "// materialize one row from its item, which is what a new key builds (§18.1, AD-13)");
                 line(2, "static std::unique_ptr<UiNode> build_row" + at + "(void* raw, const " + item + "& item, std::size_t index);");
@@ -1934,6 +2032,11 @@ namespace albor::compiler
                         line(2, "self->m_canvas_" + std::string(width ? "w" : "h") + "_" + std::to_string(slot.index) + " = value;");
                         line(2, "// the canvas resizes, which is what the binding changes (§11.3)");
                         line(2, "self->m_node_" + std::to_string(slot.index) + "->set_intrinsic_size(Size{self->m_canvas_w_" + std::to_string(slot.index) + ", self->m_canvas_h_" + std::to_string(slot.index) + "});");
+                    }
+                    // a bound offset writes the widget property, so the evaluator only produces the value (§7.3)
+                    else if (slot.node->element_type == "ScrollView" && assignment.name == "offset") {
+                        line(2, "// the widget property takes this value, so nothing is set here (§7.3, AD-24)");
+                        line(2, "(void)value;");
                     }
                     else {
                         const std::string_view setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
@@ -2174,7 +2277,7 @@ namespace albor::compiler
                     if (const NamedValueSet* set = find_named_value_set(set_name->name); set != nullptr) {
                         // the member decides the enumerator, because the two spellings differ (§11.3, §8.2)
                         if (const NamedValueMember* member = set->find_member(access->field); member != nullptr)
-                            return "albor::" + set->name + "::" + member->code;
+                            return "albor::" + (set->cpp_name.empty() ? set->name : set->cpp_name) + "::" + member->code;
                     }
                 }
                 return emit_expression(*access->object) + "." + access->field;
@@ -2392,6 +2495,25 @@ namespace albor::compiler
                     // only an alignment property raises the flag, because nothing else names an enumerator (§8.2)
                     if (assignment.type.is(TypeKind::Align))
                         m_uses_align = true;
+                }
+            }
+            // a repeat body builds widgets inside the row functions, so its needs join the include set (§18.1, AD-13)
+            for (const RepeatSlot& repeat : m_repeats) {
+                // each body node is scanned alone, because the row functions are a separate path (§11.3)
+                for (const NodeSlot& slot : repeat.body) {
+                    // the widget info decides when each engine is needed, exactly as an ordinary node does (§11.3)
+                    const WidgetInfo& info = widget_info().at(std::string_view(slot.node->element_type));
+                    // the engine flag rises with each widget, because the builder resolves it once (§14.1)
+                    m_uses_engine = m_uses_engine || info.needs_engine;
+                    // the text engine flag rises with each label, because the row functions store it (§9.1)
+                    m_uses_text_engine = m_uses_text_engine || info.needs_text_engine;
+                    // the canvas flag rises with each canvas, which adds the geometry header (§14.1)
+                    m_uses_canvas = m_uses_canvas || slot.node->element_type == "Canvas";
+                    // an alignment assignment inside a row reaches the generated unit too (§8.2)
+                    for (const CheckedAssignment& assignment : slot.node->assignments)
+                        // only an alignment property raises the flag, because nothing else names an enumerator (§8.2)
+                        if (assignment.type.is(TypeKind::Align))
+                            m_uses_align = true;
                 }
             }
             // the colour flag rises with any colour surface, which the paint header then joins (§14.1)

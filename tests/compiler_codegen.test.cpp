@@ -851,3 +851,59 @@ TEST(Codegen, ASliderRangeBecomesOneSetterOverBothBounds) {
     EXPECT_TRUE(contains(cpp.content, "m_slider_max_0 = 1.0f;"));
     EXPECT_TRUE(contains(cpp.content, "n0->set_range(m_slider_min_0, m_slider_max_0);"));
 }
+
+TEST(Codegen, AScrollViewIsConstructedAndItsViewportExtentIsCombined) {
+    // arrange
+    const std::string_view source = R"(
+component LogPanel {
+    ScrollView {
+        viewport_width: 200px;
+        viewport_height: 120px;
+        scrollbar: Scrollbar.off;
+        overscan: 32px;
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the viewport is one setter, because the two halves are written as an extent (§8.2, §11.3)
+    const GeneratedFile& unit = file_named(files, "log_panel.cpp");
+    EXPECT_TRUE(contains(unit.content, "std::make_unique<ScrollView>(engine)"));
+    EXPECT_TRUE(contains(unit.content, "set_viewport_extent(Size{m_viewport_w_0, m_viewport_h_0})"));
+    // assert the policy renders as the enumeration the widget takes, not the language spelling (§11.3, §8)
+    EXPECT_TRUE(contains(unit.content, "set_scrollbar_visibility(albor::ScrollbarVisibility::AlwaysOff)"));
+    EXPECT_TRUE(contains(unit.content, "set_overscan(32.0f)"));
+}
+
+TEST(Codegen, ABoundScrollOffsetBindsOntoTheWidgetProperty) {
+    // arrange the offset written as an expression, which is how a log view pins itself (§7.3, AD-24)
+    const std::string_view source = R"(
+component LogPanel {
+    inout property<float> extent;
+    ScrollView {
+        offset: extent;
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the binding lands on the widget property, which is what lets a user scroll outrank it (§7.3, AD-24)
+    const GeneratedFile& unit = file_named(files, "log_panel.cpp");
+    EXPECT_TRUE(contains(unit.content, "bind_offset(&Impl::evaluate_0_offset"));
+    // assert no sink was created, because a sink would call the setter and detach the binding every frame (§7.3, AD-24)
+    EXPECT_FALSE(contains(unit.content, "m_sink_0_offset"));
+}
+
+TEST(Codegen, AScrollViewCarriesItsHeaderAndItsSemanticInclude) {
+    // arrange
+    const std::string_view source = R"(
+component LogPanel {
+    ScrollView {
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the facade includes the widget header, which is what the constructed class needs (§14.1)
+    EXPECT_TRUE(contains(file_named(files, "log_panel.cpp").content, "#include \"widgets/scroll_view.h\""));
+}

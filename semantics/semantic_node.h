@@ -47,6 +47,9 @@ namespace albor
         // a container that groups other semantic nodes
         Group,
 
+        // a viewport over content larger than it shows, which scrolls (§8, AD-13)
+        ScrollView,
+
         // a native window of the application
         Window
     };

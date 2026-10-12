@@ -49,6 +49,9 @@ namespace albor
         // draw the content of the component between its background and its children, which a component fills in (§6.1)
         virtual void paint_content(RenderContext& context);
 
+        // record the children of the component, which a container overrides to clip them to a viewport (§6.2)
+        virtual void paint_children(RenderContext& context);
+
         // hand out the fill colour of the component background, which a concrete component overrides
         [[nodiscard]] virtual Color background() const;
 

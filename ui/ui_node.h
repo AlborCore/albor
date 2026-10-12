@@ -87,11 +87,20 @@ namespace albor
         // mark the layout dirty and request the measure and arrange passes (§8.2)
         void invalidate_layout();
 
+        // mark only the arrange dirty, which is what a change of position asks for (§8.2)
+        void invalidate_arrange();
+
         // report whether the node asked for a redraw since the last frame (§6.1)
         [[nodiscard]] bool render_dirty() const;
 
-        // report whether the node asked for a layout pass since the last frame (§8.2)
+        // report whether the node asked for either layout pass since the last frame (§8.2)
         [[nodiscard]] bool layout_dirty() const;
+
+        // report whether the node asked to be measured again since the last frame (§8.2)
+        [[nodiscard]] bool measure_dirty() const;
+
+        // report whether the node asked to be arranged again since the last frame (§8.2)
+        [[nodiscard]] bool arrange_dirty() const;
 
         // clear both dirty flags, which the scene builder does after it built a frame (§6.1)
         void clear_dirty();
@@ -130,6 +139,9 @@ namespace albor
         // tell the observer that a subtree is about to leave, which runs while the node is still alive (§8.3)
         void notify_detaching(UiNode* node);
 
+        // arrange the child only when it asked for a pass or its bounds would move, which keeps a relayout local (§8.2)
+        void arrange_if_changed(UiNode& child, const Rect& bounds);
+
         // the final bounds a parent arranged this node to (§8.2)
         Rect m_bounds;
 
@@ -154,8 +166,11 @@ namespace albor
         // whether the node asked for a redraw since the last frame (§6.1)
         bool m_render_dirty = true;
 
-        // whether the node asked for a layout pass since the last frame (§8.2)
-        bool m_layout_dirty = true;
+        // whether the node asked to be measured again since the last frame (§8.2)
+        bool m_measure_dirty = true;
+
+        // whether the node asked to be arranged again since the last frame (§8.2)
+        bool m_arrange_dirty = true;
 
         // whether the node draws at all (§6.1)
         bool m_visible = true;

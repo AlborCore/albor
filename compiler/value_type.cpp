@@ -62,7 +62,7 @@ namespace albor::compiler
 
     std::string ValueType::to_string() const {
         // the spellings are a table indexed by kind, so a new kind cannot leave a path unhandled (§11.1)
-        static const char* const SPELLINGS[] = {"<error>", "void", "bool", "int", "float", "string", "color", "align", "length", "Snapshot<", "vector<", ""};
+        static const char* const SPELLINGS[] = {"<error>", "void", "bool", "int", "float", "string", "color", "align", "scrollbar", "length", "Snapshot<", "vector<", ""};
         // the two parameter forms append their element, so only their prefix comes from the table (§11.1)
         if (m_kind == TypeKind::Snapshot)
             return std::string(SPELLINGS[static_cast<std::size_t>(m_kind)]) + element().to_string() + ">";
@@ -194,6 +194,17 @@ namespace albor::compiler
                                   NamedValueMember{.written = "end", .code = "End"},
                                   NamedValueMember{.written = "stretch", .code = "Stretch"},
                               }},
+            // the scrollbar set is what the scrollbar policy resolves a written member against (§8)
+            NamedValueSet{.name = "Scrollbar",
+                          .kind = TypeKind::Scrollbar,
+                          .cpp_name = "ScrollbarVisibility",
+                          .members =
+                              {
+                                  // the written form is lower case and the enumerator capitalised (§11.3, §8)
+                                  NamedValueMember{.written = "as_needed", .code = "AsNeeded"},
+                                  NamedValueMember{.written = "off", .code = "AlwaysOff"},
+                                  NamedValueMember{.written = "on", .code = "AlwaysOn"},
+                              }},
         };
         // the sets are scanned, because the language declares only a few of them (§11.1)
         for (const NamedValueSet& set : sets) {
@@ -286,6 +297,15 @@ namespace albor::compiler
                                               // a grid raises no signal of its own (§8.2)
                                               .signals = {},
                                               // a grid is a container, so it accepts children (§8.2)
+                                              .accepts_children = true});
+        // a container shows a window over content larger than itself, which scrolls (§8)
+        catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
+                                              .name = "ScrollView",
+                                              // the extent and the policy and the overscan are what a view exposes (§8)
+                                              .properties = {ElementProperty{.name = "viewport_width", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = true}, ElementProperty{.name = "viewport_height", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = true}, ElementProperty{.name = "overscan", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "offset", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "scrollbar", .type = scalar(TypeKind::Scrollbar), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "row_height", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}},
+                                              // a scroll view raises when its offset moves (§8.3)
+                                              .signals = {ElementSignal{.name = "scrolled", .parameter_types = {scalar(TypeKind::Float)}, .parameter_names = {"offset"}}},
+                                              // a scroll view holds one content container, so it accepts children (§8.2)
                                               .accepts_children = true});
         // a leaf draws a run of text, which is a caption or a value readout (§8)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)

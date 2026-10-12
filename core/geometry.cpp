@@ -1,5 +1,7 @@
 #include "core/geometry.h"
 
+#include <algorithm>
+
 namespace albor
 {
     bool Rect::empty() const {
@@ -10,6 +12,19 @@ namespace albor
     Rect Rect::from_origin_size(Point origin, Size size) {
         // build a rectangle from an origin and an extent
         return {.x = origin.x, .y = origin.y, .width = size.width, .height = size.height};
+    }
+
+    Rect Rect::intersect(const Rect& other) const {
+        // the leading edges sit where the two rectangles overlap, so the result starts at the later of the two (§6.2)
+        const float left = std::max(x, other.x);
+        // the same rule applies on the vertical axis, because an overlap starts at the later top edge (§6.2)
+        const float top = std::max(y, other.y);
+        // the trailing edge is the earlier of the two, because the overlap ends where the first rectangle does (§6.2)
+        const float right = std::min(x + width, other.x + other.width);
+        // the same rule applies on the vertical axis, for the same reason (§6.2)
+        const float bottom = std::min(y + height, other.y + other.height);
+        // a rectangle that only touches has no area, which the clamp reports as empty rather than as a sliver (§6.2)
+        return Rect::from_origin_size(Point{.x = left, .y = top}, Size{.width = std::max(0.0f, right - left), .height = std::max(0.0f, bottom - top)});
     }
 
     Transform Transform::translation(float x, float y) {

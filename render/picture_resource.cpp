@@ -57,13 +57,13 @@ namespace albor
     }
 
     void PictureRecorder::clip_rect(const Rect& rect) {
-        // the clip is stamped rather than intersected, because the replay scissors to it where it stands (§6.2)
-        m_clip = rect;
+        // the clip narrows rather than replaces, because a nested clip may only ever cut more away (§6.2)
+        m_clip = m_clip.intersect(rect);
     }
 
     void PictureRecorder::clip_rounded_rect(const Rect& rect, float) {
         // a rounded clip reduces to its rectangle, which is what the replay scissors to (§6.2)
-        m_clip = rect;
+        m_clip = m_clip.intersect(rect);
     }
 
     const Rect& PictureRecorder::clip() const {
