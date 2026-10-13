@@ -395,11 +395,21 @@ namespace albor::harfbuzz
             const float offset_x = static_cast<float>(position.x_offset) / 64.0f;
             // the vertical offset is the same scale, and is rare but a diacritic needs it (§9.1)
             const float offset_y = static_cast<float>(position.y_offset) / 64.0f;
-            // the glyph is recorded where the pen currently sits (§9.1)
-            line.glyphs.push_back(ShapedGlyph{.id = glyphs[index].codepoint, .position = Point{.x = advance + offset_x, .y = -offset_y}});
+            // the glyph is recorded where the pen currently sits, carrying the byte it came from (§9.1)
+            line.glyphs.push_back(ShapedGlyph{.id = glyphs[index].codepoint, .position = Point{.x = advance + offset_x, .y = -offset_y}, .cluster = glyphs[index].cluster});
             // the pen advances by this glyph's advance, which is what lays the next one out (§9.1)
             advance += static_cast<float>(position.x_advance) / 64.0f;
         }
+        // the line's advance is where a caret stands past its last glyph (§9.1)
+        line.width = advance;
+        // the ascent of the line is the scaled ascender, because one line carries the whole run (§9.1)
+        line.ascent = m_state->ascender * font_size;
+        // the descent is the scaled descender, reported positive because it is a distance (§9.1)
+        line.descent = -m_state->descender * font_size;
+        // the line begins at the first byte, because nothing precedes the only line of the run (§9.1)
+        line.start_byte = 0;
+        // the line ends at the end of the text, because one line holds all of it (§9.1)
+        line.end_byte = text.size();
         // the lines join the run in reading order, which for one line is the one line (§9.1)
         std::vector<ShapedRun::Line> lines;
         // the line joins the run by move, because it is already built (§9.1)

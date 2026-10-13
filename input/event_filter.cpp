@@ -18,8 +18,8 @@ namespace albor
     }
 
     bool EventFilter::is_text(const Event& event) {
-        // the text input kind is the only one an input method produces (§8.3)
-        return event.kind == EventKind::TextInput;
+        // a commit and a pre-edit are the two kinds an input method produces, and they are distinct (§8.3)
+        return event.kind == EventKind::TextInput || event.kind == EventKind::Composing;
     }
 
     bool EventFilter::positioned(const Event& event) {

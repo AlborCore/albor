@@ -13,6 +13,8 @@
 
 namespace albor
 {
+    // the animation core a widget drives itself with, declared ahead so this header stays light (§7.3)
+    class AnimationEngine;
     // the node of the UI tree, which owns its children and the two pass layout contract (§8.1, §8.2)
     class UiNode
     {
@@ -129,6 +131,12 @@ namespace albor
         // assign the in tree identifier, which the scene builder hands out once
         void set_node_id(NodeId node);
 
+        // hand the engine to this node and its descendants, which is how a widget schedules an animation (§7.3)
+        void set_animation_engine(AnimationEngine* engine);
+
+        // hand out the engine this node was given, which is null when no animation is driven (§7.3)
+        [[nodiscard]] AnimationEngine* animation_engine() const;
+
         // walk the node and its descendants depth first, which the semantic tree and the builder share (§8.1)
         void visit(const std::function<void(UiNode&)>& visitor);
 
@@ -153,6 +161,9 @@ namespace albor
 
         // the owned children, in the order they were added (§8.1)
         std::vector<std::unique_ptr<UiNode>> m_children;
+
+        // the engine a widget schedules through, which the pipeline hands down the tree (§7.3)
+        AnimationEngine* m_animations = nullptr;
 
         // the identity of the node, whose explicit id is the authoritative one (AD-11)
         NodeIdentity m_identity;

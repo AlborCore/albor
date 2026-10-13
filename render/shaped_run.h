@@ -19,6 +19,9 @@ namespace albor
         // where the glyph sits relative to the baseline origin of its line, in logical pixels (§9.1)
         Point position;
 
+        // the byte offset into the shaped text this glyph carries, which is what maps a glyph to a character (§9.1)
+        std::uint32_t cluster = 0;
+
         // compare two glyphs component wise (§9.1)
         friend bool operator==(const ShapedGlyph& lhs, const ShapedGlyph& rhs) = default;
     };
@@ -38,6 +41,21 @@ namespace albor
 
             // the glyphs of the line in drawing order (§9.1)
             std::vector<ShapedGlyph> glyphs;
+
+            // the total advance of the line in logical pixels, which is where a caret stands past its last glyph (§9.1)
+            float width = 0.0f;
+
+            // the ascent of this line, which is per line because a fallback or a tall run moves it (§9.1)
+            float ascent = 0.0f;
+
+            // the descent of this line, which is positive downwards and per line for the same reason (§9.1)
+            float descent = 0.0f;
+
+            // the byte offset the line begins at, which is what places an empty line in the run (§9.1)
+            std::size_t start_byte = 0;
+
+            // the byte offset the line ends at, which includes the break that ended it (§9.1)
+            std::size_t end_byte = 0;
 
             // compare two lines component wise (§9.1)
             friend bool operator==(const Line& lhs, const Line& rhs) = default;
@@ -60,6 +78,21 @@ namespace albor
 
         // how many glyphs the run carries across every line, which a test asserts on (§9.1)
         [[nodiscard]] std::size_t glyph_count() const;
+
+        // the line a byte offset falls on, clamped to the last line, which resolves a caret to a row (§9.1)
+        [[nodiscard]] std::size_t line_at_byte(std::size_t byte) const;
+
+        // the horizontal offset within a line where a byte offset sits, which is where a caret is drawn (§9.1)
+        [[nodiscard]] float x_at_byte(std::size_t line_index, std::size_t byte) const;
+
+        // the byte offset in a line nearest a horizontal position, which is what a press resolves to (§9.1)
+        [[nodiscard]] std::size_t byte_at_x(std::size_t line_index, float x) const;
+
+        // the byte offset after the one given, which steps a caret to the next character of the line (§9.1)
+        [[nodiscard]] std::size_t next_boundary_byte(std::size_t line_index, std::size_t byte) const;
+
+        // the byte offset before the one given, which steps a caret back over one character of the line (§9.1)
+        [[nodiscard]] std::size_t previous_boundary_byte(std::size_t line_index, std::size_t byte) const;
 
         // compare two runs field by field (§9.1)
         friend bool operator==(const ShapedRun& lhs, const ShapedRun& rhs) = default;

@@ -24,6 +24,7 @@
 #include "widgets/label.h"
 #include "widgets/scroll_view.h"
 #include "widgets/slider.h"
+#include "widgets/text_field.h"
 
 namespace albor::preview
 {
@@ -93,6 +94,8 @@ namespace albor::preview
                 built = std::make_unique<Canvas>(&engine);
             else if (node.element_type == "ScrollView")
                 built = std::make_unique<ScrollView>(&engine);
+            else if (node.element_type == "TextField")
+                built = std::make_unique<TextField>(&engine, text_engine);
             else {
                 // an element this build does not know produces nothing, which the diagnostics already reported (§12.2)
                 return nullptr;
@@ -143,17 +146,43 @@ namespace albor::preview
                     else if (auto* button = dynamic_cast<Button*>(built.get()))
                         button->set_label(text_of(*assignment.value));
                 }
-                // the size a run was written at, which only a label carries (§9.1)
+                // the size a run was written at, which a label and a field both carry (§9.1)
                 else if (assignment.name == "font_size" && numeric != nullptr) {
-                    // the label that carries a size is the only one that takes it (§9.1)
+                    // the label that shows text takes the size it was written at (§9.1)
                     if (auto* label = dynamic_cast<Label*>(built.get()))
                         label->set_font_size(static_cast<float>(number_of(*numeric)));
+                    // the field that edits text takes the same size, because one number names one widget (§9.1)
+                    else if (auto* field = dynamic_cast<TextField*>(built.get()))
+                        field->set_font_size(static_cast<float>(number_of(*numeric)));
                 }
                 // a checked state, which a preview shows as the author wrote it (§8)
                 else if (assignment.name == "checked" && numeric != nullptr) {
                     // the checkbox is the only widget that carries the state (§8)
                     if (auto* box = dynamic_cast<CheckBox*>(built.get()))
                         box->set_checked(numeric->text == "true");
+                }
+                // a written value or hint, which a field shows as the author wrote it (§8)
+                else if (assignment.name == "value" || assignment.name == "placeholder") {
+                    // the field is the only widget that edits a string (§8)
+                    if (auto* field = dynamic_cast<TextField*>(built.get())) {
+                        // the value is what the field edits, and the hint is what an empty one shows (§8)
+                        if (assignment.name == "value")
+                            field->set_value(text_of(*assignment.value));
+                        else
+                            field->set_placeholder(text_of(*assignment.value));
+                    }
+                }
+                // a read only state, which a preview shows as written (§8)
+                else if (assignment.name == "read_only" && numeric != nullptr) {
+                    // the field is the only widget that carries it, and one assignment touches one state (§8)
+                    if (auto* field = dynamic_cast<TextField*>(built.get()))
+                        field->set_read_only(numeric->text == "true");
+                }
+                // a multi line state, which a preview shows as written beside the read only one (§8)
+                else if (assignment.name == "multiline" && numeric != nullptr) {
+                    // the field is the only widget that carries it, and writing it leaves read only alone (§8)
+                    if (auto* field = dynamic_cast<TextField*>(built.get()))
+                        field->set_multiline(numeric->text == "true");
                 }
             }
             // each child is built and adopted, which is the preorder a compiled build uses (§11.3)

@@ -1,5 +1,7 @@
 #include "ui/ui_node.h"
 
+#include "animation/animation_engine.h"
+
 #include <algorithm>
 #include <utility>
 
@@ -48,6 +50,8 @@ namespace albor
             return *this;
         // the child learns its parent before it is stored, so a handler that walks up finds one (§8.1)
         child->m_parent = this;
+        // the child learns the engine this subtree already holds, because it joined after the tree was wired (§7.3)
+        child->set_animation_engine(m_animations);
         // a fresh child has never drawn, so it starts dirty (§6.1)
         child->m_render_dirty = true;
         child->m_measure_dirty = true;
@@ -65,6 +69,8 @@ namespace albor
         // an index past the end appends, which is what a caller that computed an index from a stale tree wants (§8.1)
         const std::size_t position = std::min(index, m_children.size());
         child->m_parent = this;
+        // the child learns the engine this subtree already holds, because it joined after the tree was wired (§7.3)
+        child->set_animation_engine(m_animations);
         child->m_render_dirty = true;
         child->m_measure_dirty = true;
         child->m_arrange_dirty = true;
@@ -299,7 +305,20 @@ namespace albor
         m_identity.node = node;
     }
 
-    void UiNode::visit(const std::function<void(UiNode&)>& visitor) {
+    void UiNode::set_animation_engine(AnimationEngine* engine) {
+        // the engine is borrowed, because the pipeline and the stage own it (§7.3)
+        m_animations = engine;
+        // every child is handed the same engine, so a widget nested anywhere can schedule (§7.3)
+        for (const std::unique_ptr<UiNode>& child : m_children)
+            child->set_animation_engine(engine);
+    }
+
+    AnimationEngine* UiNode::animation_engine() const {
+        // the engine is the one the pipeline handed down, which is null when none was (§7.3)
+        return m_animations;
+    }
+
+void UiNode::visit(const std::function<void(UiNode&)>& visitor) {
         // the node itself comes before its children, which is the order a depth first walk uses (§8.1)
         visitor(*this);
         for (const auto& child : m_children)

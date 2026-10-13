@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <utility>
 
+#include "ui/focus_target.h"
+
 namespace albor
 {
     void FocusManager::request_focus(UiNode* node) {
@@ -108,9 +110,15 @@ namespace albor
     void FocusManager::move_focus(UiNode* node) {
         // the previous holder is cleared first, so a node is never focused twice (§8.3)
         if (m_focused != nullptr) {
+            // a node that tracks the focus is told it lost it, because a caret follows the focus (§8.3)
+            if (auto* target = dynamic_cast<FocusTarget*>(m_focused))
+                target->set_focused(false);
             // the node knows its focus changed, because that is what its semantic state reports (§8.3, §10.1)
             m_focused->invalidate();
         }
+        // a node that tracks the focus is told it took it, which is what starts a caret (§8.3)
+        if (auto* target = dynamic_cast<FocusTarget*>(node))
+            target->set_focused(true);
         // the new holder is stored, so the keyboard path routes to it (§8.3)
         m_focused = node;
         // the new holder is invalidated, because a focus ring or a caret is a visual change (§8.3)

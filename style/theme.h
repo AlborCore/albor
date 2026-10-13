@@ -58,6 +58,15 @@ namespace albor
 
         // how far one wheel notch moves the content, which is the policy the scroll container owns (§8.2, §8.3)
         float scroll_line_extent = 40.0f;
+
+        // the smallest extent an editable field measures to, because a field has to be seen as one (§8.2)
+        Size text_field_minimum{120.0f, 20.0f};
+
+        // how deep a field's text sits inside its plate on either side, which is what an inset is (§8.2)
+        float text_field_padding = 4.0f;
+
+        // how wide a caret is drawn, which is the thickness of the editing bar (§6.1)
+        float text_field_caret_width = 1.0f;
     };
 
     // the colours a theme resolves by role, which is what lets a widget ask instead of carry a literal (§6.1)
@@ -83,6 +92,18 @@ namespace albor
 
         // the text colour of a plain label, per state, which a label has no press of its own (§6.1)
         Color label_foreground[4] = {Color{0.92f, 0.94f, 0.96f, 1.0f}, Color{0.96f, 0.97f, 0.99f, 1.0f}, Color{0.92f, 0.94f, 0.96f, 1.0f}, Color{0.58f, 0.60f, 0.64f, 1.0f}};
+
+        // the text an editable field draws, per state, which is the value the user edits (§6.1)
+        Color text_field_text[4] = {Color{0.92f, 0.94f, 0.96f, 1.0f}, Color{0.96f, 0.97f, 0.99f, 1.0f}, Color{0.92f, 0.94f, 0.96f, 1.0f}, Color{0.58f, 0.60f, 0.64f, 1.0f}};
+
+        // the placeholder an empty field draws, per state, which sits de-emphasised behind the value (§6.1)
+        Color text_field_placeholder[4] = {Color{0.58f, 0.60f, 0.64f, 1.0f}, Color{0.62f, 0.64f, 0.68f, 1.0f}, Color{0.58f, 0.60f, 0.64f, 1.0f}, Color{0.42f, 0.44f, 0.48f, 1.0f}};
+
+        // the caret an editable field draws, per state, which is the bar the user edits between (§6.1)
+        Color text_field_caret[4] = {Color{0.94f, 0.96f, 0.98f, 1.0f}, Color{1.0f, 1.0f, 1.0f, 1.0f}, Color{0.86f, 0.89f, 0.93f, 1.0f}, Color{0.52f, 0.55f, 0.60f, 1.0f}};
+
+        // the highlight a selection draws, per state, which the value sits over (§6.1)
+        Color text_field_selection[4] = {Color{0.20f, 0.55f, 0.90f, 0.35f}, Color{0.26f, 0.62f, 0.96f, 0.42f}, Color{0.14f, 0.42f, 0.74f, 0.40f}, Color{0.42f, 0.46f, 0.52f, 0.30f}};
 
         // the groove a scrollbar thumb rides in, per state, which is what shows the travel (§6.1)
         Color scrollbar_track[4] = {Color{0.16f, 0.18f, 0.22f, 0.0f}, Color{0.18f, 0.20f, 0.24f, 0.0f}, Color{0.16f, 0.18f, 0.22f, 0.0f}, Color{0.24f, 0.26f, 0.30f, 0.0f}};
@@ -146,6 +167,30 @@ namespace albor
         // replace one state of the entry, which is what a derived palette writes (§6.1)
         void set_label_foreground(ControlState state, Color value);
 
+        // replace the text colour of the normal state of an editable field (§6.1)
+        void set_text_field_text(Color value);
+
+        // replace one state of the entry, which is what a derived palette writes (§6.1)
+        void set_text_field_text(ControlState state, Color value);
+
+        // replace the placeholder colour of the normal state of an editable field (§6.1)
+        void set_text_field_placeholder(Color value);
+
+        // replace one state of the entry, which is what a derived palette writes (§6.1)
+        void set_text_field_placeholder(ControlState state, Color value);
+
+        // replace the caret colour of the normal state of an editable field (§6.1)
+        void set_text_field_caret(Color value);
+
+        // replace one state of the entry, which is what a derived palette writes (§6.1)
+        void set_text_field_caret(ControlState state, Color value);
+
+        // replace the selection colour of the normal state of an editable field (§6.1)
+        void set_text_field_selection(Color value);
+
+        // replace one state of the entry, which is what a derived palette writes (§6.1)
+        void set_text_field_selection(ControlState state, Color value);
+
         // replace the smallest push control extent, which is a sizing decision rather than a colour (§8.2)
         void set_button_minimum(Size value);
 
@@ -190,6 +235,12 @@ namespace albor
 
         // replace one state of the scrollbar thumb, which is what the user drags (§6.1)
         void set_scrollbar_thumb(ControlState state, Color value);
+
+        // replace the smallest extent an editable field measures to, which the control reads instead of a literal (§8.2)
+        void set_text_field_minimum(Size value);
+
+        // replace how deep a field's text sits inside its plate, which is the inset an inset is (§8.2)
+        void set_text_field_padding(float value);
 
     private:
         // the colours, which the overrides above write (§6.1)
