@@ -103,11 +103,6 @@ TextField::~TextField() {
         stop_blink();
     }
 
-bool TextField::focused() const {
-        // the state is what the focus manager last reported, which is the whole of it (§8.3)
-        return m_focused;
-    }
-
 bool TextField::shows_caret() const {
         // a hidden or disabled field is not edited, so it shows no caret (§8.3)
         if (disabled() || !visible())
@@ -119,20 +114,22 @@ bool TextField::shows_caret() const {
         if (has_selection())
             return false;
         // a field the focus has not reached shows no caret, because that is where a caret means something (§8.3)
-        if (!m_focused)
+        if (!focused())
             return false;
         // a blink that is in its hidden phase shows nothing this frame (§8.3)
         return m_caret_visible;
     }
 
     void TextField::set_focused(bool focused) {
+        // the change is read before the base records it, because the base is what stores the flag (§8.3)
+        const bool changed = Widget::focused() != focused;
+        // the base records the focus and repaints the ring, which every widget does the same way (§8.3)
+        Widget::set_focused(focused);
         // an unchanged focus changes nothing, because the caret is already in that state (§8.3)
-        if (m_focused == focused)
+        if (!changed)
             return;
-        // the state is stored first, because the blink is started against it (§8.3)
-        m_focused = focused;
         // losing the focus ends the blink and hides the caret, because nothing is editing any more (§8.3)
-        if (!m_focused) {
+        if (!focused) {
             stop_blink();
             m_caret_visible = false;
             invalidate();
@@ -184,7 +181,7 @@ bool TextField::shows_caret() const {
         // the caret shows again, because a move or an edit brings it back (§8.3)
         m_caret_visible = true;
         // a field that holds no focus is not blinking at all (§8.3)
-        if (!m_focused)
+        if (!focused())
             return;
         // the phase restarts, which is what makes typing hold the caret solid (§7.3)
         start_blink();

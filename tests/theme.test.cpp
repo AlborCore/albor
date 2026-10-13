@@ -5,6 +5,7 @@
 #include <memory>
 
 #include "style/theme.h"
+#include "style/theme_builder.h"
 #include "widgets/slider.h"
 #include "widgets/widget.h"
 
@@ -157,5 +158,90 @@ namespace albor
         EXPECT_FLOAT_EQ(measured.width, 300.0f);
         EXPECT_EQ(slider.theme(), &theme);
     }
+
+TEST(Theme, TheFocusRingRoundTripsEveryState) {
+    // arrange a ring colour per state, because a focus ring reads by state like any other role (§6.1)
+    Theme theme;
+    const Color red{1.0f, 0.0f, 0.0f, 1.0f};
+    const Color green{0.0f, 1.0f, 0.0f, 1.0f};
+    const Color blue{0.0f, 0.0f, 1.0f, 1.0f};
+    const Color white{1.0f, 1.0f, 1.0f, 1.0f};
+    // act every state is written on its own
+    theme.set_focus_ring(ControlState::Normal, red);
+    theme.set_focus_ring(ControlState::Hovered, green);
+    theme.set_focus_ring(ControlState::Pressed, blue);
+    theme.set_focus_ring(ControlState::Disabled, white);
+    // assert each state took its own colour, so a hover and a press differ (§6.1)
+    EXPECT_EQ(theme.palette().focus_ring[state_index(ControlState::Normal)], red);
+    EXPECT_EQ(theme.palette().focus_ring[state_index(ControlState::Hovered)], green);
+    EXPECT_EQ(theme.palette().focus_ring[state_index(ControlState::Pressed)], blue);
+    EXPECT_EQ(theme.palette().focus_ring[state_index(ControlState::Disabled)], white);
+}
+
+TEST(Theme, TheFocusRingNormalEntryHasItsOwnShorthand) {
+    // arrange
+    Theme theme;
+    const Color red{1.0f, 0.0f, 0.0f, 1.0f};
+    // act
+    theme.set_focus_ring(red);
+    // assert the shorthand wrote the normal entry, because that is the common case (§6.1)
+    EXPECT_EQ(theme.palette().focus_ring[state_index(ControlState::Normal)], red);
+}
+
+TEST(Theme, TheCanvasBackgroundRoundTripsEveryState) {
+    // arrange a plate colour per state, because a state visual reads by state (§6.1)
+    Theme theme;
+    const Color red{1.0f, 0.0f, 0.0f, 1.0f};
+    const Color green{0.0f, 1.0f, 0.0f, 1.0f};
+    const Color blue{0.0f, 0.0f, 1.0f, 1.0f};
+    const Color white{1.0f, 1.0f, 1.0f, 1.0f};
+    // act
+    theme.set_canvas_background(ControlState::Normal, red);
+    theme.set_canvas_background(ControlState::Hovered, green);
+    theme.set_canvas_background(ControlState::Pressed, blue);
+    theme.set_canvas_background(ControlState::Disabled, white);
+    // assert each state took its own colour, so a hover and a press differ (§6.1)
+    EXPECT_EQ(theme.palette().canvas_background[state_index(ControlState::Normal)], red);
+    EXPECT_EQ(theme.palette().canvas_background[state_index(ControlState::Hovered)], green);
+    EXPECT_EQ(theme.palette().canvas_background[state_index(ControlState::Pressed)], blue);
+    EXPECT_EQ(theme.palette().canvas_background[state_index(ControlState::Disabled)], white);
+}
+
+TEST(Theme, TheCanvasBackgroundNormalEntryHasItsOwnShorthand) {
+    // arrange
+    Theme theme;
+    const Color red{1.0f, 0.0f, 0.0f, 1.0f};
+    // act
+    theme.set_canvas_background(red);
+    // assert
+    EXPECT_EQ(theme.palette().canvas_background[state_index(ControlState::Normal)], red);
+}
+
+TEST(Theme, TheFocusRingMetricsRoundTrip) {
+    // arrange
+    Theme theme;
+    // act every ring measurement is written with the value it is drawn from (§6.1, §6.2)
+    theme.set_focus_ring_width(3.0f);
+    theme.set_focus_ring_offset(4.0f);
+    theme.set_focus_ring_radius(5.0f);
+    // assert
+    EXPECT_FLOAT_EQ(theme.metrics().focus_ring_width, 3.0f);
+    EXPECT_FLOAT_EQ(theme.metrics().focus_ring_offset, 4.0f);
+    EXPECT_FLOAT_EQ(theme.metrics().focus_ring_radius, 5.0f);
+}
+
+TEST(Theme, ADerivedThemeGivesEveryStateItsOwnEntry) {
+    // arrange the two derived themes, because a builder is what an application actually installs (§6.1)
+    const Theme dark = ThemeBuilder::dark(Accents{});
+    const Theme light = ThemeBuilder::light(Accents{});
+    // act, assert the focused plate and ring differ from the normal one in both schemes, because a focus is a state (§6.1)
+    EXPECT_NE(dark.palette().button_plate[state_index(ControlState::Focused)], dark.palette().button_plate[state_index(ControlState::Normal)]);
+    EXPECT_NE(light.palette().button_plate[state_index(ControlState::Focused)], light.palette().button_plate[state_index(ControlState::Normal)]);
+    EXPECT_NE(dark.palette().focus_ring[state_index(ControlState::Focused)], dark.palette().focus_ring[state_index(ControlState::Normal)]);
+    EXPECT_NE(light.palette().focus_ring[state_index(ControlState::Focused)], light.palette().focus_ring[state_index(ControlState::Normal)]);
+    // assert the resting ring is invisible in both schemes, because nothing is focused at rest (§6.1)
+    EXPECT_FLOAT_EQ(dark.palette().focus_ring[state_index(ControlState::Normal)].alpha, 0.0f);
+    EXPECT_FLOAT_EQ(light.palette().focus_ring[state_index(ControlState::Normal)].alpha, 0.0f);
+}
 
 } // namespace albor

@@ -5,6 +5,7 @@
 
 #include "commands/command.h"
 #include "core/constraints.h"
+#include "focus/focus_manager.h"
 #include "layout/column_layout.h"
 #include "layout/row_layout.h"
 #include "render/frame_scene.h"
@@ -19,6 +20,7 @@
 #include "widgets/checkbox.h"
 #include "widgets/label.h"
 #include "widgets/slider.h"
+#include "widgets/theme_controller.h"
 #include "window/window_metrics.h"
 
 using namespace albor;
@@ -3350,4 +3352,538 @@ TEST(SliderCommand, ADisabledCommandRefusesTheStep) {
     // assert the control refuses input because the one object it reads says so (§18.7)
     EXPECT_EQ(runs, std::size_t{0});
     EXPECT_TRUE(slider.disabled());
+}
+
+TEST(FocusStateChecks, AControlWithNoFocusIsNormal) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    // act, assert a control nobody focused rests in the normal state (§8.3)
+    EXPECT_FALSE(button.focused());
+    EXPECT_EQ(button.state(), ControlState::Normal);
+}
+
+TEST(FocusStateChecks, TakingTheFocusReportsFocused) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    // act
+    button.set_focused(true);
+    // assert the widget records that it holds the focus, which is what a theme entry reads (§8.3)
+    EXPECT_TRUE(button.focused());
+    EXPECT_EQ(button.state(), ControlState::Focused);
+}
+
+TEST(FocusStateChecks, DroppingTheFocusReturnsToNormal) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.set_focused(true);
+    // act
+    button.set_focused(false);
+    // assert the ring disappears with the focus, because the ring is the signal (§8.3)
+    EXPECT_FALSE(button.focused());
+    EXPECT_EQ(button.state(), ControlState::Normal);
+}
+
+TEST(FocusStateChecks, ADisabledControlReportsDisabledOverAFocus) {
+    // arrange a focused control that then refuses input, because disabled is the fact a user needs (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.set_focused(true);
+    button.set_disabled(true);
+    // act, assert the disabled entry wins over the focus, following the fixed precedence of §6.1
+    EXPECT_EQ(button.state(), ControlState::Disabled);
+}
+
+TEST(FocusStateChecks, AHoverOutranksAFocus) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.set_focused(true);
+    Event enter{EventKind::PointerEnter};
+    // act
+    button.dispatch_event(enter);
+    // assert the pointer is the stronger signal, because the user is pointing at the control (§8.3)
+    EXPECT_EQ(button.state(), ControlState::Hovered);
+}
+
+TEST(FocusStateChecks, TheFocusManagerReachesAWidget) {
+    // arrange a focused widget inside a root, which is the path a tab press takes (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    FocusManager manager;
+    // act
+    manager.request_focus(&button);
+    // assert the focus target on the widget base is what carries the change (§8.3)
+    EXPECT_TRUE(button.focused());
+    EXPECT_EQ(manager.focused(), &button);
+}
+
+TEST(FocusStateChecks, TheFocusManagerClearsTheRingItLeft) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    FocusManager manager;
+    manager.request_focus(&button);
+    // act
+    manager.clear_focus();
+    // assert the previous holder is told it lost the focus, so no stale ring survives (§8.3)
+    EXPECT_FALSE(button.focused());
+}
+
+TEST(FocusRingChecks, AnUnfocusedThemedControlDrawsNoRing) {
+    // arrange a themed control nobody focused, which is the resting paint of an application (§6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = ThemeBuilder::dark(Accents{});
+    Button button(&engine, &text_engine, "Press");
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{60.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert only the plate and its label are recorded, because the normal state carries no ring (§6.1)
+    EXPECT_EQ(rect_commands(*recorder.scene()).size(), 1u);
+}
+
+TEST(FocusRingChecks, AFocusedControlStrokesARingOutsideItsPlate) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = ThemeBuilder::dark(Accents{});
+    Button button(&engine, &text_engine, "Press");
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{60.0f, 20.0f}));
+    button.set_focused(true);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the plate and the ring are two shapes, because the ring stands off the plate (§6.1)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    const std::vector<Rect> rects = rect_commands(*scene);
+    ASSERT_EQ(rects.size(), 2u);
+    // assert the ring is larger than the plate on every side, because an offset ring surrounds rather than overlaps (§6.1)
+    const float offset = theme.metrics().focus_ring_offset;
+    EXPECT_LT(rects[1].x, rects[0].x - offset + 0.001f);
+    EXPECT_GT(rects[1].width, rects[0].width);
+}
+
+TEST(FocusRingChecks, TheRingStrokesRatherThanFills) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = ThemeBuilder::dark(Accents{});
+    Button button(&engine, &text_engine, "Press");
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{60.0f, 20.0f}));
+    button.set_focused(true);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the ring is a line around the plate, so its paint carries a stroke and no fill (§6.1)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    const DrawCommand& ring = scene->commands()[1];
+    EXPECT_FALSE(ring.paint().fills());
+    EXPECT_TRUE(ring.paint().strokes());
+    EXPECT_FLOAT_EQ(ring.paint().stroke_width, theme.metrics().focus_ring_width);
+}
+
+TEST(FocusRingChecks, AnUnthemedControlDrawsNoRing) {
+    // arrange a control with no theme, which keeps its own paint because nothing configured a ring (§6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{60.0f, 20.0f}));
+    button.set_focused(true);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the plate is the only shape, because a null theme means no ring role exists (§6.1)
+    EXPECT_EQ(rect_commands(*recorder.scene()).size(), 1u);
+}
+
+TEST(FocusRingChecks, AHiddenControlDrawsNoRing) {
+    // arrange a focused control that was then hidden, because there is nothing on screen to point at (§6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = ThemeBuilder::dark(Accents{});
+    Button button(&engine, &text_engine, "Press");
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{60.0f, 20.0f}));
+    button.set_focused(true);
+    button.set_visible(false);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert only the plate is recorded, because a hidden control carries no ring (§6.1)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    EXPECT_EQ(rect_commands(*scene).size(), 1u);
+}
+
+TEST(FocusRingChecks, ADisabledControlDrawsAFadedRing) {
+    // arrange a focused control that then refuses input, so the ring fades with the plate (§6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = ThemeBuilder::dark(Accents{});
+    Button button(&engine, &text_engine, "Press");
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{60.0f, 20.0f}));
+    button.set_focused(true);
+    button.set_disabled(true);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the ring takes the disabled entry, because a control that refuses keys should not shout (§6.1)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    const DrawCommand& ring = scene->commands()[1];
+    EXPECT_EQ(ring.paint().stroke, theme.palette().focus_ring[state_index(ControlState::Disabled)]);
+}
+
+TEST(ThemeControllerChecks, AControllerStartsOnTheDarkScheme) {
+    // arrange, act assert the dark theme is the resting one, because the shipped accents are a dark surface (§6.1)
+    ThemeController controller{Accents{}};
+    EXPECT_EQ(controller.scheme(), ColorScheme::Dark);
+}
+
+TEST(ThemeControllerChecks, InstallingAThemeReachesEveryWidget) {
+    // arrange a root over two widgets, because a flip has to reach the nested one too (§6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button outer(&engine, &text_engine, "Outer");
+    Button inner(&engine, &text_engine, "Inner");
+    outer.add_child(std::make_unique<Button>(&engine, &text_engine, "Deep"));
+    ThemeController controller{Accents{}};
+    // act
+    controller.install(outer, ColorScheme::Light);
+    // assert both widgets resolve through the installed theme, because apply_theme walks the subtree (§6.1)
+    EXPECT_EQ(outer.theme(), &controller.theme());
+    EXPECT_EQ(outer.theme()->palette().button_plate[state_index(ControlState::Normal)].red, controller.theme().palette().button_plate[state_index(ControlState::Normal)].red);
+    // assert the subtree is remembered, because a later flip reinstalls over it (§6.1)
+    EXPECT_EQ(controller.root(), &outer);
+}
+
+TEST(ThemeControllerChecks, AFlipMovesToTheOtherScheme) {
+    // arrange accents on a light surface, because a scheme is meaningless without the surface it is drawn on (§6.1)
+    Accents light_accents;
+    light_accents.surface = Color::rgb(0.96f, 0.96f, 0.97f);
+    light_accents.on_surface = Color::rgb(0.10f, 0.10f, 0.12f);
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    ThemeController controller{light_accents, Accents{}};
+    controller.install(button, ColorScheme::Dark);
+    const Color dark_plate = controller.theme().palette().button_plate[state_index(ControlState::Normal)];
+    const Color dark_surface = controller.theme().surface();
+    // act
+    controller.toggle();
+    // assert the light plate replaced the dark one, which is what a flip means (§6.1)
+    EXPECT_EQ(controller.scheme(), ColorScheme::Light);
+    EXPECT_NE(controller.theme().surface(), dark_surface);
+    EXPECT_EQ(controller.theme().palette().label_foreground[state_index(ControlState::Normal)], Color::rgba(0.10f, 0.10f, 0.12f, 1.0f));
+    // assert the widget resolved the new one, because the flip reinstalls over the tree (§6.1)
+    EXPECT_EQ(button.theme(), &controller.theme());
+    // assert the plate tracked the accents, which stay the same when only the surface moves (§6.1)
+    EXPECT_EQ(controller.theme().palette().button_plate[state_index(ControlState::Normal)], dark_plate);
+}
+
+TEST(ThemeControllerChecks, AnAccentChangeMovesThePlateToo) {
+    // arrange a second accent set that moves the accent itself, which is the other half of a scheme (§6.1)
+    Accents light_accents;
+    light_accents.surface = Color::rgb(0.96f, 0.96f, 0.97f);
+    light_accents.on_surface = Color::rgb(0.10f, 0.10f, 0.12f);
+    light_accents.accent = Color::rgb(0.10f, 0.35f, 0.75f);
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    ThemeController controller{light_accents, Accents{}};
+    controller.install(button, ColorScheme::Dark);
+    const Color dark_plate = controller.theme().palette().button_plate[state_index(ControlState::Normal)];
+    // act
+    controller.toggle();
+    // assert the plate moved with the accent, because a scheme chooses the colour a control is filled with (§6.1)
+    EXPECT_NE(controller.theme().palette().button_plate[state_index(ControlState::Normal)], dark_plate);
+}
+
+TEST(ThemeControllerChecks, AToggleTwiceReturnsToTheStart) {
+    // arrange
+    ThemeController controller{Accents{}};
+    // act, assert the two schemes toggle in both directions, because a toggle has exactly two states (§6.1)
+    controller.toggle();
+    controller.toggle();
+    EXPECT_EQ(controller.scheme(), ColorScheme::Dark);
+}
+
+TEST(ThemeControllerChecks, AFlipNotifiesTheApplication) {
+    // arrange a handler standing in for the persisted preference (§6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    ThemeController controller{Accents{}};
+    controller.install(button, ColorScheme::Dark);
+    std::vector<ColorScheme> seen;
+    controller.set_scheme_changed_handler([&seen](ColorScheme scheme) { seen.push_back(scheme); });
+    // act
+    controller.toggle();
+    // assert the application was told, which is where a preference would be written (§6.1)
+    ASSERT_EQ(seen.size(), 1u);
+    EXPECT_EQ(seen[0], ColorScheme::Light);
+}
+
+TEST(ThemeControllerChecks, AnUnchangedSchemeInstallsNothing) {
+    // arrange a handler that would notice a redundant install (§6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    ThemeController controller{Accents{}};
+    controller.install(button, ColorScheme::Dark);
+    std::size_t notified = 0;
+    controller.set_scheme_changed_handler([&notified](ColorScheme) { notified++; });
+    // act
+    controller.set_scheme(ColorScheme::Dark);
+    // assert nothing happened, because the tree already carries that theme (§6.1)
+    EXPECT_EQ(notified, 0u);
+}
+
+TEST(ThemeControllerChecks, AControllerWithNoTreeSurvivesAFlip) {
+    // arrange a controller that was never installed, which is the state before composition root wiring (§6.1)
+    ThemeController controller{Accents{}};
+    // act, assert a flip is refused rather than a null dereference, because there is no subtree (§6.1)
+    controller.toggle();
+    // assert the scheme still moved, so the preference is recorded even before a tree exists (§6.1)
+    EXPECT_EQ(controller.scheme(), ColorScheme::Light);
+    EXPECT_EQ(controller.root(), nullptr);
+}
+
+TEST(ControlStateVisuals, ACanvasDrawsAPlateFromTheTheme) {
+    // arrange a themed canvas, which had no plate of its own before this issue (§6.1)
+    BindingEngine engine;
+    const Theme theme = ThemeBuilder::dark(Accents{});
+    Canvas canvas(&engine);
+    canvas.set_theme(&theme);
+    canvas.set_intrinsic_size(Size{20.0f, 20.0f});
+    canvas.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    // act
+    canvas.render(recorder);
+    // assert the plate is drawn, because a state visual needs a surface to land on (§6.1)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_EQ(scene->command_count(), 1u);
+    EXPECT_EQ(scene->commands()[0].paint().fill, theme.palette().canvas_background[state_index(ControlState::Normal)]);
+}
+
+TEST(ControlStateVisuals, ACanvasDrawsNoPlateWithoutATheme) {
+    // arrange an unthemed canvas, which keeps its own transparent plate (§6.1)
+    BindingEngine engine;
+    Canvas canvas(&engine);
+    canvas.set_intrinsic_size(Size{20.0f, 20.0f});
+    canvas.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    // act
+    canvas.render(recorder);
+    // assert nothing is recorded, because the existing cull drops a transparent plate (§6.1)
+    EXPECT_EQ(recorder.scene()->command_count(), 0u);
+}
+
+TEST(ControlStateVisuals, ACanvasGoesHoveredFromAPointerEnter) {
+    // arrange a canvas, which had no dispatch at all and so could never leave the normal state (§8.3)
+    BindingEngine engine;
+    Canvas canvas(&engine);
+    Event enter{EventKind::PointerEnter};
+    // act
+    canvas.dispatch_event(enter);
+    // assert the canvas reports hovered, because the transition now reaches it (§8.3)
+    EXPECT_TRUE(canvas.hovered());
+    EXPECT_EQ(canvas.state(), ControlState::Hovered);
+}
+
+TEST(ControlStateVisuals, ACanvasDrawsADifferentPlateWhenHovered) {
+    // arrange
+    BindingEngine engine;
+    const Theme theme = ThemeBuilder::dark(Accents{});
+    Canvas canvas(&engine);
+    canvas.set_theme(&theme);
+    canvas.set_intrinsic_size(Size{20.0f, 20.0f});
+    canvas.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    Event enter{EventKind::PointerEnter};
+    // act
+    canvas.dispatch_event(enter);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    canvas.render(recorder);
+    // assert the hovered entry is drawn, because a state visual that never changes is not one (§6.1)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_EQ(scene->command_count(), 1u);
+    EXPECT_EQ(scene->commands()[0].paint().fill, theme.palette().canvas_background[state_index(ControlState::Hovered)]);
+    EXPECT_NE(theme.palette().canvas_background[state_index(ControlState::Hovered)], theme.palette().canvas_background[state_index(ControlState::Normal)]);
+}
+
+TEST(ControlStateVisuals, ALabelGoesHoveredFromAPointerEnter) {
+    // arrange a label, which had no dispatch and so could never leave the normal state (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Label label(&engine, &text_engine, "Text");
+    Event enter{EventKind::PointerEnter};
+    // act
+    label.dispatch_event(enter);
+    // assert the label reports hovered, because the transition now reaches it (§8.3)
+    EXPECT_TRUE(label.hovered());
+    EXPECT_EQ(label.state(), ControlState::Hovered);
+}
+
+TEST(ControlStateVisuals, ALabelResolvesTheHoveredForeground) {
+    // arrange a themed label, so the state resolves through the palette (§6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = ThemeBuilder::dark(Accents{});
+    Label label(&engine, &text_engine, "Text");
+    label.set_theme(&theme);
+    label.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    Event enter{EventKind::PointerEnter};
+    // act
+    label.dispatch_event(enter);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    label.render(recorder);
+    // assert the run took the hovered entry, which is what the state resolver is for (§6.1)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_EQ(scene->command_count(), 1u);
+    EXPECT_EQ(scene->commands()[0].paint().fill, theme.palette().label_foreground[state_index(ControlState::Hovered)]);
+}
+
+TEST(ControlStateVisuals, ACheckBoxResolvesItsFocusedOutline) {
+    // arrange a focused check box, which is the state the outline most needs (§6.1)
+    BindingEngine engine;
+    const Theme theme = ThemeBuilder::dark(Accents{});
+    CheckBox box(&engine);
+    box.set_theme(&theme);
+    box.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{16.0f, 16.0f}));
+    // act
+    box.set_focused(true);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    box.render(recorder);
+    // assert the focused outline is drawn, because the palette now has an entry for it (§6.1)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_GE(scene->command_count(), 1u);
+    EXPECT_NE(theme.palette().checkbox_outline[state_index(ControlState::Focused)], theme.palette().checkbox_outline[state_index(ControlState::Normal)]);
+}
+
+TEST(ControlStateVisuals, ASliderResolvesItsFocusedTrack) {
+    // arrange a focused slider, which is the state a keyboard user depends on (§6.1)
+    BindingEngine engine;
+    const Theme theme = ThemeBuilder::dark(Accents{});
+    Slider slider(&engine);
+    slider.set_theme(&theme);
+    slider.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 16.0f}));
+    // act
+    slider.set_focused(true);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    slider.render(recorder);
+    // assert the slider drew something, because a focused control still paints its track (§6.1)
+    EXPECT_GE(recorder.scene()->command_count(), 1u);
+    EXPECT_EQ(slider.state(), ControlState::Focused);
+}
+
+TEST(FocusRingGuards, AFocusedControlWithNoAreaDrawsNoRing) {
+    // arrange a focused control that was never arranged, because a ring around nothing is nothing (§6.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = ThemeBuilder::dark(Accents{});
+    Button button(&engine, &text_engine, "Press");
+    button.set_theme(&theme);
+    button.set_focused(true);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert no shape was recorded, because an unarranged control has no area to surround (§6.2)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    EXPECT_EQ(rect_commands(*scene).size(), 0u);
+}
+
+TEST(FocusRingGuards, AnUnfocusedControlWithAFocusedPaletteDrawsNoRing) {
+    // arrange a themed control nobody focused, whose hovered ring entry is fully opaque (§6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = ThemeBuilder::dark(Accents{});
+    Button button(&engine, &text_engine, "Press");
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{60.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert only the plate is recorded, because a ring marks the keyboard focus alone (§6.1)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    EXPECT_EQ(rect_commands(*scene).size(), 1u);
+}
+
+TEST(ControlStateVisuals, AHiddenCanvasTakesNoEvent) {
+    // arrange a hidden canvas, which draws nothing to aim at (§8.3)
+    BindingEngine engine;
+    Canvas canvas(&engine);
+    canvas.set_visible(false);
+    Event enter{EventKind::PointerEnter};
+    // act
+    canvas.dispatch_event(enter);
+    // assert the transition was skipped, because a hidden control is not a hover target (§8.3)
+    EXPECT_FALSE(canvas.hovered());
+}
+
+TEST(ControlStateVisuals, ACanvasWithoutAThemeResolvesItsOwnPlate) {
+    // arrange an unthemed canvas, whose plate table is unused (§6.1)
+    BindingEngine engine;
+    Canvas canvas(&engine);
+    // act, assert the canvas keeps its own transparent plate, because no palette answers (§6.1)
+    EXPECT_FLOAT_EQ(canvas.background().alpha, 0.0f);
+}
+
+TEST(ControlStateVisuals, AHiddenLabelTakesNoEvent) {
+    // arrange a hidden label, which draws nothing to aim at (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Label label(&engine, &text_engine, "Text");
+    label.set_visible(false);
+    Event enter{EventKind::PointerEnter};
+    // act
+    label.dispatch_event(enter);
+    // assert the transition was skipped, because a hidden control is not a hover target (§8.3)
+    EXPECT_FALSE(label.hovered());
+}
+
+TEST(FocusRingGuards, AThemeMayClearTheFocusRingItself) {
+    // arrange a theme whose focused ring is fully clear, which is a way to turn the signal off (§6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme = ThemeBuilder::dark(Accents{});
+    theme.set_focus_ring(ControlState::Focused, Color::rgba(0.0f, 0.0f, 0.0f, 0.0f));
+    Button button(&engine, &text_engine, "Press");
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{60.0f, 20.0f}));
+    // act
+    button.set_focused(true);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    button.render(recorder);
+    // assert only the plate is recorded, because a clear ring puts no ink down (§6.1)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    EXPECT_EQ(rect_commands(*scene).size(), 1u);
+}
+
+TEST(FocusStateChecks, AnUnchangedFocusChangesNothing) {
+    // arrange a focused button, which is the early return under test (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.set_focused(true);
+    button.clear_dirty();
+    // act
+    button.set_focused(true);
+    // assert nothing asked for a frame, because the ring is already in that state (§8.3)
+    EXPECT_FALSE(button.render_dirty());
+    EXPECT_TRUE(button.focused());
 }

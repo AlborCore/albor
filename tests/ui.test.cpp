@@ -208,15 +208,24 @@ namespace
     class TestPipelineContext final : public RenderContext
     {
     public:
-        void save() override {}
-        void restore() override {}
+        void save() override { m_states.push_back(m_opacity); }
+        void restore() override {
+            // a restore with nothing pushed leaves the opacity alone, because there is no state to return to (§6.2)
+            if (m_states.empty())
+                return;
+            m_opacity = m_states.back();
+            m_states.pop_back();
+        }
         void set_transform(const Transform&) override {}
         [[nodiscard]] const Transform& transform() const override { return m_transform; }
         void clip_rect(const Rect&) override {}
         void clip_rounded_rect(const Rect&, float) override {}
         [[nodiscard]] const Rect& clip() const override { return m_clip; }
+        void set_opacity(float opacity) override { m_opacity = opacity; }
+        [[nodiscard]] float opacity() const override { return m_opacity; }
         void draw_rect(const Rect&, const Paint&) override {}
         void draw_rounded_rect(const Rect&, float, const Paint&) override {}
+        void draw_shadow(const Rect&, float, const Shadow&) override {}
         void draw_text(const TextLayout&, Point, const Paint&) override {}
         void draw_line_batch(const std::shared_ptr<const LineBatch>&, const Transform&, const StrokeStyle&) override {}
         void draw_path(const std::shared_ptr<const PathResource>&, const Transform&, const Paint&) override {}
@@ -229,6 +238,12 @@ namespace
 
         // the clip the context reports, which a test does not change (§6.2)
         Rect m_clip;
+
+        // the opacity the last set wrote, which a test asserts against (§6.1)
+        float m_opacity = 1.0f;
+
+        // the opacities the saves pushed, which a restore pops (§6.2)
+        std::vector<float> m_states;
     };
 
     // the render surface double, which begins and ends frames without presenting (§6.2)
@@ -267,6 +282,40 @@ namespace
         void resize_surface(RenderSurface&, const WindowMetrics&) override {}
 
         void execute_frame(RenderSurface&, const FrameScene&) override { frames++; }
+    };
+
+    // the node that exposes the protected opacity push and pop, which a test asserts on (§6.1)
+    class ExposedOpacity final : public UiNode
+    {
+    public:
+        // hand the node opacity to the context, which the protected member does for a render (§6.1)
+        void push(RenderContext& context) const { push_opacity(context); }
+
+        // take the node opacity back off the context, which the protected member does after a render (§6.1)
+        void pop(RenderContext& context) const { pop_opacity(context); }
+    };
+
+    // the component that paints one opaque plate, which is what an opacity assertion measures (§6.1)
+    class OpaquePlate final : public Component
+    {
+    public:
+        // build the plate with a detached engine, because the test exercises paint rather than binding (§7.2)
+        OpaquePlate() : Component(nullptr) {}
+
+        // drop the fill, so a test can assert on the border alone (§6.1)
+        void clear_background() { m_painted = false; }
+
+        // override: the plate is fully opaque, so the recorded alpha is exactly the node opacity (§6.1)
+        [[nodiscard]] Color background() const override {
+            // a cleared plate is transparent, which is how a border with no fill is written (§6.1)
+            if (!m_painted)
+                return Color::rgba(0.0f, 0.0f, 0.0f, 0.0f);
+            return Color::rgb(0.5f, 0.5f, 0.5f);
+        }
+
+    private:
+        // whether the plate fills, which a test turns off to isolate the border (§6.1)
+        bool m_painted = true;
     };
 } // namespace
 
@@ -2221,4 +2270,270 @@ TEST(ComponentContractChecks, AComponentRecordsBackgroundContentThenChildren) {
     // assert the content phase ran, which is what paint_content is for (§6.1)
     ASSERT_EQ(node.phases.size(), 2u);
     EXPECT_EQ(node.phases[1], "content");
+}
+
+TEST(NodeOpacity, AFullyOpaqueNodeLeavesTheContextAlone) {
+    // arrange
+    TestPipelineContext context;
+    ExposedOpacity node;
+    // act assert a node that dims nothing costs no save, which is the common case (§6.1)
+    node.push(context);
+    // assert
+    EXPECT_FLOAT_EQ(context.opacity(), 1.0f);
+}
+
+TEST(NodeOpacity, ADimmedNodePushesItsOwnOpacity) {
+    // arrange
+    TestPipelineContext context;
+    ExposedOpacity node;
+    node.set_opacity(0.5f);
+    // act
+    node.push(context);
+    // assert the context carries the factor, which every later draw is dimmed by (§6.1)
+    EXPECT_FLOAT_EQ(context.opacity(), 0.5f);
+    node.pop(context);
+    EXPECT_FLOAT_EQ(context.opacity(), 1.0f);
+}
+
+TEST(NodeOpacity, OpacityComposesDownASubtree) {
+    // arrange two dimmed nodes, because a child dims what a parent already dimmed (§6.1)
+    TestPipelineContext context;
+    ExposedOpacity parent;
+    parent.set_opacity(0.5f);
+    // act
+    parent.push(context);
+    context.set_opacity(context.opacity() * 0.5f);
+    // assert a parent at half and a child at half lands at a quarter, because coverage multiplies (§6.1)
+    EXPECT_FLOAT_EQ(context.opacity(), 0.25f);
+    parent.pop(context);
+    EXPECT_FLOAT_EQ(context.opacity(), 1.0f);
+}
+
+TEST(NodeOpacity, TheOpacityIsClampedIntoTheUnitRange) {
+    // arrange a value from a binding that overshot, which is why the range is clamped (§6.1)
+    UiNode node;
+    // act
+    node.set_opacity(4.0f);
+    // assert
+    EXPECT_FLOAT_EQ(node.opacity(), 1.0f);
+    node.set_opacity(-2.0f);
+    EXPECT_FLOAT_EQ(node.opacity(), 0.0f);
+}
+
+TEST(NodeOpacity, AnAlphaZeroNodeStillRecords) {
+    // arrange a component at no opacity, which is invisible but not absent (§6.1)
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    OpaquePlate component;
+    component.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    component.set_opacity(0.0f);
+    // act
+    component.render(recorder);
+    // assert the node is recorded at zero alpha rather than dropped, because it still clips and stacks (§6.1)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_EQ(scene->command_count(), 1u);
+    EXPECT_FLOAT_EQ(scene->commands()[0].paint().fill.alpha, 0.0f);
+}
+
+TEST(NodeOpacity, AHalfOpacityHalvesTheRecordedAlpha) {
+    // arrange
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    OpaquePlate component;
+    component.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    component.set_opacity(0.5f);
+    // act
+    component.render(recorder);
+    // assert the recorded command carries the dimmed alpha, because the render thread never re-asks (§6.1, AD-18)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_EQ(scene->command_count(), 1u);
+    EXPECT_FLOAT_EQ(scene->commands()[0].paint().fill.alpha, 0.5f);
+}
+
+TEST(NodeOpacity, AChildInheritsItsParentsOpacity) {
+    // arrange a dimmed parent over an opaque child, which is the case an application actually writes (§6.1)
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    OpaquePlate parent;
+    auto child = std::make_unique<OpaquePlate>();
+    child->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    parent.add_child(std::move(child));
+    parent.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    parent.set_opacity(0.5f);
+    // act
+    parent.render(recorder);
+    // assert both plates carry the dimmed alpha, because the parent dims the whole subtree (§6.1)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_EQ(scene->command_count(), 2u);
+    EXPECT_FLOAT_EQ(scene->commands()[0].paint().fill.alpha, 0.5f);
+    EXPECT_FLOAT_EQ(scene->commands()[1].paint().fill.alpha, 0.5f);
+}
+
+TEST(NodeOpacity, AnAlphaZeroNodeStillHitTests) {
+    // arrange
+    OpaquePlate component;
+    component.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    component.set_opacity(0.0f);
+    // act, assert an invisible but present node is still a hit, because hit testing never reads opacity (§6.1, §8.3)
+    EXPECT_TRUE(component.hit_test(Point{5.0f, 5.0f}));
+}
+
+TEST(NodeBorder, ABorderWithNoFillStrokesAlone) {
+    // arrange a component with no fill and a border, which is an ordinary combination (§6.1)
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    OpaquePlate component;
+    component.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    component.clear_background();
+    component.set_border_width(2.0f);
+    component.set_border_color(Color::rgb(0.2f, 0.4f, 0.6f));
+    // act
+    component.render(recorder);
+    // assert the border records on its own, because a fill is not what makes a border (§6.1)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_EQ(scene->command_count(), 1u);
+    EXPECT_FALSE(scene->commands()[0].paint().fills());
+    EXPECT_TRUE(scene->commands()[0].paint().strokes());
+    EXPECT_FLOAT_EQ(scene->commands()[0].paint().stroke_width, 2.0f);
+}
+
+TEST(NodeBorder, AFillWithNoBorderFillsAlone) {
+    // arrange the other half of the independence, which is the ordinary plate (§6.1)
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    OpaquePlate component;
+    component.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    // act
+    component.render(recorder);
+    // assert the plate still fills and carries no stroke, because a border is not implied by a fill (§6.1)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_EQ(scene->command_count(), 1u);
+    EXPECT_TRUE(scene->commands()[0].paint().fills());
+    EXPECT_FALSE(scene->commands()[0].paint().strokes());
+}
+
+TEST(NodeBorder, AZeroWidthBorderStrokesNothing) {
+    // arrange a colour with no width, which is the default every node starts with (§6.1)
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    OpaquePlate component;
+    component.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    component.clear_background();
+    component.set_border_color(Color::rgb(0.2f, 0.4f, 0.6f));
+    // act
+    component.render(recorder);
+    // assert nothing is recorded, because a colour without a width is not a border (§6.1)
+    EXPECT_EQ(recorder.scene()->command_count(), 0u);
+}
+
+TEST(NodeBorder, ANegativeBorderWidthIsNoBorder) {
+    // arrange a width from a binding that undershot, which the setter clamps rather than stores (§6.1)
+    UiNode node;
+    // act
+    node.set_border_width(-3.0f);
+    // assert
+    EXPECT_FLOAT_EQ(node.border_width(), 0.0f);
+}
+
+TEST(NodeBorder, ATransparentBorderColourStrokesNothing) {
+    // arrange a width with a clear colour, because both halves must be present to stroke (§6.1)
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    OpaquePlate component;
+    component.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    component.clear_background();
+    component.set_border_width(2.0f);
+    component.set_border_color(Color::rgba(0.2f, 0.4f, 0.6f, 0.0f));
+    // act
+    component.render(recorder);
+    // assert nothing is recorded, because a clear stroke puts no ink down (§6.1)
+    EXPECT_EQ(recorder.scene()->command_count(), 0u);
+}
+
+TEST(NodeBorder, ADefaultNodeHasNoBorder) {
+    // arrange a node nobody touched, which is what every node starts as (§6.1)
+    UiNode node;
+    // act, assert the border starts empty, so nothing is stroked unless an author asks (§6.1)
+    EXPECT_FLOAT_EQ(node.border_width(), 0.0f);
+    EXPECT_FLOAT_EQ(node.border_color().alpha, 0.0f);
+}
+
+TEST(NodeSurfaceProperties, AnUnchangedBorderColourInvalidatesNothing) {
+    // arrange a node whose border is already set, which is the early return under test (§6.1)
+    UiNode node;
+    node.set_border_color(Color::rgb(0.2f, 0.3f, 0.4f));
+    node.clear_dirty();
+    // act
+    node.set_border_color(Color::rgb(0.2f, 0.3f, 0.4f));
+    // assert nothing asked for a frame, because the node looks the same (§6.1)
+    EXPECT_FALSE(node.render_dirty());
+}
+
+TEST(NodeSurfaceProperties, AnUnchangedShadowInvalidatesNothing) {
+    // arrange a node whose cast is already set, which is the early return under test (§6.1)
+    UiNode node;
+    const Shadow cast{.color = Color::rgb(0.0f, 0.0f, 0.0f), .offset = Point{0.0f, 2.0f}, .blur = 4.0f};
+    node.set_drop_shadow(cast);
+    node.clear_dirty();
+    // act
+    node.set_drop_shadow(cast);
+    // assert nothing asked for a frame, because the node looks the same (§6.1)
+    EXPECT_FALSE(node.render_dirty());
+}
+
+TEST(NodeSurfaceProperties, AChangedShadowInvalidatesTheFrame) {
+    // arrange a node with no cast, which is what every node starts as (§6.1)
+    UiNode node;
+    node.clear_dirty();
+    // act
+    node.set_drop_shadow(Shadow{.color = Color::rgb(0.0f, 0.0f, 0.0f), .offset = Point{0.0f, 2.0f}, .blur = 4.0f});
+    // assert a frame was asked for, because the cast is a visual change (§6.1)
+    EXPECT_TRUE(node.render_dirty());
+    // assert the cast reads back, because the painter asks the node for it (§6.2)
+    EXPECT_FLOAT_EQ(node.drop_shadow().blur, 4.0f);
+}
+
+TEST(NodeSurfaceProperties, ADefaultNodeCastsNothing) {
+    // arrange a node nobody touched, which is what every node starts as (§6.1)
+    UiNode node;
+    // act, assert the cast starts empty, so a component records nothing until one is set (§6.2)
+    EXPECT_TRUE(node.drop_shadow().empty());
+}
+
+TEST(NodeSurfaceProperties, AComponentCastsItsShadow) {
+    // arrange a component with a cast, which is what a modal surface writes (§6.2)
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    OpaquePlate component;
+    component.arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    component.set_drop_shadow(Shadow{.color = Color::rgb(0.0f, 0.0f, 0.0f), .offset = Point{0.0f, 2.0f}, .blur = 3.0f});
+    // act
+    component.render(recorder);
+    // assert the cast and the plate are two commands, because the cast sits under the plate (§6.2)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_EQ(scene->command_count(), 2u);
+    EXPECT_EQ(scene->commands()[0].kind(), DrawCommandKind::Shadow);
+    EXPECT_EQ(scene->commands()[1].kind(), DrawCommandKind::Rect);
+}
+
+TEST(NodeSurfaceProperties, AComponentWithNoCastRecordsNoShadow) {
+    // arrange a component with no cast, which is the ordinary case (§6.2)
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    OpaquePlate component;
+    component.arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    // act
+    component.render(recorder);
+    // assert only the plate is recorded, because an empty cast puts no ink down (§6.2)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_EQ(scene->command_count(), 1u);
+}
+
+TEST(NodeSurfaceProperties, ARecorderRefusesACastWithNoColour) {
+    // arrange a cast the recorder must refuse at the boundary (§6.2)
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    // act
+    recorder.draw_shadow(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f)});
+    // assert nothing was recorded, because a clear cast draws nothing (§6.2)
+    EXPECT_EQ(recorder.scene()->command_count(), 0u);
+}
+
+TEST(NodeSurfaceProperties, ARecorderRefusesACastWithNoShape) {
+    // arrange a cast with no area, because there is nothing to throw it (§6.2)
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    // act
+    recorder.draw_shadow(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{0.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgb(0.0f, 0.0f, 0.0f)});
+    // assert
+    EXPECT_EQ(recorder.scene()->command_count(), 0u);
 }

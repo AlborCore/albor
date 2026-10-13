@@ -1112,3 +1112,188 @@ component task_board {
     // assert an alignment written in the row reaches the generated unit, because the row is its own function (§8.2)
     EXPECT_TRUE(contains(unit, "Align::"));
 }
+
+TEST(CodegenColour, ATransparentizeCallBecomesTheMethodCall) {
+    // arrange a component whose root carries the dimmed colour (§6.1)
+    const std::string source = R"(
+component Panel {
+    in property<color> accent: transparentize(#ff0000ff, 0.5);
+    Label {
+        foreground: accent;
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the call reaches the core colour method, because the operation is one (§6.1)
+    EXPECT_TRUE(contains(all_text(files), ".transparentized(0.5f)"));
+}
+
+TEST(CodegenColour, AnAlphaCallScalesTheAlpha) {
+    // arrange a colour expression driven by a property, which is the case an application writes (§6.1)
+    const std::string source = R"(
+component Panel {
+    in property<float> amount: 0.25;
+    in property<color> accent: alpha(#336699ff, amount);
+    Label {
+        foreground: accent;
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the property reached the call, because a bound operand is a dependency (§11.3, AD-04a)
+    EXPECT_TRUE(contains(all_text(files), ".with_alpha("));
+}
+
+TEST(CodegenColour, AnAlphaSetCallReplacesTheAlpha) {
+    // arrange
+    const std::string source = R"(
+component Panel {
+    in property<color> accent: alpha_set(#336699ff, 0.75);
+    Label {
+        foreground: accent;
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the replacement spelled the other method, because the two operations differ (§6.1)
+    EXPECT_TRUE(contains(all_text(files), ".alpha_set(0.75f)"));
+}
+
+TEST(CodegenColour, AColourOperationOnANumberIsRefused) {
+    // arrange a call whose first argument is a number, which no colour operation accepts (§6.1)
+    const std::string source = R"(
+component Panel {
+    in property<color> accent: transparentize(0.5, 0.25);
+    Label {
+        foreground: accent;
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
+    const SourceFile file = Parser(tokens, diagnostics).parse();
+    (void)TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file);
+    // assert the mismatch is reported, because a silent pass would emit a call that cannot compile (§6.1)
+    EXPECT_GT(diagnostics.count(), 0U);
+}
+
+TEST(CodegenColour, AColourOperationWithANonNumericAmountIsRefused) {
+    // arrange a string where the fraction belongs, which no operation accepts (§6.1)
+    const std::string source = R"(
+component Panel {
+    in property<color> accent: transparentize(#ff0000ff, "half");
+    Label {
+        foreground: accent;
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
+    const SourceFile file = Parser(tokens, diagnostics).parse();
+    (void)TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file);
+    // assert the mismatch is reported (§6.1)
+    EXPECT_GT(diagnostics.count(), 0U);
+}
+
+TEST(CodegenColour, AnUnknownFunctionNameIsRefused) {
+    // arrange a call the language does not define, which has no type rule (§11.1)
+    const std::string source = R"(
+component Panel {
+    in property<color> accent: lighten(#ff0000ff, 0.5);
+    Label {
+        foreground: accent;
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
+    const SourceFile file = Parser(tokens, diagnostics).parse();
+    (void)TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file);
+    // assert the report names the name, because that is what the author has to change (§11.1)
+    bool named = false;
+    for (const Diagnostic& diagnostic : diagnostics.diagnostics())
+        if (diagnostic.message.find("lighten") != std::string::npos)
+            named = true;
+    EXPECT_TRUE(named);
+}
+
+TEST(CodegenColour, AColourOperationOnAFailedOperandIsNotReportedTwice) {
+    // arrange a call whose operand is itself unknown, which the checker already reported (§11.1)
+    const std::string source = R"(
+component Panel {
+    in property<color> accent: transparentize(lighten, 0.5);
+    Label {
+        foreground: accent;
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
+    const SourceFile file = Parser(tokens, diagnostics).parse();
+    (void)TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file);
+    // assert the rule stayed quiet about the mismatch, because an error operand suppresses it (§11.1)
+    int mismatches = 0;
+    for (const Diagnostic& diagnostic : diagnostics.diagnostics())
+        if (diagnostic.code == "E0410")
+            mismatches++;
+    EXPECT_EQ(mismatches, 0);
+}
+
+TEST(CodegenColour, ACallNodeTheLanguageDoesNotDefineIsRefused) {
+    // arrange a tree the parser cannot produce, because it gates the name, so the checker rule is reached directly (§11.1)
+    SourceFile file;
+    ComponentDeclaration component;
+    component.name = "Panel";
+    PropertyDeclaration property;
+    property.name = "accent";
+    property.type = "color";
+    property.direction = PropertyDirection::In;
+    std::vector<ExpressionPtr> operands;
+    operands.push_back(LiteralExpression::make(LiteralExpression::Kind::Color, "#ff0000ff", SourceSpan{}));
+    operands.push_back(LiteralExpression::make(LiteralExpression::Kind::Float, "0.5", SourceSpan{}));
+    property.default_value = CallExpression::make("lighten", std::move(operands), SourceSpan{});
+    component.properties.push_back(std::move(property));
+    file.components.push_back(std::move(component));
+    DiagnosticList diagnostics;
+    // act
+    (void)TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file);
+    // assert the report names the name, because a tree can carry one the parser would not (§11.1)
+    bool named = false;
+    for (const Diagnostic& diagnostic : diagnostics.diagnostics())
+        if (diagnostic.message.find("lighten") != std::string::npos)
+            named = true;
+    EXPECT_TRUE(named);
+}
+
+TEST(CodegenColour, AColourCallWithAFailedOperandReportsNoMismatch) {
+    // arrange a call whose amount is a text, which is the mismatch path under test (§6.1)
+    SourceFile file;
+    ComponentDeclaration component;
+    component.name = "Panel";
+    PropertyDeclaration property;
+    property.name = "accent";
+    property.type = "color";
+    property.direction = PropertyDirection::In;
+    std::vector<ExpressionPtr> operands;
+    operands.push_back(LiteralExpression::make(LiteralExpression::Kind::Color, "#ff0000ff", SourceSpan{}));
+    operands.push_back(LiteralExpression::make(LiteralExpression::Kind::String, "\"half\"", SourceSpan{}));
+    property.default_value = CallExpression::make("transparentize", std::move(operands), SourceSpan{});
+    component.properties.push_back(std::move(property));
+    file.components.push_back(std::move(component));
+    DiagnosticList diagnostics;
+    // act
+    (void)TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file);
+    // assert a mismatch was reported, because a text is not a fraction (§6.1)
+    int mismatches = 0;
+    for (const Diagnostic& diagnostic : diagnostics.diagnostics())
+        if (diagnostic.code == "E0410")
+            mismatches++;
+    EXPECT_EQ(mismatches, 1);
+}

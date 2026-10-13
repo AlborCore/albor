@@ -38,6 +38,29 @@ namespace albor
         m_draw(context);
     }
 
+    void Canvas::dispatch_event(Event& event) {
+        // a hidden canvas takes no event at all, because it draws nothing to aim at (§8.3)
+        if (!visible())
+            return;
+        // the transitions run first, so a press is a state before it reaches the callback (§8.3)
+        handle_hover_transitions(event);
+        // a canvas has no activation of its own, so every event belongs to whatever is behind it (§8.3)
+        UiNode::dispatch_event(event);
+    }
+
+    Color Canvas::background() const {
+        // a themed canvas resolves by state, so a hover and a press read without a second literal (§6.1)
+        if (theme() != nullptr)
+            return resolve(plate_colors(), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f));
+        // an unthemed canvas keeps its own plate, which is the transparent default it always had (§6.1)
+        return Color::rgba(0.0f, 0.0f, 0.0f, 0.0f);
+    }
+
+    const Color* Canvas::plate_colors() const {
+        // the palette answers, because the caller already established that a theme is installed (§6.1)
+        return theme()->palette().canvas_background;
+    }
+
     SemanticNode Canvas::semantic_node() const {
         // the role is a canvas, because the user may interact with what is drawn (§10.1)
         SemanticNode node{SemanticRole::Canvas};

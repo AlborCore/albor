@@ -272,3 +272,63 @@ TEST(SkiaRendererBackendLifecycle, DestroyingABackendAfterItRecordedNothingStill
     // assert returning at all is the claim, because the teardown order is what the driver rejects (§6.3)
     SUCCEED();
 }
+
+TEST(SkiaRenderContextShadowChecks, AContextWithNoCanvasSwallowsTheDraws) {
+    // arrange a context over no canvas at all, which is the refusal path a backend takes (§6.2)
+    SkiaRenderContext context(nullptr, 1.0f);
+    // act every draw a caller could make, because each one has to survive the null canvas (§6.2)
+    context.draw_shadow(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgb(0.0f, 0.0f, 0.0f), .blur = 2.0f});
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.draw_rounded_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), 2.0f, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // assert the state stayed usable, because a null context is a refusal rather than a crash (§6.2)
+    EXPECT_FLOAT_EQ(context.opacity(), 1.0f);
+    SUCCEED();
+}
+
+TEST(SkiaRenderContextShadowChecks, ARefusedCastDrawsNothing) {
+    // arrange a context over no canvas, plus a cast the primitive must refuse twice over (§6.2)
+    SkiaRenderContext context(nullptr, 1.0f);
+    // act a clear colour with a shape, and a colour with no shape, which are both refusals (§6.2)
+    context.draw_shadow(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f)});
+    context.draw_shadow(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{0.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgb(0.0f, 0.0f, 0.0f)});
+    // assert
+    SUCCEED();
+}
+
+TEST(SkiaRenderContextShadowChecks, ARefusedCastOnALiveCanvasDrawsNothing) {
+    // arrange a real canvas, because the refusals must hold where the canvas could actually draw (§6.2)
+    sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
+    ASSERT_NE(surface, nullptr);
+    surface->getCanvas()->clear(0x00000000);
+    SkiaRenderContext context(surface->getCanvas(), 1.0f);
+    // act the two refusals, on a canvas that would have drawn them (§6.2)
+    context.draw_shadow(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f)});
+    context.draw_shadow(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{0.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgb(0.0f, 0.0f, 0.0f)});
+    // assert the canvas stayed clear, because a refused cast puts no ink down (§6.2)
+    const SkImageInfo info = SkImageInfo::Make(SURFACE_WIDTH, SURFACE_HEIGHT, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(SURFACE_WIDTH * SURFACE_HEIGHT * 4));
+    ASSERT_TRUE(surface->readPixels(info, pixels.data(), info.minRowBytes(), 0, 0));
+    int inked = 0;
+    for (std::size_t i = 3; i < pixels.size(); i += 4)
+        if (pixels[i] > 0)
+            inked++;
+    EXPECT_EQ(inked, 0);
+}
+
+TEST(SkiaRenderContextShadowChecks, AClampedOpacityReachesTheSurface) {
+    // arrange a real canvas and a colour the opacity halves, which is what a node opacity asks (§6.1)
+    sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
+    ASSERT_NE(surface, nullptr);
+    surface->getCanvas()->clear(0x00000000);
+    SkiaRenderContext context(surface->getCanvas(), 1.0f);
+    // act an overshoot first, so the clamp runs against the value a binding would produce (§6.1)
+    context.set_opacity(9.0f);
+    EXPECT_FLOAT_EQ(context.opacity(), 1.0f);
+    context.set_opacity(0.5f);
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // assert the drawn pixel carries the halved alpha, because the opacity reaches the surface (§6.1)
+    const SkImageInfo info = SkImageInfo::Make(SURFACE_WIDTH, SURFACE_HEIGHT, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(SURFACE_WIDTH * SURFACE_HEIGHT * 4));
+    ASSERT_TRUE(surface->readPixels(info, pixels.data(), info.minRowBytes(), 0, 0));
+    EXPECT_NEAR(pixels[3], 128, 3);
+}

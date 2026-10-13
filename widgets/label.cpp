@@ -52,6 +52,16 @@ namespace albor
         context.draw_text(m_layout, Point{.x = b.x, .y = b.y}, {.fill = resolve(foreground_colors(), m_foreground)});
     }
 
+    void Label::dispatch_event(Event& event) {
+        // a hidden label takes no event at all, because it draws nothing to aim at (§8.3)
+        if (!visible())
+            return;
+        // the transitions run through the base, which is where every control inherits hover for free (§8.3)
+        handle_hover_transitions(event);
+        // a label has no activation of its own, so every event belongs to whatever is behind it (§8.3)
+        UiNode::dispatch_event(event);
+    }
+
     SemanticNode Label::semantic_node() const {
         // the role is a label, because the run is static descriptive text (§10.1)
         SemanticNode node{SemanticRole::Label};

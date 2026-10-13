@@ -293,6 +293,9 @@ namespace albor::compiler
         // type a conversion, which the closed rule set decides (§11.1)
         ValueType type_conversion(const ConversionExpression& conversion, const Scope& scope, std::vector<std::string>& dependencies);
 
+        // type a colour operation, which is a closed set of calls on a colour and a number (§6.1)
+        ValueType type_call(const CallExpression& call, const Scope& scope, std::vector<std::string>& dependencies);
+
         // type a binary application, which the operator rule decides (§11.1)
         ValueType type_binary(const BinaryExpression& binary, const Scope& scope, std::vector<std::string>& dependencies);
 

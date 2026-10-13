@@ -76,6 +76,9 @@ namespace
         // the rectangles the surface was asked to draw, in order
         std::vector<Rect> drawn_rects;
 
+        // the casts the context was asked to draw, which a test asserts against (§6.2)
+        std::vector<Shadow> shadows;
+
         // the shaped runs the surface was asked to draw, in order (§9.1)
         std::vector<std::shared_ptr<const ShapedRun>> drawn_texts;
 
@@ -132,6 +135,10 @@ namespace
 
         [[nodiscard]] const Rect& clip() const override { return current_clip; }
 
+        void set_opacity(float opacity) override { current_opacity = opacity; }
+
+        [[nodiscard]] float opacity() const override { return current_opacity; }
+
         void draw_rect(const Rect& rect, const Paint&) override {
             drawn_rects.push_back(rect);
             draw_log.emplace_back("rect");
@@ -141,6 +148,13 @@ namespace
             drawn_rects.push_back(rect);
             rounded_radii.push_back(radius);
             draw_log.emplace_back("rounded");
+        }
+
+        void draw_shadow(const Rect& rect, float radius, const Shadow& shadow) override {
+            drawn_rects.push_back(rect);
+            rounded_radii.push_back(radius);
+            shadows.push_back(shadow);
+            draw_log.emplace_back("shadow");
         }
 
         void draw_text(const TextLayout& layout, Point, const Paint&) override {
@@ -180,6 +194,9 @@ namespace
 
         // the clip the surface reads back
         Rect current_clip;
+
+        // the opacity the last set wrote, which a test asserts against (§6.1)
+        float current_opacity = 1.0f;
     };
 
     // the surface test double, which hands out the context above and counts its frames (§6.2)
@@ -1903,4 +1920,106 @@ TEST(ReplayCommandsChecks, APicturesOwnCommandsReplayInOrder) {
     ASSERT_EQ(context.draw_log.size(), 2u);
     EXPECT_EQ(context.draw_log[0], "rect");
     EXPECT_EQ(context.draw_log[1], "rounded");
+}
+
+TEST(PictureRecorder, AnOpacityDimsEveryRecordedCommand) {
+    // arrange a recorder dimmed by content, which is the picture equivalent of a node opacity (§6.1)
+    PictureRecorder recorder;
+    recorder.set_opacity(0.5f);
+    // act
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // assert the recorded command carries the dimmed alpha, because the picture replays as recorded (§6.1, §6.4)
+    ASSERT_EQ(recorder.commands().size(), 1u);
+    EXPECT_FLOAT_EQ(recorder.commands()[0].paint().fill.alpha, 0.5f);
+}
+
+TEST(PictureRecorder, AnOpacityRoundTripsThroughSaveAndRestore) {
+    // arrange a dimmed recorder, because a picture nests the draws that compose onto it (§6.1, §6.4)
+    PictureRecorder recorder;
+    recorder.set_opacity(0.5f);
+    recorder.save();
+    // act
+    recorder.set_opacity(0.25f);
+    // assert the inner value stands, because the context carries one opacity at a time (§6.1)
+    EXPECT_FLOAT_EQ(recorder.opacity(), 0.25f);
+    // assert the restore brings the outer one back, which is what the state stack is for (§6.2)
+    recorder.restore();
+    EXPECT_FLOAT_EQ(recorder.opacity(), 0.5f);
+}
+
+TEST(PictureRecorder, AnOvershootOpacityIsClamped) {
+    // arrange an opacity from a binding that overshot, which the setter clamps (§6.1)
+    PictureRecorder recorder;
+    // act
+    recorder.set_opacity(4.0f);
+    // assert
+    EXPECT_FLOAT_EQ(recorder.opacity(), 1.0f);
+}
+
+TEST(PictureRecorder, AShadowIsRecordedAsItsOwnKind) {
+    // arrange a cast with both a colour and a shape, which is what puts ink down (§6.2)
+    PictureRecorder recorder;
+    const Shadow cast{.color = Color::rgb(0.0f, 0.0f, 0.0f), .offset = Point{0.0f, 2.0f}, .blur = 3.0f};
+    // act
+    recorder.draw_shadow(Rect::from_origin_size(Point{1.0f, 2.0f}, Size{10.0f, 10.0f}), 2.0f, cast);
+    // assert the cast travels as its own kind, because the replay blurs it offscreen (§6.2)
+    ASSERT_EQ(recorder.commands().size(), 1u);
+    EXPECT_EQ(recorder.commands()[0].kind(), DrawCommandKind::Shadow);
+    EXPECT_EQ(recorder.commands()[0].shadow_geometry().shadow, cast);
+}
+
+TEST(PictureRecorder, AShadowWithNoColourDoesNotRecord) {
+    // arrange a clear cast, which puts no ink down (§6.2)
+    PictureRecorder recorder;
+    recorder.draw_shadow(Rect::from_origin_size(Point{1.0f, 2.0f}, Size{10.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f)});
+    // assert
+    EXPECT_TRUE(recorder.empty());
+}
+
+TEST(PictureRecorder, AShadowWithNoShapeDoesNotRecord) {
+    // arrange a cast with no area, because there is nothing to throw it (§6.2)
+    PictureRecorder recorder;
+    recorder.draw_shadow(Rect::from_origin_size(Point{1.0f, 2.0f}, Size{0.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgb(0.0f, 0.0f, 0.0f)});
+    // assert
+    EXPECT_TRUE(recorder.empty());
+}
+
+TEST(DrawCommandShape, AShadowCommandCarriesItsCast) {
+    // arrange a cast, which is the whole geometry of the command (§6.2)
+    const Shadow cast{.color = Color::rgb(0.1f, 0.2f, 0.3f), .offset = Point{1.0f, 2.0f}, .blur = 4.0f};
+    // act
+    const DrawCommand command = DrawCommand::shadow(Rect::from_origin_size(Point{5.0f, 5.0f}, Size{20.0f, 10.0f}), 3.0f, cast);
+    // assert the shape, the radius and the cast all travel with it, because the replay needs all three (§6.2)
+    EXPECT_EQ(command.kind(), DrawCommandKind::Shadow);
+    EXPECT_FLOAT_EQ(command.shadow_geometry().rect.width, 20.0f);
+    EXPECT_FLOAT_EQ(command.shadow_geometry().radius, 3.0f);
+    EXPECT_EQ(command.shadow_geometry().shadow, cast);
+}
+
+TEST(DrawCommandShape, AShadowWithNoShapeDrawsNothing) {
+    // arrange a cast with no area, which the factory refuses (§6.2)
+    const DrawCommand command = DrawCommand::shadow(Rect::from_origin_size(Point{5.0f, 5.0f}, Size{0.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgb(0.0f, 0.0f, 0.0f)});
+    // act, assert it draws nothing, because there is no shape to throw it (§6.2)
+    EXPECT_TRUE(command.draws_nothing());
+}
+
+TEST(DrawCommandShape, AShadowWithNoColourDrawsNothing) {
+    // arrange a clear cast, which puts no ink down (§6.2)
+    const DrawCommand command = DrawCommand::shadow(Rect::from_origin_size(Point{5.0f, 5.0f}, Size{10.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f)});
+    // act, assert it draws nothing, because a clear cast has no ink (§6.2)
+    EXPECT_TRUE(command.draws_nothing());
+}
+
+TEST(DrawCommandShape, AShadowBoundCoversTheBlurReach) {
+    // arrange a cast whose blur reaches beyond the shape on every side (§6.2)
+    const Shadow cast{.color = Color::rgb(0.0f, 0.0f, 0.0f), .offset = Point{2.0f, 4.0f}, .blur = 2.0f};
+    const DrawCommand command = DrawCommand::shadow(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}), 0.0f, cast);
+    // act
+    const Rect bound = command.bounds();
+    // assert the bound starts before the offset shape, because the blur spills past it (§6.2)
+    EXPECT_LT(bound.x, 10.0f + 2.0f);
+    EXPECT_LT(bound.y, 10.0f + 4.0f);
+    // assert the bound is wider than the shape, because the reach is added on both sides (§6.2)
+    EXPECT_GT(bound.width, 20.0f);
+    EXPECT_GT(bound.height, 20.0f);
 }

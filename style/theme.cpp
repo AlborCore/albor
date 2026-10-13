@@ -157,6 +157,41 @@ namespace albor
         m_palette.scrollbar_thumb[state_index(state)] = value;
     }
 
+    void Theme::set_focus_ring(Color value) {
+        // the normal state is the common case, which is the shorthand (§6.1)
+        m_palette.focus_ring[state_index(ControlState::Normal)] = value;
+    }
+
+    void Theme::set_focus_ring(ControlState state, Color value) {
+        // the entry is written by its state index, which is what the resolver reads (§6.1)
+        m_palette.focus_ring[state_index(state)] = value;
+    }
+
+    void Theme::set_canvas_background(Color value) {
+        // the normal state is the common case, which is the shorthand (§6.1)
+        m_palette.canvas_background[state_index(ControlState::Normal)] = value;
+    }
+
+    void Theme::set_canvas_background(ControlState state, Color value) {
+        // the entry is written by its state index, which is what the resolver reads (§6.1)
+        m_palette.canvas_background[state_index(state)] = value;
+    }
+
+    void Theme::set_focus_ring_width(float value) {
+        // the width is one value because a ring strokes evenly on every side (§6.1)
+        m_metrics.focus_ring_width = value;
+    }
+
+    void Theme::set_focus_ring_offset(float value) {
+        // the offset is one value because the ring stands off a control evenly (§6.1)
+        m_metrics.focus_ring_offset = value;
+    }
+
+    void Theme::set_focus_ring_radius(float value) {
+        // the radius is one value because the ring follows the plate it surrounds (§6.2)
+        m_metrics.focus_ring_radius = value;
+    }
+
     void Theme::set_text_field_text(Color value) {
         // the normal state is the common case, which is the shorthand (§6.1)
         m_palette.text_field_text[state_index(ControlState::Normal)] = value;

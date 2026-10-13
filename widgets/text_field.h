@@ -16,7 +16,7 @@
 namespace albor
 {
     // the widget that edits one or more lines of text, which is what a form field or a search box is (§8)
-    class TextField final : public Widget, public CaretTarget, public FocusTarget, public TextInputTarget
+    class TextField final : public Widget, public CaretTarget, public TextInputTarget
     {
     public:
         // build a field over the engines it reads, with an empty value (§8) the text engine is borrowed, not owned (§9.1)
@@ -141,9 +141,6 @@ namespace albor
 
         // override: take or drop the focus, which starts or ends the blink a caret is (§8.3)
         void set_focused(bool focused) override;
-
-        // report whether the field holds the focus, which is what a caret answers (§8.3)
-        [[nodiscard]] bool focused() const;
 
         // override: hand out the selection in utf16 units, which is what an input method replaces by range (§8.3)
         [[nodiscard]] TextInputRange selection_range() const override;
@@ -295,9 +292,6 @@ namespace albor
 
         // whether the field refuses edits but still takes focus (§8.3)
         bool m_read_only = false;
-
-        // whether the focus has reached the field, which is what decides whether a caret is shown (§8.3)
-        bool m_focused = false;
 
         // whether the caret is in its visible blink phase, which a focused field alternates (§8.3)
         bool m_caret_visible = false;

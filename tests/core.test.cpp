@@ -578,6 +578,62 @@ TEST(Color, EqualityComparesEveryComponent) {
     EXPECT_NE(first, other_channel);
 }
 
+TEST(Color, WithAlphaScalesTheExistingAlpha) {
+    // arrange a colour that is already part transparent, which is what a nested fade produces (§6.3)
+    const Color base = Color::rgba(0.2f, 0.4f, 0.6f, 0.5f);
+    // act
+    const Color dimmed = base.with_alpha(0.5f);
+    // assert the alpha moves to a quarter, because coverage multiplies rather than replaces (§6.3)
+    EXPECT_FLOAT_EQ(dimmed.alpha, 0.25f);
+    // assert the hue is untouched, because an opacity dims coverage rather than colour (§6.3)
+    EXPECT_FLOAT_EQ(dimmed.red, base.red);
+    EXPECT_FLOAT_EQ(dimmed.green, base.green);
+    EXPECT_FLOAT_EQ(dimmed.blue, base.blue);
+}
+
+TEST(Color, AlphaSetReplacesTheAlphaOutright) {
+    // arrange a half transparent colour, which is what an explicit opacity overrides (§6.3)
+    const Color base = Color::rgba(0.2f, 0.4f, 0.6f, 0.5f);
+    // act
+    const Color opaque = base.alpha_set(0.8f);
+    // assert the alpha is the one asked for rather than a product, because a replacement is not a scale (§6.3)
+    EXPECT_FLOAT_EQ(opaque.alpha, 0.8f);
+    EXPECT_FLOAT_EQ(opaque.red, base.red);
+}
+
+TEST(Color, AlphaSetClampsTheValueItIsGiven) {
+    // arrange, act
+    const Color base = Color::rgb(0.2f, 0.4f, 0.6f);
+    // assert a value from a binding that overshot is clamped rather than stored (§6.3)
+    EXPECT_FLOAT_EQ(base.alpha_set(2.0f).alpha, 1.0f);
+    EXPECT_FLOAT_EQ(base.alpha_set(-1.0f).alpha, 0.0f);
+}
+
+TEST(Color, TransparentizedMovesTheAlphaTowardZero) {
+    // arrange an opaque colour, which is what a theme entry usually is (§6.3)
+    const Color base = Color::rgb(0.2f, 0.4f, 0.6f);
+    // act
+    const Color faded = base.transparentized(0.25f);
+    // assert the alpha drops by the fraction, which is what a de-emphasis tint is (§6.3)
+    EXPECT_FLOAT_EQ(faded.alpha, 0.75f);
+    EXPECT_FLOAT_EQ(faded.red, base.red);
+}
+
+TEST(Color, TransparentizedAtAFullFractionClearsTheAlpha) {
+    // arrange, act
+    const Color faded = Color::rgb(0.2f, 0.4f, 0.6f).transparentized(1.0f);
+    // assert a full fraction leaves nothing visible, which is the point of the operation (§6.3)
+    EXPECT_FLOAT_EQ(faded.alpha, 0.0f);
+}
+
+TEST(Color, TransparentizedClampsItsFraction) {
+    // arrange, act
+    const Color base = Color::rgb(0.2f, 0.4f, 0.6f);
+    // assert a fraction from a binding that overshot is clamped into the unit range (§6.3)
+    EXPECT_FLOAT_EQ(base.transparentized(3.0f).alpha, 0.0f);
+    EXPECT_FLOAT_EQ(base.transparentized(-1.0f).alpha, 1.0f);
+}
+
 TEST(Paint, DefaultFillsWithOpaqueBlack) {
     // arrange, act
     const Paint paint;

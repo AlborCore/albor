@@ -1,5 +1,6 @@
 #include "render/draw_command.h"
 
+#include <algorithm>
 #include <span>
 
 #include <utility>
@@ -68,6 +69,14 @@ namespace albor
         return DrawCommand(GlyphOutlineGeometry{.outline = std::move(outline), .position = position}, paint);
     }
 
+    DrawCommand DrawCommand::shadow(Rect rect, float radius, Shadow shadow) {
+        // a shadow with no area casts nothing, so it is refused rather than recorded (§6.2)
+        if (rect.empty() || !shadow.casts())
+            return DrawCommand(RectGeometry{.rect = Rect{}}, Paint{});
+        // the casting shape and the cast are the geometry, because the blur needs both (§6.2)
+        return DrawCommand(ShadowGeometry{.rect = rect, .radius = radius, .shadow = shadow}, Paint{});
+    }
+
     DrawCommand::DrawCommand(Geometry geometry, Paint paint) :
         m_clip(unclipped()), m_paint(paint), m_geometry(std::move(geometry)) {}
 
@@ -92,9 +101,12 @@ namespace albor
         // an image is the sixth alternative (§6.4)
         case 5:
             return DrawCommandKind::Image;
-        // a glyph outline is the last alternative, which is what a variant holds at most (§6.4, AD-34)
-        default:
+        // a glyph outline is the seventh alternative (§6.4, AD-34)
+        case 6:
             return DrawCommandKind::GlyphOutline;
+        // a shadow is the last alternative, which is what a variant holds at most (§6.2)
+        default:
+            return DrawCommandKind::Shadow;
         }
     }
 
@@ -148,6 +160,11 @@ namespace albor
         return std::get<ImageGeometry>(m_geometry);
     }
 
+    const ShadowGeometry& DrawCommand::shadow_geometry() const {
+        // the cast is the alternative this command was built with (§6.2)
+        return std::get<ShadowGeometry>(m_geometry);
+    }
+
     void DrawCommand::set_clip(Rect clip) {
         // the clip is stamped before the command joins the list, so it is fixed for good (§6.2)
         m_clip = clip;
@@ -156,6 +173,13 @@ namespace albor
     void DrawCommand::set_transform(Transform transform) {
         // the transform is stamped before the command joins the list, so it is fixed for good (§6.4)
         m_transform = transform;
+    }
+
+    void DrawCommand::scale_alpha(float factor) {
+        // both channels move together, because an opacity dims a fill and a stroke alike (§6.1)
+        m_paint.fill.alpha = std::clamp(m_paint.fill.alpha * factor, 0.0f, 1.0f);
+        // the stroke carries its own alpha, so it takes the same factor rather than the fill's result (§6.1)
+        m_paint.stroke.alpha = std::clamp(m_paint.stroke.alpha * factor, 0.0f, 1.0f);
     }
 
     bool DrawCommand::draws_nothing() const {
@@ -202,6 +226,12 @@ namespace albor
             // the outline is read alone, because a missing one leaves nothing to trace (§6.4)
             const GlyphOutlineGeometry& outline = glyph_outline_geometry();
             return !outline.outline || outline.outline->empty() || !paints;
+        }
+        // a shadow casts nothing without a shape or a colour of its own (§6.2)
+        case DrawCommandKind::Shadow: {
+            // the cast is read alone, because it carries its own paint rather than the command's (§6.2)
+            const ShadowGeometry& cast = shadow_geometry();
+            return cast.rect.empty() || !cast.shadow.casts();
         }
         }
         // the switch covers every kind, so nothing reaches here (§6.2)
@@ -288,9 +318,20 @@ namespace albor
             // the bound is returned whole (§6.4)
             return Rect{.x = left, .y = top, .width = right - left, .height = bottom - top};
         }
+        case DrawCommandKind::Shadow:
+            return shadow_bounds();
         }
         // a kind outside the enumeration covers nothing, which is the quiet default (§6.2)
         return Rect{};
+    }
+
+    Rect DrawCommand::shadow_bounds() const {
+        // the cast is read once, because both the shape and the reach come from it (§6.2)
+        const ShadowGeometry& cast = shadow_geometry();
+        // three sigmas is what a blur of this radius reaches, so the bound is conservative rather than tight (§6.2)
+        const float reach = cast.shadow.blur * 3.0f;
+        // the offset moves the whole cast, because that is what a shadow offset means (§6.2)
+        return Rect{.x = cast.rect.x + cast.shadow.offset.x - reach, .y = cast.rect.y + cast.shadow.offset.y - reach, .width = cast.rect.width + reach * 2.0f, .height = cast.rect.height + reach * 2.0f};
     }
 
     void DrawCommand::replay_glyph_outline(RenderContext& context) const {
@@ -353,6 +394,10 @@ namespace albor
         // an embedded glyph draws as its tessellated outline, which is how AD-34 text reaches a surface (§6.4, AD-34)
         case DrawCommandKind::GlyphOutline:
             replay_glyph_outline(context);
+            return;
+        // a shadow is drawn through the primitive that blurs offscreen and composites (§6.2)
+        case DrawCommandKind::Shadow:
+            context.draw_shadow(shadow_geometry().rect, shadow_geometry().radius, shadow_geometry().shadow);
             return;
         }
     }

@@ -47,6 +47,9 @@ namespace albor
 
         // one glyph of an embedded font, drawn as its tessellated outline (§6.4, AD-06, AD-34)
         GlyphOutline,
+
+        // a shadow cast by a rounded shape, which the replay blurs offscreen and composites (§6.2)
+        Shadow,
     };
 
     // the geometry a rectangle command carries, which is the rectangle and its corner radii (§6.2)
@@ -137,12 +140,28 @@ namespace albor
         friend bool operator==(const GlyphOutlineGeometry& lhs, const GlyphOutlineGeometry& rhs) = default;
     };
 
+    // the geometry a shadow command carries, which is the shape that casts and how the cast falls (§6.2)
+    struct ShadowGeometry
+    {
+        // the rectangle the cast shape occupies, which is the shape before it is offset (§6.2)
+        Rect rect;
+
+        // the corner radius of the casting shape, which the blur follows (§6.2)
+        float radius = 0.0f;
+
+        // the colour, offset and blur the cast is drawn with (§6.2)
+        Shadow shadow;
+
+        // compare two shadows component wise, which a command comparison needs (§6.2)
+        friend bool operator==(const ShadowGeometry& lhs, const ShadowGeometry& rhs) = default;
+    };
+
     // one draw of a frame scene, which is an ordered list of these so paint order survives the hand off (§6.1, AD-18)
     class DrawCommand
     {
     public:
         // the geometry a command carries, where the alternative index is the kind (§6.2)
-        using Geometry = std::variant<RectGeometry, TextGeometry, BatchGeometry, PathGeometry, PictureGeometry, ImageGeometry, GlyphOutlineGeometry>;
+        using Geometry = std::variant<RectGeometry, TextGeometry, BatchGeometry, PathGeometry, PictureGeometry, ImageGeometry, GlyphOutlineGeometry, ShadowGeometry>;
 
         // the clip that stands for no clip at all, which is what a command carries until a recorder stamps one (§6.2)
         [[nodiscard]] static const Rect& unclipped();
@@ -170,6 +189,9 @@ namespace albor
 
         // build a glyph outline command, which is how embedded text reaches the surface (§6.4, AD-34)
         [[nodiscard]] static DrawCommand glyph_outline(std::shared_ptr<const GlyphOutline> outline, Point position, Paint paint);
+
+        // build a shadow command, which the replay blurs offscreen and composites under the shape (§6.2)
+        [[nodiscard]] static DrawCommand shadow(Rect rect, float radius, Shadow shadow);
 
         // the kind of geometry the command carries (§6.2)
         [[nodiscard]] DrawCommandKind kind() const;
@@ -207,11 +229,17 @@ namespace albor
         // the outline and the position of a glyph outline command (§6.4, AD-34)
         [[nodiscard]] const GlyphOutlineGeometry& glyph_outline_geometry() const;
 
+        // the casting shape and the cast of a shadow command (§6.2)
+        [[nodiscard]] const ShadowGeometry& shadow_geometry() const;
+
         // stamp the clip the recorder stood at, which is what the replay scissors to (§6.2)
         void set_clip(Rect clip);
 
         // stamp the transform the recorder stood at, which retained geometry draws under (§6.4)
         void set_transform(Transform transform);
+
+        // scale the alpha of both paint channels by a fraction, which is how a node opacity reaches the surface (§6.1)
+        void scale_alpha(float factor);
 
         // report whether the command would draw nothing at all, which is what a recorder culls (§6.2)
         [[nodiscard]] bool draws_nothing() const;
@@ -229,6 +257,9 @@ namespace albor
         friend bool operator!=(const DrawCommand& lhs, const DrawCommand& rhs) = default;
 
     private:
+        // read the area a cast covers, which is the shape plus the reach of its blur (§6.2)
+        [[nodiscard]] Rect shadow_bounds() const;
+
         // build a command over its geometry, so the clip and the transform are stamped after (§6.2)
         explicit DrawCommand(Geometry geometry, Paint paint);
 

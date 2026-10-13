@@ -568,6 +568,9 @@ namespace albor::compiler
         // a conversion resolves against the closed rule set (§11.1)
         if (const auto* conversion = dynamic_cast<const ConversionExpression*>(&expression))
             return type_conversion(*conversion, scope, dependencies);
+        // a colour operation resolves against the same closed set, because the language defines no more (§6.1)
+        if (const auto* call = dynamic_cast<const CallExpression*>(&expression))
+            return type_call(*call, scope, dependencies);
         // a binary application types both operands and then applies the operator rule (§11.1)
         if (const auto* binary = dynamic_cast<const BinaryExpression*>(&expression))
             return type_binary(*binary, scope, dependencies);
@@ -728,6 +731,36 @@ namespace albor::compiler
         }
         // the conversion produces exactly the target, because there is no inference (§11.1)
         return scalar(target);
+    }
+
+    ValueType TypeChecker::type_call(const CallExpression& call, const Scope& scope, std::vector<std::string>& dependencies) {
+        // a call the language does not define has no type, which the report names (§11.1)
+        if (call.function != "transparentize" && call.function != "alpha" && call.function != "alpha_set") {
+            // the report names the name, because that is what the author has to change (§11.1)
+            m_diagnostics.add(Diagnostic::Severity::Error, call.location(), "E0416", "there is no function named '" + call.function + "'");
+            return error_type();
+        }
+        // the colour is typed first, because every operation works on one (§6.1)
+        const ValueType colour = type_expression(*call.arguments.at(0), scope, dependencies);
+        // the amount is typed second, so the dependency list follows the written order (§7.3, AD-04a)
+        const ValueType amount = type_expression(*call.arguments.at(1), scope, dependencies);
+        // an argument that failed suppresses the rule, because its type is not known (§11.1)
+        if (colour.is_error() || amount.is_error())
+            return error_type();
+        // the first argument must be a colour, because the operation has nothing else to work on (§6.1)
+        if (!colour.is(TypeKind::Color)) {
+            // the report names what was written, because the author needs to know what to fix (§11.1)
+            report_type_mismatch(call, colour, scalar(TypeKind::Color));
+            return error_type();
+        }
+        // the amount must be a number, because it is a fraction or an alpha (§6.1)
+        if (!amount.is_numeric()) {
+            // the report names what was written, because the author needs to know what to fix (§11.1)
+            report_type_mismatch(call, amount, scalar(TypeKind::Float));
+            return error_type();
+        }
+        // every colour operation produces a colour, because it changes only the alpha (§6.1)
+        return scalar(TypeKind::Color);
     }
 
     ValueType TypeChecker::type_binary(const BinaryExpression& binary, const Scope& scope, std::vector<std::string>& dependencies) {

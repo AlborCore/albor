@@ -43,11 +43,20 @@ namespace albor
         // read back the current clip, which a test asserts against a test double (§6.2)
         [[nodiscard]] virtual const Rect& clip() const = 0;
 
+        // set the opacity every later draw is dimmed by, which is how a node property reaches the surface (§6.1)
+        virtual void set_opacity(float opacity) = 0;
+
+        // read back the current opacity, which a test asserts against a test double (§6.1)
+        [[nodiscard]] virtual float opacity() const = 0;
+
         // draw a filled and stroked rectangle (§6.2)
         virtual void draw_rect(const Rect& rect, const Paint& paint) = 0;
 
         // draw a filled and stroked rounded rectangle (§6.2)
         virtual void draw_rounded_rect(const Rect& rect, float radius, const Paint& paint) = 0;
+
+        // draw the shadow a shape casts, which the backend blurs offscreen and composites under it (§6.2)
+        virtual void draw_shadow(const Rect& rect, float radius, const Shadow& shadow) = 0;
 
         // draw a shaped text run whose origin is the top left of its box (§6.2, §9.1)
         virtual void draw_text(const TextLayout& layout, Point origin, const Paint& paint) = 0;

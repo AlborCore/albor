@@ -133,6 +133,24 @@ namespace albor
         }
     }
 
+    void UiNode::push_opacity(RenderContext& context) const {
+        // a fully opaque node leaves the context alone, because pushing is what costs (§6.1)
+        if (m_opacity >= 1.0f)
+            return;
+        // the state is pushed first, because a node dims only its own subtree (§6.1)
+        context.save();
+        // the node composes its own opacity onto whatever a parent already dimmed by (§6.1)
+        context.set_opacity(context.opacity() * m_opacity);
+    }
+
+    void UiNode::pop_opacity(RenderContext& context) const {
+        // a fully opaque node pushed nothing, so there is nothing to pop (§6.1)
+        if (m_opacity >= 1.0f)
+            return;
+        // the state the save pushed comes back, so a sibling draws at the parent's own opacity (§6.1)
+        context.restore();
+    }
+
     bool UiNode::hit_test(Point logical_point) const {
         // the children are hit tested last added first, because the topmost one wins (§8.3)
         for (auto position = m_children.size(); position > 0; position--)
@@ -265,6 +283,70 @@ namespace albor
         m_visible = visible;
         // showing or hiding a node changes what the frame contains (§6.1)
         invalidate_layout();
+    }
+
+    void UiNode::set_opacity(float opacity) {
+        // the value is clamped into the unit range, because a binding computed from data can land outside it (§6.1)
+        const float clamped = std::clamp(opacity, 0.0f, 1.0f);
+        // an unchanged opacity invalidates nothing, because the node looks the same (§6.1)
+        if (m_opacity == clamped)
+            return;
+        // the opacity is stored first, so the invalidation walks a tree that already knows the new one (§6.1)
+        m_opacity = clamped;
+        // an opacity change is visual only, because the node still occupies the same space (§6.1)
+        invalidate();
+    }
+
+    float UiNode::opacity() const {
+        // the opacity is what the author set, because the tree does not fold its parents in (§6.1)
+        return m_opacity;
+    }
+
+    void UiNode::set_border_width(float width) {
+        // a negative width is no border, because a stroke cannot be narrower than nothing (§6.1)
+        const float clamped = std::max(0.0f, width);
+        // an unchanged width invalidates nothing, because the node looks the same (§6.1)
+        if (m_border_width == clamped)
+            return;
+        // the width is stored first, so the invalidation walks a tree that already knows the new one (§6.1)
+        m_border_width = clamped;
+        // a border change is visual only, because it does not move the node (§6.1)
+        invalidate();
+    }
+
+    float UiNode::border_width() const {
+        // the width is what the author set, because a theme owns its own roles (§6.1)
+        return m_border_width;
+    }
+
+    void UiNode::set_border_color(Color color) {
+        // an unchanged colour invalidates nothing, because the node looks the same (§6.1)
+        if (m_border_color == color)
+            return;
+        // the colour is stored first, so the invalidation walks a tree that already strokes the new one (§6.1)
+        m_border_color = color;
+        // a border change is visual only, because it does not move the node (§6.1)
+        invalidate();
+    }
+
+    Color UiNode::border_color() const {
+        // the colour is what the author set, because it is independent of the fill (§6.1)
+        return m_border_color;
+    }
+
+    void UiNode::set_drop_shadow(Shadow shadow) {
+        // an unchanged shadow invalidates nothing, because the node looks the same (§6.1)
+        if (m_drop_shadow == shadow)
+            return;
+        // the shadow is stored first, so the invalidation walks a tree that already casts the new one (§6.1)
+        m_drop_shadow = shadow;
+        // a cast change is visual only, because it does not move the node (§6.1)
+        invalidate();
+    }
+
+    const Shadow& UiNode::drop_shadow() const {
+        // the cast is what the author set, because the tree does not invent one (§6.1)
+        return m_drop_shadow;
     }
 
     void UiNode::set_invalidation_handler(std::function<void()> handler) {
