@@ -65,6 +65,15 @@ if(APPLE)
     target_sources(albor-tests PRIVATE "./conditional/accessibility_role.macos.mm")
     set_source_files_properties("./conditional/accessibility_role.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(albor-tests PRIVATE "-framework AppKit" "-framework Foundation")
+
+    # the backend lifecycle suite destroys a second gpu context in one process, which the metal driver traps on
+    # after ganesh has used it. the trap kills the process, so no release run could finish while the suite is in,
+    # and issue 29 tracks the driver defect rather than this repository. the suite is held out of the release
+    # configuration at link time, which is what AD-04 requires of a configuration specific suite, and the two
+    # tests come back the day the driver is fixed (§6.3, issue 29)
+    if(NOT ALBOR_CONFIGURATION STREQUAL "Release")
+        target_sources(albor-tests PRIVATE "./conditional/metal_teardown.test.cpp")
+    endif()
 endif()
 
 
@@ -78,6 +87,14 @@ if(ALBOR_AUTOMATION)
         target_sources(albor-tests PRIVATE "./conditional/automation_transport.test.cpp")
     endif()
     target_link_libraries(albor-tests PRIVATE albor-automation)
+endif()
+
+# the allocation probe replaces the compiler's operator new, which an optimised build resolves before the archive
+# member is ever pulled in, so a counting bound cannot hold there. the suite that asserts one is therefore held
+# out of the release configuration at link time rather than left failing, which is what issue 31 asks for and
+# what AD-04 requires of a configuration specific suite (§2.3, issue 31)
+if(NOT ALBOR_CONFIGURATION STREQUAL "Release")
+    target_sources(albor-tests PRIVATE "./conditional/allocation_release_blind.test.cpp")
 endif()
 
 # the test binary is executed directly rather than through ctest, so it never needs a display (§2.2)
