@@ -43,17 +43,21 @@ namespace albor
     }
 
     void Component::render(RenderContext& context) {
+        // the node opacity goes on first, because every phase below draws inside it (§6.1)
+        push_opacity(context);
         // the background is drawn first, so the content lands on top of it (§6.1)
         paint_background(context);
         // the content is drawn over the background, because that is the order a composite paints in (§6.1)
         paint_content(context);
         // the children draw over both, in insertion order, which is what a composite tree needs (§6.1)
         paint_children(context);
+        // the opacity comes off last, so a sibling draws at the state this node found (§6.1)
+        pop_opacity(context);
     }
 
     void Component::paint_children(RenderContext& context) {
         // a component with no viewport of its own records its children as they are (§6.1)
-        UiNode::render(context);
+        render_children(context);
     }
 
     void Component::paint_content(RenderContext& context) {
@@ -70,20 +74,32 @@ namespace albor
     }
 
     void Component::paint_background(RenderContext& context) {
-        // a component with no area draws nothing, which keeps an unarranged component invisible (§6.1)
+        // a component with no area draws nothing, which keeps an unarranged component invisible (§6.2)
         if (bounds().empty())
             return;
-        // the fill is the only paint a background needs, so the stroke stays empty (§6.2)
-        const Color fill = background();
+        // the cast goes down first, because a shadow sits behind the shape that throws it (§6.2)
+        paint_drop_shadow(context);
+        // the fill and the border are independent, so the paint carries both whatever each is set to (§6.1)
+        const Paint paint{.fill = background(), .stroke = border_color(), .stroke_width = border_width()};
+        // a background that neither fills nor strokes draws nothing, because there is nothing on it (§6.2)
+        if (!paint.fills() && !paint.strokes())
+            return;
         // a radius means a rounded plate, which is what a themed control draws (§6.2)
-        const float radius = corner_radius();
-        if (radius > 0.0f) {
+        if (corner_radius() > 0.0f) {
             // the plate is rounded, so the corners take the radius rather than the fill (§6.2)
-            context.draw_rounded_rect(bounds(), radius, {.fill = fill});
+            context.draw_rounded_rect(bounds(), corner_radius(), paint);
             return;
         }
         // without a radius the background is a hard rectangle, which is what an unthemed component drew (§6.2)
-        context.draw_rect(bounds(), {.fill = fill});
+        context.draw_rect(bounds(), paint);
+    }
+
+    void Component::paint_drop_shadow(RenderContext& context) const {
+        // an empty cast records nothing, because a node casts nothing until it is told to (§6.2)
+        if (drop_shadow().empty())
+            return;
+        // the cast follows the plate it falls from, so a rounded plate casts a rounded shape (§6.2)
+        context.draw_shadow(bounds(), corner_radius(), drop_shadow());
     }
 
     Color Component::background() const {

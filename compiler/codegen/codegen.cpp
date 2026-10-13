@@ -327,12 +327,7 @@ namespace albor::compiler
             const std::string key = std::string(element) + "." + std::string(signal);
             // the signal to setter map is the closed catalogue of §8 (§11.3)
             static const std::unordered_map<std::string, std::string_view> setters{
-                {"Button.clicked", "set_on_click"},
-                {"Slider.changed", "set_on_change"},
-                {"CheckBox.toggled", "set_on_toggle"},
-                {"ScrollView.scrolled", "set_on_scroll"},
-                {"TextField.changed", "set_on_change"},
-                {"TextField.committed", "set_on_commit"},
+                {"Button.clicked", "set_on_click"}, {"Slider.changed", "set_on_change"}, {"CheckBox.toggled", "set_on_toggle"}, {"ScrollView.scrolled", "set_on_scroll"}, {"TextField.changed", "set_on_change"}, {"TextField.committed", "set_on_commit"},
             };
             // the lookup is a ready made key, because the pair is the identity (§11.3)
             const auto found = setters.find(key);
@@ -561,6 +556,9 @@ namespace albor::compiler
 
             // render one conversion, which the operand type decides (§11.3)
             std::string emit_conversion(const ConversionExpression& conversion);
+
+            // emit a colour operation, which is a method call on the colour it was given (§6.1)
+            std::string emit_call(const CallExpression& call);
 
             // join the dependency ids as a comma separated list, which a deps array holds (§13.3)
             std::string dep_list(const std::vector<std::string>& dependencies) const;
@@ -829,6 +827,12 @@ namespace albor::compiler
             if (const auto* conversion = dynamic_cast<const ConversionExpression*>(&expression)) {
                 // the wrapped value is walked, because the whole expression is scanned (§11.3)
                 scan_expression(*conversion->value);
+            }
+            // a colour operation has two operands, which are both walked (§11.3)
+            if (const auto* call = dynamic_cast<const CallExpression*>(&expression)) {
+                // every argument is walked in written order, because a bound operand is a dependency (§11.3, AD-04a)
+                for (const ExpressionPtr& argument : call->arguments)
+                    scan_expression(*argument);
             }
             // a binary application has two operands, which are both walked (§11.3)
             if (const auto* binary = dynamic_cast<const BinaryExpression*>(&expression)) {
@@ -2292,6 +2296,9 @@ namespace albor::compiler
             // a conversion renders through its operand, which the operand type decides (§11.3)
             if (const auto* conversion = dynamic_cast<const ConversionExpression*>(&expression))
                 return emit_conversion(*conversion);
+            // a colour operation renders as the method call it names, which the core colour carries (§6.1)
+            if (const auto* call = dynamic_cast<const CallExpression*>(&expression))
+                return emit_call(*call);
             // a binary application renders its operands, which keep the written parentheses (§11.3)
             if (const auto* binary = dynamic_cast<const BinaryExpression*>(&expression))
                 return emit_binary(*binary);
@@ -2362,6 +2369,21 @@ namespace albor::compiler
             }
             // the closing brace ends the initialiser (§8.1)
             return out + "}";
+        }
+
+        std::string ComponentEmitter::emit_call(const CallExpression& call) {
+            // the colour renders first, because every operation is a method on it (§6.1)
+            const std::string colour = emit_expression(*call.arguments.at(0));
+            // the amount renders second, because it is the fraction or alpha the operation works by (§6.1)
+            const std::string amount = emit_expression(*call.arguments.at(1));
+            // the three operations are spelled as the methods core/paint.h declares (§6.1)
+            if (call.function == "transparentize")
+                return "(" + colour + ").transparentized(" + amount + ")";
+            // an alpha modulation scales the alpha rather than replacing it (§6.1)
+            if (call.function == "alpha")
+                return "(" + colour + ").with_alpha(" + amount + ")";
+            // an alpha replacement sets the alpha outright, which is what an explicit opacity asks for (§6.1)
+            return "(" + colour + ").alpha_set(" + amount + ")";
         }
 
         std::string ComponentEmitter::emit_conversion(const ConversionExpression& conversion) {

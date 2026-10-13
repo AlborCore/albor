@@ -192,7 +192,7 @@ namespace albor::accessibility::platform
             MacosAccessibilityAdapter() {
                 // the bridge is told how to answer a child query, or every element reports no children (§10.2)
                 m_owner.children_provider = ^NSArray*(std::size_t index) {
-                    return child_elements_of(m_published, m_tree, index);
+                  return child_elements_of(m_published, m_tree, index);
                 };
             }
 
@@ -284,7 +284,7 @@ namespace albor::accessibility::platform
                     return;
                 }
                 // the content view announces the published root, so the reader walks the tree from there (§10.2)
-                view.accessibilityChildren = @[m_published[root].element];
+                view.accessibilityChildren = @[ m_published[root].element ];
             }
 
             // take the tree back out of the window, which a rebuild and a detach both need (§10.2)
@@ -298,9 +298,7 @@ namespace albor::accessibility::platform
             }
 
             // the view the window announces, which is where the published tree is handed to assistive technology (§10.2)
-            [[nodiscard]] NSView* content_view() const {
-                return m_window == nil ? nil : m_window.contentView;
-            }
+            [[nodiscard]] NSView* content_view() const { return m_window == nil ? nil : m_window.contentView; }
         };
     } // namespace
 

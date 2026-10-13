@@ -1840,14 +1840,18 @@ TEST(TextFieldImeChecks, ACompositionShowsTheMarkedString) {
     field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
     SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 40.0f}, 1.0f));
     // act
-    Event composing{.kind = EventKind::Composing, .text = "a\xE3\x81\x82" "b"};
+    Event composing{.kind = EventKind::Composing,
+                    .text = "a\xE3\x81\x82"
+                            "b"};
     field.dispatch_event(composing);
     field.render(recorder);
     // assert the mark reached the display, because the value kept holding nothing (§8.3)
     EXPECT_TRUE(field.value().empty());
     EXPECT_EQ(text_command_count(*recorder.scene()), 1u);
     EXPECT_TRUE(field.has_marked_text());
-    EXPECT_EQ(field.marked_text(), "a\xE3\x81\x82" "b");
+    EXPECT_EQ(field.marked_text(),
+              "a\xE3\x81\x82"
+              "b");
 }
 
 TEST(TextFieldImeChecks, TheMarkIsProvisionalAndSignalsNothing) {
@@ -2534,4 +2538,20 @@ TEST(TextFieldChecks, AFieldAttachedToAWiredTreeBlinksWhenItTakesTheFocus) {
     joined->set_focused(true);
     // assert a blink is running, because the engine reached the child through the tree (§7.3)
     EXPECT_EQ(animations.active_count(), 1u);
+}
+
+TEST(TextFieldImeChecks, AMarkOnAFieldWithNoEngineHoldsNoDisplayRun) {
+    // arrange a field with no engine at all, which measures nothing it cannot (§9.1)
+    TextField field(nullptr, nullptr);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    bool changed = false;
+    field.set_on_change([&changed](const std::string&) { changed = true; });
+    // act a composition arrives, which the field holds provisionally (§8.3)
+    Event mark{.kind = EventKind::Composing, .text = "abc"};
+    field.dispatch_event(mark);
+    // assert the mark is held and no edit ran, because the provisional text is not the value (§8.3)
+    EXPECT_TRUE(field.has_marked_text());
+    EXPECT_EQ(field.marked_text(), "abc");
+    EXPECT_FALSE(changed);
+    EXPECT_TRUE(field.value().empty());
 }

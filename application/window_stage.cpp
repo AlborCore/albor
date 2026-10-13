@@ -62,7 +62,8 @@ namespace albor
         if (m_animations.active_count() == 0) {
             // the engine is told the gap happened, so an animation scheduled during it starts at the next frame (§7.3)
             m_animations.begin_idle();
-        } else {
+        }
+        else {
             // the animations run before the scene is recorded, so the frame carries the values they wrote (§7.3, AD-04d)
             m_pipeline->advance_animations(std::chrono::duration<float>(now - m_last_frame).count());
         }

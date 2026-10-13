@@ -68,6 +68,39 @@ namespace albor
         return m_theme->metrics().corner_radius;
     }
 
+    void Widget::paint_background(RenderContext& context) {
+        // the plate goes down first, because the ring stands outside it rather than over it (§6.1)
+        Component::paint_background(context);
+        // the ring follows the plate, which is the order the eye reads a focused control in (§6.1)
+        paint_focus_ring(context);
+    }
+
+    void Widget::paint_focus_ring(RenderContext& context) const {
+        // without a theme there is no ring, because nothing configured one (§6.1)
+        if (m_theme == nullptr)
+            return;
+        // a hidden control draws no ring, because there is nothing on screen to point at (§6.1)
+        if (!visible())
+            return;
+        // a control with no area draws no ring, because a ring around nothing is nothing (§6.2)
+        if (bounds().empty())
+            return;
+        // the ring marks the keyboard focus alone, because a hover says nothing about taking keys (§6.1)
+        if (!m_focused)
+            return;
+        // the ring resolves by state, so a hover and a press change it with the plate it surrounds (§6.1)
+        const Color ring = resolve(m_theme->palette().focus_ring, Color::rgba(0.0f, 0.0f, 0.0f, 0.0f));
+        // a ring with no alpha draws nothing, which is how the normal state carries no signal (§6.1)
+        if (ring.alpha <= 0.0f)
+            return;
+        // the ring metrics come from the theme, because the ring is a sizing decision like any plate (§6.1)
+        const ControlMetrics& metrics = m_theme->metrics();
+        // the ring stands off the plate, because a ring on the edge reads as a border rather than as focus (§6.1)
+        const Rect outer = Rect::from_origin_size(Point{.x = bounds().x - metrics.focus_ring_offset, .y = bounds().y - metrics.focus_ring_offset}, Size{.width = bounds().width + metrics.focus_ring_offset * 2.0f, .height = bounds().height + metrics.focus_ring_offset * 2.0f});
+        // the ring is stroked rather than filled, because a filled ring would cover the plate it surrounds (§6.1)
+        context.draw_rounded_rect(outer, metrics.focus_ring_radius, {.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), .stroke = ring, .stroke_width = metrics.focus_ring_width});
+    }
+
     std::size_t Widget::semantic_child_count() const {
         // the semantic walk visits the same children the layout walks, so the two counts agree (§10.1, AD-09)
         return child_count();
@@ -107,6 +140,9 @@ namespace albor
         // the pointer inside the control is the next strongest signal (§8.3)
         if (m_hovered)
             return ControlState::Hovered;
+        // the keyboard focus outranks the resting paint, because a ring is what says the control takes keys (§8.3)
+        if (m_focused)
+            return ControlState::Focused;
         // nothing is happening to the control, which is the resting paint (§8.3)
         return ControlState::Normal;
     }
@@ -119,6 +155,21 @@ namespace albor
     bool Widget::pressed() const {
         // the flag is what the press set, and the tests read (§8.3)
         return m_pressed;
+    }
+
+    bool Widget::focused() const {
+        // the flag is what the focus manager set, and the ring and the tests read it (§8.3)
+        return m_focused;
+    }
+
+    void Widget::set_focused(bool focused) {
+        // an unchanged focus changes nothing, because the ring is already in that state (§8.3)
+        if (m_focused == focused)
+            return;
+        // the state is stored first, because the ring resolves through it (§8.3)
+        m_focused = focused;
+        // the ring appears and disappears with the focus, so the frame must be redrawn (§6.1)
+        invalidate();
     }
 
     void Widget::set_command(Command* command) {

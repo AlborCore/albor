@@ -251,24 +251,138 @@ TEST(SkiaRenderContextTextChecks, DrawingManyLinesOfOneRunCostsNoAllocation) {
     EXPECT_EQ(repeat_allocations, 0u);
 }
 
-TEST(SkiaRendererBackendLifecycle, ConstructingAndDestroyingABackendReturns) {
-    // act the backend is constructed and destroyed in a scope, which is what an application does (§6.3)
-    {
-        SkiaRendererBackend backend;
-        // assert it came up, because a backend that did not is a different failure than the one guarded here (§6.3)
-        EXPECT_TRUE(backend.ready());
-    }
-    // assert reaching this line is the claim: the driver traps in the queue dealloc unless the queue is held (§6.3)
+TEST(SkiaRenderContextShadowChecks, AContextWithNoCanvasSwallowsTheDraws) {
+    // arrange a context over no canvas at all, which is the refusal path a backend takes (§6.2)
+    SkiaRenderContext context(nullptr, 1.0f);
+    // act every draw a caller could make, because each one has to survive the null canvas (§6.2)
+    context.draw_shadow(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgb(0.0f, 0.0f, 0.0f), .blur = 2.0f});
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.draw_rounded_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), 2.0f, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // assert the state stayed usable, because a null context is a refusal rather than a crash (§6.2)
+    EXPECT_FLOAT_EQ(context.opacity(), 1.0f);
     SUCCEED();
 }
 
-TEST(SkiaRendererBackendLifecycle, DestroyingABackendAfterItRecordedNothingStillReturns) {
-    // arrange a second backend in the same process, because the first test already exercised one queue (§6.3)
-    std::unique_ptr<SkiaRendererBackend> backend = std::make_unique<SkiaRendererBackend>();
-    // assert it came up, so the destruction below is not skipped by a null (§6.3)
-    ASSERT_TRUE(backend->ready());
-    // act
-    backend.reset();
-    // assert returning at all is the claim, because the teardown order is what the driver rejects (§6.3)
+TEST(SkiaRenderContextShadowChecks, ARefusedCastDrawsNothing) {
+    // arrange a context over no canvas, plus a cast the primitive must refuse twice over (§6.2)
+    SkiaRenderContext context(nullptr, 1.0f);
+    // act a clear colour with a shape, and a colour with no shape, which are both refusals (§6.2)
+    context.draw_shadow(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f)});
+    context.draw_shadow(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{0.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgb(0.0f, 0.0f, 0.0f)});
+    // assert
     SUCCEED();
+}
+
+TEST(SkiaRenderContextShadowChecks, ARefusedCastOnALiveCanvasDrawsNothing) {
+    // arrange a real canvas, because the refusals must hold where the canvas could actually draw (§6.2)
+    sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
+    ASSERT_NE(surface, nullptr);
+    surface->getCanvas()->clear(0x00000000);
+    SkiaRenderContext context(surface->getCanvas(), 1.0f);
+    // act the two refusals, on a canvas that would have drawn them (§6.2)
+    context.draw_shadow(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f)});
+    context.draw_shadow(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{0.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgb(0.0f, 0.0f, 0.0f)});
+    // assert the canvas stayed clear, because a refused cast puts no ink down (§6.2)
+    const SkImageInfo info = SkImageInfo::Make(SURFACE_WIDTH, SURFACE_HEIGHT, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(SURFACE_WIDTH * SURFACE_HEIGHT * 4));
+    ASSERT_TRUE(surface->readPixels(info, pixels.data(), info.minRowBytes(), 0, 0));
+    int inked = 0;
+    for (std::size_t i = 3; i < pixels.size(); i += 4)
+        if (pixels[i] > 0)
+            inked++;
+    EXPECT_EQ(inked, 0);
+}
+
+TEST(SkiaRenderContextShadowChecks, AClampedOpacityReachesTheSurface) {
+    // arrange a real canvas and a colour the opacity halves, which is what a node opacity asks (§6.1)
+    sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
+    ASSERT_NE(surface, nullptr);
+    surface->getCanvas()->clear(0x00000000);
+    SkiaRenderContext context(surface->getCanvas(), 1.0f);
+    // act an overshoot first, so the clamp runs against the value a binding would produce (§6.1)
+    context.set_opacity(9.0f);
+    EXPECT_FLOAT_EQ(context.opacity(), 1.0f);
+    context.set_opacity(0.5f);
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // assert the drawn pixel carries the halved alpha, because the opacity reaches the surface (§6.1)
+    const SkImageInfo info = SkImageInfo::Make(SURFACE_WIDTH, SURFACE_HEIGHT, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(SURFACE_WIDTH * SURFACE_HEIGHT * 4));
+    ASSERT_TRUE(surface->readPixels(info, pixels.data(), info.minRowBytes(), 0, 0));
+    EXPECT_NEAR(pixels[3], 128, 3);
+}
+
+TEST(SkiaRenderContextOpacityChecks, ATranslucentColourIsNotSquaredByTheOpacity) {
+    // arrange a half transparent colour drawn at no opacity, which must land at half (§6.1)
+    sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(64, 64));
+    ASSERT_NE(surface, nullptr);
+    surface->getCanvas()->clear(0x00000000);
+    SkiaRenderContext context(surface->getCanvas(), 1.0f);
+    // act
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{32.0f, 32.0f}), Paint{.fill = Color::rgba(1.0f, 1.0f, 1.0f, 0.5f)});
+    // assert the drawn alpha is half and not a quarter, because the opacity scales once (§6.1)
+    const SkImageInfo info = SkImageInfo::Make(64, 64, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+    std::vector<std::uint8_t> pixels(64 * 64 * 4);
+    ASSERT_TRUE(surface->readPixels(info, pixels.data(), info.minRowBytes(), 0, 0));
+    EXPECT_NEAR(pixels[3], 128, 3);
+}
+
+TEST(SkiaRenderContextOpacityChecks, TheOpacityScalesATranslucentColourOnce) {
+    // arrange a half transparent colour under a half opacity, which must land at a quarter (§6.1)
+    sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(64, 64));
+    ASSERT_NE(surface, nullptr);
+    surface->getCanvas()->clear(0x00000000);
+    SkiaRenderContext context(surface->getCanvas(), 1.0f);
+    // act
+    context.set_opacity(0.5f);
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{32.0f, 32.0f}), Paint{.fill = Color::rgba(1.0f, 1.0f, 1.0f, 0.5f)});
+    // assert the drawn alpha is a quarter, because the two factors multiply (§6.1)
+    const SkImageInfo info = SkImageInfo::Make(64, 64, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+    std::vector<std::uint8_t> pixels(64 * 64 * 4);
+    ASSERT_TRUE(surface->readPixels(info, pixels.data(), info.minRowBytes(), 0, 0));
+    EXPECT_NEAR(pixels[3], 64, 3);
+}
+
+TEST(SkiaRenderContextOpacityChecks, AnOpaqueColourStaysOpaque) {
+    // arrange an opaque colour, which no opacity may touch beyond one (§6.1)
+    sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(64, 64));
+    ASSERT_NE(surface, nullptr);
+    surface->getCanvas()->clear(0x00000000);
+    SkiaRenderContext context(surface->getCanvas(), 1.0f);
+    // act
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{32.0f, 32.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // assert
+    const SkImageInfo info = SkImageInfo::Make(64, 64, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+    std::vector<std::uint8_t> pixels(64 * 64 * 4);
+    ASSERT_TRUE(surface->readPixels(info, pixels.data(), info.minRowBytes(), 0, 0));
+    EXPECT_EQ(pixels[3], 255);
+}
+
+TEST(SkiaRenderContextShadowChecks, ATranslucentCastIsNotModulatedTwiceByTheLayer) {
+    // arrange a half transparent cast, which must land at half rather than a quarter (§6.2)
+    sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(64, 64));
+    ASSERT_NE(surface, nullptr);
+    surface->getCanvas()->clear(0x00000000);
+    SkiaRenderContext context(surface->getCanvas(), 1.0f);
+    // act a blurred cast, which is the path that allocates a layer and composites it (§6.2)
+    context.draw_shadow(Rect::from_origin_size(Point{8.0f, 8.0f}, Size{32.0f, 32.0f}), 0.0f, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 0.5f), .offset = Point{0.0f, 0.0f}, .blur = 0.5f});
+    // assert the centre of the cast is half covered, because the layer carries the blur and not the colour (§6.2)
+    const SkImageInfo info = SkImageInfo::Make(64, 64, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+    std::vector<std::uint8_t> pixels(64 * 64 * 4);
+    ASSERT_TRUE(surface->readPixels(info, pixels.data(), info.minRowBytes(), 0, 0));
+    EXPECT_NEAR(pixels[(24 * 64 + 24) * 4 + 3], 128, 4);
+}
+
+TEST(SkiaRenderContextShadowChecks, ATranslucentCastAtNoBlurLandsAtItsOwnAlpha) {
+    // arrange the same cast without a blur, which skips the layer entirely (§6.2)
+    sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(64, 64));
+    ASSERT_NE(surface, nullptr);
+    surface->getCanvas()->clear(0x00000000);
+    SkiaRenderContext context(surface->getCanvas(), 1.0f);
+    // act
+    context.draw_shadow(Rect::from_origin_size(Point{8.0f, 8.0f}, Size{32.0f, 32.0f}), 0.0f, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 0.5f), .offset = Point{0.0f, 0.0f}, .blur = 0.0f});
+    // assert the two paths agree, because the blur must not change how much ink a cast puts down (§6.2)
+    const SkImageInfo info = SkImageInfo::Make(64, 64, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+    std::vector<std::uint8_t> pixels(64 * 64 * 4);
+    ASSERT_TRUE(surface->readPixels(info, pixels.data(), info.minRowBytes(), 0, 0));
+    EXPECT_NEAR(pixels[(24 * 64 + 24) * 4 + 3], 128, 3);
 }

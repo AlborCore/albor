@@ -56,4 +56,9 @@ namespace albor
         // the command joins the list in paint order, which is the order the ui thread recorded (§6.1)
         m_commands.push_back(std::move(command));
     }
+
+    void FrameScene::append_command(DrawCommand command) {
+        // the recorder already made the cull decision on the authored paint, so this one is not made twice (§6.1)
+        m_commands.push_back(std::move(command));
+    }
 } // namespace albor

@@ -14,6 +14,7 @@
 #include <skia/core/SkRect.h>
 #include <skia/core/SkSamplingOptions.h>
 #include <skia/core/SkTypeface.h>
+#include <skia/effects/SkImageFilters.h>
 
 #include "render/image_resource.h"
 #include "render/line_batch.h"
@@ -29,6 +30,12 @@ namespace albor::skia
 
         // the positions one draw fills, which are parallel to the glyphs because skia draws one per glyph (§6.3)
         thread_local std::vector<SkPoint> g_position_scratch;
+
+        // move a rectangle by an offset, which is what a shadow offset does to the shape that casts it (§6.2)
+        Rect offset_rect(const Rect& rect, Point offset) {
+            // the extent is unchanged, because an offset moves a shape rather than resizing it (§6.2)
+            return Rect{.x = rect.x + offset.x, .y = rect.y + offset.y, .width = rect.width, .height = rect.height};
+        }
     } // namespace
 
     SkiaRenderContext::SkiaRenderContext(SkCanvas* canvas, float device_scale) :
@@ -46,7 +53,7 @@ namespace albor::skia
 
     void SkiaRenderContext::save() {
         // the albor state is pushed first, because the canvas save is what the pop restores (§6.2)
-        m_states.push_back(State{m_transform, m_clip});
+        m_states.push_back(State{m_transform, m_clip, m_opacity});
         // a context with no canvas keeps its own stack only (§6.2)
         if (m_canvas == nullptr)
             return;
@@ -65,6 +72,7 @@ namespace albor::skia
         m_states.pop_back();
         m_transform = state.transform;
         m_clip = state.clip;
+        m_opacity = state.opacity;
     }
 
     void SkiaRenderContext::set_transform(const Transform& transform) {
@@ -85,6 +93,16 @@ namespace albor::skia
         matrix.postScale(m_device_scale, m_device_scale);
         m_canvas->setMatrix(matrix);
         m_transform = transform;
+    }
+
+    void SkiaRenderContext::set_opacity(float opacity) {
+        // the opacity is clamped into the unit range, because content computes it from data (§6.1)
+        m_opacity = std::clamp(opacity, 0.0f, 1.0f);
+    }
+
+    float SkiaRenderContext::opacity() const {
+        // the opacity is read back by content that composes its own on top of it (§6.1)
+        return m_opacity;
     }
 
     const Transform& SkiaRenderContext::transform() const {
@@ -128,6 +146,38 @@ namespace albor::skia
     void SkiaRenderContext::draw_rounded_rect(const Rect& rect, float radius, const Paint& paint) {
         // the corner radii are what distinguishes this shape from a plain rectangle (§6.2)
         paint_shape(paint, true, rect, radius);
+    }
+
+    void SkiaRenderContext::draw_shadow(const Rect& rect, float radius, const Shadow& shadow) {
+        // a context with no canvas casts nothing (§6.2)
+        if (m_canvas == nullptr)
+            return;
+        // a cast needs both a colour and a shape, because one without the other puts no ink down (§6.2)
+        if (!shadow.casts() || rect.empty())
+            return;
+        // a blur radius is given in logical pixels, while skia's sigma is the standard deviation (§6.2)
+        const float sigma = shadow.blur * 0.5f;
+        // a zero blur needs no filter at all, so the cast is the plain shape offset (§6.2)
+        if (sigma <= 0.0f) {
+            // the shape is offset because a shadow without a blur is a hard copy of its caster (§6.2)
+            paint_shape(Paint{.fill = shadow.color}, radius > 0.0f, offset_rect(rect, shadow.offset), radius);
+            return;
+        }
+        // the layer paint carries the blur alone, because a colour here would modulate the layer twice (§6.2)
+        SkPaint layer_paint;
+        layer_paint.setAntiAlias(true);
+        // the blur is a true gaussian over the offscreen layer rather than a cheap approximation (§6.2)
+        layer_paint.setImageFilter(SkImageFilters::Blur(sigma, sigma, nullptr));
+        // the layer bounds cover the shape plus the reach of the blur, because the filter reads outside the shape (§6.2)
+        const float reach = shadow.blur * 3.0f;
+        // the bounds are the shape offset by the shadow and grown by the reach on every side (§6.2)
+        const Rect cast_bounds = offset_rect(Rect::from_origin_size(Point{rect.x, rect.y}, Size{rect.width, rect.height}), shadow.offset);
+        // the layer is saved before the shape goes into it, because that is what makes the pass offscreen (§6.2)
+        m_canvas->saveLayer(SkRect::MakeXYWH(cast_bounds.x - reach, cast_bounds.y - reach, cast_bounds.width + reach * 2.0f, cast_bounds.height + reach * 2.0f), &layer_paint);
+        // the casting shape goes into the layer alone, so the blur sees the silhouette and nothing else (§6.2)
+        paint_shape(Paint{.fill = shadow.color}, radius > 0.0f, cast_bounds, radius);
+        // the layer is composited over what is under it, which is what puts the cast behind the shape (§6.2)
+        m_canvas->restore();
     }
 
     void SkiaRenderContext::draw_text(const TextLayout& layout, Point origin, const Paint& paint) {
@@ -177,14 +227,16 @@ namespace albor::skia
         return m_states.size();
     }
 
-    unsigned int SkiaRenderContext::to_skia_color(const Color& color) {
+    unsigned int SkiaRenderContext::to_skia_color(const Color& color) const {
+        // with_alpha already scales the colour's own alpha, so passing the opacity alone scales it once (§6.1)
+        const Color dimmed = color.with_alpha(m_opacity);
         // the albor colour is in the zero to one range, while skia packs one byte per channel (§6.3)
         const auto channel = [](float value) -> unsigned int {
             const float clamped = std::clamp(value, 0.0f, 1.0f);
             return static_cast<unsigned int>(clamped * 255.0f);
         };
         // the alpha occupies the high byte, which is the layout skia expects (§6.3)
-        return (channel(color.alpha) << 24) | (channel(color.red) << 16) | (channel(color.green) << 8) | channel(color.blue);
+        return (channel(dimmed.alpha) << 24) | (channel(dimmed.red) << 16) | (channel(dimmed.green) << 8) | channel(dimmed.blue);
     }
 
     void SkiaRenderContext::paint_shape(const Paint& paint, bool rounded, const Rect& rect, float radius) {

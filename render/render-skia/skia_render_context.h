@@ -44,11 +44,20 @@ namespace albor::skia
         // override: read back the current clip
         [[nodiscard]] const Rect& clip() const override;
 
+        // override: set the opacity the later draws are dimmed by
+        void set_opacity(float opacity) override;
+
+        // override: read back the current opacity
+        [[nodiscard]] float opacity() const override;
+
         // override: draw a filled and stroked rectangle
         void draw_rect(const Rect& rect, const Paint& paint) override;
 
         // override: draw a filled and stroked rounded rectangle
         void draw_rounded_rect(const Rect& rect, float radius, const Paint& paint) override;
+
+        // override: blur a shape offscreen and composite the cast under it
+        void draw_shadow(const Rect& rect, float radius, const Shadow& shadow) override;
 
         // override: draw a text run at its baseline origin
         void draw_text(const TextLayout& layout, Point origin, const Paint& paint) override;
@@ -77,10 +86,13 @@ namespace albor::skia
 
             // the clip at the time of the save
             Rect clip;
+
+            // the opacity at the time of the save
+            float opacity = 1.0f;
         };
 
-        // convert an albor colour into the skia colour the canvas expects
-        [[nodiscard]] static unsigned int to_skia_color(const Color& color);
+        // convert an albor colour into the skia colour the canvas expects, with the current opacity folded into the alpha
+        [[nodiscard]] unsigned int to_skia_color(const Color& color) const;
 
         // fill and stroke a shape, which is the paint handling both rectangles share
         void paint_shape(const Paint& paint, bool rounded, const Rect& rect, float radius);
@@ -102,6 +114,9 @@ namespace albor::skia
 
         // the current clip
         Rect m_clip;
+
+        // the opacity the later draws are dimmed by, which starts fully opaque (§6.1)
+        float m_opacity = 1.0f;
 
         // the pushed states, which a restore pops
         std::vector<State> m_states;

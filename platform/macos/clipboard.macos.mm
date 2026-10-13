@@ -64,7 +64,8 @@ namespace albor::macos
                 NSPasteboard* pasteboard = board();
                 if (pasteboard == nil)
                     return false;
-                return [pasteboard stringForType:NSPasteboardTypeString] != nil;            }
+                return [pasteboard stringForType:NSPasteboardTypeString] != nil;
+            }
 
             // override: report whether the surface can reach a clipboard, which a caller checks before copying (§3.5)
             [[nodiscard]] bool ready() const override {

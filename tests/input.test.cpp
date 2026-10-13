@@ -1,15 +1,14 @@
 #include <memory>
-#include <vector>
 
 #include <gtest/gtest.h>
 
 #include "commands/command_registry.h"
 #include "commands/undo_stack.h"
 #include "focus/focus_manager.h"
-#include "ui/focus_target.h"
 #include "input/event_filter.h"
 #include "input/input_controller.h"
 #include "input/input_dispatcher.h"
+#include "ui/focus_target.h"
 #include "ui/ui_event.h"
 #include "ui/ui_node.h"
 
@@ -85,9 +84,9 @@ namespace
         // how many times the manager told this node about the focus (§8.3)
         std::size_t told = 0;
 
-        void set_focused(bool focused) override {
+        void set_focused(bool value) override {
             // the state is stored, because that is what the assertion reads (§8.3)
-            this->focused = focused;
+            this->focused = value;
             // the count rises on every report, so a test can see it happened at all (§8.3)
             told++;
         }

@@ -85,7 +85,7 @@ namespace albor
         // the viewport is the clip, which is what keeps scrolled content out of the surrounding surface (§6.2)
         context.clip_rect(viewport_rect());
         // the content records inside the clip, in insertion order (§6.1)
-        UiNode::render(context);
+        render_children(context);
         // the clip is popped, so the bar below is not scissored to it (§6.2)
         context.restore();
         // the bar draws over the content, because it reports a position the content itself cannot show (§6.1)

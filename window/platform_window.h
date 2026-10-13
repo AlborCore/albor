@@ -4,8 +4,8 @@
 #include <string_view>
 
 #include "core/geometry.h"
-#include "core/text_range.h"
 #include "core/native_window_handle.h"
+#include "core/text_range.h"
 #include "ui/ui_event.h"
 #include "window/window_metrics.h"
 #include "window/window_options.h"

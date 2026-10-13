@@ -57,10 +57,7 @@ namespace
     public:
         WindowFixture() :
             // the window needs a content view, because that is where the tree is announced (§10.2)
-            window([[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 320, 240)
-                                                 styleMask:NSWindowStyleMaskBorderless
-                                                   backing:NSBackingStoreBuffered
-                                                     defer:NO]) {
+            window([[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 320, 240) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO]) {
             // the bridge is built for this platform, which is the one this suite exercises (§10.2)
             adapter = accessibility::create_adapter();
             // the window is handed over as an opaque handle, because the framework names no platform type (§3.5, AD-05)
@@ -80,9 +77,7 @@ namespace
     };
 
     // the announced children of the window's content view, which is where the published root appears (§10.2)
-    NSArray* announced_children(NSWindow* window) {
-        return window.contentView.accessibilityChildren;
-    }
+    NSArray* announced_children(NSWindow* window) { return window.contentView.accessibilityChildren; }
 } // namespace
 
 TEST(AccessibilityRole, TheAnnouncedRootCarriesTheSemanticRole) {

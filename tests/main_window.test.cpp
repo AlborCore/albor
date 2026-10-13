@@ -50,6 +50,27 @@ namespace
     albor::RootBuilder empty_form() {
         return [](albor::BindingEngine&, albor::TextEngine&) { return std::make_unique<albor::ColumnLayout>(); };
     }
+    // the leaf that schedules one repeating animation the first time it is measured (§7.3)
+    class AnimatedLeaf final : public albor::UiNode
+    {
+    public:
+        void measure(const albor::SizeConstraints& constraints, albor::Size& out_size) override {
+            // the leaf fills the offer, because the extent is not what this suite is about (§8.2)
+            out_size = constraints.constrain(albor::Size{10.0f, 10.0f});
+            m_measured_size = out_size;
+            // the animation is scheduled once the wiring handed the engine down the tree (§7.3, AD-04d)
+            if (m_handle == 0 && animation_engine() != nullptr)
+                m_handle = animation_engine()->schedule_repeating([](float) { return true; }, albor::AnimationDuration{16});
+        }
+
+        // the handle the schedule handed out, which zero still means (§7.3)
+        albor::AnimationHandle m_handle = 0;
+    };
+
+    // the builder that hands the application the animated leaf, which the window owns on its behalf (§8.1)
+    albor::RootBuilder animated_form() {
+        return [](albor::BindingEngine&, albor::TextEngine&) { return std::make_unique<AnimatedLeaf>(); };
+    }
 } // namespace
 
 TEST(MainWindow, AMainWindowRefusesWithoutARenderer) {
@@ -179,4 +200,24 @@ TEST(MainWindow, DestroyingOneOfTwoKeepsTheApplicationRunning) {
     EXPECT_TRUE(application.destroy_window(second_handle));
     EXPECT_EQ(application.window(second_handle), nullptr);
     EXPECT_TRUE(application.quit_requested());
+}
+
+TEST(MainWindow, AFrameWithARunningAnimationAdvancesIt) {
+    // arrange the factories, which the window draws through (§5.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::WindowOptions options;
+    options.title = "Animations";
+    const albor::WindowHandle handle = application.create_window(options, animated_form());
+    ASSERT_TRUE(handle.valid());
+    // act pump once, which measures the leaf and starts the animation after the frame it appears in (§7.3)
+    application.pump();
+    // assert the first frame ran through the idle branch, because the animation was not scheduled yet (§7.3)
+    EXPECT_EQ(application.frame_count(handle), 1u);
+    // act pump again, which now sees an animation running and takes the advance instead (§7.3)
+    application.pump();
+    // assert both frames built, because the advance is on the frame the recordings follow (§7.3, AD-04d)
+    EXPECT_EQ(application.frame_count(handle), 2u);
+    // cleanup the application is a singleton, so this window is torn down before the next test (§4.1)
+    EXPECT_TRUE(application.destroy_window(handle));
 }

@@ -1,5 +1,6 @@
 #include "render/picture_resource.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace albor
@@ -32,7 +33,7 @@ namespace albor
 
     void PictureRecorder::save() {
         // the current state is pushed before it can be replaced, so a restore has something to return to (§6.2)
-        m_states.push_back(State{.transform = m_transform, .clip = m_clip});
+        m_states.push_back(State{.transform = m_transform, .clip = m_clip, .opacity = m_opacity});
     }
 
     void PictureRecorder::restore() {
@@ -43,6 +44,7 @@ namespace albor
         // the state returns to what the matching save pushed (§6.2)
         m_transform = last_state.transform;
         m_clip = last_state.clip;
+        m_opacity = last_state.opacity;
         m_states.pop_back();
     }
 
@@ -71,6 +73,16 @@ namespace albor
         return m_clip;
     }
 
+    void PictureRecorder::set_opacity(float opacity) {
+        // the opacity is clamped into the unit range, because content computes it from data (§6.1)
+        m_opacity = std::clamp(opacity, 0.0f, 1.0f);
+    }
+
+    float PictureRecorder::opacity() const {
+        // the opacity is read back by content that composes its own on top of it (§6.1)
+        return m_opacity;
+    }
+
     void PictureRecorder::draw_rect(const Rect& rect, const Paint& paint) {
         // the rectangle stays raw, because the transform travels beside it (§6.4)
         record(DrawCommand::rectangle(rect, paint));
@@ -79,6 +91,14 @@ namespace albor
     void PictureRecorder::draw_rounded_rect(const Rect& rect, float radius, const Paint& paint) {
         // the radii travel with the geometry, so a recorded command keeps them (§6.2)
         record(DrawCommand::rounded_rectangle(rect, radius, paint));
+    }
+
+    void PictureRecorder::draw_shadow(const Rect& rect, float radius, const Shadow& shadow) {
+        // a cast with no colour or no shape puts no ink down, so it is never recorded (§6.2)
+        if (!shadow.casts() || rect.empty())
+            return;
+        // the cast travels raw, because the transform and the clip travel beside it (§6.4)
+        record(DrawCommand::shadow(rect, radius, shadow));
     }
 
     void PictureRecorder::draw_text(const TextLayout& layout, Point origin, const Paint& paint) {
@@ -142,9 +162,12 @@ namespace albor
     void PictureRecorder::record(DrawCommand command) {
         // every command carries the clip the recorder stood at, because the replay scissors to it (§6.2)
         command.set_clip(m_clip);
-        // a command that would draw nothing is culled here, so the picture never carries it (§6.2)
+        // the cull is decided on the authored paint, because a draw the author made is a draw even at no opacity (§6.1)
         if (command.draws_nothing())
             return;
+        // a fully opaque context leaves every paint alone, which is the common case (§6.1)
+        if (m_opacity < 1.0f)
+            command.scale_alpha(m_opacity);
         // a shape command draws under the transform the recorder stands at (§6.4)
         if (command.kind() == DrawCommandKind::Rect || command.kind() == DrawCommandKind::RoundedRect || command.kind() == DrawCommandKind::Text || command.kind() == DrawCommandKind::Image)
             command.set_transform(m_transform);

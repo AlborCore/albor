@@ -98,17 +98,12 @@ namespace albor
         return TextInputRange{.location = location, .length = length};
     }
 
-TextField::~TextField() {
+    TextField::~TextField() {
         // the blink is ended before the field dies, because the engine holds a callback that calls into it (§7.3)
         stop_blink();
     }
 
-bool TextField::focused() const {
-        // the state is what the focus manager last reported, which is the whole of it (§8.3)
-        return m_focused;
-    }
-
-bool TextField::shows_caret() const {
+    bool TextField::shows_caret() const {
         // a hidden or disabled field is not edited, so it shows no caret (§8.3)
         if (disabled() || !visible())
             return false;
@@ -119,20 +114,22 @@ bool TextField::shows_caret() const {
         if (has_selection())
             return false;
         // a field the focus has not reached shows no caret, because that is where a caret means something (§8.3)
-        if (!m_focused)
+        if (!focused())
             return false;
         // a blink that is in its hidden phase shows nothing this frame (§8.3)
         return m_caret_visible;
     }
 
     void TextField::set_focused(bool focused) {
+        // the change is read before the base records it, because the base is what stores the flag (§8.3)
+        const bool changed = Widget::focused() != focused;
+        // the base records the focus and repaints the ring, which every widget does the same way (§8.3)
+        Widget::set_focused(focused);
         // an unchanged focus changes nothing, because the caret is already in that state (§8.3)
-        if (m_focused == focused)
+        if (!changed)
             return;
-        // the state is stored first, because the blink is started against it (§8.3)
-        m_focused = focused;
         // losing the focus ends the blink and hides the caret, because nothing is editing any more (§8.3)
-        if (!m_focused) {
+        if (!focused) {
             stop_blink();
             m_caret_visible = false;
             invalidate();
@@ -184,13 +181,13 @@ bool TextField::shows_caret() const {
         // the caret shows again, because a move or an edit brings it back (§8.3)
         m_caret_visible = true;
         // a field that holds no focus is not blinking at all (§8.3)
-        if (!m_focused)
+        if (!focused())
             return;
         // the phase restarts, which is what makes typing hold the caret solid (§7.3)
         start_blink();
     }
 
-void TextField::paint_selection(RenderContext& context) {
+    void TextField::paint_selection(RenderContext& context) {
         // an empty selection has no span to highlight, which is what collapse means (§8.3)
         if (!has_selection())
             return;
@@ -499,7 +496,8 @@ void TextField::paint_selection(RenderContext& context) {
                 composed.insert(span_start, m_marked);
                 // the composed run shapes over an unbounded width, which is what a mark draws against (§9.1)
                 m_marked_layout = m_text_engine->measure(composed, 0.0f, m_font_size);
-            } else {
+            }
+            else {
                 // no engine means no display run, which is what an unmeasurable mark is (§9.1)
                 m_marked_layout = TextLayout{};
             }
@@ -762,7 +760,7 @@ void TextField::paint_selection(RenderContext& context) {
         return {std::min(m_caret, m_value.size()), std::min(m_caret, m_value.size())};
     }
 
-std::size_t TextField::line_at_y(float pointer_y) const {
+    std::size_t TextField::line_at_y(float pointer_y) const {
         // a run the engine did not shape has no row to resolve against, so the first one stands (§9.1)
         if (m_layout.run == nullptr || m_layout.run->lines().empty())
             return 0;
@@ -793,7 +791,7 @@ std::size_t TextField::line_at_y(float pointer_y) const {
         return m_layout.run->byte_at_x(index, std::max(0.0f, x));
     }
 
-std::size_t TextField::step_up_byte(std::size_t byte) const {
+    std::size_t TextField::step_up_byte(std::size_t byte) const {
         // an offset past the value clamps to its end, because there is no line to leave (§8.3)
         const std::size_t clamped = std::min(byte, m_value.size());
         // a run the engine did not shape has no line to move across (§9.1)
@@ -1187,7 +1185,6 @@ std::size_t TextField::step_up_byte(std::size_t byte) const {
         // a drag extension is visual only, because the value did not change (§6.1)
         invalidate();
     }
-
 
     void TextField::remeasure() {
         // a field with no engine cannot measure, so the runs stay empty and the plate keeps its minimum (§9.1)

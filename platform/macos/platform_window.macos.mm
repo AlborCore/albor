@@ -163,8 +163,7 @@ namespace
     }
 } // namespace
 
-@implementation AlborContentView
-{
+@implementation AlborContentView {
     // the marked string a composition holds, which the queries of the protocol read back (§8.3)
     NSString* m_marked;
 

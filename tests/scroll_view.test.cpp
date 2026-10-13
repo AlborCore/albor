@@ -44,7 +44,13 @@ namespace
 
         [[nodiscard]] const Rect& clip() const override { return m_clip; }
 
+        void set_opacity(float opacity) override { m_opacity = opacity; }
+
+        [[nodiscard]] float opacity() const override { return m_opacity; }
+
         void draw_rect(const Rect& rect, const Paint&) override { rects.push_back(rect); }
+
+        void draw_shadow(const Rect&, float, const Shadow&) override {}
 
         void draw_rounded_rect(const Rect& rect, float, const Paint&) override {
             // a rounded draw lands in both lists, because a thumb is a rounded rectangle (§6.1)
@@ -70,6 +76,9 @@ namespace
 
         // the clip the surface reads back (§6.2)
         Rect m_clip;
+
+        // the opacity the last set wrote, which a test asserts against (§6.1)
+        float m_opacity = 1.0f;
     };
 
     // the content double that reports the extent it was built with, which is what a scroll view measures (§8.2)

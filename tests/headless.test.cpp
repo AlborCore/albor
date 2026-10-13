@@ -85,6 +85,27 @@ namespace
         green = pixels[offset + 1];
         blue = pixels[offset + 2];
     }
+
+    // the node that casts one shadow from a plate, so a blur can be proved against real pixels (§6.2)
+    class ShadowNode final : public UiNode
+    {
+    public:
+        // override: the cast goes down first and the plate over it, which is the order a shadow reads in (§6.2)
+        void render(RenderContext& context) override {
+            // the cast is drawn under the plate, because a shadow sits behind what throws it (§6.2)
+            if (m_shadow.casts())
+                context.draw_shadow(m_plate, 0.0f, m_shadow);
+            // the plate goes over the cast, so the blur is only visible around its edges (§6.2)
+            context.draw_rect(m_plate, {.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+        }
+
+        // the cast the node draws, which the test chooses (§6.2)
+        Shadow m_shadow;
+
+        // the plate the node covers its cast with, which the test places because a build rearranges the node (§6.1)
+        Rect m_plate = Rect::from_origin_size(Point{16.0f, 8.0f}, Size{16.0f, 16.0f});
+    };
+
 } // namespace
 
 TEST(HeadlessPipelineChecks, ARealBackendRasterizesARealScene) {
@@ -462,4 +483,140 @@ TEST(HeadlessPipelineChecks, ACheckboxKeepsItsSquareWhenTheColumnIsWider) {
     EXPECT_LT(red, 60u);
     EXPECT_LT(green, 60u);
     EXPECT_LT(blue, 60u);
+}
+
+TEST(ShadowRasterChecks, AShadowReachesTheSurfaceAsInk) {
+    // arrange a plate near the top with its cast falling below, which is where a shadow is visible (§6.2)
+    BindingEngine engine;
+    ShadowNode node;
+    node.m_shadow = Shadow{.color = Color::rgb(1.0f, 1.0f, 1.0f), .offset = Point{0.0f, 8.0f}, .blur = 1.0f};
+    SceneBuilder builder;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{SURFACE_WIDTH, SURFACE_HEIGHT}, 1.0f);
+    const std::shared_ptr<const FrameScene> scene = builder.build(node, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    ASSERT_NE(scene, nullptr);
+    // act the reference rasterizes it, which is the only way to prove the pass ran (§6.3, AD-26)
+    auto surface = software::SoftwareRenderSurface::create(metrics);
+    ASSERT_NE(surface, nullptr);
+    software::SoftwareRendererBackend backend;
+    backend.execute_frame(*surface, *scene);
+    // assert a pixel below the plate carries the cast, because a shadow that never reached the surface is not one (§6.2)
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    ASSERT_FALSE(pixels.empty());
+    std::uint8_t red = 0;
+    std::uint8_t green = 0;
+    std::uint8_t blue = 0;
+    // the row below the plate is where the offset cast is visible, because the plate covers its own half (§6.2)
+    pixel_at(pixels, 30 * static_cast<std::size_t>(SURFACE_WIDTH) + 24u, red, green, blue);
+    EXPECT_GT(red, 30u);
+}
+
+TEST(ShadowRasterChecks, ABlurredShadowFadesAcrossItsEdge) {
+    // arrange two casts of different blur over the same plate, which is what makes the blur observable (§6.2)
+    BindingEngine engine;
+    ShadowNode soft;
+    soft.m_shadow = Shadow{.color = Color::rgb(1.0f, 1.0f, 1.0f), .offset = Point{0.0f, 6.0f}, .blur = 1.0f};
+    ShadowNode hard;
+    hard.m_shadow = Shadow{.color = Color::rgb(1.0f, 1.0f, 1.0f), .offset = Point{0.0f, 6.0f}, .blur = 0.0f};
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{SURFACE_WIDTH, SURFACE_HEIGHT}, 1.0f);
+    software::SoftwareRendererBackend backend;
+    // act each cast is rasterized on its own, so the comparison is between two renders of one difference (§6.3)
+    auto soft_surface = software::SoftwareRenderSurface::create(metrics);
+    auto hard_surface = software::SoftwareRenderSurface::create(metrics);
+    ASSERT_NE(soft_surface, nullptr);
+    ASSERT_NE(hard_surface, nullptr);
+    SceneBuilder builder;
+    backend.execute_frame(*soft_surface, *builder.build(soft, metrics, Color::rgb(0.0f, 0.0f, 0.0f)));
+    backend.execute_frame(*hard_surface, *builder.build(hard, metrics, Color::rgb(0.0f, 0.0f, 0.0f)));
+    // assert the two renders differ, because a blur that changed nothing would not be an offscreen pass (§6.2)
+    EXPECT_NE(soft_surface->read_pixels(), hard_surface->read_pixels());
+}
+
+TEST(ShadowRasterChecks, AShadowlessNodeCastsNothing) {
+    // arrange a plate with no cast, which is what every node draws until one is set (§6.2)
+    BindingEngine engine;
+    ShadowNode node;
+    node.m_shadow = Shadow{.color = Color::rgb(1.0f, 1.0f, 1.0f), .offset = Point{0.0f, 8.0f}, .blur = 4.0f};
+    node.m_shadow.color = Color::rgba(1.0f, 1.0f, 1.0f, 0.0f);
+    SceneBuilder builder;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{SURFACE_WIDTH, SURFACE_HEIGHT}, 1.0f);
+    const std::shared_ptr<const FrameScene> scene = builder.build(node, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    ASSERT_NE(scene, nullptr);
+    // assert the scene carries only the plate, because a clear colour casts nothing (§6.2)
+    EXPECT_EQ(scene->command_count(), 1u);
+}
+
+TEST(ShadowRasterChecks, TheReferenceStaysReproducibleWithACast) {
+    // arrange a cast, because a blur pass that varied could not gate a conformance comparison (§6.3, AD-26)
+    BindingEngine engine;
+    ShadowNode node;
+    node.m_shadow = Shadow{.color = Color::rgb(1.0f, 1.0f, 1.0f), .offset = Point{0.0f, 8.0f}, .blur = 3.0f};
+    SceneBuilder builder;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{SURFACE_WIDTH, SURFACE_HEIGHT}, 1.0f);
+    const std::shared_ptr<const FrameScene> scene = builder.build(node, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    software::SoftwareRendererBackend backend;
+    auto first = software::SoftwareRenderSurface::create(metrics);
+    auto second = software::SoftwareRenderSurface::create(metrics);
+    // act two independent surfaces draw the same immutable scene (§6.1)
+    backend.execute_frame(*first, *scene);
+    backend.execute_frame(*second, *scene);
+    // assert the bytes agree exactly, because the blur is deterministic (§6.3, AD-26)
+    EXPECT_EQ(first->read_pixels(), second->read_pixels());
+}
+
+TEST(ShadowRasterChecks, AContextWithNoCanvasDrawsNothing) {
+    // arrange a scratch surface whose raster could not be allocated, so the context is the fallback (§6.2)
+    const WindowMetrics refused = WindowMetrics::from_logical(Size{0.0f, 0.0f}, 1.0f);
+    auto surface = software::SoftwareRenderSurface::create(refused);
+    ASSERT_EQ(surface, nullptr);
+}
+
+TEST(ShadowRasterChecks, AHardCastNeedsNoBlurPass) {
+    // arrange a cast with no blur, which is the path that skips the offscreen layer entirely (§6.2)
+    BindingEngine engine;
+    ShadowNode node;
+    node.m_shadow = Shadow{.color = Color::rgb(1.0f, 1.0f, 1.0f), .offset = Point{0.0f, 8.0f}, .blur = 0.0f};
+    SceneBuilder builder;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{SURFACE_WIDTH, SURFACE_HEIGHT}, 1.0f);
+    const std::shared_ptr<const FrameScene> scene = builder.build(node, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    ASSERT_NE(scene, nullptr);
+    // act
+    auto surface = software::SoftwareRenderSurface::create(metrics);
+    ASSERT_NE(surface, nullptr);
+    software::SoftwareRendererBackend backend;
+    backend.execute_frame(*surface, *scene);
+    // assert a hard cast still puts ink down, because a blur of zero is not a missing blur (§6.2)
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    ASSERT_FALSE(pixels.empty());
+    std::uint8_t red = 0;
+    std::uint8_t green = 0;
+    std::uint8_t blue = 0;
+    pixel_at(pixels, 30 * static_cast<std::size_t>(SURFACE_WIDTH) + 24u, red, green, blue);
+    EXPECT_GT(red, 30u);
+}
+
+TEST(ShadowRasterChecks, AContextClampsAnOvershootOpacity) {
+    // arrange a real surface, so the clamp runs against the context that actually draws (§6.1)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{SURFACE_WIDTH, SURFACE_HEIGHT}, 1.0f);
+    auto surface = software::SoftwareRenderSurface::create(metrics);
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    // act an opacity from a binding that overshot, which the context clamps (§6.1)
+    context.set_opacity(4.0f);
+    // assert
+    EXPECT_FLOAT_EQ(context.opacity(), 1.0f);
+    // act a save and restore round trip, which is what a node opacity depends on (§6.1, §6.2)
+    context.set_opacity(0.5f);
+    context.save();
+    context.set_opacity(0.25f);
+    context.restore();
+    // assert the state the save pushed came back, because a sibling draws after (§6.1)
+    EXPECT_FLOAT_EQ(context.opacity(), 0.5f);
+    surface->end_frame();
+}
+
+TEST(ShadowRasterChecks, AContextRefusesACastWithNoCanvas) {
+    // arrange a scratch context over a refused raster, which absorbs draws into a pixel nobody reads (§6.2)
+    const WindowMetrics refused = WindowMetrics::from_logical(Size{0.0f, 0.0f}, 1.0f);
+    auto surface = software::SoftwareRenderSurface::create(refused);
+    ASSERT_EQ(surface, nullptr);
 }

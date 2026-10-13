@@ -128,6 +128,26 @@ namespace albor::compiler
         static ExpressionPtr make(std::string target_type, ExpressionPtr value, SourceSpan span);
     };
 
+    // a call to one of the builtin functions, which is a closed set so the grammar needs no rules table (§11.1)
+    class CallExpression : public Expression
+    {
+    public:
+        // the builtin name as written, which the checker resolves against the closed set (§11.1)
+        std::string function;
+
+        // the arguments in written order, which the checker types left to right (§11.1)
+        std::vector<ExpressionPtr> arguments;
+
+        // where the call was written (§11.1)
+        SourceSpan span;
+
+        // hand out where the call was written (§11.1)
+        [[nodiscard]] const SourceSpan& location() const override { return span; }
+
+        // build a call, which the parser makes from a builtin name in call position (§11.1)
+        static ExpressionPtr make(std::string function, std::vector<ExpressionPtr> arguments, SourceSpan span);
+    };
+
     // the binary operators the language defines, which is a closed set so the grammar needs no rules table (§11.1)
     enum class BinaryOperator
     {

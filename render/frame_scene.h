@@ -38,6 +38,9 @@ namespace albor
         // add a command that a ui node recorded during scene build (§6.1)
         void add_command(DrawCommand command);
 
+        // append a command the recorder already accepted, which is what stage one hands over in paint order (§6.1)
+        void append_command(DrawCommand command);
+
         // compare two scenes field by field, which a test asserts on (§6.1)
         friend bool operator==(const FrameScene& lhs, const FrameScene& rhs) = default;
 

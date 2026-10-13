@@ -2,9 +2,6 @@ name: build
 
 on:
   push:
-    branches:
-      - main
-      - framework-v1
   pull_request:
   workflow_dispatch:
 
@@ -104,6 +101,10 @@ jobs:
 
       - name: build (release preset)
         run: cmake --build --preset release --parallel 4
+
+      - name: run the unit tests
+        working-directory: .build-release/tests
+        run: ./albor-tests        
 
   # coverage is a pull request signal only: a push never runs it, on any
   # branch. fork pull requests are excluded as well, because they cannot
