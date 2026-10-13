@@ -158,8 +158,8 @@ namespace albor
     }
 
     void Theme::set_focus_ring(Color value) {
-        // the normal state is the common case, which is the shorthand (§6.1)
-        m_palette.focus_ring[state_index(ControlState::Normal)] = value;
+        // the ring draws on the focus alone, so the focused slot is the one a caller means (§6.1)
+        m_palette.focus_ring[state_index(ControlState::Focused)] = value;
     }
 
     void Theme::set_focus_ring(ControlState state, Color value) {

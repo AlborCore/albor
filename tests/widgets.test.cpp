@@ -3639,6 +3639,21 @@ TEST(ThemeControllerChecks, AFlipNotifiesTheApplication) {
     EXPECT_EQ(seen[0], ColorScheme::Light);
 }
 
+TEST(ThemeControllerChecks, AnInstallNotifiesAnAlreadyAttachedHandler) {
+    // arrange a handler attached before the install, because an application may wire it either way (§6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    ThemeController controller{Accents{}};
+    std::vector<ColorScheme> seen;
+    controller.set_scheme_changed_handler([&seen](ColorScheme scheme) { seen.push_back(scheme); });
+    // act
+    controller.install(button, ColorScheme::Light);
+    // assert the application was told of the start up choice, which is where a preference is written (§6.1)
+    ASSERT_EQ(seen.size(), 1u);
+    EXPECT_EQ(seen[0], ColorScheme::Light);
+}
+
 TEST(ThemeControllerChecks, AnUnchangedSchemeInstallsNothing) {
     // arrange a handler that would notice a redundant install (§6.1)
     BindingEngine engine;

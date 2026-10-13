@@ -123,7 +123,7 @@ namespace albor
         // the thumb of a scrollbar, per state, which is what the user drags (§6.1)
         Color scrollbar_thumb[5] = {Color{0.42f, 0.46f, 0.52f, 1.0f}, Color{0.58f, 0.62f, 0.68f, 1.0f}, Color{0.72f, 0.76f, 0.82f, 1.0f}, Color{0.28f, 0.30f, 0.34f, 1.0f}, Color{0.42f, 0.46f, 0.52f, 1.0f}};
 
-        // the ring a focused control strokes around itself, per state, which is the only focus signal (§6.1)
+        // the ring a focused control strokes around itself, per state, whose normal entry is never read (§6.1)
         Color focus_ring[5] = {Color{0.20f, 0.55f, 0.90f, 0.0f}, Color{0.26f, 0.62f, 0.96f, 1.0f}, Color{0.14f, 0.42f, 0.74f, 1.0f}, Color{0.42f, 0.46f, 0.52f, 0.55f}, Color{0.20f, 0.55f, 0.90f, 1.0f}};
 
         // the plate a canvas draws behind its content, per state, which is what a state visual needs to land on (§6.1)
@@ -254,7 +254,7 @@ namespace albor
         // replace one state of the scrollbar thumb, which is what the user drags (§6.1)
         void set_scrollbar_thumb(ControlState state, Color value);
 
-        // replace the ring colour of the normal state, which is the common case (§6.1)
+        // replace the ring colour a focused control strokes, which is the shorthand an application writes (§6.1)
         void set_focus_ring(Color value);
 
         // replace one state of the ring, so a hover and a press change the ring with the plate (§6.1)

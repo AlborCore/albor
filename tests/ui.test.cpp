@@ -223,6 +223,7 @@ namespace
         [[nodiscard]] const Rect& clip() const override { return m_clip; }
         void set_opacity(float opacity) override { m_opacity = opacity; }
         [[nodiscard]] float opacity() const override { return m_opacity; }
+        [[nodiscard]] std::size_t depth() const { return m_states.size(); }
         void draw_rect(const Rect&, const Paint&) override {}
         void draw_rounded_rect(const Rect&, float, const Paint&) override {}
         void draw_shadow(const Rect&, float, const Shadow&) override {}
@@ -300,7 +301,8 @@ namespace
     {
     public:
         // build the plate with a detached engine, because the test exercises paint rather than binding (§7.2)
-        OpaquePlate() : Component(nullptr) {}
+        OpaquePlate() :
+            Component(nullptr) {}
 
         // drop the fill, so a test can assert on the border alone (§6.1)
         void clear_background() { m_painted = false; }
@@ -2536,4 +2538,51 @@ TEST(NodeSurfaceProperties, ARecorderRefusesACastWithNoShape) {
     recorder.draw_shadow(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{0.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgb(0.0f, 0.0f, 0.0f)});
     // assert
     EXPECT_EQ(recorder.scene()->command_count(), 0u);
+}
+
+TEST(NodeOpacity, ALayoutContainerDimsItsSubtree) {
+    // arrange a plain node over a plate, which is the shape a layout container has (§6.1)
+    UiNode container;
+    auto child = std::make_unique<OpaquePlate>();
+    child->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    container.add_child(std::move(child));
+    container.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    container.set_opacity(0.5f);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    // act
+    container.render(recorder);
+    // assert the child drew at half, because a node at no opacity is not the same as no node at all (§6.1)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_EQ(scene->command_count(), 1u);
+    EXPECT_FLOAT_EQ(scene->commands()[0].paint().fill.alpha, 0.5f);
+}
+
+TEST(NodeOpacity, APlainNodeAtFullOpacityCostsNoSave) {
+    // arrange a plain node nobody dimmed, which is the common case (§6.1)
+    TestPipelineContext context;
+    UiNode container;
+    container.add_child(std::make_unique<OpaquePlate>());
+    container.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    // act
+    container.render(context);
+    // assert the state stack stayed balanced, because an undimmed node pushes nothing (§6.1)
+    EXPECT_EQ(context.depth(), 0u);
+}
+
+TEST(NodeOpacity, AComponentDimsItsChildrenExactlyOnce) {
+    // arrange a dimmed component over a child, because the component render path pushes its own opacity (§6.1)
+    OpaquePlate parent;
+    auto child = std::make_unique<OpaquePlate>();
+    child->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    parent.add_child(std::move(child));
+    parent.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    parent.set_opacity(0.5f);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    // act
+    parent.render(recorder);
+    // assert both drew at half rather than a quarter, because the component must not push twice (§6.1)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_EQ(scene->command_count(), 2u);
+    EXPECT_FLOAT_EQ(scene->commands()[0].paint().fill.alpha, 0.5f);
+    EXPECT_FLOAT_EQ(scene->commands()[1].paint().fill.alpha, 0.5f);
 }

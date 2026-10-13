@@ -176,6 +176,12 @@ namespace albor
     }
 
     void DrawCommand::scale_alpha(float factor) {
+        // a cast carries its colour in its own geometry, because a shadow command has no paint of its own (§6.2)
+        if (auto* cast = std::get_if<ShadowGeometry>(&m_geometry)) {
+            // the cast takes the factor once, because it is the same coverage multiplier the paint would take (§6.2)
+            cast->shadow.color.alpha = std::clamp(cast->shadow.color.alpha * factor, 0.0f, 1.0f);
+            return;
+        }
         // both channels move together, because an opacity dims a fill and a stroke alike (§6.1)
         m_paint.fill.alpha = std::clamp(m_paint.fill.alpha * factor, 0.0f, 1.0f);
         // the stroke carries its own alpha, so it takes the same factor rather than the fill's result (§6.1)

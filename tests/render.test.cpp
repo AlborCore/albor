@@ -2023,3 +2023,61 @@ TEST(DrawCommandShape, AShadowBoundCoversTheBlurReach) {
     EXPECT_GT(bound.width, 20.0f);
     EXPECT_GT(bound.height, 20.0f);
 }
+
+TEST(DrawCommandShape, AnOpacityDimsAShadowCommand) {
+    // arrange a cast, whose colour lives in its own geometry rather than in the command paint (§6.2)
+    const DrawCommand command = DrawCommand::shadow(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 1.0f)});
+    // act
+    DrawCommand dimmed = command;
+    dimmed.scale_alpha(0.5f);
+    // assert the cast took the factor, because a node opacity dims what it casts too (§6.2)
+    EXPECT_FLOAT_EQ(dimmed.shadow_geometry().shadow.color.alpha, 0.5f);
+}
+
+TEST(DrawCommandShape, AnOpacityDimsAShadowToNothingWithoutCullingIt) {
+    // arrange a cast, which must survive a zero opacity even though it stops being visible (§6.1, §6.2)
+    DrawCommand command = DrawCommand::shadow(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 1.0f)});
+    // the clip is stamped so the cull judges the cast rather than the absence of a clip (§6.2)
+    command.set_clip(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    // act
+    DrawCommand dimmed = command;
+    dimmed.scale_alpha(0.0f);
+    // assert the cast is still a cast, because a node at no opacity is present but not drawn (§6.1)
+    EXPECT_EQ(dimmed.kind(), DrawCommandKind::Shadow);
+    EXPECT_FLOAT_EQ(dimmed.shadow_geometry().shadow.color.alpha, 0.0f);
+    // assert the cull would now refuse it, which is why the recorders cull before they scale (§6.1)
+    EXPECT_TRUE(dimmed.draws_nothing());
+}
+
+TEST(PictureRecorder, AShadowTakesTheRecorderOpacity) {
+    // arrange a dimmed picture recorder, because a picture carries its own paint (§6.1)
+    PictureRecorder recorder;
+    recorder.set_opacity(0.5f);
+    // act
+    recorder.draw_shadow(Rect::from_origin_size(Point{1.0f, 2.0f}, Size{10.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 1.0f)});
+    // assert the recorded cast took the factor, because the recorder dims every primitive it holds (§6.1)
+    ASSERT_EQ(recorder.commands().size(), 1u);
+    EXPECT_FLOAT_EQ(recorder.commands()[0].shadow_geometry().shadow.color.alpha, 0.5f);
+}
+
+TEST(PictureRecorder, AZeroOpacityStillRecordsTheCast) {
+    // arrange a recorder at no opacity, which the scene recorder treats as present (§6.1)
+    PictureRecorder recorder;
+    recorder.set_opacity(0.0f);
+    // act
+    recorder.draw_shadow(Rect::from_origin_size(Point{1.0f, 2.0f}, Size{10.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 1.0f)});
+    // assert the cast is held at zero rather than dropped, because the two recorders must agree (§6.1)
+    ASSERT_EQ(recorder.commands().size(), 1u);
+    EXPECT_FLOAT_EQ(recorder.commands()[0].shadow_geometry().shadow.color.alpha, 0.0f);
+}
+
+TEST(PictureRecorder, AZeroOpacityStillRecordsAShape) {
+    // arrange a recorder at no opacity, because a node at no opacity is present but not drawn (§6.1)
+    PictureRecorder recorder;
+    recorder.set_opacity(0.0f);
+    // act
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // assert the command is held at zero alpha, which is what the scene recorder does (§6.1)
+    ASSERT_EQ(recorder.commands().size(), 1u);
+    EXPECT_FLOAT_EQ(recorder.commands()[0].paint().fill.alpha, 0.0f);
+}

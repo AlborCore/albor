@@ -162,12 +162,12 @@ namespace albor
     void PictureRecorder::record(DrawCommand command) {
         // every command carries the clip the recorder stood at, because the replay scissors to it (§6.2)
         command.set_clip(m_clip);
+        // the cull is decided on the authored paint, because a draw the author made is a draw even at no opacity (§6.1)
+        if (command.draws_nothing())
+            return;
         // a fully opaque context leaves every paint alone, which is the common case (§6.1)
         if (m_opacity < 1.0f)
             command.scale_alpha(m_opacity);
-        // a command that would draw nothing is culled here, so the picture never carries it (§6.2)
-        if (command.draws_nothing())
-            return;
         // a shape command draws under the transform the recorder stands at (§6.4)
         if (command.kind() == DrawCommandKind::Rect || command.kind() == DrawCommandKind::RoundedRect || command.kind() == DrawCommandKind::Text || command.kind() == DrawCommandKind::Image)
             command.set_transform(m_transform);

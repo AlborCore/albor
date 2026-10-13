@@ -124,6 +124,15 @@ namespace albor
     }
 
     void UiNode::render(RenderContext& context) {
+        // the node opacity goes on first, because every child below draws inside it (§6.1)
+        push_opacity(context);
+        // the children are recorded under that opacity, which is the whole of what this node draws (§6.1)
+        render_children(context);
+        // the opacity comes off last, so a sibling draws at the state this node found (§6.1)
+        pop_opacity(context);
+    }
+
+    void UiNode::render_children(RenderContext& context) {
         // a container draws nothing itself, but still records its children (§6.1)
         for (const auto& child : m_children) {
             // an invisible child is not visited, so the scene carries only what is on screen (§6.1)

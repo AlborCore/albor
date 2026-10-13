@@ -740,6 +740,12 @@ namespace albor::compiler
             m_diagnostics.add(Diagnostic::Severity::Error, call.location(), "E0416", "there is no function named '" + call.function + "'");
             return error_type();
         }
+        // every operation takes a colour and an amount, so a tree that does not is refused rather than indexed (§11.1)
+        if (call.arguments.size() != 2) {
+            // the report names the name and the count, because both are what the author has to change (§11.1)
+            m_diagnostics.add(Diagnostic::Severity::Error, call.location(), "E0417", "'" + call.function + "' takes exactly two arguments");
+            return error_type();
+        }
         // the colour is typed first, because every operation works on one (§6.1)
         const ValueType colour = type_expression(*call.arguments.at(0), scope, dependencies);
         // the amount is typed second, so the dependency list follows the written order (§7.3, AD-04a)

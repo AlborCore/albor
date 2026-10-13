@@ -57,7 +57,7 @@ namespace albor
 
     void Component::paint_children(RenderContext& context) {
         // a component with no viewport of its own records its children as they are (§6.1)
-        UiNode::render(context);
+        render_children(context);
     }
 
     void Component::paint_content(RenderContext& context) {

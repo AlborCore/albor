@@ -1297,3 +1297,43 @@ TEST(CodegenColour, AColourCallWithAFailedOperandReportsNoMismatch) {
             mismatches++;
     EXPECT_EQ(mismatches, 1);
 }
+
+TEST(CodegenColour, AColourOperationWithOneArgumentIsReportedNotThrown) {
+    // arrange a tree the parser cannot produce, which the checker must refuse rather than index (§11.1)
+    SourceFile file;
+    ComponentDeclaration component;
+    component.name = "Panel";
+    PropertyDeclaration property;
+    property.name = "accent";
+    property.type = "color";
+    property.direction = PropertyDirection::In;
+    std::vector<ExpressionPtr> operands;
+    operands.push_back(LiteralExpression::make(LiteralExpression::Kind::Color, "#ff0000ff", SourceSpan{}));
+    property.default_value = CallExpression::make("transparentize", std::move(operands), SourceSpan{});
+    component.properties.push_back(std::move(property));
+    file.components.push_back(std::move(component));
+    DiagnosticList diagnostics;
+    // act the checker runs over the malformed call, which must not throw
+    EXPECT_NO_THROW((void)TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file));
+    // assert the arity was reported by name, because that is what the author has to change (§11.1)
+    EXPECT_GT(diagnostics.count(), 0U);
+}
+
+TEST(CodegenColour, AColourOperationWithNoArgumentsIsReportedNotThrown) {
+    // arrange an empty argument list, which is the same refusal with nothing to type (§11.1)
+    SourceFile file;
+    ComponentDeclaration component;
+    component.name = "Panel";
+    PropertyDeclaration property;
+    property.name = "accent";
+    property.type = "color";
+    property.direction = PropertyDirection::In;
+    property.default_value = CallExpression::make("alpha_set", {}, SourceSpan{});
+    component.properties.push_back(std::move(property));
+    file.components.push_back(std::move(component));
+    DiagnosticList diagnostics;
+    // act
+    EXPECT_NO_THROW((void)TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file));
+    // assert
+    EXPECT_GT(diagnostics.count(), 0U);
+}

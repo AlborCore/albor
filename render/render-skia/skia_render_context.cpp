@@ -163,9 +163,8 @@ namespace albor::skia
             paint_shape(Paint{.fill = shadow.color}, radius > 0.0f, offset_rect(rect, shadow.offset), radius);
             return;
         }
-        // the layer paint carries the blur, which is what makes the offscreen pass a blurred one (§6.2)
+        // the layer paint carries the blur alone, because a colour here would modulate the layer twice (§6.2)
         SkPaint layer_paint;
-        layer_paint.setColor(SkColor(to_skia_color(shadow.color)));
         layer_paint.setAntiAlias(true);
         // the blur is a true gaussian over the offscreen layer rather than a cheap approximation (§6.2)
         layer_paint.setImageFilter(SkImageFilters::Blur(sigma, sigma, nullptr));
@@ -229,8 +228,8 @@ namespace albor::skia
     }
 
     unsigned int SkiaRenderContext::to_skia_color(const Color& color) const {
-        // the opacity dims the alpha only, because it is a coverage multiplier rather than a colour (§6.1)
-        const Color dimmed = color.with_alpha(color.alpha * m_opacity);
+        // with_alpha already scales the colour's own alpha, so passing the opacity alone scales it once (§6.1)
+        const Color dimmed = color.with_alpha(m_opacity);
         // the albor colour is in the zero to one range, while skia packs one byte per channel (§6.3)
         const auto channel = [](float value) -> unsigned int {
             const float clamped = std::clamp(value, 0.0f, 1.0f);

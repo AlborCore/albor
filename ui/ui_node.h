@@ -164,7 +164,6 @@ namespace albor
 
         // walk the node and its descendants depth first, which the semantic tree and the builder share (§8.1)
         void visit(const std::function<void(UiNode&)>& visitor);
-
         // walk this node and its descendants depth first for reading, which the tests assert on
         void visit(const std::function<void(const UiNode&)>& visitor) const;
 
@@ -177,6 +176,9 @@ namespace albor
 
         // pop what the push put on the context, which a sibling draws after (§6.1)
         void pop_opacity(RenderContext& context) const;
+
+        // record the children without pushing this node's opacity, because a component already pushed it (§6.1)
+        void render_children(RenderContext& context);
 
         // arrange the child only when it asked for a pass or its bounds would move, which keeps a relayout local (§8.2)
         void arrange_if_changed(UiNode& child, const Rect& bounds);
