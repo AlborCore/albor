@@ -2120,14 +2120,66 @@ TEST(TextFieldChecks, AFocusedFieldWithAnEngineStartsABlinkThatTheEngineRuns) {
     // assert a blink is running, because a caret that never blinks is a bar (§7.3, §8.3)
     EXPECT_EQ(animations.active_count(), 1u);
     EXPECT_TRUE(field.shows_caret());
-    // act a whole blink period passes
-    (void)animations.advance(0.53f);
-    // assert the caret went into its hidden phase, which is what a blink is (§8.3)
-    EXPECT_FALSE(field.shows_caret());
-    // act the next half period passes
-    (void)animations.advance(0.53f);
-    // assert the caret came back, because a blink repeats rather than ending (§7.3)
+    // act the first half of the pass goes by
+    (void)animations.advance(0.26f);
+    // assert the caret is still shown, because the visible half runs to the middle (§8.3)
     EXPECT_TRUE(field.shows_caret());
+    // act the middle goes by
+    (void)animations.advance(0.02f);
+    // assert the caret is hidden, which is the other half of the rhythm (§8.3)
+    EXPECT_FALSE(field.shows_caret());
+    // act the pass ends
+    (void)animations.advance(0.25f);
+    (void)animations.advance(0.001f);
+    // assert the caret is back, because the blink repeats rather than ending (§7.3)
+    EXPECT_TRUE(field.shows_caret());
+}
+
+TEST(TextFieldChecks, ACaretBlinkDoesNotToggleOncePerFrame) {
+    // arrange a blinking field, counting both its visibility changes and the frames it asked for (§8.3)
+    EditingTextEngine text;
+    AnimationEngine animations;
+    TextField field(nullptr, &text, "Albor");
+    field.set_animation_engine(&animations);
+    std::size_t frames_asked = 0;
+    field.set_invalidation_handler([&frames_asked] { frames_asked++; });
+    field.set_focused(true);
+    frames_asked = 0;
+    std::size_t turnovers = 0;
+    // the state the caret starts in, which a strobe would change on the very first frame (§8.3)
+    bool previous = field.shows_caret();
+    // act a second of frames at sixty hertz, which is what a window presents (§6.1)
+    for (int frame = 0; frame < 60; frame++) {
+        (void)animations.advance(1.0f / 60.0f);
+        // assert the visibility is sampled per frame, because the claim is about what a frame does (§8.3)
+        const bool now = field.shows_caret();
+        // a change is counted rather than asserted per frame, because the rhythm decides when one happens (§8.3)
+        if (now != previous)
+            turnovers++;
+        previous = now;
+    }
+    // assert the caret turned over about twice in a second rather than sixty times, which is the strobe (§8.3)
+    EXPECT_GE(turnovers, 1u);
+    EXPECT_LE(turnovers, 3u);
+    // assert the frames asked for match the turnovers, because a frame that changes nothing asks for nothing (§6.1)
+    EXPECT_LE(frames_asked, 3u);
+}
+
+TEST(TextFieldChecks, AFieldDestroyedWhileBlinkingLeavesNoAnimationBehind) {
+    // arrange a focused field that owns a running blink, inside a scope that ends (§7.3)
+    EditingTextEngine text;
+    AnimationEngine animations;
+    {
+        TextField field(nullptr, &text, "Albor");
+        field.set_animation_engine(&animations);
+        field.set_focused(true);
+        // assert the blink is running before the scope ends, because that is the hazard (§7.3)
+        ASSERT_EQ(animations.active_count(), 1u);
+    }
+    // assert the engine holds nothing, because a callback into a dead field would be called on the next frame (§7.3)
+    EXPECT_EQ(animations.active_count(), 0u);
+    // act a frame runs over the engine that outlived the field
+    EXPECT_EQ(animations.advance(0.1f), 0u);
 }
 
 TEST(TextFieldChecks, LosingTheFocusCancelsTheBlink) {
@@ -2435,4 +2487,51 @@ TEST(TextFieldImeChecks, ACommitWithNoRangeStillReplacesTheSelection) {
     field.dispatch_event(commit);
     // assert the selection went, because a commit with no range means the caret's own span (§8.3)
     EXPECT_EQ(field.value(), "aXdef");
+}
+
+TEST(TextFieldChecks, AFieldAttachedAfterTheTreeWasWiredStillFindsTheAnimationEngine) {
+    // arrange a root that was handed the engine before the field existed, which is a dynamic attach (§7.3)
+    EditingTextEngine text;
+    AnimationEngine animations;
+    UiNode root;
+    root.set_animation_engine(&animations);
+    auto field = std::make_unique<TextField>(nullptr, &text, "Albor");
+    // act
+    root.add_child(std::move(field));
+    // assert the child learned the engine from the tree it joined, because a blink needs a clock (§7.3)
+    ASSERT_EQ(root.child_count(), 1u);
+    UiNode* joined = root.children().front().get();
+    EXPECT_EQ(joined->animation_engine(), &animations);
+}
+
+TEST(TextFieldChecks, AFieldInsertedAfterTheTreeWasWiredStillFindsTheAnimationEngine) {
+    // arrange a root with a child already in it, which insertion puts another beside (§8.1)
+    EditingTextEngine text;
+    AnimationEngine animations;
+    UiNode root;
+    root.set_animation_engine(&animations);
+    root.add_child(std::make_unique<TextField>(nullptr, &text, "first"));
+    auto field = std::make_unique<TextField>(nullptr, &text, "second");
+    // act
+    root.insert_child(1, std::move(field));
+    // assert the inserted child learned it too, because insertion is attachment (§7.3)
+    ASSERT_EQ(root.child_count(), 2u);
+    EXPECT_EQ(root.children().at(1)->animation_engine(), &animations);
+}
+
+TEST(TextFieldChecks, AFieldAttachedToAWiredTreeBlinksWhenItTakesTheFocus) {
+    // arrange the same late attachment, then a focus that needs the clock (§7.3)
+    EditingTextEngine text;
+    AnimationEngine animations;
+    UiNode root;
+    root.set_animation_engine(&animations);
+    auto field = std::make_unique<TextField>(nullptr, &text, "Albor");
+    field->set_caret(1);
+    root.add_child(std::move(field));
+    TextField* joined = dynamic_cast<TextField*>(root.children().front().get());
+    ASSERT_NE(joined, nullptr);
+    // act
+    joined->set_focused(true);
+    // assert a blink is running, because the engine reached the child through the tree (§7.3)
+    EXPECT_EQ(animations.active_count(), 1u);
 }

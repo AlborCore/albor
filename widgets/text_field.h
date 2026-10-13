@@ -22,6 +22,9 @@ namespace albor
         // build a field over the engines it reads, with an empty value (§8) the text engine is borrowed, not owned (§9.1)
         TextField(BindingEngine* engine, TextEngine* text_engine, std::string value = {}, std::string explicit_id = {});
 
+        // end the blink before the field dies, because the animation the engine holds would keep calling into it (§7.3)
+        ~TextField() override;
+
         // measure against the text engine, because a field takes the extent of the run it edits (§8.2, §9.1)
         void measure(const SizeConstraints& constraints, Size& out_size) override;
 

@@ -50,6 +50,8 @@ namespace albor
             return *this;
         // the child learns its parent before it is stored, so a handler that walks up finds one (§8.1)
         child->m_parent = this;
+        // the child learns the engine this subtree already holds, because it joined after the tree was wired (§7.3)
+        child->set_animation_engine(m_animations);
         // a fresh child has never drawn, so it starts dirty (§6.1)
         child->m_render_dirty = true;
         child->m_measure_dirty = true;
@@ -67,6 +69,8 @@ namespace albor
         // an index past the end appends, which is what a caller that computed an index from a stale tree wants (§8.1)
         const std::size_t position = std::min(index, m_children.size());
         child->m_parent = this;
+        // the child learns the engine this subtree already holds, because it joined after the tree was wired (§7.3)
+        child->set_animation_engine(m_animations);
         child->m_render_dirty = true;
         child->m_measure_dirty = true;
         child->m_arrange_dirty = true;

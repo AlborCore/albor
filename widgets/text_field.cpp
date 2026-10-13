@@ -98,6 +98,11 @@ namespace albor
         return TextInputRange{.location = location, .length = length};
     }
 
+TextField::~TextField() {
+        // the blink is ended before the field dies, because the engine holds a callback that calls into it (§7.3)
+        stop_blink();
+    }
+
 bool TextField::focused() const {
         // the state is what the focus manager last reported, which is the whole of it (§8.3)
         return m_focused;
@@ -147,12 +152,16 @@ bool TextField::shows_caret() const {
         AnimationEngine* engine = animation_engine();
         if (engine == nullptr)
             return;
-        // the blink alternates the caret for as long as the field holds the focus, which is a repeating animation (§7.3)
+        // the blink runs for as long as the field holds the focus, which is a repeating animation (§7.3)
         m_blink = engine->schedule_repeating(
-            [this](float) {
-                // the phase flips, which is the whole of a blink (§8.3)
-                m_caret_visible = !m_caret_visible;
-                // the flip is a visual change, so the tree is asked for a frame (§6.1)
+            [this](float phase) {
+                // the caret is shown for the first half of every pass, which reads the phase (§8.3)
+                const bool visible = phase < 0.5f;
+                // a frame inside the same half changes nothing, so it invalidates nothing (§6.1)
+                if (visible == m_caret_visible)
+                    return true;
+                // the half turned over, so the caret is where the phase says (§6.1)
+                m_caret_visible = visible;
                 invalidate();
                 // the blink keeps running until the focus leaves, which cancel is for (§7.3)
                 return true;
