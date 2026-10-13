@@ -1840,14 +1840,18 @@ TEST(TextFieldImeChecks, ACompositionShowsTheMarkedString) {
     field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
     SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 40.0f}, 1.0f));
     // act
-    Event composing{.kind = EventKind::Composing, .text = "a\xE3\x81\x82" "b"};
+    Event composing{.kind = EventKind::Composing,
+                    .text = "a\xE3\x81\x82"
+                            "b"};
     field.dispatch_event(composing);
     field.render(recorder);
     // assert the mark reached the display, because the value kept holding nothing (§8.3)
     EXPECT_TRUE(field.value().empty());
     EXPECT_EQ(text_command_count(*recorder.scene()), 1u);
     EXPECT_TRUE(field.has_marked_text());
-    EXPECT_EQ(field.marked_text(), "a\xE3\x81\x82" "b");
+    EXPECT_EQ(field.marked_text(),
+              "a\xE3\x81\x82"
+              "b");
 }
 
 TEST(TextFieldImeChecks, TheMarkIsProvisionalAndSignalsNothing) {

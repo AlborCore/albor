@@ -6,3 +6,4 @@ build/vcpkg_installed/
 .build-cost/
 worktrees
 *.profraw
+gap-analysis-*.md

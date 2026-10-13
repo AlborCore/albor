@@ -207,7 +207,7 @@ namespace albor
             // the row ends past the last cluster of this run, which is the byte a caret rests at inside a split row (§9.1)
             line.end_byte = static_cast<std::size_t>(info->utf8Starts[info->count]);
         });
-// the line metrics carry the ascent and descent the caller places content by (§9.1)
+        // the line metrics carry the ascent and descent the caller places content by (§9.1)
         std::vector<skia::textlayout::LineMetrics> line_metrics;
         // the metrics are read per line, because a wrapped run carries one ascent per line (§9.1)
         paragraph->getLineMetrics(line_metrics);
@@ -225,7 +225,7 @@ namespace albor
             if (line.glyphs.empty())
                 line.end_byte = static_cast<std::size_t>(line_metrics[index].fStartIndex);
         }
-// the layout starts as an unmeasured default, so a run that shaped no line reports nothing (§9.1)
+        // the layout starts as an unmeasured default, so a run that shaped no line reports nothing (§9.1)
         TextLayout layout;
         // the shaped run is what the render stage replays verbatim (§9.1, AD-18)
         layout.run = ShapedRun::make(std::move(lines), font_size);

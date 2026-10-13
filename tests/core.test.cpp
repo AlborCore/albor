@@ -7,8 +7,8 @@
 #include "core/clipboard.h"
 #include "core/geometry.h"
 #include "core/native_window_handle.h"
-#include "core/text_range.h"
 #include "core/paint.h"
+#include "core/text_range.h"
 
 using namespace albor;
 

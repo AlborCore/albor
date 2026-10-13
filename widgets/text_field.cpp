@@ -98,12 +98,12 @@ namespace albor
         return TextInputRange{.location = location, .length = length};
     }
 
-TextField::~TextField() {
+    TextField::~TextField() {
         // the blink is ended before the field dies, because the engine holds a callback that calls into it (§7.3)
         stop_blink();
     }
 
-bool TextField::shows_caret() const {
+    bool TextField::shows_caret() const {
         // a hidden or disabled field is not edited, so it shows no caret (§8.3)
         if (disabled() || !visible())
             return false;
@@ -187,7 +187,7 @@ bool TextField::shows_caret() const {
         start_blink();
     }
 
-void TextField::paint_selection(RenderContext& context) {
+    void TextField::paint_selection(RenderContext& context) {
         // an empty selection has no span to highlight, which is what collapse means (§8.3)
         if (!has_selection())
             return;
@@ -496,7 +496,8 @@ void TextField::paint_selection(RenderContext& context) {
                 composed.insert(span_start, m_marked);
                 // the composed run shapes over an unbounded width, which is what a mark draws against (§9.1)
                 m_marked_layout = m_text_engine->measure(composed, 0.0f, m_font_size);
-            } else {
+            }
+            else {
                 // no engine means no display run, which is what an unmeasurable mark is (§9.1)
                 m_marked_layout = TextLayout{};
             }
@@ -759,7 +760,7 @@ void TextField::paint_selection(RenderContext& context) {
         return {std::min(m_caret, m_value.size()), std::min(m_caret, m_value.size())};
     }
 
-std::size_t TextField::line_at_y(float pointer_y) const {
+    std::size_t TextField::line_at_y(float pointer_y) const {
         // a run the engine did not shape has no row to resolve against, so the first one stands (§9.1)
         if (m_layout.run == nullptr || m_layout.run->lines().empty())
             return 0;
@@ -790,7 +791,7 @@ std::size_t TextField::line_at_y(float pointer_y) const {
         return m_layout.run->byte_at_x(index, std::max(0.0f, x));
     }
 
-std::size_t TextField::step_up_byte(std::size_t byte) const {
+    std::size_t TextField::step_up_byte(std::size_t byte) const {
         // an offset past the value clamps to its end, because there is no line to leave (§8.3)
         const std::size_t clamped = std::min(byte, m_value.size());
         // a run the engine did not shape has no line to move across (§9.1)
@@ -1184,7 +1185,6 @@ std::size_t TextField::step_up_byte(std::size_t byte) const {
         // a drag extension is visual only, because the value did not change (§6.1)
         invalidate();
     }
-
 
     void TextField::remeasure() {
         // a field with no engine cannot measure, so the runs stay empty and the plate keeps its minimum (§9.1)

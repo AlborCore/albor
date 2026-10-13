@@ -334,7 +334,7 @@ namespace albor::compiler
                                               .accepts_children = false});
         // a leaf performs an action when it is pressed, which is a push control (§8)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
-                                              .name = "Button",                                              // the label and the plate and the disabled state are what a button exposes (§8)
+                                              .name = "Button", // the label and the plate and the disabled state are what a button exposes (§8)
                                               .properties = {ElementProperty{.name = "text", .type = scalar(TypeKind::String), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "background", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}},
                                               // a button raises a click when it is pressed (§8)
                                               .signals = {ElementSignal{.name = "clicked", .parameter_types = {}}},

@@ -409,7 +409,7 @@ namespace albor
         return m_animations;
     }
 
-void UiNode::visit(const std::function<void(UiNode&)>& visitor) {
+    void UiNode::visit(const std::function<void(UiNode&)>& visitor) {
         // the node itself comes before its children, which is the order a depth first walk uses (§8.1)
         visitor(*this);
         for (const auto& child : m_children)
