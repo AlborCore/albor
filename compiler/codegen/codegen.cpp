@@ -237,10 +237,13 @@ namespace albor::compiler
             case TypeKind::Native:
                 // a record and a data type are both spelled by the name the manifest declared (§11.2, AD-17)
                 return type.native_name();
+            case TypeKind::Snapshot:
+                // a snapshot crosses as the shared pointer its element is, which never copies the record (§10.5, §13.2)
+                return "std::shared_ptr<const " + cpp_type(type.element()) + ">";
             case TypeKind::Error:
                 return "std::string";
             default:
-                // a snapshot is still blocked before it reaches here, because its element is a data type (§11.3)
+                // a shape the generator refused cannot reach here, which the validation blocks first (§11.3)
                 return "std::string";
             }
         }
@@ -622,6 +625,9 @@ namespace albor::compiler
             // the manifest headers the component needs, which the glue generator wrote from the same source (§11.2, AD-17)
             std::vector<std::string> m_record_headers;
 
+            // the data type names a snapshot carries, which the facade forward-declares instead (§11.2)
+            std::vector<std::string> m_data_declarations;
+
             // the catalog the records resolve against, which is null when the caller registered none (§11.2, AD-17)
             const ElementCatalog* m_catalog = nullptr;
 
@@ -802,11 +808,32 @@ namespace albor::compiler
                 m_blocked = true;
                 return;
             }
-            // a snapshot carries an immutable shared value, which a generated property cannot yet hold (§11.3, §13.2)
+            // a snapshot crosses as the shared immutable pointer its element is, so its element decides (§10.5, §13.2)
             if (type.is(TypeKind::Snapshot)) {
-                m_diagnostics.add(Diagnostic::Severity::Error, span, "E0501", "a value of type '" + type.to_string() + "' cannot be generated yet");
-                // the blocking flag is set, which empties the generated output (§11.3)
-                m_blocked = true;
+                // the element is what the pointer carries, which only a native name transports (§11.1, §13.2)
+                if (!type.element().is(TypeKind::Native)) {
+                    m_diagnostics.add(Diagnostic::Severity::Error, span, "E0501", "a value of type '" + type.to_string() + "' cannot be generated yet");
+                    // the blocking flag is set, which empties the generated output (§11.3)
+                    m_blocked = true;
+                    return;
+                }
+                // the element resolves against the manifest, the single source of truth for native names (§11.2, AD-17)
+                const std::string& name = type.element().native_name();
+                // a record the manifest wrote is carried by its header, which the collect pass pulled once (§11.2, AD-17)
+                const bool record = m_catalog != nullptr && m_catalog->find_record(name) != nullptr;
+                // a data type the manifest wrote is carried by its name, which the facade declares ahead (§11.2, AD-17)
+                const bool data = m_catalog != nullptr && m_catalog->holds_native(name);
+                // an element the manifest never declared cannot type the snapshot, which is refused (§11.2, AD-17)
+                if (!record && !data) {
+                    m_diagnostics.add(Diagnostic::Severity::Error, span, "E0501", "a value of type '" + type.to_string() + "' cannot be generated yet");
+                    // the blocking flag is set, which empties the generated output (§11.3)
+                    m_blocked = true;
+                    return;
+                }
+                // a data type has no generated header, which the facade declares ahead once (§11.2, AD-17)
+                if (data && std::find(m_data_declarations.begin(), m_data_declarations.end(), name) == m_data_declarations.end())
+                    m_data_declarations.push_back(name);
+                // a snapshot over a registered name crosses, and its value settles eagerly like a scalar (§13.2, §13.3)
                 return;
             }
             // a native element the generator cannot construct has no C++ spell here, which is reported (§11.3, AD-17)
@@ -1072,6 +1099,15 @@ namespace albor::compiler
             line(0, "");
             line(0, "namespace albor");
             line(0, "{");
+            // the data types a snapshot carries are declared ahead, which keeps the signatures compilable (§13.2)
+            if (!m_data_declarations.empty()) {
+                line(1, "// the application data types a snapshot carries, which the facade declares ahead rather than includes (§11.2, AD-17)");
+                // each declared type is forwarded once, which is all a shared pointer signature needs (§11.2, §13.2)
+                for (const std::string& forward : m_data_declarations)
+                    line(1, "struct " + forward + ";");
+                // the blank closes the forward section, which separates it from the class (§14.1)
+                line(0, "");
+            }
             line(1, "// the concrete facade of the " + m_class + " component, which hides its generated body (§14.1, AD-03)");
             line(1, "class " + m_class + " final : public Component");
             line(1, "{");
