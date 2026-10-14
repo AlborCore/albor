@@ -6,6 +6,7 @@
 #include <memory>
 
 #include "animation/animation_engine.h"
+#include "application/main_window_config.h"
 #include "core/paint.h"
 #include "runtime/binding_engine.h"
 #include "text/text_engine.h"
@@ -31,7 +32,7 @@ namespace albor
     {
     public:
         // wire a stage over the window's native layer, the shared backend and the shared engine (§6.1, §6.2)
-        WindowStage(Window& window, RendererBackend& renderer, TextEngine& text, RootBuilder builder);
+        WindowStage(Window& window, RendererBackend& renderer, TextEngine& text, RootBuilder builder, const MainWindowConfig& config);
 
         // stop the render thread, which the surface and the pipeline depend on (§6.1)
         ~WindowStage();
@@ -56,14 +57,26 @@ namespace albor
         // hand out the root of the driven tree, which is what an application installs a theme over (§6.1, §8.4)
         [[nodiscard]] UiNode& root() const;
 
+        // report whether the window brought a tree, which a hand drawn scene source does not (§6.1, §8.1)
+        [[nodiscard]] bool has_tree() const;
+
         // replace the colour the scene is cleared with, which a themed surface drives (§6.1, §8.4)
         void set_background(Color background);
 
         // point the window's input at the accelerators of an application, which is borrowed and outlives the stage (§18.5)
         void set_command_registry(CommandRegistry* registry);
 
-        // hand out how many frames the stage built, which a test asserts on (§6.1)
+        // install the callback that runs between a built scene and stage two, which refreshes derived state (§6.1)
+        void set_frame_hook(std::function<void()> hook);
+
+        // hand out how many frames the stage presented, which a test asserts on (§6.1)
         [[nodiscard]] std::uint64_t frame_count() const;
+
+        // hand out the reactive engine the stage settles before every frame, which a host binds over (§7.3)
+        [[nodiscard]] BindingEngine& binding_engine();
+
+        // hand out the text engine the tree measures with, which a host reads (§9.1)
+        [[nodiscard]] TextEngine& text_engine();
 
         // hand out the animation engine the frame tick advances, which a widget drives its animations on (§7.3, AD-04d)
         [[nodiscard]] AnimationEngine& animations();
@@ -78,11 +91,29 @@ namespace albor
         // the engine the stage settles before every frame, which the tree declares properties over (§7.3)
         BindingEngine m_engine;
 
+        // the engine the tree measures its text with, which every widget borrows for the whole run (§9.1)
+        TextEngine* m_text = nullptr;
+
         // the animations the frame tick advances, which the tree schedules its own on (§7.3, AD-04d)
         AnimationEngine m_animations;
 
         // the instant the last frame was dated at, which the next frame delta is measured from (§7.3)
         std::chrono::steady_clock::time_point m_last_frame;
+
+        // the number of frames this stage presented, which counts scenes rather than ticks (§6.1)
+        std::uint64_t m_frame_index = 0;
+
+        // whether a builder produced a tree, which is what decides between the pipeline and a scene source (§8.1)
+        bool m_has_tree = false;
+
+        // whether a tick that found nothing dirty skips its frame, which is what a retained tree wants (§6.1)
+        bool m_build_only_when_dirty = false;
+
+        // the source an application that owns its scene installs, which replaces the pipeline's own build (§6.1)
+        SceneSource m_scene_source;
+
+        // the callback that runs between a built scene and stage two, which is where derived state lands (§6.1)
+        std::function<void()> m_frame_hook;
 
         // the wiring, declared so the destructor releases the pipeline first and the surface last (§6.1)
         std::unique_ptr<RenderSurface> m_surface;

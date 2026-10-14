@@ -4,24 +4,55 @@
 #include <gtest/gtest.h>
 
 #include "core/dev_hook.h"
+#include "devrt/devrt.h"
+#include "devrt/element_table.h"
 #include "devrt/ir.h"
 #include "devrt/reload_adapter.h"
+#include "layout/column_layout.h"
+#include "runtime/binding_engine.h"
+#include "text/text_engine.h"
 #include "ui/ui_node.h"
+#include "widgets/button.h"
+#include "widgets/label.h"
 
 using namespace albor;
 using namespace albor::devrt;
 
 namespace
 {
-    // the element the factory builds, which is a node with no meaning of its own (§12.1)
-    std::unique_ptr<UiNode> build_element(const std::string& element) {
-        // the node is built, because a reload needs something to instantiate (§12.1)
-        std::unique_ptr<UiNode> node = std::make_unique<UiNode>();
-        // the element name becomes the identity a test can read back, because the extension adds no widget type (§12.1)
-        node->set_explicit_id(element);
-        // the node is returned whole, because the tree adopts it (§8.1)
-        return node;
-    }
+    // the engine double that measures to an empty layout, which keeps these tests off any shaper (§9.1)
+    class TestTextEngine final : public TextEngine
+    {
+    public:
+        // override: hand out the empty layout, because a reload never draws (§9.1)
+        [[nodiscard]] TextLayout measure(std::string_view, float) const override { return {}; }
+
+        // override: hand out the empty layout at the explicit size, because a reload never draws (§9.1)
+        [[nodiscard]] TextLayout measure(std::string_view, float, float) const override { return {}; }
+
+        // override: report the engine usable, because a widget checks readiness before it measures (§9.1)
+        [[nodiscard]] bool ready() const override { return true; }
+    };
+
+    // the engines and the context a reload builds nodes over, which is what the runtime binds (§12.1, AD-02)
+    struct ReloadFixture
+    {
+        // the reactive engine the built nodes declare their properties over (§7.3)
+        BindingEngine engine;
+
+        // the text engine the built nodes measure with, kept because a widget borrows it for its whole life (§9.1)
+        TestTextEngine text;
+
+        // the context carries the engines and the closed builtin set, which is the registry a Release lacks (§8, AD-01)
+        ReloadContext context;
+
+        ReloadFixture() {
+            context.engine = &engine;
+            context.text = &text;
+            context.factory = [](std::string_view element, BindingEngine& engine, TextEngine& text) { return create_node(element, engine, text); };
+            context.element_of = [](const UiNode& node) { return element_of(node); };
+        }
+    };
 
     // find a descendant carrying an id, which is how a test asserts on a patch (§12.1, AD-11)
     UiNode* find_by_id(UiNode& root, const std::string& id) {
@@ -74,7 +105,7 @@ TEST(DevIrChecks, ADeepDefinitionNestsToItsDepth) {
     // assert each level sits under the one above it (§12.1)
     ASSERT_TRUE(parsed.has_value());
     ASSERT_EQ(parsed->children.size(), 1U);
-    ASSERT_EQ(parsed->children.at(0).children.size(), 1U);
+    EXPECT_EQ(parsed->children.at(0).children.size(), 1U);
     EXPECT_EQ(parsed->children.at(0).children.at(0).id, "c");
 }
 
@@ -105,11 +136,110 @@ TEST(DevIrChecks, AMalformedDefinitionIsRefused) {
     EXPECT_FALSE(parse_ir("node Panel id=a\nnode Other id=b\n").has_value());
 }
 
+TEST(DevElementChecks, EveryBuiltinElementBuildsOverTheEngines) {
+    // arrange the engines a window owns, which a widget borrows for the whole run (§8.1, §9.1)
+    BindingEngine engine;
+    TestTextEngine text;
+    // assert each closed element of §8 resolves, because the definition language may name any of them
+    for (const char* element : {"Column", "Row", "Padding", "Stack", "Grid", "Label", "Button", "Slider", "CheckBox", "Canvas", "ScrollView", "TextField"}) {
+        EXPECT_TRUE(known_element(element)) << element;
+        EXPECT_NE(create_node(element, engine, text), nullptr) << element;
+    }
+}
+
+TEST(DevElementChecks, AnElementOutsideTheClosedSetIsRefused) {
+    // assert the registry refuses rather than guesses, because a guess would replace a subtree silently (§12.1)
+    EXPECT_FALSE(known_element("Panel"));
+    EXPECT_FALSE(known_element(""));
+    BindingEngine engine;
+    TestTextEngine text;
+    EXPECT_EQ(create_node("Panel", engine, text), nullptr);
+}
+
+TEST(DevElementChecks, APropertyLandsOnTheNodeThatDeclaresIt) {
+    // arrange a label over the engines, which is the element the definition names (§8, §9.1)
+    BindingEngine engine;
+    TestTextEngine text;
+    std::unique_ptr<UiNode> label = create_node("Label", engine, text);
+    ASSERT_NE(label, nullptr);
+    // act the definition assigns the text the author typed (§12.1)
+    EXPECT_TRUE(apply_property(*label, "Label", "text", "hello"));
+    // assert the label carries it, because that is what an edited value means (§12.1)
+    EXPECT_EQ(static_cast<Label*>(label.get())->text(), "hello");
+}
+
+TEST(DevElementChecks, APropertyNeverLandsOnTheWrongElement) {
+    // arrange a label, which declares text but no value (§11.1)
+    BindingEngine engine;
+    TestTextEngine text;
+    std::unique_ptr<UiNode> label = create_node("Label", engine, text);
+    ASSERT_NE(label, nullptr);
+    // act the definition names a property no element declares, which resolves to nothing (§11.1)
+    const bool applied = apply_property(*label, "Label", "value", "3");
+    // assert the assignment was refused, because a label has no value to set (§11.1)
+    EXPECT_FALSE(applied);
+    // assert the alignment wildcard reaches every element, because both axes are declared by all of them (§8.2)
+    EXPECT_TRUE(apply_property(*label, "Label", "horizontal_align", "center"));
+    EXPECT_EQ(label->horizontal_align(), Align::Center);
+}
+
+TEST(DevElementChecks, AValueTheLanguageNeverWroteIsRefused) {
+    // arrange a column, whose spacing is a float (§8.2)
+    BindingEngine engine;
+    TestTextEngine text;
+    std::unique_ptr<UiNode> column = create_node("Column", engine, text);
+    ASSERT_NE(column, nullptr);
+    // act and assert each of these is text the property cannot hold, so the previous value survives (§11.1)
+    EXPECT_FALSE(apply_property(*column, "Column", "spacing", "wide"));
+    EXPECT_FALSE(apply_property(*column, "Column", "spacing", ""));
+    EXPECT_FALSE(apply_property(*column, "Column", "spacing", "12px"));
+    EXPECT_FALSE(apply_property(*column, "Column", "padding", "1,2"));
+    EXPECT_FALSE(apply_property(*column, "Column", "padding", "0.1,0.2,blue"));
+    EXPECT_FALSE(apply_property(*column, "Column", "vertical_align", "middle"));
+}
+
+TEST(DevElementChecks, AColourAndAFlagAreReadFromTheDefinition) {
+    // arrange the widgets that carry a colour and a flag (§8, §8.4)
+    BindingEngine engine;
+    TestTextEngine text;
+    std::unique_ptr<UiNode> button = create_node("Button", engine, text);
+    std::unique_ptr<UiNode> check = create_node("CheckBox", engine, text);
+    ASSERT_NE(button, nullptr);
+    ASSERT_NE(check, nullptr);
+    // act and assert the assignments reach the setters the catalogue names (§11.1)
+    EXPECT_TRUE(apply_property(*button, "Button", "background", "0.1,0.2,0.3"));
+    EXPECT_EQ(static_cast<Button*>(button.get())->background(), Color::rgb(0.1f, 0.2f, 0.3f));
+    EXPECT_TRUE(apply_property(*button, "Button", "disabled", "true"));
+    EXPECT_TRUE(button->disabled());
+    EXPECT_TRUE(apply_property(*check, "CheckBox", "checked", "false"));
+    EXPECT_FALSE(check->disabled());
+}
+
+TEST(DevElementChecks, ALiveNodeIsNamedByItsDynamicType) {
+    // arrange one node per element, because naming is what finds a changed element (§12.1)
+    BindingEngine engine;
+    TestTextEngine text;
+    std::unique_ptr<UiNode> label = create_node("Label", engine, text);
+    std::unique_ptr<UiNode> button = create_node("Button", engine, text);
+    std::unique_ptr<UiNode> column = create_node("Column", engine, text);
+    ASSERT_NE(label, nullptr);
+    ASSERT_NE(button, nullptr);
+    ASSERT_NE(column, nullptr);
+    // assert the closed set names what it built (§12.1)
+    EXPECT_EQ(element_of(*label), "Label");
+    EXPECT_EQ(element_of(*button), "Button");
+    EXPECT_EQ(element_of(*column), "Column");
+    // assert a node outside the closed set has no element, because it is a bare tree node (§8)
+    UiNode bare;
+    EXPECT_TRUE(element_of(bare).empty());
+}
+
 TEST(DevReloadChecks, AFirstReloadPopulatesAnEmptyTree) {
     // arrange a tree with no children, which is what a host has before its first reload (§12.1)
+    ReloadFixture fixture;
     UiNode root;
     // act
-    const ReloadReport report = apply_reload(root, *parse_ir("node Panel id=root\n  node Label id=title\n"), &build_element);
+    const ReloadReport report = apply_reload(root, *parse_ir("node Column id=root\n  node Label id=title\n"), fixture.context);
     // assert the child was added under the root, because the definition's root is the existing component (§12.1)
     EXPECT_EQ(report.added, 1U);
     EXPECT_EQ(count_nodes(root), 2U);
@@ -119,41 +249,80 @@ TEST(DevReloadChecks, AFirstReloadPopulatesAnEmptyTree) {
 
 TEST(DevReloadChecks, ASecondReloadPreservesTheNodesItMatches) {
     // arrange a tree already holding a named child (§12.1)
+    ReloadFixture fixture;
     UiNode root;
-    (void)apply_reload(root, *parse_ir("node Panel id=root\n  node Label id=title\n"), &build_element);
+    (void)apply_reload(root, *parse_ir("node Column id=root\n  node Label id=title\n"), fixture.context);
     // the matched node is recorded, because preserving its instance is the whole claim (§12.1, §12.2)
     UiNode* before = find_by_id(root, "title");
     ASSERT_NE(before, nullptr);
     // act the definition is unchanged, which is what an edit that changes nothing looks like (§12.1)
-    const ReloadReport report = apply_reload(root, *parse_ir("node Panel id=root\n  node Label id=title\n"), &build_element);
+    const ReloadReport report = apply_reload(root, *parse_ir("node Column id=root\n  node Label id=title\n"), fixture.context);
     // assert the node kept its identity, which is what preserves the interaction state inside it (§12.1, §12.2)
     EXPECT_EQ(find_by_id(root, "title"), before);
     // assert nothing was added or removed, because the definition did not change (§12.1)
     EXPECT_EQ(report.added, 0U);
     EXPECT_EQ(report.removed, 0U);
+    EXPECT_EQ(report.replaced, 0U);
     EXPECT_EQ(report.preserved, 1U);
 }
 
 TEST(DevReloadChecks, AMovedNodeFollowsItsIdRatherThanItsPosition) {
     // arrange two children, the second of which carries an id (§12.1, AD-11)
+    ReloadFixture fixture;
     UiNode root;
-    (void)apply_reload(root, *parse_ir("node Panel id=root\n  node Label id=first\n  node Button id=second\n"), &build_element);
+    (void)apply_reload(root, *parse_ir("node Column id=root\n  node Label id=first\n  node Button id=second\n"), fixture.context);
     // the second node is recorded, because an edit will move it (§12.1, AD-11)
     UiNode* second = find_by_id(root, "second");
     ASSERT_NE(second, nullptr);
     // act the definition swaps the order, which is what a person editing a column does (§12.1)
-    (void)apply_reload(root, *parse_ir("node Panel id=root\n  node Button id=second\n  node Label id=first\n"), &build_element);
+    (void)apply_reload(root, *parse_ir("node Column id=root\n  node Button id=second\n  node Label id=first\n"), fixture.context);
     // assert the node kept its identity rather than the second slot, because the id is what identity means (§18.1, AD-11)
     EXPECT_EQ(find_by_id(root, "second"), second);
 }
 
+TEST(DevReloadChecks, AnUnidentifiedEntryIsMatchedByItsPosition) {
+    // arrange a tree holding two entries the author named nothing on, which is what a plain row looks like (§18.1, AD-11)
+    ReloadFixture fixture;
+    UiNode root;
+    (void)apply_reload(root, *parse_ir("node Column id=root\n  node Label\n  node Button\n"), fixture.context);
+    ASSERT_EQ(root.child_count(), 2U);
+    // the first instance is recorded, because position is all an unnamed entry has to be matched by (§18.1, AD-11)
+    UiNode* before = root.child_at(0);
+    ASSERT_NE(before, nullptr);
+    // act the definition is reloaded unchanged, which is what a save with no names looks like (§12.1)
+    const ReloadReport report = apply_reload(root, *parse_ir("node Column id=root\n  node Label\n  node Button\n"), fixture.context);
+    // assert both slots kept their instance, because an unnamed entry follows its position (§18.1, AD-11)
+    EXPECT_EQ(root.child_count(), 2U);
+    EXPECT_EQ(root.child_at(0), before);
+    EXPECT_EQ(report.preserved, 2U);
+    EXPECT_EQ(report.added, 0U);
+    EXPECT_EQ(report.removed, 0U);
+}
+
+TEST(DevReloadChecks, AnUnidentifiedEntryDoesNotStealACoveredSlot) {
+    // arrange a tree whose first child the author named, which an unnamed entry must not claim (§18.1, AD-11)
+    ReloadFixture fixture;
+    UiNode root;
+    (void)apply_reload(root, *parse_ir("node Column id=root\n  node Label id=named\n  node Button\n"), fixture.context);
+    ASSERT_EQ(root.child_count(), 2U);
+    UiNode* named = root.child_at(0);
+    ASSERT_NE(named, nullptr);
+    // act the author adds an unnamed entry, which takes the first slot nobody covered (§12.1, AD-11)
+    const ReloadReport report = apply_reload(root, *parse_ir("node Column id=root\n  node Label id=named\n  node Button\n  node Label\n"), fixture.context);
+    // assert the named node kept its slot and the addition landed after it (§18.1, AD-11)
+    EXPECT_EQ(root.child_at(0), named);
+    EXPECT_EQ(report.added, 1U);
+    EXPECT_EQ(report.preserved, 2U);
+}
+
 TEST(DevReloadChecks, ARemovedNodeIsDropped) {
     // arrange two children (§12.1)
+    ReloadFixture fixture;
     UiNode root;
-    (void)apply_reload(root, *parse_ir("node Panel id=root\n  node Label id=first\n  node Button id=second\n"), &build_element);
+    (void)apply_reload(root, *parse_ir("node Column id=root\n  node Label id=first\n  node Button id=second\n"), fixture.context);
     ASSERT_EQ(count_nodes(root), 3U);
     // act the definition keeps only one, which is what deleting a row looks like (§12.1)
-    const ReloadReport report = apply_reload(root, *parse_ir("node Panel id=root\n  node Label id=first\n"), &build_element);
+    const ReloadReport report = apply_reload(root, *parse_ir("node Column id=root\n  node Label id=first\n"), fixture.context);
     // assert the other is gone, because the definition no longer wants it (§12.1)
     EXPECT_EQ(report.removed, 1U);
     EXPECT_EQ(count_nodes(root), 2U);
@@ -162,10 +331,11 @@ TEST(DevReloadChecks, ARemovedNodeIsDropped) {
 
 TEST(DevReloadChecks, AnAddedNodeAppears) {
     // arrange a tree with one child (§12.1)
+    ReloadFixture fixture;
     UiNode root;
-    (void)apply_reload(root, *parse_ir("node Panel id=root\n  node Label id=first\n"), &build_element);
+    (void)apply_reload(root, *parse_ir("node Column id=root\n  node Label id=first\n"), fixture.context);
     // act the definition gains a child, which is what typing a new row looks like (§12.1)
-    const ReloadReport report = apply_reload(root, *parse_ir("node Panel id=root\n  node Label id=first\n  node Button id=second\n"), &build_element);
+    const ReloadReport report = apply_reload(root, *parse_ir("node Column id=root\n  node Label id=first\n  node Button id=second\n"), fixture.context);
     // assert the addition is reported and addressable (§12.1)
     EXPECT_EQ(report.added, 1U);
     EXPECT_NE(find_by_id(root, "second"), nullptr);
@@ -173,31 +343,186 @@ TEST(DevReloadChecks, AnAddedNodeAppears) {
 
 TEST(DevReloadChecks, AReloadWithNoFactoryAddsNothingAndKeepsTheTree) {
     // arrange a tree holding one child (§12.1)
+    ReloadFixture fixture;
     UiNode root;
-    (void)apply_reload(root, *parse_ir("node Panel id=root\n  node Label id=first\n"), &build_element);
+    (void)apply_reload(root, *parse_ir("node Column id=root\n  node Label id=first\n"), fixture.context);
     // act the definition gains a child, but no factory exists to build it (§12.1, AD-02)
-    const ReloadReport report = apply_reload(root, *parse_ir("node Panel id=root\n  node Label id=first\n  node Button id=second\n"), nullptr);
+    ReloadContext blind = fixture.context;
+    blind.factory = nullptr;
+    const ReloadReport report = apply_reload(root, *parse_ir("node Column id=root\n  node Label id=first\n  node Button id=second\n"), blind);
     // assert nothing was invented, because the extension builds no element of its own (§12.1, AD-02)
     EXPECT_EQ(report.added, 0U);
     // assert the existing node survived, because an incomplete reload must not damage a running tree (§12.1)
     EXPECT_NE(find_by_id(root, "first"), nullptr);
 }
 
-TEST(DevHookChecks, AReleaseBuildCarriesNoReloadPath) {
-    // the check only means anything where no extension is linked, which the release preset is (§2.2)
-#ifndef ALBOR_DEV
-    // assert nothing installed a reload, because a release links no extension (§12.1, AD-02)
-    EXPECT_FALSE(dev::present());
-    // assert the call is safe with nothing installed, which is the whole point of the hook (§12.1, AD-02)
-    dev::reload("node Panel id=root");
-#endif
+TEST(DevReloadChecks, AReloadWithNoEnginesAddsNothing) {
+    // arrange a context with the engines unset, because a bind that named none cannot build anything (§12.1, AD-02)
+    ReloadFixture fixture;
+    ReloadContext blind = fixture.context;
+    blind.engine = nullptr;
+    UiNode root;
+    // act the definition names a child, which the context cannot build without the reactive engine (§8.1)
+    const ReloadReport report = apply_reload(root, *parse_ir("node Column id=root\n  node Label id=title\n"), blind);
+    // assert nothing was invented, because a widget with no engine has nothing to declare over (§7.3)
+    EXPECT_EQ(report.added, 0U);
+    EXPECT_EQ(count_nodes(root), 1U);
 }
 
-TEST(DevHookChecks, AReloadWithNothingInstalledDoesNothing) {
-    // arrange a tree, which nothing is bound to (§12.1)
+TEST(DevReloadChecks, AnEditedPropertyReachesTheLiveTree) {
+    // arrange a tree holding a label, which is the element an author edits text on (§12.1)
+    ReloadFixture fixture;
     UiNode root;
-    // act the runtime hands a definition to a slot nobody filled (§12.1, AD-02)
-    dev::reload("node Panel id=root\n  node Label id=title\n");
-    // assert the tree was untouched, because a build without the extension must be unaffected (§12.1, AD-02)
+    (void)apply_reload(root, *parse_ir("node Column id=root\n  node Label id=title\n"), fixture.context);
+    UiNode* title = find_by_id(root, "title");
+    ASSERT_NE(title, nullptr);
+    // act the definition assigns the text the author just typed (§12.1)
+    const ReloadReport report = apply_reload(root, *parse_ir("node Column id=root\n  node Label id=title\n    prop text hello\n"), fixture.context);
+    // assert the instance survived, because only the value changed (§12.1, §12.2)
+    EXPECT_EQ(find_by_id(root, "title"), title);
+    EXPECT_EQ(report.preserved, 1U);
+    // assert the label carries the new text, because that is what hot swap of a value means (§12.1)
+    EXPECT_EQ(static_cast<Label*>(title)->text(), "hello");
+}
+
+TEST(DevReloadChecks, AChangedElementIsRebuiltInPlace) {
+    // arrange a tree holding a label, and the identity of that instance (§12.1)
+    ReloadFixture fixture;
+    UiNode root;
+    (void)apply_reload(root, *parse_ir("node Column id=root\n  node Label id=slot\n"), fixture.context);
+    UiNode* before = find_by_id(root, "slot");
+    ASSERT_NE(before, nullptr);
+    // act the author changes the element, which is a different class and cannot keep its instance (§12.1)
+    const ReloadReport report = apply_reload(root, *parse_ir("node Column id=root\n  node Button id=slot\n"), fixture.context);
+    // assert the rebuild is reported rather than preserved, because the instance could not be kept (§12.1)
+    EXPECT_EQ(report.replaced, 1U);
+    EXPECT_EQ(report.preserved, 0U);
+    // assert the node is now the new element and the tree did not grow (§12.1)
+    UiNode* after = find_by_id(root, "slot");
+    ASSERT_NE(after, nullptr);
+    EXPECT_NE(after, before);
+    EXPECT_EQ(element_of(*after), "Button");
+    EXPECT_EQ(count_nodes(root), 2U);
+}
+
+TEST(DevReloadChecks, AChangedElementKeepsItsPosition) {
+    // arrange three children, the middle one of which will change element (§12.1)
+    ReloadFixture fixture;
+    UiNode root;
+    (void)apply_reload(root, *parse_ir("node Column id=root\n  node Label id=a\n  node Label id=b\n  node Label id=c\n"), fixture.context);
+    ASSERT_EQ(root.child_count(), 3U);
+    // act the middle entry changes element, which must not move the neighbours (§12.1)
+    (void)apply_reload(root, *parse_ir("node Column id=root\n  node Label id=a\n  node Button id=b\n  node Label id=c\n"), fixture.context);
+    // assert the order is the one the definition declared (§12.1)
+    ASSERT_EQ(root.child_count(), 3U);
+    EXPECT_EQ(element_of(*root.child_at(0)), "Label");
+    EXPECT_EQ(element_of(*root.child_at(1)), "Button");
+    EXPECT_EQ(element_of(*root.child_at(2)), "Label");
+}
+
+TEST(DevReloadChecks, AChangedElementTheFactoryRefusesKeepsTheOldNode) {
+    // arrange a tree holding a label, and a context whose factory cannot build the new element (§12.1)
+    ReloadFixture fixture;
+    UiNode root;
+    (void)apply_reload(root, *parse_ir("node Column id=root\n  node Label id=slot\n"), fixture.context);
+    UiNode* before = find_by_id(root, "slot");
+    ASSERT_NE(before, nullptr);
+    // act the definition names an element outside the closed set, which the registry refuses (§12.1)
+    const ReloadReport report = apply_reload(root, *parse_ir("node Column id=root\n  node Panel id=slot\n"), fixture.context);
+    // assert the node survived, because a refusal changes nothing (§12.1)
+    EXPECT_EQ(find_by_id(root, "slot"), before);
+    EXPECT_EQ(report.replaced, 0U);
+    EXPECT_EQ(report.removed, 0U);
+}
+
+TEST(DevReloadChecks, AReloadWithoutAnElementResolverKeepsEveryInstance) {
+    // arrange a context that cannot name a live node, because nothing resolved it (§12.1)
+    ReloadFixture fixture;
+    ReloadContext blind = fixture.context;
+    blind.element_of = nullptr;
+    UiNode root;
+    (void)apply_reload(root, *parse_ir("node Column id=root\n  node Label id=slot\n"), fixture.context);
+    UiNode* before = find_by_id(root, "slot");
+    ASSERT_NE(before, nullptr);
+    // act the definition names a different element, which cannot be detected without the resolver (§12.1)
+    const ReloadReport report = apply_reload(root, *parse_ir("node Column id=root\n  node Button id=slot\n"), blind);
+    // assert the node was kept, because a missing resolver never forces a rebuild (§12.1)
+    EXPECT_EQ(find_by_id(root, "slot"), before);
+    EXPECT_EQ(report.replaced, 0U);
+}
+
+TEST(DevHookChecks, ALinkedExtensionInstalledItsReloadEntry) {
+    // assert the extension registered itself at load, because linking it is the switch (§12.1, AD-02)
+    EXPECT_TRUE(dev::present());
+}
+
+TEST(DevHookChecks, AReloadWithNoBoundTreeChangesNothing) {
+    // arrange the extension holding no tree, which is the state before any window exists (§12.1, AD-02)
+    bind_root(nullptr, nullptr, nullptr);
+    ASSERT_FALSE(bound());
+    // act a definition arrives with no tree to patch (§12.1, AD-12)
+    dev::reload("node Column id=root\n  node Label id=title\n");
+    // assert nothing was recorded, because there was nothing to change (§12.1)
+    EXPECT_EQ(last_report().added, 0U);
+}
+
+TEST(DevHookChecks, AClosingWindowReleasesTheExtensionBinding) {
+    // arrange a bound tree, which is what a main window hands the extension (§12.1, AD-02)
+    ReloadFixture fixture;
+    UiNode root;
+    bind_root(&root, &fixture.engine, &fixture.text);
+    ASSERT_TRUE(bound());
+    // act the window closes, which is what the runtime announces (§5.2, §12.1)
+    unbind_root(&root);
+    // assert the extension holds nothing, because a reload must never reach a destroyed window (§12.1, §5.2)
+    EXPECT_FALSE(bound());
+    // act and assert another window's tree is left alone, because the release names the root it owns (§5.2)
+    UiNode other;
+    bind_root(&other, &fixture.engine, &fixture.text);
+    unbind_root(&root);
+    EXPECT_TRUE(bound());
+    bind_root(nullptr, nullptr, nullptr);
+    EXPECT_FALSE(bound());
+}
+
+TEST(DevHookChecks, ADefinitionTheReaderRefusedIsDropped) {
+    // arrange a bound tree, because only a bound tree is patched (§12.1)
+    ReloadFixture fixture;
+    UiNode root;
+    bind_root(&root, &fixture.engine, &fixture.text);
+    ASSERT_TRUE(bound());
+    // act malformed text arrives, which the reader refuses (§12.1)
+    dev::reload("not a definition\n");
+    // assert the tree is untouched, because half a definition is worse than none (§12.1)
     EXPECT_EQ(count_nodes(root), 1U);
+    EXPECT_EQ(last_report().added, 0U);
+}
+
+TEST(DevHookChecks, ADefinitionPatchesTheBoundTreeInPlace) {
+    // arrange a bound tree, which is what a main window hands the extension (§12.1, AD-02)
+    ReloadFixture fixture;
+    UiNode root;
+    bind_root(&root, &fixture.engine, &fixture.text);
+    // act the dev service delivers the definition, which is the whole of a reload (§12.1, AD-12)
+    dev::reload("node Column id=root\n  node Label id=title\n    prop text hello\n");
+    // assert the tree now carries what the file declares, which is what hot swap means (§12.1)
+    ASSERT_EQ(count_nodes(root), 2U);
+    UiNode* title = find_by_id(root, "title");
+    ASSERT_NE(title, nullptr);
+    EXPECT_EQ(static_cast<Label*>(title)->text(), "hello");
+    // assert the report tells a developer what happened (§12.1)
+    EXPECT_EQ(last_report().added, 1U);
+}
+
+TEST(DevHookChecks, ABoundTreeRepaintsAfterAPatch) {
+    // arrange a bound tree that has already settled, because a settled tree is the one that would not repaint (§6.1)
+    ReloadFixture fixture;
+    UiNode root;
+    bind_root(&root, &fixture.engine, &fixture.text);
+    dev::reload("node Column id=root\n  node Label id=title\n");
+    root.clear_dirty();
+    // act the definition changes the tree, which must invalidate it (§12.1, §6.1)
+    dev::reload("node Column id=root\n  node Label id=title\n  node Button id=ok\n");
+    // assert the tree is dirty, because a patched tree has to show what it now declares (§6.1)
+    EXPECT_TRUE(root.render_dirty());
 }

@@ -59,12 +59,12 @@
     {
       "name": "coverage",
       "inherits": "base",
-      "displayName": "Coverage (instrumented unit tests)",
+      "displayName": "Coverage (instrumented unit tests, dev runtime linked)",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "ALBOR_CONFIGURATION": "Test",
+        "ALBOR_CONFIGURATION": "Dev",
         "ALBOR_COVERAGE": "ON",
-        "ALBOR_DEV": "OFF",
+        "ALBOR_DEV": "ON",
         "ALBOR_TEST": "ON",
         "ALBOR_AUTOMATION": "ON"
       }

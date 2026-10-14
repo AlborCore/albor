@@ -236,6 +236,31 @@ albor/
 
 `Application` is the central singleton that owns the primary run loop, window registry, task dispatcher, and platform integration.
 
+**The startup path is the composition root, and the framework owns it.** An application names a
+window and the component that window shows; it does not name a renderer, a platform adapter or a
+text engine, because each backend installs itself at load and linking is the selection (§5.3,
+§6.3, §9.1). `create_window(options, Root)` builds the component over the engines that window
+owns and hands the caller the concrete facade, so a host drives properties and signals without a
+downcast (§8.1, §7.3, AD-24).
+
+One call wires everything a main window needs: the native layer, the `RenderSurface`, the
+`FramePipeline`, the `RenderExecutor` and its render thread, the `InputController`, and the
+frame, resize and close paths (§6.1, §8.3). A `WindowStage` is that wiring, one per main window.
+`MainWindowConfig` carries the choices a window may vary: the clear `background`, whether a tick
+that changed nothing is skipped, and a `scene_source` for an application that owns its
+`FrameScene` and brings no tree. `set_frame_hook` installs work that runs between a built scene
+and its submit; `set_input_handler` observes an event **after** the tree has answered it, so
+`handled` is what the tree decided (§8.3).
+
+The raw API stays public and documented as the escape hatch: `stage(handle)` reaches the
+wiring, and `create_window(options, RootBuilder)` builds a tree imperatively. The facade does
+not replace them; it removes the repetition.
+
+`run()` returns when the last window closes, whether the window carries a stage or not (§4.1,
+§5.2). A window may be created while the loop is running, from a task or a timer; a close that
+arrives from inside a frame pass is deferred to the end of that pass, so no window is read
+after its stage is released (§4.2).
+
 ```cpp
 namespace albor {
 
@@ -1080,6 +1105,35 @@ In `Dev` configuration, applications link the `albor-devrt` extension library:
 - **Serialized IR Loader:** Loads updated component definitions compiled on-the-fly by the external compiler.
 - **Reload Adapter:** Applies `UiPatch` updates to the running UI tree, reconciling node state and preserving user interaction state using explicit `id:` identifiers.
 - **Layout Invariance Maintained:** The core runtime classes link against the dev extension through pre-defined registration hooks (null pointer checks), ensuring that memory layout and virtual table indices remain identical to Release builds.
+
+Linking `albor-devrt-auto` is the whole selection, on the same terms as a platform or a renderer
+backend: a self-installing translation unit and a whole-archive target, so an application that
+links it enables the feature and an application that does not is unaffected. Nothing in
+`application/`, `ui/` or `window/` names the extension.
+
+**The bind seam (AD-02).** `core/dev_hook.h` carries four free functions, present and
+null-checked in every configuration: `install`, `present`, `reload`, plus `install_root_binder`,
+`binder_present`, `bind_root` and `unbind_root` for the tree itself. The three bind functions
+exchange `void*` because the core names no UI type and no layout may vary by configuration. A
+main window offers its live tree, its `BindingEngine` and its `TextEngine` once, as it is wired;
+it withdraws the offer when the window closes, naming the root so that closing one window
+releases only the binding that window owned.
+
+**What carries the registry.** The element-name-to-class table and the property-name-to-setter
+catalogue live in `devrt/`, which a Release link never carries (AD-01). The extension is
+therefore the only place a name resolves to a class, and a Release binary holds neither a type
+registry nor property-by-name reflection.
+
+**What a reload does.** The extension parses the serialized definition, reconciles the tree by
+explicit `id:` first and by position second, creates what the definition added, drops what it no
+longer covers, applies every property assignment in place, rebuilds a node whose element changed
+(reporting it as `replaced`, because that instance loses its state), invalidates the layout, and
+records a `ReloadReport` a developer tool reads.
+
+**Not yet specified into existence.** Nothing delivers a definition yet. AD-12 puts the producer
+in an out-of-process dev service, and no such module exists; `dev::reload` has no caller outside
+the tests. Until one does, hot swap is reachable by a test or a future dev service, not by a
+file watcher.
 
 ### 12.2 Preview and LSP
 

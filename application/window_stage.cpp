@@ -2,28 +2,27 @@
 
 #include <chrono>
 
+#include "core/dev_hook.h"
 #include "input/input_controller.h"
+#include "render/frame_scene.h"
 #include "render/render_executor.h"
 #include "ui/frame_pipeline.h"
+#include "ui/ui_node.h"
 #include "window/window.h"
 
 #include <algorithm>
 
 namespace albor
 {
-    namespace
-    {
-        // the colour a main window clears its scene with, which the widgets read against (§6.1)
-        const Color STAGE_BACKGROUND = Color::rgb(0.05f, 0.06f, 0.08f);
-    } // namespace
-
-    WindowStage::WindowStage(Window& window, RendererBackend& renderer, TextEngine& text, RootBuilder builder) :
-        m_renderer(&renderer), m_window(&window) {
+    WindowStage::WindowStage(Window& window, RendererBackend& renderer, TextEngine& text, RootBuilder builder, const MainWindowConfig& config) :
+        m_renderer(&renderer), m_window(&window), m_text(&text), m_build_only_when_dirty(config.build_only_when_dirty), m_scene_source(std::move(config.scene_source)) {
         // the tree is built once over the engines, because the widgets read them for the whole run (§8.1)
-        std::unique_ptr<UiNode> root = builder ? builder(m_engine, text) : std::make_unique<UiNode>();
-        // stage one owns the tree and the layout and record passes (§6.1)
-        m_pipeline = std::make_unique<FramePipeline>(m_engine, std::move(root));
-        m_pipeline->set_background(STAGE_BACKGROUND);
+        std::unique_ptr<UiNode> root = builder ? builder(m_engine, text) : nullptr;
+        // an application that draws by hand brings no tree, which is what the scene source is for (§6.1)
+        m_has_tree = root != nullptr;
+        // stage one owns the tree and the record pass, and an empty root is a window that draws by hand (§6.1)
+        m_pipeline = std::make_unique<FramePipeline>(m_engine, root ? std::move(root) : std::make_unique<UiNode>());
+        m_pipeline->set_background(config.background);
         // stage two runs off the ui thread, so the ui thread is never blocked by drawing (§6.1, AD-18b)
         m_executor = std::make_unique<RenderExecutor>(m_renderer);
         m_pipeline->set_executor(m_executor.get());
@@ -43,9 +42,16 @@ namespace albor
         // the controller routes the normalized events into the tree (§8.3)
         m_input = std::make_unique<InputController>();
         m_input->attach(m_pipeline->root());
+        // the tree is offered to the dev extension, which a build that linked it patches in place (§12.1, AD-02)
+        if (m_has_tree)
+            dev::bind_root(&m_pipeline->root(), &m_engine, m_text);
     }
 
-    WindowStage::~WindowStage() = default;
+    WindowStage::~WindowStage() {
+        // the dev extension is told the tree went away, because it must never patch a destroyed window (§12.1, §5.2)
+        if (m_has_tree && m_pipeline)
+            dev::unbind_root(&m_pipeline->root());
+    }
 
     bool WindowStage::wired() const {
         // every access dereferences this wiring, so the stage answers as one (§6.1)
@@ -56,6 +62,18 @@ namespace albor
         // an unwired stage has nothing to build, which the window betrayed at creation time (§6.1)
         if (!wired())
             return;
+        // an application that owns its scene builds it here, and stage two still executes it off the ui thread (§6.1)
+        if (m_scene_source) {
+            const std::shared_ptr<const FrameScene> scene = m_scene_source(window.metrics(), m_frame_index);
+            // a source that produced nothing has no frame to present, which is what an empty tick means (§6.1)
+            if (!scene)
+                return;
+            if (m_frame_hook)
+                m_frame_hook();
+            m_executor->submit(*m_surface, scene);
+            m_frame_index++;
+            return;
+        }
         // the instant is read first, because the delta is measured against the frame before this one (§7.3)
         const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
         // an idle tree skips the advance, which is what keeps a window with no animations cheap (§7.3)
@@ -70,7 +88,15 @@ namespace albor
         // the frame is dated, because the next delta is measured from it (§7.3)
         m_last_frame = now;
         // stage one settles the graph and records the scene, stage two executes it (§6.1, AD-18)
-        m_pipeline->submit(m_pipeline->build(window.metrics()));
+        const std::shared_ptr<const FrameScene> scene = m_build_only_when_dirty ? m_pipeline->build_if_dirty(window.metrics()) : m_pipeline->build(window.metrics());
+        // a retained tree that found nothing dirty produces no scene, so the tick presents nothing (§6.1)
+        if (!scene)
+            return;
+        // whatever an application derived from the settled graph is refreshed before the scene is presented (§6.1, §10.1)
+        if (m_frame_hook)
+            m_frame_hook();
+        m_pipeline->submit(scene);
+        m_frame_index++;
     }
 
     void WindowStage::resized(RendererBackend& renderer, const Window& window) {
@@ -115,6 +141,11 @@ namespace albor
         return m_pipeline->root();
     }
 
+    bool WindowStage::has_tree() const {
+        // an application that draws by hand brought no tree, which is what the scene source is for (§6.1, §8.1)
+        return m_has_tree;
+    }
+
     void WindowStage::set_background(Color background) {
         // an unwired stage clears nothing, which is the state it was refused in (§6.1)
         if (!wired())
@@ -123,9 +154,24 @@ namespace albor
         m_pipeline->set_background(background);
     }
 
+    void WindowStage::set_frame_hook(std::function<void()> hook) {
+        // the hook is owned here, because it runs on every frame of this window and nowhere else (§6.1)
+        m_frame_hook = std::move(hook);
+    }
+
     std::uint64_t WindowStage::frame_count() const {
-        // an unwired stage built nothing, which is the count it reports (§6.1)
-        return m_pipeline ? m_pipeline->frame_count() : 0;
+        // a tick that produced no scene counted no frame, which is what this reports (§6.1)
+        return m_frame_index;
+    }
+
+    BindingEngine& WindowStage::binding_engine() {
+        // the engine is a member, so a caller holding this reference never sees it replaced (§7.3)
+        return m_engine;
+    }
+
+    TextEngine& WindowStage::text_engine() {
+        // the engine is owned by the application and outlives the stage, so the borrow stays valid (§9.1)
+        return *m_text;
     }
 
     AnimationEngine& WindowStage::animations() {
