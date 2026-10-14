@@ -15,6 +15,15 @@ namespace albor::compiler
         // the keyword that introduces a component, which is the other top level declaration (§11.1)
         constexpr std::string_view COMPONENT_KEYWORD = "component";
 
+        // the keyword that introduces a struct declaration, which a property or a signal may carry (§11.1)
+        constexpr std::string_view STRUCT_KEYWORD = "struct";
+
+        // the keyword that introduces an enum declaration, which a property may hold one member of (§11.1)
+        constexpr std::string_view ENUM_KEYWORD = "enum";
+
+        // the keyword that introduces a function declaration, which a binding may call (§11.1)
+        constexpr std::string_view FN_KEYWORD = "fn";
+
         // the keyword that introduces a property declaration, which carries the direction (§11.1)
         constexpr std::string_view PROPERTY_KEYWORD = "property";
 
@@ -209,6 +218,21 @@ namespace albor::compiler
             parse_import(file);
             return;
         }
+        // a struct is a top level declaration, which names a shape a property may carry (§11.1)
+        if (at_keyword(STRUCT_KEYWORD)) {
+            parse_struct(file);
+            return;
+        }
+        // an enum is a top level declaration, which names a closed set a property may hold one of (§11.1)
+        if (at_keyword(ENUM_KEYWORD)) {
+            parse_enum(file);
+            return;
+        }
+        // a function is a top level declaration, which a binding may call as a named computation (§11.1)
+        if (at_keyword(FN_KEYWORD)) {
+            parse_function(file);
+            return;
+        }
         // a component is the other top level declaration, which carries the tree (§11.1)
         if (at_keyword(COMPONENT_KEYWORD)) {
             // the declaration is parsed into a local first, because a broken one is dropped rather than kept (§11.1)
@@ -219,7 +243,7 @@ namespace albor::compiler
             return;
         }
         // anything else cannot start a declaration, so the reader is told what was expected (§11.1)
-        report_unexpected("import or component");
+        report_unexpected("import, struct, enum, fn or component");
         // the units up to the next declaration are skipped, so one mistake costs one declaration (§11.1)
         recover_to_declaration();
     }
@@ -248,6 +272,153 @@ namespace albor::compiler
         declaration.span.end = last_consumed_end();
         // the import is kept, because a manifest module list is what the checker resolves against (§11.1, AD-17)
         file.imports.push_back(std::move(declaration));
+    }
+
+    void Parser::parse_struct(SourceFile& file) {
+        // the declaration is assembled locally, because a broken one is dropped rather than kept (§11.1)
+        StructDeclaration declaration;
+        // the span starts at the keyword, so a diagnostic about the struct points at it (§11.1)
+        declaration.span.start = peek().span.start;
+        // the keyword is consumed, because the caller has already matched it (§11.1)
+        advance();
+        // the name is required, because it becomes the record type a field read resolves against (§11.1)
+        declaration.name = expect_identifier();
+        // the body is delimited, so the fields are read until it closes (§11.1)
+        expect_punctuation("{");
+        // the fields run until the closing brace or the end of the stream (§11.1)
+        while (!at_punctuation("}") && peek().kind != Token::Kind::End) {
+            // the field starts with its type, which the registration pass resolves against the catalog (§11.1)
+            StructField field;
+            // the span starts at the type, so a diagnostic about the field points at it (§11.1)
+            field.span.start = peek().span.start;
+            // the type is a bare name, which a parametric form then extends with its argument (§11.1)
+            field.type = expect_identifier();
+            // a parametric form such as vector<string> carries its argument in angles, which are read whole (§11.1, §8.1)
+            if (at_punctuation("<")) {
+                // the nesting depth is tracked, because the argument may itself nest (§11.1)
+                std::size_t depth = 0;
+                // the angles run until the matching close, which is what ends a nested argument (§11.1)
+                while (peek().kind != Token::Kind::End) {
+                    // the current unit is appended first, so the argument keeps its own angles (§11.1)
+                    field.type += peek().text;
+                    // an opening angle deepens the nesting, which the depth records (§11.1)
+                    const bool opens = at_punctuation("<");
+                    // a closing angle closes one level of the argument (§11.1)
+                    const bool closes = at_punctuation(">");
+                    // the unit is consumed, so the argument advances exactly once (§11.1)
+                    advance();
+                    // the depth follows the open, because a nested argument opens another angle (§11.1)
+                    if (opens)
+                        depth++;
+                    // the depth follows the close, and the matching one ends the read (§11.1)
+                    if (closes) {
+                        // the depth drops, because the body it opened has closed (§11.1)
+                        depth--;
+                        // a close at depth zero has already been appended, so the argument is complete (§11.1)
+                        if (depth == 0)
+                            break;
+                    }
+                }
+            }
+            // the name is required, because a binding addresses the field by it (§11.1)
+            field.name = expect_identifier();
+            // the field ends at the terminator, which is required (§11.1)
+            expect_punctuation(";");
+            // the span ends at the terminator, which the reader has already consumed (§11.1)
+            field.span.end = last_consumed_end();
+            // the field joins the struct, because a struct is exactly the fields it declares (§11.1)
+            declaration.fields.push_back(std::move(field));
+        }
+        // a body that never closed is reported, because the declaration is incomplete (§11.1)
+        expect_punctuation("}");
+        // the span ends at the closing brace, which the reader has already consumed (§11.1)
+        declaration.span.end = last_consumed_end();
+        // the struct is kept, because the registration pass turns it into a record the catalog resolves (§11.1)
+        file.structs.push_back(std::move(declaration));
+    }
+
+    void Parser::parse_enum(SourceFile& file) {
+        // the declaration is assembled locally, because a broken one is dropped rather than kept (§11.1)
+        EnumDeclaration declaration;
+        // the span starts at the keyword, so a diagnostic about the enum points at it (§11.1)
+        declaration.span.start = peek().span.start;
+        // the keyword is consumed, because the caller has already matched it (§11.1)
+        advance();
+        // the name is required, because it becomes the set a member resolves against (§11.1)
+        declaration.name = expect_identifier();
+        // the body is delimited, so the members are read until it closes (§11.1)
+        expect_punctuation("{");
+        // the members run until the closing brace or the end of the stream (§11.1)
+        while (!at_punctuation("}") && peek().kind != Token::Kind::End) {
+            // each member is a bare name, which is the closed set the enum holds (§11.1)
+            declaration.members.push_back(expect_identifier());
+            // a comma separates the members, which is optional before the closing brace (§11.1)
+            accept_punctuation(",");
+        }
+        // a body that never closed is reported, because the declaration is incomplete (§11.1)
+        expect_punctuation("}");
+        // the span ends at the closing brace, which the reader has already consumed (§11.1)
+        declaration.span.end = last_consumed_end();
+        // the enum is kept, because the registration pass turns it into a value set the catalog resolves (§11.1)
+        file.enums.push_back(std::move(declaration));
+    }
+
+    void Parser::parse_function(SourceFile& file) {
+        // the declaration is assembled locally, because a broken one is dropped rather than kept (§11.1)
+        FunctionDeclaration declaration;
+        // the span starts at the keyword, so a diagnostic about the function points at it (§11.1)
+        declaration.span.start = peek().span.start;
+        // the keyword is consumed, because the caller has already matched it (§11.1)
+        advance();
+        // the name is required, because a call resolves against it (§11.1)
+        declaration.name = expect_identifier();
+        // the parameters are delimited, so they are read until the list closes (§11.1)
+        expect_punctuation("(");
+        // the parameters run until the closing parenthesis or the end of the stream (§11.1)
+        while (!at_punctuation(")") && peek().kind != Token::Kind::End) {
+            // each parameter is a name followed by its type, which the body reads by name (§11.1)
+            FunctionParameter parameter;
+            // the span starts at the parameter name, so a diagnostic points at it (§11.1)
+            parameter.span.start = peek().span.start;
+            // the name is required, because the body reads the argument through it (§11.1)
+            parameter.name = expect_identifier();
+            // a colon separates the name from its type, which keeps the two readable (§11.1)
+            expect_punctuation(":");
+            // the type is a bare name, which the checker resolves against the catalog (§11.1)
+            parameter.type = expect_type_name(false);
+            // the span ends at the type, which the reader has just consumed (§11.1)
+            parameter.span.end = last_consumed_end();
+            // the parameter is kept, because the signature is what a call checks its arguments against (§11.1)
+            declaration.parameters.push_back(std::move(parameter));
+            // a comma separates the parameters, which is optional before the closing parenthesis (§11.1)
+            accept_punctuation(",");
+        }
+        // a parameter list that never closed is reported, because the signature is incomplete (§11.1)
+        expect_punctuation(")");
+        // a colon separates the parameter list from the return type, which the checker resolves (§11.1)
+        expect_punctuation(":");
+        // the return type is a bare name, which the checker resolves against the catalog (§11.1)
+        declaration.return_type = expect_type_name(false);
+        // the body is delimited, so the return is read from inside it (§11.1)
+        expect_punctuation("{");
+        // the body is a single return statement, which is the whole of the computation in this form (§11.1)
+        if (at_keyword("return")) {
+            // the keyword is consumed, because the expression follows it (§11.1)
+            advance();
+            // the returned expression is parsed with the full expression grammar, which a call reaches (§11.1)
+            declaration.return_value = parse_expression();
+            // the statement ends, which is what separates it from the closing brace (§11.1)
+            accept_punctuation(";");
+        }
+        // anything else cannot open the body, so the reader is told what was expected (§11.1)
+        else if (!at_punctuation("}"))
+            report_unexpected("a return statement");
+        // a body that never closed is reported, because the declaration is incomplete (§11.1)
+        expect_punctuation("}");
+        // the span ends at the closing brace, which the reader has already consumed (§11.1)
+        declaration.span.end = last_consumed_end();
+        // the function is kept, because the checker resolves its calls and the codegen emits its body (§11.1)
+        file.functions.push_back(std::move(declaration));
     }
 
     std::unique_ptr<ComponentDeclaration> Parser::parse_component() {
@@ -625,18 +796,34 @@ namespace albor::compiler
             statement.span.start = start;
             // the target is moved into the statement, because the parser owns the stream (§11.1)
             statement.target = std::move(target);
-            // a dot after the target is a built-in method call on a collection property (§11.1)
+            // a dot after the target reaches a field or a built-in method on a collection property (§11.1)
             if (at_punctuation(".")) {
-                // the dot is consumed, because the method name follows it (§11.1)
+                // the dot is consumed, because the name after it follows (§11.1)
                 advance();
-                // the statement is a property method, which mutates the collection in place (§11.1)
-                statement.kind = HandlerStatementKind::PropertyMethod;
-                // the method name is required, because a trailing dot names no method (§11.1)
-                statement.method = expect_identifier();
-                // the argument list is parenthesised, which is how every call in the language reads (§11.1)
-                expect_punctuation("(");
-                // the arguments are read as a list, which may be empty for clear (§11.1)
-                statement.arguments = parse_arguments();
+                // the name after the dot is required, because a trailing dot names nothing (§11.1)
+                const std::string name = expect_identifier();
+                // an opening parenthesis is a built-in method call on a collection property (§11.1)
+                if (accept_punctuation("(")) {
+                    // the statement is a property method, which mutates the collection in place (§11.1)
+                    statement.kind = HandlerStatementKind::PropertyMethod;
+                    // the method name is kept, because the checker resolves it against the closed set (§11.1)
+                    statement.method = name;
+                    // the arguments are read as a list, which may be empty for clear (§11.1)
+                    statement.arguments = parse_arguments();
+                }
+                // an equals sign is an assignment to one field of a record property (§11.1)
+                else if (accept_punctuation("=")) {
+                    // the statement is a field write, which mutates the record in place (§11.1)
+                    statement.kind = HandlerStatementKind::FieldAssignment;
+                    // the field name is kept, because the checker resolves it against the record (§11.1)
+                    statement.field = name;
+                    // the assigned value is an expression, so it may compute anything a binding may (§11.1)
+                    statement.value = parse_expression();
+                }
+                else {
+                    // a dot followed by neither form is reported, because the body has only these (§11.1)
+                    m_diagnostics.add(Diagnostic::Severity::Error, SourceSpan{.start = start, .end = peek().span.start}, "E0203", "expected '(' to call a collection method or '=' to assign a field");
+                }
             }
             // an assignment is written with an equals sign (§11.1)
             else if (accept_punctuation("=")) {
@@ -944,6 +1131,34 @@ namespace albor::compiler
         // a conversion and a colour operation are the only call forms a binding may use (§11.1)
         if (peek().kind == Token::Kind::Identifier && at_punctuation("(", 1) && is_builtin_call(peek().text))
             return parse_conversion();
+        // an identifier followed by a paren that is not a builtin is a call to a declared function (§11.1)
+        if (peek().kind == Token::Kind::Identifier && at_punctuation("(", 1)) {
+            // the span starts at the function name, so a diagnostic covers the whole call (§11.1)
+            const SourceSpan span = peek().span;
+            // the function name is moved out of the unit, because the parser owns the stream (§11.1)
+            std::string target = std::move(m_tokens[m_index].text);
+            // the name is consumed, so the argument list starts after it (§11.1)
+            advance();
+            // the argument list is delimited, so the values are read until it closes (§11.1)
+            expect_punctuation("(");
+            // the arguments travel in written order, because the call reads them left to right (§11.1)
+            std::vector<ExpressionPtr> arguments;
+            // an empty argument list is legal, because a function may take no parameters (§11.1)
+            if (!at_punctuation(")")) {
+                while (true) {
+                    // each argument is a full expression, so a call may pass a computed value (§11.1)
+                    arguments.push_back(parse_expression());
+                    // the separator ends the argument unless the list is already closed (§11.1)
+                    if (!at_punctuation(","))
+                        break;
+                    // the separator is consumed, so the next argument starts after it (§11.1)
+                    advance();
+                }
+            }
+            // the list is closed, which is required (§11.1)
+            expect_punctuation(")");
+            return CallExpression::make(std::move(target), std::move(arguments), span);
+        }
         // an identifier is a reference to a declared property (§11.1)
         if (peek().kind == Token::Kind::Identifier) {
             // the name is moved out of the unit, because the parser owns the stream (§11.1)
@@ -1087,7 +1302,7 @@ namespace albor::compiler
                 continue;
             }
             // the keywords are checked at the top level only, because a nested one is part of the broken body (§11.1)
-            if (at_keyword(IMPORT_KEYWORD) || at_keyword(COMPONENT_KEYWORD)) {
+            if (at_keyword(IMPORT_KEYWORD) || at_keyword(STRUCT_KEYWORD) || at_keyword(ENUM_KEYWORD) || at_keyword(FN_KEYWORD) || at_keyword(COMPONENT_KEYWORD)) {
                 // the scan stops before the keyword, so the next declaration is parsed from its start (§11.1)
                 return;
             }

@@ -19,6 +19,10 @@ namespace
         const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
         // the parser builds the untyped tree (§11.1)
         const SourceFile file = Parser(tokens, diagnostics).parse();
+        // the structs the file declares join the catalog, which is what makes a property of one resolve (§11.1)
+        register_ui_structs(file, catalog, diagnostics);
+        // the enums the file declares join the catalog, which is what makes a property of one hold a member (§11.1)
+        register_ui_enums(file, catalog);
         // the checker resolves it against the catalog, which is where the native types come from (§11.1, AD-17)
         return TypeChecker(catalog, diagnostics).check(file);
     }
@@ -432,6 +436,42 @@ TEST(TypeChecker, ReportsACollectionMethodOnAnIncomingProperty) {
     EXPECT_EQ(first(diagnostics).code, "E0413");
 }
 
+TEST(TypeChecker, ChecksAFieldAssignmentAgainstTheDeclaredFieldType) {
+    // arrange, act
+    const CheckedFile file = check("struct Frame { float width; } component C { inout property<Frame> frame; Button { on_clicked: { frame.width = 10.0; } } }");
+    // assert
+    const CheckedStatement& statement = file.components.at(0).root->handlers.at(0).body.at(0);
+    EXPECT_EQ(statement.kind, HandlerStatementKind::FieldAssignment);
+    EXPECT_EQ(statement.field, "width");
+}
+
+TEST(TypeChecker, ReportsAFieldAssignmentOnANonRecordProperty) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("component C { inout property<float> total: 0.0; Button { on_clicked: { total.width = 10.0; } } }", diagnostics);
+    // assert
+    EXPECT_TRUE(has_code(diagnostics, "E0417"));
+}
+
+TEST(TypeChecker, ReportsAFieldTheRecordDoesNotDeclare) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("struct Frame { float width; } component C { inout property<Frame> frame; Button { on_clicked: { frame.nope = 10.0; } } }", diagnostics);
+    // assert
+    EXPECT_TRUE(has_code(diagnostics, "E0416"));
+}
+
+TEST(TypeChecker, ReportsAFieldAssignmentOnAnIncomingProperty) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("struct Frame { float width; } component C { in property<Frame> frame; Button { on_clicked: { frame.width = 10.0; } } }", diagnostics);
+    // assert
+    EXPECT_TRUE(has_code(diagnostics, "E0413"));
+}
+
 TEST(TypeChecker, ChecksASignalInvocationAgainstItsParameters) {
     // arrange, act
     const CheckedFile file = check("component C { signal moved(float t); Button { on_clicked: { moved(1.5); } } }");
@@ -439,6 +479,13 @@ TEST(TypeChecker, ChecksASignalInvocationAgainstItsParameters) {
     ASSERT_EQ(only(file).root->handlers.at(0).body.size(), 1U);
     EXPECT_EQ(only(file).root->handlers.at(0).body.at(0).kind, HandlerStatementKind::SignalInvocation);
     EXPECT_EQ(only(file).root->handlers.at(0).body.at(0).arguments.size(), 1U);
+}
+
+TEST(TypeChecker, PassesARecordToASignalByValue) {
+    // arrange, act
+    const CheckedFile file = check("struct Frame { float width; } component C { inout property<Frame> frame; signal frame_changed(Frame frame); Button { on_clicked: { frame_changed(frame); } } }");
+    // assert the record argument matches the record parameter, so the whole file checks clean (§11.1)
+    EXPECT_EQ(file.components.at(0).root->handlers.at(0).body.at(0).kind, HandlerStatementKind::SignalInvocation);
 }
 
 TEST(TypeChecker, ReportsAnInvocationWithTheWrongArgumentCount) {
@@ -1514,6 +1561,69 @@ TEST(TypeChecker, ReportsAKeyFieldExactlyOnce) {
     EXPECT_EQ(record->key_field()->name, "key");
 }
 
+TEST(TypeChecker, ResolvesAStructPropertyFieldToItsDeclaredType) {
+    // arrange a struct a property carries and a field read inside a binding (§11.1)
+    DiagnosticList diagnostics;
+    // the field read feeds a conversion, which accepts the float the field declares (§11.1)
+    check("struct Frame { float width; float height; } component C { in property<Frame> frame; Column { Label { text: string(frame.width); } } }", diagnostics);
+    // assert the struct registered and the field resolved, so the whole file checks clean (§11.1)
+    EXPECT_EQ(diagnostics.count(), 0U);
+}
+
+TEST(TypeChecker, ReportsAStructFieldOfAnUnknownType) {
+    // arrange diagnostics, because a field must name a type the catalog resolves (§11.1)
+    DiagnosticList diagnostics;
+    // the field names a type nothing declares, so it produces nothing a read could hold (§11.1)
+    check("struct Bad { Nope value; } component C { Column {} }", diagnostics);
+    // assert
+    EXPECT_TRUE(has_code(diagnostics, "E0420"));
+}
+
+TEST(TypeChecker, RefusesAStructFieldTheDeclarationDoesNotHold) {
+    // arrange diagnostics, because a field read resolves against the declaration (§11.1)
+    DiagnosticList diagnostics;
+    // the field is not one the struct declared (§11.1)
+    check("struct Frame { float width; } component C { in property<Frame> frame; Column { Label { text: string(frame.nope); } } }", diagnostics);
+    // assert
+    EXPECT_TRUE(has_code(diagnostics, "E0416"));
+}
+
+TEST(TypeChecker, ResolvesAnEnumPropertyToItsDeclaredType) {
+    // arrange an enum a property holds and a member read inside a binding (§11.1)
+    DiagnosticList diagnostics;
+    // the member read types as the enum, which the string conversion accepts (§11.1)
+    check("enum Status { Todo, Doing, Done } component C { in property<Status> status; Column { Label { text: string(status); } } }", diagnostics);
+    // assert the enum registered and the property resolved, so the whole file checks clean (§11.1)
+    EXPECT_EQ(diagnostics.count(), 0U);
+}
+
+TEST(TypeChecker, ResolvesAnEnumMemberReadToTheEnumItself) {
+    // arrange an enum a property holds and a member written as a value inside a binding (§11.1)
+    DiagnosticList diagnostics;
+    // the written member types as the enum, which the assignment to the property accepts (§11.1)
+    check("enum Status { Todo, Doing, Done } component C { in property<Status> status; Column { Label { text: string(status); } } }", diagnostics);
+    // assert
+    EXPECT_EQ(diagnostics.count(), 0U);
+}
+
+TEST(TypeChecker, ReportsAnEnumMemberTheDeclarationDoesNotHold) {
+    // arrange diagnostics, because a member read resolves against the declaration (§11.1)
+    DiagnosticList diagnostics;
+    // the member is not one the enum declared (§11.1)
+    check("enum Status { Todo, Doing, Done } component C { in property<Status> status; Column { Label { text: string(status.Nope); } } }", diagnostics);
+    // assert the unknown member is reported against the ones the enum does hold (§11.1)
+    EXPECT_TRUE(has_code(diagnostics, "E0416"));
+}
+
+TEST(TypeChecker, ReportsAPropertyOfAnUnknownEnumName) {
+    // arrange diagnostics, because a property type must resolve against the catalog (§11.1)
+    DiagnosticList diagnostics;
+    // the property names a type nothing declares, so a value of it cannot resolve (§11.1)
+    check("component C { in property<Status> status; Column {} }", diagnostics);
+    // assert the unknown type is reported, which is what an unresolved property name produces (§11.1)
+    EXPECT_TRUE(has_code(diagnostics, "E0400"));
+}
+
 TEST(TypeCheckerHandlers, ABodyTheParserCouldNotReadIsReportedNotFollowed) {
     // arrange a handler body holding an element, which the language does not allow in a body (§11.1)
     DiagnosticList diagnostics;
@@ -1540,4 +1650,46 @@ TEST(TypeCheckerHandlers, ABodyTheParserCouldNotReadIsReportedNotFollowed) {
     EXPECT_TRUE(reported);
     // assert the checker still produced a file to describe, because a crash reports nothing (§11.1)
     EXPECT_EQ(file.components.size(), 1U);
+}
+
+TEST(TypeChecker, TypesAFunctionCallAgainstItsDeclaration) {
+    // act a component calls a declared function inside a binding, which the call resolves against (§11.1)
+    const CheckedFile file = check("fn double(x: float): float { return x * 2.0; } component C { in property<float> amount; Label { text: string(double(amount)); } }");
+    // assert the file generated cleanly, because the call and its arguments both resolved (§11.1)
+    EXPECT_EQ(file.functions.size(), 1U);
+    EXPECT_TRUE(only(file).root->assignments.at(0).type.is(TypeKind::String));
+}
+
+TEST(TypeChecker, TypesAFunctionThatCallsAnotherFunction) {
+    // act a function calls one declared after it, which the two-pass signature resolution makes legal (§11.1)
+    const CheckedFile file = check("fn outer(x: float): float { return inner(x) + 1.0; } fn inner(x: float): float { return x; } component C { in property<float> amount; Label { text: string(outer(amount)); } }");
+    // assert the forward call resolved, because both signatures were known before either body (§11.1)
+    EXPECT_EQ(file.functions.size(), 2U);
+}
+
+TEST(TypeChecker, ReportsAnUnknownFunctionName) {
+    // arrange diagnostics, because a call to an undeclared name cannot resolve (§11.1)
+    DiagnosticList diagnostics;
+    // act the component calls a function the file never declares (§11.1)
+    check("component C { in property<float> amount; Label { text: string(missing(amount)); } }", diagnostics);
+    // assert the problem is reported by name, because that is what the author must change (§11.1)
+    EXPECT_EQ(first(diagnostics).code, "E0416");
+}
+
+TEST(TypeChecker, ReportsAWrongArityFunctionCall) {
+    // arrange diagnostics, because a call that passes the wrong count cannot resolve (§11.1)
+    DiagnosticList diagnostics;
+    // act the call passes one argument where the declaration takes two (§11.1)
+    check("fn double(x: float): float { return x * 2.0; } component C { in property<float> amount; Label { text: string(double(amount, amount)); } }", diagnostics);
+    // assert the problem names the count, because both the name and the arity are what the author must fix (§11.1)
+    EXPECT_EQ(first(diagnostics).code, "E0417");
+}
+
+TEST(TypeChecker, ReportsAMismatchedFunctionArgument) {
+    // arrange diagnostics, because an argument that cannot fill its parameter cannot resolve (§11.1)
+    DiagnosticList diagnostics;
+    // act the call passes a string where the parameter is a float (§11.1)
+    check("fn double(x: float): float { return x * 2.0; } component C { in property<string> name; Label { text: string(double(name)); } }", diagnostics);
+    // assert the problem is a mismatch, because the written type cannot fill the parameter (§11.1)
+    EXPECT_GT(diagnostics.count(), 0U);
 }

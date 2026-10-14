@@ -20,6 +20,10 @@ namespace
         const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
         // the parser builds the untyped tree (§11.1)
         const SourceFile file = Parser(tokens, diagnostics).parse();
+        // the structs the file declares join the catalog, which is what makes a property of one resolve (§11.1)
+        register_ui_structs(file, catalog, diagnostics);
+        // the enums the file declares join the catalog, which is what makes a property of one hold a member (§11.1)
+        register_ui_enums(file, catalog);
         // the checker resolves it against the catalog, which is where the native types come from (§11.1, AD-17)
         const CheckedFile checked = TypeChecker(catalog, diagnostics).check(file);
         // the generator turns the checked file into the facade files, which is what the driver writes (§11.3)
@@ -437,6 +441,37 @@ TEST(Codegen, ACollectionRemoveAtGuardsTheIndex) {
     const GeneratedFile& cpp = file_named(files, "c.cpp");
     EXPECT_TRUE(contains(cpp.content, "if (index >= 0 && index < static_cast<int>(list.size()))"));
     EXPECT_TRUE(contains(cpp.content, "list.erase(list.begin() + index);"));
+}
+
+TEST(Codegen, AFieldAssignmentCopiesWritesAndSetsBack) {
+    // arrange
+    DiagnosticList diagnostics;
+    // the field write mutates a record property through a working copy (§11.1)
+    const std::string_view source = "struct Frame { float width; } component C { inout property<Frame> frame; Button { on_clicked: { frame.width = 10.0; } } }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert
+    ASSERT_FALSE(files.empty());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // the working copy is taken, the field is written and the rebuilt record is set back (§11.1)
+    EXPECT_TRUE(contains(cpp.content, "auto record = self->m_frame.get();"));
+    EXPECT_TRUE(contains(cpp.content, "record.width = "));
+    EXPECT_TRUE(contains(cpp.content, "self->m_frame.set(std::move(record));"));
+}
+
+TEST(Codegen, ARecordSignalParameterCrossesByValue) {
+    // arrange
+    DiagnosticList diagnostics;
+    // the signal carries a record payload, which the facade exposes by value (§11.1)
+    const std::string_view source = "struct Frame { float width; } component C { inout property<Frame> frame; signal frame_changed(Frame frame); Button { on_clicked: { frame_changed(frame); } } }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the whole file generates, because the record signal and its invocation both resolved (§11.1)
+    EXPECT_FALSE(files.empty());
+    EXPECT_FALSE(diagnostics.has_errors());
+    const GeneratedFile& header = file_named(files, "c.h");
+    // the facade exposes a setter that takes the record by value (§14.1)
+    EXPECT_TRUE(contains(header.content, "set_on_frame_changed"));
 }
 
 TEST(Codegen, ASnapshotOfARecordGeneratesTheFacade) {
@@ -881,6 +916,99 @@ TEST(Codegen, ARecordFieldReadRendersAsAMemberAccess) {
     EXPECT_TRUE(files.empty());
     // assert the record itself resolved, because only the repeat is refused (§11.2, AD-17)
     EXPECT_FALSE(has_code(diagnostics, "E0416"));
+}
+
+TEST(Codegen, AUiStructEmitsAGuardedDefinition) {
+    // arrange
+    DiagnosticList diagnostics;
+    // the struct is declared in the file itself, so the header emits rather than includes it (§11.1)
+    const std::string_view source = "struct Frame { float width; float height; } component C { in property<Frame> frame; Column {} }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert
+    ASSERT_FALSE(files.empty());
+    const GeneratedFile& header = file_named(files, "c.h");
+    // the struct is declared with its fields, which is the shape a field read walks (§11.1)
+    EXPECT_TRUE(contains(header.content, "struct Frame"));
+    EXPECT_TRUE(contains(header.content, "float width;"));
+    EXPECT_TRUE(contains(header.content, "float height;"));
+    // the definition is guarded, so a translation unit that includes two headers defining it takes one (§11.1)
+    EXPECT_TRUE(contains(header.content, "#ifndef ALBOR_GENERATED_STRUCT_Frame"));
+    EXPECT_TRUE(contains(header.content, "#define ALBOR_GENERATED_STRUCT_Frame"));
+}
+
+TEST(Codegen, AUiStructWithACollectionFieldPullsTheVectorHeader) {
+    // arrange
+    DiagnosticList diagnostics;
+    // the struct holds a collection field, so the emitted definition names the vector header (§8.1, §11.1)
+    const std::string_view source = "struct Box { vector<string> items; } component C { in property<Box> box; Column {} }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert
+    ASSERT_FALSE(files.empty());
+    const GeneratedFile& header = file_named(files, "c.h");
+    // the collection field renders as the standard vector over its element (§8.1, §11.3)
+    EXPECT_TRUE(contains(header.content, "std::vector<std::string> items;"));
+    // the vector header follows, because the emitted definition names it (§8.1)
+    EXPECT_TRUE(contains(header.content, "#include <vector>"));
+}
+
+TEST(Codegen, AUiStructFieldReadChecksClean) {
+    // arrange
+    DiagnosticList diagnostics;
+    // the field read feeds a conversion inside a binding, which the checker resolves (§11.1)
+    const std::string_view source = "struct Frame { float width; } component C { in property<Frame> frame; Column { Label { text: string(frame.width); } } }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the whole file generates, because the struct, the property and the field all resolved (§11.1)
+    EXPECT_FALSE(files.empty());
+    EXPECT_FALSE(diagnostics.has_errors());
+}
+
+TEST(Codegen, AUiEnumEmitsAGuardedDefinition) {
+    // arrange
+    DiagnosticList diagnostics;
+    // the enum is declared in the file itself, so the header emits rather than includes it (§11.1)
+    const std::string_view source = "enum Status { Todo, Doing, Done } component C { in property<Status> status; Column {} }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert
+    ASSERT_FALSE(files.empty());
+    const GeneratedFile& header = file_named(files, "c.h");
+    // the enum is declared with its members, which is the closed set a value may take (§11.1)
+    EXPECT_TRUE(contains(header.content, "enum class Status"));
+    EXPECT_TRUE(contains(header.content, "Todo,"));
+    EXPECT_TRUE(contains(header.content, "Doing,"));
+    EXPECT_TRUE(contains(header.content, "Done,"));
+    // the definition is guarded, so a translation unit that includes two headers defining it takes one (§11.1)
+    EXPECT_TRUE(contains(header.content, "#ifndef ALBOR_GENERATED_ENUM_Status"));
+    EXPECT_TRUE(contains(header.content, "#define ALBOR_GENERATED_ENUM_Status"));
+}
+
+TEST(Codegen, AUiEnumMemberReadEmitsTheEnumerator) {
+    // arrange
+    DiagnosticList diagnostics;
+    // the member is written as a value inside a binding, which the emission renders as the enumerator (§11.1)
+    const std::string_view source = "enum Status { Todo, Doing, Done } component C { in property<Status> status; Column { Label { text: string(status); } } }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the whole file generates, because the enum and the property both resolved (§11.1)
+    EXPECT_FALSE(files.empty());
+    EXPECT_FALSE(diagnostics.has_errors());
+}
+
+TEST(Codegen, AUiEnumPropertyTypeRendersTheEnumName) {
+    // arrange
+    DiagnosticList diagnostics;
+    // a property of the enum type spells the enum in the facade signature (§11.1)
+    const std::string_view source = "enum Status { Todo, Doing, Done } component C { in property<Status> status; Column {} }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert
+    ASSERT_FALSE(files.empty());
+    const GeneratedFile& header = file_named(files, "c.h");
+    // the accessor names the enum, which is what a host binds against (§14.1)
+    EXPECT_TRUE(contains(header.content, "Status status()"));
 }
 
 TEST(Codegen, ADataTypeStillBlocksTheOutput) {
@@ -1525,4 +1653,22 @@ TEST(CodegenColour, AColourOperationWithNoArgumentsIsReportedNotThrown) {
     EXPECT_NO_THROW((void)TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file));
     // assert
     EXPECT_GT(diagnostics.count(), 0U);
+}
+
+TEST(Codegen, EmitsAFunctionAsAGuardedStaticDefinition) {
+    // arrange diagnostics, because the function and its call must both generate (§11.1)
+    DiagnosticList diagnostics;
+    // act a component calls a declared function inside a binding (§11.1)
+    const std::string_view source = "fn double(x: float): float { return x * 2.0; } component C { in property<float> amount; Label { text: string(double(amount)); } }";
+    // assert the whole file generates, because the function and its call both resolved (§11.1)
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    EXPECT_FALSE(files.empty());
+    EXPECT_FALSE(diagnostics.has_errors());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // the forward declaration and the guarded definition both land, because a chunk may share the unit (§11.1, AD-03b)
+    EXPECT_TRUE(contains(cpp.content, "#ifndef ALBOR_GENERATED_FN_double"));
+    EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static float double(float x);"));
+    EXPECT_TRUE(contains(cpp.content, "return (x * 2.0f);"));
+    // the call renders as a plain C++ call, which the static function above defines (§11.1)
+    EXPECT_TRUE(contains(cpp.content, "double(self->m_amount.get())"));
 }

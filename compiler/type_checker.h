@@ -55,6 +55,25 @@ namespace albor::compiler
         SourceSpan span;
     };
 
+    // one resolved function, which a binding may call as a named pure computation (§11.1)
+    struct CheckedFunction
+    {
+        // the declared name, which a call resolves against (§11.1)
+        std::string name;
+
+        // the parameter names and their resolved types, which the arguments must match (§11.1)
+        std::vector<std::pair<std::string, ValueType>> parameters;
+
+        // the resolved return type, which a call carries as its own type (§11.1)
+        ValueType return_type;
+
+        // the returned expression, whose dependencies are empty because a function reads only its parameters (§11.1)
+        SharedExpression return_value;
+
+        // where the declaration was written (§11.1)
+        SourceSpan span;
+    };
+
     // one assignment on an element, resolved against the element type and typed (§11.1)
     struct CheckedAssignment
     {
@@ -86,8 +105,11 @@ namespace albor::compiler
         // the property being assigned, the signal invoked or the collection the method runs on (§11.1)
         std::string target;
 
-        // the built-in method name, which is empty for an assignment and a signal invocation (§11.1)
+        // the built-in method name, which is empty for an assignment, a signal invocation and a field write (§11.1)
         std::string method;
+
+        // the field of a record the write reaches, which is empty for every other form (§11.1)
+        std::string field;
 
         // the assigned value, which is absent for an invocation and a method call (§11.1)
         SharedExpression value;
@@ -220,6 +242,9 @@ namespace albor::compiler
         // the checked components in declaration order (§11.1)
         std::vector<CheckedComponent> components;
 
+        // the checked functions in declaration order, which a component binding may call (§11.1)
+        std::vector<CheckedFunction> functions;
+
         // the manifest modules the file imported, which name where a record header lives (§11.1, §11.2, AD-17)
         std::vector<std::string> imported_modules;
     };
@@ -247,6 +272,9 @@ namespace albor::compiler
             // the signal the handler body sits inside, whose parameters the body reads by name (§11.1)
             const ElementSignal* handler_signal = nullptr;
 
+            // the function parameters the body sits inside, which shadow every property of the same name (§11.1)
+            const std::vector<std::pair<std::string, ValueType>>* function_parameters = nullptr;
+
             // whether the scope sits inside a draw block, which is what exposes the canvas extent (§6.4)
             bool in_draw = false;
 
@@ -259,6 +287,12 @@ namespace albor::compiler
 
         // resolve the declarations of one component, which is the first pass (§11.1)
         void resolve_declarations(const ComponentDeclaration& component, CheckedComponent& out);
+
+        // resolve the signatures of every function first, so a call may appear before its declaration (§11.1)
+        void check_function_signatures(const SourceFile& file, std::vector<CheckedFunction>& out);
+
+        // resolve the body of one function against its own parameters, which is the second pass (§11.1)
+        void check_function(const FunctionDeclaration& declaration, CheckedFunction& out);
 
         // report a name the component declares twice, because a reference would be ambiguous (§11.1)
         void report_duplicate(std::string_view name, SourceSpan span);
@@ -371,7 +405,16 @@ namespace albor::compiler
         // the signals of the component being checked, which a handler resolves against (§11.1)
         const std::vector<CheckedSignal>* m_signals = nullptr;
 
+        // the resolved function signatures of the file, which a call resolves against wherever it appears (§11.1)
+        const std::vector<CheckedFunction>* m_functions = nullptr;
+
         // the declared names of the component being checked, with the span each was written at (§11.1)
         std::vector<std::pair<std::string, SourceSpan>> m_declared;
     };
+
+    // register the structs a file declares, turning each into a record the catalog resolves before the check (§11.1)
+    void register_ui_structs(const SourceFile& file, ElementCatalog& catalog, DiagnosticList& diagnostics);
+
+    // register the enums a file declares, turning each into a value set the catalog resolves before the check (§11.1)
+    void register_ui_enums(const SourceFile& file, ElementCatalog& catalog);
 } // namespace albor::compiler

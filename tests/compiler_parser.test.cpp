@@ -202,6 +202,73 @@ TEST(Parser, ReadsAnUnqualifiedImport) {
     EXPECT_EQ(file.imports.at(0).module, "albor");
 }
 
+TEST(Parser, ReadsAStructWithItsFields) {
+    // arrange, act
+    const SourceFile file = parse("struct Frame { float width; float height; }");
+    // assert
+    ASSERT_EQ(file.structs.size(), 1U);
+    const StructDeclaration& frame = file.structs.at(0);
+    EXPECT_EQ(frame.name, "Frame");
+    ASSERT_EQ(frame.fields.size(), 2U);
+    EXPECT_EQ(frame.fields.at(0).name, "width");
+    EXPECT_EQ(frame.fields.at(0).type, "float");
+    EXPECT_EQ(frame.fields.at(1).name, "height");
+    EXPECT_EQ(frame.fields.at(1).type, "float");
+}
+
+TEST(Parser, ReadsAStructFieldWithAParametricType) {
+    // arrange, act
+    const SourceFile file = parse("struct Box { vector<string> items; }");
+    // assert
+    ASSERT_EQ(file.structs.size(), 1U);
+    ASSERT_EQ(file.structs.at(0).fields.size(), 1U);
+    EXPECT_EQ(file.structs.at(0).fields.at(0).name, "items");
+    EXPECT_EQ(file.structs.at(0).fields.at(0).type, "vector<string>");
+}
+
+TEST(Parser, ReportsAStructWithNoName) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    parse("struct { float width; }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0203");
+}
+
+TEST(Parser, ReadsAnEnumWithItsMembers) {
+    // arrange, act
+    const SourceFile file = parse("enum Status { Todo, Doing, Done }");
+    // assert
+    ASSERT_EQ(file.enums.size(), 1U);
+    const EnumDeclaration& status = file.enums.at(0);
+    EXPECT_EQ(status.name, "Status");
+    ASSERT_EQ(status.members.size(), 3U);
+    EXPECT_EQ(status.members.at(0), "Todo");
+    EXPECT_EQ(status.members.at(1), "Doing");
+    EXPECT_EQ(status.members.at(2), "Done");
+}
+
+TEST(Parser, ReadsAnEnumWithASingleMember) {
+    // arrange, act
+    const SourceFile file = parse("enum Level { Only }");
+    // assert
+    ASSERT_EQ(file.enums.size(), 1U);
+    EXPECT_EQ(file.enums.at(0).name, "Level");
+    ASSERT_EQ(file.enums.at(0).members.size(), 1U);
+    EXPECT_EQ(file.enums.at(0).members.at(0), "Only");
+}
+
+TEST(Parser, ReportsAnEnumWithNoName) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    parse("enum { Todo, Done }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0203");
+}
+
 TEST(Parser, ReadsTheExampleComponentWhole) {
     // arrange, act
     const SourceFile file = parse(MAIN_VIEW);
@@ -281,6 +348,16 @@ TEST(Parser, ReadsASignalWithParameters) {
     ASSERT_EQ(signal.parameter_types.size(), 2U);
     EXPECT_EQ(signal.parameter_types.at(0), "float");
     EXPECT_EQ(signal.parameter_types.at(1), "int");
+}
+
+TEST(Parser, ReadsASignalWithARecordParameter) {
+    // arrange, act
+    const SourceFile file = parse("struct Frame { float width; } component C { signal frame_changed(Frame frame); }");
+    // assert
+    const SignalDeclaration& signal = file.components.at(0).signals.at(0);
+    EXPECT_EQ(signal.name, "frame_changed");
+    ASSERT_EQ(signal.parameter_types.size(), 1U);
+    EXPECT_EQ(signal.parameter_types.at(0), "Frame");
 }
 
 TEST(Parser, ReportsAComponentThatIsNeverClosed) {
@@ -520,6 +597,18 @@ TEST(Parser, ReadsASetStatementWithTwoArguments) {
     ASSERT_EQ(statement.arguments.size(), 2U);
 }
 
+TEST(Parser, ReadsAFieldAssignmentStatement) {
+    // arrange, act
+    const SourceFile file = parse("struct Frame { float width; } component C { inout property<Frame> frame; Button { on_clicked: { frame.width = 10.0; } } }");
+    // assert
+    const HandlerStatement& statement = file.components.at(0).root->handlers.at(0).body.at(0);
+    EXPECT_EQ(statement.kind, HandlerStatementKind::FieldAssignment);
+    EXPECT_EQ(statement.target, "frame");
+    EXPECT_EQ(statement.field, "width");
+    EXPECT_TRUE(statement.value != nullptr);
+    EXPECT_TRUE(statement.arguments.empty());
+}
+
 TEST(Parser, ReadsEachLiteralKind) {
     // arrange
     const std::string_view source = "component C { B { a: 42; b: 1.5; c: \"text\"; d: #FF0000; e: 12px; f: true; } }";
@@ -594,14 +683,15 @@ TEST(Parser, ReadsEachBuiltinConversion) {
     EXPECT_EQ(as_conversion(assignments.at(3).value).target_type, "bool");
 }
 
-TEST(Parser, ReportsACallThatIsNotABuiltinConversion) {
-    // arrange
-    DiagnosticList diagnostics;
-    // act
-    parse("component C { B { text: widget(1); } }", diagnostics);
+TEST(Parser, ReadsACallToADeclaredFunctionAsItsOwnForm) {
+    // arrange, act
+    const SourceFile file = parse("component C { B { text: tick(1); } }");
     // assert
-    ASSERT_GE(diagnostics.count(), 1U);
-    EXPECT_EQ(first(diagnostics).code, "E0203");
+    const ExpressionPtr& value = file.components.at(0).root->assignments.at(0).value;
+    ASSERT_NE(dynamic_cast<CallExpression*>(value.get()), nullptr);
+    const auto& call = static_cast<const CallExpression&>(*value);
+    EXPECT_EQ(call.function, "tick");
+    EXPECT_EQ(call.arguments.size(), 1U);
 }
 
 TEST(Parser, ReadsAUnaryApplicationAndAGroupingAsTheirOwnForms) {
@@ -1120,4 +1210,24 @@ TEST(Parser, ReportsAListWhoseClosingBracketIsMissing) {
     parse("component C { in property<vector<int>> items: [1, 2; Column {} }", diagnostics);
     // assert the problem is reported rather than the list absorbing the rest of the file (§11.1)
     EXPECT_TRUE(diagnostics.count() > 0U);
+}
+
+TEST(Parser, ReadsAFunctionDeclarationWithParametersAndAReturn) {
+    // arrange, act a file declares a function whose body returns an expression (§11.1)
+    const SourceFile file = parse("fn tick_step(low: float, high: float): float { return (high - low) / 10.0; } component C { Column {} }");
+    // assert the function is kept, because a call resolves against it (§11.1)
+    ASSERT_EQ(file.functions.size(), 1U);
+    const FunctionDeclaration& function = file.functions.at(0);
+    // assert the name and the return type come straight from the declaration (§11.1)
+    EXPECT_EQ(function.name, "tick_step");
+    EXPECT_EQ(function.return_type, "float");
+    // assert the parameters are kept in written order, because the arguments must match them (§11.1)
+    ASSERT_EQ(function.parameters.size(), 2U);
+    EXPECT_EQ(function.parameters.at(0).name, "low");
+    EXPECT_EQ(function.parameters.at(0).type, "float");
+    EXPECT_EQ(function.parameters.at(1).name, "high");
+    EXPECT_EQ(function.parameters.at(1).type, "float");
+    // assert the returned expression was parsed, because the codegen emits its body (§11.1)
+    ASSERT_NE(function.return_value, nullptr);
+    EXPECT_NE(dynamic_cast<BinaryExpression*>(function.return_value.get()), nullptr);
 }

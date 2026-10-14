@@ -30,5 +30,16 @@ albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/condi
 # the collection facade is generated, which proves a handler mutates a vector property in place (§11.1)
 albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/collection_panel.ui")
 
+# the struct facade is generated, which proves a ui-declared struct compiles into a facade (§11.1)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/frame_panel.ui")
+
+# the enum facade is generated, which proves a ui-declared enum compiles into a facade (§11.1)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/status_panel.ui")
+
+# the field-write facade is generated, which proves a handler writes one field and a signal carries a record (§11.1)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/field_panel.ui")
+
+# the function facade is generated, which proves a ui-declared function compiles into a facade (§11.1)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/fn_panel.ui")
 # the generated header reaches the test binary, because the suite includes the facade it exercises (§11.3)
 target_include_directories(albor-tests PRIVATE "${CMAKE_BINARY_DIR}/generated/albor-vector-fixture")

@@ -5,68 +5,21 @@
 
 namespace albor::compiler
 {
-    namespace
-    {
-        // the wrappers that make a snapshot and a vector read as the author wrote them (§10.5, §13.2, §8.1)
-        constexpr std::string_view SNAPSHOT_OPEN = "Snapshot<";
-        constexpr std::string_view SNAPSHOT_CLOSE = ">";
-        constexpr std::string_view VECTOR_OPEN = "vector<";
-        constexpr std::string_view VECTOR_CLOSE = ">";
-
-        // a parameter form is the wrapper, the element and the closing angle, so this is the shortest it can be (§11.1)
-        constexpr std::size_t SHORTEST_PARAMETRIC = 10;
-
-        // resolve a type name as written, against the catalog that holds the native types (§11.1, §11.2, AD-17)
-        ValueType resolve_type_name(std::string_view written, const ElementCatalog& catalog) {
-            // a scalar name is one the language spells without brackets (§11.1)
-            if (written == "bool")
-                return scalar(TypeKind::Bool);
-            // an integer is spelled int (§11.1)
-            if (written == "int")
-                return scalar(TypeKind::Int);
-            // a floating point number is spelled float (§11.1)
-            if (written == "float")
-                return scalar(TypeKind::Float);
-            // a text value is spelled string (§11.1)
-            if (written == "string")
-                return scalar(TypeKind::String);
-            // a colour is spelled color (§11.1)
-            if (written == "color")
-                return scalar(TypeKind::Color);
-            // a length is spelled length, so a declared length and a literal length agree (§11.1, AD-27)
-            if (written == "length")
-                return scalar(TypeKind::Length);
-            // a snapshot is written Snapshot<T>, whose element may itself nest (§10.5, §13.2)
-            if (written.substr(0, SNAPSHOT_OPEN.size()) == SNAPSHOT_OPEN && written.size() >= SHORTEST_PARAMETRIC && written.substr(written.size() - SNAPSHOT_CLOSE.size()) == SNAPSHOT_CLOSE) {
-                // the element is the part between the brackets, which resolves the same way (§10.5, §13.2)
-                const std::string_view inner = written.substr(SNAPSHOT_OPEN.size(), written.size() - SNAPSHOT_OPEN.size() - SNAPSHOT_CLOSE.size());
-                // the wrapper is rebuilt rather than trusted, so a malformed element still resolves (§10.5, §13.2)
-                return ValueType::parameterized(TypeKind::Snapshot, resolve_type_name(inner, catalog));
-            }
-            // a vector is written vector<T>, whose element may itself nest (§8.1)
-            if (written.substr(0, VECTOR_OPEN.size()) == VECTOR_OPEN && written.size() >= SHORTEST_PARAMETRIC && written.substr(written.size() - VECTOR_CLOSE.size()) == VECTOR_CLOSE) {
-                // the element is the part between the brackets, which resolves the same way (§8.1)
-                const std::string_view inner = written.substr(VECTOR_OPEN.size(), written.size() - VECTOR_OPEN.size() - VECTOR_CLOSE.size());
-                // the wrapper is rebuilt rather than trusted, so a malformed element still resolves (§8.1)
-                return ValueType::parameterized(TypeKind::Vector, resolve_type_name(inner, catalog));
-            }
-            // a record is a named type a repeat walks, and it resolves like any other manifest name (§11.2, AD-17, AD-13)
-            if (catalog.find_record(written) != nullptr)
-                return ValueType::native(std::string(written));
-            // anything else is a native type, which the catalog holds only if a manifest declared it (§11.2, AD-17)
-            if (catalog.find(written) != nullptr || catalog.holds_native(written))
-                return ValueType::native(std::string(written));
-            // an unknown name resolves to the error type, so nothing downstream raises a second complaint (§11.1)
-            return error_type();
-        }
-    } // namespace
-
     std::optional<ValueType> TypeChecker::Scope::lookup(std::string_view name) const {
         // a draw block reads the canvas extent, which is the node it paints into (§6.4)
         if (in_draw) {
             // the arranged width is the only width a drawing can be correct against (§6.4)
             if (name == "canvas_width" || name == "canvas_height")
                 return scalar(TypeKind::Float);
+        }
+        // the function parameters are checked first, because they are the nearest scope and shadow a property (§11.1)
+        if (function_parameters != nullptr) {
+            // each parameter is named by the declaration, so the body reads the argument by that name (§11.1)
+            for (const std::pair<std::string, ValueType>& parameter : *function_parameters) {
+                // the name decides, so a parameter resolves to exactly one type (§11.1)
+                if (parameter.first == name)
+                    return parameter.second;
+            }
         }
         // the repeat bindings are checked first, because they are the nearest scope (§11.1)
         if (repeat != nullptr) {
@@ -87,11 +40,12 @@ namespace albor::compiler
             }
         }
         // the declarations are scanned, because every scope is built from a resolved component (§11.1)
-        for (const CheckedProperty& property : *properties) {
-            // the name decides, so a reference resolves to exactly one declaration (§11.1)
-            if (property.name == name)
-                return property.type;
-        }
+        if (properties != nullptr)
+            for (const CheckedProperty& property : *properties) {
+                // the name decides, so a reference resolves to exactly one declaration (§11.1)
+                if (property.name == name)
+                    return property.type;
+            }
         // a name the scope does not hold was already reported, so nothing is returned (§11.1)
         return std::nullopt;
     }
@@ -105,6 +59,13 @@ namespace albor::compiler
         // the imports name the manifest modules, which is what a record header path is built from (§11.1, AD-17)
         for (const ImportDeclaration& imported : file.imports)
             checked.imported_modules.push_back(imported.module);
+        // the function signatures are resolved first, so a call may appear before the declaration it names (§11.1)
+        check_function_signatures(file, checked.functions);
+        // the signatures are published, because a body resolves its calls against them (§11.1)
+        m_functions = &checked.functions;
+        // the function bodies are resolved next, because a body may call any signature the file declares (§11.1)
+        for (std::size_t index = 0; index < file.functions.size() && index < checked.functions.size(); index++)
+            check_function(file.functions[index], checked.functions[index]);
         // the components are checked in declaration order, because the result preserves it (§11.1)
         for (const ComponentDeclaration& component : file.components) {
             // the component is assembled locally, because the pass state belongs to one declaration (§11.1)
@@ -132,7 +93,60 @@ namespace albor::compiler
         m_properties = nullptr;
         // the signals are cleared with it, because they pointed into the component that just ended (§11.1)
         m_signals = nullptr;
+        // the function signatures are cleared with it, because they pointed into the checked file (§11.1)
+        m_functions = nullptr;
         return checked;
+    }
+
+    void TypeChecker::check_function_signatures(const SourceFile& file, std::vector<CheckedFunction>& out) {
+        // every signature is resolved before any body, so a call may appear before the declaration it names (§11.1)
+        for (const FunctionDeclaration& declaration : file.functions) {
+            // the declaration is resolved locally, because one mistake must not hide the rest (§11.1)
+            CheckedFunction function;
+            // the name and the span come straight from the declaration (§11.1)
+            function.name = declaration.name;
+            function.span = declaration.span;
+            // the parameters are resolved in written order, because the arguments must match them (§11.1)
+            for (const FunctionParameter& parameter : declaration.parameters) {
+                // the written type resolves against the catalog, which is where a native type comes from (§11.2, AD-17)
+                const ValueType resolved = resolve_type_name(parameter.type, m_catalog);
+                // a type that did not resolve is reported here, because nothing downstream can (§11.1)
+                if (resolved.is_error())
+                    report_unknown_type(parameter.type, parameter.span);
+                // the parameter is kept, because a body reads the argument by that name (§11.1)
+                function.parameters.emplace_back(parameter.name, resolved);
+            }
+            // the return type resolves against the catalog, which is what a call carries as its own (§11.2, AD-17)
+            const ValueType return_type = resolve_type_name(declaration.return_type, m_catalog);
+            // a return type that did not resolve is reported here, because nothing downstream can (§11.1)
+            if (return_type.is_error())
+                report_unknown_type(declaration.return_type, declaration.span);
+            // the return type is stored, because a call takes it as the call's type (§11.1)
+            function.return_type = return_type;
+            // a name the file declares twice is reported, because a call would be ambiguous (§11.1)
+            for (const CheckedFunction& prior : out)
+                if (prior.name == function.name)
+                    m_diagnostics.add(Diagnostic::Severity::Error, function.span, "E0401", "'" + function.name + "' is declared more than once in this file");
+            // the signature is kept, because a body resolves its calls against it (§11.1)
+            out.push_back(std::move(function));
+        }
+    }
+
+    void TypeChecker::check_function(const FunctionDeclaration& declaration, CheckedFunction& out) {
+        // the parameters are the whole of the scope, because a function reads only its own arguments (§11.1)
+        const Scope scope{.properties = nullptr, .repeat = nullptr, .handler_signal = nullptr, .in_draw = false, .function_parameters = &out.parameters};
+        // a body with no return carries no expression, so there is nothing to type (§11.1)
+        if (declaration.return_value == nullptr)
+            return;
+        // the dependencies are dropped, because a function reads only its parameters and so has none (§11.1)
+        std::vector<std::string> dependencies;
+        // the returned expression is typed against the parameters, which is the whole of the check (§11.1)
+        const ValueType value_type = type_expression(*declaration.return_value, scope, dependencies);
+        // the value must match the declared return type, because nothing widens implicitly (§11.1)
+        if (!assignable(value_type, out.return_type))
+            report_type_mismatch(*declaration.return_value, value_type, out.return_type);
+        // the returned expression is shared rather than re-owned, because the tree owns the expression (§11.1)
+        out.return_value = std::shared_ptr<const Expression>(declaration.return_value.get(), [](const Expression*) {});
     }
 
     void TypeChecker::resolve_declarations(const ComponentDeclaration& component, CheckedComponent& out) {
@@ -488,7 +502,7 @@ namespace albor::compiler
 
     void TypeChecker::resolve_statement(const HandlerStatement& statement, const Scope& scope, CheckedHandler& out) {
         // a statement the parser could not read carries no value, and the parser already reported it (§11.1)
-        if (statement.kind == HandlerStatementKind::Assignment && statement.value == nullptr)
+        if ((statement.kind == HandlerStatementKind::Assignment || statement.kind == HandlerStatementKind::FieldAssignment) && statement.value == nullptr)
             return;
         // the statement is assembled locally, because one mistake must not hide the rest (§11.1)
         CheckedStatement out_statement;
@@ -562,6 +576,60 @@ namespace albor::compiler
                             report_type_mismatch(*out_statement.arguments.at(index), argument_type, declared->parameter_types.at(index));
                         }
                     }
+                }
+            }
+        }
+        else if (statement.kind == HandlerStatementKind::FieldAssignment) {
+            // the assigned value shares the parsed expression, because the tree owns it (§11.1)
+            out_statement.value = std::shared_ptr<const Expression>(statement.value.get(), [](const Expression*) {});
+            // the scope is the component's own, because a handler may reach any declared property (§11.1)
+            const ValueType value_type = type_expression(*out_statement.value, scope, out_statement.dependencies);
+            // the target must be a declared property of the component (§11.1)
+            const CheckedProperty* target = nullptr;
+            // the declarations are scanned, because only they can be the target (§11.1)
+            for (const CheckedProperty& property : *scope.properties) {
+                // the name decides, so the target resolves to exactly one declaration (§11.1)
+                if (property.name == statement.target)
+                    target = &property;
+            }
+            // a target that is not a declared property is reported, because there is nothing to write into (§11.1)
+            if (target == nullptr) {
+                // the problem points at the statement, because that is where the target is written (§11.1)
+                m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0404", "'" + statement.target + "' is not a property of this component");
+            }
+            // an incoming property may not be written from a handler, because a binding owns it (§11.1, §7)
+            else if (target->direction != PropertyDirection::InOut)
+                report_not_assignable(statement, statement.target);
+            // only a record carries fields, so a scalar target has none to write (§11.1)
+            else if (!target->type.is(TypeKind::Native)) {
+                // the problem names the type, because a scalar has no fields (§11.1)
+                m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0417", "'" + statement.target + "' is a " + target->type.to_string() + ", so it has no fields");
+            }
+            else {
+                // the record decides the fields, so it is resolved against the catalog (§11.2, AD-17)
+                const RecordType* record = m_catalog.find_record(target->type.native_name());
+                // a native type that is not a record carries no fields, which is reported (§11.2, AD-17)
+                if (record == nullptr) {
+                    // the problem points at the statement, because that is where the field is written (§11.1)
+                    m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0417", "'" + statement.target + "' is not a record, so it has no fields");
+                }
+                else {
+                    // the field name resolves against the declaration, which the record wrote (§11.2, AD-17)
+                    const RecordFieldType* field = record->find_field(statement.field);
+                    // a field the record does not declare cannot be written, which is reported rather than guessed (§11.2)
+                    if (field == nullptr) {
+                        // the problem points at the field name, because that is the part the author must change (§11.2)
+                        m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0416", "'" + record->name + "' has no field named '" + statement.field + "'");
+                    }
+                    // the value must match the field, because nothing widens implicitly (§11.1)
+                    else if (!assignable(value_type, field->type)) {
+                        // the mismatch points at the value, because that is what the author must change (§11.1)
+                        report_type_mismatch(*out_statement.value, value_type, field->type);
+                    }
+                    // the field is kept, because the codegen emits the write through it (§11.1)
+                    out_statement.field = statement.field;
+                    // the write is recorded, because the graph needs it to order invalidation (§7.3, AD-04a)
+                    out.writes.push_back(statement.target);
                 }
             }
         }
@@ -710,12 +778,15 @@ namespace albor::compiler
     ValueType TypeChecker::type_field_access(const FieldAccessExpression& access, const Scope& scope, std::vector<std::string>& dependencies) {
         // a value set is written as a bare name, so it is resolved before the object is typed as a reference (§11.1)
         if (const auto* set_name = dynamic_cast<const PropertyExpression*>(access.object.get()); set_name != nullptr) {
-            // the name decides, so a written value resolves to exactly one set (§11.1)
-            if (const NamedValueSet* set = find_named_value_set(set_name->name)) {
+            // the name decides, so a written value resolves to exactly one set, declared or builtin (§11.1)
+            if (const NamedValueSet* set = m_catalog.find_named_value_set(set_name->name)) {
                 // a member the set does not carry is reported against the ones it does, which the author needs (§11.1)
                 if (set->find_member(access.field) == nullptr)
                     report_unknown_value_member(access, *set);
-                // the set decides the kind, and a member that resolved types as that kind (§11.1)
+                // a set the file declared produces the type its name resolves to, which a property of it holds (§11.1)
+                if (set->user)
+                    return ValueType::native(set->name);
+                // a builtin set decides the kind, and a member that resolved types as that kind (§11.1)
                 return scalar(set->kind);
             }
         }
@@ -732,6 +803,17 @@ namespace albor::compiler
         }
         // a field read reaches a record only when the manifest declared one by that name (§11.2, AD-17)
         const RecordType* record = m_catalog.find_record(object.native_name());
+        // a native type that is not a record may be a value set the file declared, whose members resolve by name (§11.1)
+        if (record == nullptr) {
+            // the set is looked up by the object's name, because a property of the enum holds one member of it (§11.1)
+            if (const NamedValueSet* set = m_catalog.find_named_value_set(object.native_name()); set != nullptr && set->user) {
+                // a member the set does not carry is reported against the ones it does, which the author needs (§11.1)
+                if (set->find_member(access.field) == nullptr)
+                    report_unknown_value_member(access, *set);
+                // the set decides the type, which is what a property of it holds (§11.1)
+                return ValueType::native(set->name);
+            }
+        }
         // a native type that is not a record carries no fields, which the manifest declared as data (§11.2, AD-17)
         if (record == nullptr) {
             // the problem points at the access, because that is what the author must change (§11.2, AD-17)
@@ -814,12 +896,13 @@ namespace albor::compiler
         }
         // a repeat binding is not a component property, so it registers no dependency (§7.3, AD-04a)
         bool is_component_property = false;
-        // the declarations are scanned, because only they are component properties (§7.3, AD-04a)
-        for (const CheckedProperty& property : *scope.properties) {
-            // the name decides, so the dependency belongs to exactly one property (§7.3, AD-04a)
-            if (property.name == reference.name)
-                is_component_property = true;
-        }
+        // the declarations are scanned, because only they are a dependency, and a function scope holds none (§11.1)
+        if (scope.properties != nullptr)
+            for (const CheckedProperty& property : *scope.properties) {
+                // the name decides, so the dependency belongs to exactly one property (§7.3, AD-04a)
+                if (property.name == reference.name)
+                    is_component_property = true;
+            }
         // a component property becomes a dependency, because the binding invalidates when it changes (§7.3, AD-04a)
         if (is_component_property) {
             // a repeated read registers the dependency once, because the engine keeps a set (§7.3, AD-04a)
@@ -849,6 +932,37 @@ namespace albor::compiler
     }
 
     ValueType TypeChecker::type_call(const CallExpression& call, const Scope& scope, std::vector<std::string>& dependencies) {
+        // a declared function is resolved first, because it shadows a builtin of the same name (§11.1)
+        if (m_functions != nullptr)
+            for (const CheckedFunction& function : *m_functions) {
+                // the name decides, so a call resolves to exactly one declaration (§11.1)
+                if (function.name != call.function)
+                    continue;
+                // the arity must match, because a call that passes the wrong count cannot resolve (§11.1)
+                if (call.arguments.size() != function.parameters.size()) {
+                    // the report names the name and the count, because both are what the author has to change (§11.1)
+                    m_diagnostics.add(Diagnostic::Severity::Error, call.location(), "E0417", "'" + call.function + "' takes " + std::to_string(function.parameters.size()) + " arguments");
+                    return error_type();
+                }
+                // each argument is typed and checked against its parameter, because nothing widens implicitly (§11.1)
+                for (std::size_t index = 0; index < call.arguments.size(); index++) {
+                    // the argument is typed first, so the dependency list follows the written order (§7.3, AD-04a)
+                    const ValueType argument = type_expression(*call.arguments.at(index), scope, dependencies);
+                    // an argument that failed suppresses the rule, because its type is not known (§11.1)
+                    if (argument.is_error())
+                        return error_type();
+                    // the parameter it fills is the type the argument must match (§11.1)
+                    const ValueType& parameter = function.parameters.at(index).second;
+                    // the argument must fill the parameter, because nothing widens implicitly (§11.1)
+                    if (!assignable(argument, parameter)) {
+                        // the mismatch points at the argument, because that is what the author wrote (§11.1)
+                        report_type_mismatch(*call.arguments.at(index), argument, parameter);
+                        return error_type();
+                    }
+                }
+                // a call to a declared function carries the declared return type (§11.1)
+                return function.return_type;
+            }
         // a call the language does not define has no type, which the report names (§11.1)
         if (call.function != "transparentize" && call.function != "alpha" && call.function != "alpha_set") {
             // the report names the name, because that is what the author has to change (§11.1)
@@ -1137,5 +1251,58 @@ namespace albor::compiler
         // every declared property is a starting point, because a cycle is reachable from one (§7.3, AD-04a)
         for (const CheckedProperty& property : component.properties)
             visit(edges, property.name, path, finished);
+    }
+
+    namespace
+    {
+        // report whether a field type holds another record, which the first release does not emit nested (§11.1)
+        bool holds_record(const ValueType& type, const ElementCatalog& catalog) {
+            // a native name holds a record only when the catalog declares one by that name (§11.1)
+            if (type.is(TypeKind::Native))
+                return catalog.find_record(type.native_name()) != nullptr;
+            // a parameter form nests its element, which is where a held record hides (§11.1)
+            if (type.kind() == TypeKind::Vector || type.kind() == TypeKind::Snapshot)
+                return holds_record(type.element(), catalog);
+            // a scalar carries no record, which is the common case (§11.1)
+            return false;
+        }
+    } // namespace
+
+    void register_ui_structs(const SourceFile& file, ElementCatalog& catalog, DiagnosticList& diagnostics) {
+        // the structs are walked in declaration order, which is the order a field may name an earlier one (§11.1)
+        for (const StructDeclaration& declaration : file.structs) {
+            // the record starts with its name and collects the fields as they are resolved (§11.1)
+            RecordType record{.name = declaration.name, .fields = {}, .from_ui = true};
+            // each field is walked, because a field read resolves by name against the declaration (§11.1)
+            for (const StructField& field : declaration.fields) {
+                // the written type becomes the type a field read produces, resolved against the catalog (§11.1)
+                const ValueType resolved = resolve_type_name(field.type, catalog);
+                // a field that names no type is reported, because a field read would produce nothing (§11.1)
+                if (resolved.is(TypeKind::Error))
+                    diagnostics.add(Diagnostic::Severity::Error, field.span, "E0420", "a struct field must name a known type");
+                // a field that holds another record is reported, because the emitted struct does not nest one yet (§11.1)
+                else if (holds_record(resolved, catalog))
+                    diagnostics.add(Diagnostic::Severity::Error, field.span, "E0421", "a struct field may not hold another record yet");
+                // the field joins the record, which is the shape a field read walks (§11.1)
+                record.fields.push_back(RecordFieldType{.name = field.name, .type = resolved, .is_key = false});
+            }
+            // the record joins the catalog, which is what makes a property of the struct name resolve (§11.1)
+            catalog.add_record(record);
+        }
+    }
+
+    void register_ui_enums(const SourceFile& file, ElementCatalog& catalog) {
+        // the enums are walked in declaration order, which is the order a member may be read (§11.1)
+        for (const EnumDeclaration& declaration : file.enums) {
+            // the set starts with its name, marked as file declared so it resolves as a property type (§11.1)
+            NamedValueSet set{.name = declaration.name, .kind = TypeKind::Error, .user = true};
+            // each member is walked, because a member read resolves by written name against the declaration (§11.1)
+            for (const std::string& member : declaration.members) {
+                // a file declared enum spells its member the same in ui and in C++, so both forms match (§11.1, §11.3)
+                set.members.push_back(NamedValueMember{.written = member, .code = member});
+            }
+            // the set joins the catalog, which is what makes a property of the enum name resolve (§11.1)
+            catalog.add_named_value_set(set);
+        }
     }
 } // namespace albor::compiler

@@ -439,8 +439,13 @@ namespace albor::compiler
             };
 
             // build the emitter over the component and the shared problem list (§11.3)
-            ComponentEmitter(const CheckedComponent& component, DiagnosticList& diagnostics, const ElementCatalog* catalog, std::vector<std::string> modules) :
-                m_component(component), m_diagnostics(diagnostics), m_class(component.name), m_stem(snake_case(component.name)), m_catalog(catalog), m_modules(std::move(modules)) {}
+            ComponentEmitter(const CheckedComponent& component, DiagnosticList& diagnostics, const ElementCatalog* catalog, std::vector<std::string> modules, const std::vector<CheckedFunction>* functions) :
+                m_component(component), m_diagnostics(diagnostics), m_class(component.name), m_stem(snake_case(component.name)), m_catalog(catalog), m_modules(std::move(modules)), m_functions(functions) {
+                // the declared function names are collected, which tells a call apart from a colour op (§11.1)
+                if (m_functions != nullptr)
+                    for (const CheckedFunction& function : *m_functions)
+                        m_function_names.insert(function.name);
+            }
 
             // generate the two files of the component, which is empty when a problem blocked it (§11.3)
             bool emit();
@@ -491,6 +496,9 @@ namespace albor::compiler
 
             // render the implementation unit, which the facade hides behind its header (§14.1, AD-03)
             void emit_source();
+
+            // render the file-level functions this component may call, which a binding then calls (§11.1)
+            void emit_functions();
 
             // render the body struct, which owns the properties and the widgets (§14.1)
             void emit_body();
@@ -648,6 +656,15 @@ namespace albor::compiler
             // the signal parameters the handler body reads, which are the lambda arguments (§11.3)
             std::vector<std::string> m_signal_parameters;
 
+            // the file-level functions the component may call, which a call resolves against (§11.1)
+            const std::vector<CheckedFunction>* m_functions = nullptr;
+
+            // the declared function names, which tell a function call apart from a colour operation (§11.1)
+            std::unordered_set<std::string> m_function_names;
+
+            // the parameters of the function body being emitted, which read the arguments by name (§11.1)
+            std::vector<std::string> m_function_parameters;
+
             // whether the body being emitted is a draw block, which is what exposes the canvas extent (§6.4)
             bool m_draw_extent = false;
 
@@ -673,6 +690,12 @@ namespace albor::compiler
 
             // the data type names a snapshot carries, which the facade forward-declares instead (§11.2)
             std::vector<std::string> m_data_declarations;
+
+            // the records the file declares in ui, which the header emits rather than includes (§11.1)
+            std::vector<const RecordType*> m_ui_structs;
+
+            // the enums the file declares in ui, which the header emits rather than includes (§11.1)
+            std::vector<const NamedValueSet*> m_ui_enums;
 
             // the catalog the records resolve against, which is null when the caller registered none (§11.2, AD-17)
             const ElementCatalog* m_catalog = nullptr;
@@ -724,8 +747,35 @@ namespace albor::compiler
             // a record is named by its own name, which the glue generator turned into a snake case file (§11.2, AD-17)
             if (type.is(TypeKind::Native)) {
                 // the catalog is what distinguishes a record from a plain data type, because both are native (§11.2)
-                if (m_catalog == nullptr || m_catalog->find_record(type.native_name()) == nullptr)
+                const RecordType* record = m_catalog == nullptr ? nullptr : m_catalog->find_record(type.native_name());
+                if (record == nullptr) {
+                    // a native type that is no record is looked up as a value set, which is where a ui enum hides (§11.1)
+                    if (m_catalog == nullptr)
+                        return;
+                    const NamedValueSet* set = m_catalog->find_named_value_set(type.native_name());
+                    // only a set the file declared is emitted here, because a builtin has its own header (§11.1)
+                    if (set == nullptr || !set->user)
+                        return;
+                    // a set already collected is not repeated, because the definition is written once (§11.1)
+                    if (std::find(m_ui_enums.begin(), m_ui_enums.end(), set) == m_ui_enums.end())
+                        m_ui_enums.push_back(set);
                     return;
+                }
+                // a record the file declared in ui is emitted by the header, which keeps one definition (§11.1)
+                if (record->from_ui) {
+                    // a record already collected is not repeated, because the definition is written once (§11.1)
+                    if (std::find(m_ui_structs.begin(), m_ui_structs.end(), record) == m_ui_structs.end())
+                        m_ui_structs.push_back(record);
+                    // a collection field pulls the vector header, which the emitted definition names (§8.1, §11.1)
+                    for (const RecordFieldType& field : record->fields)
+                        if (carries_vector(field.type))
+                            m_uses_vector = true;
+                    // a colour field pulls the paint header, which the emitted definition names (§11.3)
+                    for (const RecordFieldType& field : record->fields)
+                        if (field.type.is(TypeKind::Color))
+                            m_uses_color = true;
+                    return;
+                }
                 // each imported module is searched, because the record lives in exactly one of them (§11.1, §11.2, AD-17)
                 for (const std::string& module : m_modules) {
                     // the header path is the module and the snake cased record, which is what the generator wrote (§11.2)
@@ -866,6 +916,12 @@ namespace albor::compiler
                 // a registered record is generatable, because the glue generator wrote its definition (§11.2)
                 if (m_catalog != nullptr && m_catalog->find_record(type.native_name()) != nullptr)
                     return;
+                // a value set the file declared in ui is generatable, because the header emits the enum (§11.1)
+                if (m_catalog != nullptr) {
+                    const NamedValueSet* set = m_catalog->find_named_value_set(type.native_name());
+                    if (set != nullptr && set->user)
+                        return;
+                }
                 // a data type the manifest declared is not a record, so nothing generates it (§11.2, AD-17)
                 m_diagnostics.add(Diagnostic::Severity::Error, span, "E0501", "a value of type '" + type.to_string() + "' cannot be generated yet");
                 // the blocking flag is set, which empties the generated output (§11.3)
@@ -1140,6 +1196,11 @@ namespace albor::compiler
             // a grouping contributes nothing, so its inner expression types the whole (§11.3)
             if (const auto* grouping = dynamic_cast<const GroupingExpression*>(&expression))
                 return type_of(*grouping->inner);
+            // a call to a declared function carries the declared return type (§11.1)
+            if (const auto* call = dynamic_cast<const CallExpression*>(&expression); call != nullptr && m_function_names.count(call->function) != 0 && m_functions != nullptr)
+                for (const CheckedFunction& function : *m_functions)
+                    if (function.name == call->function)
+                        return function.return_type;
             // a shape the checker already rejected cannot be typed here, which is safe because it blocked (§11.3)
             return error_type();
         }
@@ -1186,6 +1247,52 @@ namespace albor::compiler
                 for (const std::string& forward : m_data_declarations)
                     line(1, "struct " + forward + ";");
                 // the blank closes the forward section, which separates it from the class (§14.1)
+                line(0, "");
+            }
+            // the records the file declares in ui are emitted here, which keeps one definition behind a guard (§11.1)
+            for (const RecordType* record : m_ui_structs) {
+                // the guard macro is named after the record, so a second header that emits it is skipped (§11.1)
+                const std::string guard = "ALBOR_GENERATED_STRUCT_" + record->name;
+                // the provenance names the record, which is what a reader of the header sees (§11.1)
+                line(1, "// the " + record->name + " record the file declares in ui, which the facade carries by value (§11.1)");
+                // the guard opens, so a translation unit that includes two headers defining it takes one (§11.1)
+                line(1, "#ifndef " + guard);
+                line(1, "#define " + guard);
+                // the struct is declared with its fields, which is the shape a field read walks (§11.1)
+                line(1, "struct " + record->name);
+                line(1, "{");
+                // each field renders its C++ type and name, which is what the definition holds (§11.1)
+                for (const RecordFieldType& field : record->fields)
+                    line(2, cpp_type(field.type) + " " + field.name + ";");
+                // the struct closes, which is the whole definition (§11.1)
+                line(1, "};");
+                // the guard closes, so the definition is taken at most once per translation unit (§11.1)
+                line(1, "#endif");
+                // the blank separates one record from the next (§11.1)
+                line(0, "");
+            }
+            // the enums the file declares in ui are emitted here, which keeps one definition behind a guard (§11.1)
+            for (const NamedValueSet* set : m_ui_enums) {
+                // the guard macro is named after the set, so a second header that emits it is skipped (§11.1)
+                const std::string guard = "ALBOR_GENERATED_ENUM_" + set->name;
+                // the provenance names the set, which is what a reader of the header sees (§11.1)
+                line(1, "// the " + set->name + " enum the file declares in ui, which a property of it holds one member of (§11.1)");
+                // the guard opens, so a translation unit that includes two headers defining it takes one (§11.1)
+                line(1, "#ifndef " + guard);
+                line(1, "#define " + guard);
+                // the enum is declared with its members, which is the closed set a value may take (§11.1)
+                line(1, "enum class " + set->name);
+                line(1, "{");
+                // each member renders as an enumerator, which is the name the written form matches (§11.1)
+                for (std::size_t index = 0; index < set->members.size(); ++index) {
+                    // a trailing comma keeps the last member from needing special casing (§11.1)
+                    line(2, set->members[index].code + ",");
+                }
+                // the enum closes, which is the whole definition (§11.1)
+                line(1, "};");
+                // the guard closes, so the definition is taken at most once per translation unit (§11.1)
+                line(1, "#endif");
+                // the blank separates one set from the next (§11.1)
                 line(0, "");
             }
             line(1, "// the concrete facade of the " + m_class + " component, which hides its generated body (§14.1, AD-03)");
@@ -1237,6 +1344,53 @@ namespace albor::compiler
             line(2, "std::unique_ptr<Impl> m_impl;");
             line(1, "};");
             line(0, "} // namespace albor");
+        }
+
+        void ComponentEmitter::emit_functions() {
+            // a file with no function declares nothing here, which keeps the unit small (§11.1)
+            if (m_functions == nullptr || m_functions->empty())
+                return;
+            // the signature of each function is built once, which the forward declaration shares (§11.1)
+            std::vector<std::string> signatures;
+            signatures.reserve(m_functions->size());
+            for (const CheckedFunction& function : *m_functions) {
+                // the types are the resolved ones, which the record header already declares (§11.1)
+                std::string signature = cpp_type(function.return_type) + " " + function.name + "(";
+                for (std::size_t index = 0; index < function.parameters.size(); index++) {
+                    // a comma joins the earlier parameters, which is how a C++ parameter list reads (§11.1)
+                    if (index != 0)
+                        signature += ", ";
+                    // the parameter name is sanitised, because the written name may be a keyword (§14.1)
+                    signature += cpp_type(function.parameters.at(index).second) + " " + sanitize(function.parameters.at(index).first);
+                }
+                // the list is closed, which is what the forward declaration and the definition both need (§11.1)
+                signature += ")";
+                signatures.push_back(std::move(signature));
+            }
+            // a forward declaration precedes every definition, because a function may call one written after it (§11.1)
+            for (const std::string& signature : signatures)
+                line(0, "[[maybe_unused]] static " + signature + ";");
+            // each definition follows, which is what a call site below then reaches (§11.1)
+            for (std::size_t index = 0; index < m_functions->size(); index++) {
+                const CheckedFunction& function = m_functions->at(index);
+                line(0, "");
+                // the guard keeps one definition when two components share one unit (§11.1, AD-03b)
+                line(0, "#ifndef ALBOR_GENERATED_FN_" + function.name);
+                line(0, "#define ALBOR_GENERATED_FN_" + function.name);
+                // the parameters are published, so a reference inside the body reads the argument by name (§11.1)
+                m_function_parameters.clear();
+                for (const std::pair<std::string, ValueType>& parameter : function.parameters)
+                    m_function_parameters.push_back(sanitize(parameter.first));
+                // the body is a single return, which is the whole of the computation in this form (§11.1)
+                line(0, "[[maybe_unused]] static " + signatures.at(index) + " {");
+                // a body with no return expression is empty, which the checker already allowed (§11.1)
+                if (function.return_value != nullptr)
+                    line(1, "return " + emit_expression(*function.return_value) + ";");
+                line(0, "}");
+                // the parameters are cleared, because the next body binds its own (§11.1)
+                m_function_parameters.clear();
+                line(0, "#endif");
+            }
         }
 
         void ComponentEmitter::emit_source() {
@@ -1308,6 +1462,8 @@ namespace albor::compiler
             line(0, "");
             line(0, "namespace albor");
             line(0, "{");
+            // the file-level functions come first, because an evaluator or a handler below may call one (§11.1)
+            emit_functions();
             // the printing helpers come first, because an evaluator below may call one (§11.3)
             if (m_uses_float_helper)
                 emit_float_helper();
@@ -2501,6 +2657,21 @@ namespace albor::compiler
                                 line(2, "}");
                             }
                         }
+                        // a field write copies the record, writes the field and sets it back (§11.1)
+                        else if (statement.kind == HandlerStatementKind::FieldAssignment) {
+                            // the property name is shared, because the write goes through it (§11.3)
+                            const std::string property = "self->m_" + sanitize(statement.target);
+                            // the mutation is scoped, so the statement owns its working name (§11.1)
+                            line(2, "{");
+                            // a working copy is taken, because the field write rebuilds the record it sets back (§11.1)
+                            line(3, "// a working copy of the record is taken, which the field write rebuilds (§11.1)");
+                            line(3, "auto record = " + property + ".get();");
+                            // the field is assigned, which is the whole point of the write (§11.1)
+                            line(3, "record." + statement.field + " = " + emit_expression(*statement.value) + ";");
+                            // the rebuilt record is set back, which the engine settles (§11.1)
+                            line(3, property + ".set(std::move(record));");
+                            line(2, "}");
+                        }
                         // an invocation reports the slot, which the host installed (§11.3)
                         else {
                             std::string arguments;
@@ -2553,7 +2724,7 @@ namespace albor::compiler
                     for (std::size_t index = 0; index + 1 < call.arguments.size(); index++)
                         arguments += (arguments.empty() ? "" : ", ") + emit_expression(*call.arguments[index]);
                     const std::string colour = emit_expression(*call.arguments.back());
-                    // the numbers are split into origin and size, which is what the rect is built from (§6.4)
+                    // the numbers split into origin and size, which the rect builds from (§6.4)
                     std::vector<std::string> numbers;
                     std::string current;
                     for (const char character : arguments) {
@@ -2658,6 +2829,12 @@ namespace albor::compiler
                     if (parameter == reference->name)
                         return parameter;
                 }
+                // a function parameter is the argument the static function received, which the body reads by name (§11.1)
+                for (const std::string& parameter : m_function_parameters) {
+                    // the name decides, so a parameter resolves to the argument the call passed (§11.1)
+                    if (parameter == sanitize(reference->name))
+                        return parameter;
+                }
                 return m_object + "->m_" + sanitize(reference->name) + ".get()";
             }
             // a conversion renders through its operand, which the operand type decides (§11.3)
@@ -2682,8 +2859,10 @@ namespace albor::compiler
             if (const auto* access = dynamic_cast<const FieldAccessExpression*>(&expression)) {
                 // a written value renders as the enumerator the set declares, which the checker resolved (§11.1, §8.2)
                 if (const auto* set_name = dynamic_cast<const PropertyExpression*>(access->object.get()); set_name != nullptr) {
+                    // the catalog carries a declared set first, and the builtin table is the fallback (§11.1)
+                    const NamedValueSet* set = m_catalog != nullptr ? m_catalog->find_named_value_set(set_name->name) : find_named_value_set(set_name->name);
                     // the name decides, so a written value resolves to exactly one set (§11.1)
-                    if (const NamedValueSet* set = find_named_value_set(set_name->name); set != nullptr) {
+                    if (set != nullptr) {
                         // the member decides the enumerator, because the two spellings differ (§11.3, §8.2)
                         if (const NamedValueMember* member = set->find_member(access->field); member != nullptr)
                             return "albor::" + (set->cpp_name.empty() ? set->name : set->cpp_name) + "::" + member->code;
@@ -2739,6 +2918,19 @@ namespace albor::compiler
         }
 
         std::string ComponentEmitter::emit_call(const CallExpression& call) {
+            // a call to a declared function renders as a plain C++ call, which the static function above defines (§11.1)
+            if (m_function_names.count(call.function) != 0) {
+                // the arguments render in written order, because the call reads them left to right (§11.1)
+                std::string out = call.function + "(";
+                for (std::size_t index = 0; index < call.arguments.size(); index++) {
+                    // a comma joins the earlier arguments, which is how a C++ argument list reads (§11.1)
+                    if (index != 0)
+                        out += ", ";
+                    out += emit_expression(*call.arguments.at(index));
+                }
+                // the list is closed, which is what a call needs (§11.1)
+                return out + ")";
+            }
             // the colour renders first, because every operation is a method on it (§6.1)
             const std::string colour = emit_expression(*call.arguments.at(0));
             // the amount renders second, because it is the fraction or alpha the operation works by (§6.1)
@@ -2989,7 +3181,7 @@ namespace albor::compiler
         std::vector<std::string> chunk_contents;
         for (const CheckedComponent& component : file.components) {
             // the emitter is built per component, because the output files are per component (§14.1)
-            ComponentEmitter emitter(component, m_diagnostics, m_catalog, file.imported_modules);
+            ComponentEmitter emitter(component, m_diagnostics, m_catalog, file.imported_modules, &file.functions);
             // a component that was blocked empties the whole output, which the driver then treats as failed (§11.3)
             if (!emitter.emit())
                 return {};

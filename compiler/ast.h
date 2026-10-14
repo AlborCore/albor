@@ -298,7 +298,7 @@ namespace albor::compiler
         static ExpressionPtr make(ExpressionPtr object, std::string field, SourceSpan span);
     };
 
-    // the statements a handler body may contain, which is a closed set of three forms (§11.1)
+    // the statements a handler body may contain, which is a closed set of four forms (§11.1)
     enum class HandlerStatementKind
     {
         // an assignment to a declared property (§11.1)
@@ -308,10 +308,13 @@ namespace albor::compiler
         SignalInvocation,
 
         // a built-in method call on a declared collection property, which mutates it in place (§11.1)
-        PropertyMethod
+        PropertyMethod,
+
+        // an assignment to one field of a declared record property, which mutates the record in place (§11.1)
+        FieldAssignment
     };
 
-    // one statement inside a handler body, which is an assignment, a signal invocation or a collection method (§11.1)
+    // one statement inside a handler body, which is one of the four forms above (§11.1)
     class HandlerStatement
     {
     public:
@@ -321,8 +324,11 @@ namespace albor::compiler
         // the property being assigned, the signal being invoked or the collection the method runs on (§11.1)
         std::string target;
 
-        // the built-in method name, which is empty for an assignment and a signal invocation (§11.1)
+        // the built-in method name, which is empty for an assignment, a signal invocation and a field write (§11.1)
         std::string method;
+
+        // the field of a record the write reaches, which is empty for every other form (§11.1)
+        std::string field;
 
         // the assigned value, which is empty for a signal invocation and a method call (§11.1)
         ExpressionPtr value;
@@ -342,6 +348,38 @@ namespace albor::compiler
 
         // the parameter types as written, which the manifest and the facade agree on (§11.1)
         std::vector<std::string> parameter_types;
+
+        // where the declaration was written (§11.1)
+        SourceSpan span;
+    };
+
+    // one parameter of a function, which names a value its body reads (§11.1)
+    struct FunctionParameter
+    {
+        // the name the body writes to read the argument (§11.1)
+        std::string name;
+
+        // the type as written, which the checker resolves against the catalog (§11.1)
+        std::string type;
+
+        // where the parameter was written (§11.1)
+        SourceSpan span;
+    };
+
+    // a function the file declares, which is a pure named computation a binding may call (§11.1)
+    struct FunctionDeclaration
+    {
+        // the declared name, which a call resolves against (§11.1)
+        std::string name;
+
+        // the parameters in written order, which the arguments must match (§11.1)
+        std::vector<FunctionParameter> parameters;
+
+        // the return type as written, which the checker resolves against the catalog (§11.1)
+        std::string return_type;
+
+        // the returned expression, which is the whole of the body in this form (§11.1)
+        ExpressionPtr return_value;
 
         // where the declaration was written (§11.1)
         SourceSpan span;
@@ -485,6 +523,45 @@ namespace albor::compiler
         std::string module;
 
         // where the import was written (§11.1, AD-17)
+        SourceSpan span;
+    };
+
+    // one field a struct declares, whose type a field read resolves to (§11.1)
+    struct StructField
+    {
+        // the field name as written, which a binding addresses after the dot (§11.1)
+        std::string name;
+
+        // the type as written, which the registration pass resolves against the catalog (§11.1)
+        std::string type;
+
+        // where the field was written (§11.1)
+        SourceSpan span;
+    };
+
+    // a struct the file declares at its top level, which a property or a signal may then carry (§11.1)
+    struct StructDeclaration
+    {
+        // the struct name as written, which becomes the record type a field read resolves against (§11.1)
+        std::string name;
+
+        // the fields in declaration order, which is the shape a field read walks (§11.1)
+        std::vector<StructField> fields;
+
+        // where the declaration was written (§11.1)
+        SourceSpan span;
+    };
+
+    // an enum the file declares at its top level, which a property may then hold one member of (§11.1)
+    struct EnumDeclaration
+    {
+        // the enum name as written, which becomes the named value set a member resolves against (§11.1)
+        std::string name;
+
+        // the member names in declaration order, which is the closed set a value may take (§11.1)
+        std::vector<std::string> members;
+
+        // where the declaration was written (§11.1)
         SourceSpan span;
     };
 

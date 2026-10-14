@@ -16,6 +16,15 @@ namespace albor::compiler
         // the modules the file refers to, which are resolved against the manifest set (§11.1, AD-17)
         std::vector<ImportDeclaration> imports;
 
+        // the structs the file declares at its top level, which the registration pass turns into records (§11.1)
+        std::vector<StructDeclaration> structs;
+
+        // the enums the file declares at its top level, which the registration pass turns into value sets (§11.1)
+        std::vector<EnumDeclaration> enums;
+
+        // the functions the file declares at its top level, which a binding may call (§11.1)
+        std::vector<FunctionDeclaration> functions;
+
         // the components the file declares, which is what the checker and the codegen take (§11.1)
         std::vector<ComponentDeclaration> components;
     };
@@ -64,11 +73,20 @@ namespace albor::compiler
         // read a type name, which is bracketed for a property and bare for a signal parameter (§11.1, §11.2)
         [[nodiscard]] std::string expect_type_name(bool bracketed);
 
-        // read one declaration of the file, which is either an import or a component (§11.1)
+        // read one declaration of the file, which is an import, a struct, an enum or a component (§11.1)
         void parse_declaration(SourceFile& file);
 
         // read an import, which names a manifest module (§11.1, AD-17)
         void parse_import(SourceFile& file);
+
+        // read a struct declaration with its fields, which a property or a signal may then carry (§11.1)
+        void parse_struct(SourceFile& file);
+
+        // read an enum declaration with its members, which a property may then hold one of (§11.1)
+        void parse_enum(SourceFile& file);
+
+        // read a function declaration with its parameters and body, which a binding may call (§11.1)
+        void parse_function(SourceFile& file);
 
         // read a component declaration, including its members and its root element (§11.1)
         std::unique_ptr<ComponentDeclaration> parse_component();
