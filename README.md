@@ -146,8 +146,10 @@ application that owns its `FrameScene` and brings no tree at all. `application.s
 installs work that runs between a window's build and its submit; `application.set_input_handler`
 observes the event **after** the tree has answered it, `event.handled` included (§8.3).
 
-The raw APIs stay public and documented: `application.stage(handle)` reaches the wiring,
-and `create_window(options, RootBuilder)` builds a tree imperatively.
+`application.root(handle)` hands out the tree a window drives, for a host that installs a
+theme over it or reads its identity. The raw APIs stay public and documented as the escape
+hatch: `application.stage(handle)` reaches the wiring itself, and
+`create_window(options, RootBuilder)` builds a tree imperatively.
 
 ## Linking the dev runtime
 

@@ -330,7 +330,7 @@ TEST(MainWindow, AFacadeIsHandedBackSoAHostNeverDowncasts) {
     ASSERT_TRUE(handle.valid());
     ASSERT_NE(facade, nullptr);
     ASSERT_NE(application.stage(handle), nullptr);
-    EXPECT_EQ(application.stage(handle)->root(), facade);
+    EXPECT_EQ(&application.stage(handle)->root(), facade);
     // cleanup the application is a singleton, so this window is torn down before the next test (§4.1)
     EXPECT_TRUE(application.destroy_window(handle));
 }
@@ -362,7 +362,7 @@ TEST(MainWindow, AMainWindowOffersItsTreeToTheLinkedExtension) {
     ASSERT_TRUE(handle.valid());
     // assert the extension received the live tree, which is what a reload patches (§12.1)
     ASSERT_NE(application.stage(handle), nullptr);
-    EXPECT_EQ(recorder.bound_root, application.stage(handle)->root());
+    EXPECT_EQ(recorder.bound_root, &application.stage(handle)->root());
     // act close the window, which is what stops a reload reaching a dead tree (§5.2)
     EXPECT_TRUE(application.destroy_window(handle));
     // assert the release arrived and named that tree, because the binding belonged to this window alone (§5.2)
@@ -417,7 +417,7 @@ TEST(MainWindow, AWindowThatDrawsByHandPresentsItsOwnScene) {
     ASSERT_TRUE(handle.valid());
     // assert the window has no tree, because a scene source replaced it (§8.1)
     ASSERT_NE(application.stage(handle), nullptr);
-    EXPECT_EQ(application.stage(handle)->root(), nullptr);
+    EXPECT_FALSE(application.stage(handle)->has_tree());
     // arrange a hook, because the slot beside a scene source answers it too (§6.1)
     int hooks = 0;
     EXPECT_TRUE(application.set_frame_hook(handle, [&hooks] { hooks++; }));
@@ -464,7 +464,7 @@ TEST(MainWindow, ARetainedTreeSkipsATickThatChangedNothing) {
     // assert only the first built, because the scene was already current (§6.1, AD-06)
     EXPECT_EQ(application.frame_count(handle), 1u);
     // act invalidate the tree, which is what a settled binding or an animation does (§6.1, §7.3)
-    application.stage(handle)->root()->invalidate();
+    application.stage(handle)->root().invalidate();
     application.pump();
     // assert the invalidated tick built again, because the policy is dirty and not off (§6.1)
     EXPECT_EQ(application.frame_count(handle), 2u);
