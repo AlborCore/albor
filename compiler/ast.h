@@ -298,30 +298,36 @@ namespace albor::compiler
         static ExpressionPtr make(ExpressionPtr object, std::string field, SourceSpan span);
     };
 
-    // the statements a handler body may contain, which is a closed set of two forms (§11.1)
+    // the statements a handler body may contain, which is a closed set of three forms (§11.1)
     enum class HandlerStatementKind
     {
         // an assignment to a declared property (§11.1)
         Assignment,
 
         // an invocation of a declared signal (§11.1)
-        SignalInvocation
+        SignalInvocation,
+
+        // a built-in method call on a declared collection property, which mutates it in place (§11.1)
+        PropertyMethod
     };
 
-    // one statement inside a handler body, which is either an assignment or a signal invocation (§11.1)
+    // one statement inside a handler body, which is an assignment, a signal invocation or a collection method (§11.1)
     class HandlerStatement
     {
     public:
         // what kind of statement this is, which decides which fields below are set (§11.1)
         HandlerStatementKind kind = HandlerStatementKind::Assignment;
 
-        // the property being assigned or the signal being invoked, which is a declared name (§11.1)
+        // the property being assigned, the signal being invoked or the collection the method runs on (§11.1)
         std::string target;
 
-        // the assigned value, which is empty for a signal invocation (§11.1)
+        // the built-in method name, which is empty for an assignment and a signal invocation (§11.1)
+        std::string method;
+
+        // the assigned value, which is empty for a signal invocation and a method call (§11.1)
         ExpressionPtr value;
 
-        // the signal arguments, which are empty for an assignment (§11.1)
+        // the signal arguments or the method arguments, which are empty for an assignment (§11.1)
         std::vector<ExpressionPtr> arguments;
 
         // where the statement was written (§11.1)
@@ -396,14 +402,17 @@ namespace albor::compiler
         SourceSpan span;
     };
 
-    // the kinds of child element a tree node may contain, which is a closed set of two (§11.1)
+    // the kinds of child element a tree node may contain, which is a closed set of three (§11.1)
     enum class TreeNodeKind
     {
         // a declared element type such as Column or Button, which the manifest or the widget catalog resolves (§11.1)
         Element,
 
         // a repeated element, whose body is instantiated once per item (§11.1)
-        Repeat
+        Repeat,
+
+        // a conditional element, whose body exists only while the condition holds (§11.1)
+        Conditional
     };
 
     // one drawing call inside a draw block, which the codegen emits into the canvas body (§6.4, §11.1)
@@ -458,6 +467,12 @@ namespace albor::compiler
 
         // the body of a repeat, which is the element instantiated per item (§11.1)
         std::unique_ptr<TreeNode> repeat_body;
+
+        // the condition of a conditional, which decides whether the body exists (§11.1)
+        ExpressionPtr condition;
+
+        // the body of a conditional, which is the element that exists while the condition holds (§11.1)
+        std::unique_ptr<TreeNode> conditional_body;
 
         // where the node was written (§11.1)
         SourceSpan span;

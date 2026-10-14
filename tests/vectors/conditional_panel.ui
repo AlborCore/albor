@@ -1,0 +1,20 @@
+// the conditional fixture, which proves a guarded body materializes and a visible property hides a node (§11.1)
+
+component ConditionalPanel {
+    inout property<bool> show;
+    inout property<string> label_text;
+
+    Column {
+        spacing: 4px;
+
+        Label { text: "always"; }
+
+        Label { text: "sometimes"; visible: show; }
+
+        if show {
+            Label { text: label_text; }
+        }
+
+        Label { text: "end"; }
+    }
+}

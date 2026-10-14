@@ -27,6 +27,9 @@ namespace albor::compiler
         // the keyword that introduces a repeated element (§11.1)
         constexpr std::string_view REPEAT_KEYWORD = "Repeat";
 
+        // the keyword that introduces a conditional element, whose body exists only while the condition holds (§11.1)
+        constexpr std::string_view IF_KEYWORD = "if";
+
         // the keyword that binds an item inside a repeat body (§11.1)
         constexpr std::string_view IN_KEYWORD = "in";
 
@@ -375,6 +378,9 @@ namespace albor::compiler
         // a repeat is a tree node of its own kind, so it is read by its own rule (§11.1)
         if (at_keyword(REPEAT_KEYWORD))
             return parse_repeat();
+        // a conditional is a tree node of its own kind, so it is read by its own rule (§11.1)
+        if (at_keyword(IF_KEYWORD))
+            return parse_conditional();
         // the node is allocated first, because the caller takes the owning pointer (§11.1)
         auto node = std::make_unique<TreeNode>();
         // the node is an element, which is the default kind (§11.1)
@@ -424,6 +430,34 @@ namespace albor::compiler
         // a body that holds nothing is reported, because a repeat must instantiate something (§11.1)
         if (node->repeat_body == nullptr)
             report_unexpected("the element to repeat");
+        // a body that never closed is reported, because the node is incomplete (§11.1)
+        expect_punctuation("}");
+        // the span ends at the closing brace, which the reader has already consumed (§11.1)
+        node->span.end = last_consumed_end();
+        return node;
+    }
+
+    std::unique_ptr<TreeNode> Parser::parse_conditional() {
+        // the node is allocated first, because the caller takes the owning pointer (§11.1)
+        auto node = std::make_unique<TreeNode>();
+        // the node is a conditional, which is a tree form rather than an expression (§11.1)
+        node->kind = TreeNodeKind::Conditional;
+        // the span starts at the keyword, so a diagnostic points at the whole node (§11.1)
+        node->span.start = peek().span.start;
+        // the keyword is consumed, because the caller has already matched it (§11.1)
+        advance();
+        // the condition is an expression, so it may read a property or a comparison (§11.1)
+        node->condition = parse_expression();
+        // the body is delimited, so the wrapped node is read until it closes (§11.1)
+        expect_punctuation("{");
+        // the body must hold exactly one element, because a conditional instantiates one node (§11.1)
+        if (!at_punctuation("}")) {
+            // the wrapped element is read, because it is what the conditional instantiates (§11.1)
+            node->conditional_body = parse_tree_node();
+        }
+        // a body that holds nothing is reported, because a conditional must instantiate something (§11.1)
+        if (node->conditional_body == nullptr)
+            report_unexpected("the element to show conditionally");
         // a body that never closed is reported, because the node is incomplete (§11.1)
         expect_punctuation("}");
         // the span ends at the closing brace, which the reader has already consumed (§11.1)
@@ -591,8 +625,21 @@ namespace albor::compiler
             statement.span.start = start;
             // the target is moved into the statement, because the parser owns the stream (§11.1)
             statement.target = std::move(target);
+            // a dot after the target is a built-in method call on a collection property (§11.1)
+            if (at_punctuation(".")) {
+                // the dot is consumed, because the method name follows it (§11.1)
+                advance();
+                // the statement is a property method, which mutates the collection in place (§11.1)
+                statement.kind = HandlerStatementKind::PropertyMethod;
+                // the method name is required, because a trailing dot names no method (§11.1)
+                statement.method = expect_identifier();
+                // the argument list is parenthesised, which is how every call in the language reads (§11.1)
+                expect_punctuation("(");
+                // the arguments are read as a list, which may be empty for clear (§11.1)
+                statement.arguments = parse_arguments();
+            }
             // an assignment is written with an equals sign (§11.1)
-            if (accept_punctuation("=")) {
+            else if (accept_punctuation("=")) {
                 // the statement is an assignment, which the checker resolves against the properties (§11.1)
                 statement.kind = HandlerStatementKind::Assignment;
                 // the assigned value is an expression, so it may compute anything a binding may (§11.1)
@@ -605,8 +652,8 @@ namespace albor::compiler
                 statement.arguments = parse_arguments();
             }
             else {
-                // a statement that is neither form is reported, because the body has only these two (§11.1)
-                m_diagnostics.add(Diagnostic::Severity::Error, SourceSpan{.start = start, .end = peek().span.start}, "E0201", "a handler body may only assign a property or invoke a signal");
+                // a statement that is neither form is reported, because the body has only these three (§11.1)
+                m_diagnostics.add(Diagnostic::Severity::Error, SourceSpan{.start = start, .end = peek().span.start}, "E0201", "a handler body may only assign a property, invoke a signal or call a collection method");
             }
             // the statement ends at the terminator, which is required (§11.1)
             expect_punctuation(";");

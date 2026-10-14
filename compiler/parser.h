@@ -88,6 +88,9 @@ namespace albor::compiler
         // read a repeat, whose body is instantiated once per item (§11.1)
         std::unique_ptr<TreeNode> parse_repeat();
 
+        // read a conditional, whose body exists only while the condition holds (§11.1)
+        std::unique_ptr<TreeNode> parse_conditional();
+
         // read the members of an element, which are assignments, handlers and children (§11.1)
         void parse_tree_body(TreeNode& node);
 

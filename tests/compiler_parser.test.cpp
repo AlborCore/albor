@@ -459,6 +459,67 @@ TEST(Parser, ReportsARepeatWithNoBody) {
     EXPECT_EQ(first(diagnostics).code, "E0203");
 }
 
+TEST(Parser, ReadsAConditionalWithAConditionAndBody) {
+    // arrange, act
+    const SourceFile file = parse("component C { Column { if show { Label { text: \"x\"; } } } }");
+    // assert
+    const TreeNode& conditional = *file.components.at(0).root->children.at(0);
+    EXPECT_EQ(conditional.kind, TreeNodeKind::Conditional);
+    EXPECT_EQ(shape(conditional.condition), "show");
+    ASSERT_TRUE(conditional.conditional_body != nullptr);
+    EXPECT_EQ(conditional.conditional_body->element_type, "Label");
+}
+
+TEST(Parser, ReadsAConditionalWithAComparisonCondition) {
+    // arrange, act
+    const SourceFile file = parse("component C { if count > 3 { Label {} } }");
+    // assert
+    const TreeNode& conditional = *file.components.at(0).root;
+    EXPECT_EQ(conditional.kind, TreeNodeKind::Conditional);
+    EXPECT_EQ(shape(conditional.condition), "(count > 3)");
+}
+
+TEST(Parser, ReportsAConditionalWithNoBody) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    parse("component C { if show {} }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0203");
+}
+
+TEST(Parser, ReadsACollectionAppendStatement) {
+    // arrange, act
+    const SourceFile file = parse("component C { inout property<vector<string>> items; Button { on_clicked: { items.append(\"x\"); } } }");
+    // assert
+    const HandlerStatement& statement = file.components.at(0).root->handlers.at(0).body.at(0);
+    EXPECT_EQ(statement.kind, HandlerStatementKind::PropertyMethod);
+    EXPECT_EQ(statement.target, "items");
+    EXPECT_EQ(statement.method, "append");
+    ASSERT_EQ(statement.arguments.size(), 1U);
+}
+
+TEST(Parser, ReadsAClearStatementWithNoArgument) {
+    // arrange, act
+    const SourceFile file = parse("component C { inout property<vector<int>> items; Button { on_clicked: { items.clear(); } } }");
+    // assert
+    const HandlerStatement& statement = file.components.at(0).root->handlers.at(0).body.at(0);
+    EXPECT_EQ(statement.kind, HandlerStatementKind::PropertyMethod);
+    EXPECT_EQ(statement.method, "clear");
+    EXPECT_TRUE(statement.arguments.empty());
+}
+
+TEST(Parser, ReadsASetStatementWithTwoArguments) {
+    // arrange, act
+    const SourceFile file = parse("component C { inout property<vector<string>> items; Button { on_clicked: { items.set(0, \"y\"); } } }");
+    // assert
+    const HandlerStatement& statement = file.components.at(0).root->handlers.at(0).body.at(0);
+    EXPECT_EQ(statement.kind, HandlerStatementKind::PropertyMethod);
+    EXPECT_EQ(statement.method, "set");
+    ASSERT_EQ(statement.arguments.size(), 2U);
+}
+
 TEST(Parser, ReadsEachLiteralKind) {
     // arrange
     const std::string_view source = "component C { B { a: 42; b: 1.5; c: \"text\"; d: #FF0000; e: 12px; f: true; } }";
