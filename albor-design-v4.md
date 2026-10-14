@@ -1070,6 +1070,107 @@ component MainView {
 }
 ```
 
+The language is deliberately small and closed. Every form below is a settled part of the grammar and
+compiles to native C++ under AD-01 — there is no interpreter and no per-binding heap allocation
+(§13.3). Forms that remain undecided are listed at the end of this section rather than sketched.
+
+#### Handler Statements
+
+A handler body is a closed grammar of exactly four statement forms, each of which reaches a member of
+*this* component and nothing beyond it:
+
+- **assignment** — `click_count = click_count + 1;` writes a declared `inout` property.
+- **signal invocation** — `run_clicked();` or `frame_changed(frame);` emits a declared signal, whose
+  payload may be a scalar or a record passed by value.
+- **collection method** — `items.append("row");` mutates a `vector<T>` property in place. The closed
+  set is `append`, `remove_at`, `clear` and `set`; no other method resolves.
+- **field write** — `frame.width = 10.0;` writes one field of a record-typed `inout` property. The
+  working copy is taken, the field is assigned, and the rebuilt record is set back.
+
+A handler cannot call an arbitrary method, reach a property of another component, or invoke a command.
+That boundary is deliberate and is the open question §18.8 records; the four forms above are the whole
+of what a handler may express today.
+
+#### Conditional Rendering
+
+Two distinct forms express presence, and they are not interchangeable (§8.1):
+
+- **conditional instantiation** — `if show { Label { text: label_text; } }` instantiates the element
+  only while the condition holds. A non-present element occupies no layout and rebuilds from scratch
+  when it reappears.
+- **a visibility property** — `visible: show;` keeps the element in the tree with its identity,
+  bindings and state intact, but hides it from layout and drawing while false. A control hidden and
+  shown this way does not lose what the user typed, does not re-fire initialisation, and leaves focus
+  traversal only while hidden.
+
+The first is for a mutually exclusive pair where only one is ever valid; the second is for a tabbed
+surface whose panels must survive being switched away from.
+
+#### Declared Types
+
+A `.ui` file declares its own records and value sets, so a compound value or an enumerated property
+needs no manifest entry and no builtin (§11.2, AD-17):
+
+```text
+struct Frame {
+    float width;
+    float height;
+}
+
+enum Status { Todo, Doing, Done }
+
+component Plot {
+    inout property<Frame> frame;
+    in property<Status> status;
+
+    signal frame_changed(Frame frame);
+}
+```
+
+A record crosses a signal by value, and a field of a record-typed property is written in place (see
+the field-write form above). The compiler emits the record and the enumeration as guarded native
+types, and a `.ui`-declared type is resolved before the manifest catalog is consulted.
+
+#### Functions
+
+A `.ui` file declares a pure named computation that a binding may call:
+
+```text
+fn tick_step(low: float, high: float): float {
+    return (high - low) / 10.0;
+}
+
+component Axis {
+    in property<float> low;
+    in property<float> high;
+
+    Label { text: string(tick_step(low, high)); }
+}
+```
+
+A function reads only its parameters, so it carries no dependencies and cannot be self-referential —
+which is exactly what a binding that computes its own result could never be. It compiles to a static
+C++ function, matching the plain-static-function binding convention of §13.3. A call resolves a
+declared function before any builtin of the same name; the parameters are typed and the argument
+arity and types are checked.
+
+#### Not Yet in the Grammar
+
+Three forms the application POC needs are **not** settled and are deliberately absent rather than
+sketched, because each waits on the command decision of §18.8:
+
+- **`global`** — a module-scoped named value (a palette, an action hub, a lookup table) that several
+  components read. Its shape must respect the no-`std::function` binding convention before it is
+  designed.
+- **component composition** — a `.ui` component instantiating another `.ui` component; today only
+  manifest-native types can be instantiated.
+- **inheritance and slotted content** — a base component accepting content from a derived one
+  (`@children`). Its shape depends on whether a base can invoke behaviour on the content it is given,
+  which is the command question.
+
+Deciding the handler/element grammar and the command abstraction together settles these once; deciding
+them apart would settle the harder half twice (§18.8).
+
 ### 11.2 Native Component Manifests (AD-17)
 
 Application-defined custom views and native C++ objects exposed to `.ui` are declared in `.ui-manifest` files:
@@ -1775,10 +1876,14 @@ name and would have pulled a second concern into it:
   weight as the rest of §8. This section fixes the contract they consume — a label, an enabled
   state, a visible state, an invocation, and `ShortcutTable::display` for the accelerator text — and
   leaves their construction to the widget layer.
-- **Language exposure.** A `.ui` file cannot declare a command. Exposing one requires an entry in the
-  element catalogue (§11.1), a setter in the codegen tables (§11.3) and a native type in the
-  manifest (§11.2, AD-17). Until those exist, a command is a C++-side object and a form that mixes
-  one with a generated tree builds the command-bound control imperatively.
+- **Language exposure.** A `.ui` file cannot declare or invoke a command. The handler grammar has
+  grown to four statement forms — assignment, signal invocation, a closed set of collection methods,
+  and a record field write (§11.1) — but none of them reaches a command, and no `.ui` form names one.
+  Exposing a command requires an entry in the element catalogue (§11.1), a setter in the codegen
+  tables (§11.3) and a native type in the manifest (§11.2, AD-17). Until those exist, a command is a
+  C++-side object and a form that mixes one with a generated tree builds the command-bound control
+  imperatively. This is also the decision that governs `.ui` component composition and slotted
+  content (§11.1), which are held back for the same reason.
 - **A selection model.** §18.3 defines the span and the injection point; the model that fills them
   belongs to the control that owns a selection.
 - **Automation-driven enablement.** There is deliberately no such path. An automation client observes
