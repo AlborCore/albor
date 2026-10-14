@@ -11,14 +11,20 @@ namespace albor
     class ThemeController
     {
     public:
+        // build both schemes from the default accents through the preset, which is what a demo installs (§8.4)
+        explicit ThemeController(ThemePreset preset);
+
         // build both schemes from one set of accents, which is enough when only the states differ (§6.1)
-        explicit ThemeController(Accents accents);
+        explicit ThemeController(Accents accents, ThemePreset preset = ThemePreset::Derived);
 
         // build both schemes from one accent set each, because a surface is what a scheme is drawn on (§6.1)
-        ThemeController(Accents light_accents, Accents dark_accents);
+        ThemeController(Accents light_accents, Accents dark_accents, ThemePreset preset = ThemePreset::Derived);
 
         // install a scheme over a subtree, which is the one call an application makes at start up (§6.1)
         void install(UiNode& root, ColorScheme scheme);
+
+        // rebuild both schemes from the accents the system reports, which is what an accent change feeds (§8.4)
+        void set_accents(Accents light_accents, Accents dark_accents);
 
         // move to a scheme and reinstall it over the subtree it was given, which is what a flip is (§6.1)
         void set_scheme(ColorScheme scheme);
@@ -39,14 +45,26 @@ namespace albor
         [[nodiscard]] UiNode* root() const;
 
     private:
+        // build one theme through the preset, which is the one call a scheme install needs (§8.4)
+        [[nodiscard]] Theme build(const Accents& accents, ColorScheme scheme) const;
+
         // reinstall the current scheme over the subtree, which a change of scheme runs through (§6.1)
         void reinstall();
+
+        // the preset the schemes are built through, which is the derived baseline by default (§8.4)
+        ThemePreset m_preset = ThemePreset::Derived;
 
         // the light theme, which a flip away from the dark scheme lands on (§6.1)
         Theme m_light;
 
         // the dark theme, which a flip away from the light scheme lands on (§6.1)
         Theme m_dark;
+
+        // the light accents the themes are built from, which a later accent change needs (§8.4)
+        Accents m_light_accents;
+
+        // the dark accents the themes are built from, which a later accent change needs (§8.4)
+        Accents m_dark_accents;
 
         // the scheme currently installed, which decides which of the two themes is live (§6.1)
         ColorScheme m_scheme = ColorScheme::Dark;

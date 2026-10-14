@@ -75,6 +75,11 @@ namespace albor
         paint_focus_ring(context);
     }
 
+    Rect Widget::focus_ring_rect() const {
+        // the ring surrounds the arranged bounds by default, which is where a plate control draws (§8.4)
+        return bounds();
+    }
+
     void Widget::paint_focus_ring(RenderContext& context) const {
         // without a theme there is no ring, because nothing configured one (§6.1)
         if (m_theme == nullptr)
@@ -95,8 +100,17 @@ namespace albor
             return;
         // the ring metrics come from the theme, because the ring is a sizing decision like any plate (§6.1)
         const ControlMetrics& metrics = m_theme->metrics();
+        // the ring surrounds the rect the control names, which a sub rect control overrides (§8.4)
+        const Rect ringed = focus_ring_rect();
         // the ring stands off the plate, because a ring on the edge reads as a border rather than as focus (§6.1)
-        const Rect outer = Rect::from_origin_size(Point{.x = bounds().x - metrics.focus_ring_offset, .y = bounds().y - metrics.focus_ring_offset}, Size{.width = bounds().width + metrics.focus_ring_offset * 2.0f, .height = bounds().height + metrics.focus_ring_offset * 2.0f});
+        const Rect outer = Rect::from_origin_size(Point{.x = ringed.x - metrics.focus_ring_offset, .y = ringed.y - metrics.focus_ring_offset}, Size{.width = ringed.width + metrics.focus_ring_offset * 2.0f, .height = ringed.height + metrics.focus_ring_offset * 2.0f});
+        // the halo resolves by state too, so the soft layer follows the ring it underlies (§8.4)
+        const Color halo = resolve(m_theme->palette().focus_ring_outer, Color::rgba(0.0f, 0.0f, 0.0f, 0.0f));
+        // the halo rides one step further out than the ring, which is what a soft second layer reads as (§8.4)
+        const Rect halo_rect = Rect::from_origin_size(Point{.x = ringed.x - metrics.focus_ring_offset - 1.0f, .y = ringed.y - metrics.focus_ring_offset - 1.0f}, Size{.width = ringed.width + (metrics.focus_ring_offset + 1.0f) * 2.0f, .height = ringed.height + (metrics.focus_ring_offset + 1.0f) * 2.0f});
+        // the halo is stroked rather than filled, like the ring it underlies (§8.4)
+        if (halo.alpha > 0.0f)
+            context.draw_rounded_rect(halo_rect, metrics.focus_ring_radius + 1.0f, {.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), .stroke = halo, .stroke_width = metrics.focus_ring_width});
         // the ring is stroked rather than filled, because a filled ring would cover the plate it surrounds (§6.1)
         context.draw_rounded_rect(outer, metrics.focus_ring_radius, {.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), .stroke = ring, .stroke_width = metrics.focus_ring_width});
     }

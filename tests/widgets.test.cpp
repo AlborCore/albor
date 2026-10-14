@@ -3902,3 +3902,282 @@ TEST(FocusStateChecks, AnUnchangedFocusChangesNothing) {
     EXPECT_FALSE(button.render_dirty());
     EXPECT_TRUE(button.focused());
 }
+
+TEST(NativeThemeChecks, AThemedButtonStrokesTheBorderLayer) {
+    // arrange a theme whose border and border width are set, because the second layer is a theme decision (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_button_border(Color::rgb(1.0f, 0.0f, 0.0f));
+    theme.set_button_border_width(1.0f);
+    Button button(&engine, &text_engine, "Press");
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the plate carries the border, because the fill and the stroke are one layered draw (§8.4)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    const DrawCommand& plate = scene->commands()[0];
+    EXPECT_EQ(plate.paint().stroke, Color::rgb(1.0f, 0.0f, 0.0f));
+    EXPECT_FLOAT_EQ(plate.paint().stroke_width, 1.0f);
+}
+
+TEST(NativeThemeChecks, AThemedButtonResolvesTheBorderByState) {
+    // arrange a themed button whose hover border differs from the normal one (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_button_border(ControlState::Normal, Color::rgb(0.5f, 0.5f, 0.5f));
+    theme.set_button_border(ControlState::Hovered, Color::rgb(1.0f, 0.0f, 0.0f));
+    theme.set_button_border_width(1.0f);
+    Button button(&engine, &text_engine, "Press");
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    SceneRecorder resting(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act a resting draw resolves the normal entry, which is what a pointer elsewhere gives (§8.4)
+    button.render(resting);
+    // act a pointer enter moves the state, so the next draw resolves the hovered entry (§8.3, §8.4)
+    Event enter{.kind = EventKind::PointerEnter, .position = Point{10.0f, 5.0f}};
+    button.dispatch_event(enter);
+    SceneRecorder hovered(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    button.render(hovered);
+    // assert the two states are two strokes, which is what a lifted line reads as (§8.4)
+    EXPECT_EQ(resting.scene()->commands()[0].paint().stroke, Color::rgb(0.5f, 0.5f, 0.5f));
+    EXPECT_EQ(hovered.scene()->commands()[0].paint().stroke, Color::rgb(1.0f, 0.0f, 0.0f));
+}
+
+TEST(NativeThemeChecks, APaddedButtonMeasuresToTheLabelPlusThePadding) {
+    // arrange a themed button with twelve point padding, which is what a native push control takes (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_button_padding_horizontal(12.0f);
+    Button button(&engine, &text_engine, "x");
+    button.set_theme(&theme);
+    Size measured{};
+    // act
+    button.measure(SizeConstraints::unconstrained(), measured);
+    // assert the label plus its padding drives the width, while the height follows the theme (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, StubTextEngine::ADVANCE + 24.0f);
+}
+
+TEST(NativeThemeChecks, AThemedCheckBoxDrawsTheGlyphOverTheAccentFill) {
+    // arrange a themed checked box, whose metrics carry a corner radius and a glyph stroke (§8.4)
+    BindingEngine engine;
+    Theme theme;
+    theme.set_checkbox_corner_radius(2.0f);
+    theme.set_checkbox_glyph_stroke(1.8f);
+    CheckBox box(&engine, "box");
+    box.set_theme(&theme);
+    box.set_checked(true);
+    box.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{16.0f, 16.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    // act
+    box.render(recorder);
+    // assert the fill, the outline and the check mark are three records (§8.4)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_EQ(scene->commands().size(), 3u);
+    EXPECT_EQ(scene->commands()[2].kind(), DrawCommandKind::Polyline);
+    // assert the glyph strokes with the colour the glyph role answers, which is readable over the accent (§8.4)
+    EXPECT_FLOAT_EQ(scene->commands()[2].polyline_geometry().stroke.width, 1.8f);
+    EXPECT_EQ(scene->commands()[2].polyline_geometry().stroke.color, theme.palette().checkbox_glyph[state_index(ControlState::Normal)]);
+}
+
+TEST(NativeThemeChecks, AThemedCheckBoxDrawsARoundedOutline) {
+    // arrange a themed unchecked box whose corner radius is themed, because the shape is the theme decision (§8.4)
+    BindingEngine engine;
+    Theme theme;
+    theme.set_checkbox_corner_radius(2.0f);
+    CheckBox box(&engine, "box");
+    box.set_theme(&theme);
+    box.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{16.0f, 16.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    // act
+    box.render(recorder);
+    // assert the outline is one rounded record with no fill of its own (§8.4)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_EQ(scene->commands().size(), 1u);
+    EXPECT_EQ(scene->commands()[0].kind(), DrawCommandKind::RoundedRect);
+    EXPECT_FLOAT_EQ(scene->commands()[0].rect_geometry().radius, 2.0f);
+}
+
+TEST(NativeThemeChecks, AThemedCheckBoxCarriesTheMixedState) {
+    // arrange an unchecked box that is set to the indeterminate state (§10.1)
+    BindingEngine engine;
+    CheckBox box(&engine, "box");
+    box.set_indeterminate(true);
+    // act the semantic node is read, which is what assistive technology announces (§10.1)
+    const SemanticNode node = box.semantic_node();
+    // assert the announced state is the mixed one (§10.1)
+    EXPECT_EQ(node.check(), CheckState::Indeterminate);
+}
+
+TEST(NativeThemeChecks, AToggleOnAMixedBoxResolvesToChecked) {
+    // arrange a mixed box whose toggle fires, which is what a press does (§10.1)
+    BindingEngine engine;
+    bool reported = false;
+    CheckBox box(&engine, "box");
+    box.set_on_toggle([&reported](bool checked) { reported = checked; });
+    box.set_indeterminate(true);
+    // act a press inside the box toggles it, which is the shared path a key press takes too (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{4.0f, 4.0f}};
+    box.dispatch_event(press);
+    // assert the mixed state resolved to the true edge, which is what a boolean does (§10.1)
+    EXPECT_TRUE(box.checked());
+    EXPECT_FALSE(box.indeterminate());
+    EXPECT_TRUE(reported);
+}
+
+TEST(NativeThemeChecks, AThemedSliderDrawsTheFilledTrackAndTheRoundThumb) {
+    // arrange a themed slider whose radius metrics are set, because the native shapes are the theme decision (§8.4)
+    BindingEngine engine;
+    Theme theme;
+    theme.set_slider_track_radius(2.0f);
+    theme.set_slider_thumb(16.0f);
+    theme.set_slider_thumb_radius(8.0f);
+    theme.set_slider_fill(Color::rgb(0.2f, 0.55f, 0.9f));
+    Slider slider(&engine, "slider");
+    slider.set_theme(&theme);
+    slider.set_value(0.5f);
+    slider.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 16.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    slider.render(recorder);
+    // assert the track, the fill and the thumb are three records (§8.4)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_EQ(scene->commands().size(), 3u);
+    EXPECT_EQ(scene->commands()[1].kind(), DrawCommandKind::RoundedRect);
+    EXPECT_EQ(scene->commands()[2].kind(), DrawCommandKind::RoundedRect);
+    // assert the fill runs from the left edge up to the thumb centre, which is where the accent ends (§8.4)
+    EXPECT_FLOAT_EQ(scene->commands()[1].rect_geometry().rect.width, 60.0f);
+    // assert the thumb carries the themed radius, which reads as a circle (§8.4)
+    EXPECT_FLOAT_EQ(scene->commands()[2].rect_geometry().radius, 8.0f);
+}
+
+TEST(NativeThemeChecks, ATickedSliderDrawsADiscreteMarkPerStep) {
+    // arrange a themed slider whose tick length is set, because a ticked slider is a theme decision (§8.4)
+    BindingEngine engine;
+    Theme theme;
+    theme.set_slider_tick_length(4.0f);
+    theme.set_slider_tick_width(2.0f);
+    theme.set_slider_step(0.25f);
+    theme.set_slider_fill(Color::rgb(0.2f, 0.55f, 0.9f));
+    Slider slider(&engine, "slider");
+    slider.set_theme(&theme);
+    slider.set_value(0.0f);
+    slider.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 16.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act, assert the track, the five ticks, the fill at the minimum and the thumb are eight records (§8.4)
+    slider.render(recorder);
+    EXPECT_EQ(recorder.scene()->commands().size(), 8u);
+}
+
+TEST(NativeThemeChecks, AThemedSliderFocusRingSurroundsTheThumb) {
+    // arrange a themed focused slider whose thumb is round, since the ring follows it (§8.4)
+    BindingEngine engine;
+    Theme theme;
+    theme.set_slider_thumb(16.0f);
+    theme.set_slider_thumb_radius(8.0f);
+    Slider slider(&engine, "slider");
+    slider.set_theme(&theme);
+    slider.set_value(1.0f);
+    slider.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 16.0f}));
+    slider.set_focused(true);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    slider.render(recorder);
+    // assert the ring is the last record, which draws after the track and the thumb (§8.4)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_EQ(scene->commands().size(), 3u);
+    const Rect& thumb = scene->commands()[1].rect_geometry().rect;
+    const Rect& ring = scene->commands()[2].rect_geometry().rect;
+    // assert the ring stands two away from the thumb on every side, because a ring surrounds rather than overlaps (§6.1)
+    EXPECT_FLOAT_EQ(ring.x, thumb.x - theme.metrics().focus_ring_offset);
+    EXPECT_FLOAT_EQ(ring.width, thumb.width + theme.metrics().focus_ring_offset * 2.0f);
+    EXPECT_FLOAT_EQ(scene->commands()[2].rect_geometry().radius, theme.metrics().focus_ring_radius);
+}
+
+TEST(NativeThemeChecks, AThemedSliderDrawsAnElevatedThumb) {
+    // arrange a themed slider whose shadow strength is set, because elevation is the themed decision (§8.4)
+    BindingEngine engine;
+    Theme theme;
+    theme.set_slider_thumb_shadow(0.3f);
+    Slider slider(&engine, "slider");
+    slider.set_theme(&theme);
+    slider.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 16.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    slider.render(recorder);
+    // assert the cast is recorded between the track and the thumb, which is what sits under (§8.4)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_EQ(scene->commands().size(), 3u);
+    EXPECT_EQ(scene->commands()[1].kind(), DrawCommandKind::Shadow);
+    EXPECT_FLOAT_EQ(scene->commands()[1].shadow_geometry().shadow.color.alpha, 0.3f);
+}
+
+TEST(NativeThemeChecks, AThemedLabelResolvesTheRoleSize) {
+    // arrange a themed label whose caption size the theme carries (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_role_font_size(TextRole::Caption, 9.0f);
+    Label label(&engine, &text_engine, "Hi");
+    label.set_theme(&theme);
+    label.set_role(TextRole::Caption);
+    Size measured{};
+    // act
+    label.measure(SizeConstraints::unconstrained(), measured);
+    // assert the run was measured at nine, because the role resolved through the hierarchy (§8.4)
+    EXPECT_FLOAT_EQ(label.layout().run->font_size(), 9.0f);
+}
+
+TEST(NativeThemeChecks, ASecondaryCaptionDimsThroughTheToken) {
+    // arrange a themed caption whose secondary alpha keeps six tenths (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_role_font_size(TextRole::Caption, 9.0f);
+    theme.set_secondary_opacity(0.6f);
+    Label label(&engine, &text_engine, "Hi");
+    label.set_theme(&theme);
+    label.set_role(TextRole::Caption);
+    label.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    label.render(recorder);
+    // assert the run draws through the token rather than a literal, which is what flips with the scheme (§8.4)
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].paint().fill.alpha, 0.6f);
+}
+
+TEST(NativeThemeChecks, AnExplicitSizeReplacesTheRole) {
+    // arrange a themed label at a caption role, whose run measured at nine (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_role_font_size(TextRole::Caption, 9.0f);
+    Label label(&engine, &text_engine, "Hi");
+    label.set_theme(&theme);
+    label.set_role(TextRole::Caption);
+    // act an explicit size is set, which is what an author chooses over the hierarchy (§8.4)
+    label.set_font_size(11.0f);
+    // assert the role cleared to none and the explicit size decided, which is the resolution order (§8.4)
+    EXPECT_EQ(label.role(), TextRole::None);
+}
+
+TEST(ThemeControllerChecks, APresetBuildsTheNativeSchemes) {
+    // arrange a controller built through the macos preset, which is what a platform native application installs (§8.4)
+    ThemeController controller(ThemePreset::Macos);
+    // assert the built dark scheme carries the macos metrics, which are the guide's control sizes (§8.4)
+    EXPECT_EQ(controller.theme().metrics().button_minimum, (Size{24.0f, 28.0f}));
+    EXPECT_FLOAT_EQ(controller.theme().metrics().button_padding_horizontal, 12.0f);
+}
+
+TEST(ThemeControllerChecks, AnAccentChangeKeepsThePreset) {
+    // arrange a macos controller whose accents are rebuilt (§8.4)
+    ThemeController controller(ThemePreset::Macos);
+    // act
+    controller.set_accents(Accents{}, Accents{});
+    // assert the rebuilt theme is still the preset, because the accents only drive the derivation (§8.4)
+    EXPECT_EQ(controller.theme().metrics().button_minimum, (Size{24.0f, 28.0f}));
+}

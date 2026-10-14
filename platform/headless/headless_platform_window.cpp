@@ -83,6 +83,21 @@ namespace albor::headless
         return m_visible;
     }
 
+    SystemAppearance HeadlessPlatformWindow::system_appearance() const {
+        // the appearance is the synthetic one a test set, or the portable default before that (§5.3, §8.4)
+        return m_appearance;
+    }
+
+    void HeadlessPlatformWindow::raise_appearance_change(const SystemAppearance& appearance) {
+        // the appearance is stored first, so a later query reads what was announced (§8.4)
+        m_appearance = appearance;
+        // a window with no listener has nobody to tell, which is how a detached window flips (§8.4)
+        if (m_listener == nullptr)
+            return;
+        // the change is raised on the thread that called this, which is the ui thread in every real path (§8.4)
+        m_listener->on_platform_appearance_changed(appearance);
+    }
+
     void HeadlessPlatformWindow::close() {
         // a close is a request, because the application may veto it (§5.2)
         raise_close_request();

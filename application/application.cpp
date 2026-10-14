@@ -162,6 +162,25 @@ namespace albor
         return m_windows.find(handle);
     }
 
+    UiNode* Application::root(WindowHandle handle) {
+        // a stale handle or a plain window has no tree, which is what null reports (§5.2)
+        const std::map<std::uint64_t, std::unique_ptr<WindowStage>>::const_iterator stage = m_stages.find(handle.id());
+        if (stage == m_stages.end())
+            return nullptr;
+        // the stage owns the built tree, which an application installs a theme over (§6.1, §8.4)
+        return &stage->second->root();
+    }
+
+    void Application::set_window_background(WindowHandle handle, Color background) {
+        // a stale handle has no scene to clear, which the stale window reports (§5.2)
+        if (m_windows.find(handle) == nullptr)
+            return;
+        // the stage owns the scene background, which is what the frame clears with (§6.1, §8.4)
+        const std::map<std::uint64_t, std::unique_ptr<WindowStage>>::const_iterator stage = m_stages.find(handle.id());
+        if (stage != m_stages.end())
+            stage->second->set_background(background);
+    }
+
     bool Application::destroy_window(WindowHandle handle) {
         // the window's stage is dropped first, so its surface outlives no layer (§6.1)
         release_stage(handle);
@@ -248,6 +267,11 @@ namespace albor
         m_input_handler = std::move(handler);
     }
 
+    void Application::set_appearance_handler(std::function<void(WindowHandle, const SystemAppearance&)> handler) {
+        // the handler replaces the previous one, so a change reaches exactly one owner (§8.4)
+        m_appearance_handler = std::move(handler);
+    }
+
     bool Application::quit_requested() const {
         // the request is recorded even when the application never reached its loop (§4.1)
         return m_quit_requested;
@@ -320,6 +344,15 @@ namespace albor
                 return;
             // the handle travels with the event, so the application can tell the windows apart (§8.3)
             m_input_handler(handle, event);
+        });
+
+        // a system appearance change reaches the appearance handler, which is where a theme follows the system (§8.4)
+        window.set_appearance_handler([this, handle](const SystemAppearance& appearance) {
+            // an application without an appearance handler records nothing, which is the quiet default (§8.4)
+            if (!m_appearance_handler)
+                return;
+            // the handle travels with the appearance, so an application can tell the windows apart (§8.4)
+            m_appearance_handler(handle, appearance);
         });
 
         // a native window close reaches the application as the Closed notification of §5.2

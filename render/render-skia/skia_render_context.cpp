@@ -148,6 +148,33 @@ namespace albor::skia
         paint_shape(paint, true, rect, radius);
     }
 
+    void SkiaRenderContext::draw_polyline(const std::span<const Point>& points, const StrokeStyle& stroke) {
+        // a context with no canvas draws nothing (§6.2)
+        if (m_canvas == nullptr)
+            return;
+        // a polyline with fewer than two vertices has no segment to stroke (§6.2)
+        if (points.size() < 2 || stroke.width <= 0.0f)
+            return;
+        // the vertices are joined into one contour, which is what makes the elbows solid rather than notched (§6.2)
+        SkPathBuilder builder;
+        builder.moveTo(points.front().x, points.front().y);
+        // every vertex after the first is a line, which is what a polyline is (§6.2)
+        for (std::size_t index = 1; index < points.size(); index++)
+            builder.lineTo(points[index].x, points[index].y);
+        const SkPath path = builder.detach();
+        // the stroke carries the colour with the opacity folded in, like every stroke of a frame (§6.1)
+        SkPaint stroke_paint;
+        stroke_paint.setStyle(SkPaint::kStroke_Style);
+        stroke_paint.setColor(SkColor(to_skia_color(stroke.color)));
+        stroke_paint.setStrokeWidth(stroke.width);
+        // the ends and the elbows both close roundly, which is how a control glyph reads (§6.2)
+        stroke_paint.setStrokeCap(SkPaint::kRound_Cap);
+        stroke_paint.setStrokeJoin(SkPaint::kRound_Join);
+        stroke_paint.setAntiAlias(true);
+        // the polyline draws at the current matrix, which is where the scene placed it (§6.2)
+        m_canvas->drawPath(path, stroke_paint);
+    }
+
     void SkiaRenderContext::draw_shadow(const Rect& rect, float radius, const Shadow& shadow) {
         // a context with no canvas casts nothing (§6.2)
         if (m_canvas == nullptr)

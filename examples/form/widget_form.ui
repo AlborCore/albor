@@ -52,8 +52,8 @@ component WidgetForm {
             width: 380px;
             height: 20px;
             draw: {
-                fill_rect(0, 0, canvas_width, canvas_height, #1A1E26);
-                fill_rect(0, 0, canvas_width * level, canvas_height, #33BF73);
+                fill_rect(0, 0, canvas_width, canvas_height, #D4D6DE);
+                fill_rect(0, 0, canvas_width * level, canvas_height, #0A82FF);
             }
         }
 

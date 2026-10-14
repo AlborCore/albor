@@ -58,6 +58,8 @@ namespace
             rects.push_back(rect);
         }
 
+        void draw_polyline(const std::span<const Point>&, const StrokeStyle&) override {}
+
         void draw_text(const TextLayout&, Point, const Paint&) override {}
 
         void draw_line_batch(const std::shared_ptr<const LineBatch>&, const Transform&, const StrokeStyle&) override {}

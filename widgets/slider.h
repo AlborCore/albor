@@ -70,6 +70,9 @@ namespace albor
         // override: a slider presents no label of its own, so it follows the enablement and the applicability (§18.7)
         void apply_command_state(const CommandState& state) override;
 
+        // override: surround the thumb rather than the control, which is what a track control carries (§8.4)
+        [[nodiscard]] Rect focus_ring_rect() const override;
+
     private:
         // the track colours the slider resolves through, which are the installed palette when a theme is present (§6.1)
         [[nodiscard]] const Color* track_colors() const;
@@ -77,8 +80,17 @@ namespace albor
         // the thumb colours the slider resolves through, which are the installed palette when a theme is present (§6.1)
         [[nodiscard]] const Color* thumb_colors() const;
 
+        // the fill colours the slider resolves through, which are the accent of the installed palette (§8.4)
+        [[nodiscard]] const Color* fill_colors() const;
+
         // move the value to the position the pointer names, which a press and a drag share (§8.3)
         void jump_to(Point logical_position);
+
+        // the rect the thumb occupies at the current value, which the paint and the ring both read (§8.4)
+        [[nodiscard]] Rect thumb_rect(const ControlMetrics& metrics) const;
+
+        // draw the discrete ticks the theme asked for, which sit just under the track (§8.4)
+        void paint_ticks(RenderContext& context, const ControlMetrics& metrics, const Rect& track, float travel, float thumb_extent) const;
 
         // the work a change performs, which receives the new value (§8.3)
         std::function<void(float)> m_on_change;

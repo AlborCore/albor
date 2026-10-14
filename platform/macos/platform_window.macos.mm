@@ -161,6 +161,32 @@ namespace
         modifiers.command = (flags & NSEventModifierFlagCommand) != 0;
         return modifiers;
     }
+
+    // read the appearance the system renders with, which is what a theme follows (§5.3, §8.4)
+    albor::SystemAppearance system_appearance_report() {
+        albor::SystemAppearance report;
+        // the appearance is the one the application resolves with, because albor does not override it (§5.3)
+        NSAppearance* appearance = [NSAppearance currentDrawingAppearance];
+        // the best match names dark aqua when the user picked dark, and the light one otherwise (§8.4)
+        NSString* best = [appearance bestMatchFromAppearancesWithNames:@[ NSAppearanceNameAqua, NSAppearanceNameDarkAqua ]];
+        report.scheme = [best isEqualToString:NSAppearanceNameDarkAqua] ? albor::ColorScheme::Dark : albor::ColorScheme::Light;
+        // the accent colour is the one the system highlights controls with, in the srgb space (§6.3)
+        NSColor* accent = [NSColor controlAccentColor];
+        // a nil colour means an appkit that carries no accent, which leaves the portable default in place (§5.3)
+        if (accent == nil)
+            return report;
+        NSColor* srgb = [accent colorUsingColorSpace:[NSColorSpace sRGBColorSpace]];
+        if (srgb == nil)
+            return report;
+        // the components are read through the srgb space, which is the one albor paints in (§6.3)
+        CGFloat red = 0.0;
+        CGFloat green = 0.0;
+        CGFloat blue = 0.0;
+        CGFloat alpha = 0.0;
+        [srgb getRed:&red green:&green blue:&blue alpha:&alpha];
+        report.accent = albor::Color::rgba(static_cast<float>(red), static_cast<float>(green), static_cast<float>(blue), static_cast<float>(alpha));
+        return report;
+    }
 } // namespace
 
 @implementation AlborContentView {
@@ -437,6 +463,12 @@ namespace albor
         // the backing scale observer, which is removed before the state is released (§4.2)
         id backing_observer = nil;
 
+        // the appearance flip observer, which is removed before the state is released (§8.4)
+        id appearance_observer = nil;
+
+        // the distributed accent change observer, which is removed before the state is released (§8.4)
+        id accent_observer = nil;
+
         // whether a frame was requested and not yet drawn, which is per window pacing (AD-18b)
         bool frame_requested = false;
 
@@ -531,8 +563,31 @@ namespace albor
                                                     // the framework receives the metrics the platform now reports (§9.1)
                                                     state->listener->on_platform_resize(metrics_of(state->window));
                                                   }];
+        // an appearance flip reaches the listener by its runtime name, which lets a theme follow the system live (§8.4)
+        state->appearance_observer = [center addObserverForName:@"NSApplicationDidChangeEffectiveAppearanceNotification"
+                                                         object:nil
+                                                          queue:main_queue
+                                                     usingBlock:^(NSNotification*) {
+                                                       if (state->listener == nullptr)
+                                                           return;
+                                                       // the framework receives the new system appearance (§8.4)
+                                                       state->listener->on_platform_appearance_changed(system_appearance_report());
+                                                     }];
         // a new window moves the cascade along, so a later window does not stack on this one (§5.3)
         window_ordinal++;
+        // the accent colour changes on the system settings, announced through the distributed center (§8.4)
+        NSDistributedNotificationCenter* distributed = [NSDistributedNotificationCenter defaultCenter];
+        // an accent change reaches the listener as an appearance change too, which keeps the theme current (§8.4)
+        state->accent_observer = [distributed addObserverForName:@"AppleColorPreferencesChangedNotification"
+                                                          object:nil
+                                                           queue:[NSOperationQueue mainQueue]
+                                                      usingBlock:^(NSNotification*) {
+                                                        // a gone listener means the window died, so the event drops (§4.2)
+                                                        if (state->listener == nullptr)
+                                                            return;
+                                                        // the framework receives the new system appearance (§8.4)
+                                                        state->listener->on_platform_appearance_changed(system_appearance_report());
+                                                      }];
         // the framework window keeps the shared state alive, because the observers reference it (§4.2)
         return std::unique_ptr<MacosPlatformWindow>(new MacosPlatformWindow(std::move(state)));
     }
@@ -554,6 +609,14 @@ namespace albor
         if (m_state->backing_observer != nil) {
             [center removeObserver:m_state->backing_observer];
             m_state->backing_observer = nil;
+        }
+        if (m_state->appearance_observer != nil) {
+            [center removeObserver:m_state->appearance_observer];
+            m_state->appearance_observer = nil;
+        }
+        if (m_state->accent_observer != nil) {
+            [[NSDistributedNotificationCenter defaultCenter] removeObserver:m_state->accent_observer];
+            m_state->accent_observer = nil;
         }
         // the native window is closed last, so the layer and its drawables die with it (§6.3)
         [m_state->window close];
@@ -623,6 +686,11 @@ namespace albor
             return NativeWindowHandle{};
         // the layer crosses into the framework as an opaque pointer, which no appkit type may name (§3.5, AD-05)
         return NativeWindowHandle::from_object((__bridge const void*)m_state->layer);
+    }
+
+    SystemAppearance MacosPlatformWindow::system_appearance() const {
+        // the appearance is a system value, so it is read fresh on every ask rather than cached (§5.3, §8.4)
+        return system_appearance_report();
     }
 
     void MacosPlatformWindow::request_frame() {

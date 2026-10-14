@@ -110,6 +110,19 @@ namespace albor
         m_input->set_command_registry(registry);
     }
 
+    UiNode& WindowStage::root() const {
+        // the tree is the one the pipeline drives, because the two stages are its two halves (§6.1, AD-18)
+        return m_pipeline->root();
+    }
+
+    void WindowStage::set_background(Color background) {
+        // an unwired stage clears nothing, which is the state it was refused in (§6.1)
+        if (!wired())
+            return;
+        // the background is what stage one clears the surface with, which a themed surface writes (§6.1, §8.4)
+        m_pipeline->set_background(background);
+    }
+
     std::uint64_t WindowStage::frame_count() const {
         // an unwired stage built nothing, which is the count it reports (§6.1)
         return m_pipeline ? m_pipeline->frame_count() : 0;

@@ -56,6 +56,12 @@ namespace albor
         // override: hand out the plate fill, which the base records before the label and which resolves by state (§6.2)
         [[nodiscard]] Color background() const override;
 
+        // override: hand out how wide the plate strokes its border, which the theme owns per state (§8.4)
+        [[nodiscard]] float border_width() const override;
+
+        // override: hand out the border colour the plate strokes, which resolves by state (§8.4)
+        [[nodiscard]] Color border_color() const override;
+
     protected:
         // override: a button presents the label, the enablement and the applicability a command publishes (§18.7)
         void apply_command_state(const CommandState& state) override;
@@ -87,5 +93,11 @@ namespace albor
 
         // the label colours the button resolves through, which are the installed palette when a theme is present (§6.1)
         [[nodiscard]] const Color* label_colors() const;
+
+        // the border colours the button resolves through, which are the installed palette when a theme is present (§8.4)
+        [[nodiscard]] const Color* border_colors() const;
+
+        // the size the label is measured at, which the theme typography owns when one is installed (§8.4, §9.1)
+        [[nodiscard]] float label_font_size() const;
     };
 } // namespace albor

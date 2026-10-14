@@ -93,6 +93,11 @@ namespace albor
         record(DrawCommand::rounded_rectangle(rect, radius, paint));
     }
 
+    void PictureRecorder::draw_polyline(const std::span<const Point>& points, const StrokeStyle& stroke) {
+        // the vertex run stays raw, because the transform travels beside it (§6.4)
+        record(DrawCommand::polyline(points, stroke));
+    }
+
     void PictureRecorder::draw_shadow(const Rect& rect, float radius, const Shadow& shadow) {
         // a cast with no colour or no shape puts no ink down, so it is never recorded (§6.2)
         if (!shadow.casts() || rect.empty())

@@ -1240,6 +1240,43 @@ namespace albor
         return theme()->palette().text_field_selection;
     }
 
+    Color TextField::background() const {
+        // a themed field reads through the plate role, which is what the theme answers (§8.4)
+        return resolve(plate_colors(), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f));
+    }
+
+    float TextField::border_width() const {
+        // without a theme the stroke keeps the width the node stored (§8.1)
+        if (theme() == nullptr)
+            return UiNode::border_width();
+        // a themed field draws its hairline, which the theme sizes (§8.4)
+        return 1.0f;
+    }
+
+    Color TextField::border_color() const {
+        // without a theme the stroke keeps the colour the node stored (§8.1)
+        if (theme() == nullptr)
+            return UiNode::border_color();
+        // the border resolves by state, so a focus carries the accent line (§8.4)
+        return resolve(border_colors(), UiNode::border_color());
+    }
+
+    const Color* TextField::plate_colors() const {
+        // without a theme the table is unused, because the resolver returns the field's own fill (§8.4)
+        if (theme() == nullptr)
+            return nullptr;
+        // the installed palette answers, because the theme owns the colour (§8.4)
+        return theme()->palette().text_field_plate;
+    }
+
+    const Color* TextField::border_colors() const {
+        // without a theme the table is unused, because the resolver returns the node's stroke (§8.4)
+        if (theme() == nullptr)
+            return nullptr;
+        // the installed palette answers, because the theme owns the colour (§8.4)
+        return theme()->palette().text_field_border;
+    }
+
     const ControlMetrics& TextField::metrics() const {
         // the installed theme answers, because the sizing is one decision rather than a literal per widget (§8.2)
         if (theme() != nullptr)

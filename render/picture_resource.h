@@ -91,6 +91,9 @@ namespace albor
         // override: record a filled and stroked rounded rectangle
         void draw_rounded_rect(const Rect& rect, float radius, const Paint& paint) override;
 
+        // override: record a polyline joined from vertex to vertex
+        void draw_polyline(const std::span<const Point>& points, const StrokeStyle& stroke) override;
+
         // override: record the shadow a shape casts
         void draw_shadow(const Rect& rect, float radius, const Shadow& shadow) override;
 

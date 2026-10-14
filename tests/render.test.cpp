@@ -76,6 +76,9 @@ namespace
         // the rectangles the surface was asked to draw, in order
         std::vector<Rect> drawn_rects;
 
+        // the polylines the surface was asked to draw, in scene space points (§6.2)
+        std::vector<std::vector<Point>> drawn_polylines;
+
         // the casts the context was asked to draw, which a test asserts against (§6.2)
         std::vector<Shadow> shadows;
 
@@ -148,6 +151,12 @@ namespace
             drawn_rects.push_back(rect);
             rounded_radii.push_back(radius);
             draw_log.emplace_back("rounded");
+        }
+
+        void draw_polyline(const std::span<const Point>& points, const StrokeStyle&) override {
+            // the vertices are recorded as scene space points, which a test asserts on (§6.2)
+            drawn_polylines.emplace_back(points.begin(), points.end());
+            draw_log.emplace_back("polyline");
         }
 
         void draw_shadow(const Rect& rect, float radius, const Shadow& shadow) override {

@@ -43,6 +43,15 @@ namespace albor
         // override: announce the field as a text field whose value is the text it edits (§10.1)
         [[nodiscard]] SemanticNode semantic_node() const override;
 
+        // override: hand out the plate fill the value draws over, which the theme owns when one is installed (§8.4)
+        [[nodiscard]] Color background() const override;
+
+        // override: hand out how wide the field strokes its border, which the theme owns (§8.4)
+        [[nodiscard]] float border_width() const override;
+
+        // override: hand out the border colour the field strokes, which resolves by state (§8.4)
+        [[nodiscard]] Color border_color() const override;
+
         // replace the edited text, which remeasures and moves the caret inside the new extent (§9.1)
         void set_value(std::string value);
 
@@ -247,6 +256,12 @@ namespace albor
 
         // the colours the selection resolves through, which are the palette when a theme is installed (§6.1)
         [[nodiscard]] const Color* selection_colors() const;
+
+        // the plate colours the field resolves through, which are the installed palette when a theme is present (§8.4)
+        [[nodiscard]] const Color* plate_colors() const;
+
+        // the border colours the field resolves through, which are the installed palette when a theme is present (§8.4)
+        [[nodiscard]] const Color* border_colors() const;
 
         // hand out the metrics the field measures from, which the theme sets and the default answers (§8.2)
         [[nodiscard]] const ControlMetrics& metrics() const;

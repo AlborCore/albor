@@ -8,9 +8,13 @@
 #include "commands/command_registry.h"
 #include "layout/column_layout.h"
 #include "layout/row_layout.h"
+#include "style/theme.h"
 #include "widgets/button.h"
 #include "widgets/checkbox.h"
 #include "widgets/label.h"
+#include "widgets/theme_controller.h"
+#include "widgets/widget.h"
+#include "window/system_appearance.h"
 
 namespace
 {
@@ -35,6 +39,12 @@ namespace
         }
         return "unknown";
     }
+
+    // the light accents, which are the window surface the system shows in light mode with the reported accent (§8.4)
+    albor::Accents light_accents(albor::Color accent) { return albor::Accents{.surface = albor::Color::rgb(0.925f, 0.925f, 0.930f), .on_surface = albor::Color::rgb(0.18f, 0.18f, 0.20f), .accent = accent, .outline = albor::Color::rgb(0.55f, 0.57f, 0.60f)}; }
+
+    // the dark accents, which are the window surface the system shows in dark mode with the reported accent (§8.4)
+    albor::Accents dark_accents(albor::Color accent) { return albor::Accents{.surface = albor::Color::rgb(0.125f, 0.125f, 0.135f), .on_surface = albor::Color::rgb(0.92f, 0.94f, 0.96f), .accent = accent, .outline = albor::Color::rgb(0.42f, 0.44f, 0.48f)}; }
 
     // build the scene, which declares the commands once and binds three consumers to each (§18.1, AD-15)
     std::unique_ptr<albor::UiNode> build_scene(albor::BindingEngine& engine, albor::TextEngine& text) {
@@ -122,7 +132,12 @@ namespace
             // one write reaches the toolbar, the menu row and the accelerator, because they read one object (§18.7)
             save.set_enabled(!checked);
         });
-        column->add_child(std::move(armed));
+        // the box pairs with its own label, which is how a native check box reads (§8.4)
+        auto armed_row = std::make_unique<albor::RowLayout>();
+        armed_row->set_gap(8.0f);
+        armed_row->add_child(std::move(armed));
+        armed_row->add_child(std::make_unique<albor::Label>(&engine, &text, "withhold saves", "armed_label"));
+        column->add_child(std::move(armed_row));
 
         // the tree returns the column, which the stage owns from here (§8.1)
         return column;
@@ -142,6 +157,26 @@ int main() {
         std::fprintf(stderr, "commands: the window could not be created\n");
         return 1;
     }
+    // the starting scheme is the one the system reports, which a native application follows (§8.4)
+    albor::Window* window = application.window(handle);
+    const albor::SystemAppearance appearance = window->system_appearance();
+    // the macos preset over the reported accents is the native control set, which the tree borrows (§8.4, §6.1)
+    albor::ThemeController controller(light_accents(appearance.accent), dark_accents(appearance.accent), albor::ThemePreset::Macos);
+    // the tree carries the theme from its root down, which is what every widget resolves through (§6.1)
+    controller.install(*application.root(handle), appearance.scheme);
+    // the scene is cleared with the themed surface, which is what the native faces read against (§6.1, §8.4)
+    application.set_window_background(handle, controller.theme().surface());
+    // a system appearance change rebuilds and reinstalls the theme, so the window follows the settings live (§8.4)
+    application.set_appearance_handler([&](albor::WindowHandle changed, const albor::SystemAppearance& changed_appearance) {
+        // only this example window is answered, so another window is left alone (§5.2)
+        if (changed != handle || application.window(handle) == nullptr)
+            return;
+        // the accents are rebuilt from the reported accent, and the scheme follows the report (§8.4)
+        controller.set_accents(light_accents(changed_appearance.accent), dark_accents(changed_appearance.accent));
+        controller.set_scheme(changed_appearance.scheme);
+        // the frame background follows the surface the theme resolved (§8.4)
+        application.set_window_background(handle, controller.theme().surface());
+    });
     std::printf("commands: running, one action bound to a toolbar, a menu row and the keyboard\n");
     // the loop blocks until the last window closes, which ends the application (§4.1)
     return application.run();

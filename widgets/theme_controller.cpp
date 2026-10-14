@@ -6,11 +6,39 @@
 
 namespace albor
 {
-    ThemeController::ThemeController(Accents accents) :
-        ThemeController(accents, accents) {}
+    ThemeController::ThemeController(ThemePreset preset) :
+        ThemeController(Accents{}, Accents{}, preset) {}
 
-    ThemeController::ThemeController(Accents light_accents, Accents dark_accents) :
-        m_light(ThemeBuilder::light(light_accents)), m_dark(ThemeBuilder::dark(dark_accents)) {}
+    ThemeController::ThemeController(Accents accents, ThemePreset preset) :
+        ThemeController(accents, accents, preset) {}
+
+    ThemeController::ThemeController(Accents light_accents, Accents dark_accents, ThemePreset preset) :
+        m_preset(preset), m_light(build(light_accents, ColorScheme::Light)), m_dark(build(dark_accents, ColorScheme::Dark)), m_light_accents(light_accents), m_dark_accents(dark_accents) {}
+
+    Theme ThemeController::build(const Accents& accents, ColorScheme scheme) const {
+        // the derived preset is the portable baseline, which the builder answers (§6.1)
+        if (m_preset == ThemePreset::Derived)
+            return scheme == ColorScheme::Dark ? ThemeBuilder::dark(accents) : ThemeBuilder::light(accents);
+        // a macos preset reads as the macos control set (§8.4)
+        if (m_preset == ThemePreset::Macos)
+            return Theme::macos(accents, scheme);
+        // a fluent preset reads as the windows control set (§8.4)
+        if (m_preset == ThemePreset::Fluent)
+            return Theme::fluent(accents, scheme);
+        // a pro dark preset reads as a professional tool surface (§8.4)
+        return Theme::pro_dark(accents);
+    }
+
+    void ThemeController::set_accents(Accents light_accents, Accents dark_accents) {
+        // the accents are stored first, so a later scheme flip rebuilds from the same source (§8.4)
+        m_light_accents = light_accents;
+        m_dark_accents = dark_accents;
+        // both schemes are rebuilt, because every colour in the palette derives from the accents (§6.1)
+        m_light = build(m_light_accents, ColorScheme::Light);
+        m_dark = build(m_dark_accents, ColorScheme::Dark);
+        // the rebuilt theme is put over the tree, which is where the accent change reaches the screen (§8.4)
+        reinstall();
+    }
 
     void ThemeController::install(UiNode& root, ColorScheme scheme) {
         // the subtree is remembered first, because a later flip has nothing to reinstall without it (§6.1)

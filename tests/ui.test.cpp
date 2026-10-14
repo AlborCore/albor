@@ -226,6 +226,7 @@ namespace
         [[nodiscard]] std::size_t depth() const { return m_states.size(); }
         void draw_rect(const Rect&, const Paint&) override {}
         void draw_rounded_rect(const Rect&, float, const Paint&) override {}
+        void draw_polyline(const std::span<const Point>&, const StrokeStyle&) override {}
         void draw_shadow(const Rect&, float, const Shadow&) override {}
         void draw_text(const TextLayout&, Point, const Paint&) override {}
         void draw_line_batch(const std::shared_ptr<const LineBatch>&, const Transform&, const StrokeStyle&) override {}

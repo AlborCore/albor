@@ -55,6 +55,9 @@ namespace albor
         // draw a filled and stroked rounded rectangle (§6.2)
         virtual void draw_rounded_rect(const Rect& rect, float radius, const Paint& paint) = 0;
 
+        // draw a polyline joined from vertex to vertex, which is the continuous stroke a control glyph needs (§6.2)
+        virtual void draw_polyline(const std::span<const Point>& points, const StrokeStyle& stroke) = 0;
+
         // draw the shadow a shape casts, which the backend blurs offscreen and composites under it (§6.2)
         virtual void draw_shadow(const Rect& rect, float radius, const Shadow& shadow) = 0;
 

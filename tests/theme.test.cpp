@@ -266,3 +266,81 @@ namespace albor
     }
 
 } // namespace albor
+
+namespace albor
+{
+    TEST(ThemePresets, TheMacosPresetSizesAControlToTheGuide) {
+        // arrange the default accent set, which is what an application that customises nothing takes (§8.4)
+        const Theme macos = Theme::macos(Accents{}, ColorScheme::Dark);
+        // assert the control metrics are the ones the interface guide names (§8.4)
+        EXPECT_EQ(macos.metrics().button_minimum, (Size{24.0f, 28.0f}));
+        EXPECT_FLOAT_EQ(macos.metrics().button_padding_horizontal, 12.0f);
+        EXPECT_FLOAT_EQ(macos.metrics().button_border_width, 1.0f);
+        EXPECT_FLOAT_EQ(macos.metrics().corner_radius, 5.0f);
+        EXPECT_EQ(macos.metrics().checkbox_box, (Size{14.0f, 14.0f}));
+        EXPECT_FLOAT_EQ(macos.metrics().checkbox_outline, 1.0f);
+        EXPECT_FLOAT_EQ(macos.metrics().slider_thumb, 22.0f);
+        EXPECT_FLOAT_EQ(macos.metrics().slider_thumb_radius, 11.0f);
+        EXPECT_FLOAT_EQ(macos.metrics().slider_thumb_shadow, 0.30f);
+        // the hierarchy sizes body copy at thirteen (§8.4)
+        EXPECT_FLOAT_EQ(macos.typography().body, 13.0f);
+    }
+
+    TEST(ThemePresets, TheMacosPresetCarriesAHairlineBorderAndASubtleFace) {
+        // arrange
+        const Theme macos = Theme::macos(Accents{}, ColorScheme::Dark);
+        // assert the border resolves a real colour rather than none, which is the second layer (§8.4)
+        EXPECT_GT(macos.palette().button_border[state_index(ControlState::Normal)].alpha, 0.0f);
+        // assert the face is a neutral lift rather than the accent block (§8.4)
+        EXPECT_NE(macos.palette().button_plate[state_index(ControlState::Normal)], Accents{}.accent);
+        // assert the halo under the ring is the accent dimmed, which is the dual layer (§8.4)
+        EXPECT_FLOAT_EQ(macos.palette().focus_ring_outer[state_index(ControlState::Focused)].alpha, 0.45f);
+    }
+
+    TEST(ThemePresets, TheFluentPresetSizesAControlToTheLanguage) {
+        // arrange
+        const Theme fluent = Theme::fluent(Accents{}, ColorScheme::Light);
+        // assert the control metrics are the ones the windows language names (§8.4)
+        EXPECT_EQ(fluent.metrics().button_minimum, (Size{24.0f, 32.0f}));
+        EXPECT_FLOAT_EQ(fluent.metrics().corner_radius, 4.0f);
+        EXPECT_FLOAT_EQ(fluent.metrics().checkbox_outline, 1.5f);
+        EXPECT_FLOAT_EQ(fluent.metrics().slider_tick_length, 4.0f);
+        EXPECT_FLOAT_EQ(fluent.typography().body, 14.0f);
+    }
+
+    TEST(ThemePresets, TheProDarkPresetKeepsTheToolComp) {
+        // arrange
+        const Theme pro_dark = Theme::pro_dark(Accents{});
+        // assert the control metrics are the ones a tool surface sizes (§8.4)
+        EXPECT_EQ(pro_dark.metrics().button_minimum, (Size{24.0f, 24.0f}));
+        EXPECT_FLOAT_EQ(pro_dark.metrics().button_padding_horizontal, 8.0f);
+        // assert the face lifts off the surface, which is the contrast a tool separates with (§8.4)
+        EXPECT_GT(pro_dark.palette().button_plate[state_index(ControlState::Normal)].red, Accents{}.surface.red);
+    }
+
+    TEST(ThemeTypography, ARoleSizeRoundTrips) {
+        // arrange
+        Theme theme;
+        // act
+        theme.set_role_font_size(TextRole::Caption, 9.5f);
+        theme.set_secondary_opacity(0.5f);
+        // assert the hierarchy carries the writes, because a role resolves through it (§8.4)
+        EXPECT_FLOAT_EQ(theme.typography().caption, 9.5f);
+        EXPECT_FLOAT_EQ(theme.typography().secondary_opacity, 0.5f);
+    }
+
+    TEST(ThemeTypography, TheSecondLayersDefaultToInvisible) {
+        // arrange
+        Theme theme;
+        // assert every new layer is silent by default, so no theme changes any widget until it decides (§8.4)
+        EXPECT_FLOAT_EQ(theme.palette().slider_fill[state_index(ControlState::Normal)].alpha, 0.0f);
+        EXPECT_FLOAT_EQ(theme.palette().button_border[state_index(ControlState::Normal)].alpha, 0.0f);
+        EXPECT_FLOAT_EQ(theme.palette().focus_ring_outer[state_index(ControlState::Focused)].alpha, 0.0f);
+        // assert the native metric tokens are silent by default too (§8.4)
+        EXPECT_FLOAT_EQ(theme.metrics().button_padding_horizontal, 0.0f);
+        EXPECT_FLOAT_EQ(theme.metrics().button_border_width, 0.0f);
+        EXPECT_FLOAT_EQ(theme.metrics().checkbox_glyph_stroke, 0.0f);
+        EXPECT_FLOAT_EQ(theme.metrics().slider_thumb_shadow, 0.0f);
+        EXPECT_FLOAT_EQ(theme.metrics().slider_tick_length, 0.0f);
+    }
+} // namespace albor
