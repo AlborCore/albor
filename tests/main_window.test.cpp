@@ -111,7 +111,11 @@ namespace
         }
 
         // an inert binder is left behind, because the hook is process wide and a later suite asserts it (§12.1)
-        ~InstalledRecorder() { albor::dev::install_root_binder(&record_bind, &record_unbind); }
+        ~InstalledRecorder() {
+            // the recorder is forgotten first, because it dies with this frame and a bind must not write to it (§12.1)
+            g_recorder = nullptr;
+            albor::dev::install_root_binder(&record_bind, &record_unbind);
+        }
     };
 
     // the builder that hands the application the animated leaf, which the window owns on its behalf (§8.1)

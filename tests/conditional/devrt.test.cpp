@@ -1,5 +1,6 @@
 #include <memory>
 #include <string>
+#include <tuple>
 
 #include <gtest/gtest.h>
 
@@ -66,6 +67,27 @@ namespace
         });
         // the node is returned, or nothing when no node carries the id (§12.1)
         return found;
+    }
+
+    // the value one property holds, chosen by the name because the type is what the setter reads (§11.1)
+    std::string value_for(const std::string& property) {
+        // a name outside the declared set is a table lie, so the test fails loudly rather than reading a default (§11.1)
+        if (property == "text" || property == "placeholder")
+            return "hello";
+        // a float is any number the language writes, and the spacing is trimmed rather than refused (§11.1)
+        if (property == "spacing" || property == "padding" || property == "font_size" || property == "overscan" || property == "row_height")
+            return "12";
+        // a colour is three channel floats, which is how the language writes one (§11.1)
+        if (property == "foreground" || property == "background" || property == "outline" || property == "check_fill" || property == "track_color" || property == "thumb_color")
+            return "0.1,0.2,0.3";
+        // a scrollbar policy is a named member of §8 (§11.1)
+        if (property == "scrollbar")
+            return "as_needed";
+        // a slider value is a plain number in the unit range (§11.1)
+        if (property == "value")
+            return "0.5";
+        // everything left is a flag, which the language writes as one of two words (§11.1)
+        return "true";
     }
 
     // count every node of a tree, which is how a test asserts on additions and removals (§12.1)
@@ -183,6 +205,84 @@ TEST(DevElementChecks, APropertyNeverLandsOnTheWrongElement) {
     EXPECT_EQ(label->horizontal_align(), Align::Center);
 }
 
+TEST(DevElementChecks, EveryDeclaredPropertyLandsOnItsOwnElement) {
+    // arrange the engines a window owns, which is what a rebuilt node is built over (§8.1, §9.1)
+    BindingEngine engine;
+    TestTextEngine text;
+    // the closed catalogue of §8, paired with a value each property holds, which is what a definition writes (§11.1)
+    const std::vector<std::pair<std::string, std::string>> assignments{
+        {"Column", "spacing"}, {"Column", "padding"}, {"Row", "spacing"}, {"Grid", "spacing"}, {"Padding", "padding"}, {"Label", "text"}, {"Label", "foreground"}, {"Label", "font_size"}, {"Button", "text"}, {"Button", "background"}, {"Button", "disabled"}, {"Slider", "value"}, {"Slider", "disabled"}, {"Slider", "track_color"}, {"Slider", "thumb_color"}, {"CheckBox", "checked"}, {"CheckBox", "disabled"}, {"CheckBox", "outline"}, {"CheckBox", "check_fill"}, {"ScrollView", "overscan"}, {"ScrollView", "scrollbar"}, {"ScrollView", "row_height"}, {"TextField", "value"}, {"TextField", "placeholder"}, {"TextField", "read_only"}, {"TextField", "multiline"}, {"TextField", "disabled"}, {"TextField", "font_size"},
+    };
+    // assert each assignment lands, because a setter the table names but never runs is a table that lies (§11.1)
+    for (const std::pair<std::string, std::string>& assignment : assignments) {
+        const std::string& element = assignment.first;
+        const std::string& property = assignment.second;
+        std::unique_ptr<UiNode> node = create_node(element, engine, text);
+        ASSERT_NE(node, nullptr) << element;
+        // the value is the one the property holds, chosen per type so the setter runs rather than refuses (§11.1)
+        const std::string value = value_for(property);
+        EXPECT_TRUE(apply_property(*node, element, property, value)) << element << "." << property;
+    }
+}
+
+TEST(DevElementChecks, EveryElementTakesBothAlignments) {
+    // arrange the engines and one node per element, because both axes are declared by all of them (§8.2)
+    BindingEngine engine;
+    TestTextEngine text;
+    for (const char* element : {"Column", "Row", "Padding", "Stack", "Grid", "Label", "Button", "Slider", "CheckBox", "Canvas", "ScrollView", "TextField"}) {
+        std::unique_ptr<UiNode> node = create_node(element, engine, text);
+        ASSERT_NE(node, nullptr) << element;
+        // act and assert both axes land on every element, because alignment is a property of every node (§8.2)
+        EXPECT_TRUE(apply_property(*node, element, "horizontal_align", "center")) << element;
+        EXPECT_EQ(node->horizontal_align(), Align::Center) << element;
+        EXPECT_TRUE(apply_property(*node, element, "vertical_align", "stretch")) << element;
+        EXPECT_EQ(node->vertical_align(), Align::Stretch) << element;
+    }
+}
+
+TEST(DevElementChecks, AnAssignmentIsTrimmedOfTheSpacingItWasWrittenWith) {
+    // arrange a column, whose spacing is a float (§8.2)
+    BindingEngine engine;
+    TestTextEngine text;
+    std::unique_ptr<UiNode> column = create_node("Column", engine, text);
+    ASSERT_NE(column, nullptr);
+    // act and assert the surrounding spaces are the definition's, not the value's (§11.1)
+    EXPECT_TRUE(apply_property(*column, "Column", "spacing", "  8  "));
+    EXPECT_TRUE(apply_property(*column, "Column", "padding", "\t4\n"));
+}
+
+TEST(DevElementChecks, EveryTypedPropertyRefusesAValueItCannotHold) {
+    // arrange the engines a window owns, which is what a rebuilt node is built over (§8.1, §9.1)
+    BindingEngine engine;
+    TestTextEngine text;
+    // the closed catalogue of the typed properties, each with a value of the wrong shape (§11.1)
+    const std::vector<std::tuple<std::string, std::string, std::string>> refusals{
+        {"Column", "spacing", "wide"}, {"Column", "padding", "wide"}, {"Row", "spacing", "wide"}, {"Grid", "spacing", "wide"}, {"Padding", "padding", "wide"}, {"Label", "foreground", "blue"}, {"Label", "font_size", "big"}, {"Button", "background", "blue"}, {"Button", "disabled", "yes"}, {"Slider", "value", "half"}, {"Slider", "disabled", "yes"}, {"Slider", "track_color", "blue"}, {"Slider", "thumb_color", "blue"}, {"CheckBox", "checked", "yes"}, {"CheckBox", "disabled", "yes"}, {"CheckBox", "outline", "blue"}, {"CheckBox", "check_fill", "blue"}, {"ScrollView", "overscan", "some"}, {"ScrollView", "scrollbar", "sometimes"}, {"ScrollView", "row_height", "tall"}, {"TextField", "read_only", "yes"}, {"TextField", "multiline", "yes"}, {"TextField", "disabled", "yes"}, {"TextField", "font_size", "big"}, {"Label", "horizontal_align", "middle"}, {"Label", "vertical_align", "middle"},
+    };
+    // assert each setter refuses rather than half applying, because a refused value leaves the node as it was (§11.1)
+    for (const std::tuple<std::string, std::string, std::string>& refusal : refusals) {
+        const std::string element = std::get<0>(refusal);
+        const std::string property = std::get<1>(refusal);
+        const std::string value = std::get<2>(refusal);
+        std::unique_ptr<UiNode> node = create_node(element, engine, text);
+        ASSERT_NE(node, nullptr) << element;
+        EXPECT_FALSE(apply_property(*node, element, property, value)) << element << "." << property;
+    }
+}
+
+TEST(DevElementChecks, AScrollbarPolicyIsReadFromItsNamedMembers) {
+    // arrange a viewport, whose policy is a closed named set (§8)
+    BindingEngine engine;
+    TestTextEngine text;
+    std::unique_ptr<UiNode> scroll = create_node("ScrollView", engine, text);
+    ASSERT_NE(scroll, nullptr);
+    // act and assert each member of the set lands, and a name outside it does not (§11.1)
+    EXPECT_TRUE(apply_property(*scroll, "ScrollView", "scrollbar", "as_needed"));
+    EXPECT_TRUE(apply_property(*scroll, "ScrollView", "scrollbar", "always_off"));
+    EXPECT_TRUE(apply_property(*scroll, "ScrollView", "scrollbar", "always_on"));
+    EXPECT_FALSE(apply_property(*scroll, "ScrollView", "scrollbar", "sometimes"));
+}
+
 TEST(DevElementChecks, AValueTheLanguageNeverWroteIsRefused) {
     // arrange a column, whose spacing is a float (§8.2)
     BindingEngine engine;
@@ -194,8 +294,27 @@ TEST(DevElementChecks, AValueTheLanguageNeverWroteIsRefused) {
     EXPECT_FALSE(apply_property(*column, "Column", "spacing", ""));
     EXPECT_FALSE(apply_property(*column, "Column", "spacing", "12px"));
     EXPECT_FALSE(apply_property(*column, "Column", "padding", "1,2"));
-    EXPECT_FALSE(apply_property(*column, "Column", "padding", "0.1,0.2,blue"));
     EXPECT_FALSE(apply_property(*column, "Column", "vertical_align", "middle"));
+    // a colour is read through its own reader, so its refusals are asserted on a property that is one (§11.1)
+    std::unique_ptr<UiNode> label = create_node("Label", engine, text);
+    ASSERT_NE(label, nullptr);
+    // assert a triple that is not three numbers is not a colour, and neither is a pair of them (§11.1)
+    EXPECT_FALSE(apply_property(*label, "Label", "foreground", "0.1,0.2,blue"));
+    EXPECT_FALSE(apply_property(*label, "Label", "foreground", "0.1,0.2"));
+    EXPECT_FALSE(apply_property(*label, "Label", "foreground", "blue"));
+}
+
+TEST(DevElementChecks, APropertyNeverLandsOnADifferentElement) {
+    // arrange a label, whose dynamic type is not the element a button property belongs to (§11.1)
+    BindingEngine engine;
+    TestTextEngine text;
+    std::unique_ptr<UiNode> label = create_node("Label", engine, text);
+    ASSERT_NE(label, nullptr);
+    // act and assert the button setter refuses the label, because a name alone must not carry an assignment (§11.1)
+    EXPECT_FALSE(apply_property(*label, "Button", "text", "hello"));
+    EXPECT_FALSE(apply_property(*label, "Button", "disabled", "true"));
+    // assert the label kept its own text, which is what a refused assignment means (§11.1)
+    EXPECT_EQ(static_cast<Label*>(label.get())->text(), "");
 }
 
 TEST(DevElementChecks, AColourAndAFlagAreReadFromTheDefinition) {
