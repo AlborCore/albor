@@ -501,7 +501,7 @@ namespace albor::compiler
                 out.writes.push_back(statement.target);
             }
         }
-        else {
+        else if (statement.kind == HandlerStatementKind::SignalInvocation) {
             // the invoked signal must be one the component declares (§11.1)
             const CheckedSignal* declared = nullptr;
             // the signals of the component are scanned, because only they can be invoked (§11.1)
@@ -535,6 +535,94 @@ namespace albor::compiler
                             report_type_mismatch(*out_statement.arguments.at(index), argument_type, declared->parameter_types.at(index));
                         }
                     }
+                }
+            }
+        }
+        else {
+            // a property method mutates a collection, so the target must be a declared property (§11.1)
+            const CheckedProperty* target = nullptr;
+            // the declarations are scanned, because only they can be the target (§11.1)
+            for (const CheckedProperty& property : *scope.properties) {
+                // the name decides, so the target resolves to exactly one declaration (§11.1)
+                if (property.name == statement.target)
+                    target = &property;
+            }
+            // a target that is not a declared property is reported, because there is nothing to mutate (§11.1)
+            if (target == nullptr) {
+                // the problem points at the statement, because that is where the target is written (§11.1)
+                m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0404", "'" + statement.target + "' is not a property of this component");
+            }
+            // only a vector property carries the collection methods, because that is the closed set (§11.1)
+            else if (!target->type.is(TypeKind::Vector)) {
+                // the problem names the type, because a scalar has no collection methods (§11.1)
+                m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0419", "'" + statement.target + "' is a " + target->type.to_string() + ", so it has no collection methods");
+            }
+            // an incoming property may not be mutated from a handler, because a binding owns it (§11.1, §7)
+            else if (target->direction != PropertyDirection::InOut) {
+                report_not_assignable(statement, statement.target);
+            }
+            else {
+                // the element type is what every argument is checked against, so it is kept (§11.1)
+                out_statement.element = target->type.element();
+                // the method name decides the arity and the argument types, which are a closed set (§11.1)
+                const std::string& method = statement.method;
+                // each argument shares the parsed expression, because the tree owns it (§11.1)
+                for (const ExpressionPtr& argument : statement.arguments)
+                    out_statement.arguments.push_back(std::shared_ptr<const Expression>(argument.get(), [](const Expression*) {}));
+                // the write is recorded, because the graph needs it to order invalidation (§7.3, AD-04a)
+                out.writes.push_back(statement.target);
+                // the method is copied, because the codegen emits it as checked (§11.1)
+                out_statement.method = method;
+                // the closed set of methods is matched, because an unknown one has no mutation (§11.1)
+                if (method == "append") {
+                    // append takes exactly one element, which is the value pushed (§11.1)
+                    if (out_statement.arguments.size() != 1) {
+                        m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0406", "'append' takes 1 argument(s)");
+                    }
+                    else {
+                        // the argument must be the element type, because nothing widens implicitly (§11.1)
+                        const ValueType argument_type = type_expression(*out_statement.arguments.at(0), scope, out_statement.dependencies);
+                        if (!assignable(argument_type, out_statement.element))
+                            report_type_mismatch(*out_statement.arguments.at(0), argument_type, out_statement.element);
+                    }
+                }
+                else if (method == "remove_at") {
+                    // remove_at takes exactly one index, which is the position erased (§11.1)
+                    if (out_statement.arguments.size() != 1) {
+                        m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0406", "'remove_at' takes 1 argument(s)");
+                    }
+                    else {
+                        // the argument must be an integer, because a position is a count (§11.1)
+                        const ValueType argument_type = type_expression(*out_statement.arguments.at(0), scope, out_statement.dependencies);
+                        if (!assignable(argument_type, scalar(TypeKind::Int)))
+                            report_type_mismatch(*out_statement.arguments.at(0), argument_type, scalar(TypeKind::Int));
+                    }
+                }
+                else if (method == "clear") {
+                    // clear takes no argument, because it drops every element (§11.1)
+                    if (!out_statement.arguments.empty()) {
+                        m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0406", "'clear' takes 0 argument(s)");
+                    }
+                }
+                else if (method == "set") {
+                    // set takes an index and a value, because it replaces one element (§11.1)
+                    if (out_statement.arguments.size() != 2) {
+                        m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0406", "'set' takes 2 argument(s)");
+                    }
+                    else {
+                        // the index must be an integer, because a position is a count (§11.1)
+                        const ValueType index_type = type_expression(*out_statement.arguments.at(0), scope, out_statement.dependencies);
+                        if (!assignable(index_type, scalar(TypeKind::Int)))
+                            report_type_mismatch(*out_statement.arguments.at(0), index_type, scalar(TypeKind::Int));
+                        // the value must be the element type, because nothing widens implicitly (§11.1)
+                        const ValueType value_type = type_expression(*out_statement.arguments.at(1), scope, out_statement.dependencies);
+                        if (!assignable(value_type, out_statement.element))
+                            report_type_mismatch(*out_statement.arguments.at(1), value_type, out_statement.element);
+                    }
+                }
+                else {
+                    // a method the language does not define has no mutation, so it is reported (§11.1)
+                    m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0418", "'" + method + "' is not a collection method; the closed set is append, remove_at, clear and set");
                 }
             }
         }

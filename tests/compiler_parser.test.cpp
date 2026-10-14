@@ -459,6 +459,37 @@ TEST(Parser, ReportsARepeatWithNoBody) {
     EXPECT_EQ(first(diagnostics).code, "E0203");
 }
 
+TEST(Parser, ReadsACollectionAppendStatement) {
+    // arrange, act
+    const SourceFile file = parse("component C { inout property<vector<string>> items; Button { on_clicked: { items.append(\"x\"); } } }");
+    // assert
+    const HandlerStatement& statement = file.components.at(0).root->handlers.at(0).body.at(0);
+    EXPECT_EQ(statement.kind, HandlerStatementKind::PropertyMethod);
+    EXPECT_EQ(statement.target, "items");
+    EXPECT_EQ(statement.method, "append");
+    ASSERT_EQ(statement.arguments.size(), 1U);
+}
+
+TEST(Parser, ReadsAClearStatementWithNoArgument) {
+    // arrange, act
+    const SourceFile file = parse("component C { inout property<vector<int>> items; Button { on_clicked: { items.clear(); } } }");
+    // assert
+    const HandlerStatement& statement = file.components.at(0).root->handlers.at(0).body.at(0);
+    EXPECT_EQ(statement.kind, HandlerStatementKind::PropertyMethod);
+    EXPECT_EQ(statement.method, "clear");
+    EXPECT_TRUE(statement.arguments.empty());
+}
+
+TEST(Parser, ReadsASetStatementWithTwoArguments) {
+    // arrange, act
+    const SourceFile file = parse("component C { inout property<vector<string>> items; Button { on_clicked: { items.set(0, \"y\"); } } }");
+    // assert
+    const HandlerStatement& statement = file.components.at(0).root->handlers.at(0).body.at(0);
+    EXPECT_EQ(statement.kind, HandlerStatementKind::PropertyMethod);
+    EXPECT_EQ(statement.method, "set");
+    ASSERT_EQ(statement.arguments.size(), 2U);
+}
+
 TEST(Parser, ReadsEachLiteralKind) {
     // arrange
     const std::string_view source = "component C { B { a: 42; b: 1.5; c: \"text\"; d: #FF0000; e: 12px; f: true; } }";

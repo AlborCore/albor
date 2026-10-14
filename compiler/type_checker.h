@@ -83,14 +83,20 @@ namespace albor::compiler
         // what kind of statement this is, which decides which fields below are set (§11.1)
         HandlerStatementKind kind = HandlerStatementKind::Assignment;
 
-        // the property being assigned or the signal being invoked (§11.1)
+        // the property being assigned, the signal invoked or the collection the method runs on (§11.1)
         std::string target;
 
-        // the assigned value, which is absent for an invocation (§11.1)
+        // the built-in method name, which is empty for an assignment and a signal invocation (§11.1)
+        std::string method;
+
+        // the assigned value, which is absent for an invocation and a method call (§11.1)
         SharedExpression value;
 
-        // the invocation arguments, which are empty for an assignment (§11.1)
+        // the invocation or method arguments, which are empty for an assignment (§11.1)
         std::vector<SharedExpression> arguments;
+
+        // the element type of a collection method, which is what the mutation works with (§11.1)
+        ValueType element;
 
         // the component properties the statement reads, which the graph walk orders by (§7.3, AD-04a)
         std::vector<std::string> dependencies;

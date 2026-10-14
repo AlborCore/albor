@@ -382,6 +382,56 @@ TEST(TypeChecker, ReportsAnAssignmentThatDoesNotMatchTheProperty) {
     EXPECT_EQ(first(diagnostics).code, "E0410");
 }
 
+TEST(TypeChecker, ChecksACollectionAppendAgainstTheElementType) {
+    // arrange, act
+    const CheckedFile file = check("component C { inout property<vector<string>> items; Button { on_clicked: { items.append(\"x\"); } } }");
+    // assert
+    const CheckedStatement& statement = only(file).root->handlers.at(0).body.at(0);
+    EXPECT_EQ(statement.kind, HandlerStatementKind::PropertyMethod);
+    EXPECT_EQ(statement.element.to_string(), "string");
+    ASSERT_EQ(only(file).root->handlers.at(0).writes.size(), 1U);
+}
+
+TEST(TypeChecker, ReportsACollectionMethodOnANonVectorProperty) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("component C { inout property<int> count: 0; Button { on_clicked: { count.append(1); } } }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0419");
+}
+
+TEST(TypeChecker, ReportsAnUnknownCollectionMethod) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("component C { inout property<vector<int>> items; Button { on_clicked: { items.sort(); } } }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0418");
+}
+
+TEST(TypeChecker, ReportsAnAppendWithTheWrongArity) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("component C { inout property<vector<int>> items; Button { on_clicked: { items.append(); } } }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0406");
+}
+
+TEST(TypeChecker, ReportsACollectionMethodOnAnIncomingProperty) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("component C { in property<vector<int>> items; Button { on_clicked: { items.append(1); } } }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0413");
+}
+
 TEST(TypeChecker, ChecksASignalInvocationAgainstItsParameters) {
     // arrange, act
     const CheckedFile file = check("component C { signal moved(float t); Button { on_clicked: { moved(1.5); } } }");

@@ -2163,12 +2163,55 @@ namespace albor::compiler
                     m_signal_parameters.clear();
                     for (const std::pair<std::string, std::string>& parameter : named_signal_params(slot.node->element_type, handler.name))
                         m_signal_parameters.push_back(parameter.second);
-                    // each statement is emitted as a property write or a signal invocation (§11.3)
+                    // each statement is emitted as a property write, a signal invocation or a collection mutation (§11.3)
                     for (const CheckedStatement& statement : handler.body) {
                         // an assignment writes the target property, which the engine settles (§11.3)
                         if (statement.kind == HandlerStatementKind::Assignment) {
                             line(2, "// the written assignment runs, which updates the component property (§11.3)");
                             line(2, "self->m_" + sanitize(statement.target) + ".set(" + emit_expression(*statement.value) + ");");
+                        }
+                        // a collection method copies, mutates and sets back, which is how a vector changes (§11.1)
+                        else if (statement.kind == HandlerStatementKind::PropertyMethod) {
+                            // the property name is shared, because the mutation writes through it (§11.3)
+                            const std::string property = "self->m_" + sanitize(statement.target);
+                            // clear drops every element, which needs no working copy (§11.1)
+                            if (statement.method == "clear") {
+                                line(2, "// the collection is emptied, which the engine settles (§11.1)");
+                                line(2, property + ".set({});");
+                            }
+                            else {
+                                // the mutation is scoped, so each statement owns its working names (§11.1)
+                                line(2, "{");
+                                // a working copy is taken, because the mutation rebuilds the vector it sets back (§11.1)
+                                line(3, "// a working copy of the collection is taken, which the mutation rebuilds (§11.1)");
+                                line(3, "auto list = " + property + ".get();");
+                                // the index is bound once, because both the bounds check and the access read it (§11.1)
+                                if (statement.method == "remove_at" || statement.method == "set") {
+                                    line(3, "// the index is read once, because the bounds check and the access agree on it (§11.1)");
+                                    line(3, "const int index = " + emit_expression(*statement.arguments.at(0)) + ";");
+                                }
+                                // the element is appended, which grows the collection by one (§11.1)
+                                if (statement.method == "append") {
+                                    line(3, "// the element is pushed, which grows the collection by one (§11.1)");
+                                    line(3, "list.push_back(" + emit_expression(*statement.arguments.at(0)) + ");");
+                                }
+                                // the element at the index is erased, which shrinks the collection by one (§11.1)
+                                else if (statement.method == "remove_at") {
+                                    line(3, "// the element is erased when the index is in range, which shrinks the collection (§11.1)");
+                                    line(3, "if (index >= 0 && index < static_cast<int>(list.size()))");
+                                    line(4, "list.erase(list.begin() + index);");
+                                }
+                                // the element at the index is replaced, which keeps the collection size (§11.1)
+                                else if (statement.method == "set") {
+                                    line(3, "// the element is replaced when the index is in range, which keeps the size (§11.1)");
+                                    line(3, "if (index >= 0 && index < static_cast<int>(list.size()))");
+                                    line(4, "list[static_cast<std::size_t>(index)] = " + emit_expression(*statement.arguments.at(1)) + ";");
+                                }
+                                // the rebuilt collection is set back, which the engine settles (§11.1)
+                                line(3, "// the rebuilt collection is set back, which the engine settles (§11.1)");
+                                line(3, property + ".set(std::move(list));");
+                                line(2, "}");
+                            }
                         }
                         // an invocation reports the slot, which the host installed (§11.3)
                         else {

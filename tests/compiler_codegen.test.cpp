@@ -348,6 +348,47 @@ TEST(Codegen, ANestedSnapshotBlocksTheOutput) {
     EXPECT_TRUE(has_code(diagnostics, "E0501"));
 }
 
+TEST(Codegen, ACollectionAppendCopiesMutatesAndSetsBack) {
+    // arrange
+    DiagnosticList diagnostics;
+    // the append mutates a vector property through a working copy (§11.1)
+    const std::string_view source = "component C { inout property<vector<string>> items; Button { on_clicked: { items.append(\"x\"); } } }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert
+    ASSERT_FALSE(files.empty());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // the working copy is taken, the element is pushed and the rebuilt vector is set back (§11.1)
+    EXPECT_TRUE(contains(cpp.content, "auto list = self->m_items.get();"));
+    EXPECT_TRUE(contains(cpp.content, "list.push_back("));
+    EXPECT_TRUE(contains(cpp.content, "self->m_items.set(std::move(list));"));
+}
+
+TEST(Codegen, ACollectionClearDropsEveryElement) {
+    // arrange
+    DiagnosticList diagnostics;
+    // the clear needs no working copy, because an empty vector replaces the value (§11.1)
+    const std::string_view source = "component C { inout property<vector<int>> items; Button { on_clicked: { items.clear(); } } }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "self->m_items.set({});"));
+}
+
+TEST(Codegen, ACollectionRemoveAtGuardsTheIndex) {
+    // arrange
+    DiagnosticList diagnostics;
+    // the remove_at erases only when the index is in range, which is what keeps the vector valid (§11.1)
+    const std::string_view source = "component C { inout property<vector<int>> items; Button { on_clicked: { items.remove_at(0); } } }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "if (index >= 0 && index < static_cast<int>(list.size()))"));
+    EXPECT_TRUE(contains(cpp.content, "list.erase(list.begin() + index);"));
+}
+
 TEST(Codegen, ASnapshotOfARecordGeneratesTheFacade) {
     // arrange a catalog holding a record, which is what the manifest contributes (§11.2, AD-17)
     ElementCatalog catalog = ElementCatalog::with_builtins();

@@ -1,0 +1,29 @@
+// the collection fixture, which proves a handler mutates a vector property in place (§11.1)
+
+component CollectionPanel {
+    inout property<vector<string>> items;
+
+    Column {
+        Button {
+            text: "Add";
+            on_clicked: {
+                items.append("row");
+            }
+        }
+
+        Button {
+            text: "Reset";
+            on_clicked: {
+                items.clear();
+                items.append("first");
+            }
+        }
+
+        Button {
+            text: "Drop first";
+            on_clicked: {
+                items.remove_at(0);
+            }
+        }
+    }
+}

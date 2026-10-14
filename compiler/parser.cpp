@@ -591,8 +591,21 @@ namespace albor::compiler
             statement.span.start = start;
             // the target is moved into the statement, because the parser owns the stream (§11.1)
             statement.target = std::move(target);
+            // a dot after the target is a built-in method call on a collection property (§11.1)
+            if (at_punctuation(".")) {
+                // the dot is consumed, because the method name follows it (§11.1)
+                advance();
+                // the statement is a property method, which mutates the collection in place (§11.1)
+                statement.kind = HandlerStatementKind::PropertyMethod;
+                // the method name is required, because a trailing dot names no method (§11.1)
+                statement.method = expect_identifier();
+                // the argument list is parenthesised, which is how every call in the language reads (§11.1)
+                expect_punctuation("(");
+                // the arguments are read as a list, which may be empty for clear (§11.1)
+                statement.arguments = parse_arguments();
+            }
             // an assignment is written with an equals sign (§11.1)
-            if (accept_punctuation("=")) {
+            else if (accept_punctuation("=")) {
                 // the statement is an assignment, which the checker resolves against the properties (§11.1)
                 statement.kind = HandlerStatementKind::Assignment;
                 // the assigned value is an expression, so it may compute anything a binding may (§11.1)
@@ -605,8 +618,8 @@ namespace albor::compiler
                 statement.arguments = parse_arguments();
             }
             else {
-                // a statement that is neither form is reported, because the body has only these two (§11.1)
-                m_diagnostics.add(Diagnostic::Severity::Error, SourceSpan{.start = start, .end = peek().span.start}, "E0201", "a handler body may only assign a property or invoke a signal");
+                // a statement that is neither form is reported, because the body has only these three (§11.1)
+                m_diagnostics.add(Diagnostic::Severity::Error, SourceSpan{.start = start, .end = peek().span.start}, "E0201", "a handler body may only assign a property, invoke a signal or call a collection method");
             }
             // the statement ends at the terminator, which is required (§11.1)
             expect_punctuation(";");
