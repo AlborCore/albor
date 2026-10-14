@@ -107,27 +107,57 @@ The compiler generates a concrete facade class per component — properties, sig
 children as a stable, non-virtual interface — and rebuilds only the translation units
 that actually changed when a `.ui` body is edited (§14.3).
 
-## Using a component
+## Starting an application
+
+An application names a window and the component it shows. It does not name a renderer, a
+platform adapter or a text engine: each backend installs itself at load, so **linking is the
+selection** (§5.3, §6.3, §9.1).
 
 ```cpp
 #include "application/application.h"
-#include "platform/macos/event_loop.h"
-#include "render/render-skia/skia_renderer_backend.h"
 #include "greeting_panel.h"
 
 int main() {
-    // the composition root installs the platform, the renderer and the text engine
-    albor::macos::install_macos_platform();
-    albor::install_skia_renderer_backend();
-    albor::SkiaTextEngine::install();
-
     albor::Application& application = albor::Application::instance();
-    // ...
-    auto panel = std::make_unique<albor::GreetingPanel>(&engine, text_engine.get());
+
+    albor::WindowOptions options;
+    options.title = "Albor — Greeting";
+    options.size = albor::Size{800.0f, 600.0f};
+
+    // the application builds the component over the engines it owns and hands the facade back
+    albor::GreetingPanel* panel = nullptr;
+    const albor::WindowHandle handle = application.create_window(options, panel);
+    if (!handle.valid()) {
+        std::fprintf(stderr, "greeting: the window could not be created\n");
+        return 1;
+    }
+
     panel->set_on_run_clicked([] { /* react to the signal */ });
-    // ...
+    return application.run();
 }
 ```
+
+`run()` returns when the last main window closes (§4.1). A window may also be added while
+the loop is running, from a task or a timer; the run still ends with the last one.
+
+`albor::MainWindowConfig` carries the per-window choices: the clear `background`, whether a
+tick that changed nothing is skipped (`build_only_when_dirty`), and a `scene_source` for an
+application that owns its `FrameScene` and brings no tree at all. `application.set_frame_hook`
+installs work that runs between a window's build and its submit; `application.set_input_handler`
+observes the event **after** the tree has answered it, `event.handled` included (§8.3).
+
+`application.root(handle)` hands out the tree a window drives, for a host that installs a
+theme over it or reads its identity. The raw APIs stay public and documented as the escape
+hatch: `application.stage(handle)` reaches the wiring itself, and
+`create_window(options, RootBuilder)` builds a tree imperatively.
+
+## Linking the dev runtime
+
+`albor-devrt-auto` is the whole switch. An application that links it gets hot swap of
+`.ui` structure and property values; an application that does not is unaffected, and a
+reference to the extension from a Release target **fails to link** rather than compiling away
+(§12.1, AD-01, AD-04). No application code changes between the two, and the framework itself
+knows nothing about the extension beyond four null-checked hook calls.
 
 Complete, buildable versions live in [`examples/`](examples/) — a hand-built reactive
 counter, a manifest-driven chart with custom line-batch rendering, and the compiled
@@ -138,6 +168,8 @@ counter, a manifest-driven chart with custom line-batch rendering, and the compi
 | area | state |
 | --- | --- |
 | application, event loop, tasks, timers | done (§4) |
+| startup facade: one call wires window, surface, pipeline, executor and input | done (§4.1, §6.1) |
+| dev runtime extension: self-installing, patches a live tree in place | done (§12.1) |
 | macOS platform: AppKit window, display-link pacing, input | done (§5) |
 | Skia renderer backend (Metal/Ganesh), render executor thread | done (§6) |
 | reactive properties, eager-push binding engine, snapshots | done (§7) |
@@ -150,7 +182,8 @@ counter, a manifest-driven chart with custom line-batch rendering, and the compi
 | Win32 / Wayland / X11 platform backends | planned (phase 1 follow-up) |
 | software renderer, headless CI, parity suite | planned (AD-26) |
 | style/theme system, hover and pressed states | planned |
-| LSP, preview, live reload, automation, accessibility adapters | planned (phase 5) |
+| out-of-process dev service that delivers definitions to the extension | planned (§12.1, AD-12) |
+| LSP, preview, automation, accessibility adapters | planned (phase 5) |
 
 ## Building
 

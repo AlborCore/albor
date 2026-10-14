@@ -1,5 +1,4 @@
 #include <cstdio>
-#include <memory>
 
 #include "application/application.h"
 #include "drivability.h"
@@ -16,23 +15,20 @@ namespace
     // the dark accents, which are the window surface the system shows in dark mode with the reported accent (§8.4)
     albor::Accents dark_accents(albor::Color accent) { return albor::Accents{.surface = albor::Color::rgb(0.125f, 0.125f, 0.135f), .on_surface = albor::Color::rgb(0.92f, 0.94f, 0.96f), .accent = accent, .outline = albor::Color::rgb(0.42f, 0.44f, 0.48f)}; }
 
-    // the tree the form window shows, which is the compiled component over the engines the stage owns (§8.1, §11.3)
-    std::unique_ptr<albor::UiNode> build_scene(albor::BindingEngine& engine, albor::TextEngine& text) {
-        // the generated facade is the whole tree, which needs the text engine for its labels (§9.1, §11.3)
-        return std::make_unique<albor::WidgetForm>(&engine, &text);
-    }
 } // namespace
 
 int main() {
-    // the platform and the backends installed themselves at load, so the application runs on them (§5.3, §9.1)
+    // the application owns the native loop, the window registry and the task dispatcher (§4.1)
     albor::Application& application = albor::Application::instance();
-    // the window is a main window, whose tree the application builds from the compiled component (§6.1, §8.3)
+    // the window opens with the example title and the documented size (§5.1)
     albor::WindowOptions options;
     options.title = "Albor \xE2\x80\x94 Widget Form";
     options.size = albor::Size{420.0f, 560.0f};
-    const albor::WindowHandle handle = application.create_window(options, build_scene);
+    // the application builds the compiled component over the engines it owns, and linking chose the backends (§8.1, §6.3)
+    albor::WidgetForm* form = nullptr;
+    const albor::WindowHandle handle = application.create_window(options, form);
     // a window that refused its tree leaves nothing to show, which the invalid handle reports (§5.1)
-    if (!handle.valid()) {
+    if (!handle.valid() || form == nullptr) {
         std::fprintf(stderr, "form: the window could not be created\n");
         return 1;
     }

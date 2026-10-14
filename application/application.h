@@ -4,13 +4,19 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <type_traits>
+#include <vector>
 
+#include "application/main_window_config.h"
 #include "application/task_queue.h"
 #include "application/timer.h"
 #include "application/window_stage.h"
 #include "commands/command_registry.h"
 #include "core/paint.h"
+#include "runtime/binding_engine.h"
+#include "text/text_engine.h"
 #include "ui/ui_event.h"
+#include "ui/ui_node.h"
 #include "window/system_appearance.h"
 #include "window/window.h"
 #include "window/window_handle.h"
@@ -102,6 +108,34 @@ namespace albor
         // create a main window whose tree the builder builds, wired for rendering (§6.1, §8.1)
         WindowHandle create_window(const WindowOptions& options, RootBuilder builder);
 
+        // create a main window over the config, whose tree the builder builds, wired for rendering (§6.1, §8.1)
+        WindowHandle create_window(const WindowOptions& options, RootBuilder builder, const MainWindowConfig& config);
+
+        // create a main window whose tree is the named component, and hand the caller the facade it drives (§14.1)
+        template <class Root>
+        WindowHandle create_window(const WindowOptions& options, Root*& out) {
+            // the config is the documented default, so the window presents against the standard clear colour (§6.1)
+            return create_window(options, out, MainWindowConfig{});
+        }
+
+        // create a main window whose tree is the named component over the config, handing back the facade (§8.1)
+        template <class Root>
+        WindowHandle create_window(const WindowOptions& options, Root*& out, const MainWindowConfig& config) {
+            // the facade is only reachable once the stage built the tree, so the pointer starts empty (§14.1)
+            out = nullptr;
+            // the builder runs inside the stage, because the engines it needs belong to that window (§8.1)
+            return create_window(
+                options,
+                [&out](BindingEngine& engine, TextEngine& text) -> std::unique_ptr<UiNode> {
+                    // the component is built over the engines, choosing the constructor its shape declares (§8.1)
+                    std::unique_ptr<Root> node = build_root<Root>(engine, text);
+                    // the caller keeps the concrete facade, which is how a host drives its properties (§7.3, AD-24)
+                    out = node.get();
+                    return node;
+                },
+                config);
+        }
+
         // find the window a handle names, returning null when the handle is stale (§5.2)
         [[nodiscard]] Window* window(WindowHandle handle);
 
@@ -122,6 +156,12 @@ namespace albor
 
         // hand out how many frames a window's tree built, which a window without one never did (§6.1)
         [[nodiscard]] std::uint64_t frame_count(WindowHandle handle) const;
+
+        // hand out the frame machinery of a main window, which is null for a window that has none (§6.1)
+        [[nodiscard]] WindowStage* stage(WindowHandle handle);
+
+        // install the callback that runs between a main window's build and its submit, which refreshes state (§6.1)
+        bool set_frame_hook(WindowHandle handle, std::function<void()> hook);
 
         // hand out the task dispatcher, which an application posts work to
         [[nodiscard]] TaskQueue& tasks();
@@ -166,6 +206,23 @@ namespace albor
         [[nodiscard]] CommandRegistry& commands();
 
     private:
+        // build the named component over the engines a stage owns, choosing the constructor its shape declares (§8.1)
+        template <class Root>
+        static std::unique_ptr<Root> build_root(BindingEngine& engine, TextEngine& text) {
+            // a component that measures text takes the text engine, and one that does not has no use for it (§9.1)
+            if constexpr (std::is_constructible_v<Root, BindingEngine*, TextEngine*>) {
+                return std::make_unique<Root>(&engine, &text);
+            }
+            // the remaining components are reactive only, so the text engine is never handed to them (§7.3)
+            else if constexpr (std::is_constructible_v<Root, BindingEngine*>) {
+                return std::make_unique<Root>(&engine);
+            }
+            // a container arranges children and declares no property, so it borrows no engine at all (§8.2)
+            else {
+                return std::make_unique<Root>();
+            }
+        }
+
         // attach the framework listeners to a window, which is what makes its events reach the application (§5.3)
         void bind_window(WindowHandle handle, Window& window);
 
@@ -174,6 +231,9 @@ namespace albor
 
         // drop the stage of a closed window, since nothing may touch its surface afterwards (§6.1)
         void release_stage(WindowHandle handle);
+
+        // apply the teardowns that arrived while a frame pass was walking the stages (§4.2)
+        void drain_deferred_stages();
 
         // end the run when no window and no stage is left, which is the default lifetime (§4.1)
         void end_run_when_no_windows();
@@ -202,6 +262,12 @@ namespace albor
 
         // the registry that owns every open window (§4.1)
         WindowRegistry m_windows;
+
+        // the windows whose teardown was deferred by a close that arrived mid frame, so the walk stays valid (§4.2)
+        std::vector<WindowHandle> m_deferred;
+
+        // whether a frame pass is walking the stages, which is what makes a teardown defer itself (§4.2)
+        bool m_driving_frames = false;
 
         // the callback every frame tick reaches (§6.1)
         std::function<void()> m_frame_handler;

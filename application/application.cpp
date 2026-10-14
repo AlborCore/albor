@@ -120,7 +120,9 @@ namespace albor
         });
     }
 
-    WindowHandle Application::create_window(const WindowOptions& options, RootBuilder builder) {
+    WindowHandle Application::create_window(const WindowOptions& options, RootBuilder builder) { return create_window(options, std::move(builder), MainWindowConfig{}); }
+
+    WindowHandle Application::create_window(const WindowOptions& options, RootBuilder builder, const MainWindowConfig& config) {
         // the window joins the registry with the listeners every window carries, which keeps its events routed (§5.3)
         const WindowHandle handle = create_window(options);
         // the invalid handle only means the platform refused the window (§5.1)
@@ -133,7 +135,7 @@ namespace albor
             return WindowHandle{};
         }
         // the stage wires the window's surface, pipeline, render thread and input once (§6.1, §8.3)
-        std::unique_ptr<WindowStage> stage = std::make_unique<WindowStage>(*m_windows.find(handle), *m_renderer, *m_text, std::move(builder));
+        std::unique_ptr<WindowStage> stage = std::make_unique<WindowStage>(*m_windows.find(handle), *m_renderer, *m_text, std::move(builder), config);
         // the window routes keys through the application's commands, which is what one shared object means (§18.5)
         stage->set_command_registry(&m_commands);
         // a stage the backend refused leaves nothing behind, because half a window cannot draw (§6.3)
@@ -182,6 +184,11 @@ namespace albor
     }
 
     bool Application::destroy_window(WindowHandle handle) {
+        // a close that arrives inside a frame pass is recorded rather than applied, because that pass is reading it (§4.2)
+        if (m_driving_frames) {
+            m_deferred.push_back(handle);
+            return true;
+        }
         // the window's stage is dropped first, so its surface outlives no layer (§6.1)
         release_stage(handle);
         // the registry closes the native window before it drops the framework window (§5.2)
@@ -204,7 +211,24 @@ namespace albor
         // a window without a tree built nothing, which is what its count reports (§6.1)
         const std::map<std::uint64_t, std::unique_ptr<WindowStage>>::const_iterator entry = m_stages.find(handle.id());
         // a stage that never built reports zero (§6.1)
-        return entry == m_stages.end() ? 0 : entry->second->frame_count();
+        return entry == m_stages.end() ? 0u : entry->second->frame_count();
+    }
+
+    WindowStage* Application::stage(WindowHandle handle) {
+        // the map is keyed by the window id, which is what a handle names (§5.2)
+        const std::map<std::uint64_t, std::unique_ptr<WindowStage>>::const_iterator entry = m_stages.find(handle.id());
+        // a window that is not a main window has no stage, which null reports (§6.1)
+        return entry == m_stages.end() ? nullptr : entry->second.get();
+    }
+
+    bool Application::set_frame_hook(WindowHandle handle, std::function<void()> hook) {
+        // a window that is not a main window has no stage to install into (§6.1)
+        WindowStage* found = stage(handle);
+        if (found == nullptr)
+            return false;
+        // the stage runs the hook once a scene was built and before stage two executes it (§6.1)
+        found->set_frame_hook(std::move(hook));
+        return true;
     }
 
     TaskQueue& Application::tasks() {
@@ -232,7 +256,8 @@ namespace albor
         // a frame tick only draws when something asked for a frame (§6.1)
         if (m_frame_handler)
             m_frame_handler();
-        // every main window is driven by the same tick, which is what a headless loop reaches through (§6.1)
+        // the flag makes a teardown that arrives inside the pass wait for it, so no window is read after release (§4.2)
+        m_driving_frames = true;
         for (const std::pair<const std::uint64_t, std::unique_ptr<WindowStage>>& entry : m_stages) {
             // the window may already be gone, whose stage dies with the closed notification (§5.2)
             const Window* window = m_windows.find(WindowHandle::from_id(entry.first));
@@ -240,6 +265,20 @@ namespace albor
                 continue;
             entry.second->run_frame(*window);
         }
+        m_driving_frames = false;
+        // a teardown that arrived while the pass was running is applied now, which is after the walk ended (§4.2)
+        drain_deferred_stages();
+    }
+
+    void Application::drain_deferred_stages() {
+        // nothing was deferred, which is the ordinary tick and the one that must not allocate (§4.2)
+        if (m_deferred.empty())
+            return;
+        // the walk is driven by index, because a teardown may append the window it closed in turn (§4.2)
+        for (std::size_t index = 0; index < m_deferred.size(); ++index)
+            destroy_window(m_deferred[index]);
+        // the queue is emptied last, because a teardown may have appended to it (§4.2)
+        m_deferred.clear();
     }
 
     void Application::set_frame_handler(std::function<void()> handler) {
@@ -335,8 +374,12 @@ namespace albor
             // a main window routes into its own tree, which is where the widgets answer (§8.3)
             const std::map<std::uint64_t, std::unique_ptr<WindowStage>>::const_iterator stage = m_stages.find(handle.id());
             if (stage != m_stages.end()) {
+                // the routed copy carries what the tree decided, which is what the host below observes (§8.3)
                 Event routed = event;
                 stage->second->deliver(routed);
+                // a main window is observed too, because a host reacts to what its tree answered (§8.3, AD-24)
+                if (m_input_handler)
+                    m_input_handler(handle, routed);
                 return;
             }
             // an event without an application handler is dropped, which is the quiet default of §8.3
@@ -396,7 +439,7 @@ namespace albor
     }
 
     void Application::release_stage(WindowHandle handle) {
-        // a stage whose window is closing is erased, so no handler reaches into dead wiring (§6.1)
+        // a stage whose window is closing is erased, because no handler may reach into dead wiring (§6.1)
         m_stages.erase(handle.id());
     }
 

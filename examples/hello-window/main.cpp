@@ -4,8 +4,6 @@
 
 #include "application/application.h"
 #include "render/frame_scene.h"
-#include "render/render_executor.h"
-#include "window/window.h"
 
 namespace
 {
@@ -31,63 +29,23 @@ namespace
 } // namespace
 
 int main() {
-    // the platform and the backends installed themselves at load, so the composition creates what they registered
-    std::unique_ptr<albor::RendererBackend> renderer = albor::create_renderer_backend();
-    if (!renderer || !renderer->ready()) {
-        std::fprintf(stderr, "hello-window: the skia metal backend did not come up\n");
-        return 1;
-    }
     // the application owns the native loop, the window registry and the task dispatcher (§4.1)
     albor::Application& application = albor::Application::instance();
     // the window opens with the documented title and the documented 800 by 600 size (§5.1)
     albor::WindowOptions options;
     options.title = "Albor \xE2\x80\x94 Hello Window";
     options.size = albor::Size{800.0f, 600.0f};
-    const albor::WindowHandle handle = application.create_window(options);
+    // this example owns its scene rather than a tree, which is what the scene source is for (§6.1)
+    albor::MainWindowConfig config;
+    config.background = BACKGROUND;
+    config.scene_source = build_frame;
+    // the application builds the surface, the render thread and the frame plumbing, because linking chose them (§6.3)
+    const albor::WindowHandle handle = application.create_window(options, albor::RootBuilder{}, config);
     // a window that could not be created leaves nothing to present (§5.1)
     if (!handle.valid()) {
         std::fprintf(stderr, "hello-window: the window could not be created\n");
         return 1;
     }
-    albor::Window* window = application.window(handle);
-    // the surface wraps the metal layer of the window, which is the macos presentation path (§6.3, AD-16)
-    std::unique_ptr<albor::RenderSurface> surface = renderer->create_surface(window->native_handle(), window->metrics());
-    if (!surface) {
-        std::fprintf(stderr, "hello-window: the render surface could not be created\n");
-        return 1;
-    }
-    // stage two runs on its own thread, so the ui thread is never blocked by drawing (§6.1, AD-18b)
-    albor::RenderExecutor executor(renderer.get());
-    // a closing window terminates the application, which is the ordinary shutdown path (§4.1)
-    application.set_close_handler([&application](albor::WindowHandle) {
-        application.quit(0);
-        return true;
-    });
-    // the ui thread builds a frame per pacing tick and hands it to the render thread (§6.1)
-    std::uint64_t frame_index = 0;
-    application.set_frame_handler([&] {
-        // the window may already be gone when a queued tick arrives (§4.2)
-        if (application.window(handle) == nullptr)
-            return;
-        // the metrics are read on every tick, so a resize is answered by the very next frame (§9.1)
-        const albor::WindowMetrics metrics = window->metrics();
-        // stage one builds the immutable scene for the current metrics (§6.1)
-        const std::shared_ptr<const albor::FrameScene> scene = build_frame(metrics, frame_index);
-        // stage two executes it off the ui thread, which never runs application code (§6.1, AD-18)
-        executor.submit(*surface, scene);
-        frame_index++;
-    });
-    // a native resize resizes the surface here on the ui thread (§5.3, D9.1)
-    application.set_resize_handler([&](albor::WindowHandle resized) {
-        // only the example window is answered, so another window is left alone (§5.2)
-        if (resized != handle)
-            return;
-        // the executor drains first, because the surface may still be in a frame (§6.1, D9.1)
-        executor.flush();
-        // the surface takes the metrics the window just reported, which is what the next scene is built for (§9.1)
-        renderer->resize_surface(*surface, window->metrics());
-    });
-    std::printf("hello-window: running, close the window to quit\n");
-    // the loop blocks until the window closes, which asks the application to quit (§4.1)
+    // the loop blocks until the window closes, which is what ends the application (§4.1)
     return application.run();
 }
