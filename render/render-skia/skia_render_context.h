@@ -56,6 +56,9 @@ namespace albor::skia
         // override: draw a filled and stroked rounded rectangle
         void draw_rounded_rect(const Rect& rect, float radius, const Paint& paint) override;
 
+        // override: draw a polyline joined from vertex to vertex, which is what a control glyph needs (§6.2)
+        void draw_polyline(const std::span<const Point>& points, const StrokeStyle& stroke) override;
+
         // override: blur a shape offscreen and composite the cast under it
         void draw_shadow(const Rect& rect, float radius, const Shadow& shadow) override;
 

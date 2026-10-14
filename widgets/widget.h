@@ -120,8 +120,11 @@ namespace albor
         // run the pointer transitions through the state flags, which every control calls before its own handling (§8.3)
         void handle_hover_transitions(const Event& event);
 
+        // hand out the rect the focus ring surrounds, which a control smaller than its bounds overrides (§8.4)
+        [[nodiscard]] virtual Rect focus_ring_rect() const;
+
         // stroke the focus ring outside the plate, which a focused widget draws and an unthemed one does not (§6.1)
-        void paint_focus_ring(RenderContext& context) const;
+        virtual void paint_focus_ring(RenderContext& context) const;
 
         // resolve a role in the current state, falling back to the widget's own value when no theme is installed (§6.1)
         [[nodiscard]] Color resolve(const Color* theme_colors, Color own) const;

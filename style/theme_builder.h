@@ -1,19 +1,10 @@
 #pragma once
 
+#include "core/color_scheme.h"
 #include "style/theme.h"
 
 namespace albor
 {
-    // the light and dark schemes a builder turns one set of accents into, because a design system has two (§6.1)
-    enum class ColorScheme
-    {
-        // the scheme drawn on a light surface
-        Light,
-
-        // the scheme drawn on a dark surface
-        Dark
-    };
-
     // the set of source colours a theme is derived from, which is what an application actually chooses (§6.1)
     struct Accents
     {

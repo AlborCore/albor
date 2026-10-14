@@ -76,6 +76,9 @@ namespace
         // the rectangles the surface was asked to draw, in order
         std::vector<Rect> drawn_rects;
 
+        // the polylines the surface was asked to draw, in scene space points (§6.2)
+        std::vector<std::vector<Point>> drawn_polylines;
+
         // the casts the context was asked to draw, which a test asserts against (§6.2)
         std::vector<Shadow> shadows;
 
@@ -148,6 +151,12 @@ namespace
             drawn_rects.push_back(rect);
             rounded_radii.push_back(radius);
             draw_log.emplace_back("rounded");
+        }
+
+        void draw_polyline(const std::span<const Point>& points, const StrokeStyle&) override {
+            // the vertices are recorded as scene space points, which a test asserts on (§6.2)
+            drawn_polylines.emplace_back(points.begin(), points.end());
+            draw_log.emplace_back("polyline");
         }
 
         void draw_shadow(const Rect& rect, float radius, const Shadow& shadow) override {
@@ -2080,4 +2089,18 @@ TEST(PictureRecorder, AZeroOpacityStillRecordsAShape) {
     // assert the command is held at zero alpha, which is what the scene recorder does (§6.1)
     ASSERT_EQ(recorder.commands().size(), 1u);
     EXPECT_FLOAT_EQ(recorder.commands()[0].paint().fill.alpha, 0.0f);
+}
+
+TEST(PictureRecorder, APolylineBakesTheTransformIntoItsVertices) {
+    // arrange a recorder standing at a translation, which is what a nested composition holds (§6.4)
+    PictureRecorder recorder;
+    recorder.set_transform(Transform::translation(5.0f, 6.0f));
+    // act a polyline is drawn through local vertices, which the replay cannot remap (§6.2)
+    const Point points[] = {{0.0f, 0.0f}, {10.0f, 10.0f}, {10.0f, 0.0f}};
+    recorder.draw_polyline(points, StrokeStyle{});
+    // assert the recorded run carries the mapped vertices, because the transform is baked (§6.4)
+    ASSERT_EQ(recorder.commands().size(), 1u);
+    const std::vector<Point>& mapped = recorder.commands()[0].polyline_geometry().points;
+    ASSERT_EQ(mapped.size(), 3u);
+    EXPECT_EQ(mapped[1], (Point{15.0f, 16.0f}));
 }

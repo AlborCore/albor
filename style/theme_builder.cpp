@@ -66,12 +66,13 @@ namespace albor
         theme.set_slider_track(ControlState::Pressed, darken(track, 0.15f));
         theme.set_slider_track(ControlState::Disabled, Color::rgba(track.red, track.green, track.blue, 0.5f));
         theme.set_slider_track(ControlState::Focused, track);
-        // the thumb is what the user grabs, so it is the strongest value on the control (§6.1)
-        theme.set_slider_thumb(ControlState::Normal, on_surface);
-        theme.set_slider_thumb(ControlState::Hovered, on_surface);
-        theme.set_slider_thumb(ControlState::Pressed, lighten(on_surface, 0.15f));
-        theme.set_slider_thumb(ControlState::Disabled, Color::rgba(on_surface.red, on_surface.green, on_surface.blue, 0.45f));
-        theme.set_slider_thumb(ControlState::Focused, on_surface);
+        // the thumb reads white on a light surface, because a native knob is not the text colour (§8.4)
+        const Color thumb = scheme == ColorScheme::Light ? Color::rgb(1.0f, 1.0f, 1.0f) : on_surface;
+        theme.set_slider_thumb(ControlState::Normal, thumb);
+        theme.set_slider_thumb(ControlState::Hovered, thumb);
+        theme.set_slider_thumb(ControlState::Pressed, scheme == ColorScheme::Light ? Color::rgba(1.0f, 1.0f, 1.0f, 0.9f) : lighten(on_surface, 0.15f));
+        theme.set_slider_thumb(ControlState::Disabled, Color::rgba(thumb.red, thumb.green, thumb.blue, 0.45f));
+        theme.set_slider_thumb(ControlState::Focused, thumb);
 
         // a plain label has no press of its own, so only its disabled variant differs (§6.1)
         theme.set_label_foreground(ControlState::Normal, on_surface);

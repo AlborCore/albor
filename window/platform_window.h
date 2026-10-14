@@ -7,6 +7,7 @@
 #include "core/native_window_handle.h"
 #include "core/text_range.h"
 #include "ui/ui_event.h"
+#include "window/system_appearance.h"
 #include "window/window_metrics.h"
 #include "window/window_options.h"
 
@@ -32,6 +33,9 @@ namespace albor
 
         // report a normalized input event, which the platform adapter produces in logical coordinates (§5.3, §8.3)
         virtual void on_platform_event(const Event& event) = 0;
+
+        // report that the appearance the system renders with changed while the window is alive (§5.3, §8.4)
+        virtual void on_platform_appearance_changed(const SystemAppearance& appearance) = 0;
     };
 
     // the platform half of a window, which every native backend implements (§5.3)
@@ -60,6 +64,12 @@ namespace albor
 
         // hand out the native object a renderer backend attaches to, which is opaque here (§3.5, AD-05)
         [[nodiscard]] virtual NativeWindowHandle native_handle() const = 0;
+
+        // read the appearance the system renders with, which a theme follows (§5.3, §8.4)
+        [[nodiscard]] virtual SystemAppearance system_appearance() const {
+            // a backend that does not query the system reports the portable default, which is a dark scheme (§5.3)
+            return SystemAppearance{};
+        }
 
         // ask the native window to present another frame
         virtual void request_frame() = 0;

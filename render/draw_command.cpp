@@ -27,6 +27,11 @@ namespace albor
         return DrawCommand(RectGeometry{.rect = rect, .radius = radius, .rounded = true}, paint);
     }
 
+    DrawCommand DrawCommand::polyline(std::span<const Point> points, StrokeStyle stroke) {
+        // the vertex run and its stroke are the geometry, because a polyline is nothing but the two (§6.2)
+        return DrawCommand(PolylineGeometry{.points = std::vector<Point>(points.begin(), points.end()), .stroke = stroke}, Paint{});
+    }
+
     DrawCommand DrawCommand::text(TextLayout layout, Point origin, Paint paint) {
         // the run travels with its box origin, which is what a line of a wrapped run draws at (§6.2, §9.1)
         return DrawCommand(TextGeometry{.layout = std::move(layout), .origin = origin}, paint);
@@ -104,7 +109,13 @@ namespace albor
         // a glyph outline is the seventh alternative (§6.4, AD-34)
         case 6:
             return DrawCommandKind::GlyphOutline;
-        // a shadow is the last alternative, which is what a variant holds at most (§6.2)
+        // a shadow is the eighth alternative, which is what a variant holds at most (§6.2)
+        case 7:
+            return DrawCommandKind::Shadow;
+        // a polyline is the ninth alternative, which is what a variant holds at most (§6.2)
+        case 8:
+            return DrawCommandKind::Polyline;
+        // an alternative outside the enumeration is read as the shadow, which a report sees (§6.2)
         default:
             return DrawCommandKind::Shadow;
         }
@@ -128,6 +139,11 @@ namespace albor
     const RectGeometry& DrawCommand::rect_geometry() const {
         // the geometry is a shape only when the command is one, which the replay guarantees (§6.2)
         return std::get<RectGeometry>(m_geometry);
+    }
+
+    const PolylineGeometry& DrawCommand::polyline_geometry() const {
+        // the geometry is a polyline only when the command is one, which the replay guarantees (§6.2)
+        return std::get<PolylineGeometry>(m_geometry);
     }
 
     const TextGeometry& DrawCommand::text_geometry() const {
@@ -182,6 +198,12 @@ namespace albor
             cast->shadow.color.alpha = std::clamp(cast->shadow.color.alpha * factor, 0.0f, 1.0f);
             return;
         }
+        // a polyline carries its colour in its own geometry, because its stroke is what it draws with (§6.2)
+        if (auto* line = std::get_if<PolylineGeometry>(&m_geometry)) {
+            // the glyph stroke takes the factor once, which is what an opacity dims a check mark by (§6.1)
+            line->stroke.color.alpha = std::clamp(line->stroke.color.alpha * factor, 0.0f, 1.0f);
+            return;
+        }
         // both channels move together, because an opacity dims a fill and a stroke alike (§6.1)
         m_paint.fill.alpha = std::clamp(m_paint.fill.alpha * factor, 0.0f, 1.0f);
         // the stroke carries its own alpha, so it takes the same factor rather than the fill's result (§6.1)
@@ -200,6 +222,12 @@ namespace albor
         case DrawCommandKind::Rect:
         case DrawCommandKind::RoundedRect:
             return rect_geometry().rect.empty() || !paints;
+        // a polyline with fewer than two vertices, or a stroke of no width, contributes nothing (§6.2)
+        case DrawCommandKind::Polyline: {
+            // the vertices and their stroke are read together, because both decide what is drawn (§6.2)
+            const PolylineGeometry& line = polyline_geometry();
+            return line.points.size() < 2 || line.stroke.width <= 0.0f;
+        }
         // a run with no glyphs or no paint contributes nothing to the frame (§6.2)
         case DrawCommandKind::Text:
             return text_geometry().layout.empty() || !paints;
@@ -251,6 +279,27 @@ namespace albor
         case DrawCommandKind::RoundedRect:
             // a rectangle covers exactly the rectangle it was given (§6.2)
             return rect_geometry().rect;
+        case DrawCommandKind::Polyline: {
+            // a polyline is bounded by its own vertices, which is what the run carries (§6.2)
+            const std::vector<Point>& points = polyline_geometry().points;
+            // a run with no vertex covers nothing, which is the quiet default (§6.2)
+            if (points.empty())
+                return Rect{};
+            // the edges start at the first vertex, which every run has (§6.2)
+            float left = points.front().x;
+            float right = left;
+            float top = points.front().y;
+            float bottom = top;
+            // every further vertex widens the edges, which is what makes the bound conservative (§6.2)
+            for (const Point& point : points) {
+                left = std::min(left, point.x);
+                right = std::max(right, point.x);
+                top = std::min(top, point.y);
+                bottom = std::max(bottom, point.y);
+            }
+            // the bound is returned whole (§6.2)
+            return Rect{.x = left, .y = top, .width = right - left, .height = bottom - top};
+        }
         case DrawCommandKind::Text: {
             // a run covers its measured extent, which the layout already carries (§9.1)
             const TextLayout& layout = text_geometry().layout;
@@ -376,6 +425,10 @@ namespace albor
         // a rounded shape draws through the primitive that keeps its radii (§6.2)
         case DrawCommandKind::RoundedRect:
             context.draw_rounded_rect(rect_geometry().rect, rect_geometry().radius, m_paint);
+            return;
+        // a polyline draws through the primitive that joins its vertices (§6.2)
+        case DrawCommandKind::Polyline:
+            context.draw_polyline(polyline_geometry().points, polyline_geometry().stroke);
             return;
         // a run draws at the origin of its box, which every line places its own baseline under (§6.2, §9.1)
         case DrawCommandKind::Text:

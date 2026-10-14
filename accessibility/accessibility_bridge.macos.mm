@@ -298,7 +298,29 @@ namespace albor::accessibility::platform
             }
 
             // the view the window announces, which is where the published tree is handed to assistive technology (§10.2)
-            [[nodiscard]] NSView* content_view() const { return m_window == nil ? nil : m_window.contentView; }
+            [[nodiscard]] NSView* content_view() const {
+                // a bridge with no object publishes into nothing, which is the quiet default (§10.2)
+                if (m_window == nil)
+                    return nil;
+                // the window a handle named directly is the one appkit asks (§10.2)
+                if ([m_window isKindOfClass:[NSWindow class]])
+                    return ((NSWindow*)m_window).contentView;
+                // a content view a handle named is announced through itself (§10.2)
+                if ([m_window isKindOfClass:[NSView class]])
+                    return (NSView*)m_window;
+                // a layer the renderer attaches to reaches its window through the view AppKit made its delegate (§5.3)
+                if ([m_window isKindOfClass:[CALayer class]]) {
+                    // the delegate of a layer backed view is the view, which is what carries the window (§5.3)
+                    id delegate = ((CALayer*)m_window).delegate;
+                    // a delegate that is not a view cannot carry a window, which the quiet default states (§5.3)
+                    if (![delegate isKindOfClass:[NSView class]])
+                        return nil;
+                    // the view's window is the one the tree publishes into (§10.2)
+                    return ((NSView*)delegate).window.contentView;
+                }
+                // an object of no supported kind announces nothing, which is quieter than forwarding into it (§10.2)
+                return nil;
+            }
         };
     } // namespace
 

@@ -1,14 +1,12 @@
 #include "widgets/slider.h"
 
 #include <algorithm>
+#include <cmath>
 
 #include "commands/command.h"
 
 namespace albor
 {
-    // the extent of the thumb along the track, which is what the user grabs (§6.1)
-    constexpr float THUMB_SIZE = 12.0f;
-
     // the amount one key press moves the value, because a semantic action carries no exact target (§10.1)
     constexpr float STEP = 0.05f;
 
@@ -50,8 +48,16 @@ namespace albor
         const float thumb_extent = theme() != nullptr ? metrics.slider_thumb : 12.0f;
         // the track is a thin band centred vertically, because a slider reads as a horizontal line (§6.1)
         const Rect track = Rect::from_origin_size(Point{.x = bounds().x, .y = bounds().y + (bounds().height - thickness) * 0.5f}, Size{.width = bounds().width, .height = thickness});
+        // a themed track carries a radius, which is what rounds it into a capsule (§8.4)
+        const float track_radius = theme() != nullptr ? metrics.slider_track_radius : 0.0f;
         // the track colour resolves by state, so a hover and a press differ without a second literal (§6.1)
-        context.draw_rect(track, {.fill = resolve(track_colors(), m_track_color)});
+        const Paint track_paint{.fill = resolve(track_colors(), m_track_color)};
+        // a themed radius means a capsule, which is the shape a native track is (§8.4)
+        if (track_radius > 0.0f)
+            context.draw_rounded_rect(track, track_radius, track_paint);
+        // without a themed radius the track is the hard band the slider always drew (§6.1)
+        else
+            context.draw_rect(track, track_paint);
         // the travel of the thumb is the track minus the thumb, so it never overhangs either end (§6.1)
         const float travel = std::max(0.0f, bounds().width - thumb_extent);
         // a track with no travel has no reachable position, so the thumb is left off (§6.2)
@@ -59,12 +65,77 @@ namespace albor
             return;
         // the fraction of the range the value sits at, which is what places the thumb (§8)
         const float fraction = (m_value - m_minimum) / (m_maximum - m_minimum);
-        // the thumb is a square centred on the track at the value position (§6.1)
-        const Rect thumb = Rect::from_origin_size(Point{.x = bounds().x + travel * fraction, .y = bounds().y + (bounds().height - thumb_extent) * 0.5f}, Size{.width = thumb_extent, .height = thumb_extent});
+        // the filled portion runs from the left edge up to the thumb centre, which is what a filled track reads as (§8.4)
+        const float filled_width = thumb_extent * 0.5f + travel * fraction;
+        // the fill resolves by state like the track, where a transparent entry draws nothing (§8.4)
+        const Paint fill_paint{.fill = resolve(fill_colors(), Color::rgba(0.0f, 0.0f, 0.0f, 0.0f))};
+        // a themed fill draws from the minimum to the thumb, which is where the accent ends (§8.4)
+        if (fill_paint.fills() && filled_width > 0.0f) {
+            // the fill is a capsule that shares the track's radius, so the two endpoints read as one line (§8.4)
+            const Rect filled = Rect::from_origin_size(Point{.x = track.x, .y = track.y}, Size{.width = filled_width, .height = track.height});
+            context.draw_rounded_rect(filled, track_radius, fill_paint);
+        }
+        // the discrete ticks draw when the theme asked for them, which is what a stepped control names (§8.4)
+        paint_ticks(context, metrics, track, travel, thumb_extent);
+        // the rect the thumb occupies is shared with the ring, because both read the same place (§8.4)
+        const Rect thumb = thumb_rect(metrics);
+        // a themed thumb lifts on a shadow, which is what elevation means (§8.4)
+        if (theme() != nullptr && metrics.slider_thumb_shadow > 0.0f) {
+            // the shadow falls straight down and lifts with the themed strength (§8.4)
+            context.draw_shadow(thumb, metrics.slider_thumb_radius, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, metrics.slider_thumb_shadow), .offset = Point{0.0f, 2.0f}, .blur = 2.0f});
+        }
         // the thumb colour resolves by state, so it is what the user grabs in every state (§6.1)
-        context.draw_rect(thumb, {.fill = resolve(thumb_colors(), m_thumb_color)});
+        const Paint thumb_paint{.fill = resolve(thumb_colors(), m_thumb_color)};
+        // a themed thumb carries a radius, which a half extent turns into a circle (§8.4)
+        const float thumb_radius = theme() != nullptr ? metrics.slider_thumb_radius : 0.0f;
+        // a themed radius means a round thumb, which is what a native knob is (§8.4)
+        if (thumb_radius > 0.0f)
+            context.draw_rounded_rect(thumb, thumb_radius, thumb_paint);
+        // without a themed radius the thumb is the square the slider always drew (§6.1)
+        else
+            context.draw_rect(thumb, thumb_paint);
     }
 
+    void Slider::paint_ticks(RenderContext& context, const ControlMetrics& metrics, const Rect& track, float travel, float thumb_extent) const {
+        // a slider without a themed tick length draws none, because the token is the decision (§8.4)
+        if (theme() == nullptr || metrics.slider_tick_length <= 0.0f)
+            return;
+        // the tick colour resolves with the track, which is what a groove sits under (§8.4)
+        const Color tick = resolve(track_colors(), m_track_color);
+        // the number of reachable steps is what the range and the step settle for (§8.4)
+        const float step_count = std::floor((m_maximum - m_minimum) / std::max(metrics.slider_step, 1.0e-6f));
+        // a step count below one has no tick to place, because the track holds a single position (§8.4)
+        if (step_count < 1.0f)
+            return;
+        // the ticks sit just under the track, which is where a stepped control names them (§8.4)
+        for (std::int32_t index = 0; index <= static_cast<std::int32_t>(step_count); ++index) {
+            // the fraction of the range this tick names, which is where the thumb centre would sit (§8.4)
+            const float fraction = static_cast<float>(index) / step_count;
+            // the tick is centred on the thumb position, which is what makes the answer exact (§8.4)
+            const Rect tick_mark = Rect::from_origin_size(Point{.x = bounds().x + thumb_extent * 0.5f + travel * fraction - metrics.slider_tick_width * 0.5f, .y = track.y + track.height + 1.0f}, Size{.width = metrics.slider_tick_width, .height = metrics.slider_tick_length});
+            // the tick is a small round stroke, which is what a marker reads as (§8.4)
+            context.draw_rounded_rect(tick_mark, metrics.slider_tick_width * 0.5f, {.fill = tick});
+        }
+    }
+
+    Rect Slider::thumb_rect(const ControlMetrics& metrics) const {
+        // the thumb extent is what the theme says, or the value the slider always drew with (§6.1)
+        const float thumb_extent = theme() != nullptr ? metrics.slider_thumb : 12.0f;
+        // the travel of the thumb is the track minus the thumb, so it never overhangs either end (§6.1)
+        const float travel = std::max(0.0f, bounds().width - thumb_extent);
+        // the fraction of the range the value sits at, which is what places the thumb (§8)
+        const float fraction = (m_value - m_minimum) / (m_maximum - m_minimum);
+        // the thumb is a square centred on the track at the value position (§6.1)
+        return Rect::from_origin_size(Point{.x = bounds().x + travel * fraction, .y = bounds().y + (bounds().height - thumb_extent) * 0.5f}, Size{.width = thumb_extent, .height = thumb_extent});
+    }
+
+    Rect Slider::focus_ring_rect() const {
+        // without a theme no ring draws, so the answered rect is never read (§8.4)
+        if (theme() == nullptr)
+            return bounds();
+        // the ring surrounds the thumb, which is the part the user steers (§8.4)
+        return thumb_rect(theme()->metrics());
+    }
     bool Slider::hit_test(Point logical_point) const {
         // a hidden slider is not a hit, because it draws nothing (§8.3)
         if (!visible())
@@ -138,12 +209,15 @@ namespace albor
     }
 
     void Slider::jump_to(Point logical_position) {
+        // the thumb extent is what the theme says, or the value the slider always moved by (§6.1)
+        const ControlMetrics& metrics = theme() != nullptr ? theme()->metrics() : default_metrics();
+        const float thumb_extent = theme() != nullptr ? metrics.slider_thumb : 12.0f;
         // a track with no length has no reachable position, so the value stays where it was (§8)
-        const float travel = bounds().width - THUMB_SIZE;
+        const float travel = bounds().width - thumb_extent;
         if (travel <= 0.0f)
             return;
         // the press offset from the left edge becomes the fraction of the travel (§8)
-        const float fraction = std::clamp((logical_position.x - bounds().x - THUMB_SIZE * 0.5f) / travel, 0.0f, 1.0f);
+        const float fraction = std::clamp((logical_position.x - bounds().x - thumb_extent * 0.5f) / travel, 0.0f, 1.0f);
         // the value is derived from the fraction, so the thumb lands where the pointer is (§8)
         const float moved = m_minimum + (m_maximum - m_minimum) * fraction;
         // an unchanged value changes nothing, so a position on the current thumb is not reported (§8.3)
@@ -318,5 +392,13 @@ namespace albor
             return nullptr;
         // the installed palette answers, because the theme owns the colour (§6.1)
         return theme()->palette().slider_thumb;
+    }
+
+    const Color* Slider::fill_colors() const {
+        // without a theme the table is unused, because no fill is drawn at all (§8.4)
+        if (theme() == nullptr)
+            return nullptr;
+        // the installed palette answers, because the accent fills the covered track (§8.4)
+        return theme()->palette().slider_fill;
     }
 } // namespace albor

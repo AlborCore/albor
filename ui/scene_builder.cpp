@@ -76,6 +76,16 @@ namespace albor
         record(DrawCommand::rounded_rectangle(to_scene(rect), radius, paint));
     }
 
+    void SceneRecorder::draw_polyline(const std::span<const Point>& points, const StrokeStyle& stroke) {
+        // every vertex is mapped into scene coordinates now, because the render thread cannot ask where (§6.1, AD-18)
+        std::vector<Point> mapped;
+        mapped.reserve(points.size());
+        for (const Point& point : points)
+            mapped.push_back(to_scene(point));
+        // the polyline records as the vertex run the replay joins (§6.2)
+        record(DrawCommand::polyline(mapped, stroke));
+    }
+
     void SceneRecorder::draw_shadow(const Rect& rect, float radius, const Shadow& shadow) {
         // a cast with no colour or no shape puts no ink down, so it is never recorded (§6.2)
         if (!shadow.casts() || rect.empty())

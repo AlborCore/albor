@@ -30,6 +30,9 @@ namespace albor
         // a filled and stroked rectangle with corner radii (§6.2)
         RoundedRect,
 
+        // a polyline joined from vertex to vertex, which is what a control glyph strokes (§6.2)
+        Polyline,
+
         // a shaped text run (§6.2)
         Text,
 
@@ -66,6 +69,19 @@ namespace albor
 
         // compare two shapes component wise, which a command comparison needs (§6.2)
         friend bool operator==(const RectGeometry& lhs, const RectGeometry& rhs) = default;
+    };
+
+    // the geometry a polyline command carries, which is the vertex run and its stroke (§6.2)
+    struct PolylineGeometry
+    {
+        // the vertices in drawing order, which the replay joins into one contour (§6.2)
+        std::vector<Point> points;
+
+        // the stroke the polyline draws with (§6.2)
+        StrokeStyle stroke;
+
+        // compare two polylines component wise, which a command comparison needs (§6.2)
+        friend bool operator==(const PolylineGeometry& lhs, const PolylineGeometry& rhs) = default;
     };
 
     // the geometry a text command carries, which is the run and the origin of its box (§6.2)
@@ -161,7 +177,7 @@ namespace albor
     {
     public:
         // the geometry a command carries, where the alternative index is the kind (§6.2)
-        using Geometry = std::variant<RectGeometry, TextGeometry, BatchGeometry, PathGeometry, PictureGeometry, ImageGeometry, GlyphOutlineGeometry, ShadowGeometry>;
+        using Geometry = std::variant<RectGeometry, TextGeometry, BatchGeometry, PathGeometry, PictureGeometry, ImageGeometry, GlyphOutlineGeometry, ShadowGeometry, PolylineGeometry>;
 
         // the clip that stands for no clip at all, which is what a command carries until a recorder stamps one (§6.2)
         [[nodiscard]] static const Rect& unclipped();
@@ -171,6 +187,9 @@ namespace albor
 
         // build a rounded rectangle command, which keeps the radius the recorder was given (§6.2)
         [[nodiscard]] static DrawCommand rounded_rectangle(Rect rect, float radius, Paint paint);
+
+        // build a polyline command over the vertex run, which carries its stroke (§6.2)
+        [[nodiscard]] static DrawCommand polyline(std::span<const Point> points, StrokeStyle stroke);
 
         // build a text command with the origin of the run box (§6.2)
         [[nodiscard]] static DrawCommand text(TextLayout layout, Point origin, Paint paint);
@@ -210,6 +229,9 @@ namespace albor
 
         // the rectangle and corner radii of a shape command (§6.2)
         [[nodiscard]] const RectGeometry& rect_geometry() const;
+
+        // the vertex run and stroke of a polyline command (§6.2)
+        [[nodiscard]] const PolylineGeometry& polyline_geometry() const;
 
         // the run and the origin of its box of a text command (§6.2)
         [[nodiscard]] const TextGeometry& text_geometry() const;

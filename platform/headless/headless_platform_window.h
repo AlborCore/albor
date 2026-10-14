@@ -54,8 +54,14 @@ namespace albor::headless
         // override: close the window, which raises a close request the application may veto (§5.2)
         void close() override;
 
+        // override: read the synthetic appearance this window reports, which is what a test drives (§5.3, §8.4)
+        [[nodiscard]] SystemAppearance system_appearance() const override;
+
         // raise a synthetic resize, which is how a test drives the ui thread onto new metrics (§5.3, D9.1)
         void raise_resize(const WindowMetrics& metrics);
+
+        // raise a synthetic appearance change, which is how a test drives a theme flip without a system (§8.4)
+        void raise_appearance_change(const SystemAppearance& appearance);
 
         // raise a synthetic normalized event, which is how a test drives input without a device (§8.3)
         void raise_event(const Event& event);
@@ -93,5 +99,8 @@ namespace albor::headless
 
         // whether a resize has been raised but not yet drawn, which is what a test waits on (§5.3)
         bool m_resize_pending = false;
+
+        // the appearance this window reports, which is synthetic and owned here (§5.3, §8.4)
+        SystemAppearance m_appearance;
     };
 } // namespace albor::headless

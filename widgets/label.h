@@ -41,6 +41,12 @@ namespace albor
         // hand out the fill colour of the run (§6.1)
         [[nodiscard]] Color foreground() const;
 
+        // set the role the label resolves its size and its colour through, which a theme owns (§8.4)
+        void set_role(TextRole role);
+
+        // hand out the role the label is set to (§8.4)
+        [[nodiscard]] TextRole role() const;
+
         // replace the font size the run is measured at, which remeasures because the metrics changed (§9.1)
         void set_font_size(float font_size);
 
@@ -54,6 +60,12 @@ namespace albor
         // the foreground colours the label resolves through, which are the palette when a theme is installed (§6.1)
         [[nodiscard]] const Color* foreground_colors() const;
 
+        // the size the run resolves from the hierarchy, or the explicit value otherwise (§8.4)
+        [[nodiscard]] float font_size_used() const;
+
+        // the colour the run draws with, which a secondary role dims through the theme's opacity token (§8.4)
+        [[nodiscard]] Color foreground_color() const;
+
         // the text engine that measures the run, which the application owns (§9.1)
         TextEngine* m_text_engine = nullptr;
 
@@ -66,7 +78,10 @@ namespace albor
         // the fill colour of the run (§6.1)
         Color m_foreground{1.0f, 1.0f, 1.0f, 1.0f};
 
-        // the size the run is measured at (§9.1)
+        // the size the run is measured at, which the explicit value selects until a role does (§9.1)
         float m_font_size = TextEngine::DEFAULT_FONT_SIZE;
+
+        // the role the run resolves, which is none until an author sets one (§8.4)
+        TextRole m_role = TextRole::None;
     };
 } // namespace albor

@@ -53,6 +53,12 @@ namespace albor
         // route one normalized event into the tree, which is where the widgets answer (§8.3)
         void deliver(Event& event);
 
+        // hand out the root of the driven tree, which is what an application installs a theme over (§6.1, §8.4)
+        [[nodiscard]] UiNode& root() const;
+
+        // replace the colour the scene is cleared with, which a themed surface drives (§6.1, §8.4)
+        void set_background(Color background);
+
         // point the window's input at the accelerators of an application, which is borrowed and outlives the stage (§18.5)
         void set_command_registry(CommandRegistry* registry);
 

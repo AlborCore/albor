@@ -123,14 +123,14 @@ namespace albor
         // set how wide the node strokes its own border, where zero is no border at all (§6.1)
         void set_border_width(float width);
 
-        // hand out how wide the node strokes its own border (§6.1)
-        [[nodiscard]] float border_width() const;
+        // hand out how wide the node strokes its own border, which a per state control resolves through (§6.1)
+        [[nodiscard]] virtual float border_width() const;
 
         // replace the colour the node strokes its own border with, which is independent of its fill (§6.1)
         void set_border_color(Color color);
 
-        // hand out the colour the node strokes its own border with (§6.1)
-        [[nodiscard]] Color border_color() const;
+        // hand out the colour the node strokes its own border with, which a per state control resolves through (§6.1)
+        [[nodiscard]] virtual Color border_color() const;
 
         // set the shadow the node casts, which an empty shadow removes (§6.1)
         void set_drop_shadow(Shadow shadow);

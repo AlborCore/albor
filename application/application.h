@@ -9,7 +9,9 @@
 #include "application/timer.h"
 #include "application/window_stage.h"
 #include "commands/command_registry.h"
+#include "core/paint.h"
 #include "ui/ui_event.h"
+#include "window/system_appearance.h"
 #include "window/window.h"
 #include "window/window_handle.h"
 #include "window/window_options.h"
@@ -106,6 +108,12 @@ namespace albor
         // find the window a handle names for reading, returning null when the handle is stale (§5.2)
         [[nodiscard]] const Window* window(WindowHandle handle) const;
 
+        // hand out the tree a main window drives, returning null when the handle is stale or has no tree (§6.1, §8.4)
+        [[nodiscard]] UiNode* root(WindowHandle handle);
+
+        // replace the colour a window's scene clears with, which a themed surface writes (§6.1, §8.4)
+        void set_window_background(WindowHandle handle, Color background);
+
         // destroy the window a handle names, which closes its native window first (§5.2)
         bool destroy_window(WindowHandle handle);
 
@@ -141,6 +149,9 @@ namespace albor
 
         // install the callback a normalized input event reaches, which is how a window's input is driven (§8.3)
         void set_input_handler(std::function<void(WindowHandle, const Event&)> handler);
+
+        // install the callback a system appearance change reaches, which is how a theme follows the system live (§8.4)
+        void set_appearance_handler(std::function<void(WindowHandle, const SystemAppearance&)> handler);
 
         // report whether the application was asked to terminate
         [[nodiscard]] bool quit_requested() const;
@@ -206,6 +217,9 @@ namespace albor
 
         // the callback a normalized input event reaches, which the bind window forwards per window (§8.3)
         std::function<void(WindowHandle, const Event&)> m_input_handler;
+
+        // the callback a system appearance change reaches, which the bind window forwards per window (§8.4)
+        std::function<void(WindowHandle, const SystemAppearance&)> m_appearance_handler;
 
         // the exit code quit was called with, which run hands back (§4.1)
         int m_exit_code = 0;

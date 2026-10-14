@@ -1104,3 +1104,43 @@ TEST(Window, AWindowWithoutANativeWindowDropsEveryCall) {
     window.close();
     EXPECT_FALSE(window.alive());
 }
+
+TEST(Window, AnAppearanceChangeReachesTheAppearanceHandler) {
+    // arrange a window over the double, because the listener the double holds is the platform raise path (§8.4)
+    auto native = std::make_unique<TestPlatformWindow>();
+    TestPlatformWindow* platform = native.get();
+    Window window(WindowHandle::from_id(1u), WindowOptions{}, std::move(native));
+    SystemAppearance received;
+    window.set_appearance_handler([&received](const SystemAppearance& appearance) { received = appearance; });
+    // act the platform raises a light scheme with its accent, which is what a flip produces (§8.4)
+    const SystemAppearance changed{ColorScheme::Light, Color::rgb(1.0f, 0.0f, 0.0f)};
+    platform->listener->on_platform_appearance_changed(changed);
+    // assert the handler saw the appearance whole, which is what a theme follows (§8.4)
+    EXPECT_TRUE(received == changed);
+    // assert the window is the listener the raise reached, so the window owns the notification (§5.3)
+    EXPECT_EQ(platform->listener, &window);
+}
+
+TEST(Window, AnAppearanceChangeWithoutAHandlerIsQuiet) {
+    // arrange a window nobody listens through, which is the default application shape (§8.4)
+    auto native = std::make_unique<TestPlatformWindow>();
+    TestPlatformWindow* platform = native.get();
+    Window window(WindowHandle::from_id(1u), WindowOptions{}, std::move(native));
+    // act, assert the raise survives a window without a handler, which is the quiet default (§8.4)
+    platform->listener->on_platform_appearance_changed(SystemAppearance{ColorScheme::Light, Color::rgb(0.0f, 1.0f, 0.0f)});
+    EXPECT_EQ(platform->listener, &window);
+}
+
+TEST(Window, TheAppearanceQueryComesFromThePlatform) {
+    // arrange a window whose platform reports the portable default, because the double does not override it (§5.3)
+    Window window(WindowHandle::from_id(1u), WindowOptions{}, std::make_unique<TestPlatformWindow>());
+    // act, assert the window hands the platform answer back, which is the authority rule (§5.3, §8.4)
+    EXPECT_TRUE(window.system_appearance() == SystemAppearance{});
+}
+
+TEST(Window, AWindowWithoutANativeWindowReportsTheDefaultAppearance) {
+    // arrange a window with no platform, which has no system to ask (§5.3)
+    Window window(WindowHandle::from_id(1u), WindowOptions{}, nullptr);
+    // act, assert the default appearance is what the query reports (§8.4)
+    EXPECT_TRUE(window.system_appearance() == SystemAppearance{});
+}

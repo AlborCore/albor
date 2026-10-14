@@ -38,6 +38,12 @@ namespace albor
         // report whether the box is checked (§8.3)
         [[nodiscard]] bool checked() const;
 
+        // set or clear the indeterminate state, which is what a mixed boolean is stored as (§8)
+        void set_indeterminate(bool indeterminate);
+
+        // report whether the box is indeterminate (§8, §10.1)
+        [[nodiscard]] bool indeterminate() const;
+
         // replace the work a toggle performs, which receives the state the box moved to (§8.3)
         void set_on_toggle(std::function<void(bool)> handler);
 
@@ -60,6 +66,9 @@ namespace albor
         // override: a checkbox presents no label of its own, so it follows the enablement and the applicability (§18.7)
         void apply_command_state(const CommandState& state) override;
 
+        // override: surround the fixed square rather than the stretched bounds, which is what a box is (§8.4)
+        [[nodiscard]] Rect focus_ring_rect() const override;
+
     private:
         // flip the state and report it, which a press and a semantic action share (§8.3, §10.1)
         void toggle();
@@ -76,6 +85,15 @@ namespace albor
         // the outline colours the box resolves through, which are the installed palette when a theme is present (§6.1)
         [[nodiscard]] const Color* outline_colors() const;
 
+        // the glyph colours the mark resolves through, which are the installed palette when a theme is present (§8.4)
+        [[nodiscard]] const Color* glyph_colors() const;
+
+        // draw the check mark the box carries when it is checked, which is the glyph over the accent fill (§8.4)
+        void paint_check_mark(RenderContext& context, const Rect& box) const;
+
+        // draw the dash the box carries when it is indeterminate, which is the glyph over the accent fill (§8.4)
+        void paint_indeterminate_dash(RenderContext& context, const Rect& box) const;
+
         // the work a toggle performs, which receives the new state (§8.3)
         std::function<void(bool)> m_on_toggle;
 
@@ -87,6 +105,9 @@ namespace albor
 
         // whether the box is checked, which is what the semantic check state reports (§10.1)
         bool m_checked = false;
+
+        // whether the box is indeterminate, which a mixed boolean reports instead of either edge (§10.1)
+        bool m_indeterminate = false;
 
         // whether the box refuses input (§8.3)
         bool m_disabled = false;

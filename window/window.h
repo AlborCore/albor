@@ -7,6 +7,7 @@
 #include "core/native_window_handle.h"
 #include "ui/ui_event.h"
 #include "window/platform_window.h"
+#include "window/system_appearance.h"
 #include "window/window_handle.h"
 #include "window/window_metrics.h"
 #include "window/window_options.h"
@@ -65,6 +66,12 @@ namespace albor
         // hand out the native object a renderer backend attaches to (§3.5)
         [[nodiscard]] NativeWindowHandle native_handle() const;
 
+        // read the appearance the system renders with, which the platform is the authority on (§5.3, §8.4)
+        [[nodiscard]] SystemAppearance system_appearance() const;
+
+        // install the callback an appearance change reaches, which is how a theme follows the system (§8.4)
+        void set_appearance_handler(std::function<void(const SystemAppearance&)> handler);
+
         // install the callback a native close request consults before it may proceed (§5.2)
         void set_close_handler(std::function<bool()> handler);
 
@@ -104,6 +111,9 @@ namespace albor
         // override: deliver a normalized input event to the input handler (§5.3, §8.3)
         void on_platform_event(const Event& event) override;
 
+        // override: report a system appearance change to the appearance handler (§5.3, §8.4)
+        void on_platform_appearance_changed(const SystemAppearance& appearance) override;
+
     private:
         // the handle that names this window
         WindowHandle m_handle;
@@ -128,6 +138,9 @@ namespace albor
 
         // the callback a normalized input event reaches
         std::function<void(const Event&)> m_input_handler;
+
+        // the callback an appearance change reaches, which is null when nobody listens (§8.4)
+        std::function<void(const SystemAppearance&)> m_appearance_handler;
 
         // the last metrics the platform reported, which a null native window never updates
         WindowMetrics m_metrics;

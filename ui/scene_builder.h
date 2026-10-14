@@ -11,7 +11,6 @@
 #include "render/render_context.h"
 #include "ui/ui_node.h"
 #include "window/window_metrics.h"
-
 namespace albor
 {
     // the render context that records stage one commands into an immutable scene, so no backend type appears here (§3.5, AD-05)
@@ -53,6 +52,9 @@ namespace albor
 
         // override: record a filled and stroked rounded rectangle
         void draw_rounded_rect(const Rect& rect, float radius, const Paint& paint) override;
+
+        // override: record a polyline joined from vertex to vertex
+        void draw_polyline(const std::span<const Point>& points, const StrokeStyle& stroke) override;
 
         // override: record the shadow a shape casts
         void draw_shadow(const Rect& rect, float radius, const Shadow& shadow) override;

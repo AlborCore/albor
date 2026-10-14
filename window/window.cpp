@@ -99,6 +99,19 @@ namespace albor
         return m_platform->native_handle();
     }
 
+    SystemAppearance Window::system_appearance() const {
+        // a window without a native window has no system to ask, so it reports the portable default (§5.3)
+        if (!m_platform)
+            return SystemAppearance{};
+        // the platform is the authority on the system appearance, so the window only asks it (§5.3, §8.4)
+        return m_platform->system_appearance();
+    }
+
+    void Window::set_appearance_handler(std::function<void(const SystemAppearance&)> handler) {
+        // the handler receives every appearance change the platform raises (§8.4)
+        m_appearance_handler = std::move(handler);
+    }
+
     void Window::set_close_handler(std::function<bool()> handler) {
         // the handler is consulted on every close request, so replacing it changes the next verdict (§5.2)
         m_close_handler = std::move(handler);
@@ -195,5 +208,12 @@ namespace albor
         if (!m_input_handler)
             return;
         m_input_handler(event);
+    }
+
+    void Window::on_platform_appearance_changed(const SystemAppearance& appearance) {
+        // a window without an appearance handler records nothing, which is the quiet default of §8.4
+        if (!m_appearance_handler)
+            return;
+        m_appearance_handler(appearance);
     }
 } // namespace albor

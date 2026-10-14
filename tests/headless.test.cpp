@@ -620,3 +620,18 @@ TEST(ShadowRasterChecks, AContextRefusesACastWithNoCanvas) {
     auto surface = software::SoftwareRenderSurface::create(refused);
     ASSERT_EQ(surface, nullptr);
 }
+
+TEST(HeadlessAppearanceChecks, AHeadlessWindowReportsTheAppearanceItWasGiven) {
+    // arrange a headless window, which has no system behind it (§5.3, §8.4)
+    WindowOptions options;
+    options.title = "appearance";
+    const std::unique_ptr<albor::headless::HeadlessPlatformWindow> platform = albor::headless::HeadlessPlatformWindow::create(options);
+    // act the appearance starts as the portable default, which is what the query reports (§8.4)
+    const bool starts_default = platform->system_appearance() == SystemAppearance{};
+    // act a synthetic appearance is raised with no listener, which is stored rather than told (§8.4)
+    const SystemAppearance changed{ColorScheme::Light, Color::rgb(1.0f, 0.0f, 0.0f)};
+    platform->raise_appearance_change(changed);
+    // assert the query reads what the raise stored (§8.4)
+    EXPECT_TRUE(starts_default);
+    EXPECT_TRUE(platform->system_appearance() == changed);
+}

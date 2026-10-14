@@ -19,8 +19,8 @@ namespace albor
         if (m_text_engine != nullptr) {
             // the offered width bounds the run, because a label wraps inside the space its parent gives it (§8.2, §9.1)
             const float offered_width = constraints.maximum.width > 0.0f ? constraints.maximum.width : 0.0f;
-            // the run is measured at the current font size, because the metrics follow the size (§9.1)
-            m_layout = m_text_engine->measure(m_text, offered_width, m_font_size);
+            // the run is measured at the hierarchy size the role resolved, because the metrics follow it (§9.1, §8.4)
+            m_layout = m_text_engine->measure(m_text, offered_width, font_size_used());
         }
         // the content is at least the run the label carries, and at least its children (§8.2)
         Size content = m_layout.size;
@@ -48,8 +48,8 @@ namespace albor
             return;
         // bounds
         const Rect& b = bounds();
-        // the run is recorded at the top of its box, and the foreground resolves by state (§6.1, §9.1)
-        context.draw_text(m_layout, Point{.x = b.x, .y = b.y}, {.fill = resolve(foreground_colors(), m_foreground)});
+        // the run is recorded at the top of its box, and the colour resolves by role and state (§6.1, §9.1)
+        context.draw_text(m_layout, Point{.x = b.x, .y = b.y}, {.fill = foreground_color()});
     }
 
     void Label::dispatch_event(Event& event) {
@@ -110,9 +110,19 @@ namespace albor
     }
 
     void Label::set_font_size(float font_size) {
-        // an unchanged size remeasures nothing, because the metrics did not change (§9.1)
-        if (m_font_size == font_size)
+        // an unchanged size may still have to leave a role, because the size decides beneath the role (§8.4)
+        if (m_font_size == font_size) {
+            // a role resolved the last measure, so leaving it sizes the run back to the explicit value (§8.4)
+            if (m_role != TextRole::None) {
+                m_role = TextRole::None;
+                // the effective metrics change with the role, so the layout passes must run again (§8.4, §8.2)
+                invalidate_layout();
+            }
+            // exit
             return;
+        }
+        // an explicit size is what the run resolves through again, which is what a chosen size names (§8.4)
+        m_role = TextRole::None;
         // the size is stored first, so the invalidation walks a label that already knows its metrics (§9.1)
         m_font_size = font_size;
         // a label with no engine has nothing to remeasure, so its run stays as it was (§9.1)
@@ -125,6 +135,56 @@ namespace albor
     float Label::font_size() const {
         // the size is what the run was last measured at (§9.1)
         return m_font_size;
+    }
+
+    void Label::set_role(TextRole role) {
+        // an unchanged role changes nothing, because the metrics already resolved (§8.4)
+        if (m_role == role)
+            return;
+        // the role is stored first, so the next measure resolves through it (§8.4)
+        m_role = role;
+        // a role change resizes the run, so the layout passes must run again (§8.4, §8.2)
+        invalidate_layout();
+    }
+
+    TextRole Label::role() const {
+        // the role is what the measure pass resolves through (§8.4)
+        return m_role;
+    }
+
+    float Label::font_size_used() const {
+        // without a theme the run keeps its explicit size, which is the unthemed behaviour (§9.1)
+        if (theme() == nullptr || m_role == TextRole::None)
+            return m_font_size;
+        // a body role takes the size the hierarchy sets body copy at (§8.4)
+        switch (m_role) {
+        // the body size is where a plain label sits (§8.4)
+        case TextRole::Body:
+            return theme()->typography().body;
+        // the caption size is the smallest hierarchy entry (§8.4)
+        case TextRole::Caption:
+            return theme()->typography().caption;
+        // the headline size is the largest entry (§8.4)
+        case TextRole::Headline:
+            return theme()->typography().headline;
+        // the subheadline size is one step stronger than body copy (§8.4)
+        case TextRole::Subheadline:
+            return theme()->typography().subheadline;
+        // the none role never reaches here, because the explicit size already answered (§8.4)
+        default:
+            return m_font_size;
+        }
+    }
+
+    Color Label::foreground_color() const {
+        // without a theme the run keeps its own colour, which is the unthemed behaviour (§6.1)
+        if (theme() == nullptr)
+            return m_foreground;
+        // a caption is the secondary role, so it dims through the token the theme carries rather than a literal (§8.4)
+        if (m_role == TextRole::Caption)
+            return resolve(foreground_colors(), m_foreground).transparentized(1.0f - theme()->typography().secondary_opacity);
+        // every other role reads the resolved foreground (§8.4)
+        return resolve(foreground_colors(), m_foreground);
     }
 
     const TextLayout& Label::layout() const {

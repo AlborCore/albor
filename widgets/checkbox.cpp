@@ -32,6 +32,11 @@ namespace albor
         Component::arrange(bounds);
     }
 
+    Rect CheckBox::focus_ring_rect() const {
+        // the ring surrounds the fixed square, which is the visual the user aims at (§8.4)
+        return box_rect();
+    }
+
     Rect CheckBox::box_rect() const {
         // the metric is the control size, because the box is a fixed square whatever it is arranged into (§8.2)
         const ControlMetrics& metrics = theme() != nullptr ? theme()->metrics() : default_metrics();
@@ -47,13 +52,61 @@ namespace albor
             return;
         // the square is the fixed metric, because the box does not stretch with its arranged bounds (§8.2)
         const Rect box = box_rect();
-        // a checked box carries a fill, which is the only way the state reads without a glyph (§6.1)
-        if (m_checked) {
+        // the metrics answer the radius and the glyph, which is the theme's decision when one is installed (§8.4)
+        const ControlMetrics& metrics = theme() != nullptr ? theme()->metrics() : default_metrics();
+        // a checked or mixed box carries a fill, which is the only way the accent reads without a glyph (§6.1)
+        if (m_checked || m_indeterminate) {
             // the fill resolves by state, so a hover and a press differ without a second literal (§6.1)
-            context.draw_rect(box, {.fill = resolve(fill_colors(), m_check_fill)});
+            const Paint fill_paint{.fill = resolve(fill_colors(), m_check_fill)};
+            // a themed fill shares the box radius, so the accent reads as one rounded shape (§8.4)
+            if (metrics.checkbox_corner_radius > 0.0f)
+                context.draw_rounded_rect(box, metrics.checkbox_corner_radius, fill_paint);
+            // without a themed radius the fill is the square the box always drew (§6.1)
+            else
+                context.draw_rect(box, fill_paint);
         }
         // the outline resolves by state, so the border reads as part of the control (§6.1)
-        context.draw_rect(box, {.stroke = resolve(outline_colors(), m_outline), .stroke_width = outline_width()});
+        if (metrics.checkbox_corner_radius > 0.0f)
+            context.draw_rounded_rect(box, metrics.checkbox_corner_radius, {.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), .stroke = resolve(outline_colors(), m_outline), .stroke_width = outline_width()});
+        // without a themed radius the outline is the hard rectangle the box always drew (§8.4)
+        else
+            context.draw_rect(box, {.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), .stroke = resolve(outline_colors(), m_outline), .stroke_width = outline_width()});
+        // a mixed box draws the dash before the mark, because one is checked and the other is not (§10.1)
+        if (m_indeterminate)
+            paint_indeterminate_dash(context, box);
+        // a checked box draws the check mark, which is the glyph a native box carries (§8.4)
+        else if (m_checked)
+            paint_check_mark(context, box);
+    }
+
+    void CheckBox::paint_check_mark(RenderContext& context, const Rect& box) const {
+        // a box without a themed glyph keeps its plain fill, because the glyph is a theme decision (§8.4)
+        if (theme() == nullptr || theme()->metrics().checkbox_glyph_stroke <= 0.0f)
+            return;
+        // the glyph colour is the role the theme answers, which reads over the accent fill (§8.4)
+        const Color glyph = resolve(glyph_colors(), Color{0.96f, 0.97f, 0.99f, 1.0f});
+        // the mark starts at the left quarter where the short leg begins (§8.4)
+        const Point start{.x = box.x + box.width * 0.25f, .y = box.y + box.height - box.height * 0.30f};
+        // the mark bends at the bottom centre, which is where the two legs meet (§8.4)
+        const Point elbow{.x = box.x + box.width * 0.42f, .y = box.y + box.height - box.height * 0.12f};
+        // the mark ends at the right quarter where the long leg reaches (§8.4)
+        const Point end{.x = box.x + box.width - box.width * 0.08f, .y = box.y + box.height * 0.15f};
+        // the three points join into one check mark stroke (§8.4)
+        const Point points[] = {start, elbow, end};
+        // the glyph strokes with the theme decided width, which is what makes the mark visible (§8.4)
+        context.draw_polyline(points, {.color = glyph, .width = theme()->metrics().checkbox_glyph_stroke});
+    }
+
+    void CheckBox::paint_indeterminate_dash(RenderContext& context, const Rect& box) const {
+        // a box without a themed glyph keeps its plain fill, because the glyph is a theme decision (§8.4)
+        if (theme() == nullptr)
+            return;
+        // the glyph colour is the role the theme answers, which reads over the accent fill (§8.4)
+        const Color glyph = resolve(glyph_colors(), Color{0.96f, 0.97f, 0.99f, 1.0f});
+        // the dash spans the middle half of the box, which is what a mixed symbol reads as (§8.4)
+        const Rect dash = Rect::from_origin_size(Point{.x = box.x + box.width * 0.20f, .y = box.y + box.height * 0.5f - theme()->metrics().checkbox_glyph_stroke * 0.5f}, Size{.width = box.width * 0.60f, .height = std::max(theme()->metrics().checkbox_glyph_stroke, 2.0f)});
+        // the dash draws as one rounded bar over the accent fill (§8.4)
+        context.draw_rounded_rect(dash, dash.height * 0.5f, {.fill = glyph});
     }
 
     bool CheckBox::hit_test(Point logical_point) const {
@@ -119,7 +172,7 @@ namespace albor
         // a disabled box reports the disabled state, which is what refuses activation (§10.1)
         node.set_disabled(disabled());
         // the check state mirrors the stored boolean, which is what a screen reader announces (§10.1)
-        node.set_check(m_checked ? CheckState::Checked : CheckState::Unchecked);
+        node.set_check(m_indeterminate ? CheckState::Indeterminate : m_checked ? CheckState::Checked : CheckState::Unchecked);
         // the toggle action runs the same path a press does, and its identifier is discarded because a widget names actions by label (§10.1) the action body carries no disabled guard, because SemanticNode::invoke refuses every action while the node it belongs to is disabled, which is where that rule belongs (§10.1)
         (void)node.add_action("toggle", [control = mutable_owner(this)] {
             // the toggle runs through the shared command when one is bound, as a press does (§18.7)
@@ -141,6 +194,21 @@ namespace albor
     bool CheckBox::checked() const {
         // the state is what the semantic check state and the render pass both read (§10.1)
         return m_checked;
+    }
+
+    void CheckBox::set_indeterminate(bool indeterminate) {
+        // an unchanged state redraws nothing, because the box looks the same (§6.1)
+        if (m_indeterminate == indeterminate)
+            return;
+        // the state is stored first, so the invalidation walks a box that already knows it is mixed (§8.3)
+        m_indeterminate = indeterminate;
+        // a mixed box changes its fill and its glyph, so the frame must be redrawn (§6.1, §10.1)
+        invalidate();
+    }
+
+    bool CheckBox::indeterminate() const {
+        // the state is what the semantic check state and the render pass both read (§10.1)
+        return m_indeterminate;
     }
 
     void CheckBox::set_on_toggle(std::function<void(bool)> handler) {
@@ -177,9 +245,16 @@ namespace albor
     }
 
     void CheckBox::toggle() {
+        // a mixed box resolves to checked on the next press, which is what a tri state control does (§10.1)
+        if (m_indeterminate) {
+            m_indeterminate = false;
+            m_checked = true;
+        }
         // the state flips before anything runs, so every observer sees the value the box moved to (§8.3)
-        m_checked = !m_checked;
-        // a toggled box changes its fill, so the frame must be redrawn (§6.1)
+        else {
+            m_checked = !m_checked;
+        }
+        // a toggled box changes its fill and its glyph, so the frame must be redrawn (§6.1)
         invalidate();
         // a bound command is invoked with the new truth, which is what an action that carries a value receives (§18.3)
         if (command() != nullptr) {
@@ -239,5 +314,13 @@ namespace albor
             return nullptr;
         // the installed palette answers, because the theme owns the colour (§6.1)
         return theme()->palette().checkbox_outline;
+    }
+
+    const Color* CheckBox::glyph_colors() const {
+        // without a theme the table is unused, because no glyph is drawn at all (§8.4)
+        if (theme() == nullptr)
+            return nullptr;
+        // the installed palette answers, because the glyph is a role like the outline (§8.4)
+        return theme()->palette().checkbox_glyph;
     }
 } // namespace albor

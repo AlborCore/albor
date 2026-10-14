@@ -10,11 +10,19 @@ namespace albor
 {
     Button::Button(BindingEngine* engine, TextEngine* text_engine, std::string label, std::string explicit_id) :
         Widget(engine, std::move(explicit_id)), m_text_engine(text_engine), m_label(std::move(label)) {
-        // a button with no engine cannot measure, so the label stays empty and the plate falls back to the minimum extent (§9.1, AD-14)
+        // a button with no engine cannot measure, so the plate stays at its minimum extent (§9.1, AD-14)
         if (m_text_engine == nullptr)
             return;
         // the label is measured once up front, so the plate is sized before the first layout pass reaches it (§9.1, AD-14)
-        m_label_layout = m_text_engine->measure(m_label, 0.0f, TextEngine::DEFAULT_FONT_SIZE);
+        m_label_layout = m_text_engine->measure(m_label, 0.0f, label_font_size());
+    }
+
+    float Button::label_font_size() const {
+        // without a theme the label takes the size every other call site takes (§9.1)
+        if (theme() == nullptr)
+            return TextEngine::DEFAULT_FONT_SIZE;
+        // the theme owns the hierarchy, so the label is set at the body size the design language decided (§8.4)
+        return theme()->typography().body;
     }
 
     void Button::measure(const SizeConstraints& constraints, Size& out_size) {
@@ -22,13 +30,15 @@ namespace albor
         if (m_text_engine != nullptr) {
             // the offered width bounds the run, because a narrow parent wraps the plate's label (§8.2, §9.1)
             const float offered_width = constraints.maximum.width > 0.0f ? constraints.maximum.width : 0.0f;
-            // the run is measured at the default button size, because the plate carries no separate size knob (§9.1)
-            m_label_layout = m_text_engine->measure(m_label, offered_width, TextEngine::DEFAULT_FONT_SIZE);
+            // the run is measured at the hierarchy size the button carries (§9.1)
+            m_label_layout = m_text_engine->measure(m_label, offered_width, label_font_size());
         }
         // the minimum comes from the theme when one is installed, so a sizing decision is configured in one place (§8.2)
         const ControlMetrics& metrics = theme() != nullptr ? theme()->metrics() : default_metrics();
-        // a push control must stay grabbable, so the label drives the plate and a default covers an empty label (§8.2)
-        Size content{.width = std::max(m_label_layout.size.width, metrics.button_minimum.width), .height = std::max(m_label_layout.size.height, metrics.button_minimum.height)};
+        // a padded control insets its label on both sides, which is what a native push control measures to (§8.2)
+        const float padding = m_label_layout.empty() ? 0.0f : 2.0f * metrics.button_padding_horizontal;
+        // a push control stays grabbable, so the label plus its padding drives the plate (§8.2)
+        Size content{.width = std::max(m_label_layout.size.width + padding, metrics.button_minimum.width), .height = std::max(m_label_layout.size.height, metrics.button_minimum.height)};
         // the children are measured too, because a widget is a component and they are part of its content (§8.1, §8.2)
         Size children{};
         UiNode::measure(constraints, children);
@@ -141,7 +151,7 @@ namespace albor
         // a button with no engine has nothing to remeasure, because it cannot measure at all (§9.1, AD-14)
         if (m_text_engine != nullptr)
             // the run is measured eagerly, because the plate is as wide as the text it carries (§9.1, AD-14)
-            m_label_layout = m_text_engine->measure(m_label, 0.0f, TextEngine::DEFAULT_FONT_SIZE);
+            m_label_layout = m_text_engine->measure(m_label, 0.0f, label_font_size());
         // a new label resizes the plate, so the layout passes must run again (§8.2)
         invalidate_layout();
     }
@@ -234,6 +244,27 @@ namespace albor
             return nullptr;
         // the installed palette answers, because the theme owns the colour (§6.1)
         return theme()->palette().button_label;
+    }
+
+    const Color* Button::border_colors() const {
+        // without a theme the table is unused, because the resolver returns the node's own stroke (§8.4)
+        if (theme() == nullptr)
+            return nullptr;
+        // the installed palette answers, because the border is a role like the plate (§8.4)
+        return theme()->palette().button_border;
+    }
+
+    float Button::border_width() const {
+        // without a theme the stroke keeps the width the node stored (§8.1)
+        if (theme() == nullptr)
+            return UiNode::border_width();
+        // the theme owns the width, because a border is a sizing decision like the plate (§8.4)
+        return theme()->metrics().button_border_width;
+    }
+
+    Color Button::border_color() const {
+        // with a theme the border resolves by state, so a hover lifts it like the plate does (§8.4)
+        return resolve(border_colors(), UiNode::border_color());
     }
 
 } // namespace albor

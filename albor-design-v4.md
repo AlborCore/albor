@@ -884,6 +884,35 @@ Installation is a single call, `apply_theme(root, theme)`, which walks a subtree
 theme to every widget in it. It lives in `widgets/` rather than on `UiNode`, because the ui tree
 must not know what a widget or a theme is (§3.2, AD-05).
 
+**Platform-native appearance (settled during implementation, issue 60).** The flat derived
+palette is the portable baseline; the native look is a *preset*, not a rewrite:
+
+1. **OS appearance sync is a HAL contract.** `PlatformWindow::system_appearance()` answers a
+   `SystemAppearance` (a `ColorScheme` in `core/` plus an accent `Color`), and
+   `PlatformWindowListener::on_platform_appearance_changed` reports live flips (a backend that
+   does not query the OS answers the portable default, which is how headless and unimplemented
+   backends build unchanged). macOS asks `NSAppearance`/`NSColor.controlAccentColor` and observes
+   the effective appearance and the accent change. `Application::set_appearance_handler` forwards
+   the change per window so an application rebuilds and reinstalls its theme; windows repaint
+   through the invalidation that install already performs.
+2. **The presets are `Theme::macos`, `Theme::fluent` and `Theme::pro_dark`.** Each one derives
+   every state through `ThemeBuilder` and then shapes the surface: neutral control faces instead
+   of accent colour blocks, HIG/Fluent control metrics (button height, horizontal padding, field
+   height), native corner radii. Their palette and metric tokens are set by the preset alone, so
+   the unthemed defaults — and a plain derived theme — keep the behaviour they always had.
+3. **Layered control rendering.** A plate is a fill *and* a border stroke: `button_border` per
+   state resolves like the plate, `button_border_width` sizes it, and the two layers ride one
+   command. A native checkbox is a rounded box with a check mark glyph, drawn through a
+   `draw_polyline` primitive that joins its vertices; an indeterminate box draws the dash.
+4. **The focus ring is dual layer.** `focus_ring` strokes the crisp ring and `focus_ring_outer`
+   strokes the halo one step further out; a theme that leaves the halo transparent draws exactly
+   one ring, which is why a derived theme looks in place next to a preset.
+5. **Typography is a token hierarchy.** `Typography` carries named roles (`TextRole`:
+   body, caption, headline, subheadline) and the secondary opacity token; `Label::set_role`
+   resolves size and colour through it, and dark/light flips recolour without any literal.
+6. **A glyph stroke draws joined.** `RenderContext::draw_polyline` is the level 0 primitive the
+   check marks ride; every backend and recorder shares it, the same way a rectangle is shared.
+
 ---
 
 ## 9. Text, Typography, and Internationalization

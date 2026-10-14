@@ -6,6 +6,7 @@
 #include "core/geometry.h"
 #include "core/native_window_handle.h"
 #include "window/platform_window.h"
+#include "window/system_appearance.h"
 #include "window/window_metrics.h"
 #include "window/window_options.h"
 
@@ -49,6 +50,9 @@ namespace albor
 
         // override: hand out the metal layer a renderer backend attaches to (§3.5)
         [[nodiscard]] NativeWindowHandle native_handle() const override;
+
+        // override: read the appearance the system renders with, which appkit is the authority on (§5.3, §8.4)
+        [[nodiscard]] SystemAppearance system_appearance() const override;
 
         // override: ask the display link for another frame (§4.3, AD-16)
         void request_frame() override;
