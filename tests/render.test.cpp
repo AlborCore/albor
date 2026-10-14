@@ -2090,3 +2090,17 @@ TEST(PictureRecorder, AZeroOpacityStillRecordsAShape) {
     ASSERT_EQ(recorder.commands().size(), 1u);
     EXPECT_FLOAT_EQ(recorder.commands()[0].paint().fill.alpha, 0.0f);
 }
+
+TEST(PictureRecorder, APolylineBakesTheTransformIntoItsVertices) {
+    // arrange a recorder standing at a translation, which is what a nested composition holds (§6.4)
+    PictureRecorder recorder;
+    recorder.set_transform(Transform::translation(5.0f, 6.0f));
+    // act a polyline is drawn through local vertices, which the replay cannot remap (§6.2)
+    const Point points[] = {{0.0f, 0.0f}, {10.0f, 10.0f}, {10.0f, 0.0f}};
+    recorder.draw_polyline(points, StrokeStyle{});
+    // assert the recorded run carries the mapped vertices, because the transform is baked (§6.4)
+    ASSERT_EQ(recorder.commands().size(), 1u);
+    const std::vector<Point>& mapped = recorder.commands()[0].polyline_geometry().points;
+    ASSERT_EQ(mapped.size(), 3u);
+    EXPECT_EQ(mapped[1], (Point{15.0f, 16.0f}));
+}

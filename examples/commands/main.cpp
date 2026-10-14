@@ -159,6 +159,11 @@ int main() {
     }
     // the starting scheme is the one the system reports, which a native application follows (§8.4)
     albor::Window* window = application.window(handle);
+    // a window the registry dropped cannot be themed, which the failure states rather than crashes on (§5.2)
+    if (window == nullptr) {
+        std::fprintf(stderr, "commands: the window is not open\n");
+        return 1;
+    }
     const albor::SystemAppearance appearance = window->system_appearance();
     // the macos preset over the reported accents is the native control set, which the tree borrows (§8.4, §6.1)
     albor::ThemeController controller(light_accents(appearance.accent), dark_accents(appearance.accent), albor::ThemePreset::Macos);

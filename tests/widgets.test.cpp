@@ -4182,3 +4182,62 @@ TEST(ThemeControllerChecks, AnAccentChangeKeepsThePreset) {
     // assert the rebuilt theme is still the preset, because the accents only drive the derivation (§8.4)
     EXPECT_EQ(controller.theme().metrics().button_minimum, (Size{24.0f, 28.0f}));
 }
+
+TEST(NativeThemeChecks, AnUnthemedBoxDrawsItsOutlineWithoutAFill) {
+    // arrange an unchecked box with no theme, whose fill the outline pass always left empty (§8.4)
+    BindingEngine engine;
+    CheckBox box(&engine, "box");
+    box.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{16.0f, 16.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    // act
+    box.render(recorder);
+    // assert the unthemed outline carries no fill of its own, which is the transparent token (§8.4)
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].paint().fill.alpha, 0.0f);
+    EXPECT_TRUE(recorder.scene()->commands()[0].paint().strokes());
+}
+
+TEST(ThemeChecks, AThemeInstallRunsTheLayoutPasses) {
+    // arrange a slider measured under no theme, whose extents the install invalidates (§8.4)
+    BindingEngine engine;
+    Slider slider(&engine, "slider");
+    Size measured{};
+    slider.measure(SizeConstraints::at_most(Size{400.0f, 400.0f}), measured);
+    Theme theme;
+    theme.set_slider_extent(Size{300.0f, 24.0f});
+    // act the theme is installed over a laid out widget, which asks the layout passes to run again (§8.4)
+    slider.set_theme(&theme);
+    // assert the measure pass is dirty, because the theme now owns the extent (§8.4, §8.2)
+    EXPECT_TRUE(slider.measure_dirty());
+}
+
+TEST(NativeThemeChecks, AnOpacityDimsTheCheckGlyphWithTheFill) {
+    // arrange a themed checked box inside a node that drew at zero opacity (§6.1)
+    BindingEngine engine;
+    Theme theme;
+    theme.set_checkbox_glyph_stroke(1.8f);
+    CheckBox box(&engine, "box");
+    box.set_theme(&theme);
+    box.set_checked(true);
+    box.set_opacity(0.0f);
+    box.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{16.0f, 16.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    // act
+    box.render(recorder);
+    // assert the glyph stroke dims like the fill would, because an opacity owns the whole node (§6.1)
+    EXPECT_FLOAT_EQ(recorder.scene()->commands().back().polyline_geometry().stroke.color.alpha, 0.0f);
+}
+
+TEST(NativeThemeChecks, AnExplicitSizeLeavesTheRoleEvenUnchanged) {
+    // arrange a themed label at a caption role pointing at the same value the size carries (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_role_font_size(TextRole::Caption, 9.0f);
+    Label label(&engine, &text_engine, "Hi");
+    label.set_font_size(20.0f);
+    label.set_role(TextRole::Caption);
+    // act the same explicit size is set again, which is what a duplicated authoring passes (§8.4)
+    label.set_font_size(20.0f);
+    // assert the role cleared, because the explicit size is the resolution owner (§8.4)
+    EXPECT_EQ(label.role(), TextRole::None);
+}

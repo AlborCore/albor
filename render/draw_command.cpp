@@ -109,10 +109,13 @@ namespace albor
         // a glyph outline is the seventh alternative (§6.4, AD-34)
         case 6:
             return DrawCommandKind::GlyphOutline;
+        // a shadow is the eighth alternative, which is what a variant holds at most (§6.2)
+        case 7:
+            return DrawCommandKind::Shadow;
         // a polyline is the ninth alternative, which is what a variant holds at most (§6.2)
         case 8:
             return DrawCommandKind::Polyline;
-        // a shadow is the eighth alternative, which is what a variant holds at most (§6.2)
+        // an alternative outside the enumeration is read as the shadow, which a report sees (§6.2)
         default:
             return DrawCommandKind::Shadow;
         }
@@ -193,6 +196,12 @@ namespace albor
         if (auto* cast = std::get_if<ShadowGeometry>(&m_geometry)) {
             // the cast takes the factor once, because it is the same coverage multiplier the paint would take (§6.2)
             cast->shadow.color.alpha = std::clamp(cast->shadow.color.alpha * factor, 0.0f, 1.0f);
+            return;
+        }
+        // a polyline carries its colour in its own geometry, because its stroke is what it draws with (§6.2)
+        if (auto* line = std::get_if<PolylineGeometry>(&m_geometry)) {
+            // the glyph stroke takes the factor once, which is what an opacity dims a check mark by (§6.1)
+            line->stroke.color.alpha = std::clamp(line->stroke.color.alpha * factor, 0.0f, 1.0f);
             return;
         }
         // both channels move together, because an opacity dims a fill and a stroke alike (§6.1)

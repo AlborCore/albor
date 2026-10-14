@@ -137,6 +137,8 @@ namespace albor
         m_theme = theme;
         // a theme changes the paint, so the widget asks for a frame (§6.1)
         invalidate();
+        // the metrics and the hierarchy the measure resolves through changed too, so the layout passes run (§8.4, §8.2)
+        invalidate_layout();
     }
 
     const Theme* Widget::theme() const {

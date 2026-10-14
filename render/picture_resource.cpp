@@ -94,8 +94,14 @@ namespace albor
     }
 
     void PictureRecorder::draw_polyline(const std::span<const Point>& points, const StrokeStyle& stroke) {
-        // the vertex run stays raw, because the transform travels beside it (§6.4)
-        record(DrawCommand::polyline(points, stroke));
+        // every vertex is mapped through the recorder transform now, because the replay cannot ask where (§6.4)
+        std::vector<Point> mapped;
+        mapped.reserve(points.size());
+        // the run keeps the shape the transform cooked, which is what stays readable in one pass (§6.4)
+        for (const Point& point : points)
+            mapped.push_back(m_transform.apply(point));
+        // the mapped polyline records as the vertex run the replay joins (§6.2)
+        record(DrawCommand::polyline(mapped, stroke));
     }
 
     void PictureRecorder::draw_shadow(const Rect& rect, float radius, const Shadow& shadow) {

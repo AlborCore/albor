@@ -8,8 +8,8 @@ namespace albor::inspector
 {
     namespace
     {
-        // how many kinds a report counts, which is the enumeration's size (§6.2)
-        constexpr std::size_t KIND_COUNT = 9;
+        // how many kinds a report counts, which the last enumerator names, so a next kind cannot drift (§6.2)
+        constexpr std::size_t KIND_COUNT = static_cast<std::size_t>(DrawCommandKind::Shadow) + 1;
 
         // report whether a bound carries a number that is not finite, which no rasterizer can honour (§6.2)
         bool not_finite(const Rect& rect) {

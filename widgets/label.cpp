@@ -110,9 +110,17 @@ namespace albor
     }
 
     void Label::set_font_size(float font_size) {
-        // an unchanged size remeasures nothing, because the metrics did not change (§9.1)
-        if (m_font_size == font_size)
+        // an unchanged size may still have to leave a role, because the size decides beneath the role (§8.4)
+        if (m_font_size == font_size) {
+            // a role resolved the last measure, so leaving it sizes the run back to the explicit value (§8.4)
+            if (m_role != TextRole::None) {
+                m_role = TextRole::None;
+                // the effective metrics change with the role, so the layout passes must run again (§8.4, §8.2)
+                invalidate_layout();
+            }
+            // exit
             return;
+        }
         // an explicit size is what the run resolves through again, which is what a chosen size names (§8.4)
         m_role = TextRole::None;
         // the size is stored first, so the invalidation walks a label that already knows its metrics (§9.1)

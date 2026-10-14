@@ -214,6 +214,15 @@ namespace
     return YES;
 }
 
+// the effective appearance of the window changed, which is the route appkit recommends for a theme flip (§8.4)
+- (void)viewDidChangeEffectiveAppearance {
+    // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
+    if (self.listener == nullptr)
+        return;
+    // the framework receives the appearance the system now renders with (§8.4)
+    self.listener->on_platform_appearance_changed(system_appearance_report());
+}
+
 // a click on an inactive window reaches the view immediately, which is what a fast press needs (§8.3)
 - (BOOL)acceptsFirstMouse:(NSEvent*)event {
     (void)event;
@@ -463,9 +472,6 @@ namespace albor
         // the backing scale observer, which is removed before the state is released (§4.2)
         id backing_observer = nil;
 
-        // the appearance flip observer, which is removed before the state is released (§8.4)
-        id appearance_observer = nil;
-
         // the distributed accent change observer, which is removed before the state is released (§8.4)
         id accent_observer = nil;
 
@@ -563,16 +569,6 @@ namespace albor
                                                     // the framework receives the metrics the platform now reports (§9.1)
                                                     state->listener->on_platform_resize(metrics_of(state->window));
                                                   }];
-        // an appearance flip reaches the listener by its runtime name, which lets a theme follow the system live (§8.4)
-        state->appearance_observer = [center addObserverForName:@"NSApplicationDidChangeEffectiveAppearanceNotification"
-                                                         object:nil
-                                                          queue:main_queue
-                                                     usingBlock:^(NSNotification*) {
-                                                       if (state->listener == nullptr)
-                                                           return;
-                                                       // the framework receives the new system appearance (§8.4)
-                                                       state->listener->on_platform_appearance_changed(system_appearance_report());
-                                                     }];
         // a new window moves the cascade along, so a later window does not stack on this one (§5.3)
         window_ordinal++;
         // the accent colour changes on the system settings, announced through the distributed center (§8.4)
@@ -609,10 +605,6 @@ namespace albor
         if (m_state->backing_observer != nil) {
             [center removeObserver:m_state->backing_observer];
             m_state->backing_observer = nil;
-        }
-        if (m_state->appearance_observer != nil) {
-            [center removeObserver:m_state->appearance_observer];
-            m_state->appearance_observer = nil;
         }
         if (m_state->accent_observer != nil) {
             [[NSDistributedNotificationCenter defaultCenter] removeObserver:m_state->accent_observer];

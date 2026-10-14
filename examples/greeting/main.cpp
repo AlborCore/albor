@@ -16,11 +16,14 @@
 #include "widgets/widget.h"
 #include "window/window.h"
 
-// the light accents, which are the window surface the system shows in light mode with the reported accent (§8.4)
-albor::Accents light_accents(albor::Color accent) { return albor::Accents{.surface = albor::Color::rgb(0.925f, 0.925f, 0.930f), .on_surface = albor::Color::rgb(0.18f, 0.18f, 0.20f), .accent = accent, .outline = albor::Color::rgb(0.55f, 0.57f, 0.60f)}; }
+namespace
+{
+    // the light accents, which are the window surface the system shows in light mode with the reported accent (§8.4)
+    albor::Accents light_accents(albor::Color accent) { return albor::Accents{.surface = albor::Color::rgb(0.925f, 0.925f, 0.930f), .on_surface = albor::Color::rgb(0.18f, 0.18f, 0.20f), .accent = accent, .outline = albor::Color::rgb(0.55f, 0.57f, 0.60f)}; }
 
-// the dark accents, which are the window surface the system shows in dark mode with the reported accent (§8.4)
-albor::Accents dark_accents(albor::Color accent) { return albor::Accents{.surface = albor::Color::rgb(0.125f, 0.125f, 0.135f), .on_surface = albor::Color::rgb(0.92f, 0.94f, 0.96f), .accent = accent, .outline = albor::Color::rgb(0.42f, 0.44f, 0.48f)}; }
+    // the dark accents, which are the window surface the system shows in dark mode with the reported accent (§8.4)
+    albor::Accents dark_accents(albor::Color accent) { return albor::Accents{.surface = albor::Color::rgb(0.125f, 0.125f, 0.135f), .on_surface = albor::Color::rgb(0.92f, 0.94f, 0.96f), .accent = accent, .outline = albor::Color::rgb(0.42f, 0.44f, 0.48f)}; }
+} // namespace
 
 int main() {
     // the platform and the backends installed themselves at load, so the composition creates what they registered
@@ -62,10 +65,14 @@ int main() {
     panel->set_on_run_clicked([] { std::printf("greeting: the run_clicked signal fired\n"); });
     // the pipeline owns the tree and drives stage one on the ui thread (§6.1, AD-18)
     albor::FramePipeline pipeline(engine, std::move(panel));
-    // the starting scheme is the one the system reports, which a native application follows (§8.4)
+    // the starting scheme is the one the system reports, and a dropped window fails rather (§8.4, §5.2)
+    if (window == nullptr) {
+        std::fprintf(stderr, "greeting: the window is not open\n");
+        return 1;
+    }
     const albor::SystemAppearance appearance = window->system_appearance();
     // the controller builds the macos preset over the accents the system reports, which is the native control set (§8.4)
-    albor::ThemeController controller(albor::Accents{.surface = albor::Color::rgb(0.925f, 0.925f, 0.930f), .on_surface = albor::Color::rgb(0.18f, 0.18f, 0.20f), .accent = appearance.accent, .outline = albor::Color::rgb(0.55f, 0.57f, 0.60f)}, albor::Accents{.surface = albor::Color::rgb(0.125f, 0.125f, 0.135f), .on_surface = albor::Color::rgb(0.92f, 0.94f, 0.96f), .accent = appearance.accent, .outline = albor::Color::rgb(0.42f, 0.44f, 0.48f)}, albor::ThemePreset::Macos);
+    albor::ThemeController controller(light_accents(appearance.accent), dark_accents(appearance.accent), albor::ThemePreset::Macos);
     // the controller owns the theme the whole tree borrows, so it is themed through the same presets (§6.1, §8.4)
     controller.install(pipeline.root(), appearance.scheme);
     // the scene is cleared with the themed surface, which is what the native faces read against (§6.1, §8.4)
