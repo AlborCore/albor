@@ -167,6 +167,9 @@ add_subdirectory(render/render-software)
 add_subdirectory(platform/macos)
 add_subdirectory(platform/headless)
 
+# the win32 adapter with its waitable timer pacing, which self registers when linked (§3.2, AD-16)
+add_subdirectory(platform/windows)
+
 # the compiler frontend that turns .ui source into native c++ (§11.1)
 add_subdirectory(compiler)
 add_subdirectory(language-server)
