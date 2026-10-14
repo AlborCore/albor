@@ -605,6 +605,34 @@ TEST(TypeChecker, ReportsARepeatOverSomethingThatIsNotACollection) {
     EXPECT_EQ(first(diagnostics).code, "E0410");
 }
 
+TEST(TypeChecker, ResolvesAConditionalWithABoolCondition) {
+    // arrange, act
+    const CheckedFile file = check("component C { in property<bool> show; Column { if show { Label { text: \"x\"; } } } }");
+    // assert
+    const std::shared_ptr<CheckedNode>& conditional = only(file).root->children.at(0);
+    EXPECT_EQ(conditional->kind, TreeNodeKind::Conditional);
+    ASSERT_TRUE(conditional->conditional_body != nullptr);
+    EXPECT_EQ(conditional->conditional_body->element_type, "Label");
+}
+
+TEST(TypeChecker, RecordsTheConditionDependencies) {
+    // arrange, act
+    const CheckedFile file = check("component C { in property<bool> show; Column { if show { Label {} } } }");
+    // assert
+    const std::shared_ptr<CheckedNode>& conditional = only(file).root->children.at(0);
+    EXPECT_EQ(conditional->condition_dependencies, std::vector<std::string>{"show"});
+}
+
+TEST(TypeChecker, ReportsAConditionalConditionThatIsNotABool) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("component C { in property<int> count: 1; Column { if count { Label {} } } }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0410");
+}
+
 TEST(TypeChecker, KeepsTheAuthorIdentityOutOfTheBindingGraph) {
     // arrange, act
     const CheckedFile file = check("component C { Button { id: action; on_clicked: { } } }");

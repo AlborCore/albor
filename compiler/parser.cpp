@@ -27,6 +27,9 @@ namespace albor::compiler
         // the keyword that introduces a repeated element (§11.1)
         constexpr std::string_view REPEAT_KEYWORD = "Repeat";
 
+        // the keyword that introduces a conditional element, whose body exists only while the condition holds (§11.1)
+        constexpr std::string_view IF_KEYWORD = "if";
+
         // the keyword that binds an item inside a repeat body (§11.1)
         constexpr std::string_view IN_KEYWORD = "in";
 
@@ -375,6 +378,9 @@ namespace albor::compiler
         // a repeat is a tree node of its own kind, so it is read by its own rule (§11.1)
         if (at_keyword(REPEAT_KEYWORD))
             return parse_repeat();
+        // a conditional is a tree node of its own kind, so it is read by its own rule (§11.1)
+        if (at_keyword(IF_KEYWORD))
+            return parse_conditional();
         // the node is allocated first, because the caller takes the owning pointer (§11.1)
         auto node = std::make_unique<TreeNode>();
         // the node is an element, which is the default kind (§11.1)
@@ -424,6 +430,34 @@ namespace albor::compiler
         // a body that holds nothing is reported, because a repeat must instantiate something (§11.1)
         if (node->repeat_body == nullptr)
             report_unexpected("the element to repeat");
+        // a body that never closed is reported, because the node is incomplete (§11.1)
+        expect_punctuation("}");
+        // the span ends at the closing brace, which the reader has already consumed (§11.1)
+        node->span.end = last_consumed_end();
+        return node;
+    }
+
+    std::unique_ptr<TreeNode> Parser::parse_conditional() {
+        // the node is allocated first, because the caller takes the owning pointer (§11.1)
+        auto node = std::make_unique<TreeNode>();
+        // the node is a conditional, which is a tree form rather than an expression (§11.1)
+        node->kind = TreeNodeKind::Conditional;
+        // the span starts at the keyword, so a diagnostic points at the whole node (§11.1)
+        node->span.start = peek().span.start;
+        // the keyword is consumed, because the caller has already matched it (§11.1)
+        advance();
+        // the condition is an expression, so it may read a property or a comparison (§11.1)
+        node->condition = parse_expression();
+        // the body is delimited, so the wrapped node is read until it closes (§11.1)
+        expect_punctuation("{");
+        // the body must hold exactly one element, because a conditional instantiates one node (§11.1)
+        if (!at_punctuation("}")) {
+            // the wrapped element is read, because it is what the conditional instantiates (§11.1)
+            node->conditional_body = parse_tree_node();
+        }
+        // a body that holds nothing is reported, because a conditional must instantiate something (§11.1)
+        if (node->conditional_body == nullptr)
+            report_unexpected("the element to show conditionally");
         // a body that never closed is reported, because the node is incomplete (§11.1)
         expect_punctuation("}");
         // the span ends at the closing brace, which the reader has already consumed (§11.1)

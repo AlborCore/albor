@@ -173,6 +173,15 @@ namespace albor::compiler
         // the component properties the repeated source reads, which the graph walk orders by (§7.3, AD-04a)
         std::vector<std::string> repeat_dependencies;
 
+        // the condition expression of a conditional, which decides whether the body exists (§11.1)
+        SharedExpression condition;
+
+        // the component properties the condition reads, which the graph walk orders by (§7.3, AD-04a)
+        std::vector<std::string> condition_dependencies;
+
+        // the checked body of a conditional, which is the element that exists while the condition holds (§11.1)
+        std::shared_ptr<CheckedNode> conditional_body;
+
         // where the node was written (§11.1)
         SourceSpan span;
     };
@@ -256,6 +265,9 @@ namespace albor::compiler
 
         // resolve the repeat form, whose body sees the item binding (§11.1)
         std::shared_ptr<CheckedNode> resolve_repeat(const TreeNode& node, const Scope& scope);
+
+        // resolve the conditional form, whose body exists only while the condition holds (§11.1)
+        std::shared_ptr<CheckedNode> resolve_conditional(const TreeNode& node, const Scope& scope);
 
         // resolve the assignments of an element against its type (§11.1)
         void resolve_assignments(const TreeNode& node, const ElementType& type, const Scope& scope, CheckedNode& out);

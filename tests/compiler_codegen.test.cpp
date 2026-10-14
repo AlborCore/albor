@@ -348,6 +348,56 @@ TEST(Codegen, ANestedSnapshotBlocksTheOutput) {
     EXPECT_TRUE(has_code(diagnostics, "E0501"));
 }
 
+TEST(Codegen, AConditionalEmitsABuildUpdateAndEvaluateTrio) {
+    // arrange
+    DiagnosticList diagnostics;
+    // the condition reads a bool property, which drives a guarded body (§11.1)
+    const std::string_view source = "component C { in property<bool> show; Column { if show { Label { text: \"x\"; } } } }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert
+    ASSERT_FALSE(files.empty());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // the condition property is registered and bound, which keeps the body live against its sources (§7.2, §13.3)
+    EXPECT_TRUE(contains(cpp.content, "Property<bool> m_cond_0;"));
+    EXPECT_TRUE(contains(cpp.content, "m_cond_0.bind_static(&Impl::evaluate_conditional_0, this, deps_cond_0);"));
+    // the body is built on demand, which is what materialises it once the condition holds (§11.1)
+    EXPECT_TRUE(contains(cpp.content, "void build_conditional_0();"));
+    // the body reconciles on a condition change, which is how it appears and disappears (§11.1)
+    EXPECT_TRUE(contains(cpp.content, "void update_conditional_0(bool present);"));
+    // the evaluator reads the condition and settles the body, which is the reactive entry (§13.3)
+    EXPECT_TRUE(contains(cpp.content, "bool C::Impl::evaluate_conditional_0(void* raw) {"));
+    // the body node is adopted into the parent at the recorded offset, which is where it belongs (§8.1)
+    EXPECT_TRUE(contains(cpp.content, "m_node_0->insert_child("));
+    // the removed body is taken back out, which destroys it (§11.1)
+    EXPECT_TRUE(contains(cpp.content, "m_cond_root_0 = m_node_0->remove_child("));
+}
+
+TEST(Codegen, AConditionalBodyEvaluatorGuardsAgainstAnAbsentNode) {
+    // arrange
+    DiagnosticList diagnostics;
+    // the bound assignment lives inside the guarded body, so its evaluator must skip an absent node (§11.1)
+    const std::string_view source = "component C { in property<bool> show; in property<string> label; Column { if show { Label { text: label; } } } }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // the evaluator returns the computed value even when the node is gone, so the engine still settles (§13.3)
+    EXPECT_TRUE(contains(cpp.content, "if (self->m_node_1 == nullptr)"));
+}
+
+TEST(Codegen, AConditionalBlocksTheOutputForANonBoolCondition) {
+    // arrange
+    DiagnosticList diagnostics;
+    // the condition must be a bool, which a non-bool is not (§11.1)
+    const std::string_view source = "component C { in property<int> count: 1; Column { if count { Label {} } } }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert
+    EXPECT_TRUE(files.empty());
+    EXPECT_TRUE(has_code(diagnostics, "E0410"));
+}
+
 TEST(Codegen, ASnapshotOfARecordGeneratesTheFacade) {
     // arrange a catalog holding a record, which is what the manifest contributes (§11.2, AD-17)
     ElementCatalog catalog = ElementCatalog::with_builtins();

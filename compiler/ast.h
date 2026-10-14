@@ -396,14 +396,17 @@ namespace albor::compiler
         SourceSpan span;
     };
 
-    // the kinds of child element a tree node may contain, which is a closed set of two (§11.1)
+    // the kinds of child element a tree node may contain, which is a closed set of three (§11.1)
     enum class TreeNodeKind
     {
         // a declared element type such as Column or Button, which the manifest or the widget catalog resolves (§11.1)
         Element,
 
         // a repeated element, whose body is instantiated once per item (§11.1)
-        Repeat
+        Repeat,
+
+        // a conditional element, whose body exists only while the condition holds (§11.1)
+        Conditional
     };
 
     // one drawing call inside a draw block, which the codegen emits into the canvas body (§6.4, §11.1)
@@ -458,6 +461,12 @@ namespace albor::compiler
 
         // the body of a repeat, which is the element instantiated per item (§11.1)
         std::unique_ptr<TreeNode> repeat_body;
+
+        // the condition of a conditional, which decides whether the body exists (§11.1)
+        ExpressionPtr condition;
+
+        // the body of a conditional, which is the element that exists while the condition holds (§11.1)
+        std::unique_ptr<TreeNode> conditional_body;
 
         // where the node was written (§11.1)
         SourceSpan span;

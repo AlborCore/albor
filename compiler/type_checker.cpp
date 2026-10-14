@@ -267,6 +267,9 @@ namespace albor::compiler
         // a repeat is checked by its own rule, because its body sees an extra binding (§11.1)
         if (node.kind == TreeNodeKind::Repeat)
             return resolve_repeat(node, scope);
+        // a conditional is checked by its own rule, because its body exists only while the condition holds (§11.1)
+        if (node.kind == TreeNodeKind::Conditional)
+            return resolve_conditional(node, scope);
         // the node is allocated up front, because the caller takes a shared pointer (§11.1)
         auto out = std::make_shared<CheckedNode>();
         // the kind, the name, the identity and the span come straight from the node (§11.1, AD-11)
@@ -327,6 +330,30 @@ namespace albor::compiler
             const Scope inner{.properties = scope.properties, .repeat = out.get()};
             // the body is checked against that scope, which is what makes the item resolvable (§11.1)
             out->repeat_body = resolve_node(*node.repeat_body, inner);
+        }
+        return out;
+    }
+
+    std::shared_ptr<CheckedNode> TypeChecker::resolve_conditional(const TreeNode& node, const Scope& scope) {
+        // the node is allocated up front, because the caller takes a shared pointer (§11.1)
+        auto out = std::make_shared<CheckedNode>();
+        // the kind and the span come straight from the node (§11.1)
+        out->kind = TreeNodeKind::Conditional;
+        out->explicit_id = node.explicit_id;
+        out->span = node.span;
+        // the condition is shared rather than re-owned, because the tree owns the expression (§11.1)
+        out->condition = std::shared_ptr<const Expression>(node.condition.get(), [](const Expression*) {});
+        // the condition is typed in the enclosing scope, because the body does not yet exist (§11.1)
+        const ValueType condition_type = type_expression(*out->condition, scope, out->condition_dependencies);
+        // a condition must be a question, because a conditional either shows the body or does not (§11.1)
+        if (!condition_type.is_error() && !condition_type.is(TypeKind::Bool)) {
+            // the problem points at the condition, because that is what the author must change (§11.1)
+            report_type_mismatch(*out->condition, condition_type, scalar(TypeKind::Bool));
+        }
+        // a conditional with no body was already reported by the parser (§11.1)
+        if (node.conditional_body != nullptr) {
+            // the body sees the same scope, because a conditional does not introduce a binding (§11.1)
+            out->conditional_body = resolve_node(*node.conditional_body, scope);
         }
         return out;
     }

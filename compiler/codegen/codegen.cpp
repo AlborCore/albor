@@ -372,6 +372,9 @@ namespace albor::compiler
             // the node slot that has no parent, which is what the root records (§8.1)
             static constexpr std::size_t NO_PARENT = static_cast<std::size_t>(-1);
 
+            // the marker for a node that no conditional guards, which is the ordinary case (§11.1)
+            static constexpr std::size_t NO_CONDITIONAL = static_cast<std::size_t>(-1);
+
             // one tree node in the flat build order, which the emitter records as it walks (§8.1)
             struct NodeSlot
             {
@@ -386,6 +389,9 @@ namespace albor::compiler
 
                 // the child positions from the row root, which is how an update reaches this node (§18.1, AD-13)
                 std::vector<std::size_t> row_path;
+
+                // the conditional that guards this node, which is NO_CONDITIONAL when none does (§11.1)
+                std::size_t conditional = NO_CONDITIONAL;
             };
 
             // one repeat and the body it materializes per item, which is what a keyed view owns (§18.1, AD-13)
@@ -408,6 +414,28 @@ namespace albor::compiler
 
                 // whether the repeat hangs directly under a viewport, which decides a windowed view (§8.2, AD-13)
                 bool virtualized = false;
+            };
+
+            // one conditional and the body it materializes while the condition holds, which is a single instance (§11.1)
+            struct ConditionalSlot
+            {
+                // the preorder index, which names the condition member and the three functions (§11.1)
+                std::size_t index = 0;
+
+                // the conditional node being emitted, which carries the condition (§11.1)
+                const CheckedNode* node = nullptr;
+
+                // the index of the container that holds this conditional, which is where its body hangs (§11.1)
+                std::size_t parent = 0;
+
+                // the body nodes in preorder, which are the nodes the body is made of (§11.1)
+                std::vector<NodeSlot> body;
+
+                // the child position the body takes, which keeps the body where the conditional was written (§11.1)
+                std::size_t offset = 0;
+
+                // the conditional that guards this one, which is NO_CONDITIONAL when it hangs at the top (§11.1)
+                std::size_t parent_conditional = NO_CONDITIONAL;
             };
 
             // build the emitter over the component and the shared problem list (§11.3)
@@ -450,7 +478,7 @@ namespace albor::compiler
             void scan_color(const Expression& expression);
 
             // collect the nodes in preorder, which is the order the build function creates them (§8.1)
-            void collect(const CheckedNode& node, std::size_t parent);
+            void collect(const CheckedNode& node, std::size_t parent, std::size_t conditional = NO_CONDITIONAL);
 
             // find a declared property by name, which the type walk resolves against (§11.3)
             const CheckedProperty* property_named(std::string_view name) const;
@@ -506,11 +534,29 @@ namespace albor::compiler
             // emit the body members a repeat needs, which is the view and the three row functions (§18.1, AD-13)
             void emit_repeat_members();
 
+            // emit the members a conditional needs: the condition, the root and the presence flag (§11.1)
+            void emit_conditional_members();
+
+            // emit the build of one conditional body, which creates the nodes while the condition holds (§11.1)
+            void emit_conditional_build(const ConditionalSlot& slot);
+
+            // emit the update of one conditional, which materializes or destroys the body against the condition (§11.1)
+            void emit_conditional_update(const ConditionalSlot& slot);
+
+            // emit the condition expression of a conditional, rendered against the given object (§11.1)
+            std::string conditional_condition(const ConditionalSlot& slot, const std::string& object);
+
+            // the dependencies a conditional body reads, which joins the condition so any change rebuilds (§11.1)
+            std::vector<std::string> conditional_dependencies(const ConditionalSlot& slot);
+
             // emit the row functions of every repeat, which are appended once the tree is known (§18.1, AD-13)
             void emit_repeat_row_functions_all();
 
             // give each repeat the child position its first row takes, because rows keep the written place (§18.1)
             void assign_repeat_offsets();
+
+            // give each conditional the child position its body takes, because a body keeps the written place (§11.1)
+            void assign_conditional_offsets();
 
             // render the source a repeat walks, which the evaluator reads (§8.1, §18.1)
             std::string repeat_source_expression(const RepeatSlot& slot);
@@ -637,6 +683,9 @@ namespace albor::compiler
             // the repeats in preorder, each of which is a keyed view over its source (§18.1, AD-13)
             std::vector<RepeatSlot> m_repeats;
 
+            // the conditionals in preorder, each of which materializes its body while the condition holds (§11.1)
+            std::vector<ConditionalSlot> m_conditionals;
+
             // the next index a body node takes, which keeps row node names unique across repeats (§8.1, §18.1)
             std::size_t m_body_count = 0;
 
@@ -729,6 +778,21 @@ namespace albor::compiler
         }
 
         void ComponentEmitter::validate_node(const CheckedNode& node) {
+            // a conditional materializes a body while its condition holds, so the condition is scanned (§11.1)
+            if (node.kind == TreeNodeKind::Conditional) {
+                // the condition is scanned for physical lengths, because their density is undefined (§11.1, AD-27)
+                if (node.condition != nullptr) {
+                    scan_expression(*node.condition);
+                    scan_color(*node.condition);
+                }
+                // the body is validated as a tree of its own, because a body is made of those nodes (§11.1)
+                if (node.conditional_body != nullptr)
+                    validate_node(*node.conditional_body);
+                // the children are walked, because a nested problem matters just as much (§11.3)
+                for (const std::shared_ptr<CheckedNode>& child : node.children)
+                    validate_node(*child);
+                return;
+            }
             // a repeat materializes keyed rows, so it is checked against what a row identity needs (§18.1, AD-13)
             if (node.kind == TreeNodeKind::Repeat) {
                 // the source element must be a record, because a row is keyed by a declared field (§18.1, AD-13)
@@ -917,7 +981,7 @@ namespace albor::compiler
                 scan_color(*grouping->inner);
         }
 
-        void ComponentEmitter::collect(const CheckedNode& node, std::size_t parent) {
+        void ComponentEmitter::collect(const CheckedNode& node, std::size_t parent, std::size_t conditional) {
             // a repeat is not a widget, so it becomes a keyed view rather than a node of its own (§18.1, AD-13)
             if (node.kind == TreeNodeKind::Repeat) {
                 // the repeat takes the next index, which names its view member (§18.1)
@@ -934,13 +998,29 @@ namespace albor::compiler
                 m_repeats.push_back(std::move(slot));
                 return;
             }
+            // a conditional is not a widget either, so it becomes a guarded body rather than a node of its own (§11.1)
+            if (node.kind == TreeNodeKind::Conditional) {
+                // the conditional takes the next index, which names its condition member (§11.1)
+                const std::size_t index = m_conditionals.size();
+                // the slot records the container and the conditional that guards this one (§11.1)
+                ConditionalSlot slot{.index = index, .node = &node, .parent = parent, .parent_conditional = conditional};
+                // the slot is appended first, so a nested conditional finds its index during the body walk (§11.1)
+                m_conditionals.push_back(std::move(slot));
+                // the body is walked into the node list with no parent, because the conditional adopts it (§11.1)
+                if (node.conditional_body != nullptr)
+                    collect(*node.conditional_body, NO_PARENT, index);
+                return;
+            }
             // the node takes the next index, which is its slot in the build order (§8.1)
             const std::size_t index = m_nodes.size();
             // the node is appended, so its children can reference its index (§8.1)
-            m_nodes.push_back({.index = index, .node = &node, .parent = parent});
+            m_nodes.push_back({.index = index, .node = &node, .parent = parent, .conditional = conditional});
+            // a body node also joins its conditional slot, because the build and the update walk that list (§11.1)
+            if (conditional != NO_CONDITIONAL)
+                m_conditionals.at(conditional).body.push_back(m_nodes.back());
             // the children follow in order, which keeps their preorder contiguous (§8.1)
             for (const std::shared_ptr<CheckedNode>& child : node.children)
-                collect(*child, index);
+                collect(*child, index, conditional);
         }
 
         ValueType ComponentEmitter::repeat_element_type(const CheckedNode& node) const {
@@ -1277,6 +1357,26 @@ namespace albor::compiler
                 reconcile(slot);
                 line(1, "}");
             }
+            // each conditional emits its build, update and evaluator, which is what a condition change calls (§11.1)
+            for (const ConditionalSlot& slot : m_conditionals) {
+                // the suffix names every function of this conditional (§11.1)
+                const std::string at = "_" + std::to_string(slot.index);
+                line(0, "");
+                line(1, "bool " + m_class + "::Impl::evaluate_conditional" + at + "(void* raw) {");
+                line(2, "// the body is recovered from the context, which keeps the path allocation free (§13.3)");
+                line(2, "auto* self = static_cast<Impl*>(raw);");
+                m_object = "self";
+                line(2, "// the condition is read once, which is what decides whether the body exists (§11.1)");
+                line(2, "const bool value = " + conditional_condition(slot, "self") + ";");
+                line(2, "// the body settles against the fresh condition, which rebuilds or destroys it (§11.1)");
+                line(2, "self->update_conditional" + at + "(value);");
+                line(2, "// the value is returned, which the engine stores as the bound value (§13.3)");
+                line(2, "return value;");
+                line(1, "}");
+                m_object.clear();
+                emit_conditional_build(slot);
+                emit_conditional_update(slot);
+            }
             line(0, "} // namespace albor");
         }
 
@@ -1394,6 +1494,9 @@ namespace albor::compiler
             // each repeat declares its view and its row functions, which is what materializes a row (§18.1, AD-13)
             if (!m_repeats.empty())
                 emit_repeat_members();
+            // each conditional declares its body nodes, root and condition, which is what materializes a body (§11.1)
+            if (!m_conditionals.empty())
+                emit_conditional_members();
             // each canvas body node declares row local tracks, because every row owns its own (§11.3, §18.1)
             for (const RepeatSlot& slot : m_repeats) {
                 // the body is walked per node, because only a canvas publishes two dimensions (§11.3, §18.1)
@@ -1553,6 +1656,13 @@ namespace albor::compiler
                     line(2, "owner->register_property(" + sink + ");");
                 }
             }
+            // each conditional condition joins the scope too, which the binding engine keys on (§13.3)
+            for (const ConditionalSlot& conditional : m_conditionals) {
+                // the suffix names the condition member of this conditional (§11.1)
+                const std::string at = "_" + std::to_string(conditional.index);
+                line(2, "// the condition joins the component scope, which gives the binding a unique id (§13.3)");
+                line(2, "owner->register_property(m_cond" + at + ");");
+            }
             // a default that reads no source is computed once, which is what the builder owns (§14.1)
             for (const CheckedProperty& property : m_component.properties) {
                 // the member name is the shared C++ name of the property (§14.1)
@@ -1578,8 +1688,13 @@ namespace albor::compiler
             }
             // each repeat claims the position its rows occupy, which must precede its siblings (§18.1, AD-13)
             assign_repeat_offsets();
+            // each conditional claims the position its body occupies, which must precede its siblings (§11.1)
+            assign_conditional_offsets();
             // the tree is built in preorder, which hangs every node of the facade together (§8.1)
             for (const NodeSlot& slot : m_nodes) {
+                // a conditional body node is built inside its own build, so the main pass skips it (§11.1)
+                if (slot.conditional != NO_CONDITIONAL)
+                    continue;
                 line(0, "");
                 emit_node_block(slot);
                 // each repeat inside this container is created where it was written (§18.1, AD-13)
@@ -1594,6 +1709,20 @@ namespace albor::compiler
             // the root is adopted last, which is the only owned node of the facade (§8.1)
             if (!m_nodes.empty())
                 line(2, "owner->add_child(std::move(node_0));");
+            // each top level conditional settles once the tree exists, because its parent is now built (§11.1)
+            for (const ConditionalSlot& conditional : m_conditionals) {
+                // a nested conditional is settled inside its parent build, so only a top level one runs here (§11.1)
+                if (conditional.parent_conditional != NO_CONDITIONAL)
+                    continue;
+                // the suffix names every member of this conditional (§11.1)
+                const std::string at = "_" + std::to_string(conditional.index);
+                line(0, "");
+                line(2, "// the condition is bound, which keeps the body live against its sources (§13.3)");
+                line(2, "const PropertyId deps_cond" + at + "[] = {" + dep_list(conditional_dependencies(conditional)) + "};");
+                line(2, "m_cond" + at + ".bind_static(&Impl::evaluate_conditional" + at + ", this, deps_cond" + at + ");");
+                // the condition settles once here, because a bind may not fire immediately (§11.1)
+                line(2, "update_conditional" + at + "(" + conditional_condition(conditional, "this") + ");");
+            }
             line(1, "}");
         }
 
@@ -1886,6 +2015,159 @@ namespace albor::compiler
             }
         }
 
+        void ComponentEmitter::assign_conditional_offsets() {
+            // each conditional needs the child position its body takes, which is where it was written (§11.1)
+            for (ConditionalSlot& conditional : m_conditionals) {
+                // a conditional with no parent has no container to count, which the checker already refused (§11.1)
+                if (conditional.parent == NO_PARENT) {
+                    // the offset stays zero, because an orphan is reported rather than emitted (§11.1)
+                    conditional.offset = 0;
+                    continue;
+                }
+                // the parent is located, because its children decide where the body begins (§11.1)
+                const NodeSlot* parent = nullptr;
+                for (const NodeSlot& slot : m_nodes) {
+                    // the index decides, so the parent is the one this conditional hangs from (§11.1)
+                    if (slot.index == conditional.parent)
+                        parent = &slot;
+                }
+                // a conditional whose parent is missing cannot place its body, which would be a generator defect (§11.1)
+                if (parent == nullptr) {
+                    conditional.offset = 0;
+                    continue;
+                }
+                // the element and repeat siblings before this conditional are counted, because each holds a slot (§11.1)
+                std::size_t preceding = 0;
+                // the siblings are walked in order, which is what fixes the body position (§11.1)
+                for (const std::shared_ptr<CheckedNode>& child : parent->node->children) {
+                    // this conditional ends the count, because that is where the body begins (§11.1)
+                    if (child.get() == conditional.node)
+                        break;
+                    // an element or a repeat holds a position, because it is always present (§11.1)
+                    if (child->kind == TreeNodeKind::Element || child->kind == TreeNodeKind::Repeat)
+                        preceding++;
+                }
+                conditional.offset = preceding;
+            }
+        }
+
+        std::string ComponentEmitter::conditional_condition(const ConditionalSlot& slot, const std::string& object) {
+            // the object decides how a property read renders, because a member function reads directly (§13.3)
+            m_object = object;
+            // the condition is rendered exactly as written, because the checker already typed it (§11.1)
+            const std::string rendered = emit_expression(*slot.node->condition);
+            // the object is cleared, because the caller resumes its own rendering mode (§13.3)
+            m_object.clear();
+            return rendered;
+        }
+
+        std::vector<std::string> ComponentEmitter::conditional_dependencies(const ConditionalSlot& slot) {
+            // the dependencies start as the condition's own, because a change shows or hides the body (§11.1)
+            std::vector<std::string> dependencies = slot.node->condition_dependencies;
+            // a body that reads a component property needs a rebuild when that property changes (§11.1)
+            for (const NodeSlot& body : slot.body) {
+                // each assignment contributes, because a body shows whatever its bindings compute (§13.3)
+                for (const CheckedAssignment& assignment : body.node->assignments) {
+                    // each source joins once, because the engine keeps a set (§7.3, AD-04a)
+                    for (const std::string& source : assignment.dependencies) {
+                        // a duplicate would register the same id twice (§7.3, AD-04a)
+                        if (std::find(dependencies.begin(), dependencies.end(), source) == dependencies.end())
+                            dependencies.push_back(source);
+                    }
+                }
+            }
+            return dependencies;
+        }
+
+        void ComponentEmitter::emit_conditional_members() {
+            // each conditional contributes a root, a presence flag and a condition, which is what a body needs (§11.1)
+            for (const ConditionalSlot& slot : m_conditionals) {
+                // the suffix names every member of this conditional, which keeps them unique across conditionals (§11.1)
+                const std::string at = "_" + std::to_string(slot.index);
+                line(0, "");
+                // the body root node pointers are already members, because a body node joins the main node list (§11.1)
+                line(2, "// the owning root of this conditional body, which the tree holds while the condition holds (§11.1)");
+                line(2, "std::unique_ptr<UiNode> m_cond_root" + at + ";");
+                line(0, "");
+                line(2, "// whether this conditional body currently exists, which is what an update guards on (§11.1)");
+                line(2, "bool m_cond_present" + at + " = false;");
+                line(0, "");
+                line(2, "// the condition the body hangs on, which the engine keeps current (§11.1, §13.3)");
+                line(2, "Property<bool> m_cond" + at + ";");
+                line(0, "");
+                line(2, "// materialize or destroy the body against the condition, which is what a change does (§11.1)");
+                line(2, "void update_conditional" + at + "(bool present);");
+                line(0, "");
+                line(2, "// build the body nodes, which runs once each time the condition becomes true (§11.1)");
+                line(2, "void build_conditional" + at + "();");
+                line(0, "");
+                line(2, "// recompute the condition and rebuild the body, which is what a source change does (§11.1)");
+                line(2, "static bool evaluate_conditional" + at + "(void* raw);");
+            }
+        }
+
+        void ComponentEmitter::emit_conditional_build(const ConditionalSlot& slot) {
+            // the suffix names every function of this conditional, which keeps them unique (§11.1)
+            const std::string at = "_" + std::to_string(slot.index);
+            line(0, "");
+            line(1, "void " + m_class + "::Impl::build_conditional" + at + "() {");
+            // the engine is resolved once, because a widget construction takes it (§7.2)
+            if (m_uses_engine) {
+                line(2, "// the engine settles the registered properties, which the widgets read (§7.2)");
+                line(2, "BindingEngine* const engine = owner->engine();");
+            }
+            // the body is built in preorder, which hangs the body together exactly as written (§8.1)
+            for (const NodeSlot& body : slot.body) {
+                // each body node is a plain node block, because a body has a single instance (§11.1)
+                line(0, "");
+                emit_node_block(body);
+            }
+            // the body root is stored, because the conditional owns it from here (§11.1)
+            if (!slot.body.empty())
+                line(2, "m_cond_root" + at + " = std::move(node_" + std::to_string(slot.body.front().index) + ");");
+            // each nested conditional builds after the body, because its parent now exists (§11.1)
+            for (const ConditionalSlot& nested : m_conditionals) {
+                // a nested conditional is one this body guards, so its update runs inside this build (§11.1)
+                if (nested.parent_conditional != slot.index)
+                    continue;
+                const std::string nested_at = "_" + std::to_string(nested.index);
+                line(0, "");
+                line(2, "// the nested conditional settles now, because its parent exists (§11.1)");
+                line(2, "update_conditional" + nested_at + "(" + conditional_condition(nested, "this") + ");");
+            }
+            line(1, "}");
+        }
+
+        void ComponentEmitter::emit_conditional_update(const ConditionalSlot& slot) {
+            // the suffix names every member of this conditional, which keeps them unique (§11.1)
+            const std::string at = "_" + std::to_string(slot.index);
+            line(0, "");
+            line(1, "void " + m_class + "::Impl::update_conditional" + at + "(bool present) {");
+            // the body appears when the condition turns true and it is not there yet (§11.1)
+            line(2, "// the body is built and adopted the first time the condition holds (§11.1)");
+            line(2, "if (present && !m_cond_present" + at + ") {");
+            line(3, "build_conditional" + at + "();");
+            // the body is inserted at the position the conditional was written at (§11.1)
+            if (slot.parent != NO_PARENT)
+                line(3, "m_node_" + std::to_string(slot.parent) + "->insert_child(" + std::to_string(slot.offset) + ", std::move(m_cond_root" + at + "));");
+            line(3, "m_cond_present" + at + " = true;");
+            line(2, "}");
+            // the body disappears when the condition turns false and it is there (§11.1)
+            line(2, "// the body is destroyed the moment the condition stops holding (§11.1)");
+            line(2, "else if (!present && m_cond_present" + at + ") {");
+            if (slot.parent != NO_PARENT) {
+                line(3, "// the root is removed from the tree, which takes it out of the frame (§11.1)");
+                line(3, "m_cond_root" + at + " = m_node_" + std::to_string(slot.parent) + "->remove_child(m_cond_root" + at + ".get());");
+            }
+            // every body node pointer is cleared, because the evaluators guard on absence (§11.1)
+            for (const NodeSlot& body : slot.body)
+                line(3, "m_node_" + std::to_string(body.index) + " = nullptr;");
+            line(3, "m_cond_root" + at + ".reset();");
+            line(3, "m_cond_present" + at + " = false;");
+            line(2, "}");
+            line(1, "}");
+        }
+
         void ComponentEmitter::emit_repeat_row_functions_all() {
             // each repeat emits its own three functions, because they share the body node names (§18.1, AD-13)
             for (const RepeatSlot& slot : m_repeats)
@@ -2091,6 +2373,12 @@ namespace albor::compiler
                     m_object = "self";
                     line(2, "// the value is computed once, which the widget and the sink both take (§13.3)");
                     line(2, "const " + cpp_type(assignment.type) + " value = " + emit_expression(*assignment.value) + ";");
+                    // a body that is not built writes nothing, because the node does not exist yet (§11.1)
+                    if (slot.conditional != NO_CONDITIONAL) {
+                        line(2, "// the conditional body may be absent, so nothing is written when it is (§11.1)");
+                        line(2, "if (self->m_node_" + std::to_string(slot.index) + " == nullptr)");
+                        line(3, "return value;");
+                    }
                     // the widget setter receives the value, which is what makes the binding visible (§13.3)
                     if (slot.node->element_type == "Canvas" && (assignment.name == "width" || assignment.name == "height")) {
                         // the width track updates first, which the intrinsic size then combines (§13.3)
@@ -2568,6 +2856,8 @@ namespace albor::compiler
             m_nodes.clear();
             // the repeats are cleared with the tree, because both are rebuilt per component (§18.1, AD-13)
             m_repeats.clear();
+            // the conditionals are cleared with them, because both are rebuilt per component (§11.1)
+            m_conditionals.clear();
             // the body counter restarts, because body names need only be unique within one component (§18.1, AD-13)
             m_body_count = 0;
             // the walk starts at the root, which has no parent (§8.1)

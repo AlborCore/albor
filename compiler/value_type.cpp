@@ -232,6 +232,8 @@ namespace albor::compiler
             ElementProperty{.name = "horizontal_align", .type = alignment, .assignable = true, .scaled_by_density = false},
             // the vertical axis is its independent counterpart, and neither one is the parent's main axis (§8.2)
             ElementProperty{.name = "vertical_align", .type = alignment, .assignable = true, .scaled_by_density = false},
+            // visibility hides a node and its subtree without removing it from the tree (§8.1)
+            ElementProperty{.name = "visible", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false},
         };
     }
 
