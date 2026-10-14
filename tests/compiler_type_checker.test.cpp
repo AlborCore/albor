@@ -19,6 +19,8 @@ namespace
         const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
         // the parser builds the untyped tree (§11.1)
         const SourceFile file = Parser(tokens, diagnostics).parse();
+        // the structs the file declares join the catalog, which is what makes a property of one resolve (§11.1)
+        register_ui_structs(file, catalog, diagnostics);
         // the checker resolves it against the catalog, which is where the native types come from (§11.1, AD-17)
         return TypeChecker(catalog, diagnostics).check(file);
     }
@@ -1484,6 +1486,33 @@ TEST(TypeChecker, ReportsAKeyFieldExactlyOnce) {
     ASSERT_NE(record, nullptr);
     ASSERT_NE(record->key_field(), nullptr);
     EXPECT_EQ(record->key_field()->name, "key");
+}
+
+TEST(TypeChecker, ResolvesAStructPropertyFieldToItsDeclaredType) {
+    // arrange a struct a property carries and a field read inside a binding (§11.1)
+    DiagnosticList diagnostics;
+    // the field read feeds a conversion, which accepts the float the field declares (§11.1)
+    check("struct Frame { float width; float height; } component C { in property<Frame> frame; Column { Label { text: string(frame.width); } } }", diagnostics);
+    // assert the struct registered and the field resolved, so the whole file checks clean (§11.1)
+    EXPECT_EQ(diagnostics.count(), 0U);
+}
+
+TEST(TypeChecker, ReportsAStructFieldOfAnUnknownType) {
+    // arrange diagnostics, because a field must name a type the catalog resolves (§11.1)
+    DiagnosticList diagnostics;
+    // the field names a type nothing declares, so it produces nothing a read could hold (§11.1)
+    check("struct Bad { Nope value; } component C { Column {} }", diagnostics);
+    // assert
+    EXPECT_TRUE(has_code(diagnostics, "E0420"));
+}
+
+TEST(TypeChecker, RefusesAStructFieldTheDeclarationDoesNotHold) {
+    // arrange diagnostics, because a field read resolves against the declaration (§11.1)
+    DiagnosticList diagnostics;
+    // the field is not one the struct declared (§11.1)
+    check("struct Frame { float width; } component C { in property<Frame> frame; Column { Label { text: string(frame.nope); } } }", diagnostics);
+    // assert
+    EXPECT_TRUE(has_code(diagnostics, "E0416"));
 }
 
 TEST(TypeCheckerHandlers, ABodyTheParserCouldNotReadIsReportedNotFollowed) {

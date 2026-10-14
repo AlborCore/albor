@@ -20,6 +20,8 @@ namespace
         const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
         // the parser builds the untyped tree (§11.1)
         const SourceFile file = Parser(tokens, diagnostics).parse();
+        // the structs the file declares join the catalog, which is what makes a property of one resolve (§11.1)
+        register_ui_structs(file, catalog, diagnostics);
         // the checker resolves it against the catalog, which is where the native types come from (§11.1, AD-17)
         const CheckedFile checked = TypeChecker(catalog, diagnostics).check(file);
         // the generator turns the checked file into the facade files, which is what the driver writes (§11.3)
@@ -831,6 +833,53 @@ TEST(Codegen, ARecordFieldReadRendersAsAMemberAccess) {
     EXPECT_TRUE(files.empty());
     // assert the record itself resolved, because only the repeat is refused (§11.2, AD-17)
     EXPECT_FALSE(has_code(diagnostics, "E0416"));
+}
+
+TEST(Codegen, AUiStructEmitsAGuardedDefinition) {
+    // arrange
+    DiagnosticList diagnostics;
+    // the struct is declared in the file itself, so the header emits rather than includes it (§11.1)
+    const std::string_view source = "struct Frame { float width; float height; } component C { in property<Frame> frame; Column {} }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert
+    ASSERT_FALSE(files.empty());
+    const GeneratedFile& header = file_named(files, "c.h");
+    // the struct is declared with its fields, which is the shape a field read walks (§11.1)
+    EXPECT_TRUE(contains(header.content, "struct Frame"));
+    EXPECT_TRUE(contains(header.content, "float width;"));
+    EXPECT_TRUE(contains(header.content, "float height;"));
+    // the definition is guarded, so a translation unit that includes two headers defining it takes one (§11.1)
+    EXPECT_TRUE(contains(header.content, "#ifndef ALBOR_GENERATED_STRUCT_Frame"));
+    EXPECT_TRUE(contains(header.content, "#define ALBOR_GENERATED_STRUCT_Frame"));
+}
+
+TEST(Codegen, AUiStructWithACollectionFieldPullsTheVectorHeader) {
+    // arrange
+    DiagnosticList diagnostics;
+    // the struct holds a collection field, so the emitted definition names the vector header (§8.1, §11.1)
+    const std::string_view source = "struct Box { vector<string> items; } component C { in property<Box> box; Column {} }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert
+    ASSERT_FALSE(files.empty());
+    const GeneratedFile& header = file_named(files, "c.h");
+    // the collection field renders as the standard vector over its element (§8.1, §11.3)
+    EXPECT_TRUE(contains(header.content, "std::vector<std::string> items;"));
+    // the vector header follows, because the emitted definition names it (§8.1)
+    EXPECT_TRUE(contains(header.content, "#include <vector>"));
+}
+
+TEST(Codegen, AUiStructFieldReadChecksClean) {
+    // arrange
+    DiagnosticList diagnostics;
+    // the field read feeds a conversion inside a binding, which the checker resolves (§11.1)
+    const std::string_view source = "struct Frame { float width; } component C { in property<Frame> frame; Column { Label { text: string(frame.width); } } }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the whole file generates, because the struct, the property and the field all resolved (§11.1)
+    EXPECT_FALSE(files.empty());
+    EXPECT_FALSE(diagnostics.has_errors());
 }
 
 TEST(Codegen, ADataTypeStillBlocksTheOutput) {

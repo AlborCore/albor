@@ -479,6 +479,32 @@ namespace albor::compiler
         SourceSpan span;
     };
 
+    // one field a struct declares, whose type a field read resolves to (§11.1)
+    struct StructField
+    {
+        // the field name as written, which a binding addresses after the dot (§11.1)
+        std::string name;
+
+        // the type as written, which the registration pass resolves against the catalog (§11.1)
+        std::string type;
+
+        // where the field was written (§11.1)
+        SourceSpan span;
+    };
+
+    // a struct the file declares at its top level, which a property or a signal may then carry (§11.1)
+    struct StructDeclaration
+    {
+        // the struct name as written, which becomes the record type a field read resolves against (§11.1)
+        std::string name;
+
+        // the fields in declaration order, which is the shape a field read walks (§11.1)
+        std::vector<StructField> fields;
+
+        // where the declaration was written (§11.1)
+        SourceSpan span;
+    };
+
     // a whole parsed component, which is the unit the checker and the codegen both take (§11.1)
     struct ComponentDeclaration
     {

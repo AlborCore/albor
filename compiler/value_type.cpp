@@ -465,4 +465,54 @@ namespace albor::compiler
         // the set is handed out as it stands, because a caller only reads it (§11.1)
         return m_types;
     }
+
+    ValueType resolve_type_name(std::string_view written, const ElementCatalog& catalog) {
+        // the wrappers that make a snapshot and a vector read as the author wrote them (§10.5, §13.2, §8.1)
+        constexpr std::string_view SNAPSHOT_OPEN = "Snapshot<";
+        constexpr std::string_view SNAPSHOT_CLOSE = ">";
+        constexpr std::string_view VECTOR_OPEN = "vector<";
+        constexpr std::string_view VECTOR_CLOSE = ">";
+        // a parameter form is the wrapper, the element and the closing angle, so this is the shortest it can be (§11.1)
+        constexpr std::size_t SHORTEST_PARAMETRIC = 10;
+        // a scalar name is one the language spells without brackets (§11.1)
+        if (written == "bool")
+            return scalar(TypeKind::Bool);
+        // an integer is spelled int (§11.1)
+        if (written == "int")
+            return scalar(TypeKind::Int);
+        // a floating point number is spelled float (§11.1)
+        if (written == "float")
+            return scalar(TypeKind::Float);
+        // a text value is spelled string (§11.1)
+        if (written == "string")
+            return scalar(TypeKind::String);
+        // a colour is spelled color (§11.1)
+        if (written == "color")
+            return scalar(TypeKind::Color);
+        // a length is spelled length, so a declared length and a literal length agree (§11.1, AD-27)
+        if (written == "length")
+            return scalar(TypeKind::Length);
+        // a snapshot is written Snapshot<T>, whose element may itself nest (§10.5, §13.2)
+        if (written.substr(0, SNAPSHOT_OPEN.size()) == SNAPSHOT_OPEN && written.size() >= SHORTEST_PARAMETRIC && written.substr(written.size() - SNAPSHOT_CLOSE.size()) == SNAPSHOT_CLOSE) {
+            // the element is the part between the brackets, which resolves the same way (§10.5, §13.2)
+            const std::string_view inner = written.substr(SNAPSHOT_OPEN.size(), written.size() - SNAPSHOT_OPEN.size() - SNAPSHOT_CLOSE.size());
+            // the wrapper is rebuilt rather than trusted, so a malformed element still resolves (§10.5, §13.2)
+            return ValueType::parameterized(TypeKind::Snapshot, resolve_type_name(inner, catalog));
+        }
+        // a vector is written vector<T>, whose element may itself nest (§8.1)
+        if (written.substr(0, VECTOR_OPEN.size()) == VECTOR_OPEN && written.size() >= SHORTEST_PARAMETRIC && written.substr(written.size() - VECTOR_CLOSE.size()) == VECTOR_CLOSE) {
+            // the element is the part between the brackets, which resolves the same way (§8.1)
+            const std::string_view inner = written.substr(VECTOR_OPEN.size(), written.size() - VECTOR_OPEN.size() - VECTOR_CLOSE.size());
+            // the wrapper is rebuilt rather than trusted, so a malformed element still resolves (§8.1)
+            return ValueType::parameterized(TypeKind::Vector, resolve_type_name(inner, catalog));
+        }
+        // a record is a named type a repeat walks, and it resolves like any other manifest name (§11.2, AD-17, AD-13)
+        if (catalog.find_record(written) != nullptr)
+            return ValueType::native(std::string(written));
+        // anything else is a native type, which the catalog holds only if a manifest declared it (§11.2, AD-17)
+        if (catalog.find(written) != nullptr || catalog.holds_native(written))
+            return ValueType::native(std::string(written));
+        // an unknown name resolves to the error type, so nothing downstream raises a second complaint (§11.1)
+        return error_type();
+    }
 } // namespace albor::compiler

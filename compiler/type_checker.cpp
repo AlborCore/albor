@@ -5,62 +5,6 @@
 
 namespace albor::compiler
 {
-    namespace
-    {
-        // the wrappers that make a snapshot and a vector read as the author wrote them (§10.5, §13.2, §8.1)
-        constexpr std::string_view SNAPSHOT_OPEN = "Snapshot<";
-        constexpr std::string_view SNAPSHOT_CLOSE = ">";
-        constexpr std::string_view VECTOR_OPEN = "vector<";
-        constexpr std::string_view VECTOR_CLOSE = ">";
-
-        // a parameter form is the wrapper, the element and the closing angle, so this is the shortest it can be (§11.1)
-        constexpr std::size_t SHORTEST_PARAMETRIC = 10;
-
-        // resolve a type name as written, against the catalog that holds the native types (§11.1, §11.2, AD-17)
-        ValueType resolve_type_name(std::string_view written, const ElementCatalog& catalog) {
-            // a scalar name is one the language spells without brackets (§11.1)
-            if (written == "bool")
-                return scalar(TypeKind::Bool);
-            // an integer is spelled int (§11.1)
-            if (written == "int")
-                return scalar(TypeKind::Int);
-            // a floating point number is spelled float (§11.1)
-            if (written == "float")
-                return scalar(TypeKind::Float);
-            // a text value is spelled string (§11.1)
-            if (written == "string")
-                return scalar(TypeKind::String);
-            // a colour is spelled color (§11.1)
-            if (written == "color")
-                return scalar(TypeKind::Color);
-            // a length is spelled length, so a declared length and a literal length agree (§11.1, AD-27)
-            if (written == "length")
-                return scalar(TypeKind::Length);
-            // a snapshot is written Snapshot<T>, whose element may itself nest (§10.5, §13.2)
-            if (written.substr(0, SNAPSHOT_OPEN.size()) == SNAPSHOT_OPEN && written.size() >= SHORTEST_PARAMETRIC && written.substr(written.size() - SNAPSHOT_CLOSE.size()) == SNAPSHOT_CLOSE) {
-                // the element is the part between the brackets, which resolves the same way (§10.5, §13.2)
-                const std::string_view inner = written.substr(SNAPSHOT_OPEN.size(), written.size() - SNAPSHOT_OPEN.size() - SNAPSHOT_CLOSE.size());
-                // the wrapper is rebuilt rather than trusted, so a malformed element still resolves (§10.5, §13.2)
-                return ValueType::parameterized(TypeKind::Snapshot, resolve_type_name(inner, catalog));
-            }
-            // a vector is written vector<T>, whose element may itself nest (§8.1)
-            if (written.substr(0, VECTOR_OPEN.size()) == VECTOR_OPEN && written.size() >= SHORTEST_PARAMETRIC && written.substr(written.size() - VECTOR_CLOSE.size()) == VECTOR_CLOSE) {
-                // the element is the part between the brackets, which resolves the same way (§8.1)
-                const std::string_view inner = written.substr(VECTOR_OPEN.size(), written.size() - VECTOR_OPEN.size() - VECTOR_CLOSE.size());
-                // the wrapper is rebuilt rather than trusted, so a malformed element still resolves (§8.1)
-                return ValueType::parameterized(TypeKind::Vector, resolve_type_name(inner, catalog));
-            }
-            // a record is a named type a repeat walks, and it resolves like any other manifest name (§11.2, AD-17, AD-13)
-            if (catalog.find_record(written) != nullptr)
-                return ValueType::native(std::string(written));
-            // anything else is a native type, which the catalog holds only if a manifest declared it (§11.2, AD-17)
-            if (catalog.find(written) != nullptr || catalog.holds_native(written))
-                return ValueType::native(std::string(written));
-            // an unknown name resolves to the error type, so nothing downstream raises a second complaint (§11.1)
-            return error_type();
-        }
-    } // namespace
-
     std::optional<ValueType> TypeChecker::Scope::lookup(std::string_view name) const {
         // a draw block reads the canvas extent, which is the node it paints into (§6.4)
         if (in_draw) {
@@ -1110,5 +1054,43 @@ namespace albor::compiler
         // every declared property is a starting point, because a cycle is reachable from one (§7.3, AD-04a)
         for (const CheckedProperty& property : component.properties)
             visit(edges, property.name, path, finished);
+    }
+
+    namespace
+    {
+        // report whether a field type holds another record, which the first release does not emit nested (§11.1)
+        bool holds_record(const ValueType& type, const ElementCatalog& catalog) {
+            // a native name holds a record only when the catalog declares one by that name (§11.1)
+            if (type.is(TypeKind::Native))
+                return catalog.find_record(type.native_name()) != nullptr;
+            // a parameter form nests its element, which is where a held record hides (§11.1)
+            if (type.kind() == TypeKind::Vector || type.kind() == TypeKind::Snapshot)
+                return holds_record(type.element(), catalog);
+            // a scalar carries no record, which is the common case (§11.1)
+            return false;
+        }
+    } // namespace
+
+    void register_ui_structs(const SourceFile& file, ElementCatalog& catalog, DiagnosticList& diagnostics) {
+        // the structs are walked in declaration order, which is the order a field may name an earlier one (§11.1)
+        for (const StructDeclaration& declaration : file.structs) {
+            // the record starts with its name and collects the fields as they are resolved (§11.1)
+            RecordType record{.name = declaration.name, .fields = {}, .from_ui = true};
+            // each field is walked, because a field read resolves by name against the declaration (§11.1)
+            for (const StructField& field : declaration.fields) {
+                // the written type becomes the type a field read produces, resolved against the catalog (§11.1)
+                const ValueType resolved = resolve_type_name(field.type, catalog);
+                // a field that names no type is reported, because a field read would produce nothing (§11.1)
+                if (resolved.is(TypeKind::Error))
+                    diagnostics.add(Diagnostic::Severity::Error, field.span, "E0420", "a struct field must name a known type");
+                // a field that holds another record is reported, because the emitted struct does not nest one yet (§11.1)
+                else if (holds_record(resolved, catalog))
+                    diagnostics.add(Diagnostic::Severity::Error, field.span, "E0421", "a struct field may not hold another record yet");
+                // the field joins the record, which is the shape a field read walks (§11.1)
+                record.fields.push_back(RecordFieldType{.name = field.name, .type = resolved, .is_key = false});
+            }
+            // the record joins the catalog, which is what makes a property of the struct name resolve (§11.1)
+            catalog.add_record(record);
+        }
     }
 } // namespace albor::compiler

@@ -628,6 +628,9 @@ namespace albor::compiler
             // the data type names a snapshot carries, which the facade forward-declares instead (§11.2)
             std::vector<std::string> m_data_declarations;
 
+            // the records the file declares in ui, which the header emits rather than includes (§11.1)
+            std::vector<const RecordType*> m_ui_structs;
+
             // the catalog the records resolve against, which is null when the caller registered none (§11.2, AD-17)
             const ElementCatalog* m_catalog = nullptr;
 
@@ -675,8 +678,24 @@ namespace albor::compiler
             // a record is named by its own name, which the glue generator turned into a snake case file (§11.2, AD-17)
             if (type.is(TypeKind::Native)) {
                 // the catalog is what distinguishes a record from a plain data type, because both are native (§11.2)
-                if (m_catalog == nullptr || m_catalog->find_record(type.native_name()) == nullptr)
+                const RecordType* record = m_catalog == nullptr ? nullptr : m_catalog->find_record(type.native_name());
+                if (record == nullptr)
                     return;
+                // a record the file declared in ui is emitted by the header, which keeps one definition (§11.1)
+                if (record->from_ui) {
+                    // a record already collected is not repeated, because the definition is written once (§11.1)
+                    if (std::find(m_ui_structs.begin(), m_ui_structs.end(), record) == m_ui_structs.end())
+                        m_ui_structs.push_back(record);
+                    // a collection field pulls the vector header, which the emitted definition names (§8.1, §11.1)
+                    for (const RecordFieldType& field : record->fields)
+                        if (carries_vector(field.type))
+                            m_uses_vector = true;
+                    // a colour field pulls the paint header, which the emitted definition names (§11.3)
+                    for (const RecordFieldType& field : record->fields)
+                        if (field.type.is(TypeKind::Color))
+                            m_uses_color = true;
+                    return;
+                }
                 // each imported module is searched, because the record lives in exactly one of them (§11.1, §11.2, AD-17)
                 for (const std::string& module : m_modules) {
                     // the header path is the module and the snake cased record, which is what the generator wrote (§11.2)
@@ -1106,6 +1125,28 @@ namespace albor::compiler
                 for (const std::string& forward : m_data_declarations)
                     line(1, "struct " + forward + ";");
                 // the blank closes the forward section, which separates it from the class (§14.1)
+                line(0, "");
+            }
+            // the records the file declares in ui are emitted here, which keeps one definition behind a guard (§11.1)
+            for (const RecordType* record : m_ui_structs) {
+                // the guard macro is named after the record, so a second header that emits it is skipped (§11.1)
+                const std::string guard = "ALBOR_GENERATED_STRUCT_" + record->name;
+                // the provenance names the record, which is what a reader of the header sees (§11.1)
+                line(1, "// the " + record->name + " record the file declares in ui, which the facade carries by value (§11.1)");
+                // the guard opens, so a translation unit that includes two headers defining it takes one (§11.1)
+                line(1, "#ifndef " + guard);
+                line(1, "#define " + guard);
+                // the struct is declared with its fields, which is the shape a field read walks (§11.1)
+                line(1, "struct " + record->name);
+                line(1, "{");
+                // each field renders its C++ type and name, which is what the definition holds (§11.1)
+                for (const RecordFieldType& field : record->fields)
+                    line(2, cpp_type(field.type) + " " + field.name + ";");
+                // the struct closes, which is the whole definition (§11.1)
+                line(1, "};");
+                // the guard closes, so the definition is taken at most once per translation unit (§11.1)
+                line(1, "#endif");
+                // the blank separates one record from the next (§11.1)
                 line(0, "");
             }
             line(1, "// the concrete facade of the " + m_class + " component, which hides its generated body (§14.1, AD-03)");

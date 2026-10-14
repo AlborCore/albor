@@ -168,6 +168,9 @@ namespace albor::compiler
         // the fields in declaration order, where exactly one carries the identity (§11.2, AD-18)
         std::vector<RecordFieldType> fields;
 
+        // whether the file declared the record in ui rather than a manifest, so the header emits it (§11.1)
+        bool from_ui = false;
+
         // find a field by name, which is what a field read resolves against (§11.2, AD-17)
         [[nodiscard]] const RecordFieldType* find_field(std::string_view field_name) const;
 
@@ -273,4 +276,7 @@ namespace albor::compiler
         // the known records, which a collection holds and a repeat walks (§11.2, AD-17, AD-13)
         std::vector<RecordType> m_records;
     };
+
+    // resolve a type name as written against the catalog, which is what a property or a field names (§11.1, §11.2)
+    [[nodiscard]] ValueType resolve_type_name(std::string_view written, const ElementCatalog& catalog);
 } // namespace albor::compiler

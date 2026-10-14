@@ -16,6 +16,9 @@ namespace albor::compiler
         // the modules the file refers to, which are resolved against the manifest set (§11.1, AD-17)
         std::vector<ImportDeclaration> imports;
 
+        // the structs the file declares at its top level, which the registration pass turns into records (§11.1)
+        std::vector<StructDeclaration> structs;
+
         // the components the file declares, which is what the checker and the codegen take (§11.1)
         std::vector<ComponentDeclaration> components;
     };
@@ -64,11 +67,14 @@ namespace albor::compiler
         // read a type name, which is bracketed for a property and bare for a signal parameter (§11.1, §11.2)
         [[nodiscard]] std::string expect_type_name(bool bracketed);
 
-        // read one declaration of the file, which is either an import or a component (§11.1)
+        // read one declaration of the file, which is an import, a struct or a component (§11.1)
         void parse_declaration(SourceFile& file);
 
         // read an import, which names a manifest module (§11.1, AD-17)
         void parse_import(SourceFile& file);
+
+        // read a struct declaration with its fields, which a property or a signal may then carry (§11.1)
+        void parse_struct(SourceFile& file);
 
         // read a component declaration, including its members and its root element (§11.1)
         std::unique_ptr<ComponentDeclaration> parse_component();

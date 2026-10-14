@@ -362,4 +362,7 @@ namespace albor::compiler
         // the declared names of the component being checked, with the span each was written at (§11.1)
         std::vector<std::pair<std::string, SourceSpan>> m_declared;
     };
+
+    // register the structs a file declares, turning each into a record the catalog resolves before the check (§11.1)
+    void register_ui_structs(const SourceFile& file, ElementCatalog& catalog, DiagnosticList& diagnostics);
 } // namespace albor::compiler

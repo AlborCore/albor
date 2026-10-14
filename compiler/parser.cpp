@@ -15,6 +15,9 @@ namespace albor::compiler
         // the keyword that introduces a component, which is the other top level declaration (§11.1)
         constexpr std::string_view COMPONENT_KEYWORD = "component";
 
+        // the keyword that introduces a struct declaration, which a property or a signal may carry (§11.1)
+        constexpr std::string_view STRUCT_KEYWORD = "struct";
+
         // the keyword that introduces a property declaration, which carries the direction (§11.1)
         constexpr std::string_view PROPERTY_KEYWORD = "property";
 
@@ -206,6 +209,11 @@ namespace albor::compiler
             parse_import(file);
             return;
         }
+        // a struct is a top level declaration, which names a shape a property may carry (§11.1)
+        if (at_keyword(STRUCT_KEYWORD)) {
+            parse_struct(file);
+            return;
+        }
         // a component is the other top level declaration, which carries the tree (§11.1)
         if (at_keyword(COMPONENT_KEYWORD)) {
             // the declaration is parsed into a local first, because a broken one is dropped rather than kept (§11.1)
@@ -216,7 +224,7 @@ namespace albor::compiler
             return;
         }
         // anything else cannot start a declaration, so the reader is told what was expected (§11.1)
-        report_unexpected("import or component");
+        report_unexpected("import, struct or component");
         // the units up to the next declaration are skipped, so one mistake costs one declaration (§11.1)
         recover_to_declaration();
     }
@@ -245,6 +253,69 @@ namespace albor::compiler
         declaration.span.end = last_consumed_end();
         // the import is kept, because a manifest module list is what the checker resolves against (§11.1, AD-17)
         file.imports.push_back(std::move(declaration));
+    }
+
+    void Parser::parse_struct(SourceFile& file) {
+        // the declaration is assembled locally, because a broken one is dropped rather than kept (§11.1)
+        StructDeclaration declaration;
+        // the span starts at the keyword, so a diagnostic about the struct points at it (§11.1)
+        declaration.span.start = peek().span.start;
+        // the keyword is consumed, because the caller has already matched it (§11.1)
+        advance();
+        // the name is required, because it becomes the record type a field read resolves against (§11.1)
+        declaration.name = expect_identifier();
+        // the body is delimited, so the fields are read until it closes (§11.1)
+        expect_punctuation("{");
+        // the fields run until the closing brace or the end of the stream (§11.1)
+        while (!at_punctuation("}") && peek().kind != Token::Kind::End) {
+            // the field starts with its type, which the registration pass resolves against the catalog (§11.1)
+            StructField field;
+            // the span starts at the type, so a diagnostic about the field points at it (§11.1)
+            field.span.start = peek().span.start;
+            // the type is a bare name, which a parametric form then extends with its argument (§11.1)
+            field.type = expect_identifier();
+            // a parametric form such as vector<string> carries its argument in angles, which are read whole (§11.1, §8.1)
+            if (at_punctuation("<")) {
+                // the nesting depth is tracked, because the argument may itself nest (§11.1)
+                std::size_t depth = 0;
+                // the angles run until the matching close, which is what ends a nested argument (§11.1)
+                while (peek().kind != Token::Kind::End) {
+                    // the current unit is appended first, so the argument keeps its own angles (§11.1)
+                    field.type += peek().text;
+                    // an opening angle deepens the nesting, which the depth records (§11.1)
+                    const bool opens = at_punctuation("<");
+                    // a closing angle closes one level of the argument (§11.1)
+                    const bool closes = at_punctuation(">");
+                    // the unit is consumed, so the argument advances exactly once (§11.1)
+                    advance();
+                    // the depth follows the open, because a nested argument opens another angle (§11.1)
+                    if (opens)
+                        depth++;
+                    // the depth follows the close, and the matching one ends the read (§11.1)
+                    if (closes) {
+                        // the depth drops, because the body it opened has closed (§11.1)
+                        depth--;
+                        // a close at depth zero has already been appended, so the argument is complete (§11.1)
+                        if (depth == 0)
+                            break;
+                    }
+                }
+            }
+            // the name is required, because a binding addresses the field by it (§11.1)
+            field.name = expect_identifier();
+            // the field ends at the terminator, which is required (§11.1)
+            expect_punctuation(";");
+            // the span ends at the terminator, which the reader has already consumed (§11.1)
+            field.span.end = last_consumed_end();
+            // the field joins the struct, because a struct is exactly the fields it declares (§11.1)
+            declaration.fields.push_back(std::move(field));
+        }
+        // a body that never closed is reported, because the declaration is incomplete (§11.1)
+        expect_punctuation("}");
+        // the span ends at the closing brace, which the reader has already consumed (§11.1)
+        declaration.span.end = last_consumed_end();
+        // the struct is kept, because the registration pass turns it into a record the catalog resolves (§11.1)
+        file.structs.push_back(std::move(declaration));
     }
 
     std::unique_ptr<ComponentDeclaration> Parser::parse_component() {
@@ -1053,7 +1124,7 @@ namespace albor::compiler
                 continue;
             }
             // the keywords are checked at the top level only, because a nested one is part of the broken body (§11.1)
-            if (at_keyword(IMPORT_KEYWORD) || at_keyword(COMPONENT_KEYWORD)) {
+            if (at_keyword(IMPORT_KEYWORD) || at_keyword(STRUCT_KEYWORD) || at_keyword(COMPONENT_KEYWORD)) {
                 // the scan stops before the keyword, so the next declaration is parsed from its start (§11.1)
                 return;
             }

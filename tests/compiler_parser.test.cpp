@@ -202,6 +202,40 @@ TEST(Parser, ReadsAnUnqualifiedImport) {
     EXPECT_EQ(file.imports.at(0).module, "albor");
 }
 
+TEST(Parser, ReadsAStructWithItsFields) {
+    // arrange, act
+    const SourceFile file = parse("struct Frame { float width; float height; }");
+    // assert
+    ASSERT_EQ(file.structs.size(), 1U);
+    const StructDeclaration& frame = file.structs.at(0);
+    EXPECT_EQ(frame.name, "Frame");
+    ASSERT_EQ(frame.fields.size(), 2U);
+    EXPECT_EQ(frame.fields.at(0).name, "width");
+    EXPECT_EQ(frame.fields.at(0).type, "float");
+    EXPECT_EQ(frame.fields.at(1).name, "height");
+    EXPECT_EQ(frame.fields.at(1).type, "float");
+}
+
+TEST(Parser, ReadsAStructFieldWithAParametricType) {
+    // arrange, act
+    const SourceFile file = parse("struct Box { vector<string> items; }");
+    // assert
+    ASSERT_EQ(file.structs.size(), 1U);
+    ASSERT_EQ(file.structs.at(0).fields.size(), 1U);
+    EXPECT_EQ(file.structs.at(0).fields.at(0).name, "items");
+    EXPECT_EQ(file.structs.at(0).fields.at(0).type, "vector<string>");
+}
+
+TEST(Parser, ReportsAStructWithNoName) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    parse("struct { float width; }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0203");
+}
+
 TEST(Parser, ReadsTheExampleComponentWhole) {
     // arrange, act
     const SourceFile file = parse(MAIN_VIEW);
