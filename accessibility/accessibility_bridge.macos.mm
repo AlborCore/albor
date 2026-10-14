@@ -138,12 +138,18 @@ typedef NSArray* (^AlborAccessibilityChildren)(std::size_t);
     return published == nullptr ? NO : published->node.focused();
 }
 
-// override: the value of a checkable node, which the application kit reads as a string (§10.1)
+// override: the value of a checkable or editable node, which the application kit reads as a string (§10.1)
 - (NSString*)accessibilityValue {
     // the publication this element names is the one the bridge assigned (§10.2)
     const Published* published = static_cast<const Published*>(self.publication);
-    // only a checkable node carries a value, because nothing else has one to report (§10.1)
-    if (published == nullptr || published->node.check() == albor::CheckState::NotCheckable)
+    // an element with no publication carries no value, which is the quiet default (§10.2)
+    if (published == nullptr)
+        return nil;
+    // an editable node announces its text, because that is the value assistive technology edits (§10.1)
+    if (published->node.role() == albor::SemanticRole::TextField)
+        return [NSString stringWithUTF8String:published->node.value().c_str()];
+    // only a checkable node otherwise carries a value, because nothing else has one to report (§10.1)
+    if (published->node.check() == albor::CheckState::NotCheckable)
         return nil;
     // the mixed state has no single string, so it announces its own name (§10.1)
     if (published->node.check() == albor::CheckState::Indeterminate)

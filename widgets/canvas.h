@@ -22,6 +22,12 @@ namespace albor
         // record whatever the callback draws, which is the whole point of a canvas (§6.1, §6.4)
         void paint_content(RenderContext& context) override;
 
+        // override: answer the pointer transitions, so a canvas gains hover and press like any other control (§8.3)
+        void dispatch_event(Event& event) override;
+
+        // override: hand out the plate the state resolves, so a hover and a press are visible (§6.1)
+        [[nodiscard]] Color background() const override;
+
         // override: announce the canvas as a drawing surface an adapter may interact with (§10.1)
         [[nodiscard]] SemanticNode semantic_node() const override;
 
@@ -41,6 +47,9 @@ namespace albor
         [[nodiscard]] std::uint64_t draw_count() const;
 
     private:
+        // the colours the plate resolves through, which are the palette when a theme is installed (§6.1)
+        [[nodiscard]] const Color* plate_colors() const;
+
         // the work that draws into the context (§6.4)
         std::function<void(RenderContext&)> m_draw;
 

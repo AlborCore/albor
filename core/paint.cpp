@@ -14,6 +14,21 @@ namespace albor
         return {.red = std::clamp(red, 0.0f, 1.0f), .green = std::clamp(green, 0.0f, 1.0f), .blue = std::clamp(blue, 0.0f, 1.0f), .alpha = std::clamp(alpha, 0.0f, 1.0f)};
     }
 
+    Color Color::with_alpha(float alpha) const {
+        // the channels are untouched, because an opacity dims coverage rather than hue (§6.3)
+        return Color::rgba(red, green, blue, alpha * this->alpha);
+    }
+
+    Color Color::alpha_set(float alpha) const {
+        // the alpha is replaced rather than scaled, which is what an explicit opacity asks for (§6.3)
+        return Color::rgba(red, green, blue, alpha);
+    }
+
+    Color Color::transparentized(float fraction) const {
+        // the alpha moves toward zero by the fraction, which is what a de-emphasis reads as (§6.3)
+        return Color::rgba(red, green, blue, alpha * (1.0f - std::clamp(fraction, 0.0f, 1.0f)));
+    }
+
     bool Paint::fills() const {
         // a fully transparent fill contributes nothing, so the paint draws no fill at all (§6.2)
         return fill.alpha > 0.0f;
@@ -22,5 +37,15 @@ namespace albor
     bool Paint::strokes() const {
         // a stroke needs both a visible colour and a positive width to reach the surface (§6.2)
         return stroke.alpha > 0.0f && stroke_width > 0.0f;
+    }
+
+    bool Shadow::casts() const {
+        // a clear colour casts nothing, and a negative blur is not a blur (§6.2)
+        return color.alpha > 0.0f && blur >= 0.0f;
+    }
+
+    bool Shadow::empty() const {
+        // the default shadow carries no colour, which is the only way to say there is none (§6.2)
+        return color.alpha <= 0.0f;
     }
 } // namespace albor

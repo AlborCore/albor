@@ -23,7 +23,10 @@ namespace
         // the checker resolves it against the catalog, which is where the native types come from (§11.1, AD-17)
         const CheckedFile checked = TypeChecker(catalog, diagnostics).check(file);
         // the generator turns the checked file into the facade files, which is what the driver writes (§11.3)
-        return CodeGenerator(diagnostics).generate(checked);
+        CodeGenerator generator(diagnostics);
+        // the catalog is what tells the generator a native type is generatable (§11.2, AD-17)
+        generator.set_catalog(&catalog);
+        return generator.generate(checked);
     }
 
     std::vector<GeneratedFile> generate(std::string_view source, DiagnosticList& diagnostics) {
@@ -259,10 +262,10 @@ TEST(Codegen, ANativeElementBlocksTheOutput) {
     EXPECT_TRUE(has_code(diagnostics, "E0501"));
 }
 
-TEST(Codegen, ANativePropertyTypeBlocksTheOutput) {
+TEST(Codegen, ASnapshotPropertyGeneratesTheFacade) {
     // arrange
     DiagnosticList diagnostics;
-    // the snapshot carries a native record, which a compiled property cannot transport yet (§11.2, AD-17)
+    // the snapshot carries a manifest data type, which a shared pointer transports (§10.5, §13.2)
     ElementCatalog catalog = ElementCatalog::with_builtins();
     // the native record is what the manifest declares, so the checker types it (§11.2, AD-17)
     catalog.add_native_data("WaveformData");
@@ -270,9 +273,104 @@ TEST(Codegen, ANativePropertyTypeBlocksTheOutput) {
     const std::string_view source = "component C { in property<Snapshot<WaveformData>> data; Column {} }";
     // act
     const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert the facade spells the property, which the reactive member holds as a snapshot (§14.1, §13.2)
+    ASSERT_EQ(files.size(), 2U);
+    // the data type is declared ahead, which is all a shared pointer signature needs (§11.2, AD-17)
+    const GeneratedFile& header = file_named(files, "c.h");
+    EXPECT_TRUE(contains(header.content, "struct WaveformData;"));
+    // the accessor reads the snapshot by value, which is a pointer copy and never a record copy (§10.5, §14.1)
+    EXPECT_TRUE(contains(header.content, "[[nodiscard]] std::shared_ptr<const WaveformData> data() const;"));
+    // the setter takes the snapshot by value, which drives the bindings that read it (§14.1, §13.2)
+    EXPECT_TRUE(contains(header.content, "void set_data(std::shared_ptr<const WaveformData> value);"));
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // the reactive member stores the snapshot itself, which the settle path never deep-copies (§13.2, §13.3)
+    EXPECT_TRUE(contains(cpp.content, "Property<std::shared_ptr<const WaveformData>> m_data;"));
+}
+
+TEST(Codegen, ASnapshotPropertyBindsThroughTheEngine) {
+    // arrange
+    DiagnosticList diagnostics;
+    // the snapshot carries a manifest data type, which a shared pointer transports (§10.5, §13.2)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // the native record is what the manifest declares, so the checker types it (§11.2, AD-17)
+    catalog.add_native_data("WaveformData");
+    // the dependent reads the snapshot property, which settles eagerly like a scalar does (§13.2, §13.3)
+    const std::string_view source = "component C { in property<Snapshot<WaveformData>> data; in property<Snapshot<WaveformData>> same: data; Column {} }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert the binding declares the snapshot dependency, which the engine settles on a republication (§13.3)
+    ASSERT_EQ(files.size(), 2U);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "Property<std::shared_ptr<const WaveformData>> m_same;"));
+    EXPECT_TRUE(contains(cpp.content, "m_same.bind_static(&Impl::compute_same, this, deps_same);"));
+    EXPECT_TRUE(contains(cpp.content, "const PropertyId deps_same[] = {m_data.id()};"));
+    // the evaluator copies only the pointer, which is what the snapshot value is (§10.5, §13.2)
+    EXPECT_TRUE(contains(cpp.content, "std::shared_ptr<const WaveformData> C::Impl::compute_same(void* raw) {"));
+    EXPECT_TRUE(contains(cpp.content, "const std::shared_ptr<const WaveformData> value = self->m_data.get();"));
+}
+
+TEST(Codegen, ASnapshotOverAnUndeclaredTypeBlocksTheOutput) {
+    // arrange
+    DiagnosticList diagnostics;
+    // the manifest declares no such type, so the snapshot carries nothing resolvable (§11.2, AD-17)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    const std::string_view source = "component C { in property<Snapshot<UnknownData>> data; Column {} }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
     // assert
     EXPECT_TRUE(files.empty());
     EXPECT_TRUE(has_code(diagnostics, "E0501"));
+}
+
+TEST(Codegen, ASnapshotOverAScalarBlocksTheOutput) {
+    // arrange
+    DiagnosticList diagnostics;
+    // a snapshot is the crossing for a data record, which a scalar is not (§10.5, §13.2)
+    const std::string_view source = "component C { in property<Snapshot<int>> value; Column {} }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert
+    EXPECT_TRUE(files.empty());
+    EXPECT_TRUE(has_code(diagnostics, "E0501"));
+}
+
+TEST(Codegen, ANestedSnapshotBlocksTheOutput) {
+    // arrange
+    DiagnosticList diagnostics;
+    // the inner element must be a plain native name, which a nested snapshot is not (§11.2, §13.2)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    catalog.add_native_data("WaveformData");
+    const std::string_view source = "component C { in property<Snapshot<Snapshot<WaveformData>>> data; Column {} }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert
+    EXPECT_TRUE(files.empty());
+    EXPECT_TRUE(has_code(diagnostics, "E0501"));
+}
+
+TEST(Codegen, ASnapshotOfARecordGeneratesTheFacade) {
+    // arrange a catalog holding a record, which is what the manifest contributes (§11.2, AD-17)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    catalog.add_record(RecordType{.name = "Task", .fields = {RecordFieldType{.name = "title", .type = scalar(TypeKind::String), .is_key = false}}});
+    DiagnosticList diagnostics;
+    // the file imports the module, because that is what names the record header's directory (§11.1, §11.2, AD-17)
+    const std::string_view source = "import chart; component C { in property<Snapshot<Task>> data; Column {} }";
+    const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
+    const SourceFile file = Parser(tokens, diagnostics).parse();
+    const CheckedFile checked = TypeChecker(catalog, diagnostics).check(file);
+    // act
+    CodeGenerator generator(diagnostics);
+    // the catalog is what tells the generator a record is generatable and where its header lives (§11.2, AD-17)
+    generator.set_catalog(&catalog);
+    const std::vector<GeneratedFile> files = generator.generate(checked);
+    // assert the record header is pulled, which the shared pointer signature needs (§11.2, AD-17)
+    ASSERT_EQ(files.size(), 2U);
+    const GeneratedFile& header = file_named(files, "c.h");
+    EXPECT_TRUE(contains(header.content, "#include \"chart/task.h\""));
+    EXPECT_TRUE(contains(header.content, "[[nodiscard]] std::shared_ptr<const Task> data() const;"));
+    EXPECT_TRUE(contains(header.content, "void set_data(std::shared_ptr<const Task> value);"));
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "Property<std::shared_ptr<const Task>> m_data;"));
 }
 
 TEST(Codegen, AFileTheCheckerBlockedProducesNothing) {
@@ -755,6 +853,68 @@ TEST(Codegen, ACheckboxHandlerReadsTheStateItToggledTo) {
     EXPECT_TRUE(contains(cpp.content, "self->m_armed.set(checked);"));
 }
 
+TEST(Codegen, ATextFieldIsConstructedOverBothEnginesAndOwnsItsHeader) {
+    // arrange a field the author declared over the value and the hint (§11.1)
+    const std::string source = R"(component C {
+    TextField {
+        value: "Albor";
+        placeholder: "type here";
+        multiline: true;
+    }
+})";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert the field is one of the engine and text engine widgets (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<TextField>(engine, text_engine);"));
+    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/text_field.h\""));
+    // assert both runs reach the widget through the setters the catalog names (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "set_value("));
+    EXPECT_TRUE(contains(cpp.content, "set_placeholder("));
+    // assert the mode reaches the widget as the author wrote it (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "set_multiline("));
+}
+
+TEST(Codegen, AReversedBooleanAndABoolStateReachTheirSetters) {
+    // arrange a field whose states the author wrote as bools (§11.1)
+    const std::string source = R"(component C {
+    TextField {
+        read_only: true;
+        disabled: false;
+    }
+})";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert both states reach the widget (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "set_read_only("));
+    EXPECT_TRUE(contains(cpp.content, "set_disabled(false)"));
+}
+
+TEST(Codegen, ATextFieldSignalsCarryTheStringTheyChangedTo) {
+    // arrange a field whose two signals a form wires (§11.1)
+    const std::string source = R"(component C {
+    inout property<string> name: "";
+    TextField {
+        value: name;
+        placeholder: "type a name";
+        on_changed: {
+            name = value;
+        }
+        on_committed: {
+            name = value;
+        }
+    }
+})";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert the string parameter is named on both handlers, which the bodies assign (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "set_on_change([this](std::string value) { handle_"));
+    EXPECT_TRUE(contains(cpp.content, "set_on_commit([this](std::string value) { handle_"));
+    EXPECT_TRUE(contains(cpp.content, "self->m_name.set(value);"));
+}
+
 TEST(Codegen, ACanvasDrawBlockBecomesADrawBody) {
     // arrange a canvas that fills itself from a bound property, which is custom drawing (§6.4)
     const std::string source = R"(component C {
@@ -1049,4 +1209,229 @@ component task_board {
     EXPECT_FALSE(contains(unit, "ScrollableRows<Task>"));
     // assert an alignment written in the row reaches the generated unit, because the row is its own function (§8.2)
     EXPECT_TRUE(contains(unit, "Align::"));
+}
+
+TEST(CodegenColour, ATransparentizeCallBecomesTheMethodCall) {
+    // arrange a component whose root carries the dimmed colour (§6.1)
+    const std::string source = R"(
+component Panel {
+    in property<color> accent: transparentize(#ff0000ff, 0.5);
+    Label {
+        foreground: accent;
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the call reaches the core colour method, because the operation is one (§6.1)
+    EXPECT_TRUE(contains(all_text(files), ".transparentized(0.5f)"));
+}
+
+TEST(CodegenColour, AnAlphaCallScalesTheAlpha) {
+    // arrange a colour expression driven by a property, which is the case an application writes (§6.1)
+    const std::string source = R"(
+component Panel {
+    in property<float> amount: 0.25;
+    in property<color> accent: alpha(#336699ff, amount);
+    Label {
+        foreground: accent;
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the property reached the call, because a bound operand is a dependency (§11.3, AD-04a)
+    EXPECT_TRUE(contains(all_text(files), ".with_alpha("));
+}
+
+TEST(CodegenColour, AnAlphaSetCallReplacesTheAlpha) {
+    // arrange
+    const std::string source = R"(
+component Panel {
+    in property<color> accent: alpha_set(#336699ff, 0.75);
+    Label {
+        foreground: accent;
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the replacement spelled the other method, because the two operations differ (§6.1)
+    EXPECT_TRUE(contains(all_text(files), ".alpha_set(0.75f)"));
+}
+
+TEST(CodegenColour, AColourOperationOnANumberIsRefused) {
+    // arrange a call whose first argument is a number, which no colour operation accepts (§6.1)
+    const std::string source = R"(
+component Panel {
+    in property<color> accent: transparentize(0.5, 0.25);
+    Label {
+        foreground: accent;
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
+    const SourceFile file = Parser(tokens, diagnostics).parse();
+    (void)TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file);
+    // assert the mismatch is reported, because a silent pass would emit a call that cannot compile (§6.1)
+    EXPECT_GT(diagnostics.count(), 0U);
+}
+
+TEST(CodegenColour, AColourOperationWithANonNumericAmountIsRefused) {
+    // arrange a string where the fraction belongs, which no operation accepts (§6.1)
+    const std::string source = R"(
+component Panel {
+    in property<color> accent: transparentize(#ff0000ff, "half");
+    Label {
+        foreground: accent;
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
+    const SourceFile file = Parser(tokens, diagnostics).parse();
+    (void)TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file);
+    // assert the mismatch is reported (§6.1)
+    EXPECT_GT(diagnostics.count(), 0U);
+}
+
+TEST(CodegenColour, AnUnknownFunctionNameIsRefused) {
+    // arrange a call the language does not define, which has no type rule (§11.1)
+    const std::string source = R"(
+component Panel {
+    in property<color> accent: lighten(#ff0000ff, 0.5);
+    Label {
+        foreground: accent;
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
+    const SourceFile file = Parser(tokens, diagnostics).parse();
+    (void)TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file);
+    // assert the report names the name, because that is what the author has to change (§11.1)
+    bool named = false;
+    for (const Diagnostic& diagnostic : diagnostics.diagnostics())
+        if (diagnostic.message.find("lighten") != std::string::npos)
+            named = true;
+    EXPECT_TRUE(named);
+}
+
+TEST(CodegenColour, AColourOperationOnAFailedOperandIsNotReportedTwice) {
+    // arrange a call whose operand is itself unknown, which the checker already reported (§11.1)
+    const std::string source = R"(
+component Panel {
+    in property<color> accent: transparentize(lighten, 0.5);
+    Label {
+        foreground: accent;
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
+    const SourceFile file = Parser(tokens, diagnostics).parse();
+    (void)TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file);
+    // assert the rule stayed quiet about the mismatch, because an error operand suppresses it (§11.1)
+    int mismatches = 0;
+    for (const Diagnostic& diagnostic : diagnostics.diagnostics())
+        if (diagnostic.code == "E0410")
+            mismatches++;
+    EXPECT_EQ(mismatches, 0);
+}
+
+TEST(CodegenColour, ACallNodeTheLanguageDoesNotDefineIsRefused) {
+    // arrange a tree the parser cannot produce, because it gates the name, so the checker rule is reached directly (§11.1)
+    SourceFile file;
+    ComponentDeclaration component;
+    component.name = "Panel";
+    PropertyDeclaration property;
+    property.name = "accent";
+    property.type = "color";
+    property.direction = PropertyDirection::In;
+    std::vector<ExpressionPtr> operands;
+    operands.push_back(LiteralExpression::make(LiteralExpression::Kind::Color, "#ff0000ff", SourceSpan{}));
+    operands.push_back(LiteralExpression::make(LiteralExpression::Kind::Float, "0.5", SourceSpan{}));
+    property.default_value = CallExpression::make("lighten", std::move(operands), SourceSpan{});
+    component.properties.push_back(std::move(property));
+    file.components.push_back(std::move(component));
+    DiagnosticList diagnostics;
+    // act
+    (void)TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file);
+    // assert the report names the name, because a tree can carry one the parser would not (§11.1)
+    bool named = false;
+    for (const Diagnostic& diagnostic : diagnostics.diagnostics())
+        if (diagnostic.message.find("lighten") != std::string::npos)
+            named = true;
+    EXPECT_TRUE(named);
+}
+
+TEST(CodegenColour, AColourCallWithAFailedOperandReportsNoMismatch) {
+    // arrange a call whose amount is a text, which is the mismatch path under test (§6.1)
+    SourceFile file;
+    ComponentDeclaration component;
+    component.name = "Panel";
+    PropertyDeclaration property;
+    property.name = "accent";
+    property.type = "color";
+    property.direction = PropertyDirection::In;
+    std::vector<ExpressionPtr> operands;
+    operands.push_back(LiteralExpression::make(LiteralExpression::Kind::Color, "#ff0000ff", SourceSpan{}));
+    operands.push_back(LiteralExpression::make(LiteralExpression::Kind::String, "\"half\"", SourceSpan{}));
+    property.default_value = CallExpression::make("transparentize", std::move(operands), SourceSpan{});
+    component.properties.push_back(std::move(property));
+    file.components.push_back(std::move(component));
+    DiagnosticList diagnostics;
+    // act
+    (void)TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file);
+    // assert a mismatch was reported, because a text is not a fraction (§6.1)
+    int mismatches = 0;
+    for (const Diagnostic& diagnostic : diagnostics.diagnostics())
+        if (diagnostic.code == "E0410")
+            mismatches++;
+    EXPECT_EQ(mismatches, 1);
+}
+
+TEST(CodegenColour, AColourOperationWithOneArgumentIsReportedNotThrown) {
+    // arrange a tree the parser cannot produce, which the checker must refuse rather than index (§11.1)
+    SourceFile file;
+    ComponentDeclaration component;
+    component.name = "Panel";
+    PropertyDeclaration property;
+    property.name = "accent";
+    property.type = "color";
+    property.direction = PropertyDirection::In;
+    std::vector<ExpressionPtr> operands;
+    operands.push_back(LiteralExpression::make(LiteralExpression::Kind::Color, "#ff0000ff", SourceSpan{}));
+    property.default_value = CallExpression::make("transparentize", std::move(operands), SourceSpan{});
+    component.properties.push_back(std::move(property));
+    file.components.push_back(std::move(component));
+    DiagnosticList diagnostics;
+    // act the checker runs over the malformed call, which must not throw
+    EXPECT_NO_THROW((void)TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file));
+    // assert the arity was reported by name, because that is what the author has to change (§11.1)
+    EXPECT_GT(diagnostics.count(), 0U);
+}
+
+TEST(CodegenColour, AColourOperationWithNoArgumentsIsReportedNotThrown) {
+    // arrange an empty argument list, which is the same refusal with nothing to type (§11.1)
+    SourceFile file;
+    ComponentDeclaration component;
+    component.name = "Panel";
+    PropertyDeclaration property;
+    property.name = "accent";
+    property.type = "color";
+    property.direction = PropertyDirection::In;
+    property.default_value = CallExpression::make("alpha_set", {}, SourceSpan{});
+    component.properties.push_back(std::move(property));
+    file.components.push_back(std::move(component));
+    DiagnosticList diagnostics;
+    // act
+    EXPECT_NO_THROW((void)TypeChecker(ElementCatalog::with_builtins(), diagnostics).check(file));
+    // assert
+    EXPECT_GT(diagnostics.count(), 0U);
 }

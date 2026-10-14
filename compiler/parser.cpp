@@ -41,8 +41,20 @@ namespace albor::compiler
 
         // the conversion target names the language defines, which is a closed set (§11.1)
         [[nodiscard]] bool is_conversion_name(std::string_view name) {
-            // the four builtin conversions are the only call forms a binding may use (§11.1)
+            // the four builtin conversions are the only single value call forms a binding may use (§11.1)
             return name == "string" || name == "int" || name == "float" || name == "bool";
+        }
+
+        // report whether a name is a colour operation, which is what a colour expression reaches through (§6.1)
+        [[nodiscard]] bool is_colour_operation(std::string_view name) {
+            // the three colour operations are the closed set, because the language defines no more (§11.1)
+            return name == "transparentize" || name == "alpha" || name == "alpha_set";
+        }
+
+        // report whether a name may be called at all, which keeps the grammar closed (§11.1)
+        [[nodiscard]] bool is_builtin_call(std::string_view name) {
+            // a conversion and a colour operation are the only two call forms (§11.1)
+            return is_conversion_name(name) || is_colour_operation(name);
         }
     } // namespace
 
@@ -882,8 +894,8 @@ namespace albor::compiler
             advance();
             return LiteralExpression::make(LiteralExpression::Kind::Boolean, std::move(text), span);
         }
-        // a builtin conversion is the only call form a binding may use (§11.1)
-        if (peek().kind == Token::Kind::Identifier && at_punctuation("(", 1) && is_conversion_name(peek().text))
+        // a conversion and a colour operation are the only call forms a binding may use (§11.1)
+        if (peek().kind == Token::Kind::Identifier && at_punctuation("(", 1) && is_builtin_call(peek().text))
             return parse_conversion();
         // an identifier is a reference to a declared property (§11.1)
         if (peek().kind == Token::Kind::Identifier) {
@@ -957,19 +969,37 @@ namespace albor::compiler
     }
 
     ExpressionPtr Parser::parse_conversion() {
-        // the span starts at the conversion name, so a diagnostic covers the whole call (§11.1)
+        // the span starts at the builtin name, so a diagnostic covers the whole call (§11.1)
         const SourceSpan span = peek().span;
-        // the target name is moved out of the unit, because the parser owns the stream (§11.1)
+        // the builtin name is moved out of the unit, because the parser owns the stream (§11.1)
         std::string target = std::move(m_tokens[m_index].text);
+        // a colour operation is the only builtin that takes a second argument (§11.1)
+        const bool colour = is_colour_operation(target);
         // the name is consumed, so the argument list starts after it (§11.1)
         advance();
-        // the argument list is delimited, so the value is read until it closes (§11.1)
+        // the argument list is delimited, so the values are read until it closes (§11.1)
         expect_punctuation("(");
-        // the value is an expression, so a conversion may wrap a computed value (§11.1)
+        // the first value is an expression, so a builtin may wrap a computed value (§11.1)
         ExpressionPtr value = parse_expression();
+        // a conversion and a colour operation that both take one value keep the older node (§11.1)
+        if (!colour) {
+            // the list is closed, which is required (§11.1)
+            expect_punctuation(")");
+            return ConversionExpression::make(std::move(target), std::move(value), span);
+        }
+        // a colour operation takes the fraction or alpha it works by as its second argument (§6.1)
+        expect_punctuation(",");
+        // the second value is an expression, so a bound fraction may drive the operation (§6.1)
+        ExpressionPtr amount = parse_expression();
         // the list is closed, which is required (§11.1)
         expect_punctuation(")");
-        return ConversionExpression::make(std::move(target), std::move(value), span);
+        // the arguments travel in written order, because the operation reads them left to right (§11.1)
+        std::vector<ExpressionPtr> arguments;
+        // the colour is the first operand of every operation (§6.1)
+        arguments.push_back(std::move(value));
+        // the amount is the second, because it is what the operation works by (§6.1)
+        arguments.push_back(std::move(amount));
+        return CallExpression::make(std::move(target), std::move(arguments), span);
     }
 
     void Parser::report_unexpected(std::string_view expected) {

@@ -79,11 +79,20 @@ namespace albor
         // override: read back the current clip
         [[nodiscard]] const Rect& clip() const override;
 
+        // override: set the opacity the later draws are dimmed by
+        void set_opacity(float opacity) override;
+
+        // override: read back the current opacity
+        [[nodiscard]] float opacity() const override;
+
         // override: record a filled and stroked rectangle
         void draw_rect(const Rect& rect, const Paint& paint) override;
 
         // override: record a filled and stroked rounded rectangle
         void draw_rounded_rect(const Rect& rect, float radius, const Paint& paint) override;
+
+        // override: record the shadow a shape casts
+        void draw_shadow(const Rect& rect, float radius, const Shadow& shadow) override;
 
         // override: record a text run at its baseline origin
         void draw_text(const TextLayout& layout, Point origin, const Paint& paint) override;
@@ -118,6 +127,9 @@ namespace albor
 
             // the clip at the time of the save
             Rect clip;
+
+            // the opacity at the time of the save
+            float opacity = 1.0f;
         };
 
         // record a command after skipping the ones that would draw nothing (§6.4)
@@ -128,6 +140,9 @@ namespace albor
 
         // the current clip the recorder reads back, which starts as the whole area because a picture has no surface (§6.2)
         Rect m_clip;
+
+        // the opacity the recorded commands are dimmed by, which starts fully opaque (§6.1)
+        float m_opacity = 1.0f;
 
         // the pushed states, which a restore pops (§6.2)
         std::vector<State> m_states;

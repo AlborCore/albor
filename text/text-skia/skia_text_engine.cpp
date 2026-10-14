@@ -191,31 +191,66 @@ namespace albor
         const float layout_width = max_width > 0.0f ? max_width : UNBOUNDED_WIDTH;
         // the paragraph lays the run out at that width, which is the measure phase of §8.2 (§9.1)
         paragraph->layout(layout_width);
-        // the shaped lines are collected before the paragraph goes away (§9.1, AD-18)
+        // the shaped lines are collected before the paragraph goes away, one entry per visual line (§9.1, AD-18)
         std::vector<ShapedRun::Line> lines;
-        // the visitor reports every line in reading order and names the font each line was shaped with (§9.1)
-        paragraph->visit([&lines](int, const skia::textlayout::Paragraph::VisitorInfo* info) {
-            // a null visit info marks the end of a line, which carries nothing to record (§9.1)
-            if (info == nullptr || info->count <= 0)
+        // which visual lines already took their first run, because a fallback font splits one row into several (§9.1)
+        std::vector<bool> opened;
+        // the visitor reports one font run at a time and names its line, so a run folds in (§9.1)
+        paragraph->visit([&lines, &opened](int line_number, const skia::textlayout::Paragraph::VisitorInfo* info) {
+            // the line the run belongs to may not be open yet, because a row shaped no glyph before this run (§9.1)
+            if (lines.size() <= static_cast<std::size_t>(line_number)) {
+                // the row exists as an empty line, which is what a blank row is (§9.1)
+                lines.resize(static_cast<std::size_t>(line_number) + 1);
+                // the opened flags follow the rows, so a later run knows whether it is the first (§9.1)
+                opened.resize(static_cast<std::size_t>(line_number) + 1, false);
+            }
+            // the end of a line carries nothing to record, because the metrics below fold its row (§9.1)
+            if (info == nullptr)
                 return;
-            // the line is built aside because the visitor reports one line at a time (§9.1)
-            ShapedRun::Line line;
-            // the typeface the line was shaped with, which the renderer draws from (§9.1)
-            line.font = FontHandle::from_object(info->font.getTypeface());
-            // the line origin is the baseline the glyph positions of the line hang from (§9.1)
-            line.origin = Point{.x = info->origin.x(), .y = info->origin.y()};
+            // a line carrying no glyph has no advance to record, but the row it marks still stands (§9.1)
+            if (info->count <= 0)
+                return;
+            // the row the run belongs to is addressed for the whole run (§9.1)
+            ShapedRun::Line& line = lines[static_cast<std::size_t>(line_number)];
+            // the first run of a row names the typeface and the baseline the whole row hangs from (§9.1)
+            if (!opened[static_cast<std::size_t>(line_number)]) {
+                // the typeface the row was shaped with, which the renderer draws from (§9.1)
+                line.font = FontHandle::from_object(info->font.getTypeface());
+                // the line origin is the baseline the glyph positions of the row hang from (§9.1)
+                line.origin = Point{.x = info->origin.x(), .y = info->origin.y()};
+                // the row begins at the first cluster its first run carries (§9.1)
+                line.start_byte = static_cast<std::size_t>(info->utf8Starts[0]);
+                // the row is open now, so a fallback run does not reset it (§9.1)
+                opened[static_cast<std::size_t>(line_number)] = true;
+            }
             // the glyphs are reserved, because the visitor reports how many there are (§9.1)
-            line.glyphs.reserve(static_cast<std::size_t>(info->count));
-            // every glyph contributes its index and its position beside the line origin (§9.1)
+            line.glyphs.reserve(line.glyphs.size() + static_cast<std::size_t>(info->count));
+            // every glyph contributes its index, its position and its byte (§9.1)
             for (int index = 0; index < info->count; index++)
-                line.glyphs.push_back(ShapedGlyph{.id = static_cast<std::uint32_t>(info->glyphs[index]), .position = Point{.x = info->positions[index].x(), .y = info->positions[index].y()}});
-            // the line joins the run in the order the visitor reported it (§9.1)
-            lines.push_back(std::move(line));
+                line.glyphs.push_back(ShapedGlyph{.id = static_cast<std::uint32_t>(info->glyphs[index]), .position = Point{.x = info->positions[index].x(), .y = info->positions[index].y()}, .cluster = info->utf8Starts[index]});
+            // the row is as wide as every run on it, which is where a caret past the last glyph stands (§9.1)
+            line.width += static_cast<float>(info->advanceX);
+            // the row ends past the last cluster of this run, which is the byte a caret rests at inside a split row (§9.1)
+            line.end_byte = static_cast<std::size_t>(info->utf8Starts[info->count]);
         });
         // the line metrics carry the ascent and descent the caller places content by (§9.1)
         std::vector<skia::textlayout::LineMetrics> line_metrics;
         // the metrics are read per line, because a wrapped run carries one ascent per line (§9.1)
         paragraph->getLineMetrics(line_metrics);
+        // every row the metrics cover is folded onto the line of the same index, because the two are the same rows (§9.1)
+        for (std::size_t index = 0; index < line_metrics.size() && index < lines.size(); index++) {
+            // the row is addressed once, because the metrics and the run agree (§9.1)
+            ShapedRun::Line& line = lines[index];
+            // the ascent of the row is what the caret above its glyphs hangs from (§9.1)
+            line.ascent = static_cast<float>(line_metrics[index].fAscent);
+            // the descent is the pair member, so a caller places the same pair on the row (§9.1)
+            line.descent = static_cast<float>(line_metrics[index].fDescent);
+            // the byte the row begins at is what a press on its left edge resolves to (§9.1)
+            line.start_byte = static_cast<std::size_t>(line_metrics[index].fStartIndex);
+            // a row that shaped nothing ends where it began, because it advanced no byte (§9.1)
+            if (line.glyphs.empty())
+                line.end_byte = static_cast<std::size_t>(line_metrics[index].fStartIndex);
+        }
         // the layout starts as an unmeasured default, so a run that shaped no line reports nothing (§9.1)
         TextLayout layout;
         // the shaped run is what the render stage replays verbatim (§9.1, AD-18)

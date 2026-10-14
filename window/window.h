@@ -56,6 +56,12 @@ namespace albor
         // ask the platform to present another frame
         void request_frame();
 
+        // hand the text input anchor over, which is where a candidate window is placed by (§8.3)
+        void set_text_anchor(Rect anchor);
+
+        // hand the document selection over, which is the range an input method reads and replaces (§8.3)
+        void set_text_selection(TextInputRange selection);
+
         // hand out the native object a renderer backend attaches to (§3.5)
         [[nodiscard]] NativeWindowHandle native_handle() const;
 

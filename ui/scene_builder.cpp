@@ -1,5 +1,7 @@
 #include "ui/scene_builder.h"
 
+#include <algorithm>
+
 #include "render/image_resource.h"
 #include "render/line_batch.h"
 #include "render/path_resource.h"
@@ -14,7 +16,7 @@ namespace albor
 
     void SceneRecorder::save() {
         // the current state is pushed before it can be replaced, so a restore has something to return to (§6.2)
-        m_states.push_back(State{.transform = m_transform, .clip = m_clip});
+        m_states.push_back(State{.transform = m_transform, .clip = m_clip, .opacity = m_opacity});
     }
 
     void SceneRecorder::restore() {
@@ -25,6 +27,7 @@ namespace albor
         // the state returns to what the matching save pushed (§6.2)
         m_transform = last_state.transform;
         m_clip = last_state.clip;
+        m_opacity = last_state.opacity;
         m_states.pop_back();
     }
 
@@ -53,6 +56,16 @@ namespace albor
         return m_clip;
     }
 
+    void SceneRecorder::set_opacity(float opacity) {
+        // the opacity is clamped into the unit range, because a binding computed from data can land outside it (§6.1)
+        m_opacity = std::clamp(opacity, 0.0f, 1.0f);
+    }
+
+    float SceneRecorder::opacity() const {
+        // the opacity is read back by a node that composes its own on top of it (§6.1)
+        return m_opacity;
+    }
+
     void SceneRecorder::draw_rect(const Rect& rect, const Paint& paint) {
         // the rectangle is mapped into scene coordinates now, because the render thread cannot ask where (§6.1, AD-18)
         record(DrawCommand::rectangle(to_scene(rect), paint));
@@ -61,6 +74,14 @@ namespace albor
     void SceneRecorder::draw_rounded_rect(const Rect& rect, float radius, const Paint& paint) {
         // the radii travel with the geometry, which is what the bucketed scene used to lose (§6.2)
         record(DrawCommand::rounded_rectangle(to_scene(rect), radius, paint));
+    }
+
+    void SceneRecorder::draw_shadow(const Rect& rect, float radius, const Shadow& shadow) {
+        // a cast with no colour or no shape puts no ink down, so it is never recorded (§6.2)
+        if (!shadow.casts() || rect.empty())
+            return;
+        // the shape is mapped into scene coordinates now, because the render thread cannot ask where (§6.1, AD-18)
+        record(DrawCommand::shadow(to_scene(rect), radius, shadow));
     }
 
     void SceneRecorder::draw_text(const TextLayout& layout, Point origin, const Paint& paint) {
@@ -158,17 +179,20 @@ namespace albor
         std::shared_ptr<FrameScene> scene = std::make_shared<FrameScene>(m_metrics, m_background);
         // the commands travel into the scene in paint order, because stage two replays them as recorded (§6.1, AD-18)
         for (const DrawCommand& command : m_commands)
-            scene->add_command(command);
+            scene->append_command(command);
         return scene;
     }
 
     void SceneRecorder::record(DrawCommand command) {
         // the clip is stamped first, because a command carries the clip it was recorded under (§6.2)
         command.set_clip(m_clip);
-        // the command is refused when it would draw nothing, so the scene carries no dead draw (§6.2)
+        // the cull is decided on the authored paint, because a draw the author made is a draw even at no opacity (§6.1)
         if (command.draws_nothing())
             return;
-        // the scene holds the recorded commands in paint order, which is what stage two replays (§6.1)
+        // a fully opaque context leaves every paint alone, which is the common case (§6.1)
+        if (m_opacity < 1.0f)
+            command.scale_alpha(m_opacity);
+        // the scene holds the recorded commands in paint order, which is what stage two replays as recorded (§6.1)
         m_commands.push_back(std::move(command));
     }
 

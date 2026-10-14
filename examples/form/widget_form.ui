@@ -5,6 +5,7 @@ component WidgetForm {
     inout property<int> presses: 0;
     inout property<float> level: 0.5;
     inout property<bool> armed: false;
+    inout property<string> name: "";
 
     Column {
         spacing: 12px;
@@ -67,6 +68,29 @@ component WidgetForm {
             on_toggled: {
                 armed = checked;
             }
+        }
+
+        Label {
+            id: form_name_label;
+            text: "who is this form for?";
+        }
+
+        TextField {
+            id: form_name;
+            value: name;
+            placeholder: "type a name";
+            disabled: armed;
+            on_changed: {
+                name = value;
+            }
+            on_committed: {
+                presses = presses + 1;
+            }
+        }
+
+        Label {
+            id: form_name_value;
+            text: "typed " + string(name);
         }
     }
 }

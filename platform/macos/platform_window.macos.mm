@@ -39,8 +39,8 @@
 
 @end
 
-// the content view that translates native events into normalized ones, which is the input path of §8.3
-@interface AlborContentView : NSView
+// the content view that translates native events into normalized ones, conforming NSTextInputClient (§8.3)
+@interface AlborContentView : NSView <NSTextInputClient>
 
 // the framework listener the events are forwarded to, which is null once the framework window is gone (§4.2)
 @property(nonatomic, assign) albor::PlatformWindowListener* listener;
@@ -91,8 +91,10 @@ namespace
         // the space bar
         case 49:
             return albor::Key::Space;
-        // the backspace and the forward delete both remove
+        // the backspace key removes before the caret, and the forward delete removes at it (§8.3)
         case 51:
+            return albor::Key::Backspace;
+        // the forward delete key
         case 117:
             return albor::Key::Delete;
         // the home key, which a scroll viewport answers with its start (§8.3)
@@ -161,7 +163,25 @@ namespace
     }
 } // namespace
 
-@implementation AlborContentView
+@implementation AlborContentView {
+    // the marked string a composition holds, which the queries of the protocol read back (§8.3)
+    NSString* m_marked;
+
+    // the range the mark spans, which the marked and selected queries hand out (§8.3)
+    NSRange m_marked_range;
+
+    // the caret rect the framework pushed, which the candidate query converts (§8.3)
+    NSRect m_anchor;
+
+    // whether an anchor was pushed at all, which the candidate query answers through (§8.3)
+    BOOL m_anchor_valid;
+
+    // the document selection the framework pushed, in the utf16 units the input system speaks (§8.3)
+    NSRange m_selection;
+
+    // whether a selection was pushed at all, which the selected query answers through (§8.3)
+    BOOL m_selection_valid;
+}
 
 // the view owns the caret, so it accepts first responder for the key events to reach it (§8.3)
 - (BOOL)acceptsFirstResponder {
@@ -233,7 +253,7 @@ namespace
     message.key = key_from_nsevent(event);
     message.modifiers = modifiers_from_nsevent(event);
     self.listener->on_platform_event(message);
-    // the interpret path gives the input method a chance to produce committed text (§8.3)
+    // the interpret path is what composition, marked text and the committed text flow through (§8.3)
     [self interpretKeyEvents:@[ event ]];
 }
 
@@ -248,21 +268,145 @@ namespace
     self.listener->on_platform_event(message);
 }
 
-- (void)insertText:(id)string {
+// the committed text the input method finalised, which is what a commit REPLACED the mark with (§8.3)
+- (void)insertText:(id)string replacementRange:(NSRange)replacementRange {
     // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
     if (self.listener == nullptr)
         return;
-    // an attributed string hands its plain text over, which is what a key event spells (§8.3)
+    // an attributed string hands its plain text over, which is what a mark resolved to (§8.3)
     NSString* text = [string isKindOfClass:[NSString class]] ? (NSString*)string : [string string];
     if (text.length == 0)
         return;
     const char* utf8 = text.UTF8String;
     if (utf8 == nullptr)
         return;
+    // the mark is gone, because a commit resolves it (§8.3)
+    m_marked = nil;
     albor::Event message;
     message.kind = albor::EventKind::TextInput;
     message.text = std::string(utf8);
+    // a range the input system named travels with the event, so a reconversion replaces what it meant (§8.3)
+    if (replacementRange.location != NSNotFound)
+        message.replacement = albor::TextInputRange{static_cast<std::size_t>(replacementRange.location), static_cast<std::size_t>(replacementRange.length)};
     self.listener->on_platform_event(message);
+}
+
+// the marked string a composition produces, which is what a candidate window edits before a commit (§8.3)
+- (void)setMarkedText:(id)string selectedRange:(NSRange)selectedRange replacementRange:(NSRange)replacementRange {
+    // the marked range is derived from the mark, which is the only thing this side of the protocol holds (§8.3)
+    (void)selectedRange;
+    // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
+    if (self.listener == nullptr)
+        return;
+    // an attributed string hands its plain text over, which is what a composition holds (§8.3)
+    NSString* text = [string isKindOfClass:[NSString class]] ? (NSString*)string : [string string];
+    // the mark is stored, because the queries the input system makes read it back (§8.3)
+    m_marked = text;
+    // a length of zero is the unmark, which the caret the field holds stays at (§8.3)
+    m_marked_range = text.length > 0 ? NSMakeRange(0, text.length) : NSMakeRange(NSNotFound, 0);
+    // an empty utf8 stream is still an event, because clearing the mark is eventful (§8.3)
+    const char* utf8 = text.length > 0 ? text.UTF8String : "";
+    if (utf8 == nullptr)
+        return;
+    albor::Event message;
+    message.kind = albor::EventKind::Composing;
+    message.text = std::string(utf8);
+    // a range the input system named travels with the event, because a composition may replace a span (§8.3)
+    if (replacementRange.location != NSNotFound)
+        message.replacement = albor::TextInputRange{static_cast<std::size_t>(replacementRange.location), static_cast<std::size_t>(replacementRange.length)};
+    self.listener->on_platform_event(message);
+}
+
+// the mark the field renounces, which the committed text follows (§8.3)
+- (void)unmarkText {
+    // a mark that was never held renounces nothing (§8.3)
+    if (m_marked == nil || self.listener == nullptr)
+        return;
+    // the mark disappears, which the caret the field holds stays put under (§8.3)
+    m_marked_range = NSMakeRange(NSNotFound, 0);
+    NSString* text = m_marked;
+    m_marked = nil;
+    albor::Event message;
+    message.kind = albor::EventKind::Composing;
+    message.text = std::string("");
+    (void)text;
+    self.listener->on_platform_event(message);
+}
+
+// report whether a composition is active, which the input system queries between calls (§8.3)
+- (BOOL)hasMarkedText {
+    return m_marked != nil;
+}
+
+// hand out the range the mark spans, where no mark names not found (§8.3)
+- (NSRange)markedRange {
+    return m_marked_range;
+}
+
+// hand out the range the field edits, which sits where the mark held while one is alive (§8.3)
+- (NSRange)selectedRange {
+    // the mark is the edit the input system reads while one is alive (§8.3)
+    if (m_marked_range.location != NSNotFound)
+        return m_marked_range;
+    // the selection the framework pushed is the document range, which is what a reconversion replaces (§8.3)
+    if (m_selection_valid)
+        return m_selection;
+    // a field that published no selection reads as an empty selection at the origin (§8.3)
+    return NSMakeRange(0, 0);
+}
+
+// hand out the screen rect a candidate window anchors to, which the caret rect is (§8.3)
+- (NSRect)firstRectForCharacterRange:(NSRange)range actualRange:(NSRangePointer)actualRange {
+    // the range is unaddressable without the field's own byte map, which is what the anchor already resolves (§8.3)
+    (void)range;
+    (void)actualRange;
+    // an anchor the framework never sent anchors nothing, which is the quiet default (§8.3)
+    if (!m_anchor_valid)
+        return NSMakeRect(0.0, 0.0, 0.0, 0.0);
+    // the anchor travels in view coordinates with y growing downwards, which appkit reads upwards (§8.3)
+    const CGFloat height = self.bounds.size.height;
+    const NSRect native = NSMakeRect(m_anchor.origin.x, height - (m_anchor.origin.y + m_anchor.size.height), m_anchor.size.width, m_anchor.size.height);
+    // the screen is where the candidate window is placed by, which the window converts into (§8.3)
+    return [self.window convertRectToScreen:[self convertRect:native toView:nil]];
+}
+
+// hand out the byte index a screen point lands over, which a candidate placement reverses (§8.3)
+- (NSUInteger)characterIndexForPoint:(NSPoint)point {
+    // the point is unaddressable without the byte map, which is what the index stays out of reach for (§8.3)
+    (void)point;
+    return 0;
+}
+
+// hand out the attributes a mark may carry, which the underline the field paints is one of (§8.3)
+- (NSArray<NSAttributedStringKey>*)validAttributesForMarkedText {
+    // the field paints its own mark, so the plain text is all the system asks for (§8.3)
+    return @[];
+}
+
+// hand out the attributed run a range covers, which the mark alone decorates (§8.3)
+- (NSAttributedString*)attributedSubstringForProposedRange:(NSRange)range actualRange:(NSRangePointer)actualRange {
+    // the ranges are read, because the protocol contract names them (§8.3)
+    (void)range;
+    (void)actualRange;
+    return nil;
+}
+
+// the command the input system routed, which already travelled as a key event the framework answered (§18.5)
+- (void)doCommandBySelector:(SEL)selector {
+    // the commands are swallowed, because the key down was already normalized and answered (§8.3)
+    (void)selector;
+}
+
+// the anchor the framework pushes, which the candidate query answers through (§8.3)
+- (void)setTextAnchor:(NSRect)anchor {
+    m_anchor = anchor;
+    m_anchor_valid = YES;
+}
+
+// the document selection the framework pushed, which the selected query answers through (§8.3)
+- (void)setTextSelection:(NSRange)selection {
+    m_selection = selection;
+    m_selection_valid = YES;
 }
 
 @end
@@ -484,6 +628,28 @@ namespace albor
     void MacosPlatformWindow::request_frame() {
         // the pacing source is owned by the event loop, so a window only records that it wants a frame (§4.3)
         m_state->frame_requested = true;
+    }
+
+    void MacosPlatformWindow::set_text_selection(TextInputRange selection) {
+        // a window with no native window has no input method to address a document through (§8.3)
+        if (m_state->window == nil)
+            return;
+        // the view the input system talks to is the one that stores the range (§8.3)
+        AlborContentView* content = static_cast<AlborContentView*>(m_state->content_view);
+        if (content == nil)
+            return;
+        [content setTextSelection:NSMakeRange(selection.location, selection.length)];
+    }
+
+    void MacosPlatformWindow::set_text_anchor(Rect anchor) {
+        // a window with no native window has no input method to anchor (§8.3)
+        if (m_state->window == nil)
+            return;
+        // the anchor is stored on the view the input system talks to (§8.3)
+        AlborContentView* content = static_cast<AlborContentView*>(m_state->content_view);
+        if (content == nil)
+            return;
+        [content setTextAnchor:NSMakeRect(anchor.x, anchor.y, anchor.width, anchor.height)];
     }
 
     bool MacosPlatformWindow::frame_requested() const {

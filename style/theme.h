@@ -20,7 +20,10 @@ namespace albor
         Pressed,
 
         // the control refuses input, so its paint comes from the disabled variants
-        Disabled
+        Disabled,
+
+        // the control holds the keyboard focus, so its paint carries the focus ring
+        Focused
     };
 
     // the sizing a control takes from the theme, so the metrics are one decision rather than a literal per widget (§8.2)
@@ -58,37 +61,73 @@ namespace albor
 
         // how far one wheel notch moves the content, which is the policy the scroll container owns (§8.2, §8.3)
         float scroll_line_extent = 40.0f;
+
+        // the smallest extent an editable field measures to, because a field has to be seen as one (§8.2)
+        Size text_field_minimum{120.0f, 20.0f};
+
+        // how deep a field's text sits inside its plate on either side, which is what an inset is (§8.2)
+        float text_field_padding = 4.0f;
+
+        // how wide a caret is drawn, which is the thickness of the editing bar (§6.1)
+        float text_field_caret_width = 1.0f;
+
+        // how wide a focus ring strokes, because the ring is the only thing that says a control takes keys (§6.1)
+        float focus_ring_width = 2.0f;
+
+        // how far a focus ring sits outside its control, because a ring on the edge reads as a border (§6.1)
+        float focus_ring_offset = 2.0f;
+
+        // the radius a focus ring is drawn with, which a ring shares with the plate it surrounds (§6.2)
+        float focus_ring_radius = 8.0f;
     };
 
     // the colours a theme resolves by role, which is what lets a widget ask instead of carry a literal (§6.1)
     struct Palette
     {
         // the plate of a control, per state, which is the fill behind its content (§6.1)
-        Color button_plate[4] = {Color{0.20f, 0.55f, 0.90f, 1.0f}, Color{0.26f, 0.62f, 0.96f, 1.0f}, Color{0.14f, 0.42f, 0.74f, 1.0f}, Color{0.42f, 0.46f, 0.52f, 1.0f}};
+        Color button_plate[5] = {Color{0.20f, 0.55f, 0.90f, 1.0f}, Color{0.26f, 0.62f, 0.96f, 1.0f}, Color{0.14f, 0.42f, 0.74f, 1.0f}, Color{0.42f, 0.46f, 0.52f, 1.0f}, Color{0.22f, 0.57f, 0.92f, 1.0f}};
 
         // the label colour of a control, per state, which is what the disabled variant fades (§6.1)
-        Color button_label[4] = {Color{0.96f, 0.97f, 0.99f, 1.0f}, Color{1.0f, 1.0f, 1.0f, 1.0f}, Color{0.88f, 0.90f, 0.94f, 1.0f}, Color{0.72f, 0.74f, 0.78f, 1.0f}};
+        Color button_label[5] = {Color{0.96f, 0.97f, 0.99f, 1.0f}, Color{1.0f, 1.0f, 1.0f, 1.0f}, Color{0.88f, 0.90f, 0.94f, 1.0f}, Color{0.72f, 0.74f, 0.78f, 1.0f}, Color{0.96f, 0.97f, 0.99f, 1.0f}};
 
         // the fill of a check box, per state, which is the box itself (§6.1)
-        Color checkbox_fill[4] = {Color{0.20f, 0.55f, 0.90f, 1.0f}, Color{0.26f, 0.62f, 0.96f, 1.0f}, Color{0.14f, 0.42f, 0.74f, 1.0f}, Color{0.62f, 0.66f, 0.72f, 1.0f}};
+        Color checkbox_fill[5] = {Color{0.20f, 0.55f, 0.90f, 1.0f}, Color{0.26f, 0.62f, 0.96f, 1.0f}, Color{0.14f, 0.42f, 0.74f, 1.0f}, Color{0.62f, 0.66f, 0.72f, 1.0f}, Color{0.22f, 0.57f, 0.92f, 1.0f}};
 
         // the outline of a check box, per state, which is what makes the empty box visible (§6.1)
-        Color checkbox_outline[4] = {Color{0.45f, 0.50f, 0.58f, 1.0f}, Color{0.60f, 0.66f, 0.74f, 1.0f}, Color{0.34f, 0.40f, 0.48f, 1.0f}, Color{0.58f, 0.60f, 0.64f, 1.0f}};
+        Color checkbox_outline[5] = {Color{0.45f, 0.50f, 0.58f, 1.0f}, Color{0.60f, 0.66f, 0.74f, 1.0f}, Color{0.34f, 0.40f, 0.48f, 1.0f}, Color{0.58f, 0.60f, 0.64f, 1.0f}, Color{0.52f, 0.57f, 0.65f, 1.0f}};
 
         // the track of a slider, per state, which is the line the thumb rides (§6.1)
-        Color slider_track[4] = {Color{0.24f, 0.27f, 0.32f, 1.0f}, Color{0.28f, 0.32f, 0.38f, 1.0f}, Color{0.20f, 0.23f, 0.28f, 1.0f}, Color{0.40f, 0.42f, 0.46f, 1.0f}};
+        Color slider_track[5] = {Color{0.24f, 0.27f, 0.32f, 1.0f}, Color{0.28f, 0.32f, 0.38f, 1.0f}, Color{0.20f, 0.23f, 0.28f, 1.0f}, Color{0.40f, 0.42f, 0.46f, 1.0f}, Color{0.26f, 0.29f, 0.34f, 1.0f}};
 
         // the thumb of a slider, per state, which is what the user grabs (§6.1)
-        Color slider_thumb[4] = {Color{0.92f, 0.94f, 0.96f, 1.0f}, Color{1.0f, 1.0f, 1.0f, 1.0f}, Color{0.78f, 0.82f, 0.88f, 1.0f}, Color{0.66f, 0.68f, 0.72f, 1.0f}};
+        Color slider_thumb[5] = {Color{0.92f, 0.94f, 0.96f, 1.0f}, Color{1.0f, 1.0f, 1.0f, 1.0f}, Color{0.78f, 0.82f, 0.88f, 1.0f}, Color{0.66f, 0.68f, 0.72f, 1.0f}, Color{0.92f, 0.94f, 0.96f, 1.0f}};
 
         // the text colour of a plain label, per state, which a label has no press of its own (§6.1)
-        Color label_foreground[4] = {Color{0.92f, 0.94f, 0.96f, 1.0f}, Color{0.96f, 0.97f, 0.99f, 1.0f}, Color{0.92f, 0.94f, 0.96f, 1.0f}, Color{0.58f, 0.60f, 0.64f, 1.0f}};
+        Color label_foreground[5] = {Color{0.92f, 0.94f, 0.96f, 1.0f}, Color{0.96f, 0.97f, 0.99f, 1.0f}, Color{0.92f, 0.94f, 0.96f, 1.0f}, Color{0.58f, 0.60f, 0.64f, 1.0f}, Color{0.92f, 0.94f, 0.96f, 1.0f}};
+
+        // the text an editable field draws, per state, which is the value the user edits (§6.1)
+        Color text_field_text[5] = {Color{0.92f, 0.94f, 0.96f, 1.0f}, Color{0.96f, 0.97f, 0.99f, 1.0f}, Color{0.92f, 0.94f, 0.96f, 1.0f}, Color{0.58f, 0.60f, 0.64f, 1.0f}, Color{0.92f, 0.94f, 0.96f, 1.0f}};
+
+        // the placeholder an empty field draws, per state, which sits de-emphasised behind the value (§6.1)
+        Color text_field_placeholder[5] = {Color{0.58f, 0.60f, 0.64f, 1.0f}, Color{0.62f, 0.64f, 0.68f, 1.0f}, Color{0.58f, 0.60f, 0.64f, 1.0f}, Color{0.42f, 0.44f, 0.48f, 1.0f}, Color{0.58f, 0.60f, 0.64f, 1.0f}};
+
+        // the caret an editable field draws, per state, which is the bar the user edits between (§6.1)
+        Color text_field_caret[5] = {Color{0.94f, 0.96f, 0.98f, 1.0f}, Color{1.0f, 1.0f, 1.0f, 1.0f}, Color{0.86f, 0.89f, 0.93f, 1.0f}, Color{0.52f, 0.55f, 0.60f, 1.0f}, Color{0.94f, 0.96f, 0.98f, 1.0f}};
+
+        // the highlight a selection draws, per state, which the value sits over (§6.1)
+        Color text_field_selection[5] = {Color{0.20f, 0.55f, 0.90f, 0.35f}, Color{0.26f, 0.62f, 0.96f, 0.42f}, Color{0.14f, 0.42f, 0.74f, 0.40f}, Color{0.42f, 0.46f, 0.52f, 0.30f}, Color{0.22f, 0.57f, 0.92f, 0.38f}};
 
         // the groove a scrollbar thumb rides in, per state, which is what shows the travel (§6.1)
-        Color scrollbar_track[4] = {Color{0.16f, 0.18f, 0.22f, 0.0f}, Color{0.18f, 0.20f, 0.24f, 0.0f}, Color{0.16f, 0.18f, 0.22f, 0.0f}, Color{0.24f, 0.26f, 0.30f, 0.0f}};
+        Color scrollbar_track[5] = {Color{0.16f, 0.18f, 0.22f, 0.0f}, Color{0.18f, 0.20f, 0.24f, 0.0f}, Color{0.16f, 0.18f, 0.22f, 0.0f}, Color{0.24f, 0.26f, 0.30f, 0.0f}, Color{0.16f, 0.18f, 0.22f, 0.0f}};
 
         // the thumb of a scrollbar, per state, which is what the user drags (§6.1)
-        Color scrollbar_thumb[4] = {Color{0.42f, 0.46f, 0.52f, 1.0f}, Color{0.58f, 0.62f, 0.68f, 1.0f}, Color{0.72f, 0.76f, 0.82f, 1.0f}, Color{0.28f, 0.30f, 0.34f, 1.0f}};
+        Color scrollbar_thumb[5] = {Color{0.42f, 0.46f, 0.52f, 1.0f}, Color{0.58f, 0.62f, 0.68f, 1.0f}, Color{0.72f, 0.76f, 0.82f, 1.0f}, Color{0.28f, 0.30f, 0.34f, 1.0f}, Color{0.42f, 0.46f, 0.52f, 1.0f}};
+
+        // the ring a focused control strokes around itself, per state, whose normal entry is never read (§6.1)
+        Color focus_ring[5] = {Color{0.20f, 0.55f, 0.90f, 0.0f}, Color{0.26f, 0.62f, 0.96f, 1.0f}, Color{0.14f, 0.42f, 0.74f, 1.0f}, Color{0.42f, 0.46f, 0.52f, 0.55f}, Color{0.20f, 0.55f, 0.90f, 1.0f}};
+
+        // the plate a canvas draws behind its content, per state, which is what a state visual needs to land on (§6.1)
+        Color canvas_background[5] = {Color{0.11f, 0.12f, 0.15f, 1.0f}, Color{0.15f, 0.17f, 0.21f, 1.0f}, Color{0.09f, 0.10f, 0.13f, 1.0f}, Color{0.18f, 0.19f, 0.22f, 1.0f}, Color{0.13f, 0.14f, 0.18f, 1.0f}};
     };
 
     // the theme that binds a palette to control metrics, which the widget base resolves through (§6.1, §8.2)
@@ -146,6 +185,30 @@ namespace albor
         // replace one state of the entry, which is what a derived palette writes (§6.1)
         void set_label_foreground(ControlState state, Color value);
 
+        // replace the text colour of the normal state of an editable field (§6.1)
+        void set_text_field_text(Color value);
+
+        // replace one state of the entry, which is what a derived palette writes (§6.1)
+        void set_text_field_text(ControlState state, Color value);
+
+        // replace the placeholder colour of the normal state of an editable field (§6.1)
+        void set_text_field_placeholder(Color value);
+
+        // replace one state of the entry, which is what a derived palette writes (§6.1)
+        void set_text_field_placeholder(ControlState state, Color value);
+
+        // replace the caret colour of the normal state of an editable field (§6.1)
+        void set_text_field_caret(Color value);
+
+        // replace one state of the entry, which is what a derived palette writes (§6.1)
+        void set_text_field_caret(ControlState state, Color value);
+
+        // replace the selection colour of the normal state of an editable field (§6.1)
+        void set_text_field_selection(Color value);
+
+        // replace one state of the entry, which is what a derived palette writes (§6.1)
+        void set_text_field_selection(ControlState state, Color value);
+
         // replace the smallest push control extent, which is a sizing decision rather than a colour (§8.2)
         void set_button_minimum(Size value);
 
@@ -190,6 +253,33 @@ namespace albor
 
         // replace one state of the scrollbar thumb, which is what the user drags (§6.1)
         void set_scrollbar_thumb(ControlState state, Color value);
+
+        // replace the ring colour a focused control strokes, which is the shorthand an application writes (§6.1)
+        void set_focus_ring(Color value);
+
+        // replace one state of the ring, so a hover and a press change the ring with the plate (§6.1)
+        void set_focus_ring(ControlState state, Color value);
+
+        // replace the plate of the normal state a canvas draws behind its content (§6.1)
+        void set_canvas_background(Color value);
+
+        // replace one state of the canvas plate, which is what a state visual reads (§6.1)
+        void set_canvas_background(ControlState state, Color value);
+
+        // replace how wide a focus ring strokes, which is what makes it readable (§6.1)
+        void set_focus_ring_width(float value);
+
+        // replace how far a focus ring sits outside its control, because a ring on the edge reads as a border (§6.1)
+        void set_focus_ring_offset(float value);
+
+        // replace the radius a focus ring is drawn with, which it shares with the plate (§6.2)
+        void set_focus_ring_radius(float value);
+
+        // replace the smallest extent an editable field measures to, which the control reads instead of a literal (§8.2)
+        void set_text_field_minimum(Size value);
+
+        // replace how deep a field's text sits inside its plate, which is the inset an inset is (§8.2)
+        void set_text_field_padding(float value);
 
     private:
         // the colours, which the overrides above write (§6.1)

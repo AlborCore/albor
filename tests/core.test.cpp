@@ -1,10 +1,186 @@
 #include <gtest/gtest.h>
 
+#include <memory>
+#include <string>
+#include <string_view>
+
+#include "core/clipboard.h"
 #include "core/geometry.h"
 #include "core/native_window_handle.h"
 #include "core/paint.h"
+#include "core/text_range.h"
 
 using namespace albor;
+
+namespace
+{
+    // the contract test double, which holds the text in memory so a test asserts on §3.5 rather than on a platform (§3.5)
+    class HoldingClipboard final : public Clipboard
+    {
+    public:
+        // what the double carries, which a test reads back and a copy replaces (§3.5)
+        std::string carried;
+
+        // whether the double reports itself as able to copy (§3.5)
+        bool usable = true;
+
+        [[nodiscard]] std::string text() const override {
+            // an unusable surface reads nothing, which is what an absent pasteboard reports (§3.5)
+            if (!usable)
+                return {};
+            return carried;
+        }
+
+        void set_text(std::string_view text) override {
+            // an unusable surface writes nothing, so a copy is dropped rather than crashing (§3.5)
+            if (!usable)
+                return;
+            // the double owns its copy, because the caller owns the view (§3.5)
+            carried = std::string(text);
+        }
+
+        [[nodiscard]] bool has_text() const override {
+            // a surface that cannot be reached carries nothing, which is what a paste checks first (§3.5)
+            if (!usable)
+                return false;
+            return !carried.empty();
+        }
+
+        [[nodiscard]] bool ready() const override {
+            // the flag a test sets is the whole answer, so an unreachable surface can be exercised (§3.5)
+            return usable;
+        }
+    };
+    // the process clipboard test double, which stands in for a platform pasteboard behind the installed factory (§3.5)
+    class ProcessClipboard final : public Clipboard
+    {
+    public:
+        void set_text(std::string_view text) override {
+            // the double owns its copy, because the caller owns the view (§3.5)
+            carried = std::string(text);
+        }
+
+        [[nodiscard]] std::string text() const override {
+            // the content is what a copy reads back (§3.5)
+            return carried;
+        }
+
+        [[nodiscard]] bool has_text() const override {
+            // a surface with content from none answers no (§3.5)
+            return !carried.empty();
+        }
+
+        [[nodiscard]] bool ready() const override {
+            // the double is always reachable, because it is a test double (§3.5)
+            return true;
+        }
+
+    private:
+        // what the surface carries, which a copy replaces (§3.5)
+        std::string carried;
+    };
+
+} // namespace
+
+TEST(ClipboardContractChecks, StartsWithoutAPlatformInstalled) {
+    // arrange act
+    const ClipboardFactory& factory = clipboard_factory();
+    // assert the framework reports no surface rather than fabricating one (§3.5)
+    EXPECT_FALSE(static_cast<bool>(factory));
+}
+
+TEST(ClipboardContractChecks, CreateRefusesWithoutAPlatform) {
+    // arrange act
+    std::unique_ptr<Clipboard> clipboard = create_clipboard();
+    // assert an uninstalled platform means the framework has no way to copy (§3.5)
+    EXPECT_EQ(clipboard, nullptr);
+}
+
+TEST(ClipboardContractChecks, AnInstalledPlatformIsBuilt) {
+    // arrange
+    set_clipboard_factory([] { return std::make_unique<HoldingClipboard>(); });
+    // act
+    std::unique_ptr<Clipboard> clipboard = create_clipboard();
+    // assert
+    ASSERT_NE(clipboard, nullptr);
+    EXPECT_TRUE(clipboard->ready());
+    // the factory is uninstalled again, because the next test reads the empty one (§3.5)
+    set_clipboard_factory(nullptr);
+}
+
+TEST(ClipboardContractChecks, AnUninstalledFactoryIsTheEmptyOne) {
+    // arrange
+    set_clipboard_factory(nullptr);
+    // act
+    const ClipboardFactory& factory = clipboard_factory();
+    // assert a removed platform leaves no factory rather than a stale one (§3.5)
+    EXPECT_FALSE(static_cast<bool>(factory));
+}
+
+TEST(ClipboardContractChecks, AClipboardStartsCarryingNothing) {
+    // arrange
+    HoldingClipboard clipboard;
+    // act
+    const std::string carried = clipboard.text();
+    // assert a surface nobody copied into has nothing to hand out (§3.5)
+    EXPECT_TRUE(carried.empty());
+    EXPECT_FALSE(clipboard.has_text());
+}
+
+TEST(ClipboardContractChecks, ACopyReplacesWhatWasThere) {
+    // arrange
+    HoldingClipboard clipboard;
+    clipboard.carried = "before";
+    // act
+    clipboard.set_text("after");
+    // assert a copy replaces rather than adds, which is what the pasteboard contract is (§3.5)
+    EXPECT_EQ(clipboard.text(), "after");
+}
+
+TEST(ClipboardContractChecks, AnEmptyCopyClearsTheClipboard) {
+    // arrange
+    HoldingClipboard clipboard;
+    clipboard.carried = "before";
+    // act
+    clipboard.set_text("");
+    // assert copying nothing leaves nothing, which is what a cut of a selection then delete is (§3.5)
+    EXPECT_TRUE(clipboard.text().empty());
+    EXPECT_FALSE(clipboard.has_text());
+}
+
+TEST(ClipboardContractChecks, ACopyKeepsTheTextItWasGiven) {
+    // arrange a source the caller owns, which the surface is handed as a view (§3.5)
+    std::string source = "borrowed";
+    HoldingClipboard clipboard;
+    // act
+    clipboard.set_text(source);
+    // act again the caller drops its own copy, which is what a view means (§3.5)
+    source.clear();
+    // assert the copy survived the caller dropping its own copy, because the surface owns what it was handed (§3.5)
+    EXPECT_EQ(clipboard.text(), "borrowed");
+    EXPECT_TRUE(clipboard.has_text());
+}
+
+TEST(ClipboardContractChecks, MultiByteTextSurvivesACopy) {
+    // arrange
+    HoldingClipboard clipboard;
+    // act
+    clipboard.set_text("\xC3\xA9t\xC3\xA9");
+    // assert the surface is a text surface, so two byte characters are not truncated (§3.5)
+    EXPECT_EQ(clipboard.text(), "\xC3\xA9t\xC3\xA9");
+}
+
+TEST(ClipboardContractChecks, AnUnreachableSurfaceCarriesNothing) {
+    // arrange
+    HoldingClipboard clipboard;
+    clipboard.usable = false;
+    // act
+    clipboard.set_text("dropped");
+    // assert a surface that cannot be reached is a refusal rather than a crash (§3.5)
+    EXPECT_FALSE(clipboard.ready());
+    EXPECT_TRUE(clipboard.text().empty());
+    EXPECT_FALSE(clipboard.has_text());
+}
 
 TEST(Size, DefaultHasNoExtent) {
     // arrange, act
@@ -402,6 +578,62 @@ TEST(Color, EqualityComparesEveryComponent) {
     EXPECT_NE(first, other_channel);
 }
 
+TEST(Color, WithAlphaScalesTheExistingAlpha) {
+    // arrange a colour that is already part transparent, which is what a nested fade produces (§6.3)
+    const Color base = Color::rgba(0.2f, 0.4f, 0.6f, 0.5f);
+    // act
+    const Color dimmed = base.with_alpha(0.5f);
+    // assert the alpha moves to a quarter, because coverage multiplies rather than replaces (§6.3)
+    EXPECT_FLOAT_EQ(dimmed.alpha, 0.25f);
+    // assert the hue is untouched, because an opacity dims coverage rather than colour (§6.3)
+    EXPECT_FLOAT_EQ(dimmed.red, base.red);
+    EXPECT_FLOAT_EQ(dimmed.green, base.green);
+    EXPECT_FLOAT_EQ(dimmed.blue, base.blue);
+}
+
+TEST(Color, AlphaSetReplacesTheAlphaOutright) {
+    // arrange a half transparent colour, which is what an explicit opacity overrides (§6.3)
+    const Color base = Color::rgba(0.2f, 0.4f, 0.6f, 0.5f);
+    // act
+    const Color opaque = base.alpha_set(0.8f);
+    // assert the alpha is the one asked for rather than a product, because a replacement is not a scale (§6.3)
+    EXPECT_FLOAT_EQ(opaque.alpha, 0.8f);
+    EXPECT_FLOAT_EQ(opaque.red, base.red);
+}
+
+TEST(Color, AlphaSetClampsTheValueItIsGiven) {
+    // arrange, act
+    const Color base = Color::rgb(0.2f, 0.4f, 0.6f);
+    // assert a value from a binding that overshot is clamped rather than stored (§6.3)
+    EXPECT_FLOAT_EQ(base.alpha_set(2.0f).alpha, 1.0f);
+    EXPECT_FLOAT_EQ(base.alpha_set(-1.0f).alpha, 0.0f);
+}
+
+TEST(Color, TransparentizedMovesTheAlphaTowardZero) {
+    // arrange an opaque colour, which is what a theme entry usually is (§6.3)
+    const Color base = Color::rgb(0.2f, 0.4f, 0.6f);
+    // act
+    const Color faded = base.transparentized(0.25f);
+    // assert the alpha drops by the fraction, which is what a de-emphasis tint is (§6.3)
+    EXPECT_FLOAT_EQ(faded.alpha, 0.75f);
+    EXPECT_FLOAT_EQ(faded.red, base.red);
+}
+
+TEST(Color, TransparentizedAtAFullFractionClearsTheAlpha) {
+    // arrange, act
+    const Color faded = Color::rgb(0.2f, 0.4f, 0.6f).transparentized(1.0f);
+    // assert a full fraction leaves nothing visible, which is the point of the operation (§6.3)
+    EXPECT_FLOAT_EQ(faded.alpha, 0.0f);
+}
+
+TEST(Color, TransparentizedClampsItsFraction) {
+    // arrange, act
+    const Color base = Color::rgb(0.2f, 0.4f, 0.6f);
+    // assert a fraction from a binding that overshot is clamped into the unit range (§6.3)
+    EXPECT_FLOAT_EQ(base.transparentized(3.0f).alpha, 0.0f);
+    EXPECT_FLOAT_EQ(base.transparentized(-1.0f).alpha, 1.0f);
+}
+
 TEST(Paint, DefaultFillsWithOpaqueBlack) {
     // arrange, act
     const Paint paint;
@@ -536,4 +768,76 @@ TEST(NativeWindowHandle, DefaultEqualsAHandleWrappingNull) {
     const NativeWindowHandle null_object = NativeWindowHandle::from_object(nullptr);
     // assert
     EXPECT_EQ(empty, null_object);
+}
+
+TEST(ClipboardContractChecks, TheProcessClipboardIsBuiltOnceAndKept) {
+    // arrange a factory that counts how many clipboards it built (§3.5)
+    auto built = std::make_shared<std::size_t>(0);
+    set_clipboard_factory([built] {
+        // the count rises per build, which is what the reuse assertion reads (§3.5)
+        (*built)++;
+        return std::make_unique<ProcessClipboard>();
+    });
+    // act the process clipboard is asked for twice
+    Clipboard* first = process_clipboard();
+    Clipboard* second = process_clipboard();
+    // assert the same surface came back, because a pasteboard is a resource to hold rather than to churn (§3.5)
+    EXPECT_NE(first, nullptr);
+    EXPECT_EQ(first, second);
+    EXPECT_EQ(*built, 1u);
+    // act again the platform installs a different clipboard
+    set_clipboard_factory(nullptr);
+}
+
+TEST(ClipboardContractChecks, TheProcessClipboardIsNullWithoutAPlatform) {
+    // arrange no installed factory, which is what a build without an adapter has (§3.5)
+    set_clipboard_factory(nullptr);
+    // act assert
+    EXPECT_EQ(process_clipboard(), nullptr);
+}
+
+TEST(TextRangeChecks, AnAsciiDocumentAddressesItselfInUtf16Units) {
+    // arrange a plain ascii document, where both encodings count the same (§8.3)
+    const std::string text = "abc";
+    // act assert
+    EXPECT_EQ(utf16_offset_for_byte(text, 0), 0u);
+    EXPECT_EQ(utf16_offset_for_byte(text, 2), 2u);
+    EXPECT_EQ(utf16_length(text), 3u);
+    EXPECT_EQ(byte_for_utf16_offset(text, 2), 2u);
+}
+
+TEST(TextRangeChecks, AMultiByteCharacterCountsAsOneOrMoreUtf16Units) {
+    // arrange a document holding two and three byte characters (§8.3)
+    const std::string text = "\xC3\xA9\xE6\x97\xA5";
+    // act assert the two byte character is two bytes and one unit, and the three byte one is three and one (§8.3)
+    EXPECT_EQ(utf16_offset_for_byte(text, 0), 0u);
+    EXPECT_EQ(utf16_offset_for_byte(text, 2), 1u);
+    EXPECT_EQ(utf16_offset_for_byte(text, 5), 2u);
+    EXPECT_EQ(utf16_length(text), 2u);
+}
+
+TEST(TextRangeChecks, AFourByteCharacterCountsAsTwoUtf16Units) {
+    // arrange a document holding one astral character, which utf16 spells as a surrogate pair (§8.3)
+    const std::string text = "\xF0\x9F\x98\x80";
+    // act assert
+    EXPECT_EQ(utf16_length(text), 2u);
+    EXPECT_EQ(utf16_offset_for_byte(text, 4), 2u);
+    EXPECT_EQ(byte_for_utf16_offset(text, 2), 4u);
+}
+
+TEST(TextRangeChecks, AnOffsetInsideACharacterClampsToItsStart) {
+    // arrange a document whose second character is two bytes wide in utf8 (§8.3)
+    const std::string text = "a\u00E9b";
+    // act assert an offset inside the character lands on it, because a caret cannot stand inside (§8.3)
+    EXPECT_EQ(byte_for_utf16_offset(text, 1), 1u);
+    EXPECT_EQ(byte_for_utf16_offset(text, 0), 0u);
+    EXPECT_EQ(byte_for_utf16_offset(text, 99), 4u);
+}
+
+TEST(TextRangeChecks, AnOffsetPastTheEndLandsAtTheEnd) {
+    // arrange a short document and an offset beyond it (§8.3)
+    const std::string text = "abc";
+    // act assert
+    EXPECT_EQ(byte_for_utf16_offset(text, 50), 3u);
+    EXPECT_EQ(utf16_offset_for_byte(text, 50), 3u);
 }

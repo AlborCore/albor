@@ -8,11 +8,14 @@
 #include "core/align.h"
 #include "core/constraints.h"
 #include "core/geometry.h"
+#include "core/paint.h"
 #include "render/render_context.h"
 #include "ui/ui_event.h"
 
 namespace albor
 {
+    // the animation core a widget drives itself with, declared ahead so this header stays light (§7.3)
+    class AnimationEngine;
     // the node of the UI tree, which owns its children and the two pass layout contract (§8.1, §8.2)
     class UiNode
     {
@@ -111,6 +114,30 @@ namespace albor
         // show or hide the node, which invalidates it so the change reaches the screen (§6.1)
         virtual void set_visible(bool visible);
 
+        // set how opaque the node and its subtree draw, which dims rather than removes them (§6.1)
+        void set_opacity(float opacity);
+
+        // hand out how opaque the node draws, where one is fully opaque (§6.1)
+        [[nodiscard]] float opacity() const;
+
+        // set how wide the node strokes its own border, where zero is no border at all (§6.1)
+        void set_border_width(float width);
+
+        // hand out how wide the node strokes its own border (§6.1)
+        [[nodiscard]] float border_width() const;
+
+        // replace the colour the node strokes its own border with, which is independent of its fill (§6.1)
+        void set_border_color(Color color);
+
+        // hand out the colour the node strokes its own border with (§6.1)
+        [[nodiscard]] Color border_color() const;
+
+        // set the shadow the node casts, which an empty shadow removes (§6.1)
+        void set_drop_shadow(Shadow shadow);
+
+        // hand out the shadow the node casts, which is empty while none is set (§6.1)
+        [[nodiscard]] const Shadow& drop_shadow() const;
+
         // report whether the node refuses input, which a focus traversal and a hit test rely on (§8.3)
         [[nodiscard]] virtual bool disabled() const;
 
@@ -129,15 +156,29 @@ namespace albor
         // assign the in tree identifier, which the scene builder hands out once
         void set_node_id(NodeId node);
 
+        // hand the engine to this node and its descendants, which is how a widget schedules an animation (§7.3)
+        void set_animation_engine(AnimationEngine* engine);
+
+        // hand out the engine this node was given, which is null when no animation is driven (§7.3)
+        [[nodiscard]] AnimationEngine* animation_engine() const;
+
         // walk the node and its descendants depth first, which the semantic tree and the builder share (§8.1)
         void visit(const std::function<void(UiNode&)>& visitor);
-
         // walk this node and its descendants depth first for reading, which the tests assert on
         void visit(const std::function<void(const UiNode&)>& visitor) const;
 
     protected:
         // tell the observer that a subtree is about to leave, which runs while the node is still alive (§8.3)
         void notify_detaching(UiNode* node);
+
+        // push the node opacity onto the context, which dims the whole subtree below it (§6.1)
+        void push_opacity(RenderContext& context) const;
+
+        // pop what the push put on the context, which a sibling draws after (§6.1)
+        void pop_opacity(RenderContext& context) const;
+
+        // record the children without pushing this node's opacity, because a component already pushed it (§6.1)
+        void render_children(RenderContext& context);
 
         // arrange the child only when it asked for a pass or its bounds would move, which keeps a relayout local (§8.2)
         void arrange_if_changed(UiNode& child, const Rect& bounds);
@@ -153,6 +194,9 @@ namespace albor
 
         // the owned children, in the order they were added (§8.1)
         std::vector<std::unique_ptr<UiNode>> m_children;
+
+        // the engine a widget schedules through, which the pipeline hands down the tree (§7.3)
+        AnimationEngine* m_animations = nullptr;
 
         // the identity of the node, whose explicit id is the authoritative one (AD-11)
         NodeIdentity m_identity;
@@ -174,6 +218,18 @@ namespace albor
 
         // whether the node draws at all (§6.1)
         bool m_visible = true;
+
+        // how opaque the node draws, where one is fully opaque and zero still records (§6.1)
+        float m_opacity = 1.0f;
+
+        // how wide the node strokes its own border, where zero means it draws no border (§6.1)
+        float m_border_width = 0.0f;
+
+        // the colour the node strokes its own border with, which is set independently of the fill (§6.1)
+        Color m_border_color = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f);
+
+        // the shadow the node casts, which is empty while none is set (§6.1)
+        Shadow m_drop_shadow;
 
         // how the node sits on the horizontal axis, which a parent reads when it arranges (§8.2)
         Align m_horizontal_align = Align::Inherit;

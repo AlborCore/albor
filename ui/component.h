@@ -75,6 +75,10 @@ namespace albor
             m_property_count++;
         }
 
+    private:
+        // draw the shadow the component casts, which sits under its plate (§6.2)
+        void paint_drop_shadow(RenderContext& context) const;
+
     protected:
         // the engine that settles the properties of this component, which is null when detached (§7.2)
         BindingEngine* m_engine = nullptr;

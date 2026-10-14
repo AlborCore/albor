@@ -1,9 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 #include "core/geometry.h"
+#include "core/text_range.h"
 
 namespace albor
 {
@@ -33,6 +35,9 @@ namespace albor
 
         // a key came up
         KeyUp,
+
+        // pre-edit text arrived from the input method, which is the marked string before it is committed (§8.3)
+        Composing,
 
         // committed text arrived from the input method
         TextInput
@@ -70,6 +75,9 @@ namespace albor
 
         // the delete key, which removes the selected content
         Delete,
+
+        // the backspace key, which removes the character before the caret (§8.3)
+        Backspace,
 
         // the home key, which reaches the start of the content a viewport scrolls
         Home,
@@ -284,8 +292,11 @@ namespace albor
         // the modifier keys held during the event, which distinguishes shift tab (§8.3)
         Modifiers modifiers;
 
-        // the utf8 text a text input event carries, which is empty for every other kind
+        // the utf8 text a text or composing event carries, which is the marked string while composing (§8.3)
         std::string text;
+
+        // the document range an input method asked to replace, which is absent when it asked for none (§8.3)
+        std::optional<TextInputRange> replacement;
 
         // whether a handler claimed the event, which stops the walk at this node (§8.3)
         bool handled = false;

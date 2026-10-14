@@ -704,3 +704,137 @@ TEST(SemanticProvider, AProviderChildIsIndependentOfItsParent) {
     ASSERT_NE(child, nullptr);
     EXPECT_EQ(child->semantic_child_count(), 0u);
 }
+
+TEST(SemanticNode, ATextFieldStartsWithNoValue) {
+    // arrange
+    SemanticNode node(SemanticRole::TextField);
+    // act
+    const std::string& value = node.value();
+    // assert an editable node publishes nothing until it is given something (§10.1)
+    EXPECT_TRUE(value.empty());
+}
+
+TEST(SemanticNode, TheValueIsWhatTheControlPublished) {
+    // arrange
+    SemanticNode node(SemanticRole::TextField);
+    // act
+    node.set_value("Albor");
+    // assert the node owns what it was handed, because the adapters read it long after the write (§10.1)
+    EXPECT_EQ(node.value(), "Albor");
+}
+
+TEST(SemanticNode, TheValueKeepsTheTextItWasGiven) {
+    // arrange
+    SemanticNode node(SemanticRole::TextField);
+    // act
+    node.set_value("\xC3\xA9t\xC3\xA9");
+    // assert a value is a text value, so two byte characters are not truncated (§10.1)
+    EXPECT_EQ(node.value(), "\xC3\xA9t\xC3\xA9");
+}
+
+TEST(SemanticNode, AnEmptyValueIsStillAValue) {
+    // arrange
+    SemanticNode node(SemanticRole::TextField);
+    node.set_value("before");
+    // act
+    node.set_value("");
+    // assert a field the user emptied publishes nothing rather than keeping the last text (§10.1)
+    EXPECT_TRUE(node.value().empty());
+}
+
+TEST(SemanticNode, AButtonCarriesNoValue) {
+    // arrange
+    SemanticNode node(SemanticRole::Button);
+    // act
+    node.set_value("ignored by the role");
+    // assert the state is reported, and it is the role that decides how it is read (§10.1)
+    EXPECT_EQ(node.value(), "ignored by the role");
+    EXPECT_EQ(node.role(), SemanticRole::Button);
+}
+
+TEST(SemanticNode, ANodeStartsEditableAndSingleLine) {
+    // arrange
+    SemanticNode node(SemanticRole::TextField);
+    // act
+    const bool read_only = node.read_only();
+    const bool multiline = node.multiline();
+    // assert both states default false, because a field is editable and single line until told otherwise (§10.1)
+    EXPECT_FALSE(read_only);
+    EXPECT_FALSE(multiline);
+}
+
+TEST(SemanticNode, TheReadOnlyStateCanBeSet) {
+    // arrange
+    SemanticNode node(SemanticRole::TextField);
+    // act
+    node.set_read_only(true);
+    // assert
+    EXPECT_TRUE(node.read_only());
+}
+
+TEST(SemanticNode, ReadOnlyIsDistinctFromDisabled) {
+    // arrange
+    SemanticNode node(SemanticRole::TextField);
+    // act
+    node.set_read_only(true);
+    // assert a read only field still takes focus and still permits a copy, which disabled does not (§10.1)
+    EXPECT_TRUE(node.read_only());
+    EXPECT_FALSE(node.disabled());
+}
+
+TEST(SemanticNode, TheMultiLineStateCanBeSet) {
+    // arrange
+    SemanticNode node(SemanticRole::TextField);
+    // act
+    node.set_multiline(true);
+    // assert
+    EXPECT_TRUE(node.multiline());
+}
+
+TEST(SemanticNode, MultiLineIsIndependentOfTheValue) {
+    // arrange
+    SemanticNode node(SemanticRole::TextField);
+    // act
+    node.set_multiline(true);
+    node.set_value("first\nsecond");
+    // assert the states are independent, because a read only field may still span lines (§10.1)
+    EXPECT_TRUE(node.multiline());
+    EXPECT_EQ(node.value(), "first\nsecond");
+}
+
+TEST(SemanticNode, TheEditableStatesAreCarriedByTheStateSet) {
+    // arrange
+    SemanticNode node(SemanticRole::TextField);
+    // act
+    node.set_value("v");
+    node.set_read_only(true);
+    node.set_multiline(true);
+    // assert the states compare by what they carry, so a tree test can assert on all of them at once (§10.1)
+    EXPECT_EQ(node.states(), (SemanticStates{.disabled = false, .focused = false, .check = CheckState::NotCheckable, .value = "v", .read_only = true, .multiline = true}));
+}
+
+TEST(SemanticNode, AReadOnlyFieldStillRunsItsActions) {
+    // arrange
+    SemanticNode node(SemanticRole::TextField);
+    node.set_read_only(true);
+    bool copied = false;
+    (void)node.add_action("copy", [&copied] { copied = true; });
+    // act
+    const bool invoked = node.invoke("copy");
+    // assert a read only field refuses edits but still permits a copy, which is why the state is not disabled (§10.1)
+    EXPECT_TRUE(invoked);
+    EXPECT_TRUE(copied);
+}
+
+TEST(SemanticNode, ADisabledFieldStillRefusesItsActions) {
+    // arrange
+    SemanticNode node(SemanticRole::TextField);
+    node.set_disabled(true);
+    bool copied = false;
+    (void)node.add_action("copy", [&copied] { copied = true; });
+    // act
+    const bool invoked = node.invoke("copy");
+    // assert the two states differ exactly here, which is what makes them separate states (§10.1)
+    EXPECT_FALSE(invoked);
+    EXPECT_FALSE(copied);
+}

@@ -237,10 +237,13 @@ namespace albor::compiler
             case TypeKind::Native:
                 // a record and a data type are both spelled by the name the manifest declared (§11.2, AD-17)
                 return type.native_name();
+            case TypeKind::Snapshot:
+                // a snapshot crosses as the shared pointer its element is, which never copies the record (§10.5, §13.2)
+                return "std::shared_ptr<const " + cpp_type(type.element()) + ">";
             case TypeKind::Error:
                 return "std::string";
             default:
-                // a snapshot is still blocked before it reaches here, because its element is a data type (§11.3)
+                // a shape the generator refused cannot reach here, which the validation blocks first (§11.3)
                 return "std::string";
             }
         }
@@ -286,7 +289,7 @@ namespace albor::compiler
         const std::map<std::string_view, WidgetInfo>& widget_info() {
             // the table is built once, because the builtin set is closed (§11.3)
             static const std::map<std::string_view, WidgetInfo> table{
-                {"Column", {.header = "layout/column_layout.h", .class_name = "ColumnLayout", .needs_engine = false, .needs_text_engine = false}}, {"Row", {.header = "layout/row_layout.h", .class_name = "RowLayout", .needs_engine = false, .needs_text_engine = false}}, {"Padding", {.header = "layout/padding_layout.h", .class_name = "PaddingLayout", .needs_engine = false, .needs_text_engine = false}}, {"Stack", {.header = "layout/stack_layout.h", .class_name = "StackLayout", .needs_engine = false, .needs_text_engine = false}}, {"Grid", {.header = "layout/grid_layout.h", .class_name = "GridLayout", .needs_engine = false, .needs_text_engine = false}}, {"Label", {.header = "widgets/label.h", .class_name = "Label", .needs_engine = true, .needs_text_engine = true}}, {"Button", {.header = "widgets/button.h", .class_name = "Button", .needs_engine = true, .needs_text_engine = true}}, {"Slider", {.header = "widgets/slider.h", .class_name = "Slider", .needs_engine = true, .needs_text_engine = false}}, {"CheckBox", {.header = "widgets/checkbox.h", .class_name = "CheckBox", .needs_engine = true, .needs_text_engine = false}}, {"Canvas", {.header = "widgets/canvas.h", .class_name = "Canvas", .needs_engine = true, .needs_text_engine = false}}, {"ScrollView", {.header = "widgets/scroll_view.h", .class_name = "ScrollView", .needs_engine = true, .needs_text_engine = false}},
+                {"Column", {.header = "layout/column_layout.h", .class_name = "ColumnLayout", .needs_engine = false, .needs_text_engine = false}}, {"Row", {.header = "layout/row_layout.h", .class_name = "RowLayout", .needs_engine = false, .needs_text_engine = false}}, {"Padding", {.header = "layout/padding_layout.h", .class_name = "PaddingLayout", .needs_engine = false, .needs_text_engine = false}}, {"Stack", {.header = "layout/stack_layout.h", .class_name = "StackLayout", .needs_engine = false, .needs_text_engine = false}}, {"Grid", {.header = "layout/grid_layout.h", .class_name = "GridLayout", .needs_engine = false, .needs_text_engine = false}}, {"Label", {.header = "widgets/label.h", .class_name = "Label", .needs_engine = true, .needs_text_engine = true}}, {"Button", {.header = "widgets/button.h", .class_name = "Button", .needs_engine = true, .needs_text_engine = true}}, {"Slider", {.header = "widgets/slider.h", .class_name = "Slider", .needs_engine = true, .needs_text_engine = false}}, {"CheckBox", {.header = "widgets/checkbox.h", .class_name = "CheckBox", .needs_engine = true, .needs_text_engine = false}}, {"Canvas", {.header = "widgets/canvas.h", .class_name = "Canvas", .needs_engine = true, .needs_text_engine = false}}, {"ScrollView", {.header = "widgets/scroll_view.h", .class_name = "ScrollView", .needs_engine = true, .needs_text_engine = false}}, {"TextField", {.header = "widgets/text_field.h", .class_name = "TextField", .needs_engine = true, .needs_text_engine = true}},
             };
             return table;
         }
@@ -297,7 +300,7 @@ namespace albor::compiler
             const std::string key = std::string(element) + "." + std::string(property);
             // the property to setter map is the closed catalogue of §8 (§11.3)
             static const std::unordered_map<std::string, std::string_view> setters{
-                {"Column.spacing", "set_gap"}, {"Column.padding", "set_padding"}, {"Row.spacing", "set_gap"}, {"Padding.padding", "set_padding"}, {"Grid.spacing", "set_gap"}, {"Label.text", "set_text"}, {"Label.foreground", "set_foreground"}, {"Label.font_size", "set_font_size"}, {"Button.text", "set_label"}, {"Button.background", "set_background"}, {"Button.disabled", "set_disabled"}, {"Slider.value", "set_value"}, {"Slider.disabled", "set_disabled"}, {"Slider.track_color", "set_track_color"}, {"Slider.thumb_color", "set_thumb_color"}, {"CheckBox.checked", "set_checked"}, {"CheckBox.disabled", "set_disabled"}, {"CheckBox.outline", "set_outline"}, {"CheckBox.check_fill", "set_check_fill"}, {"ScrollView.overscan", "set_overscan"}, {"ScrollView.scrollbar", "set_scrollbar_visibility"}, {"ScrollView.row_height", "set_row_height"},
+                {"Column.spacing", "set_gap"}, {"Column.padding", "set_padding"}, {"Row.spacing", "set_gap"}, {"Padding.padding", "set_padding"}, {"Grid.spacing", "set_gap"}, {"Label.text", "set_text"}, {"Label.foreground", "set_foreground"}, {"Label.font_size", "set_font_size"}, {"Button.text", "set_label"}, {"Button.background", "set_background"}, {"Button.disabled", "set_disabled"}, {"Slider.value", "set_value"}, {"Slider.disabled", "set_disabled"}, {"Slider.track_color", "set_track_color"}, {"Slider.thumb_color", "set_thumb_color"}, {"CheckBox.checked", "set_checked"}, {"CheckBox.disabled", "set_disabled"}, {"CheckBox.outline", "set_outline"}, {"CheckBox.check_fill", "set_check_fill"}, {"ScrollView.overscan", "set_overscan"}, {"ScrollView.scrollbar", "set_scrollbar_visibility"}, {"ScrollView.row_height", "set_row_height"}, {"TextField.value", "set_value"}, {"TextField.placeholder", "set_placeholder"}, {"TextField.read_only", "set_read_only"}, {"TextField.multiline", "set_multiline"}, {"TextField.disabled", "set_disabled"}, {"TextField.font_size", "set_font_size"},
             };
             // the lookup is a ready made key, because the pair is the identity (§11.3)
             const auto found = setters.find(key);
@@ -327,10 +330,7 @@ namespace albor::compiler
             const std::string key = std::string(element) + "." + std::string(signal);
             // the signal to setter map is the closed catalogue of §8 (§11.3)
             static const std::unordered_map<std::string, std::string_view> setters{
-                {"Button.clicked", "set_on_click"},
-                {"Slider.changed", "set_on_change"},
-                {"CheckBox.toggled", "set_on_toggle"},
-                {"ScrollView.scrolled", "set_on_scroll"},
+                {"Button.clicked", "set_on_click"}, {"Slider.changed", "set_on_change"}, {"CheckBox.toggled", "set_on_toggle"}, {"ScrollView.scrolled", "set_on_scroll"}, {"TextField.changed", "set_on_change"}, {"TextField.committed", "set_on_commit"},
             };
             // the lookup is a ready made key, because the pair is the identity (§11.3)
             const auto found = setters.find(key);
@@ -349,6 +349,9 @@ namespace albor::compiler
             // a scroll reports the offset it moved to, which is the one value a viewport raises (§8.3)
             if (element == "ScrollView" && signal == "scrolled")
                 return {{"float", "offset"}};
+            // a field raises the string it changed to, which a validation and a commit both read (§8)
+            if (element == "TextField" && (signal == "changed" || signal == "committed"))
+                return {{"std::string", "value"}};
             // a button click carries nothing, so its handler takes no parameter (§11.3)
             return {};
         }
@@ -557,6 +560,9 @@ namespace albor::compiler
             // render one conversion, which the operand type decides (§11.3)
             std::string emit_conversion(const ConversionExpression& conversion);
 
+            // emit a colour operation, which is a method call on the colour it was given (§6.1)
+            std::string emit_call(const CallExpression& call);
+
             // join the dependency ids as a comma separated list, which a deps array holds (§13.3)
             std::string dep_list(const std::vector<std::string>& dependencies) const;
 
@@ -618,6 +624,9 @@ namespace albor::compiler
 
             // the manifest headers the component needs, which the glue generator wrote from the same source (§11.2, AD-17)
             std::vector<std::string> m_record_headers;
+
+            // the data type names a snapshot carries, which the facade forward-declares instead (§11.2)
+            std::vector<std::string> m_data_declarations;
 
             // the catalog the records resolve against, which is null when the caller registered none (§11.2, AD-17)
             const ElementCatalog* m_catalog = nullptr;
@@ -799,11 +808,32 @@ namespace albor::compiler
                 m_blocked = true;
                 return;
             }
-            // a snapshot carries an immutable shared value, which a generated property cannot yet hold (§11.3, §13.2)
+            // a snapshot crosses as the shared immutable pointer its element is, so its element decides (§10.5, §13.2)
             if (type.is(TypeKind::Snapshot)) {
-                m_diagnostics.add(Diagnostic::Severity::Error, span, "E0501", "a value of type '" + type.to_string() + "' cannot be generated yet");
-                // the blocking flag is set, which empties the generated output (§11.3)
-                m_blocked = true;
+                // the element is what the pointer carries, which only a native name transports (§11.1, §13.2)
+                if (!type.element().is(TypeKind::Native)) {
+                    m_diagnostics.add(Diagnostic::Severity::Error, span, "E0501", "a value of type '" + type.to_string() + "' cannot be generated yet");
+                    // the blocking flag is set, which empties the generated output (§11.3)
+                    m_blocked = true;
+                    return;
+                }
+                // the element resolves against the manifest, the single source of truth for native names (§11.2, AD-17)
+                const std::string& name = type.element().native_name();
+                // a record the manifest wrote is carried by its header, which the collect pass pulled once (§11.2, AD-17)
+                const bool record = m_catalog != nullptr && m_catalog->find_record(name) != nullptr;
+                // a data type the manifest wrote is carried by its name, which the facade declares ahead (§11.2, AD-17)
+                const bool data = m_catalog != nullptr && m_catalog->holds_native(name);
+                // an element the manifest never declared cannot type the snapshot, which is refused (§11.2, AD-17)
+                if (!record && !data) {
+                    m_diagnostics.add(Diagnostic::Severity::Error, span, "E0501", "a value of type '" + type.to_string() + "' cannot be generated yet");
+                    // the blocking flag is set, which empties the generated output (§11.3)
+                    m_blocked = true;
+                    return;
+                }
+                // a data type has no generated header, which the facade declares ahead once (§11.2, AD-17)
+                if (data && std::find(m_data_declarations.begin(), m_data_declarations.end(), name) == m_data_declarations.end())
+                    m_data_declarations.push_back(name);
+                // a snapshot over a registered name crosses, and its value settles eagerly like a scalar (§13.2, §13.3)
                 return;
             }
             // a native element the generator cannot construct has no C++ spell here, which is reported (§11.3, AD-17)
@@ -824,6 +854,12 @@ namespace albor::compiler
             if (const auto* conversion = dynamic_cast<const ConversionExpression*>(&expression)) {
                 // the wrapped value is walked, because the whole expression is scanned (§11.3)
                 scan_expression(*conversion->value);
+            }
+            // a colour operation has two operands, which are both walked (§11.3)
+            if (const auto* call = dynamic_cast<const CallExpression*>(&expression)) {
+                // every argument is walked in written order, because a bound operand is a dependency (§11.3, AD-04a)
+                for (const ExpressionPtr& argument : call->arguments)
+                    scan_expression(*argument);
             }
             // a binary application has two operands, which are both walked (§11.3)
             if (const auto* binary = dynamic_cast<const BinaryExpression*>(&expression)) {
@@ -1063,6 +1099,15 @@ namespace albor::compiler
             line(0, "");
             line(0, "namespace albor");
             line(0, "{");
+            // the data types a snapshot carries are declared ahead, which keeps the signatures compilable (§13.2)
+            if (!m_data_declarations.empty()) {
+                line(1, "// the application data types a snapshot carries, which the facade declares ahead rather than includes (§11.2, AD-17)");
+                // each declared type is forwarded once, which is all a shared pointer signature needs (§11.2, §13.2)
+                for (const std::string& forward : m_data_declarations)
+                    line(1, "struct " + forward + ";");
+                // the blank closes the forward section, which separates it from the class (§14.1)
+                line(0, "");
+            }
             line(1, "// the concrete facade of the " + m_class + " component, which hides its generated body (§14.1, AD-03)");
             line(1, "class " + m_class + " final : public Component");
             line(1, "{");
@@ -2287,6 +2332,9 @@ namespace albor::compiler
             // a conversion renders through its operand, which the operand type decides (§11.3)
             if (const auto* conversion = dynamic_cast<const ConversionExpression*>(&expression))
                 return emit_conversion(*conversion);
+            // a colour operation renders as the method call it names, which the core colour carries (§6.1)
+            if (const auto* call = dynamic_cast<const CallExpression*>(&expression))
+                return emit_call(*call);
             // a binary application renders its operands, which keep the written parentheses (§11.3)
             if (const auto* binary = dynamic_cast<const BinaryExpression*>(&expression))
                 return emit_binary(*binary);
@@ -2357,6 +2405,21 @@ namespace albor::compiler
             }
             // the closing brace ends the initialiser (§8.1)
             return out + "}";
+        }
+
+        std::string ComponentEmitter::emit_call(const CallExpression& call) {
+            // the colour renders first, because every operation is a method on it (§6.1)
+            const std::string colour = emit_expression(*call.arguments.at(0));
+            // the amount renders second, because it is the fraction or alpha the operation works by (§6.1)
+            const std::string amount = emit_expression(*call.arguments.at(1));
+            // the three operations are spelled as the methods core/paint.h declares (§6.1)
+            if (call.function == "transparentize")
+                return "(" + colour + ").transparentized(" + amount + ")";
+            // an alpha modulation scales the alpha rather than replacing it (§6.1)
+            if (call.function == "alpha")
+                return "(" + colour + ").with_alpha(" + amount + ")";
+            // an alpha replacement sets the alpha outright, which is what an explicit opacity asks for (§6.1)
+            return "(" + colour + ").alpha_set(" + amount + ")";
         }
 
         std::string ComponentEmitter::emit_conversion(const ConversionExpression& conversion) {

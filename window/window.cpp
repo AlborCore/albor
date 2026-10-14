@@ -70,11 +70,26 @@ namespace albor
     }
 
     void Window::request_frame() {
-        // a window without a native window presents nothing (§4.3)
+        // a window without a platform has nothing to pace (§6.1)
         if (!m_platform)
             return;
-        // the native window records the request and answers it on the next pacing tick (§4.3, AD-18b)
         m_platform->request_frame();
+    }
+
+    void Window::set_text_anchor(Rect anchor) {
+        // a window without a platform has no input method to anchor (§8.3)
+        if (!m_platform)
+            return;
+        // the anchor is handed through whole, which the platform places (§8.3)
+        m_platform->set_text_anchor(anchor);
+    }
+
+    void Window::set_text_selection(TextInputRange selection) {
+        // a window without a platform has no input method to address a document through (§8.3)
+        if (!m_platform)
+            return;
+        // the range is handed through whole, which the platform stores in its own units (§8.3)
+        m_platform->set_text_selection(selection);
     }
 
     NativeWindowHandle Window::native_handle() const {

@@ -1,5 +1,4 @@
 #include <memory>
-#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -9,6 +8,7 @@
 #include "input/event_filter.h"
 #include "input/input_controller.h"
 #include "input/input_dispatcher.h"
+#include "ui/focus_target.h"
 #include "ui/ui_event.h"
 #include "ui/ui_node.h"
 
@@ -74,6 +74,35 @@ namespace
                 event.handled = true;
         }
     };
+    // the focus tracking test double, which records what the manager told it (§8.3)
+    class FocusRecordingNode final : public UiNode, public FocusTarget
+    {
+    public:
+        // whether the node believes it holds the focus (§8.3)
+        bool focused = false;
+
+        // how many times the manager told this node about the focus (§8.3)
+        std::size_t told = 0;
+
+        void set_focused(bool value) override {
+            // the state is stored, because that is what the assertion reads (§8.3)
+            this->focused = value;
+            // the count rises on every report, so a test can see it happened at all (§8.3)
+            told++;
+        }
+
+        void measure(const SizeConstraints& constraints, Size& out_size) override {
+            // the node fills whatever it is offered, because the focus tests do not exercise layout (§8.2)
+            out_size = constraints.constrain(Size{10.0f, 10.0f});
+            m_measured_size = out_size;
+        }
+
+        [[nodiscard]] bool hit_test(Point logical_point) const override {
+            // the node hits anywhere inside its bounds, so a test controls the point (§8.3)
+            return logical_point.x >= 0.0f && logical_point.y >= 0.0f;
+        }
+    };
+
 } // namespace
 
 TEST(EventFilterChecks, PointerDownIsAPointerEvent) {
@@ -138,14 +167,16 @@ TEST(EventFilterChecks, WheelIsTheOnlyScrollEvent) {
     EXPECT_FALSE(EventFilter::is_scroll(text));
 }
 
-TEST(EventFilterChecks, TextInputIsTheOnlyTextEvent) {
+TEST(EventFilterChecks, CommittedAndPreEditTextAreTheTextEvents) {
     // arrange
     Event text{.kind = EventKind::TextInput};
+    Event composing{.kind = EventKind::Composing};
     Event move{.kind = EventKind::PointerMove};
     Event key{.kind = EventKind::KeyUp};
     Event wheel{.kind = EventKind::Wheel};
     // act assert
     EXPECT_TRUE(EventFilter::is_text(text));
+    EXPECT_TRUE(EventFilter::is_text(composing));
     EXPECT_FALSE(EventFilter::is_text(move));
     EXPECT_FALSE(EventFilter::is_text(key));
     EXPECT_FALSE(EventFilter::is_text(wheel));
@@ -169,10 +200,12 @@ TEST(EventFilterChecks, KeyAndTextEventsCarryNoPosition) {
     Event key_down{.kind = EventKind::KeyDown};
     Event key_up{.kind = EventKind::KeyUp};
     Event text{.kind = EventKind::TextInput};
+    Event composing{.kind = EventKind::Composing};
     // act assert
     EXPECT_FALSE(EventFilter::positioned(key_down));
     EXPECT_FALSE(EventFilter::positioned(key_up));
     EXPECT_FALSE(EventFilter::positioned(text));
+    EXPECT_FALSE(EventFilter::positioned(composing));
 }
 
 TEST(InputDispatcherChecks, RoutesToTheRootWhenItHasNoChildren) {
@@ -438,6 +471,57 @@ TEST(InputDispatcherChecks, AnAlreadyClaimedEventIsNotRoutedToFocus) {
     InputDispatcher::dispatch_to_focused(root, event, &root);
     // assert
     EXPECT_EQ(root.deliveries, 0u);
+}
+
+TEST(FocusManagerChecks, AFocusTargetIsToldWhenTheFocusMovesOntoIt) {
+    // arrange a node that tracks the focus, which is what a caret is (§8.3)
+    FocusManager manager;
+    FocusRecordingNode node;
+    node.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    // act
+    manager.request_focus(&node);
+    // assert the node knows it holds the focus, because a caret follows it (§8.3)
+    EXPECT_TRUE(node.focused);
+    EXPECT_EQ(node.told, 1u);
+}
+
+TEST(FocusManagerChecks, AFocusTargetIsToldWhenTheFocusMovesOffIt) {
+    // arrange two tracked nodes, one holding the focus (§8.3)
+    FocusManager manager;
+    FocusRecordingNode first;
+    FocusRecordingNode second;
+    first.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    second.arrange(Rect::from_origin_size(Point{20.0f, 0.0f}, Size{10.0f, 10.0f}));
+    manager.request_focus(&first);
+    // act the focus moves to the other node
+    manager.request_focus(&second);
+    // assert the first was told it lost the focus, which is what ends a blink (§8.3)
+    EXPECT_FALSE(first.focused);
+    EXPECT_TRUE(second.focused);
+}
+
+TEST(FocusManagerChecks, LosingTheFocusTellsTheTargetToo) {
+    // arrange a tracked node holding the focus (§8.3)
+    FocusManager manager;
+    FocusRecordingNode node;
+    node.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    manager.request_focus(&node);
+    // act the window loses its focus
+    manager.clear_focus();
+    // assert the node was told, because a caret must not keep blinking (§8.3)
+    EXPECT_FALSE(node.focused);
+    EXPECT_EQ(manager.focused(), nullptr);
+}
+
+TEST(FocusManagerChecks, ANodeThatDoesNotTrackTheFocusIsUntouched) {
+    // arrange an ordinary node, which the manager focuses without knowing anything else (§8.3)
+    FocusManager manager;
+    RecordingNode node;
+    node.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    // act
+    manager.request_focus(&node);
+    // assert the focus landed, which is all an ordinary node is asked (§8.3)
+    EXPECT_EQ(manager.focused(), &node);
 }
 
 TEST(FocusManagerChecks, StartsWithNothingFocused) {
@@ -1011,6 +1095,36 @@ TEST(InputControllerChecks, ATextEventReachesTheFocusedWalk) {
     // assert the text channel routes through the focused walk, which the dispatcher serves (§8.3)
     EXPECT_EQ(root.deliveries, 1u);
     EXPECT_TRUE(event.handled);
+}
+
+TEST(InputControllerChecks, AComposingEventReachesTheFocusedWalk) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    controller.attach(root);
+    // act
+    Event event{.kind = EventKind::Composing, .text = "\xE3\x81\x82"};
+    controller.deliver(event);
+    // assert a pre-edit walks the same channel as a commit, because the field the focus names answers both (§8.3)
+    EXPECT_EQ(root.deliveries, 1u);
+    EXPECT_TRUE(event.handled);
+}
+
+TEST(InputControllerChecks, AComposingEventIsClaimedSeparatelyFromACommit) {
+    // arrange
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    controller.attach(root);
+    // act
+    Event marked{.kind = EventKind::Composing, .text = "\xE3\x81\x82"};
+    controller.deliver(marked);
+    Event committed{.kind = EventKind::TextInput, .text = "\xE3\x81\x82"};
+    controller.deliver(committed);
+    // assert the pre-edit and the commit arrive as two events, which is what makes the two states distinct (§8.3)
+    EXPECT_EQ(root.deliveries, 2u);
+    EXPECT_TRUE(committed.handled);
 }
 
 TEST(InputControllerChecks, ASecondPressWhileCapturingIsDropped) {

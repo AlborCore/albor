@@ -19,6 +19,7 @@
 #include "widgets/label.h"
 #include "widgets/scroll_view.h"
 #include "widgets/slider.h"
+#include "widgets/text_field.h"
 
 using namespace albor;
 
@@ -286,4 +287,92 @@ TEST(PreviewHostChecks, EveryWrittenPropertyReachesTheWidgetItNames) {
     Label* sized = dynamic_cast<Label*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<Label*>(&node) != nullptr; }));
     ASSERT_NE(sized, nullptr);
     EXPECT_FLOAT_EQ(sized->font_size(), 21.0f);
+}
+
+TEST(PreviewHostChecks, AFieldsOwnStatesBothHoldBecauseTheyAreSeparateProperties) {
+    // arrange a field writing both states, which a preview must show as the author wrote them (§8)
+    const std::string source = R"UI(component Both {
+    TextField {
+        id: notes;
+        read_only: true;
+        multiline: true;
+    }
+})UI";
+    BindingEngine engine;
+    // act
+    preview::PreviewResult result = preview::build(source, engine);
+    // assert nothing was reported, because every property here is one the catalog declares (§11.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    TextField* field = dynamic_cast<TextField*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<TextField*>(&node) != nullptr; }));
+    ASSERT_NE(field, nullptr);
+    // assert the read only state holds, because writing multiline must not clear it (§8)
+    EXPECT_TRUE(field->read_only());
+    // assert the multi line state holds too, because writing one state must not clear the other (§8)
+    EXPECT_TRUE(field->multiline());
+}
+
+TEST(PreviewHostChecks, WritingTheMultiLineStateLeavesTheReadOnlyStateAlone) {
+    // arrange a field writing only the multi line state, which must not disturb what it did not write (§8)
+    const std::string source = R"UI(component OnlyMultiline {
+    TextField {
+        id: notes;
+        multiline: true;
+    }
+})UI";
+    BindingEngine engine;
+    // act
+    preview::PreviewResult result = preview::build(source, engine);
+    // assert nothing was reported, because every property here is one the catalog declares (§11.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    TextField* field = dynamic_cast<TextField*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<TextField*>(&node) != nullptr; }));
+    ASSERT_NE(field, nullptr);
+    EXPECT_TRUE(field->multiline());
+    // assert the untouched state keeps its own default, which is an editable field (§8)
+    EXPECT_FALSE(field->read_only());
+}
+
+TEST(PreviewHostChecks, TheWrittenFontSizeReachesAFieldAndNotOnlyALabel) {
+    // arrange a field writing its size, which a label and a field both own (§9.1)
+    const std::string source = R"UI(component SizedField {
+    TextField {
+        id: notes;
+        value: "Albor";
+        font_size: 19.0;
+    }
+})UI";
+    BindingEngine engine;
+    // act
+    preview::PreviewResult result = preview::build(source, engine);
+    // assert nothing was reported, because every property here is one the catalog declares (§11.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    TextField* field = dynamic_cast<TextField*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<TextField*>(&node) != nullptr; }));
+    ASSERT_NE(field, nullptr);
+    // assert the size reached the field, because one assignment names one number on either widget (§9.1)
+    EXPECT_FLOAT_EQ(field->font_size(), 19.0f);
+}
+
+TEST(PreviewHostChecks, AFieldShowsTheValueAndHintTheAuthorWrote) {
+    // arrange a field writing both strings, which a preview shows as written (§8)
+    const std::string source = R"UI(component WrittenField {
+    TextField {
+        id: notes;
+        value: "Albor";
+        placeholder: "type here";
+    }
+})UI";
+    BindingEngine engine;
+    // act
+    preview::PreviewResult result = preview::build(source, engine);
+    // assert nothing was reported, because every property here is one the catalog declares (§11.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    TextField* field = dynamic_cast<TextField*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<TextField*>(&node) != nullptr; }));
+    ASSERT_NE(field, nullptr);
+    // assert the edited text reaches the widget, because a preview shows the value the app will show (§8)
+    EXPECT_EQ(field->value(), "Albor");
+    // assert the hint reaches it too, because an empty field draws what the author wrote (§8)
+    EXPECT_EQ(field->placeholder(), "type here");
 }

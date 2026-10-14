@@ -36,6 +36,18 @@ namespace albor::compiler
         return node;
     }
 
+    ExpressionPtr CallExpression::make(std::string function, std::vector<ExpressionPtr> arguments, SourceSpan span) {
+        // the node is allocated before it is filled, because the caller only holds the owning pointer (§11.1)
+        auto node = std::make_unique<CallExpression>();
+        // the builtin name is moved in rather than copied, because the scanner already built it (§11.1)
+        node->function = std::move(function);
+        // the arguments are moved in, because only one tree may own them (§11.1)
+        node->arguments = std::move(arguments);
+        // the span covers the whole call, so a diagnostic about it points at it (§11.1)
+        node->span = span;
+        return node;
+    }
+
     ExpressionPtr ConversionExpression::make(std::string target_type, ExpressionPtr value, SourceSpan span) {
         // the node is allocated before it is filled, because the caller only holds the owning pointer (§11.1)
         auto node = std::make_unique<ConversionExpression>();
