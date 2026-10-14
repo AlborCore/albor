@@ -4020,6 +4020,7 @@ TEST(NativeThemeChecks, AToggleOnAMixedBoxResolvesToChecked) {
     CheckBox box(&engine, "box");
     box.set_on_toggle([&reported](bool checked) { reported = checked; });
     box.set_indeterminate(true);
+    box.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{16.0f, 16.0f}));
     // act a press inside the box toggles it, which is the shared path a key press takes too (§8.3)
     Event press{.kind = EventKind::PointerDown, .position = Point{4.0f, 4.0f}};
     box.dispatch_event(press);
@@ -4087,15 +4088,15 @@ TEST(NativeThemeChecks, AThemedSliderFocusRingSurroundsTheThumb) {
     SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
     // act
     slider.render(recorder);
-    // assert the ring is the last record, which draws after the track and the thumb (§8.4)
+    // assert the ring draws first, because the background phase precedes the content it surrounds (§8.4)
     const std::shared_ptr<const FrameScene> scene = recorder.scene();
     ASSERT_EQ(scene->commands().size(), 3u);
-    const Rect& thumb = scene->commands()[1].rect_geometry().rect;
-    const Rect& ring = scene->commands()[2].rect_geometry().rect;
+    const Rect& ring = scene->commands()[0].rect_geometry().rect;
+    const Rect& thumb = scene->commands()[2].rect_geometry().rect;
     // assert the ring stands two away from the thumb on every side, because a ring surrounds rather than overlaps (§6.1)
     EXPECT_FLOAT_EQ(ring.x, thumb.x - theme.metrics().focus_ring_offset);
     EXPECT_FLOAT_EQ(ring.width, thumb.width + theme.metrics().focus_ring_offset * 2.0f);
-    EXPECT_FLOAT_EQ(scene->commands()[2].rect_geometry().radius, theme.metrics().focus_ring_radius);
+    EXPECT_FLOAT_EQ(scene->commands()[0].rect_geometry().radius, theme.metrics().focus_ring_radius);
 }
 
 TEST(NativeThemeChecks, AThemedSliderDrawsAnElevatedThumb) {

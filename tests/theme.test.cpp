@@ -281,7 +281,7 @@ namespace albor
         EXPECT_FLOAT_EQ(macos.metrics().checkbox_outline, 1.0f);
         EXPECT_FLOAT_EQ(macos.metrics().slider_thumb, 22.0f);
         EXPECT_FLOAT_EQ(macos.metrics().slider_thumb_radius, 11.0f);
-        EXPECT_FLOAT_EQ(macos.metrics().slider_thumb_shadow, 0.30f);
+        EXPECT_FLOAT_EQ(macos.metrics().slider_thumb_shadow, 0.14f);
         // the hierarchy sizes body copy at thirteen (§8.4)
         EXPECT_FLOAT_EQ(macos.typography().body, 13.0f);
     }

@@ -1114,7 +1114,7 @@ TEST(Window, AnAppearanceChangeReachesTheAppearanceHandler) {
     window.set_appearance_handler([&received](const SystemAppearance& appearance) { received = appearance; });
     // act the platform raises a light scheme with its accent, which is what a flip produces (§8.4)
     const SystemAppearance changed{ColorScheme::Light, Color::rgb(1.0f, 0.0f, 0.0f)};
-    native->listener->on_platform_appearance_changed(changed);
+    platform->listener->on_platform_appearance_changed(changed);
     // assert the handler saw the appearance whole, which is what a theme follows (§8.4)
     EXPECT_TRUE(received == changed);
     // assert the window is the listener the raise reached, so the window owns the notification (§5.3)
