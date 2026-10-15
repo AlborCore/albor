@@ -1131,6 +1131,12 @@ A record crosses a signal by value, and a field of a record-typed property is wr
 the field-write form above). The compiler emits the record and the enumeration as guarded native
 types, and a `.ui`-declared type is resolved before the manifest catalog is consulted.
 
+A record is also constructed as a value with `Frame { width: 16.0, height: 9.0 };`. Named fields
+make the written order free, and a field the construction leaves out is value-initialised, so
+`Frame { width: 16.0 }` is a complete value with `height` at zero. The compiler emits the fields in
+the order the record declared them, because that is the order a C++ designated initialiser requires.
+A construction names a record and nothing else; constructing any other type is rejected.
+
 #### Functions
 
 A `.ui` file declares a pure named computation that a binding may call:
@@ -1154,14 +1160,41 @@ C++ function, matching the plain-static-function binding convention of §13.3. A
 declared function before any builtin of the same name; the parameters are typed and the argument
 arity and types are checked.
 
+#### Module-Scoped Values
+
+A `.ui` file declares a module-scoped named value that the bindings of the file read:
+
+```text
+global banner: string = "Albor";
+
+component Panel {
+    Column {
+        Label { text: banner; }
+    }
+}
+```
+
+A module in this language is one `.ui` file, so the value is visible to every component the file
+declares and to nothing outside it. The type is required, because the initializer is checked
+against it rather than inferred from it, and the value is read-only — a write reports against the
+declaration, which is what makes it safe to share.
+
+A read resolves after every local scope — function parameters, a repeat item, a signal parameter,
+the component's own properties — so a property of the same name shadows it. A module-scoped value
+never changes, so reading one adds no binding dependency: there is no change that could make the
+binding re-run (§7.3, AD-04a). The initializer is an ordinary expression of the file's own scope,
+so it may construct a record (`Frame { width: 16.0 }`) or call a declared `fn` above, but it may
+not read another module-scoped value — which keeps the set free of cycles with no ordering rule.
+
+It compiles to a file-level `static const` guarded by name — the same shape a `fn` takes — and a
+read renders as that plain name in the generated binding function: no `std::function`, no
+per-binding allocation (§13.3).
+
 #### Not Yet in the Grammar
 
-Three forms the application POC needs are **not** settled and are deliberately absent rather than
+Two forms the application POC needs are **not** settled and are deliberately absent rather than
 sketched, because each waits on a design decision of its own:
 
-- **`global`** — a module-scoped named value (a palette, an action hub, a lookup table) that several
-  components read. Its shape must respect the no-`std::function` binding convention before it is
-  designed.
 - **component composition** — a `.ui` component instantiating another `.ui` component; today only
   manifest-native types can be instantiated.
 - **inheritance and slotted content** — a base component accepting content from a derived one
@@ -1169,8 +1202,8 @@ sketched, because each waits on a design decision of its own:
   shape is the element grammar itself rather than any unanswered command question.
 
 The command side of this is settled — a handler fires a command and a base may hold one (§11.1, §18.8)
-— so each form now waits on its own design: the binding convention for `global`, the element grammar
-for the other two.
+— and `global` now waits on no question of its own (§11.1), so both remaining forms wait on the
+element grammar itself.
 
 ### 11.2 Native Component Manifests (AD-17)
 
