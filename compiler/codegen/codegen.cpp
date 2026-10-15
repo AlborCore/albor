@@ -231,6 +231,9 @@ namespace albor::compiler
             case TypeKind::Scrollbar:
                 // the policy set renders as the enumeration the viewport takes, which names itself (§11.3, §8)
                 return "ScrollbarVisibility";
+            case TypeKind::Command:
+                // a command reaches the generated body as a borrowed pointer, which the widget binds to (§18.1, AD-15)
+                return "Command*";
             case TypeKind::Vector:
                 // a collection becomes the standard vector over its element, which recurses into a nested one (§8.1)
                 return "std::vector<" + cpp_type(type.element()) + ">";
@@ -300,7 +303,7 @@ namespace albor::compiler
             const std::string key = std::string(element) + "." + std::string(property);
             // the property to setter map is the closed catalogue of §8 (§11.3)
             static const std::unordered_map<std::string, std::string_view> setters{
-                {"Column.spacing", "set_gap"}, {"Column.padding", "set_padding"}, {"Row.spacing", "set_gap"}, {"Padding.padding", "set_padding"}, {"Grid.spacing", "set_gap"}, {"Label.text", "set_text"}, {"Label.foreground", "set_foreground"}, {"Label.font_size", "set_font_size"}, {"Button.text", "set_label"}, {"Button.background", "set_background"}, {"Button.disabled", "set_disabled"}, {"Slider.value", "set_value"}, {"Slider.disabled", "set_disabled"}, {"Slider.track_color", "set_track_color"}, {"Slider.thumb_color", "set_thumb_color"}, {"CheckBox.checked", "set_checked"}, {"CheckBox.disabled", "set_disabled"}, {"CheckBox.outline", "set_outline"}, {"CheckBox.check_fill", "set_check_fill"}, {"ScrollView.overscan", "set_overscan"}, {"ScrollView.scrollbar", "set_scrollbar_visibility"}, {"ScrollView.row_height", "set_row_height"}, {"TextField.value", "set_value"}, {"TextField.placeholder", "set_placeholder"}, {"TextField.read_only", "set_read_only"}, {"TextField.multiline", "set_multiline"}, {"TextField.disabled", "set_disabled"}, {"TextField.font_size", "set_font_size"},
+                {"Column.spacing", "set_gap"}, {"Column.padding", "set_padding"}, {"Row.spacing", "set_gap"}, {"Padding.padding", "set_padding"}, {"Grid.spacing", "set_gap"}, {"Label.text", "set_text"}, {"Label.foreground", "set_foreground"}, {"Label.font_size", "set_font_size"}, {"Button.text", "set_label"}, {"Button.background", "set_background"}, {"Button.disabled", "set_disabled"}, {"Button.action", "set_command"}, {"Slider.value", "set_value"}, {"Slider.disabled", "set_disabled"}, {"Slider.track_color", "set_track_color"}, {"Slider.thumb_color", "set_thumb_color"}, {"Slider.action", "set_command"}, {"CheckBox.checked", "set_checked"}, {"CheckBox.disabled", "set_disabled"}, {"CheckBox.outline", "set_outline"}, {"CheckBox.check_fill", "set_check_fill"}, {"CheckBox.action", "set_command"}, {"ScrollView.overscan", "set_overscan"}, {"ScrollView.scrollbar", "set_scrollbar_visibility"}, {"ScrollView.row_height", "set_row_height"}, {"TextField.value", "set_value"}, {"TextField.placeholder", "set_placeholder"}, {"TextField.read_only", "set_read_only"}, {"TextField.multiline", "set_multiline"}, {"TextField.disabled", "set_disabled"}, {"TextField.font_size", "set_font_size"},
             };
             // the lookup is a ready made key, because the pair is the identity (§11.3)
             const auto found = setters.find(key);
@@ -681,6 +684,8 @@ namespace albor::compiler
             bool m_uses_color = false;
             // whether any alignment value reaches the generated units, which the align header follows (§14.1, §8.2)
             bool m_uses_align = false;
+            // whether a command reaches the generated facade, which the forward declaration follows (§18.1, AD-15)
+            bool m_uses_command = false;
 
             // whether any property carries a collection, which decides the vector header (§8.1)
             bool m_uses_vector = false;
@@ -904,7 +909,7 @@ namespace albor::compiler
 
         void ComponentEmitter::validate_type(const ValueType& type, const SourceSpan& span) {
             // a scalar type translates directly, which is what every other check assumes (§11.3)
-            if (type.is(TypeKind::Bool) || type.is(TypeKind::Int) || type.is(TypeKind::Float) || type.is(TypeKind::String) || type.is(TypeKind::Color) || type.is(TypeKind::Length) || type.is(TypeKind::Align) || type.is(TypeKind::Scrollbar))
+            if (type.is(TypeKind::Bool) || type.is(TypeKind::Int) || type.is(TypeKind::Float) || type.is(TypeKind::String) || type.is(TypeKind::Color) || type.is(TypeKind::Length) || type.is(TypeKind::Align) || type.is(TypeKind::Scrollbar) || type.is(TypeKind::Command))
                 return;
             // a collection is generatable when its element is, which is the same rule applied one level in (§8.1)
             if (type.is(TypeKind::Vector)) {
@@ -1240,6 +1245,9 @@ namespace albor::compiler
             line(0, "");
             line(0, "namespace albor");
             line(0, "{");
+            // a command is a pointer in the facade, so a forward declaration is all a signature needs (§18.1, AD-15)
+            if (m_uses_command)
+                line(1, "class Command;");
             // the data types a snapshot carries are declared ahead, which keeps the signatures compilable (§13.2)
             if (!m_data_declarations.empty()) {
                 line(1, "// the application data types a snapshot carries, which the facade declares ahead rather than includes (§11.2, AD-17)");
@@ -2528,7 +2536,9 @@ namespace albor::compiler
                     line(2, "auto* self = static_cast<Impl*>(raw);");
                     m_object = "self";
                     line(2, "// the value is computed once, which the widget and the sink both take (§13.3)");
-                    line(2, "const " + cpp_type(assignment.type) + " value = " + emit_expression(*assignment.value) + ";");
+                    // a pointer value stays mutable, because the widget setter takes a non-const command (§18.1, AD-15)
+                    const std::string value_type = cpp_type(assignment.type);
+                    line(2, (value_type.ends_with('*') ? std::string() : std::string("const ")) + value_type + " value = " + emit_expression(*assignment.value) + ";");
                     // a body that is not built writes nothing, because the node does not exist yet (§11.1)
                     if (slot.conditional != NO_CONDITIONAL) {
                         line(2, "// the conditional body may be absent, so nothing is written when it is (§11.1)");
@@ -3137,11 +3147,21 @@ namespace albor::compiler
             // the colour flag rises with any colour surface, which the paint header then joins (§14.1)
             for (const CheckedProperty& property : m_component.properties)
                 m_uses_color = m_uses_color || property.type.is(TypeKind::Color);
+            // a command slot or an action binding names the command type, which the header then forwards (§18.1, AD-15)
+            for (const CheckedProperty& property : m_component.properties)
+                m_uses_command = m_uses_command || property.type.is(TypeKind::Command);
+            // an action assignment binds a command to a widget, so it carries the same need (§18.1, AD-15)
+            for (const NodeSlot& slot : m_nodes)
+                for (const CheckedAssignment& assignment : slot.node->assignments)
+                    m_uses_command = m_uses_command || assignment.type.is(TypeKind::Command);
             // the signal parameters carry the same need, which the facade signatures then spell (§14.1)
             for (const CheckedSignal& signal : m_component.signals) {
                 // each parameter is checked, because any one of them forces the header (§14.1)
-                for (const ValueType& parameter : signal.parameter_types)
+                for (const ValueType& parameter : signal.parameter_types) {
                     m_uses_color = m_uses_color || parameter.is(TypeKind::Color);
+                    // a command parameter names the command type, which the header then forwards (§18.1, AD-15)
+                    m_uses_command = m_uses_command || parameter.is(TypeKind::Command);
+                }
             }
             // the defaults may hold colour text as well, which the include set must not miss (§11.3)
             for (const CheckedProperty& property : m_component.properties) {

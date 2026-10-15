@@ -1,0 +1,13 @@
+// the command fixture, which proves a command property binds to a widget action (§18.1, AD-15)
+
+component CommandPanel {
+    in property<command> save;
+
+    Column {
+        Button { text: "Save"; action: save; }
+
+        Slider { value: 0.5; action: save; }
+
+        CheckBox { checked: true; action: save; }
+    }
+}

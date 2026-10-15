@@ -1693,3 +1693,31 @@ TEST(TypeChecker, ReportsAMismatchedFunctionArgument) {
     // assert the problem is a mismatch, because the written type cannot fill the parameter (§11.1)
     EXPECT_GT(diagnostics.count(), 0U);
 }
+
+TEST(TypeChecker, TypesACommandPropertyAndItsWidgetAction) {
+    // arrange a component declares a command slot and a button action (§18.1, AD-15)
+    const std::string_view source = "component C { in property<command> save; Column { Button { text: \"Save\"; action: save; } } }";
+    // act the file is checked, because the command type and the action property must both resolve (§18.1)
+    const CheckedFile file = check(source);
+    // assert the action assignment carries the command type, because that is what the binding resolved to (§18.1)
+    const CheckedNode& button = *only(file).root->children.at(0);
+    EXPECT_TRUE(button.assignments.at(1).type.is(TypeKind::Command));
+}
+
+TEST(TypeChecker, RefusesAnActionBoundToANonCommandValue) {
+    // arrange diagnostics, because a value that is not a command cannot fill an action (§18.1, AD-15)
+    DiagnosticList diagnostics;
+    // act the button action is bound to an integer, which is not the command type (§18.1, AD-15)
+    check("component C { Column { Button { action: 5; } } }", diagnostics);
+    // assert the problem is a mismatch, because the written value cannot fill the slot (§11.1)
+    EXPECT_EQ(first(diagnostics).code, "E0410");
+}
+
+TEST(TypeChecker, ReportsAnActionOnAWidgetThatCarriesNone) {
+    // arrange diagnostics, because a label performs no action, so the catalogue gives it none (§18.1, AD-15)
+    DiagnosticList diagnostics;
+    // act the action is written on a label, which exposes no action property (§11.1)
+    check("component C { in property<command> save; Column { Label { action: save; } } }", diagnostics);
+    // assert the problem names the property, because that is what the author must move (§11.1)
+    EXPECT_EQ(first(diagnostics).code, "E0411");
+}

@@ -62,7 +62,7 @@ namespace albor::compiler
 
     std::string ValueType::to_string() const {
         // the spellings are a table indexed by kind, so a new kind cannot leave a path unhandled (§11.1)
-        static const char* const SPELLINGS[] = {"<error>", "void", "bool", "int", "float", "string", "color", "align", "scrollbar", "length", "Snapshot<", "vector<", ""};
+        static const char* const SPELLINGS[] = {"<error>", "void", "bool", "int", "float", "string", "color", "align", "scrollbar", "length", "Snapshot<", "vector<", "", "command"};
         // the two parameter forms append their element, so only their prefix comes from the table (§11.1)
         if (m_kind == TypeKind::Snapshot)
             return std::string(SPELLINGS[static_cast<std::size_t>(m_kind)]) + element().to_string() + ">";
@@ -337,7 +337,7 @@ namespace albor::compiler
         // a leaf performs an action when it is pressed, which is a push control (§8)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Button", // the label and the plate and the disabled state are what a button exposes (§8)
-                                              .properties = {ElementProperty{.name = "text", .type = scalar(TypeKind::String), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "background", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}},
+                                              .properties = {ElementProperty{.name = "text", .type = scalar(TypeKind::String), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "background", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "action", .type = scalar(TypeKind::Command), .assignable = true, .scaled_by_density = false}},
                                               // a button raises a click when it is pressed (§8)
                                               .signals = {ElementSignal{.name = "clicked", .parameter_types = {}}},
                                               // a button is a leaf, so it takes no children (§8)
@@ -346,7 +346,7 @@ namespace albor::compiler
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Slider",
                                               // the value and the disabled state and the two colours are what a slider exposes (§8)
-                                              .properties = {ElementProperty{.name = "value", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "min", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "max", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "track_color", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "thumb_color", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}},
+                                              .properties = {ElementProperty{.name = "value", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "min", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "max", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "track_color", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "thumb_color", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "action", .type = scalar(TypeKind::Command), .assignable = true, .scaled_by_density = false}},
                                               // a slider raises a change when the user drags it, and names the value (§8)
                                               .signals = {ElementSignal{.name = "changed", .parameter_types = {scalar(TypeKind::Float)}, .parameter_names = {"value"}}},
                                               // a slider is a leaf, so it takes no children (§8)
@@ -355,7 +355,7 @@ namespace albor::compiler
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "CheckBox",
                                               // the checked and the disabled state and the two colours are what a checkbox exposes (§8)
-                                              .properties = {ElementProperty{.name = "checked", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "outline", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "check_fill", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}},
+                                              .properties = {ElementProperty{.name = "checked", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "outline", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "check_fill", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "action", .type = scalar(TypeKind::Command), .assignable = true, .scaled_by_density = false}},
                                               // a checkbox raises a toggle with its new value (§8)
                                               .signals = {ElementSignal{.name = "toggled", .parameter_types = {scalar(TypeKind::Bool)}, .parameter_names = {"checked"}}},
                                               // a checkbox is a leaf, so it takes no children (§8)
@@ -513,6 +513,9 @@ namespace albor::compiler
         // a length is spelled length, so a declared length and a literal length agree (§11.1, AD-27)
         if (written == "length")
             return scalar(TypeKind::Length);
+        // a command is spelled command, so a declared slot and a widget action name one type (§18.1, AD-15)
+        if (written == "command")
+            return scalar(TypeKind::Command);
         // a snapshot is written Snapshot<T>, whose element may itself nest (§10.5, §13.2)
         if (written.substr(0, SNAPSHOT_OPEN.size()) == SNAPSHOT_OPEN && written.size() >= SHORTEST_PARAMETRIC && written.substr(written.size() - SNAPSHOT_CLOSE.size()) == SNAPSHOT_CLOSE) {
             // the element is the part between the brackets, which resolves the same way (§10.5, §13.2)

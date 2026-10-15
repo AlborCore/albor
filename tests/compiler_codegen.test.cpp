@@ -1672,3 +1672,34 @@ TEST(Codegen, EmitsAFunctionAsAGuardedStaticDefinition) {
     // the call renders as a plain C++ call, which the static function above defines (§11.1)
     EXPECT_TRUE(contains(cpp.content, "double(self->m_amount.get())"));
 }
+
+TEST(Codegen, EmitsACommandActionBinding) {
+    // arrange diagnostics, because the command type and the action setter must both generate (§18.1, AD-15)
+    DiagnosticList diagnostics;
+    // act a component declares a command slot and binds a button action to it (§18.1, AD-15)
+    const std::string_view source = R"(
+component Editor {
+    in property<command> save;
+
+    Column {
+        Button {
+            text: "Save";
+            action: save;
+        }
+    }
+}
+)";
+    // assert the whole file generates, because the command type and the action property both resolved (§18.1)
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    EXPECT_FALSE(files.empty());
+    EXPECT_FALSE(diagnostics.has_errors());
+    const GeneratedFile& header = file_named(files, "editor.h");
+    // the header forwards the command, because an accessor names it as a pointer (§18.1, AD-15)
+    EXPECT_TRUE(contains(header.content, "class Command;"));
+    EXPECT_TRUE(contains(header.content, "[[nodiscard]] Command* save() const;"));
+    EXPECT_TRUE(contains(header.content, "void set_save(Command* value);"));
+    const GeneratedFile& cpp = file_named(files, "editor.cpp");
+    // the body holds the slot and forwards it to the widget setter, which is what the action binds (§18.1, AD-15)
+    EXPECT_TRUE(contains(cpp.content, "Property<Command*> m_save;"));
+    EXPECT_TRUE(contains(cpp.content, "->set_command(value);"));
+}

@@ -48,7 +48,10 @@ namespace albor::compiler
         Vector,
 
         // a native component type the manifest declares, which the checker resolves by name (§11.2, AD-17)
-        Native
+        Native,
+
+        // a reference to a shared command object, which a widget action binds to (§18.1, AD-15)
+        Command
     };
 
     // one value type, which is either a scalar kind, a parameter form or a named native type (§11.1)
