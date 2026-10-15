@@ -278,6 +278,36 @@ namespace albor::compiler
         static ExpressionPtr make(std::vector<ExpressionPtr> elements, SourceSpan span);
     };
 
+    // one named field of a construction, which pairs the declared name with the value it takes (§11.1)
+    struct ConstructionField
+    {
+        // the field name as written, which the record declaration resolves (§11.1)
+        std::string name;
+
+        // the value assigned to it, which the checker types against the declared field (§11.1)
+        ExpressionPtr value;
+    };
+
+    // a construction of a record value, written Type{field: value}, which is how an author writes one (§11.1)
+    class RecordConstructionExpression : public Expression
+    {
+    public:
+        // the record type as written, which the checker resolves against the declared types (§11.1)
+        std::string type_name;
+
+        // the fields in written order, each pairing its name with its value (§11.1)
+        std::vector<ConstructionField> fields;
+
+        // where the braces were written (§11.1)
+        SourceSpan span;
+
+        // hand out where the braces were written (§11.1)
+        [[nodiscard]] const SourceSpan& location() const override { return span; }
+
+        // build a construction, which the parser makes once it has read the field list (§11.1)
+        static ExpressionPtr make(std::string type_name, std::vector<ConstructionField> fields, SourceSpan span);
+    };
+
     // a read of one field of a record, written item.title, which is how a repeat body reaches its item (§11.2, AD-17)
     class FieldAccessExpression : public Expression
     {
@@ -380,6 +410,22 @@ namespace albor::compiler
 
         // the returned expression, which is the whole of the body in this form (§11.1)
         ExpressionPtr return_value;
+
+        // where the declaration was written (§11.1)
+        SourceSpan span;
+    };
+
+    // a module-scoped named value the file declares, which several components read (§11.1)
+    struct GlobalDeclaration
+    {
+        // the declared name, which a reference resolves against (§11.1)
+        std::string name;
+
+        // the declared type as written, which the checker resolves against the catalog (§11.1)
+        std::string type;
+
+        // the initial value, which is the whole of the declaration in this form (§11.1)
+        ExpressionPtr value;
 
         // where the declaration was written (§11.1)
         SourceSpan span;

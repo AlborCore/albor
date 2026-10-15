@@ -24,6 +24,9 @@ namespace albor::compiler
         // the keyword that introduces a function declaration, which a binding may call (§11.1)
         constexpr std::string_view FN_KEYWORD = "fn";
 
+        // the keyword that introduces a module-scoped value, which several components read (§11.1)
+        constexpr std::string_view GLOBAL_KEYWORD = "global";
+
         // the keyword that introduces a property declaration, which carries the direction (§11.1)
         constexpr std::string_view PROPERTY_KEYWORD = "property";
 
@@ -165,21 +168,30 @@ namespace albor::compiler
         // the name starts empty, because a bracketed type may begin with its own angle (§11.1)
         std::string name;
         // a bracketed type opens with an angle, which the caller has to see before anything is read (§11.1)
-        if (bracketed)
+        if (bracketed) {
             expect_punctuation("<");
-        // a bare type is a single name, because it is delimited by the surrounding punctuation (§11.1)
-        if (!bracketed) {
-            // a bare type is required to be an identifier, because that is all the language writes (§11.1)
-            if (peek().kind != Token::Kind::Identifier) {
-                report_unexpected("a type name");
-                return name;
-            }
-            // the name is moved out of the unit, because the parser owns the stream (§11.1)
-            std::string bare = std::move(m_tokens[m_index].text);
-            // the unit is consumed, because the type has been read (§11.1)
-            advance();
-            return bare;
+            return read_type_angles();
         }
+        // a bare type is required to be an identifier, because that is all the language writes (§11.1)
+        if (peek().kind != Token::Kind::Identifier) {
+            report_unexpected("a type name");
+            return name;
+        }
+        // the name is moved out of the unit, because the parser owns the stream (§11.1)
+        std::string bare = std::move(m_tokens[m_index].text);
+        // the unit is consumed, because the type has been read (§11.1)
+        advance();
+        // a generic opens an angle, which the tail reads exactly as the bracketed form spells it (§11.1)
+        if (at_punctuation("<")) {
+            advance();
+            bare += "<" + read_type_angles() + ">";
+        }
+        return bare;
+    }
+
+    std::string Parser::read_type_angles() {
+        // the name starts empty, because the caller has already consumed the opening angle (§11.1)
+        std::string name;
         // the nesting depth is tracked, because Snapshot<T> has a type inside it (§11.1)
         std::size_t depth = 1;
         // the loop runs until the matching closing angle, which is what ends a nested type (§11.1)
@@ -233,6 +245,11 @@ namespace albor::compiler
             parse_function(file);
             return;
         }
+        // a global is a top level declaration, which several components read as a named value (§11.1)
+        if (at_keyword(GLOBAL_KEYWORD)) {
+            parse_global(file);
+            return;
+        }
         // a component is the other top level declaration, which carries the tree (§11.1)
         if (at_keyword(COMPONENT_KEYWORD)) {
             // the declaration is parsed into a local first, because a broken one is dropped rather than kept (§11.1)
@@ -243,7 +260,7 @@ namespace albor::compiler
             return;
         }
         // anything else cannot start a declaration, so the reader is told what was expected (§11.1)
-        report_unexpected("import, struct, enum, fn or component");
+        report_unexpected("import, struct, enum, fn, global or component");
         // the units up to the next declaration are skipped, so one mistake costs one declaration (§11.1)
         recover_to_declaration();
     }
@@ -419,6 +436,31 @@ namespace albor::compiler
         declaration.span.end = last_consumed_end();
         // the function is kept, because the checker resolves its calls and the codegen emits its body (§11.1)
         file.functions.push_back(std::move(declaration));
+    }
+
+    void Parser::parse_global(SourceFile& file) {
+        // the declaration is assembled locally, because a broken one is dropped rather than kept (§11.1)
+        GlobalDeclaration declaration;
+        // the span starts at the keyword, so a diagnostic about the global points at it (§11.1)
+        declaration.span.start = peek().span.start;
+        // the keyword is consumed, because the caller has already matched it (§11.1)
+        advance();
+        // the name is required, because a reference resolves against it (§11.1)
+        declaration.name = expect_identifier();
+        // a colon separates the name from its type, which is how a declared name binds (§11.1)
+        expect_punctuation(":");
+        // the type is a bare or generic name, which the checker resolves against the catalog (§11.1)
+        declaration.type = expect_type_name(false);
+        // an equals separates the type from the value, which is the whole of the declaration (§11.1)
+        expect_punctuation("=");
+        // the value is an expression, so a construction or a literal may fill it (§11.1)
+        declaration.value = parse_expression();
+        // the declaration ends at the terminator, which is required (§11.1)
+        expect_punctuation(";");
+        // the span ends at the terminator, which the reader has already consumed (§11.1)
+        declaration.span.end = last_consumed_end();
+        // the global is kept, because the checker types its value and the codegen emits it (§11.1)
+        file.globals.push_back(std::move(declaration));
     }
 
     std::unique_ptr<ComponentDeclaration> Parser::parse_component() {
@@ -617,8 +659,10 @@ namespace albor::compiler
         node->span.start = peek().span.start;
         // the keyword is consumed, because the caller has already matched it (§11.1)
         advance();
-        // the condition is an expression, so it may read a property or a comparison (§11.1)
+        // the condition is parsed with construction suspended, because the brace that follows would open one (§11.1)
+        m_allow_construction = false;
         node->condition = parse_expression();
+        m_allow_construction = true;
         // the body is delimited, so the wrapped node is read until it closes (§11.1)
         expect_punctuation("{");
         // the body must hold exactly one element, because a conditional instantiates one node (§11.1)
@@ -1158,6 +1202,46 @@ namespace albor::compiler
             // the list is closed, which is required (§11.1)
             expect_punctuation(")");
             return CallExpression::make(std::move(target), std::move(arguments), span);
+        }
+        // an identifier followed by a brace is a record construction, which is how an author writes one (§11.1)
+        if (peek().kind == Token::Kind::Identifier && at_punctuation("{", 1) && m_allow_construction) {
+            // the span starts at the type name, so a diagnostic covers the whole construction (§11.1)
+            const SourceSpan start = peek().span;
+            // the type name is moved out of the unit, because the parser owns the stream (§11.1)
+            std::string type_name = std::move(m_tokens[m_index].text);
+            // the name is consumed, so the brace that opens the field list follows it (§11.1)
+            advance();
+            // the brace opens the field list, which is delimited the way an argument list is (§11.1)
+            expect_punctuation("{");
+            // the fields travel in written order, because the record resolves them by name (§11.1)
+            std::vector<ConstructionField> fields;
+            // an empty field list is legal, because every field then keeps its default (§11.1)
+            if (!at_punctuation("}")) {
+                while (true) {
+                    // each field is a name, a colon and a value, which pairs the declared field with it (§11.1)
+                    ConstructionField field;
+                    // the name is required, because the value binds through it (§11.1)
+                    field.name = expect_identifier();
+                    // the colon separates the name from the value, which is how every value binds (§11.1)
+                    expect_punctuation(":");
+                    // the value follows the full precedence, so a field holds any value (§11.1)
+                    field.value = parse_expression();
+                    fields.push_back(std::move(field));
+                    // the separator ends the field unless the list is already closed (§11.1)
+                    if (!at_punctuation(","))
+                        break;
+                    // the separator is consumed, so the next field starts after it (§11.1)
+                    advance();
+                    // a separator directly before the brace ends the list, which is the trailing comma (§11.1)
+                    if (at_punctuation("}"))
+                        break;
+                }
+            }
+            // the brace closes the list, which is required (§11.1)
+            expect_punctuation("}");
+            // the span ends at the brace, so the construction covers exactly what was written (§11.1)
+            const SourceSpan span{.start = start.start, .end = last_consumed_end()};
+            return RecordConstructionExpression::make(std::move(type_name), std::move(fields), span);
         }
         // an identifier is a reference to a declared property (§11.1)
         if (peek().kind == Token::Kind::Identifier) {

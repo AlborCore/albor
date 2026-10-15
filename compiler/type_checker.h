@@ -74,6 +74,22 @@ namespace albor::compiler
         SourceSpan span;
     };
 
+    // one resolved module-scoped value, which several components read as a named constant (§11.1)
+    struct CheckedGlobal
+    {
+        // the declared name, which a reference resolves against (§11.1)
+        std::string name;
+
+        // the resolved declared type, which every read carries as its own (§11.1)
+        ValueType type;
+
+        // the initial value, whose dependencies are empty because a global reads only its own scope (§11.1)
+        SharedExpression value;
+
+        // where the declaration was written (§11.1)
+        SourceSpan span;
+    };
+
     // one assignment on an element, resolved against the element type and typed (§11.1)
     struct CheckedAssignment
     {
@@ -245,6 +261,9 @@ namespace albor::compiler
         // the checked functions in declaration order, which a component binding may call (§11.1)
         std::vector<CheckedFunction> functions;
 
+        // the checked module-scoped values in declaration order, which a component expression may read (§11.1)
+        std::vector<CheckedGlobal> globals;
+
         // the manifest modules the file imported, which name where a record header lives (§11.1, §11.2, AD-17)
         std::vector<std::string> imported_modules;
     };
@@ -275,6 +294,9 @@ namespace albor::compiler
             // the function parameters the body sits inside, which shadow every property of the same name (§11.1)
             const std::vector<std::pair<std::string, ValueType>>* function_parameters = nullptr;
 
+            // the module-scoped values an expression reads, which a component scope carries and no function sees (§11.1)
+            const std::vector<CheckedGlobal>* globals = nullptr;
+
             // whether the scope sits inside a draw block, which is what exposes the canvas extent (§6.4)
             bool in_draw = false;
 
@@ -293,6 +315,18 @@ namespace albor::compiler
 
         // resolve the body of one function against its own parameters, which is the second pass (§11.1)
         void check_function(const FunctionDeclaration& declaration, CheckedFunction& out);
+
+        // resolve the declared type of every module-scoped value first, so an initializer may name any of them (§11.1)
+        void check_global_signatures(const SourceFile& file, std::vector<CheckedGlobal>& out);
+
+        // resolve the initial value of one module-scoped value against its declared type, which is the second pass (§11.1)
+        void check_global_value(const GlobalDeclaration& declaration, CheckedGlobal& out);
+
+        // report whether the name is a module-scoped value, which is what a write to it is reported against (§11.1)
+        [[nodiscard]] bool is_global(std::string_view name) const;
+
+        // report a write to a module-scoped value, because one is read-only wherever a write appears (§11.1)
+        void report_read_only(std::string_view name, SourceSpan span);
 
         // report a name the component declares twice, because a reference would be ambiguous (§11.1)
         void report_duplicate(std::string_view name, SourceSpan span);
@@ -335,6 +369,9 @@ namespace albor::compiler
 
         // type a bracketed list, whose elements must agree because a collection has one element type (§8.1)
         ValueType type_array(const ArrayExpression& array, const Scope& scope, std::vector<std::string>& dependencies);
+
+        // resolve a record construction against the record the catalog declares, which is how a value is written (§11.1)
+        ValueType type_record_construction(const RecordConstructionExpression& construction, const Scope& scope, std::vector<std::string>& dependencies);
 
         // type a field read, which resolves the object first and then the field the manifest declared (§11.2, AD-17)
         ValueType type_field_access(const FieldAccessExpression& access, const Scope& scope, std::vector<std::string>& dependencies);
@@ -407,6 +444,9 @@ namespace albor::compiler
 
         // the resolved function signatures of the file, which a call resolves against wherever it appears (§11.1)
         const std::vector<CheckedFunction>* m_functions = nullptr;
+
+        // the module-scoped values of the file, which a component expression reads and no function body sees (§11.1)
+        const std::vector<CheckedGlobal>* m_globals = nullptr;
 
         // the declared names of the component being checked, with the span each was written at (§11.1)
         std::vector<std::pair<std::string, SourceSpan>> m_declared;

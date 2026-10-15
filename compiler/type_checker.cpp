@@ -46,6 +46,13 @@ namespace albor::compiler
                 if (property.name == name)
                     return property.type;
             }
+        // the module-scoped values are consulted last, because a component's own declarations shadow them (§11.1)
+        if (globals != nullptr)
+            for (const CheckedGlobal& global : *globals) {
+                // the name decides, so a reference resolves to exactly one declaration (§11.1)
+                if (global.name == name)
+                    return global.type;
+            }
         // a name the scope does not hold was already reported, so nothing is returned (§11.1)
         return std::nullopt;
     }
@@ -66,6 +73,13 @@ namespace albor::compiler
         // the function bodies are resolved next, because a body may call any signature the file declares (§11.1)
         for (std::size_t index = 0; index < file.functions.size() && index < checked.functions.size(); index++)
             check_function(file.functions[index], checked.functions[index]);
+        // the module-scoped types resolve next, so an initializer may name any value the file declares (§11.1)
+        check_global_signatures(file, checked.globals);
+        // the initial values follow their signatures, because one may call a function the file declares (§11.1)
+        for (std::size_t index = 0; index < file.globals.size() && index < checked.globals.size(); index++)
+            check_global_value(file.globals[index], checked.globals[index]);
+        // the module-scoped values are published, because a component expression resolves against them (§11.1)
+        m_globals = &checked.globals;
         // the components are checked in declaration order, because the result preserves it (§11.1)
         for (const ComponentDeclaration& component : file.components) {
             // the component is assembled locally, because the pass state belongs to one declaration (§11.1)
@@ -95,6 +109,8 @@ namespace albor::compiler
         m_signals = nullptr;
         // the function signatures are cleared with it, because they pointed into the checked file (§11.1)
         m_functions = nullptr;
+        // the module-scoped values are cleared with them, because they pointed into the checked file too (§11.1)
+        m_globals = nullptr;
         return checked;
     }
 
@@ -149,6 +165,63 @@ namespace albor::compiler
         out.return_value = std::shared_ptr<const Expression>(declaration.return_value.get(), [](const Expression*) {});
     }
 
+    void TypeChecker::check_global_signatures(const SourceFile& file, std::vector<CheckedGlobal>& out) {
+        // every type is resolved before any value, so one initializer may name another file-level name (§11.1)
+        for (const GlobalDeclaration& declaration : file.globals) {
+            // the declaration is resolved locally, because one mistake must not hide the rest (§11.1)
+            CheckedGlobal global;
+            // the name and the span come straight from the declaration (§11.1)
+            global.name = declaration.name;
+            global.span = declaration.span;
+            // the declared type resolves against the catalog, which is where a native type comes from (§11.2, AD-17)
+            const ValueType resolved = resolve_type_name(declaration.type, m_catalog);
+            // a type that did not resolve is reported here, because nothing downstream can (§11.1)
+            if (resolved.is_error())
+                report_unknown_type(declaration.type, declaration.span);
+            // the resolved type is stored, because every read carries it as its own (§11.1)
+            global.type = resolved;
+            // a name the file declares twice is reported, because a reference would be ambiguous (§11.1)
+            for (const CheckedGlobal& prior : out)
+                if (prior.name == global.name)
+                    m_diagnostics.add(Diagnostic::Severity::Error, global.span, "E0401", "'" + global.name + "' is declared more than once in this file");
+            // the signature is kept, because the value pass resolves its initializer against it (§11.1)
+            out.push_back(std::move(global));
+        }
+    }
+
+    void TypeChecker::check_global_value(const GlobalDeclaration& declaration, CheckedGlobal& out) {
+        // the value with no initializer has nothing to type, because the parser already reported the gap (§11.1)
+        if (declaration.value == nullptr)
+            return;
+        // the scope is empty on purpose, because a value reads neither a property nor another global (§11.1)
+        const Scope scope{.properties = nullptr, .repeat = nullptr};
+        // the dependencies are dropped, because a global never changes and so is never one (§7.3, AD-04a)
+        std::vector<std::string> dependencies;
+        // the initializer is typed against the empty scope, which is the whole of the check (§11.1)
+        const ValueType value_type = type_expression(*declaration.value, scope, dependencies);
+        // the value must match the declared type, because nothing widens implicitly (§11.1)
+        if (!value_type.is_error() && !assignable(value_type, out.type))
+            report_type_mismatch(*declaration.value, value_type, out.type);
+        // the initializer is shared rather than re-owned, because the tree owns the expression (§11.1)
+        out.value = std::shared_ptr<const Expression>(declaration.value.get(), [](const Expression*) {});
+    }
+
+    bool TypeChecker::is_global(std::string_view name) const {
+        // the file may declare none, which keeps the scan a null check away (§11.1)
+        if (m_globals == nullptr)
+            return false;
+        // the name decides, so exactly one declaration answers for it (§11.1)
+        for (const CheckedGlobal& global : *m_globals)
+            if (global.name == name)
+                return true;
+        return false;
+    }
+
+    void TypeChecker::report_read_only(std::string_view name, SourceSpan span) {
+        // the problem points at the write, because that is what the author must change (§11.1)
+        m_diagnostics.add(Diagnostic::Severity::Error, span, "E0422", "'" + std::string(name) + "' is a module-scoped value, which is read-only");
+    }
+
     void TypeChecker::resolve_declarations(const ComponentDeclaration& component, CheckedComponent& out) {
         // the properties are resolved first, because a default may reference any of them (§11.1)
         for (const PropertyDeclaration& declaration : component.properties) {
@@ -181,7 +254,7 @@ namespace albor::compiler
             if (!out.properties.at(index).has_default)
                 continue;
             // the scope is the whole declaration list, because the default may read any of it (§11.1)
-            const Scope scope{.properties = &out.properties, .repeat = nullptr};
+            const Scope scope{.properties = &out.properties, .repeat = nullptr, .globals = m_globals};
             // the dependencies come from the same walk, because a default is a binding (§7.3, AD-04a)
             const ValueType value_type = type_expression(*out.properties.at(index).default_value, scope, out.properties.at(index).default_dependencies);
             // the value must match the property, because nothing widens implicitly (§11.1)
@@ -272,7 +345,7 @@ namespace albor::compiler
             return;
         }
         // the scope a reference resolves in is the component's own declarations (§11.1)
-        const Scope scope{.properties = &out.properties, .repeat = nullptr};
+        const Scope scope{.properties = &out.properties, .repeat = nullptr, .globals = m_globals};
         // the root is checked against that scope, which is the second pass (§11.1)
         out.root = resolve_node(*component.root, scope);
     }
@@ -526,8 +599,12 @@ namespace albor::compiler
             }
             // a target that is not a declared property is reported, because there is nothing to assign (§11.1)
             if (target == nullptr) {
+                // a module-scoped value answers the name, which is what a write to one reports as (§11.1)
+                if (is_global(statement.target))
+                    report_read_only(statement.target, statement.span);
                 // the problem points at the statement, because that is where the target is written (§11.1)
-                m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0404", "'" + statement.target + "' is not a property of this component");
+                else
+                    m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0404", "'" + statement.target + "' is not a property of this component");
             }
             else {
                 // an incoming property may not be assigned from a handler, because a binding owns it (§11.1, §7)
@@ -594,8 +671,12 @@ namespace albor::compiler
             }
             // a target that is not a declared property is reported, because there is nothing to write into (§11.1)
             if (target == nullptr) {
+                // a module-scoped value answers the name, which is what a write to one reports as (§11.1)
+                if (is_global(statement.target))
+                    report_read_only(statement.target, statement.span);
                 // the problem points at the statement, because that is where the target is written (§11.1)
-                m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0404", "'" + statement.target + "' is not a property of this component");
+                else
+                    m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0404", "'" + statement.target + "' is not a property of this component");
             }
             // an incoming property may not be written from a handler, because a binding owns it (§11.1, §7)
             else if (target->direction != PropertyDirection::InOut)
@@ -644,8 +725,12 @@ namespace albor::compiler
             }
             // a target that is not a declared property is reported, because there is nothing to mutate (§11.1)
             if (target == nullptr) {
+                // a module-scoped value answers the name, which is what a mutation of one reports as (§11.1)
+                if (is_global(statement.target))
+                    report_read_only(statement.target, statement.span);
                 // the problem points at the statement, because that is where the target is written (§11.1)
-                m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0404", "'" + statement.target + "' is not a property of this component");
+                else
+                    m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0404", "'" + statement.target + "' is not a property of this component");
             }
             // a command property takes the one built-in that fires it, and firing writes nothing (§18.1, AD-15)
             else if (target->type.is(TypeKind::Command)) {
@@ -782,6 +867,9 @@ namespace albor::compiler
         // a bracketed list types as the collection its elements agree on (§8.1)
         if (const auto* array = dynamic_cast<const ArrayExpression*>(&expression))
             return type_array(*array, scope, dependencies);
+        // a construction types against the record its written name declares (§11.1)
+        if (const auto* construction = dynamic_cast<const RecordConstructionExpression*>(&expression))
+            return type_record_construction(*construction, scope, dependencies);
         // a field read resolves the object first, because the field is only known once the record is (§11.2)
         if (const auto* access = dynamic_cast<const FieldAccessExpression*>(&expression))
             return type_field_access(*access, scope, dependencies);
@@ -871,6 +959,46 @@ namespace albor::compiler
         }
         // the agreed element type is the collection, and an unknown one keeps the collection unknown (§8.1)
         return ValueType::parameterized(TypeKind::Vector, element);
+    }
+
+    ValueType TypeChecker::type_record_construction(const RecordConstructionExpression& construction, const Scope& scope, std::vector<std::string>& dependencies) {
+        // the written name resolves first, because the fields must be read from somewhere (§11.1)
+        const ValueType type = resolve_type_name(construction.type_name, m_catalog);
+        // a name that resolves to nothing reports once here, because no field can resolve against it (§11.1)
+        if (type.is_error()) {
+            report_unknown_type(construction.type_name, construction.span);
+            return error_type();
+        }
+        // only a record carries fields, because a scalar construction has none to fill (§11.2, AD-17)
+        const RecordType* record = type.is(TypeKind::Native) ? m_catalog.find_record(type.native_name()) : nullptr;
+        if (record == nullptr) {
+            // the problem points at the construction, because that is what the author must change (§11.2, AD-17)
+            m_diagnostics.add(Diagnostic::Severity::Error, construction.span, "E0417", "'" + construction.type_name + "' is not a record, so it has no fields");
+            return error_type();
+        }
+        // each field is read in written order, because each pairs one declared field with a value (§11.1)
+        for (std::size_t index = 0; index < construction.fields.size(); index++) {
+            const ConstructionField& field = construction.fields.at(index);
+            // a field the record does not declare is reported against the ones it does (§11.2, AD-17)
+            const RecordFieldType* declared = record->find_field(field.name);
+            if (declared == nullptr) {
+                m_diagnostics.add(Diagnostic::Severity::Error, field.value->location(), "E0416", "'" + record->name + "' has no field named '" + field.name + "'");
+                continue;
+            }
+            // a field named twice is reported, because the construction would bind it once (§11.1)
+            for (std::size_t prior = 0; prior < index; prior++)
+                if (construction.fields.at(prior).name == field.name) {
+                    m_diagnostics.add(Diagnostic::Severity::Error, field.value->location(), "E0423", "'" + record->name + "' names field '" + field.name + "' twice");
+                    break;
+                }
+            // the value is typed next, because it must match the field it fills (§11.1)
+            const ValueType value_type = type_expression(*field.value, scope, dependencies);
+            // the value must match the declared field, because nothing widens implicitly (§11.1)
+            if (!value_type.is_error() && !assignable(value_type, declared->type))
+                report_type_mismatch(*field.value, value_type, declared->type);
+        }
+        // the construction produces exactly the record, because there is no inference (§11.1)
+        return type;
     }
 
     ValueType TypeChecker::type_literal(const LiteralExpression& literal) {

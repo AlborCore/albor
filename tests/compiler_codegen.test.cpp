@@ -1730,3 +1730,29 @@ component Editor {
     // the definition joins the unit, because a forward declaration cannot carry the invoke call (§14.1, §18.1)
     EXPECT_TRUE(contains(cpp.content, "#include \"commands/command.h\""));
 }
+TEST(Codegen, EmitsAGlobalAsAGuardedFileStatic) {
+    // arrange, act
+    const std::vector<GeneratedFile> files = generate("global gap: float = 2.5; component C { Label {} }");
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert
+    EXPECT_TRUE(contains(cpp.content, "#ifndef ALBOR_GENERATED_GLOBAL_gap"));
+    EXPECT_TRUE(contains(cpp.content, "#define ALBOR_GENERATED_GLOBAL_gap"));
+    EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static const float gap = 2.5f;"));
+}
+
+TEST(Codegen, ReadsAGlobalThroughItsBareName) {
+    // arrange, act
+    const std::vector<GeneratedFile> files = generate("global gap: float = 2.5; component C { inout property<float> wide: 0.0; Button { on_clicked: { wide = gap; } } }");
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert
+    EXPECT_TRUE(contains(cpp.content, "self->m_wide.set(gap);"));
+    EXPECT_FALSE(contains(cpp.content, "m_gap"));
+}
+
+TEST(Codegen, EmitsARecordConstructionInDeclarationOrder) {
+    // arrange, act
+    const std::vector<GeneratedFile> files = generate("struct Frame { float w; float h; } global box: Frame = Frame{h: 2.5, w: 1.5}; component C { Label {} }");
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert
+    EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static const Frame box = Frame{.w = 1.5f, .h = 2.5f};"));
+}

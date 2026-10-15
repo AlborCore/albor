@@ -25,6 +25,9 @@ namespace albor::compiler
         // the functions the file declares at its top level, which a binding may call (§11.1)
         std::vector<FunctionDeclaration> functions;
 
+        // the module-scoped values the file declares at its top level, which several components read (§11.1)
+        std::vector<GlobalDeclaration> globals;
+
         // the components the file declares, which is what the checker and the codegen take (§11.1)
         std::vector<ComponentDeclaration> components;
     };
@@ -73,7 +76,10 @@ namespace albor::compiler
         // read a type name, which is bracketed for a property and bare for a signal parameter (§11.1, §11.2)
         [[nodiscard]] std::string expect_type_name(bool bracketed);
 
-        // read one declaration of the file, which is an import, a struct, an enum or a component (§11.1)
+        // read the units between the angle brackets of a generic type, which the closing angle ends (§11.1)
+        [[nodiscard]] std::string read_type_angles();
+
+        // read one declaration of the file, an import, struct, enum, function, global or component (§11.1)
         void parse_declaration(SourceFile& file);
 
         // read an import, which names a manifest module (§11.1, AD-17)
@@ -87,6 +93,9 @@ namespace albor::compiler
 
         // read a function declaration with its parameters and body, which a binding may call (§11.1)
         void parse_function(SourceFile& file);
+
+        // read a module-scoped value declaration, which several components then read (§11.1)
+        void parse_global(SourceFile& file);
 
         // read a component declaration, including its members and its root element (§11.1)
         std::unique_ptr<ComponentDeclaration> parse_component();
@@ -180,6 +189,9 @@ namespace albor::compiler
 
         // the offset of the unit the parser is on (§11.1)
         std::size_t m_index = 0;
+
+        // whether an identifier may open a record construction, which a conditional condition suspends (§11.1)
+        bool m_allow_construction = true;
 
         // the last unit of the stream, which every lookahead is clamped to so a read is never out of range (§11.1)
         Token m_end;

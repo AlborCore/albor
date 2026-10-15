@@ -1762,3 +1762,110 @@ TEST(TypeChecker, ReportsAnActionOnAWidgetThatCarriesNone) {
     // assert the problem names the property, because that is what the author must move (§11.1)
     EXPECT_EQ(first(diagnostics).code, "E0411");
 }
+
+TEST(TypeChecker, TypesAGlobalAgainstItsDeclaredType) {
+    // arrange, act
+    const CheckedFile file = check("global gap: float = 2.5; component C { Label {} }");
+    // assert
+    ASSERT_EQ(file.globals.size(), 1U);
+    EXPECT_EQ(file.globals.at(0).name, "gap");
+    EXPECT_TRUE(file.globals.at(0).type.is(TypeKind::Float));
+}
+
+TEST(TypeChecker, ReportsAGlobalWhoseValueMismatchesItsType) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("global gap: float = \"x\"; component C { Label {} }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0410");
+}
+
+TEST(TypeChecker, ReportsAGlobalDeclaredTwice) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("global gap: float = 2.5; global gap: float = 1.5; component C { Label {} }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0401");
+}
+
+TEST(TypeChecker, ReportsAWriteToAGlobal) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("global gap: float = 2.5; component C { inout property<float> wide: 0.0; Button { on_clicked: { gap = 1.0; } } }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0422");
+}
+
+TEST(TypeChecker, AGlobalReadAddsNoDependency) {
+    // arrange, act
+    const CheckedFile file = check("global gap: float = 2.5; component C { inout property<float> wide: 0.0; Button { on_clicked: { wide = gap; } } }");
+    // assert
+    const CheckedHandler& handler = only(file).root->handlers.at(0);
+    ASSERT_EQ(handler.body.size(), 1U);
+    EXPECT_TRUE(handler.body.at(0).dependencies.empty());
+}
+
+TEST(TypeChecker, APropertyShadowsAGlobalOfTheSameName) {
+    // arrange, act
+    const CheckedFile file = check("global wide: float = 2.5; component C { inout property<float> wide: 0.0; Button { on_clicked: { wide = wide + 1.0; } } }");
+    // assert
+    const CheckedHandler& handler = only(file).root->handlers.at(0);
+    ASSERT_EQ(handler.body.size(), 1U);
+    ASSERT_EQ(handler.body.at(0).dependencies.size(), 1U);
+    EXPECT_EQ(handler.body.at(0).dependencies.at(0), "wide");
+}
+
+TEST(TypeChecker, TypesARecordConstructionAgainstTheRecord) {
+    // arrange, act
+    const CheckedFile file = check("struct Frame { float w; float h; } global box: Frame = Frame{h: 2.0, w: 1.0}; component C { Label {} }");
+    // assert
+    ASSERT_EQ(file.globals.size(), 1U);
+    EXPECT_TRUE(file.globals.at(0).type.is(TypeKind::Native));
+    EXPECT_EQ(file.globals.at(0).type.native_name(), "Frame");
+}
+
+TEST(TypeChecker, ReportsAConstructionFieldTheRecordDoesNotDeclare) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("struct Frame { float w; float h; } global box: Frame = Frame{z: 1.0}; component C { Label {} }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0416");
+}
+
+TEST(TypeChecker, ReportsAFieldNamedTwiceInAConstruction) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("struct Frame { float w; float h; } global box: Frame = Frame{w: 1.0, w: 2.0}; component C { Label {} }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0423");
+}
+
+TEST(TypeChecker, ReportsAConstructionOfANonRecord) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("global odd: float = float{x: 1.0}; component C { Label {} }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0417");
+}
+
+TEST(TypeChecker, ReportsAConstructionFieldValueMismatch) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("struct Frame { float w; float h; } global box: Frame = Frame{w: \"x\"}; component C { Label {} }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0410");
+}

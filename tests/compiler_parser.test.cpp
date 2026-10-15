@@ -1231,3 +1231,37 @@ TEST(Parser, ReadsAFunctionDeclarationWithParametersAndAReturn) {
     ASSERT_NE(function.return_value, nullptr);
     EXPECT_NE(dynamic_cast<BinaryExpression*>(function.return_value.get()), nullptr);
 }
+
+TEST(Parser, ReadsAGlobalDeclarationWithItsValue) {
+    // arrange, act
+    const SourceFile file = parse("global gap: float = 2.5; component C { Label {} }");
+    // assert
+    ASSERT_EQ(file.globals.size(), 1U);
+    EXPECT_EQ(file.globals.at(0).name, "gap");
+    EXPECT_EQ(file.globals.at(0).type, "float");
+    ASSERT_NE(file.globals.at(0).value, nullptr);
+    EXPECT_EQ(as_literal(file.globals.at(0).value).text, "2.5");
+}
+
+TEST(Parser, ReadsARecordConstructionInWrittenOrder) {
+    // arrange, act
+    const SourceFile file = parse("global p: Point = Point{y: 2.0, x: 1.0}; component C { Label {} }");
+    // assert
+    ASSERT_EQ(file.globals.size(), 1U);
+    const auto* construction = dynamic_cast<const RecordConstructionExpression*>(file.globals.at(0).value.get());
+    ASSERT_NE(construction, nullptr);
+    EXPECT_EQ(construction->type_name, "Point");
+    ASSERT_EQ(construction->fields.size(), 2U);
+    EXPECT_EQ(construction->fields.at(0).name, "y");
+    EXPECT_EQ(construction->fields.at(1).name, "x");
+}
+
+TEST(Parser, SuspendsAConstructionAcrossAConditionalCondition) {
+    // arrange, act
+    const SourceFile file = parse("component C { if flag { Column {} } }");
+    // assert
+    ASSERT_EQ(file.components.size(), 1U);
+    const TreeNode& root = *file.components.at(0).root;
+    EXPECT_EQ(root.kind, TreeNodeKind::Conditional);
+    EXPECT_NE(dynamic_cast<const PropertyExpression*>(root.condition.get()), nullptr);
+}

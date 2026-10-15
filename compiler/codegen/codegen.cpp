@@ -442,8 +442,8 @@ namespace albor::compiler
             };
 
             // build the emitter over the component and the shared problem list (§11.3)
-            ComponentEmitter(const CheckedComponent& component, DiagnosticList& diagnostics, const ElementCatalog* catalog, std::vector<std::string> modules, const std::vector<CheckedFunction>* functions) :
-                m_component(component), m_diagnostics(diagnostics), m_class(component.name), m_stem(snake_case(component.name)), m_functions(functions), m_catalog(catalog), m_modules(std::move(modules)) {
+            ComponentEmitter(const CheckedComponent& component, DiagnosticList& diagnostics, const ElementCatalog* catalog, std::vector<std::string> modules, const std::vector<CheckedFunction>* functions, const std::vector<CheckedGlobal>* globals) :
+                m_component(component), m_diagnostics(diagnostics), m_class(component.name), m_stem(snake_case(component.name)), m_functions(functions), m_globals(globals), m_catalog(catalog), m_modules(std::move(modules)) {
                 // the declared function names are collected, which tells a call apart from a colour op (§11.1)
                 if (m_functions != nullptr)
                     for (const CheckedFunction& function : *m_functions)
@@ -491,6 +491,9 @@ namespace albor::compiler
             // find a declared property by name, which the type walk resolves against (§11.3)
             const CheckedProperty* property_named(std::string_view name) const;
 
+            // find a module-scoped value by name, which a read outside the properties resolves against (§11.1)
+            const CheckedGlobal* global_named(std::string_view name) const;
+
             // the type of a checked expression, which mirrors the checker's own walk (§11.3)
             ValueType type_of(const Expression& expression) const;
 
@@ -502,6 +505,9 @@ namespace albor::compiler
 
             // render the file-level functions this component may call, which a binding then calls (§11.1)
             void emit_functions();
+
+            // render the module-scoped values of the file, which a binding or a handler reads (§11.1)
+            void emit_globals();
 
             // render the body struct, which owns the properties and the widgets (§14.1)
             void emit_body();
@@ -608,6 +614,9 @@ namespace albor::compiler
             // render one expression as C++, which the codegen re-emits the written shape (§11.3)
             std::string emit_expression(const Expression& expression);
 
+            // render one record construction in declared field order, which designated initializers require (§11.1)
+            std::string emit_record_construction(const RecordConstructionExpression& construction);
+
             // render one literal, which the value decides (§11.3)
             std::string emit_literal(const LiteralExpression& literal);
 
@@ -661,6 +670,9 @@ namespace albor::compiler
 
             // the file-level functions the component may call, which a call resolves against (§11.1)
             const std::vector<CheckedFunction>* m_functions = nullptr;
+
+            // the module-scoped values the component reads, which a file-level static then holds (§11.1)
+            const std::vector<CheckedGlobal>* m_globals = nullptr;
 
             // the declared function names, which tell a function call apart from a colour operation (§11.1)
             std::unordered_set<std::string> m_function_names;
@@ -827,6 +839,19 @@ namespace albor::compiler
                 if (property.has_default)
                     scan_expression(*property.default_value);
             }
+            // a module-scoped value joins the header needs and the length scan, because its type and value show (§11.1)
+            if (m_globals != nullptr)
+                for (const CheckedGlobal& global : *m_globals) {
+                    // a collection anywhere in the declared type pulls the vector header into the facade (§8.1, §14.1)
+                    if (carries_vector(global.type))
+                        m_uses_vector = true;
+                    // a record anywhere in the declared type pulls the header that declares its struct (§11.2, AD-17)
+                    collect_record_headers(global.type);
+                    // the type is validated the same way, because a module value is checked like a property (§11.1)
+                    validate_type(global.type, global.span);
+                    // the value is scanned for physical lengths, because their density is undefined (§11.3, AD-27)
+                    scan_expression(*global.value);
+                }
             // the tree is walked, which finds a repeat, a native element or a physical length (§11.3)
             if (m_component.root != nullptr)
                 validate_node(*m_component.root);
@@ -1006,6 +1031,10 @@ namespace albor::compiler
             // a field read walks its object, because the object may hold anything a scan must refuse (§11.2)
             if (const auto* access = dynamic_cast<const FieldAccessExpression*>(&expression))
                 scan_expression(*access->object);
+            // a construction carries field values, which are walked because any may hold a length (§11.1)
+            if (const auto* construction = dynamic_cast<const RecordConstructionExpression*>(&expression))
+                for (const ConstructionField& field : construction->fields)
+                    scan_expression(*field.value);
         }
 
         void ComponentEmitter::scan_color(const Expression& expression) {
@@ -1040,6 +1069,10 @@ namespace albor::compiler
             // a grouping has an inner expression, which is walked behind it (§11.3)
             if (const auto* grouping = dynamic_cast<const GroupingExpression*>(&expression))
                 scan_color(*grouping->inner);
+            // a construction carries field values, which are walked because any may name a colour (§11.1)
+            if (const auto* construction = dynamic_cast<const RecordConstructionExpression*>(&expression))
+                for (const ConstructionField& field : construction->fields)
+                    scan_color(*field.value);
         }
 
         void ComponentEmitter::collect(const CheckedNode& node, std::size_t parent, std::size_t conditional) {
@@ -1148,6 +1181,18 @@ namespace albor::compiler
             return nullptr;
         }
 
+        const CheckedGlobal* ComponentEmitter::global_named(std::string_view name) const {
+            // the module values are scanned, because a file holds only a handful of them (§11.1)
+            if (m_globals != nullptr)
+                for (const CheckedGlobal& global : *m_globals) {
+                    // the name decides, so a reference resolves to exactly one declaration (§11.1)
+                    if (global.name == name)
+                        return &global;
+                }
+            // a name that is not declared is a checker defect, because the checker already resolved it (§11.1)
+            return nullptr;
+        }
+
         ValueType ComponentEmitter::type_of(const Expression& expression) const {
             // a literal carries its own type, because its kind says what it is (§11.3)
             if (const auto* literal = dynamic_cast<const LiteralExpression*>(&expression)) {
@@ -1180,10 +1225,14 @@ namespace albor::compiler
             }
             // a reference resolves against the component, which is what a generated read needs (§11.3)
             if (const auto* reference = dynamic_cast<const PropertyExpression*>(&expression)) {
-                // the declared property decides, which the checker already confirmed exists (§11.3)
+                // the declared property decides, because a property shadows a module-scoped value (§11.1, §11.3)
                 const CheckedProperty* property = property_named(reference->name);
-                // a missing property cannot be typed, which a checker defect would cause (§11.3)
-                return property != nullptr ? property->type : error_type();
+                if (property != nullptr)
+                    return property->type;
+                // a name no property declares may still be a module-scoped value, which types as its declaration (§11.1)
+                const CheckedGlobal* global = global_named(reference->name);
+                // a name neither declares is a checker defect, because the checker already resolved it (§11.3)
+                return global != nullptr ? global->type : error_type();
             }
             // a conversion produces its target, which is the closed rule set (§11.3)
             if (const auto* conversion = dynamic_cast<const ConversionExpression*>(&expression)) {
@@ -1206,6 +1255,9 @@ namespace albor::compiler
                 for (const CheckedFunction& function : *m_functions)
                     if (function.name == call->function)
                         return function.return_type;
+            // a construction types as the record its written name declares, which the checker resolved (§11.1)
+            if (const auto* construction = dynamic_cast<const RecordConstructionExpression*>(&expression))
+                return m_catalog == nullptr ? error_type() : resolve_type_name(construction->type_name, *m_catalog);
             // a shape the checker already rejected cannot be typed here, which is safe because it blocked (§11.3)
             return error_type();
         }
@@ -1401,6 +1453,21 @@ namespace albor::compiler
             }
         }
 
+        void ComponentEmitter::emit_globals() {
+            // a file with no module-scoped value declares nothing here, which keeps the unit small (§11.1)
+            if (m_globals == nullptr || m_globals->empty())
+                return;
+            for (const CheckedGlobal& global : *m_globals) {
+                line(0, "");
+                // the guard keeps one definition when two components share one unit (§11.1, AD-03b)
+                line(0, "#ifndef ALBOR_GENERATED_GLOBAL_" + global.name);
+                line(0, "#define ALBOR_GENERATED_GLOBAL_" + global.name);
+                // the value is a file-level static, because a component instance does not hold it (§11.1)
+                line(0, "[[maybe_unused]] static const " + cpp_type(global.type) + " " + sanitize(global.name) + " = " + emit_expression(*global.value) + ";");
+                line(0, "#endif");
+            }
+        }
+
         void ComponentEmitter::emit_source() {
             // the implementation output is the active target, which the line helper appends to (§14.1)
             m_output = &m_source;
@@ -1473,8 +1540,9 @@ namespace albor::compiler
             line(0, "");
             line(0, "namespace albor");
             line(0, "{");
-            // the file-level functions come first, because an evaluator or a handler below may call one (§11.1)
+            // the file-level functions and values come first, because an evaluator or a handler below reads them (§11.1)
             emit_functions();
+            emit_globals();
             // the printing helpers come first, because an evaluator below may call one (§11.3)
             if (m_uses_float_helper)
                 emit_float_helper();
@@ -2822,6 +2890,38 @@ namespace albor::compiler
             line(1, "}");
         }
 
+        std::string ComponentEmitter::emit_record_construction(const RecordConstructionExpression& construction) {
+            // the written name resolves to the record, which the checker already confirmed exists (§11.1)
+            const ValueType type = m_catalog == nullptr ? error_type() : resolve_type_name(construction.type_name, *m_catalog);
+            // only a record renders here, because the checker rejected any other construction (§11.1)
+            const RecordType* record = type.is(TypeKind::Native) ? m_catalog->find_record(type.native_name()) : nullptr;
+            // a construction the checker rejected cannot render, which the empty literal stands in for (§11.3)
+            if (record == nullptr)
+                return emit_string_literal({});
+            // the record's name opens the initialiser, which is the type the value lands in (§11.1)
+            std::string out = cpp_type(type) + "{";
+            // each field is offered its written value, because designated initializers follow declaration order (§11.1)
+            for (const RecordFieldType& field : record->fields) {
+                // the written field is looked up per declared field, because the written order may differ (§11.1)
+                const ConstructionField* provided = nullptr;
+                for (const ConstructionField& candidate : construction.fields)
+                    if (candidate.name == field.name) {
+                        // the match is kept, because the value renders for exactly this field (§11.1)
+                        provided = &candidate;
+                        break;
+                    }
+                // a field the construction left out stays value initialised, which a partial construction means (§11.1)
+                if (provided == nullptr)
+                    continue;
+                // a comma joins the earlier fields, which is how an initialiser list reads (§11.1)
+                if (out.back() != '{')
+                    out += ", ";
+                out += "." + field.name + " = " + emit_expression(*provided->value);
+            }
+            // the closing brace ends the initialiser (§11.1)
+            return out + "}";
+        }
+
         std::string ComponentEmitter::emit_expression(const Expression& expression) {
             // a literal renders from its value, which carries its own spelling (§11.3)
             if (const auto* literal = dynamic_cast<const LiteralExpression*>(&expression))
@@ -2829,6 +2929,9 @@ namespace albor::compiler
             // a translation is resolved through the catalog, which is what makes @tr mean something (§9.2, §11.3)
             if (const auto* translation = dynamic_cast<const TranslationExpression*>(&expression))
                 return "albor::i18n::translate(" + emit_string_literal(translation->text) + ")";
+            // a construction renders in the record's declared field order, which designated initializers require (§11.1)
+            if (const auto* construction = dynamic_cast<const RecordConstructionExpression*>(&expression))
+                return emit_record_construction(*construction);
             // a reference reads the property member, which is the reactive value (§11.3)
             if (const auto* reference = dynamic_cast<const PropertyExpression*>(&expression)) {
                 // a repeat item is the row parameter, because the body binds it for the row being built (§11.1, §18.1)
@@ -2854,6 +2957,9 @@ namespace albor::compiler
                     if (parameter == sanitize(reference->name))
                         return parameter;
                 }
+                // a name no property declares may still be a module-scoped value, which is the file-level static (§11.1)
+                if (property_named(reference->name) == nullptr && global_named(reference->name) != nullptr)
+                    return sanitize(reference->name);
                 return m_object + "->m_" + sanitize(reference->name) + ".get()";
             }
             // a conversion renders through its operand, which the operand type decides (§11.3)
@@ -3178,6 +3284,14 @@ namespace albor::compiler
                 if (property.has_default)
                     scan_color(*property.default_value);
             }
+            // a module-scoped value may hold colour text too, which the include set must not miss (§11.1)
+            if (m_globals != nullptr)
+                for (const CheckedGlobal& global : *m_globals) {
+                    // a colour-typed value pulls the paint header, which its constructor call requires (§11.1)
+                    m_uses_color = m_uses_color || global.type.is(TypeKind::Color);
+                    // the initial value is walked, because a colour literal may sit anywhere inside it (§11.1)
+                    scan_color(*global.value);
+                }
             // the header is emitted first, which the implementation then includes (§14.1)
             emit_header();
             // the implementation follows, which defines everything the header declared (§14.1)
@@ -3210,7 +3324,7 @@ namespace albor::compiler
         std::vector<std::string> chunk_contents;
         for (const CheckedComponent& component : file.components) {
             // the emitter is built per component, because the output files are per component (§14.1)
-            ComponentEmitter emitter(component, m_diagnostics, m_catalog, file.imported_modules, &file.functions);
+            ComponentEmitter emitter(component, m_diagnostics, m_catalog, file.imported_modules, &file.functions, &file.globals);
             // a component that was blocked empties the whole output, which the driver then treats as failed (§11.3)
             if (!emitter.emit())
                 return {};
