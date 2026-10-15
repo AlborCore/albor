@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "commands/command_id.h"
@@ -13,6 +12,8 @@
 
 namespace albor
 {
+    class CommandRegistry;
+
     // the shared action object that buttons, shortcuts, menus and automation bind to (AD-15, §18.1)
     class Command
     {
@@ -27,7 +28,7 @@ namespace albor
         Command& operator=(const Command&) = delete;
         Command(Command&&) = delete;
         Command& operator=(Command&&) = delete;
-        ~Command() = default;
+        ~Command();
 
         // hand out the runtime identity, which is the correlation hint and never a selector (§18.1, AD-11)
         [[nodiscard]] CommandId id() const;
@@ -90,6 +91,9 @@ namespace albor
         void bind_undo_stack(UndoStack* stack);
 
     private:
+        // the registry that indexed this command, which it clears when the registry goes away first (§18.1)
+        friend class CommandRegistry;
+
         // one bound consumer, which is a callback and the context it was given (§18.1)
         struct Binding
         {
@@ -138,5 +142,8 @@ namespace albor
 
         // whether the action declared that it needs the current selection (§18.3)
         bool m_selection_required = false;
+
+        // the registry that indexed this command, which leaves rather than owns it and is null while unindexed (§18.1)
+        CommandRegistry* m_registry = nullptr;
     };
 } // namespace albor
