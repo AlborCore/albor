@@ -150,7 +150,7 @@ namespace albor::compiler
 
     void TypeChecker::check_function(const FunctionDeclaration& declaration, CheckedFunction& out) {
         // the parameters are the whole of the scope, because a function reads only its own arguments (§11.1)
-        const Scope scope{.properties = nullptr, .repeat = nullptr, .handler_signal = nullptr, .function_parameters = &out.parameters, .in_draw = false};
+        const Scope scope{.properties = nullptr, .repeat = nullptr, .handler_signal = nullptr, .function_parameters = &out.parameters, .globals = nullptr, .in_draw = false};
         // a body with no return carries no expression, so there is nothing to type (§11.1)
         if (declaration.return_value == nullptr)
             return;
