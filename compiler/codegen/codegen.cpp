@@ -276,10 +276,10 @@ namespace albor::compiler
         struct WidgetInfo
         {
             // the header that declares the class, which the generated file includes (§11.3)
-            std::string_view header;
+            std::string header;
 
             // the C++ class the generated code constructs, which is unqualified in the framework (§11.3)
-            std::string_view class_name;
+            std::string class_name;
 
             // whether constructing the class needs the binding engine (§11.3)
             bool needs_engine = false;
@@ -295,77 +295,6 @@ namespace albor::compiler
                 {"Column", {.header = "layout/column_layout.h", .class_name = "ColumnLayout", .needs_engine = false, .needs_text_engine = false}}, {"Row", {.header = "layout/row_layout.h", .class_name = "RowLayout", .needs_engine = false, .needs_text_engine = false}}, {"Padding", {.header = "layout/padding_layout.h", .class_name = "PaddingLayout", .needs_engine = false, .needs_text_engine = false}}, {"Stack", {.header = "layout/stack_layout.h", .class_name = "StackLayout", .needs_engine = false, .needs_text_engine = false}}, {"Grid", {.header = "layout/grid_layout.h", .class_name = "GridLayout", .needs_engine = false, .needs_text_engine = false}}, {"Label", {.header = "widgets/label.h", .class_name = "Label", .needs_engine = true, .needs_text_engine = true}}, {"Button", {.header = "widgets/button.h", .class_name = "Button", .needs_engine = true, .needs_text_engine = true}}, {"Slider", {.header = "widgets/slider.h", .class_name = "Slider", .needs_engine = true, .needs_text_engine = false}}, {"CheckBox", {.header = "widgets/checkbox.h", .class_name = "CheckBox", .needs_engine = true, .needs_text_engine = false}}, {"Canvas", {.header = "widgets/canvas.h", .class_name = "Canvas", .needs_engine = true, .needs_text_engine = false}}, {"ScrollView", {.header = "widgets/scroll_view.h", .class_name = "ScrollView", .needs_engine = true, .needs_text_engine = false}}, {"TextField", {.header = "widgets/text_field.h", .class_name = "TextField", .needs_engine = true, .needs_text_engine = true}},
             };
             return table;
-        }
-
-        // the setter a property assignment maps to, keyed by the element and the property (§11.3)
-        std::string_view setter_of(std::string_view element, std::string_view property) {
-            // the composite key is assembled, because the map is keyed by the pair (§11.3)
-            const std::string key = std::string(element) + "." + std::string(property);
-            // the property to setter map is the closed catalogue of §8 (§11.3)
-            static const std::unordered_map<std::string, std::string_view> setters{
-                {"Column.spacing", "set_gap"}, {"Column.padding", "set_padding"}, {"Row.spacing", "set_gap"}, {"Padding.padding", "set_padding"}, {"Grid.spacing", "set_gap"}, {"Label.text", "set_text"}, {"Label.foreground", "set_foreground"}, {"Label.font_size", "set_font_size"}, {"Button.text", "set_label"}, {"Button.background", "set_background"}, {"Button.disabled", "set_disabled"}, {"Button.action", "set_command"}, {"Slider.value", "set_value"}, {"Slider.disabled", "set_disabled"}, {"Slider.track_color", "set_track_color"}, {"Slider.thumb_color", "set_thumb_color"}, {"Slider.action", "set_command"}, {"CheckBox.checked", "set_checked"}, {"CheckBox.disabled", "set_disabled"}, {"CheckBox.outline", "set_outline"}, {"CheckBox.check_fill", "set_check_fill"}, {"CheckBox.action", "set_command"}, {"ScrollView.overscan", "set_overscan"}, {"ScrollView.scrollbar", "set_scrollbar_visibility"}, {"ScrollView.row_height", "set_row_height"}, {"TextField.value", "set_value"}, {"TextField.placeholder", "set_placeholder"}, {"TextField.read_only", "set_read_only"}, {"TextField.multiline", "set_multiline"}, {"TextField.disabled", "set_disabled"}, {"TextField.font_size", "set_font_size"},
-            };
-            // the lookup is a ready made key, because the pair is the identity (§11.3)
-            const auto found = setters.find(key);
-            // a property every type carries has no per type entry, because it resolves against the common set (§8.2)
-            if (found != setters.end())
-                return found->second;
-            // the common set decides, because alignment is a property of every node a parent arranges (§8.2)
-            static const std::vector<std::pair<std::string, std::string>> common_setters = [] {
-                // the names come from the catalogue, held apart so a returned view outlives this call (§8.2, §11.3)
-                std::vector<std::pair<std::string, std::string>> built;
-                for (const ElementProperty& common : common_element_properties())
-                    built.emplace_back(common.name, "set_" + common.name);
-                return built;
-            }();
-            for (const auto& entry : common_setters) {
-                // the name decides, so a common property resolves to exactly one setter (§8.2)
-                if (entry.first == property)
-                    return std::string_view(entry.second);
-            }
-            // an element with no setter carries none, which only the canvas reaches (§11.3)
-            return std::string_view{};
-        }
-
-        // the callback setter an element signal wires to, keyed by the element and the signal (§11.3)
-        std::string_view signal_setter_of(std::string_view element, std::string_view signal) {
-            // the composite key is assembled, because the map is keyed by the pair (§11.3)
-            const std::string key = std::string(element) + "." + std::string(signal);
-            // the signal to setter map is the closed catalogue of §8 (§11.3)
-            static const std::unordered_map<std::string, std::string_view> setters{
-                {"Button.clicked", "set_on_click"}, {"Slider.changed", "set_on_change"}, {"CheckBox.toggled", "set_on_toggle"}, {"ScrollView.scrolled", "set_on_scroll"}, {"TextField.changed", "set_on_change"}, {"TextField.committed", "set_on_commit"},
-            };
-            // the lookup is a ready made key, because the pair is the identity (§11.3)
-            const auto found = setters.find(key);
-            // an element with no signal carries none, which only the three widgets reach (§11.3)
-            return found == setters.end() ? std::string_view{} : found->second;
-        }
-
-        // the named parameters an element signal carries, which a generated lambda and its body both take (§11.3)
-        std::vector<std::pair<std::string, std::string>> named_signal_params(std::string_view element, std::string_view signal) {
-            // a slider change carries the new value, and the catalog names it (§11.3)
-            if (element == "Slider" && signal == "changed")
-                return {{"float", "value"}};
-            // a checkbox toggle carries the new state, which the catalog also names (§11.3)
-            if (element == "CheckBox" && signal == "toggled")
-                return {{"bool", "checked"}};
-            // a scroll reports the offset it moved to, which is the one value a viewport raises (§8.3)
-            if (element == "ScrollView" && signal == "scrolled")
-                return {{"float", "offset"}};
-            // a field raises the string it changed to, which a validation and a commit both read (§8)
-            if (element == "TextField" && (signal == "changed" || signal == "committed"))
-                return {{"std::string", "value"}};
-            // a button click carries nothing, so its handler takes no parameter (§11.3)
-            return {};
-        }
-
-        // the signature fragment a handler takes after the context, which carries the raised parameters (§11.3)
-        std::string handler_signature(std::string_view element, std::string_view signal) {
-            // the named parameters decide the fragment, because the catalog declares them (§11.3)
-            std::string fragment;
-            for (const std::pair<std::string, std::string>& parameter : named_signal_params(element, signal))
-                fragment += ", [[maybe_unused]] " + parameter.first + " " + parameter.second;
-            return fragment;
         }
 
         // the emitter for one component, which produces the facade header and its implementation unit (§11.3)
@@ -442,8 +371,8 @@ namespace albor::compiler
             };
 
             // build the emitter over the component and the shared problem list (§11.3)
-            ComponentEmitter(const CheckedComponent& component, DiagnosticList& diagnostics, const ElementCatalog* catalog, std::vector<std::string> modules, const std::vector<CheckedFunction>* functions, const std::vector<CheckedGlobal>* globals) :
-                m_component(component), m_diagnostics(diagnostics), m_class(component.name), m_stem(snake_case(component.name)), m_functions(functions), m_globals(globals), m_catalog(catalog), m_modules(std::move(modules)) {
+            ComponentEmitter(const CheckedComponent& component, DiagnosticList& diagnostics, const ElementCatalog* catalog, std::vector<std::string> modules, const std::vector<CheckedFunction>* functions, const std::vector<CheckedGlobal>* globals, const std::vector<CheckedComponent>* file_components) :
+                m_component(component), m_diagnostics(diagnostics), m_class(component.name), m_stem(snake_case(component.name)), m_functions(functions), m_globals(globals), m_catalog(catalog), m_modules(std::move(modules)), m_file_components(file_components) {
                 // the declared function names are collected, which tells a call apart from a colour op (§11.1)
                 if (m_functions != nullptr)
                     for (const CheckedFunction& function : *m_functions)
@@ -493,6 +422,27 @@ namespace albor::compiler
 
             // find a module-scoped value by name, which a read outside the properties resolves against (§11.1)
             const CheckedGlobal* global_named(std::string_view name) const;
+
+            // find a file component by name, which an element reference resolves before the builtin table (§11.1)
+            [[nodiscard]] const CheckedComponent* component_named(std::string_view element) const;
+
+            // the widget info of an element, where a file component contributes beside the builtin set (§11.3)
+            [[nodiscard]] WidgetInfo info_of(std::string_view element) const;
+
+            // the setter a property assignment maps to, where a file component names it after its property (§11.3)
+            [[nodiscard]] std::string setter_of(std::string_view element, std::string_view property) const;
+
+            // the callback setter an element signal wires to, where a file component signal names itself (§11.3)
+            [[nodiscard]] std::string signal_setter_of(std::string_view element, std::string_view signal) const;
+
+            // the named parameters a signal carries, which a file component signal declares beside its type (§11.3)
+            [[nodiscard]] std::vector<std::pair<std::string, std::string>> named_signal_params(std::string_view element, std::string_view signal) const;
+
+            // the typed parameters an element signal raises, which a handler body expression resolves against (§11.3)
+            [[nodiscard]] std::vector<std::pair<std::string, ValueType>> signal_parameter_types(std::string_view element, std::string_view signal) const;
+
+            // the signature fragment a handler takes after the context, which the raised parameters decide (§11.3)
+            [[nodiscard]] std::string handler_signature(std::string_view element, std::string_view signal) const;
 
             // the type of a checked expression, which mirrors the checker's own walk (§11.3)
             ValueType type_of(const Expression& expression) const;
@@ -668,6 +618,9 @@ namespace albor::compiler
             // the signal parameters the handler body reads, which are the lambda arguments (§11.3)
             std::vector<std::string> m_signal_parameters;
 
+            // the types of those parameters, which a conversion in the body resolves against as it is scanned (§11.3)
+            std::vector<std::pair<std::string, ValueType>> m_signal_parameter_types;
+
             // the file-level functions the component may call, which a call resolves against (§11.1)
             const std::vector<CheckedFunction>* m_functions = nullptr;
 
@@ -720,6 +673,9 @@ namespace albor::compiler
             // the manifest modules the file imported, which name the directories the record headers live in (§11.1, AD-17)
             std::vector<std::string> m_modules;
 
+            // the components the file declares, which an element reference resolves against before the builtin set (§11.1)
+            const std::vector<CheckedComponent>* m_file_components = nullptr;
+
             // the repeats in preorder, each of which is a keyed view over its source (§18.1, AD-13)
             std::vector<RepeatSlot> m_repeats;
 
@@ -759,6 +715,144 @@ namespace albor::compiler
             // whether a blocking condition was reported, which empties the output (§11.3)
             bool m_blocked = false;
         };
+
+        const CheckedComponent* ComponentEmitter::component_named(std::string_view element) const {
+            // the file's own components are searched first, because a declared name shadows a builtin one (§11.1)
+            if (m_file_components != nullptr)
+                for (const CheckedComponent& component : *m_file_components)
+                    if (component.name == element)
+                        return &component;
+            // nothing the file declares goes by that name, so the builtin set decides (§11.1)
+            return nullptr;
+        }
+
+        WidgetInfo ComponentEmitter::info_of(std::string_view element) const {
+            // a file component constructs through its facade, which takes both engines like a label does (§11.3)
+            if (const CheckedComponent* component = component_named(element))
+                return {.header = snake_case(component->name) + ".h", .class_name = component->name, .needs_engine = true, .needs_text_engine = true};
+            // every other element is a builtin, whose header and class the closed set names (§11.3)
+            return widget_info().at(element);
+        }
+
+        std::string ComponentEmitter::setter_of(std::string_view element, std::string_view property) const {
+            // a file component exposes one setter per property, named the way its facade declares it (§11.3)
+            if (component_named(element) != nullptr)
+                return "set_" + sanitize(property);
+            // the composite key is assembled, because the map is keyed by the pair (§11.3)
+            const std::string key = std::string(element) + "." + std::string(property);
+            // the property to setter map is the closed catalogue of §8 (§11.3)
+            static const std::unordered_map<std::string, std::string_view> setters{
+                {"Column.spacing", "set_gap"}, {"Column.padding", "set_padding"}, {"Row.spacing", "set_gap"}, {"Padding.padding", "set_padding"}, {"Grid.spacing", "set_gap"}, {"Label.text", "set_text"}, {"Label.foreground", "set_foreground"}, {"Label.font_size", "set_font_size"}, {"Button.text", "set_label"}, {"Button.background", "set_background"}, {"Button.disabled", "set_disabled"}, {"Button.action", "set_command"}, {"Slider.value", "set_value"}, {"Slider.disabled", "set_disabled"}, {"Slider.track_color", "set_track_color"}, {"Slider.thumb_color", "set_thumb_color"}, {"Slider.action", "set_command"}, {"CheckBox.checked", "set_checked"}, {"CheckBox.disabled", "set_disabled"}, {"CheckBox.outline", "set_outline"}, {"CheckBox.check_fill", "set_check_fill"}, {"CheckBox.action", "set_command"}, {"ScrollView.overscan", "set_overscan"}, {"ScrollView.scrollbar", "set_scrollbar_visibility"}, {"ScrollView.row_height", "set_row_height"}, {"TextField.value", "set_value"}, {"TextField.placeholder", "set_placeholder"}, {"TextField.read_only", "set_read_only"}, {"TextField.multiline", "set_multiline"}, {"TextField.disabled", "set_disabled"}, {"TextField.font_size", "set_font_size"},
+            };
+            // the lookup is a ready made key, because the pair is the identity (§11.3)
+            const auto found = setters.find(key);
+            // a property every type carries has no per type entry, because it resolves against the common set (§8.2)
+            if (found != setters.end())
+                return std::string(found->second);
+            // the common set decides, because alignment is a property of every node a parent arranges (§8.2, §11.3)
+            static const std::vector<std::pair<std::string, std::string>> common_setters = [] {
+                // the names come from the catalogue, held apart so a returned view outlives this call (§8.2, §11.3)
+                std::vector<std::pair<std::string, std::string>> built;
+                for (const ElementProperty& common : common_element_properties())
+                    built.emplace_back(common.name, "set_" + common.name);
+                return built;
+            }();
+            for (const auto& entry : common_setters) {
+                // the name decides, so a common property resolves to exactly one setter (§8.2)
+                if (entry.first == property)
+                    return entry.second;
+            }
+            // an element with no setter carries none, which only the canvas reaches (§11.3)
+            return std::string{};
+        }
+
+        std::string ComponentEmitter::signal_setter_of(std::string_view element, std::string_view signal) const {
+            // a file component signal wires through the slot its facade declares, which the written name decides (§11.3)
+            if (component_named(element) != nullptr)
+                return "set_on_" + sanitize(signal);
+            // the composite key is assembled, because the map is keyed by the pair (§11.3)
+            const std::string key = std::string(element) + "." + std::string(signal);
+            // the signal to setter map is the closed catalogue of §8 (§11.3)
+            static const std::unordered_map<std::string, std::string_view> setters{
+                {"Button.clicked", "set_on_click"}, {"Slider.changed", "set_on_change"}, {"CheckBox.toggled", "set_on_toggle"}, {"ScrollView.scrolled", "set_on_scroll"}, {"TextField.changed", "set_on_change"}, {"TextField.committed", "set_on_commit"},
+            };
+            // the lookup is a ready made key, because the pair is the identity (§11.3)
+            const auto found = setters.find(key);
+            // an element with no signal carries none, which only the three widgets reach (§11.3)
+            return found == setters.end() ? std::string{} : std::string(found->second);
+        }
+
+        std::vector<std::pair<std::string, std::string>> ComponentEmitter::named_signal_params(std::string_view element, std::string_view signal) const {
+            // a file component signal declares its own parameters, which the raised values read by name (§11.3)
+            if (const CheckedComponent* component = component_named(element)) {
+                // the declared signal is located, because only it carries the parameter list (§11.3)
+                for (const CheckedSignal& declared : component->signals) {
+                    // a name mismatch means another signal, which the next iteration then takes (§11.3)
+                    if (declared.name != signal)
+                        continue;
+                    // the parameters pair type and name in declaration order, which the handler signature follows (§11.3)
+                    std::vector<std::pair<std::string, std::string>> named;
+                    for (std::size_t index = 0; index < declared.parameter_types.size(); index++) {
+                        // the C++ type is the checked spelling, which the facade setter already uses (§11.3)
+                        const std::string type = cpp_type(declared.parameter_types[index]);
+                        // the name is shared with the facade slot, so the lambda declares the same one (§14.1)
+                        named.emplace_back(type, sanitize(index < declared.parameter_names.size() ? declared.parameter_names[index] : std::string{}));
+                    }
+                    return named;
+                }
+                // a signal the file never declared carries no parameters, which only a blocked output reaches (§11.3)
+                return {};
+            }
+            // a slider change carries the new value, and the catalog names it (§11.3)
+            if (element == "Slider" && signal == "changed")
+                return {{"float", "value"}};
+            // a checkbox toggle carries the new state, which the catalog also names (§11.3)
+            if (element == "CheckBox" && signal == "toggled")
+                return {{"bool", "checked"}};
+            // a scroll reports the offset it moved to, which is the one value a viewport raises (§8.3)
+            if (element == "ScrollView" && signal == "scrolled")
+                return {{"float", "offset"}};
+            // a field raises the string it changed to, which a validation and a commit both read (§8)
+            if (element == "TextField" && (signal == "changed" || signal == "committed"))
+                return {{"std::string", "value"}};
+            // a button click carries nothing, so its handler takes no parameter (§11.3)
+            return {};
+        }
+
+        std::vector<std::pair<std::string, ValueType>> ComponentEmitter::signal_parameter_types(std::string_view element, std::string_view signal) const {
+            // the paired parameters are assembled, which both the component route and the catalog route hand back (§11.3)
+            auto pair_parameters = [](const std::vector<ValueType>& types, const std::vector<std::string>& names) {
+                // the index walks both lists, because the declaration kept them parallel (§11.1)
+                std::vector<std::pair<std::string, ValueType>> paired;
+                for (std::size_t index = 0; index < types.size() && index < names.size(); index++)
+                    paired.emplace_back(names[index], types[index]);
+                return paired;
+            };
+            // a file component signal declares its own parameters, which carry the checked types (§11.3)
+            if (const CheckedComponent* component = component_named(element)) {
+                for (const CheckedSignal& declared : component->signals)
+                    if (declared.name == signal)
+                        return pair_parameters(declared.parameter_types, declared.parameter_names);
+                // a signal the file never declared carries no parameters, which only a blocked output reaches (§11.3)
+                return {};
+            }
+            // a builtin element resolves against the catalog, where the raised types are declared (§11.3)
+            const ElementType* type = m_catalog == nullptr ? nullptr : m_catalog->find(element);
+            if (type != nullptr)
+                for (const ElementSignal& declared : type->signals)
+                    if (declared.name == signal)
+                        return pair_parameters(declared.parameter_types, declared.parameter_names);
+            // an element no catalog declares raises nothing a body can read (§11.3)
+            return {};
+        }
+
+        std::string ComponentEmitter::handler_signature(std::string_view element, std::string_view signal) const {
+            // the named parameters decide the fragment, because the catalog declares them (§11.3)
+            std::string fragment;
+            for (const std::pair<std::string, std::string>& parameter : named_signal_params(element, signal))
+                fragment += ", [[maybe_unused]] " + parameter.first + " " + parameter.second;
+            return fragment;
+        }
 
         void ComponentEmitter::collect_record_headers(const ValueType& type) {
             // a record is named by its own name, which the glue generator turned into a snake case file (§11.2, AD-17)
@@ -892,7 +986,7 @@ namespace albor::compiler
                 return;
             }
             // an element outside the widget set is native, which has no generated construction path (§11.3, AD-17)
-            if (!widget_info().contains(std::string_view(node.element_type))) {
+            if (!widget_info().contains(std::string_view(node.element_type)) && component_named(std::string_view(node.element_type)) == nullptr) {
                 // the problem names the type, because that is what the author wrote (§11.3)
                 m_diagnostics.add(Diagnostic::Severity::Error, node.span, "E0501", "'" + node.element_type + "' is not a generated element type");
                 // the blocking flag is set, which empties the generated output (§11.3)
@@ -900,6 +994,11 @@ namespace albor::compiler
             }
             // each assignment is scanned for its type and its expressions (§11.3)
             for (const CheckedAssignment& assignment : node.assignments) {
+                // a collection anywhere in the assigned type pulls the vector header, which a sink names (§8.1, §14.1)
+                if (carries_vector(assignment.type))
+                    m_uses_vector = true;
+                // a record anywhere in the assigned type pulls the header that declares its struct (§11.2, AD-17)
+                collect_record_headers(assignment.type);
                 // the value type is rejected, because a native or a collection value cannot be built (§11.3)
                 validate_type(assignment.type, assignment.span);
                 // the value is scanned for physical lengths, because their density is undefined (§11.3, AD-27)
@@ -909,6 +1008,8 @@ namespace albor::compiler
             }
             // each handler body is scanned the same way, because it may hold anything (§11.3)
             for (const CheckedHandler& handler : node.handlers) {
+                // the raised parameters are typed here, because a conversion in the body reads them (§11.3)
+                m_signal_parameter_types = signal_parameter_types(node.element_type, handler.name);
                 // each statement is scanned on its own, because one problem must not hide the rest (§11.3)
                 for (const CheckedStatement& statement : handler.body) {
                     // an assignment carries its value, which is scanned (§11.3)
@@ -926,6 +1027,8 @@ namespace albor::compiler
                         scan_color(*argument);
                     }
                 }
+                // the parameters are cleared, because the next handler binds its own (§11.3)
+                m_signal_parameter_types.clear();
             }
             // the children are walked, because a nested problem matters just as much (§11.3)
             for (const std::shared_ptr<CheckedNode>& child : node.children)
@@ -1225,6 +1328,12 @@ namespace albor::compiler
             }
             // a reference resolves against the component, which is what a generated read needs (§11.3)
             if (const auto* reference = dynamic_cast<const PropertyExpression*>(&expression)) {
+                // the signal parameters are read first, because a handler parameter shadows a property (§11.1, §11.3)
+                for (const std::pair<std::string, ValueType>& parameter : m_signal_parameter_types) {
+                    // the name decides, so a parameter types as the signal raised it (§11.3)
+                    if (parameter.first == reference->name)
+                        return parameter.second;
+                }
                 // the declared property decides, because a property shadows a module-scoped value (§11.1, §11.3)
                 const CheckedProperty* property = property_named(reference->name);
                 if (property != nullptr)
@@ -1511,7 +1620,7 @@ namespace albor::compiler
             // the widget headers join the set, because each constructed class must be declared (§14.1)
             for (const NodeSlot& slot : m_nodes) {
                 // the widget info of the element names the header to include (§14.1)
-                const WidgetInfo& info = widget_info().at(std::string_view(slot.node->element_type));
+                const WidgetInfo& info = info_of(std::string_view(slot.node->element_type));
                 // the header is added once, because the set deduplicates (§14.1)
                 project_headers.push_back(std::string(info.header));
             }
@@ -1520,7 +1629,7 @@ namespace albor::compiler
                 // each body node contributes its header, because the row functions construct it (§11.3)
                 for (const NodeSlot& slot : repeat.body)
                     // the widget info of the element names the header to include (§14.1)
-                    project_headers.push_back(std::string(widget_info().at(std::string_view(slot.node->element_type)).header));
+                    project_headers.push_back(std::string(info_of(std::string_view(slot.node->element_type)).header));
             // the engine type needs its header, which every widget body uses (§14.1)
             project_headers.push_back("runtime/binding_engine.h");
             // the property type needs its header, which every body uses (§14.1)
@@ -1647,7 +1756,7 @@ namespace albor::compiler
             // each widget becomes an owned pointer member, which the evaluators write through (§8.1)
             for (const NodeSlot& slot : m_nodes) {
                 // the class name is the constructed type, which decides the pointer type (§8.1)
-                const std::string_view class_name = widget_info().at(std::string_view(slot.node->element_type)).class_name;
+                const std::string class_name = info_of(std::string_view(slot.node->element_type)).class_name;
                 line(2, "// the " + slot.node->element_type + " node, which the bindings write through (§8.1)");
                 line(2, std::string(class_name) + "* m_node_" + std::to_string(slot.index) + " = nullptr;");
                 line(0, "");
@@ -1963,7 +2072,7 @@ namespace albor::compiler
 
         void ComponentEmitter::emit_node_block(const NodeSlot& slot) {
             // the class name decides the constructor, which the element carries (§8.1)
-            const WidgetInfo& info = widget_info().at(std::string_view(slot.node->element_type));
+            const WidgetInfo& info = info_of(std::string_view(slot.node->element_type));
             // the constructor arguments depend on the engines the widget reads (§8.1)
             std::string arguments = "()";
             // a widget construction pulls the engine, which the builder resolved above (§7.2)
@@ -2050,7 +2159,7 @@ namespace albor::compiler
                 // a constant reaches the widget setter directly, which what a static value is (§14.1)
                 if (assignment.dependencies.empty()) {
                     // the setter is fetched by the element and the property, which the catalog named (§11.3)
-                    const std::string_view setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
+                    const std::string setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
                     line(2, "// apply the static " + assignment.name + ", which is the value the author wrote (§14.1)");
                     line(2, "n" + std::to_string(slot.index) + "->" + std::string(setter) + "(" + emit_expression(*assignment.value) + ");");
                 }
@@ -2079,7 +2188,7 @@ namespace albor::compiler
             // each handler wires its callback, which a widget signal triggers (§11.3)
             for (const CheckedHandler& handler : slot.node->handlers) {
                 // the callback setter comes from the element and the signal, which the catalog named (§11.3)
-                const std::string_view setter = signal_setter_of(std::string_view(slot.node->element_type), handler.name);
+                const std::string setter = signal_setter_of(std::string_view(slot.node->element_type), handler.name);
                 // the lambda carries the signal parameters by name, so the body reads what the widget raised (§11.3)
                 const std::vector<std::pair<std::string, std::string>> named = named_signal_params(slot.node->element_type, handler.name);
                 std::string lambda_parameters;
@@ -2101,7 +2210,7 @@ namespace albor::compiler
 
         void ComponentEmitter::emit_row_node_block(const NodeSlot& slot) {
             // the class name decides the constructor, which the element carries (§8.1, §18.1)
-            const WidgetInfo& info = widget_info().at(std::string_view(slot.node->element_type));
+            const WidgetInfo& info = info_of(std::string_view(slot.node->element_type));
             // the constructor arguments depend on the engines the widget reads (§8.1, §18.1)
             std::string arguments = "()";
             // a widget construction pulls the engine, which the builder resolved above (§7.2, §18.1)
@@ -2130,7 +2239,7 @@ namespace albor::compiler
                     continue;
                 }
                 // the setter is fetched by the element and the property, which the catalog named (§11.3)
-                const std::string_view setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
+                const std::string setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
                 line(2, "// apply the " + assignment.name + ", which is what this row shows (§18.1)");
                 line(2, "n" + std::to_string(slot.index) + "->" + std::string(setter) + "(" + emit_expression(*assignment.value) + ");");
             }
@@ -2140,7 +2249,7 @@ namespace albor::compiler
             // each handler wires its callback, because a row handler runs the written body (§11.3, §18.1)
             for (const CheckedHandler& handler : slot.node->handlers) {
                 // the callback setter comes from the element and the signal, which the catalog named (§11.3)
-                const std::string_view setter = signal_setter_of(std::string_view(slot.node->element_type), handler.name);
+                const std::string setter = signal_setter_of(std::string_view(slot.node->element_type), handler.name);
                 // the lambda carries the signal parameters by name, so the body reads what the widget raised (§11.3)
                 const std::vector<std::pair<std::string, std::string>> named = named_signal_params(slot.node->element_type, handler.name);
                 std::string lambda_parameters;
@@ -2177,7 +2286,7 @@ namespace albor::compiler
                     continue;
                 }
                 // the setter is the same one the build used, because both paths write the same widget (§11.3)
-                const std::string_view setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
+                const std::string setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
                 line(2, "// rewrite the " + assignment.name + ", because the row now shows another item (§18.1, AD-13)");
                 line(2, "n" + std::to_string(slot.index) + "->" + std::string(setter) + "(" + emit_expression(*assignment.value) + ");");
             }
@@ -2475,7 +2584,7 @@ namespace albor::compiler
 
         void ComponentEmitter::emit_row_walk(const NodeSlot& slot) {
             // the concrete class is what the walk casts to, because an assignment needs the widget setter (§11.3, §18.1)
-            const std::string cls(widget_info().at(std::string_view(slot.node->element_type)).class_name);
+            const std::string cls(info_of(std::string_view(slot.node->element_type)).class_name);
             // the body root is the node the view handed back, so its walk is a cast rather than a descent (§18.1, AD-13)
             if (slot.row_path.empty()) {
                 line(2, "// the body root is the row itself, which the view handed back (§18.1, AD-13)");
@@ -2639,7 +2748,7 @@ namespace albor::compiler
                         line(2, "(void)value;");
                     }
                     else {
-                        const std::string_view setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
+                        const std::string setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
                         line(2, "// the widget shows the computed value, which is what makes the binding visible (§13.3)");
                         line(2, "self->m_node_" + std::to_string(slot.index) + "->" + std::string(setter) + "(value);");
                     }
@@ -2688,6 +2797,8 @@ namespace albor::compiler
                     m_signal_parameters.clear();
                     for (const std::pair<std::string, std::string>& parameter : named_signal_params(slot.node->element_type, handler.name))
                         m_signal_parameters.push_back(parameter.second);
+                    // their types are published too, because a conversion in the body resolves against them (§11.3)
+                    m_signal_parameter_types = signal_parameter_types(slot.node->element_type, handler.name);
                     // each statement is emitted as a write, a signal invocation or a built-in method (§11.3)
                     for (const CheckedStatement& statement : handler.body) {
                         // an assignment writes the target property, which the engine settles (§11.3)
@@ -2777,6 +2888,7 @@ namespace albor::compiler
                     line(1, "}");
                     m_object.clear();
                     m_signal_parameters.clear();
+                    m_signal_parameter_types.clear();
                 }
             }
         }
@@ -3226,7 +3338,7 @@ namespace albor::compiler
             // the engine and the colour flags are gathered from the tree, which the headers need (§14.1)
             for (const NodeSlot& slot : m_nodes) {
                 // the widget info decides when each engine is needed, which the builder then resolves (§14.1)
-                const WidgetInfo& info = widget_info().at(std::string_view(slot.node->element_type));
+                const WidgetInfo& info = info_of(std::string_view(slot.node->element_type));
                 // the engine flag rises with each widget, because the builder resolves it once (§14.1)
                 m_uses_engine = m_uses_engine || info.needs_engine;
                 // the text engine flag rises with each label, because the body stores it (§14.1)
@@ -3245,7 +3357,7 @@ namespace albor::compiler
                 // each body node is scanned alone, because the row functions are a separate path (§11.3)
                 for (const NodeSlot& slot : repeat.body) {
                     // the widget info decides when each engine is needed, exactly as an ordinary node does (§11.3)
-                    const WidgetInfo& info = widget_info().at(std::string_view(slot.node->element_type));
+                    const WidgetInfo& info = info_of(std::string_view(slot.node->element_type));
                     // the engine flag rises with each widget, because the builder resolves it once (§14.1)
                     m_uses_engine = m_uses_engine || info.needs_engine;
                     // the text engine flag rises with each label, because the row functions store it (§9.1)
@@ -3324,7 +3436,7 @@ namespace albor::compiler
         std::vector<std::string> chunk_contents;
         for (const CheckedComponent& component : file.components) {
             // the emitter is built per component, because the output files are per component (§14.1)
-            ComponentEmitter emitter(component, m_diagnostics, m_catalog, file.imported_modules, &file.functions, &file.globals);
+            ComponentEmitter emitter(component, m_diagnostics, m_catalog, file.imported_modules, &file.functions, &file.globals, &file.components);
             // a component that was blocked empties the whole output, which the driver then treats as failed (§11.3)
             if (!emitter.emit())
                 return {};

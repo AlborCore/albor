@@ -1756,3 +1756,76 @@ TEST(Codegen, EmitsARecordConstructionInDeclarationOrder) {
     // assert
     EXPECT_TRUE(contains(cpp.content, "[[maybe_unused]] static const Frame box = Frame{.w = 1.5f, .h = 2.5f};"));
 }
+
+TEST(Codegen, ConstructsAComposedComponentWithBothEngines) {
+    // arrange, act a component instantiates another component the same file declares (§11.1)
+    const std::vector<GeneratedFile> files = generate("component Greeting { in property<string> title; Column { Label { text: title; } } } component App { in property<string> name; Greeting { title: name; } }");
+    // assert the sibling header joins the include set, because the construction needs its class (§14.1)
+    const GeneratedFile& cpp = file_named(files, "app.cpp");
+    EXPECT_TRUE(contains(cpp.content, "#include \"greeting.h\""));
+    // assert the facade is constructed with both engines, which its generated body reads (§14.1)
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<Greeting>(engine, text_engine)"));
+    // assert the member pointer names the facade type, because the bindings write through it (§8.1)
+    EXPECT_TRUE(contains(cpp.content, "Greeting* m_node_0"));
+}
+
+TEST(Codegen, BindsAPropertyOfAComposedComponent) {
+    // arrange, act the assignment carries a source, so it runs through a sink rather than a direct set (§13.3)
+    const std::vector<GeneratedFile> files = generate("component Greeting { in property<string> title; Column { Label { text: title; } } } component App { in property<string> name; Greeting { title: name; } }");
+    const GeneratedFile& cpp = file_named(files, "app.cpp");
+    // assert the sink binds over the source, because the engine recomputes it when the source changes (§13.3)
+    EXPECT_TRUE(contains(cpp.content, "m_sink_0_title.bind_static(&Impl::evaluate_0_title, this, deps_0_title);"));
+    // assert the evaluator writes through the node pointer, which is what makes the binding visible on the facade (§13.3)
+    EXPECT_TRUE(contains(cpp.content, "self->m_node_0->set_title(value);"));
+}
+
+TEST(Codegen, WiresAHandlerForAComposedComponentSignal) {
+    // arrange, act the outer component attaches a handler to the signal the composed component raises (§11.1)
+    const std::vector<GeneratedFile> files = generate("component Greeting { signal dismissed(); Column {} } component App { Greeting { on_dismissed: { } } }");
+    const GeneratedFile& cpp = file_named(files, "app.cpp");
+    // assert the callback setter is the facade slot, which is what a file component signal declares (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "n0->set_on_dismissed([this]() { handle_0_dismissed(this); });"));
+    // assert the handler declaration joins the body, because the lambda calls it (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "static void handle_0_dismissed(void* raw);"));
+}
+
+TEST(Codegen, EmitsTheSignalParametersOfAComposedComponent) {
+    // arrange, act the signal declares a parameter, which the outer handler body reads (§11.1)
+    const std::vector<GeneratedFile> files = generate("component G { inout property<string> q; signal hit(float v); Column {} } component C { in property<float> n; inout property<string> r; G { on_hit: { r = string(v); } } }");
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert the handler takes the raised parameter by name, which the written body referenced (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "static void handle_0_hit(void* raw, [[maybe_unused]] float v);"));
+    // assert the lambda declares and forwards the same parameter, which is how the body reads the raised value (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "n0->set_on_hit([this](float v) { handle_0_hit(this, v); });"));
+}
+
+TEST(Codegen, TypesASignalParameterSoTheTextHelperIsEmitted) {
+    // arrange, act the handler converts the raised float, which only the helper can print (§11.3)
+    const std::vector<GeneratedFile> files = generate("component G { inout property<string> q; signal hit(float v); Column {} } component C { in property<float> n; inout property<string> r; G { on_hit: { r = string(v); } } }");
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert the helper is emitted and its header joins, because the conversion resolves the parameter type (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "#include <cstdio>"));
+    EXPECT_TRUE(contains(cpp.content, "c_float_to_text(v)"));
+}
+
+TEST(Codegen, FlattensAnInheritedTreeIntoTheDerivedComponent) {
+    // arrange, act the derived component fills the base slot with its own content (§11.1)
+    const std::vector<GeneratedFile> files = generate("component Panel { in property<string> title; Column { Label { text: title; } @children } } component Wide : Panel { Label { text: title; } }");
+    const GeneratedFile& cpp = file_named(files, "wide.cpp");
+    // assert the base root was cloned into the derived body, because the container is what hangs from the facade (§11.1)
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<ColumnLayout>()"));
+    // assert the base label and the spliced content both hang under it, in the order the base wrote (§11.1)
+    EXPECT_TRUE(contains(cpp.content, "n0->add_child(std::move(node_1));"));
+    EXPECT_TRUE(contains(cpp.content, "n0->add_child(std::move(node_2));"));
+    // assert the inherited property reaches the derived facade, because a host binds against it (§14.1)
+    const GeneratedFile& header = file_named(files, "wide.h");
+    EXPECT_TRUE(contains(header.content, "void set_title(std::string value);"));
+}
+
+TEST(Codegen, UsesTheOverriddenDefaultOfARedeclaredProperty) {
+    // arrange, act the derived body redeclares the inherited property with another default (§11.1)
+    const std::vector<GeneratedFile> files = generate("component B { in property<string> t: \"a\"; Column { Label { text: t; } } } component D : B { in property<string> t: \"b\"; }");
+    const GeneratedFile& cpp = file_named(files, "d.cpp");
+    // assert the member initialises from the derived default, because the redeclaration replaced the base entry (§11.1)
+    EXPECT_TRUE(contains(cpp.content, "Property<std::string> m_t{std::string(\"b\")};"));
+}

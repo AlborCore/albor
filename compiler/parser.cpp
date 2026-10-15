@@ -472,6 +472,15 @@ namespace albor::compiler
         advance();
         // the name is required, because it becomes the generated class name (§11.1, AD-03a)
         component->name = expect_identifier();
+        // a colon names the base component, which is what a derived component writes after its name (§11.1)
+        if (accept_punctuation(":")) {
+            // the base span starts at its name, because a diagnostic about the base points at it (§11.1)
+            component->base_span.start = peek().span.start;
+            // the base is a name, because only a component this file declares may fill the role (§11.1)
+            component->base = expect_identifier();
+            // the span ends at the name, which the reader has just consumed (§11.1)
+            component->base_span.end = last_consumed_end();
+        }
         // the body is delimited, so the members are read until it closes (§11.1)
         expect_punctuation("{");
         // the members run until the closing brace or the end of the stream (§11.1)
@@ -500,9 +509,14 @@ namespace albor::compiler
             parse_signal_declaration(component);
             return;
         }
-        // anything else at this level must be the root element (§11.1)
+        // anything else at this level is an element of the body, which the shape below decides (§11.1)
         if (peek().kind == Token::Kind::Identifier) {
-            // the root is taken once, because a component has exactly one (§11.1)
+            // a derived component takes content elements, because several may fill the one slot (§11.1)
+            if (!component.base.empty()) {
+                component.content.push_back(parse_tree_node());
+                return;
+            }
+            // the root is taken once, because a component that derives from none has exactly one (§11.1)
             if (component.root == nullptr) {
                 component.root = parse_tree_node();
                 return;
@@ -573,6 +587,8 @@ namespace albor::compiler
             // a parameter with no name is reported, because the facade cannot emit a signature without it (§11.2)
             if (parameter.empty())
                 report_unexpected("a parameter name");
+            // the name is kept beside the type, because a handler body reads the raised value by it (§11.1)
+            declaration.parameter_names.push_back(parameter);
             // a further parameter is preceded by a comma, which is consumed here (§11.1)
             if (!accept_punctuation(","))
                 break;
@@ -710,6 +726,28 @@ namespace albor::compiler
         if (peek().kind == Token::Kind::Identifier) {
             // the child is read and appended, because the tree is built as the body is read (§11.1)
             node.children.push_back(parse_tree_node());
+            return;
+        }
+        // an at sign starts the children slot, which is where a derived component's content lands (§11.1)
+        if (peek().kind == Token::Kind::Macro) {
+            // only the children macro marks a slot, because every other macro belongs to an expression (§11.1)
+            if (peek().text == "children") {
+                // the node is allocated first, because the caller takes the owning pointer (§11.1)
+                auto slot = std::make_unique<TreeNode>();
+                // the kind marks the content point, which the checker splices a derived body into (§11.1)
+                slot->kind = TreeNodeKind::Slot;
+                // the span covers the marker, because a diagnostic about the slot points at it (§11.1)
+                slot->span = peek().span;
+                // the marker is consumed, because the node now carries it (§11.1)
+                advance();
+                // the slot is kept among the children, because that is the position it marks (§11.1)
+                node.children.push_back(std::move(slot));
+                return;
+            }
+            // a macro that marks nothing here is reported, because the member position starts nothing else (§11.1)
+            report_unexpected("a property, a handler, a child element or @children");
+            // the offending unit is consumed, because the member loop would otherwise stall on it (§11.1)
+            advance();
             return;
         }
         // a unit that starts nothing is reported, because the grammar allows nothing else here (§11.1)
@@ -1298,7 +1336,7 @@ namespace albor::compiler
         advance();
         // the argument list is delimited, so the literal is read until it closes (§11.1, §9.2)
         expect_punctuation("(");
-        // a translatable string takes exactly one literal, because a key with holes is written with concatenation (§11.1, §9.2)
+        // a translatable string takes one literal, because a key with holes is written with concatenation (§11.1, §9.2)
         ExpressionPtr argument = parse_expression();
         // the list is closed, which is required (§11.1, §9.2)
         expect_punctuation(")");

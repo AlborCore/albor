@@ -379,6 +379,9 @@ namespace albor::compiler
         // the parameter types as written, which the manifest and the facade agree on (§11.1)
         std::vector<std::string> parameter_types;
 
+        // the parameter names in declaration order, which a handler body reads the raised value by (§11.1)
+        std::vector<std::string> parameter_names;
+
         // where the declaration was written (§11.1)
         SourceSpan span;
     };
@@ -486,7 +489,7 @@ namespace albor::compiler
         SourceSpan span;
     };
 
-    // the kinds of child element a tree node may contain, which is a closed set of three (§11.1)
+    // the kinds of child element a tree node may contain, which is a closed set of four (§11.1)
     enum class TreeNodeKind
     {
         // a declared element type such as Column or Button, which the manifest or the widget catalog resolves (§11.1)
@@ -496,7 +499,10 @@ namespace albor::compiler
         Repeat,
 
         // a conditional element, whose body exists only while the condition holds (§11.1)
-        Conditional
+        Conditional,
+
+        // the content point a base declares, which a derived component's elements replace (§11.1)
+        Slot
     };
 
     // one drawing call inside a draw block, which the codegen emits into the canvas body (§6.4, §11.1)
@@ -617,6 +623,12 @@ namespace albor::compiler
         // the component name as written, which becomes the generated facade class name (§11.1, AD-03a)
         std::string name;
 
+        // the base component as written, which is empty when the component derives from none (§11.1)
+        std::string base;
+
+        // where the base was written, which is what a diagnostic about it points at (§11.1)
+        SourceSpan base_span;
+
         // the modules the component refers to (§11.1, AD-17)
         std::vector<ImportDeclaration> imports;
 
@@ -628,6 +640,9 @@ namespace albor::compiler
 
         // the root element of the component, which is empty when the component declares none (§11.1)
         std::unique_ptr<TreeNode> root;
+
+        // the content elements a derived component supplies for the base's children slot (§11.1)
+        std::vector<std::unique_ptr<TreeNode>> content;
 
         // where the declaration starts, which is what a driver reports against (§11.1)
         SourceSpan span;

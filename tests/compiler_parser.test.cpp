@@ -1265,3 +1265,61 @@ TEST(Parser, SuspendsAConstructionAcrossAConditionalCondition) {
     EXPECT_EQ(root.kind, TreeNodeKind::Conditional);
     EXPECT_NE(dynamic_cast<const PropertyExpression*>(root.condition.get()), nullptr);
 }
+
+TEST(Parser, ReadsAnInheritanceHeaderOnAComponent) {
+    // arrange, act the derived component names its base after a colon (§11.1)
+    const SourceFile file = parse("component Base { Column { @children } } component Wide : Base { Label {} }");
+    // assert the base name is kept, because the merge pass looks it up by it (§11.1)
+    ASSERT_EQ(file.components.size(), 2U);
+    const ComponentDeclaration& derived = file.components.at(1);
+    EXPECT_EQ(derived.base, "Base");
+    // assert the base span covers the written name, because an unknown base points at it (§11.1)
+    EXPECT_FALSE(derived.base_span.empty());
+    // assert the content element landed in content rather than root, because a derived body declares no root (§11.1)
+    EXPECT_EQ(derived.root, nullptr);
+    ASSERT_EQ(derived.content.size(), 1U);
+    EXPECT_EQ(derived.content.at(0)->element_type, "Label");
+}
+
+TEST(Parser, ReadsSeveralContentElementsInADerivedComponent) {
+    // arrange, act the derived body holds two elements, which both fill the one slot (§11.1)
+    const SourceFile file = parse("component Base { Column { @children } } component Wide : Base { Label {} Button {} }");
+    // assert both were kept in written order, because the fill inserts them in that order (§11.1)
+    ASSERT_EQ(file.components.size(), 2U);
+    ASSERT_EQ(file.components.at(1).content.size(), 2U);
+    EXPECT_EQ(file.components.at(1).content.at(0)->element_type, "Label");
+    EXPECT_EQ(file.components.at(1).content.at(1)->element_type, "Button");
+}
+
+TEST(Parser, ReadsChildrenAsASlotInsideTheRoot) {
+    // arrange, act the marker is written inside the root element, which is where a base declares the content point (§11.1)
+    const SourceFile file = parse("component Base { in property<string> t; Column { Label { text: t; } @children } }");
+    // assert the root kept the marker as a slot node, because a fill replaces exactly that node (§11.1)
+    ASSERT_EQ(file.components.size(), 1U);
+    const TreeNode& root = *file.components.at(0).root;
+    ASSERT_EQ(root.children.size(), 2U);
+    EXPECT_EQ(root.children.at(1)->kind, TreeNodeKind::Slot);
+}
+
+TEST(Parser, ReadsSignalParameterNamesBesideTheirTypes) {
+    // arrange, act a signal declares parameters, which a handler body reads by name (§11.1)
+    const SourceFile file = parse("component C { signal hit(float v, string s); Column {} }");
+    // assert both names were kept beside their types, because the signature uses the types and the body the names (§11.1)
+    ASSERT_EQ(file.components.size(), 1U);
+    ASSERT_EQ(file.components.at(0).signals.size(), 1U);
+    const SignalDeclaration& signal = file.components.at(0).signals.at(0);
+    EXPECT_EQ(signal.parameter_types.at(0), "float");
+    EXPECT_EQ(signal.parameter_names.at(0), "v");
+    EXPECT_EQ(signal.parameter_types.at(1), "string");
+    EXPECT_EQ(signal.parameter_names.at(1), "s");
+}
+
+TEST(Parser, ReportsChildrenWrittenAtComponentLevel) {
+    // arrange a stray marker outside any element, because only an element declares the content point (§11.1)
+    DiagnosticList diagnostics;
+    // act the file is parsed, which the member rule refuses (§11.1)
+    parse("component Base { @children } component C { Label {} }", diagnostics);
+    // assert the marker is reported, because a component body holds properties, signals or the root element (§11.1)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0203");
+}

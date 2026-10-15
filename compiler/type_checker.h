@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -14,7 +15,7 @@
 
 namespace albor::compiler
 {
-    // the checked tree shares the expressions the parser built, because re-owning them would duplicate the whole ast (§11.1)
+    // the checked tree shares the parser's expressions, because re-owning them would duplicate the whole ast (§11.1)
     using SharedExpression = std::shared_ptr<const Expression>;
 
     // one property a component declares, resolved to the type it was written with (§11.1)
@@ -50,6 +51,9 @@ namespace albor::compiler
 
         // the parameter types in declaration order, which an invocation must match (§11.1)
         std::vector<ValueType> parameter_types;
+
+        // the parameter names in declaration order, which a handler body reads the raised value by (§11.1)
+        std::vector<std::string> parameter_names;
 
         // where the declaration was written (§11.1)
         SourceSpan span;
@@ -310,6 +314,27 @@ namespace albor::compiler
         // resolve the declarations of one component, which is the first pass (§11.1)
         void resolve_declarations(const ComponentDeclaration& component, CheckedComponent& out);
 
+        // merge the members a base declares under a derived component's own, which the scope resolves against (§11.1)
+        [[nodiscard]] bool merge_inherited(const SourceFile& file, std::size_t index, std::vector<CheckedComponent>& out);
+
+        // type the defaults a component's own declarations carry against the merged list they resolve in (§11.1)
+        void type_own_defaults(const ComponentDeclaration& component, CheckedComponent& out);
+
+        // publish the element type each file component exposes, which an instance resolves before the catalog (§11.1)
+        void publish_component_types(const std::vector<CheckedComponent>& checked, const std::vector<bool>& inherited);
+
+        // resolve every component tree with its base's checked tree in hand, which a derived body splices into (§11.1)
+        void resolve_component_trees(const SourceFile& file, std::vector<CheckedComponent>& out);
+
+        // reject a graph of component elements that instantiates itself, which would build forever (§11.1)
+        void detect_instantiation_cycles(const std::vector<CheckedComponent>& checked);
+
+        // walk one component's instantiation edges, reporting an edge that returns to the open path (§11.1)
+        void visit_instantiation(const std::string& name, const std::map<std::string, std::vector<std::pair<std::string, SourceSpan>>>& edges, std::map<std::string, int>& colour);
+
+        // collect the component elements one checked tree instantiates, which is the edge set a cycle walk reads (§11.1)
+        void collect_instantiation_edges(const CheckedNode& node, std::vector<std::pair<std::string, SourceSpan>>& targets) const;
+
         // resolve the signatures of every function first, so a call may appear before its declaration (§11.1)
         void check_function_signatures(const SourceFile& file, std::vector<CheckedFunction>& out);
 
@@ -332,7 +357,7 @@ namespace albor::compiler
         void report_duplicate(std::string_view name, SourceSpan span);
 
         // resolve the root element, which is the second pass (§11.1)
-        void resolve_tree(const ComponentDeclaration& component, CheckedComponent& out);
+        void resolve_tree(const ComponentDeclaration& component, CheckedComponent& out, const CheckedComponent* base);
 
         // resolve one tree node against the scope it appears in (§11.1)
         std::shared_ptr<CheckedNode> resolve_node(const TreeNode& node, const Scope& scope);
@@ -450,6 +475,12 @@ namespace albor::compiler
 
         // the declared names of the component being checked, with the span each was written at (§11.1)
         std::vector<std::pair<std::string, SourceSpan>> m_declared;
+
+        // the index each file component sits at by name, which a base and an element both resolve against (§11.1)
+        std::map<std::string, std::size_t> m_component_index;
+
+        // the element types the file's own components expose to an instance, which resolve before the catalog (§11.1)
+        std::map<std::string, ElementType> m_file_component_types;
     };
 
     // register the structs a file declares, turning each into a record the catalog resolves before the check (§11.1)

@@ -1072,7 +1072,7 @@ component MainView {
 
 The language is deliberately small and closed. Every form below is a settled part of the grammar and
 compiles to native C++ under AD-01 — there is no interpreter and no per-binding heap allocation
-(§13.3). Forms that remain undecided are listed at the end of this section rather than sketched.
+(§13.3).
 
 #### Handler Statements
 
@@ -1190,20 +1190,87 @@ It compiles to a file-level `static const` guarded by name — the same shape a 
 read renders as that plain name in the generated binding function: no `std::function`, no
 per-binding allocation (§13.3).
 
-#### Not Yet in the Grammar
+#### Component Composition
 
-Two forms the application POC needs are **not** settled and are deliberately absent rather than
-sketched, because each waits on a design decision of its own:
+A component the file declares is itself an element type of that file:
 
-- **component composition** — a `.ui` component instantiating another `.ui` component; today only
-  manifest-native types can be instantiated.
-- **inheritance and slotted content** — a base component accepting content from a derived one
-  (`@children`). A base can now hold a command and fire it from a handler (§11.1), so what governs the
-  shape is the element grammar itself rather than any unanswered command question.
+```text
+// Example: App.ui
+component Greeting {
+    in property<string> title;
+    signal dismissed();
 
-The command side of this is settled — a handler fires a command and a base may hold one (§11.1, §18.8)
-— and `global` now waits on no question of its own (§11.1), so both remaining forms wait on the
-element grammar itself.
+    Column {
+        Label { text: title; }
+    }
+}
+
+component App {
+    in property<string> name;
+
+    Greeting {
+        title: name;
+        on_dismissed: { }
+    }
+}
+```
+
+An element name resolves against the file's own components before the catalog, so a declared name
+shadows a manifest-native type of the same spelling — the same precedence a type name follows. An
+instance assigns against the component's own properties and attaches handlers to the signals it
+declares through the ordinary eager-push path: an assignment with a source becomes a binding whose
+dependencies are the source's `PropertyId`s and whose write lands on the instance's setter (§13.3,
+§14.1), and a handler subscribes to the signal the facade raises.
+
+Composition is same-file and one direction: a component instantiates only components its own file
+declares, an instance takes no children — content is what a derived component supplies alone, so
+children written on an instance are refused — and a component graph that instantiates itself is
+refused outright.
+
+For codegen (§14.1) each instance is a member that constructs the sibling's concrete facade with
+both engines and includes its generated header: the opaque-body boundary AD-03 draws around a
+manifest component applies across a file boundary the same way. Nothing beyond the facade itself
+intervenes, and no runtime registry of components exists, because the file's component list exists
+only while the file compiles (AD-01).
+
+#### Inheritance and Slotted Content
+
+A component may derive from one the same file declares:
+
+```text
+// Example: Panel.ui
+component Panel {
+    in property<string> title;
+
+    Column {
+        Label { text: title; }
+        @children
+    }
+}
+
+component Wide : Panel {
+    Label { text: "Wide"; }
+}
+```
+
+`@children` marks the content point inside the base's tree — at most one per component, because two
+could never both be filled. The derived body carries content elements instead of a root; the fill
+operates on a clone of the base's checked tree, leaving the base's own body untouched, and each
+content element lands where the marker sat in the order the body wrote it. Content with no slot to
+fill is refused, a second slot is refused, and a slot written inside content is refused and dropped
+— only a base declares the content point.
+
+A base that is never derived shows no content point: the marker is stripped from every checked tree
+before codegen, so a base used directly builds exactly what it declares and no slot reaches
+generated code. A derived component may redeclare an inherited property with its own default — the
+type and direction must match, and the redeclaration replaces the default — so a base may carry a
+default a derived body narrows.
+
+The derivation stops at one level: the base must be a component the same file declares and must
+itself derive from nothing, so an unknown name and a deeper chain are both refused. The whole
+result flattens during the check: the derived facade carries the merged member set and the spliced
+tree, and the splice is a compile-time copy with no runtime slot, no content API and no change to
+`UiNode`. Release sees only the native code the splice produced (AD-01, AD-02).
 
 ### 11.2 Native Component Manifests (AD-17)
 
@@ -1922,8 +1989,8 @@ name and would have pulled a second concern into it:
   one of them fires the shared object the application owns, carrying no argument. Carrying one is
   unsettled: `CommandArgument`'s integer is unsigned where a `.ui` integer is not, so the mapping
   needs a decision before the statement grows a parameter. `.ui` composition and slotted content
-  (§11.1) no longer wait on this section either — a base can hand its content a command and invoke
-  it, so what holds those two back is their own element-grammar design alone.
+  (§11.1) are settled and wait on nothing here — the element grammar took both, and a base can hand
+  its content a command and invoke it.
 - **A selection model.** §18.3 defines the span and the injection point; the model that fills them
   belongs to the control that owns a selection.
 - **Automation-driven enablement.** There is deliberately no such path. An automation client observes

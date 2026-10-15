@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -17,14 +18,17 @@ namespace
     CheckedFile check(std::string_view source, DiagnosticList& diagnostics, ElementCatalog catalog) {
         // the scanner runs first, because the parser takes units (§11.1)
         const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
-        // the parser builds the untyped tree (§11.1)
-        const SourceFile file = Parser(tokens, diagnostics).parse();
+        // the parser builds the untyped tree, which the returned checked file only aliases (§11.1)
+        SourceFile parsed = Parser(tokens, diagnostics).parse();
         // the structs the file declares join the catalog, which is what makes a property of one resolve (§11.1)
-        register_ui_structs(file, catalog, diagnostics);
+        register_ui_structs(parsed, catalog, diagnostics);
         // the enums the file declares join the catalog, which is what makes a property of one hold a member (§11.1)
-        register_ui_enums(file, catalog);
+        register_ui_enums(parsed, catalog);
+        // every checked expression borrows its parse, so each parse is kept for the life of the test binary (§11.1)
+        static std::vector<std::unique_ptr<SourceFile>> keep_parsed;
+        keep_parsed.push_back(std::make_unique<SourceFile>(std::move(parsed)));
         // the checker resolves it against the catalog, which is where the native types come from (§11.1, AD-17)
-        return TypeChecker(catalog, diagnostics).check(file);
+        return TypeChecker(catalog, diagnostics).check(*keep_parsed.back());
     }
 
     // check a source against a catalog that is expected to be clean, which fails the test when it is not (§11.1)
@@ -1868,4 +1872,174 @@ TEST(TypeChecker, ReportsAConstructionFieldValueMismatch) {
     // assert
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0410");
+}
+
+TEST(TypeChecker, ResolvesAComponentElementAgainstTheFileFirst) {
+    // arrange, act the file declares its own Label, which outranks the builtin of the same name (§11.1)
+    const CheckedFile file = check("component Label { in property<float> extra; Column {} } component C { Label { extra: 1.0; } }");
+    // assert the instance resolved against the file component, because its property the builtin does not declare (§11.1)
+    const CheckedComponent& user = file.components.at(1);
+    ASSERT_NE(user.root, nullptr);
+    EXPECT_EQ(user.root->element_type, "Label");
+    ASSERT_EQ(user.root->assignments.size(), 1U);
+    EXPECT_TRUE(user.root->assignments.at(0).type.is(TypeKind::Float));
+}
+
+TEST(TypeChecker, AFileComponentShadowsTheBuiltinOfTheSameName) {
+    // arrange a file Label that declares no text, so the builtin property must not resolve (§11.1)
+    DiagnosticList diagnostics;
+    // act the instance writes the builtin property, which the shadowing file component does not declare (§11.1)
+    check("component Label { in property<float> extra; Column {} } component C { Label { text: \"x\"; } }", diagnostics);
+    // assert the written property is unknown, because the file component shadowed the builtin (§11.1)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0411");
+}
+
+TEST(TypeChecker, ReportsContentOnAComponentInstance) {
+    // arrange a component instance with content under it, because only a derived component fills a slot (§11.1)
+    DiagnosticList diagnostics;
+    // act the file is checked, which the instance rule refuses (§11.1)
+    check("component G { Column {} } component C { G { Label {} } }", diagnostics);
+    // assert the content is reported, because an instance takes content through no route (§11.1)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0430");
+}
+
+TEST(TypeChecker, AHandlerReadsTheSignalParameterOfAComposedComponent) {
+    // arrange, act the outer handler reads the raised parameter, which the signal declared beside its type (§11.1)
+    const CheckedFile file = check("component G { inout property<string> q; signal hit(float v); Column {} } component C { inout property<string> r; G { on_hit: { r = string(v); } } }");
+    // assert the handler ran the written body against the outer property, because the parameter only read (§11.1)
+    const CheckedComponent& outer = file.components.at(1);
+    ASSERT_NE(outer.root, nullptr);
+    ASSERT_EQ(outer.root->handlers.size(), 1U);
+    const CheckedHandler& handler = outer.root->handlers.at(0);
+    ASSERT_EQ(handler.body.size(), 1U);
+    ASSERT_EQ(handler.writes.size(), 1U);
+    EXPECT_EQ(handler.writes.at(0), "r");
+}
+
+TEST(TypeChecker, ReportsAnUnknownSignalOnAComponentInstance) {
+    // arrange a handler for a signal the composed component never raises (§11.1)
+    DiagnosticList diagnostics;
+    // act the file is checked, which the signal rule refuses (§11.1)
+    check("component G { Column {} } component C { G { on_zapped: {} } }", diagnostics);
+    // assert the signal is reported, because only a declared signal takes a handler (§11.1)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0412");
+}
+
+TEST(TypeChecker, AnInheritedComponentFlattensTheBaseTree) {
+    // arrange, act the derived body supplies the content the base slot takes (§11.1)
+    const CheckedFile file = check("component Base { in property<string> title; Column { Label { text: title; } @children } } component Wide : Base { Label { text: title; } }");
+    // assert the derived component kept the inherited property, because its own content binds against it (§11.1)
+    const CheckedComponent& derived = file.components.at(1);
+    ASSERT_EQ(derived.properties.size(), 1U);
+    EXPECT_EQ(derived.properties.at(0).name, "title");
+    // assert the derived tree is the base tree with content spliced at the slot, because the fill does that (§11.1)
+    ASSERT_NE(derived.root, nullptr);
+    EXPECT_EQ(derived.root->element_type, "Column");
+    ASSERT_EQ(derived.root->children.size(), 2U);
+    EXPECT_EQ(derived.root->children.at(0)->element_type, "Label");
+    EXPECT_EQ(derived.root->children.at(1)->element_type, "Label");
+}
+
+TEST(TypeChecker, ARedeclaredPropertyKeepsTheTypeAndOverridesTheDefault) {
+    // arrange, act the derived body redeclares the inherited property with another default (§11.1)
+    const CheckedFile file = check("component Base { in property<string> t: \"a\"; Column { @children } } component D : Base { in property<string> t: \"b\"; }");
+    // assert the merged property carries the derived declaration, because the override replaces the base entry (§11.1)
+    ASSERT_EQ(file.components.size(), 2U);
+    const CheckedComponent& derived = file.components.at(1);
+    ASSERT_EQ(derived.properties.size(), 1U);
+    const CheckedProperty& property = derived.properties.at(0);
+    EXPECT_TRUE(property.type.is(TypeKind::String));
+    ASSERT_TRUE(property.has_default);
+    ASSERT_NE(property.default_value, nullptr);
+    // assert the default reads from the derived text, because the base entry must not survive the redeclaration (§11.1)
+    const auto* literal = dynamic_cast<const LiteralExpression*>(property.default_value.get());
+    ASSERT_NE(literal, nullptr);
+    EXPECT_EQ(literal->text, "b");
+}
+
+TEST(TypeChecker, ReportsARedeclaredPropertyOfAnotherType) {
+    // arrange a redeclaration that disagrees with the base, because a redeclaration may only narrow the default (§11.1)
+    DiagnosticList diagnostics;
+    // act the file is checked, which the redeclaration rule refuses (§11.1)
+    check("component Base { in property<string> t; Column { @children } } component D : Base { in property<float> t; }", diagnostics);
+    // assert the redeclaration is reported, because the inherited type is the contract (§11.1)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0424");
+}
+
+TEST(TypeChecker, ReportsAnUnknownBaseComponent) {
+    // arrange a derived header naming a component the file never declares (§11.1)
+    DiagnosticList diagnostics;
+    // act the file is checked, which the base lookup refuses (§11.1)
+    check("component C : Nope { Label {} }", diagnostics);
+    // assert the base is reported, because inheritance stays inside one file (§11.1)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0425");
+}
+
+TEST(TypeChecker, ReportsABaseThatIsItselfDerived) {
+    // arrange a two level chain, because inheritance is one level deep (§11.1)
+    DiagnosticList diagnostics;
+    // act the file is checked, which the chain rule refuses (§11.1)
+    check("component A : B { Label {} } component B : C { Label {} } component C { Column {} }", diagnostics);
+    // assert the deeper derivation is reported, because a base carries the content point itself (§11.1)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0426");
+}
+
+TEST(TypeChecker, ReportsASecondChildrenSlotInTheBase) {
+    // arrange a base with two markers, because two could never both be filled (§11.1)
+    DiagnosticList diagnostics;
+    // act the file is checked, which the single slot rule refuses (§11.1)
+    check("component B { Column { @children @children } } component D : B { Label {} }", diagnostics);
+    // assert the extra slot is reported once, because the first one is the content point (§11.1)
+    EXPECT_EQ(count_code(diagnostics, "E0427"), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0427");
+}
+
+TEST(TypeChecker, ReportsAChildrenSlotInsideDerivedContent) {
+    // arrange content that declares a marker of its own, because only a base declares the content point (§11.1)
+    DiagnosticList diagnostics;
+    // act the file is checked, which the marker rule refuses (§11.1)
+    check("component B { Column { @children } } component D : B { Label { @children } }", diagnostics);
+    // assert the marker is reported somewhere in the run, because the leaf already refused the child element (§11.1)
+    EXPECT_TRUE(has_code(diagnostics, "E0427"));
+}
+
+TEST(TypeChecker, ReportsContentWhenTheBaseDeclaresNoSlot) {
+    // arrange content for a base whose tree carries no marker, because nothing would take it (§11.1)
+    DiagnosticList diagnostics;
+    // act the file is checked, which the fill rule refuses (§11.1)
+    check("component B { Column { Label {} } } component D : B { Label {} }", diagnostics);
+    // assert the unfilled content is reported, because the base declared no children slot (§11.1)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0428");
+}
+
+TEST(TypeChecker, ReportsAComponentInstantiationCycle) {
+    // arrange two components that instantiate each other, which would build forever (§11.1)
+    DiagnosticList diagnostics;
+    // act the file is checked, which the cycle walk refuses (§11.1)
+    check("component A { B {} } component B { A {} }", diagnostics);
+    // assert the cycle is reported, because no tree may contain itself (§11.1)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0429");
+}
+
+TEST(TypeChecker, ASlotStripsFromTheTreeWhenABaseIsUsedDirectly) {
+    // arrange, act a base with a marker is instantiated without any derived content (§11.1)
+    const CheckedFile file = check("component Base { in property<string> t; Column { Label { text: t; } @children } } component C { Base { t: \"x\"; } }");
+    // assert the marker is gone from the base's own tree, because a base used directly shows no content point (§11.1)
+    const CheckedComponent& base = file.components.at(0);
+    ASSERT_NE(base.root, nullptr);
+    ASSERT_EQ(base.root->children.size(), 1U);
+    EXPECT_EQ(base.root->children.at(0)->element_type, "Label");
+    // assert the instance carries only its content, because composition builds the base facade, not its tree (§11.1)
+    const CheckedComponent& user = file.components.at(1);
+    ASSERT_NE(user.root, nullptr);
+    EXPECT_EQ(user.root->element_type, "Base");
+    EXPECT_EQ(user.root->children.size(), 0U);
 }
