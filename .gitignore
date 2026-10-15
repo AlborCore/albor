@@ -7,3 +7,7 @@ build/vcpkg_installed/
 worktrees
 *.profraw
 gap-analysis-*.md
+*.profdata
+coverage.lcov
+cobertura.xml
+.venv-lcov/
