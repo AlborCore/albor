@@ -364,7 +364,7 @@ namespace albor::compiler
             // the named parameters decide the fragment, because the catalog declares them (§11.3)
             std::string fragment;
             for (const std::pair<std::string, std::string>& parameter : named_signal_params(element, signal))
-                fragment += ", " + parameter.first + " " + parameter.second;
+                fragment += ", [[maybe_unused]] " + parameter.first + " " + parameter.second;
             return fragment;
         }
 
@@ -443,7 +443,7 @@ namespace albor::compiler
 
             // build the emitter over the component and the shared problem list (§11.3)
             ComponentEmitter(const CheckedComponent& component, DiagnosticList& diagnostics, const ElementCatalog* catalog, std::vector<std::string> modules, const std::vector<CheckedFunction>* functions) :
-                m_component(component), m_diagnostics(diagnostics), m_class(component.name), m_stem(snake_case(component.name)), m_catalog(catalog), m_modules(std::move(modules)), m_functions(functions) {
+                m_component(component), m_diagnostics(diagnostics), m_class(component.name), m_stem(snake_case(component.name)), m_functions(functions), m_catalog(catalog), m_modules(std::move(modules)) {
                 // the declared function names are collected, which tells a call apart from a colour op (§11.1)
                 if (m_functions != nullptr)
                     for (const CheckedFunction& function : *m_functions)

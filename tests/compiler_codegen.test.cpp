@@ -1048,7 +1048,7 @@ TEST(Codegen, AHandlerBodyReadsTheValueItsSignalCarries) {
     // assert the lambda forwards the value, which is how the body reaches it (§11.3)
     EXPECT_TRUE(contains(cpp.content, "set_on_change([this](float value) { handle_"));
     EXPECT_TRUE(contains(cpp.content, "handle_0_changed(this, value);"));
-    EXPECT_TRUE(contains(cpp.content, "static void handle_0_changed(void* raw, float value);"));
+    EXPECT_TRUE(contains(cpp.content, "static void handle_0_changed(void* raw, [[maybe_unused]] float value);"));
     EXPECT_TRUE(contains(cpp.content, "self->m_level.set(value);"));
 }
 

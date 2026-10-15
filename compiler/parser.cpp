@@ -353,7 +353,7 @@ namespace albor::compiler
             // each member is a bare name, which is the closed set the enum holds (§11.1)
             declaration.members.push_back(expect_identifier());
             // a comma separates the members, which is optional before the closing brace (§11.1)
-            accept_punctuation(",");
+            (void)accept_punctuation(",");
         }
         // a body that never closed is reported, because the declaration is incomplete (§11.1)
         expect_punctuation("}");
@@ -391,7 +391,7 @@ namespace albor::compiler
             // the parameter is kept, because the signature is what a call checks its arguments against (§11.1)
             declaration.parameters.push_back(std::move(parameter));
             // a comma separates the parameters, which is optional before the closing parenthesis (§11.1)
-            accept_punctuation(",");
+            (void)accept_punctuation(",");
         }
         // a parameter list that never closed is reported, because the signature is incomplete (§11.1)
         expect_punctuation(")");
@@ -408,7 +408,7 @@ namespace albor::compiler
             // the returned expression is parsed with the full expression grammar, which a call reaches (§11.1)
             declaration.return_value = parse_expression();
             // the statement ends, which is what separates it from the closing brace (§11.1)
-            accept_punctuation(";");
+            (void)accept_punctuation(";");
         }
         // anything else cannot open the body, so the reader is told what was expected (§11.1)
         else if (!at_punctuation("}"))
