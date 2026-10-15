@@ -1267,7 +1267,7 @@ Every architectural decision from Phase 0 is formally settled for production imp
 | **AD-12** | Live Reload Model | **Decided** | Out-of-process dev service emits serialized IR/patches; in-app reload adapter updates live UI tree. |
 | **AD-13** | Virtualization & Keys | **Decided** | Model views virtualize materialized nodes; rows keyed by stable `ItemKey` identifiers. |
 | **AD-14** | Text/Layout Dependency | **Decided** | Text measurement via `TextEngine` is a prerequisite contract for layout calculation. |
-| **AD-15** | Command Abstraction | **Decided** | `Command` objects bind actions across buttons, shortcuts, menus, and automation. Enablement is observed from one object rather than copied per consumer; enabled and visible are two published states that route differently; the undo stack sits behind the object so one invocation contributes one entry. See §18. |
+| **AD-15** | Command Abstraction | **Decided** | `Command` objects bind actions across buttons, shortcuts, menus, automation, and a `.ui` control bound through `action:`. Enablement is observed from one object rather than copied per consumer; enabled and visible are two published states that route differently; the undo stack sits behind the object so one invocation contributes one entry. See §18. |
 | **AD-16** | Platform Strategy | **Decided** | Direct platform adapters behind `PlatformWindow`. macOS AppKit + Metal + `CVDisplayLink` first. |
 | **AD-17** | Native Manifest | **Decided** | Single source of truth for native components; compiler generates C++ glue and never parses C++. |
 | **AD-18a**| Stage Division | **Decided** | UI thread produces `FrameScene`; render thread executes GPU drawing commands. |
@@ -1641,6 +1641,12 @@ public:
 }
 ```
 
+**Ownership.** The application owns its commands, and the registry indexes them rather than keeping
+any alive. `declare` hands back a `unique_ptr` the caller keeps, `join` records a command the caller
+owns elsewhere, and a command leaves the index through its own destructor, so no entry outlives what
+it points at. The registry keeps what is genuinely its own — the author-assigned id table, the undo
+stack, the shortcut table, the selection source, and the two history commands it builds on first use.
+
 Four rules are load-bearing, and each of them is a boundary rather than a convenience:
 
 1. **The author assigned id is the only identity (AD-11).** `explicit_id()` is empty when the author
@@ -1876,14 +1882,17 @@ name and would have pulled a second concern into it:
   weight as the rest of §8. This section fixes the contract they consume — a label, an enabled
   state, a visible state, an invocation, and `ShortcutTable::display` for the accelerator text — and
   leaves their construction to the widget layer.
-- **Language exposure.** A `.ui` file cannot declare or invoke a command. The handler grammar has
-  grown to four statement forms — assignment, signal invocation, a closed set of collection methods,
-  and a record field write (§11.1) — but none of them reaches a command, and no `.ui` form names one.
-  Exposing a command requires an entry in the element catalogue (§11.1), a setter in the codegen
-  tables (§11.3) and a native type in the manifest (§11.2, AD-17). Until those exist, a command is a
-  C++-side object and a form that mixes one with a generated tree builds the command-bound control
-  imperatively. This is also the decision that governs `.ui` component composition and slotted
-  content (§11.1), which are held back for the same reason.
+- **Language exposure — a `.ui` file names a command but does not invoke one.** A component declares
+  a slot with `in property<command>` and a control binds it with `action:`, so a generated tree can
+  carry a command-bound `Button`, `Slider` or `CheckBox`. The three halves this needs are the entry in
+  the element catalogue (§11.1), the `set_command` entry in the codegen tables (§11.3) and the
+  `command` type the checker resolves (§11.1); the application owns the command and fills the slot,
+  and the generated control borrows the pointer and observes it. What stays closed is the **handler**:
+  its four statement forms (§11.1) reach assignment, signal invocation, a closed set of collection
+  methods and a record field write, and none of them names a command, so a `.ui` file still cannot
+  trigger an action it did not wire to a control. `.ui` component composition and slotted content
+  (§11.1) stay held back for that reason, because their shape depends on a base invoking behaviour on
+  the content it is given.
 - **A selection model.** §18.3 defines the span and the injection point; the model that fills them
   belongs to the control that owns a selection.
 - **Automation-driven enablement.** There is deliberately no such path. An automation client observes
