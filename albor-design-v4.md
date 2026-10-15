@@ -1082,14 +1082,14 @@ A handler body is a closed grammar of exactly four statement forms, each of whic
 - **assignment** — `click_count = click_count + 1;` writes a declared `inout` property.
 - **signal invocation** — `run_clicked();` or `frame_changed(frame);` emits a declared signal, whose
   payload may be a scalar or a record passed by value.
-- **collection method** — `items.append("row");` mutates a `vector<T>` property in place. The closed
-  set is `append`, `remove_at`, `clear` and `set`; no other method resolves.
+- **built-in method** — `items.append("row");` mutates a `vector<T>` property in place (the closed
+  set is `append`, `remove_at`, `clear` and `set`); `save.invoke();` fires a `command` property the
+  application filled, carrying no argument and recording no write, with `invoke` as its only method.
 - **field write** — `frame.width = 10.0;` writes one field of a record-typed `inout` property. The
   working copy is taken, the field is assigned, and the rebuilt record is set back.
 
-A handler cannot call an arbitrary method, reach a property of another component, or invoke a command.
-That boundary is deliberate and is the open question §18.8 records; the four forms above are the whole
-of what a handler may express today.
+A handler cannot call an arbitrary method or reach a property of another component. That boundary is
+deliberate, and the four forms above are the whole of what a handler may express today.
 
 #### Conditional Rendering
 
@@ -1157,7 +1157,7 @@ arity and types are checked.
 #### Not Yet in the Grammar
 
 Three forms the application POC needs are **not** settled and are deliberately absent rather than
-sketched, because each waits on the command decision of §18.8:
+sketched, because each waits on a design decision of its own:
 
 - **`global`** — a module-scoped named value (a palette, an action hub, a lookup table) that several
   components read. Its shape must respect the no-`std::function` binding convention before it is
@@ -1165,11 +1165,12 @@ sketched, because each waits on the command decision of §18.8:
 - **component composition** — a `.ui` component instantiating another `.ui` component; today only
   manifest-native types can be instantiated.
 - **inheritance and slotted content** — a base component accepting content from a derived one
-  (`@children`). Its shape depends on whether a base can invoke behaviour on the content it is given,
-  which is the command question.
+  (`@children`). A base can now hold a command and fire it from a handler (§11.1), so what governs the
+  shape is the element grammar itself rather than any unanswered command question.
 
-Deciding the handler/element grammar and the command abstraction together settles these once; deciding
-them apart would settle the harder half twice (§18.8).
+The command side of this is settled — a handler fires a command and a base may hold one (§11.1, §18.8)
+— so each form now waits on its own design: the binding convention for `global`, the element grammar
+for the other two.
 
 ### 11.2 Native Component Manifests (AD-17)
 
@@ -1267,7 +1268,7 @@ Every architectural decision from Phase 0 is formally settled for production imp
 | **AD-12** | Live Reload Model | **Decided** | Out-of-process dev service emits serialized IR/patches; in-app reload adapter updates live UI tree. |
 | **AD-13** | Virtualization & Keys | **Decided** | Model views virtualize materialized nodes; rows keyed by stable `ItemKey` identifiers. |
 | **AD-14** | Text/Layout Dependency | **Decided** | Text measurement via `TextEngine` is a prerequisite contract for layout calculation. |
-| **AD-15** | Command Abstraction | **Decided** | `Command` objects bind actions across buttons, shortcuts, menus, automation, and a `.ui` control bound through `action:`. Enablement is observed from one object rather than copied per consumer; enabled and visible are two published states that route differently; the undo stack sits behind the object so one invocation contributes one entry. See §18. |
+| **AD-15** | Command Abstraction | **Decided** | `Command` objects bind actions across buttons, shortcuts, menus, automation, and a `.ui` control bound through `action:` or fired from a handler's `invoke`. Enablement is observed from one object rather than copied per consumer; enabled and visible are two published states that route differently; the undo stack sits behind the object so one invocation contributes one entry. See §18. |
 | **AD-16** | Platform Strategy | **Decided** | Direct platform adapters behind `PlatformWindow`. macOS AppKit + Metal + `CVDisplayLink` first. |
 | **AD-17** | Native Manifest | **Decided** | Single source of truth for native components; compiler generates C++ glue and never parses C++. |
 | **AD-18a**| Stage Division | **Decided** | UI thread produces `FrameScene`; render thread executes GPU drawing commands. |
@@ -1593,7 +1594,8 @@ enum class InvocationSource
     Menu,
     Automation,
     Accessibility,
-    UndoRedo
+    UndoRedo,
+    Handler
 };
 
 // one invocation, carrying whatever the action needs at the moment it runs (§18.3, §18.4)
@@ -1882,17 +1884,13 @@ name and would have pulled a second concern into it:
   weight as the rest of §8. This section fixes the contract they consume — a label, an enabled
   state, a visible state, an invocation, and `ShortcutTable::display` for the accelerator text — and
   leaves their construction to the widget layer.
-- **Language exposure — a `.ui` file names a command but does not invoke one.** A component declares
-  a slot with `in property<command>` and a control binds it with `action:`, so a generated tree can
-  carry a command-bound `Button`, `Slider` or `CheckBox`. The three halves this needs are the entry in
-  the element catalogue (§11.1), the `set_command` entry in the codegen tables (§11.3) and the
-  `command` type the checker resolves (§11.1); the application owns the command and fills the slot,
-  and the generated control borrows the pointer and observes it. What stays closed is the **handler**:
-  its four statement forms (§11.1) reach assignment, signal invocation, a closed set of collection
-  methods and a record field write, and none of them names a command, so a `.ui` file still cannot
-  trigger an action it did not wire to a control. `.ui` component composition and slotted content
-  (§11.1) stay held back for that reason, because their shape depends on a base invoking behaviour on
-  the content it is given.
+- **Language exposure.** A `.ui` file names a command three ways — a declared `in property<command>`
+  slot, an `action:` binding on a control, and an `invoke` statement in a handler (§11.1) — and every
+  one of them fires the shared object the application owns, carrying no argument. Carrying one is
+  unsettled: `CommandArgument`'s integer is unsigned where a `.ui` integer is not, so the mapping
+  needs a decision before the statement grows a parameter. `.ui` composition and slotted content
+  (§11.1) no longer wait on this section either — a base can hand its content a command and invoke
+  it, so what holds those two back is their own element-grammar design alone.
 - **A selection model.** §18.3 defines the span and the injection point; the model that fills them
   belongs to the control that owns a selection.
 - **Automation-driven enablement.** There is deliberately no such path. An automation client observes
