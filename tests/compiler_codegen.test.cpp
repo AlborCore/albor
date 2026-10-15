@@ -1703,3 +1703,30 @@ component Editor {
     EXPECT_TRUE(contains(cpp.content, "Property<Command*> m_save;"));
     EXPECT_TRUE(contains(cpp.content, "->set_command(value);"));
 }
+
+TEST(Codegen, EmitsACommandInvocationFromAHandler) {
+    // arrange diagnostics, because the command slot and the handler that fires it must both generate (§18.1, AD-15)
+    DiagnosticList diagnostics;
+    // act a component declares a command slot and a handler body that invokes it (§18.1, AD-15)
+    const std::string_view source = R"(
+component Editor {
+    in property<command> save;
+
+    Button {
+        on_clicked: {
+            save.invoke();
+        }
+    }
+}
+)";
+    // assert the whole file generates, because the invocation resolved against the slot (§18.1, AD-15)
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    EXPECT_FALSE(files.empty());
+    EXPECT_FALSE(diagnostics.has_errors());
+    const GeneratedFile& cpp = file_named(files, "editor.cpp");
+    // the body guards the slot and discards the outcome, which is the route every other consumer takes (§18.3)
+    EXPECT_TRUE(contains(cpp.content, "if (Command* command = self->m_save.get())"));
+    EXPECT_TRUE(contains(cpp.content, "(void)command->invoke();"));
+    // the definition joins the unit, because a forward declaration cannot carry the invoke call (§14.1, §18.1)
+    EXPECT_TRUE(contains(cpp.content, "#include \"commands/command.h\""));
+}

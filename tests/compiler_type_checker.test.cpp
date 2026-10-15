@@ -426,6 +426,47 @@ TEST(TypeChecker, ReportsAnAppendWithTheWrongArity) {
     EXPECT_EQ(first(diagnostics).code, "E0406");
 }
 
+TEST(TypeChecker, ChecksACommandInvocationAgainstAnIncomingSlot) {
+    // arrange, act
+    const CheckedFile file = check("component C { in property<command> save; Button { on_clicked: { save.invoke(); } } }");
+    // assert
+    const CheckedStatement& statement = only(file).root->handlers.at(0).body.at(0);
+    EXPECT_EQ(statement.kind, HandlerStatementKind::PropertyMethod);
+    EXPECT_EQ(statement.method, "invoke");
+    // a fired command records no write, because the slot only names the object the action lives on (§7.3, §18.1)
+    EXPECT_EQ(only(file).root->handlers.at(0).writes.size(), 0U);
+}
+
+TEST(TypeChecker, ReportsAnUnknownCommandMethod) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("component C { in property<command> save; Button { on_clicked: { save.drop(); } } }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0418");
+}
+
+TEST(TypeChecker, ReportsACommandInvocationWithAnArgument) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("component C { in property<command> save; inout property<int> count: 0; Button { on_clicked: { save.invoke(count); } } }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0406");
+}
+
+TEST(TypeChecker, ReportsACommandInvocationOnANonCommandProperty) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("component C { inout property<string> text: \"\"; Button { on_clicked: { text.invoke(); } } }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0419");
+}
+
 TEST(TypeChecker, ReportsACollectionMethodOnAnIncomingProperty) {
     // arrange
     DiagnosticList diagnostics;

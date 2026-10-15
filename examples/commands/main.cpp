@@ -37,6 +37,8 @@ namespace
             return "accessibility";
         case albor::InvocationSource::UndoRedo:
             return "undo";
+        case albor::InvocationSource::Handler:
+            return "handler";
         }
         return "unknown";
     }

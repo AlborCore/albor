@@ -1,7 +1,8 @@
-// the command fixture, which proves a command property binds to a widget action (§18.1, AD-15)
+// the command fixture, which proves a widget action binding and a handler invocation both generate (§18.1, AD-15)
 
 component CommandPanel {
     in property<command> save;
+    inout property<string> note;
 
     Column {
         Button { text: "Save"; action: save; }
@@ -9,5 +10,7 @@ component CommandPanel {
         Slider { value: 0.5; action: save; }
 
         CheckBox { checked: true; action: save; }
+
+        TextField { on_committed: { note = value; save.invoke(); } }
     }
 }

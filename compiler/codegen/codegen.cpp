@@ -1438,6 +1438,9 @@ namespace albor::compiler
             // a translated emission resolves through the catalogue, which only a translated component needs (§9.2)
             if (m_uses_i18n)
                 project_headers.push_back("i18n/catalog.h");
+            // an invocation needs the command definition, which the forward declaration only names (§18.1, AD-15)
+            if (m_uses_command)
+                project_headers.push_back("commands/command.h");
             // the widget headers join the set, because each constructed class must be declared (§14.1)
             for (const NodeSlot& slot : m_nodes) {
                 // the widget info of the element names the header to include (§14.1)
@@ -2617,19 +2620,25 @@ namespace albor::compiler
                     m_signal_parameters.clear();
                     for (const std::pair<std::string, std::string>& parameter : named_signal_params(slot.node->element_type, handler.name))
                         m_signal_parameters.push_back(parameter.second);
-                    // each statement is emitted as a property write, a signal invocation or a collection mutation (§11.3)
+                    // each statement is emitted as a write, a signal invocation or a built-in method (§11.3)
                     for (const CheckedStatement& statement : handler.body) {
                         // an assignment writes the target property, which the engine settles (§11.3)
                         if (statement.kind == HandlerStatementKind::Assignment) {
                             line(2, "// the written assignment runs, which updates the component property (§11.3)");
                             line(2, "self->m_" + sanitize(statement.target) + ".set(" + emit_expression(*statement.value) + ");");
                         }
-                        // a collection method copies, mutates and sets back, which is how a vector changes (§11.1)
+                        // a built-in method either fires a command or mutates a collection in place (§11.1, §18.1)
                         else if (statement.kind == HandlerStatementKind::PropertyMethod) {
                             // the property name is shared, because the mutation writes through it (§11.3)
                             const std::string property = "self->m_" + sanitize(statement.target);
+                            // a command invocation fires the action in the slot and needs no working copy (§18.1, AD-15)
+                            if (statement.method == "invoke") {
+                                line(2, "// the shared action is invoked, and an unfilled slot makes it a no-op (§18.1, AD-15)");
+                                line(2, "if (Command* command = " + property + ".get())");
+                                line(3, "(void)command->invoke();");
+                            }
                             // clear drops every element, which needs no working copy (§11.1)
-                            if (statement.method == "clear") {
+                            else if (statement.method == "clear") {
                                 line(2, "// the collection is emptied, which the engine settles (§11.1)");
                                 line(2, property + ".set({});");
                             }

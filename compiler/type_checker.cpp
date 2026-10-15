@@ -634,7 +634,7 @@ namespace albor::compiler
             }
         }
         else {
-            // a property method mutates a collection, so the target must be a declared property (§11.1)
+            // a property method runs a built-in on a declared property, so the target must be one (§11.1)
             const CheckedProperty* target = nullptr;
             // the declarations are scanned, because only they can be the target (§11.1)
             for (const CheckedProperty& property : *scope.properties) {
@@ -646,6 +646,22 @@ namespace albor::compiler
             if (target == nullptr) {
                 // the problem points at the statement, because that is where the target is written (§11.1)
                 m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0404", "'" + statement.target + "' is not a property of this component");
+            }
+            // a command property takes the one built-in that fires it, and firing writes nothing (§18.1, AD-15)
+            else if (target->type.is(TypeKind::Command)) {
+                // the method is copied, because the codegen emits it as checked (§11.1)
+                out_statement.method = statement.method;
+                // the closed set of one is matched, because any other name has no invocation to emit (§11.1, §18.1)
+                if (statement.method != "invoke") {
+                    // the problem names the method, because that is the part the author must change (§11.1)
+                    m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0418", "'" + statement.method + "' is not a command method; the closed set is invoke");
+                }
+                // a handler carries no argument to a command yet, so the bare form is the whole surface (§18.3)
+                else if (!statement.arguments.empty()) {
+                    // the problem points at the statement, because that is where the argument is written (§11.1)
+                    m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0406", "'invoke' takes 0 argument(s)");
+                }
+                // no write is recorded, because firing a command changes no property of this component (§7.3, §18.1)
             }
             // only a vector property carries the collection methods, because that is the closed set (§11.1)
             else if (!target->type.is(TypeKind::Vector)) {
