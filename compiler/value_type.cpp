@@ -62,7 +62,7 @@ namespace albor::compiler
 
     std::string ValueType::to_string() const {
         // the spellings are a table indexed by kind, so a new kind cannot leave a path unhandled (§11.1)
-        static const char* const SPELLINGS[] = {"<error>", "void", "bool", "int", "float", "string", "color", "align", "scrollbar", "length", "Snapshot<", "vector<", ""};
+        static const char* const SPELLINGS[] = {"<error>", "void", "bool", "int", "float", "string", "color", "align", "scrollbar", "length", "Snapshot<", "vector<", "", "command"};
         // the two parameter forms append their element, so only their prefix comes from the table (§11.1)
         if (m_kind == TypeKind::Snapshot)
             return std::string(SPELLINGS[static_cast<std::size_t>(m_kind)]) + element().to_string() + ">";
@@ -232,6 +232,8 @@ namespace albor::compiler
             ElementProperty{.name = "horizontal_align", .type = alignment, .assignable = true, .scaled_by_density = false},
             // the vertical axis is its independent counterpart, and neither one is the parent's main axis (§8.2)
             ElementProperty{.name = "vertical_align", .type = alignment, .assignable = true, .scaled_by_density = false},
+            // visibility hides a node and its subtree without removing it from the tree (§8.1)
+            ElementProperty{.name = "visible", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false},
         };
     }
 
@@ -335,7 +337,7 @@ namespace albor::compiler
         // a leaf performs an action when it is pressed, which is a push control (§8)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Button", // the label and the plate and the disabled state are what a button exposes (§8)
-                                              .properties = {ElementProperty{.name = "text", .type = scalar(TypeKind::String), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "background", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}},
+                                              .properties = {ElementProperty{.name = "text", .type = scalar(TypeKind::String), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "background", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "action", .type = scalar(TypeKind::Command), .assignable = true, .scaled_by_density = false}},
                                               // a button raises a click when it is pressed (§8)
                                               .signals = {ElementSignal{.name = "clicked", .parameter_types = {}}},
                                               // a button is a leaf, so it takes no children (§8)
@@ -344,7 +346,7 @@ namespace albor::compiler
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Slider",
                                               // the value and the disabled state and the two colours are what a slider exposes (§8)
-                                              .properties = {ElementProperty{.name = "value", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "min", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "max", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "track_color", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "thumb_color", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}},
+                                              .properties = {ElementProperty{.name = "value", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "min", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "max", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "track_color", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "thumb_color", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "action", .type = scalar(TypeKind::Command), .assignable = true, .scaled_by_density = false}},
                                               // a slider raises a change when the user drags it, and names the value (§8)
                                               .signals = {ElementSignal{.name = "changed", .parameter_types = {scalar(TypeKind::Float)}, .parameter_names = {"value"}}},
                                               // a slider is a leaf, so it takes no children (§8)
@@ -353,7 +355,7 @@ namespace albor::compiler
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "CheckBox",
                                               // the checked and the disabled state and the two colours are what a checkbox exposes (§8)
-                                              .properties = {ElementProperty{.name = "checked", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "outline", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "check_fill", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}},
+                                              .properties = {ElementProperty{.name = "checked", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "outline", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "check_fill", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "action", .type = scalar(TypeKind::Command), .assignable = true, .scaled_by_density = false}},
                                               // a checkbox raises a toggle with its new value (§8)
                                               .signals = {ElementSignal{.name = "toggled", .parameter_types = {scalar(TypeKind::Bool)}, .parameter_names = {"checked"}}},
                                               // a checkbox is a leaf, so it takes no children (§8)
@@ -445,6 +447,25 @@ namespace albor::compiler
         return nullptr;
     }
 
+    void ElementCatalog::add_named_value_set(const NamedValueSet& set) {
+        // a set the catalog already holds is not redefined, because a ui file would resolve two shapes (§11.1)
+        if (find_named_value_set(set.name) != nullptr)
+            return;
+        // the set is appended, because the file is the single source of truth for it (§11.1)
+        m_named_value_sets.push_back(set);
+    }
+
+    const NamedValueSet* ElementCatalog::find_named_value_set(std::string_view name) const {
+        // the sets the file declared are searched first, because a ui enum is looked up by name (§11.1)
+        for (const NamedValueSet& set : m_named_value_sets) {
+            // the name decides, so a member read resolves to exactly one set (§11.1)
+            if (set.name == name)
+                return &set;
+        }
+        // the builtin table is the fallback, because Align and Scrollbar are always available (§11.1)
+        return albor::compiler::find_named_value_set(name);
+    }
+
     bool ElementCatalog::holds_native(std::string_view name) const {
         // a data type is not an element, so the element lookup does not find it (§11.2, AD-17)
         return std::find(m_native_data.begin(), m_native_data.end(), name) != m_native_data.end();
@@ -464,5 +485,61 @@ namespace albor::compiler
     const std::vector<ElementType>& ElementCatalog::types() const {
         // the set is handed out as it stands, because a caller only reads it (§11.1)
         return m_types;
+    }
+
+    ValueType resolve_type_name(std::string_view written, const ElementCatalog& catalog) {
+        // the wrappers that make a snapshot and a vector read as the author wrote them (§10.5, §13.2, §8.1)
+        constexpr std::string_view SNAPSHOT_OPEN = "Snapshot<";
+        constexpr std::string_view SNAPSHOT_CLOSE = ">";
+        constexpr std::string_view VECTOR_OPEN = "vector<";
+        constexpr std::string_view VECTOR_CLOSE = ">";
+        // a parameter form is the wrapper, the element and the closing angle, so this is the shortest it can be (§11.1)
+        constexpr std::size_t SHORTEST_PARAMETRIC = 10;
+        // a scalar name is one the language spells without brackets (§11.1)
+        if (written == "bool")
+            return scalar(TypeKind::Bool);
+        // an integer is spelled int (§11.1)
+        if (written == "int")
+            return scalar(TypeKind::Int);
+        // a floating point number is spelled float (§11.1)
+        if (written == "float")
+            return scalar(TypeKind::Float);
+        // a text value is spelled string (§11.1)
+        if (written == "string")
+            return scalar(TypeKind::String);
+        // a colour is spelled color (§11.1)
+        if (written == "color")
+            return scalar(TypeKind::Color);
+        // a length is spelled length, so a declared length and a literal length agree (§11.1, AD-27)
+        if (written == "length")
+            return scalar(TypeKind::Length);
+        // a command is spelled command, so a declared slot and a widget action name one type (§18.1, AD-15)
+        if (written == "command")
+            return scalar(TypeKind::Command);
+        // a snapshot is written Snapshot<T>, whose element may itself nest (§10.5, §13.2)
+        if (written.substr(0, SNAPSHOT_OPEN.size()) == SNAPSHOT_OPEN && written.size() >= SHORTEST_PARAMETRIC && written.substr(written.size() - SNAPSHOT_CLOSE.size()) == SNAPSHOT_CLOSE) {
+            // the element is the part between the brackets, which resolves the same way (§10.5, §13.2)
+            const std::string_view inner = written.substr(SNAPSHOT_OPEN.size(), written.size() - SNAPSHOT_OPEN.size() - SNAPSHOT_CLOSE.size());
+            // the wrapper is rebuilt rather than trusted, so a malformed element still resolves (§10.5, §13.2)
+            return ValueType::parameterized(TypeKind::Snapshot, resolve_type_name(inner, catalog));
+        }
+        // a vector is written vector<T>, whose element may itself nest (§8.1)
+        if (written.substr(0, VECTOR_OPEN.size()) == VECTOR_OPEN && written.size() >= SHORTEST_PARAMETRIC && written.substr(written.size() - VECTOR_CLOSE.size()) == VECTOR_CLOSE) {
+            // the element is the part between the brackets, which resolves the same way (§8.1)
+            const std::string_view inner = written.substr(VECTOR_OPEN.size(), written.size() - VECTOR_OPEN.size() - VECTOR_CLOSE.size());
+            // the wrapper is rebuilt rather than trusted, so a malformed element still resolves (§8.1)
+            return ValueType::parameterized(TypeKind::Vector, resolve_type_name(inner, catalog));
+        }
+        // a record is a named type a repeat walks, and it resolves like any other manifest name (§11.2, AD-17, AD-13)
+        if (catalog.find_record(written) != nullptr)
+            return ValueType::native(std::string(written));
+        // a named value set the file declared resolves to the type its members produce, which a property may hold (§11.1)
+        if (const NamedValueSet* set = catalog.find_named_value_set(written); set != nullptr && set->user)
+            return ValueType::native(std::string(written));
+        // anything else is a native type, which the catalog holds only if a manifest declared it (§11.2, AD-17)
+        if (catalog.find(written) != nullptr || catalog.holds_native(written))
+            return ValueType::native(std::string(written));
+        // an unknown name resolves to the error type, so nothing downstream raises a second complaint (§11.1)
+        return error_type();
     }
 } // namespace albor::compiler

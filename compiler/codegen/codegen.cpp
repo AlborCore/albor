@@ -231,6 +231,9 @@ namespace albor::compiler
             case TypeKind::Scrollbar:
                 // the policy set renders as the enumeration the viewport takes, which names itself (§11.3, §8)
                 return "ScrollbarVisibility";
+            case TypeKind::Command:
+                // a command reaches the generated body as a borrowed pointer, which the widget binds to (§18.1, AD-15)
+                return "Command*";
             case TypeKind::Vector:
                 // a collection becomes the standard vector over its element, which recurses into a nested one (§8.1)
                 return "std::vector<" + cpp_type(type.element()) + ">";
@@ -273,10 +276,10 @@ namespace albor::compiler
         struct WidgetInfo
         {
             // the header that declares the class, which the generated file includes (§11.3)
-            std::string_view header;
+            std::string header;
 
             // the C++ class the generated code constructs, which is unqualified in the framework (§11.3)
-            std::string_view class_name;
+            std::string class_name;
 
             // whether constructing the class needs the binding engine (§11.3)
             bool needs_engine = false;
@@ -294,83 +297,15 @@ namespace albor::compiler
             return table;
         }
 
-        // the setter a property assignment maps to, keyed by the element and the property (§11.3)
-        std::string_view setter_of(std::string_view element, std::string_view property) {
-            // the composite key is assembled, because the map is keyed by the pair (§11.3)
-            const std::string key = std::string(element) + "." + std::string(property);
-            // the property to setter map is the closed catalogue of §8 (§11.3)
-            static const std::unordered_map<std::string, std::string_view> setters{
-                {"Column.spacing", "set_gap"}, {"Column.padding", "set_padding"}, {"Row.spacing", "set_gap"}, {"Padding.padding", "set_padding"}, {"Grid.spacing", "set_gap"}, {"Label.text", "set_text"}, {"Label.foreground", "set_foreground"}, {"Label.font_size", "set_font_size"}, {"Button.text", "set_label"}, {"Button.background", "set_background"}, {"Button.disabled", "set_disabled"}, {"Slider.value", "set_value"}, {"Slider.disabled", "set_disabled"}, {"Slider.track_color", "set_track_color"}, {"Slider.thumb_color", "set_thumb_color"}, {"CheckBox.checked", "set_checked"}, {"CheckBox.disabled", "set_disabled"}, {"CheckBox.outline", "set_outline"}, {"CheckBox.check_fill", "set_check_fill"}, {"ScrollView.overscan", "set_overscan"}, {"ScrollView.scrollbar", "set_scrollbar_visibility"}, {"ScrollView.row_height", "set_row_height"}, {"TextField.value", "set_value"}, {"TextField.placeholder", "set_placeholder"}, {"TextField.read_only", "set_read_only"}, {"TextField.multiline", "set_multiline"}, {"TextField.disabled", "set_disabled"}, {"TextField.font_size", "set_font_size"},
-            };
-            // the lookup is a ready made key, because the pair is the identity (§11.3)
-            const auto found = setters.find(key);
-            // a property every type carries has no per type entry, because it resolves against the common set (§8.2)
-            if (found != setters.end())
-                return found->second;
-            // the common set decides, because alignment is a property of every node a parent arranges (§8.2)
-            static const std::vector<std::pair<std::string, std::string>> common_setters = [] {
-                // the names come from the catalogue, held apart so a returned view outlives this call (§8.2, §11.3)
-                std::vector<std::pair<std::string, std::string>> built;
-                for (const ElementProperty& common : common_element_properties())
-                    built.emplace_back(common.name, "set_" + common.name);
-                return built;
-            }();
-            for (const auto& entry : common_setters) {
-                // the name decides, so a common property resolves to exactly one setter (§8.2)
-                if (entry.first == property)
-                    return std::string_view(entry.second);
-            }
-            // an element with no setter carries none, which only the canvas reaches (§11.3)
-            return std::string_view{};
-        }
-
-        // the callback setter an element signal wires to, keyed by the element and the signal (§11.3)
-        std::string_view signal_setter_of(std::string_view element, std::string_view signal) {
-            // the composite key is assembled, because the map is keyed by the pair (§11.3)
-            const std::string key = std::string(element) + "." + std::string(signal);
-            // the signal to setter map is the closed catalogue of §8 (§11.3)
-            static const std::unordered_map<std::string, std::string_view> setters{
-                {"Button.clicked", "set_on_click"}, {"Slider.changed", "set_on_change"}, {"CheckBox.toggled", "set_on_toggle"}, {"ScrollView.scrolled", "set_on_scroll"}, {"TextField.changed", "set_on_change"}, {"TextField.committed", "set_on_commit"},
-            };
-            // the lookup is a ready made key, because the pair is the identity (§11.3)
-            const auto found = setters.find(key);
-            // an element with no signal carries none, which only the three widgets reach (§11.3)
-            return found == setters.end() ? std::string_view{} : found->second;
-        }
-
-        // the named parameters an element signal carries, which a generated lambda and its body both take (§11.3)
-        std::vector<std::pair<std::string, std::string>> named_signal_params(std::string_view element, std::string_view signal) {
-            // a slider change carries the new value, and the catalog names it (§11.3)
-            if (element == "Slider" && signal == "changed")
-                return {{"float", "value"}};
-            // a checkbox toggle carries the new state, which the catalog also names (§11.3)
-            if (element == "CheckBox" && signal == "toggled")
-                return {{"bool", "checked"}};
-            // a scroll reports the offset it moved to, which is the one value a viewport raises (§8.3)
-            if (element == "ScrollView" && signal == "scrolled")
-                return {{"float", "offset"}};
-            // a field raises the string it changed to, which a validation and a commit both read (§8)
-            if (element == "TextField" && (signal == "changed" || signal == "committed"))
-                return {{"std::string", "value"}};
-            // a button click carries nothing, so its handler takes no parameter (§11.3)
-            return {};
-        }
-
-        // the signature fragment a handler takes after the context, which carries the raised parameters (§11.3)
-        std::string handler_signature(std::string_view element, std::string_view signal) {
-            // the named parameters decide the fragment, because the catalog declares them (§11.3)
-            std::string fragment;
-            for (const std::pair<std::string, std::string>& parameter : named_signal_params(element, signal))
-                fragment += ", " + parameter.first + " " + parameter.second;
-            return fragment;
-        }
-
         // the emitter for one component, which produces the facade header and its implementation unit (§11.3)
         class ComponentEmitter
         {
         public:
             // the node slot that has no parent, which is what the root records (§8.1)
             static constexpr std::size_t NO_PARENT = static_cast<std::size_t>(-1);
+
+            // the marker for a node that no conditional guards, which is the ordinary case (§11.1)
+            static constexpr std::size_t NO_CONDITIONAL = static_cast<std::size_t>(-1);
 
             // one tree node in the flat build order, which the emitter records as it walks (§8.1)
             struct NodeSlot
@@ -386,6 +321,9 @@ namespace albor::compiler
 
                 // the child positions from the row root, which is how an update reaches this node (§18.1, AD-13)
                 std::vector<std::size_t> row_path;
+
+                // the conditional that guards this node, which is NO_CONDITIONAL when none does (§11.1)
+                std::size_t conditional = NO_CONDITIONAL;
             };
 
             // one repeat and the body it materializes per item, which is what a keyed view owns (§18.1, AD-13)
@@ -408,11 +346,44 @@ namespace albor::compiler
 
                 // whether the repeat hangs directly under a viewport, which decides a windowed view (§8.2, AD-13)
                 bool virtualized = false;
+
+                // the conditional that guards this repeat, which is NO_CONDITIONAL when it stands in the open tree (§11.1)
+                std::size_t parent_conditional = NO_CONDITIONAL;
+
+                // the runtime position the rows take, which a guarded body shifts as its siblings appear (§18.1, §11.1)
+                std::string offset_expression;
+            };
+
+            // one conditional and the body it materializes while the condition holds, which is a single instance (§11.1)
+            struct ConditionalSlot
+            {
+                // the preorder index, which names the condition member and the three functions (§11.1)
+                std::size_t index = 0;
+
+                // the conditional node being emitted, which carries the condition (§11.1)
+                const CheckedNode* node = nullptr;
+
+                // the index of the container that holds this conditional, which is where its body hangs (§11.1)
+                std::size_t parent = 0;
+
+                // the body nodes in preorder, which are the nodes the body is made of (§11.1)
+                std::vector<NodeSlot> body;
+
+                // the runtime index expression, which counts the present earlier siblings the body must follow (§11.1)
+                std::string index_expression;
+
+                // the conditional that guards this one, which is NO_CONDITIONAL when it hangs at the top (§11.1)
+                std::size_t parent_conditional = NO_CONDITIONAL;
             };
 
             // build the emitter over the component and the shared problem list (§11.3)
-            ComponentEmitter(const CheckedComponent& component, DiagnosticList& diagnostics, const ElementCatalog* catalog, std::vector<std::string> modules) :
-                m_component(component), m_diagnostics(diagnostics), m_class(component.name), m_stem(snake_case(component.name)), m_catalog(catalog), m_modules(std::move(modules)) {}
+            ComponentEmitter(const CheckedComponent& component, DiagnosticList& diagnostics, const ElementCatalog* catalog, std::vector<std::string> modules, const std::vector<CheckedFunction>* functions, const std::vector<CheckedGlobal>* globals, const std::vector<CheckedComponent>* file_components) :
+                m_component(component), m_diagnostics(diagnostics), m_class(component.name), m_stem(snake_case(component.name)), m_functions(functions), m_globals(globals), m_catalog(catalog), m_modules(std::move(modules)), m_file_components(file_components) {
+                // the declared function names are collected, which tells a call apart from a colour op (§11.1)
+                if (m_functions != nullptr)
+                    for (const CheckedFunction& function : *m_functions)
+                        m_function_names.insert(function.name);
+            }
 
             // generate the two files of the component, which is empty when a problem blocked it (§11.3)
             bool emit();
@@ -440,6 +411,9 @@ namespace albor::compiler
             // walk one node for the blocking conditions, which reports every problem it finds (§11.3)
             void validate_node(const CheckedNode& node);
 
+            // report every conditional inside a repeat body, which a keyed row cannot reconcile (§11.1, AD-13)
+            void reject_conditionals_in_body(const CheckedNode& node);
+
             // reject a type codegen cannot translate, which is a native or a collection type (§11.3)
             void validate_type(const ValueType& type, const SourceSpan& span);
 
@@ -450,10 +424,34 @@ namespace albor::compiler
             void scan_color(const Expression& expression);
 
             // collect the nodes in preorder, which is the order the build function creates them (§8.1)
-            void collect(const CheckedNode& node, std::size_t parent);
+            void collect(const CheckedNode& node, std::size_t parent, std::size_t conditional = NO_CONDITIONAL);
 
             // find a declared property by name, which the type walk resolves against (§11.3)
             const CheckedProperty* property_named(std::string_view name) const;
+
+            // find a module-scoped value by name, which a read outside the properties resolves against (§11.1)
+            const CheckedGlobal* global_named(std::string_view name) const;
+
+            // find a file component by name, which an element reference resolves before the builtin table (§11.1)
+            [[nodiscard]] const CheckedComponent* component_named(std::string_view element) const;
+
+            // the widget info of an element, where a file component contributes beside the builtin set (§11.3)
+            [[nodiscard]] WidgetInfo info_of(std::string_view element) const;
+
+            // the setter a property assignment maps to, where a file component names it after its property (§11.3)
+            [[nodiscard]] std::string setter_of(std::string_view element, std::string_view property) const;
+
+            // the callback setter an element signal wires to, where a file component signal names itself (§11.3)
+            [[nodiscard]] std::string signal_setter_of(std::string_view element, std::string_view signal) const;
+
+            // the named parameters a signal carries, which a file component signal declares beside its type (§11.3)
+            [[nodiscard]] std::vector<std::pair<std::string, std::string>> named_signal_params(std::string_view element, std::string_view signal) const;
+
+            // the typed parameters an element signal raises, which a handler body expression resolves against (§11.3)
+            [[nodiscard]] std::vector<std::pair<std::string, ValueType>> signal_parameter_types(std::string_view element, std::string_view signal) const;
+
+            // the signature fragment a handler takes after the context, which the raised parameters decide (§11.3)
+            [[nodiscard]] std::string handler_signature(std::string_view element, std::string_view signal) const;
 
             // the type of a checked expression, which mirrors the checker's own walk (§11.3)
             ValueType type_of(const Expression& expression) const;
@@ -463,6 +461,12 @@ namespace albor::compiler
 
             // render the implementation unit, which the facade hides behind its header (§14.1, AD-03)
             void emit_source();
+
+            // render the file-level functions this component may call, which a binding then calls (§11.1)
+            void emit_functions();
+
+            // render the module-scoped values of the file, which a binding or a handler reads (§11.1)
+            void emit_globals();
 
             // render the body struct, which owns the properties and the widgets (§14.1)
             void emit_body();
@@ -506,11 +510,29 @@ namespace albor::compiler
             // emit the body members a repeat needs, which is the view and the three row functions (§18.1, AD-13)
             void emit_repeat_members();
 
+            // emit the members a conditional needs: the condition, the root and the presence flag (§11.1)
+            void emit_conditional_members();
+
+            // emit the build of one conditional body, which creates the nodes while the condition holds (§11.1)
+            void emit_conditional_build(const ConditionalSlot& slot);
+
+            // emit the update of one conditional, which materializes or destroys the body against the condition (§11.1)
+            void emit_conditional_update(const ConditionalSlot& slot);
+
+            // emit the condition expression of a conditional, rendered against the given object (§11.1)
+            std::string conditional_condition(const ConditionalSlot& slot, const std::string& object);
+
+            // the dependencies a conditional body reads, which joins the condition so any change rebuilds (§11.1)
+            std::vector<std::string> conditional_dependencies(const ConditionalSlot& slot);
+
             // emit the row functions of every repeat, which are appended once the tree is known (§18.1, AD-13)
             void emit_repeat_row_functions_all();
 
             // give each repeat the child position its first row takes, because rows keep the written place (§18.1)
             void assign_repeat_offsets();
+
+            // give each conditional the child position its body takes, because a body keeps the written place (§11.1)
+            void assign_conditional_offsets();
 
             // render the source a repeat walks, which the evaluator reads (§8.1, §18.1)
             std::string repeat_source_expression(const RepeatSlot& slot);
@@ -527,8 +549,14 @@ namespace albor::compiler
             // emit the rewrite of one row body node, which walks from the row root to reach it (§18.1, AD-13)
             void emit_row_update_block(const NodeSlot& slot);
 
-            // emit the reconcile call of one repeat, which materializes the rows its source carries (§18.1, AD-13)
-            void emit_repeat_reconcile(const RepeatSlot& slot);
+            // emit the view construction of one repeat, which materializes the rows its source carries (§18.1, AD-13)
+            void emit_repeat_materialize(const RepeatSlot& slot);
+
+            // emit the source registration and binding of one repeat, which keeps the rows live (§18.1, AD-13)
+            void emit_repeat_binding(const RepeatSlot& slot);
+
+            // emit the view teardown of one repeat, which a guarded body runs when its condition drops (§11.1, §18.1)
+            void emit_repeat_teardown(const RepeatSlot& slot);
 
             // emit the reconcile statement itself, which the builder and the source binding both call (§18.1, AD-13)
             void reconcile(const RepeatSlot& slot);
@@ -550,6 +578,9 @@ namespace albor::compiler
 
             // render one expression as C++, which the codegen re-emits the written shape (§11.3)
             std::string emit_expression(const Expression& expression);
+
+            // render one record construction in declared field order, which designated initializers require (§11.1)
+            std::string emit_record_construction(const RecordConstructionExpression& construction);
 
             // render one literal, which the value decides (§11.3)
             std::string emit_literal(const LiteralExpression& literal);
@@ -602,6 +633,21 @@ namespace albor::compiler
             // the signal parameters the handler body reads, which are the lambda arguments (§11.3)
             std::vector<std::string> m_signal_parameters;
 
+            // the types of those parameters, which a conversion in the body resolves against as it is scanned (§11.3)
+            std::vector<std::pair<std::string, ValueType>> m_signal_parameter_types;
+
+            // the file-level functions the component may call, which a call resolves against (§11.1)
+            const std::vector<CheckedFunction>* m_functions = nullptr;
+
+            // the module-scoped values the component reads, which a file-level static then holds (§11.1)
+            const std::vector<CheckedGlobal>* m_globals = nullptr;
+
+            // the declared function names, which tell a function call apart from a colour operation (§11.1)
+            std::unordered_set<std::string> m_function_names;
+
+            // the parameters of the function body being emitted, which read the arguments by name and type (§11.1)
+            std::vector<std::pair<std::string, ValueType>> m_function_parameters;
+
             // whether the body being emitted is a draw block, which is what exposes the canvas extent (§6.4)
             bool m_draw_extent = false;
 
@@ -611,6 +657,9 @@ namespace albor::compiler
             // whether any node constructs through the engine, which the builder then resolves (§7.2)
             bool m_uses_engine = false;
 
+            // whether a node outside a conditional body constructs through the engine, which the builder resolves (§11.1)
+            bool m_build_needs_engine = false;
+
             // whether any node constructs through the text engine, which the body then stores (§9.1)
             bool m_uses_text_engine = false;
 
@@ -618,6 +667,8 @@ namespace albor::compiler
             bool m_uses_color = false;
             // whether any alignment value reaches the generated units, which the align header follows (§14.1, §8.2)
             bool m_uses_align = false;
+            // whether a command reaches the generated facade, which the forward declaration follows (§18.1, AD-15)
+            bool m_uses_command = false;
 
             // whether any property carries a collection, which decides the vector header (§8.1)
             bool m_uses_vector = false;
@@ -628,14 +679,26 @@ namespace albor::compiler
             // the data type names a snapshot carries, which the facade forward-declares instead (§11.2)
             std::vector<std::string> m_data_declarations;
 
+            // the records the file declares in ui, which the header emits rather than includes (§11.1)
+            std::vector<const RecordType*> m_ui_structs;
+
+            // the enums the file declares in ui, which the header emits rather than includes (§11.1)
+            std::vector<const NamedValueSet*> m_ui_enums;
+
             // the catalog the records resolve against, which is null when the caller registered none (§11.2, AD-17)
             const ElementCatalog* m_catalog = nullptr;
 
             // the manifest modules the file imported, which name the directories the record headers live in (§11.1, AD-17)
             std::vector<std::string> m_modules;
 
+            // the components the file declares, which an element reference resolves against before the builtin set (§11.1)
+            const std::vector<CheckedComponent>* m_file_components = nullptr;
+
             // the repeats in preorder, each of which is a keyed view over its source (§18.1, AD-13)
             std::vector<RepeatSlot> m_repeats;
+
+            // the conditionals in preorder, each of which materializes its body while the condition holds (§11.1)
+            std::vector<ConditionalSlot> m_conditionals;
 
             // the next index a body node takes, which keeps row node names unique across repeats (§8.1, §18.1)
             std::size_t m_body_count = 0;
@@ -671,12 +734,177 @@ namespace albor::compiler
             bool m_blocked = false;
         };
 
+        const CheckedComponent* ComponentEmitter::component_named(std::string_view element) const {
+            // the file's own components are searched first, because a declared name shadows a builtin one (§11.1)
+            if (m_file_components != nullptr)
+                for (const CheckedComponent& component : *m_file_components)
+                    if (component.name == element)
+                        return &component;
+            // nothing the file declares goes by that name, so the builtin set decides (§11.1)
+            return nullptr;
+        }
+
+        WidgetInfo ComponentEmitter::info_of(std::string_view element) const {
+            // a file component constructs through its facade, which takes both engines like a label does (§11.3)
+            if (const CheckedComponent* component = component_named(element))
+                return {.header = snake_case(component->name) + ".h", .class_name = component->name, .needs_engine = true, .needs_text_engine = true};
+            // every other element is a builtin, whose header and class the closed set names (§11.3)
+            return widget_info().at(element);
+        }
+
+        std::string ComponentEmitter::setter_of(std::string_view element, std::string_view property) const {
+            // a file component exposes one setter per property, named the way its facade declares it (§11.3)
+            if (component_named(element) != nullptr)
+                return "set_" + sanitize(property);
+            // the composite key is assembled, because the map is keyed by the pair (§11.3)
+            const std::string key = std::string(element) + "." + std::string(property);
+            // the property to setter map is the closed catalogue of §8 (§11.3)
+            static const std::unordered_map<std::string, std::string_view> setters{
+                {"Column.spacing", "set_gap"}, {"Column.padding", "set_padding"}, {"Row.spacing", "set_gap"}, {"Padding.padding", "set_padding"}, {"Grid.spacing", "set_gap"}, {"Label.text", "set_text"}, {"Label.foreground", "set_foreground"}, {"Label.font_size", "set_font_size"}, {"Button.text", "set_label"}, {"Button.background", "set_background"}, {"Button.disabled", "set_disabled"}, {"Button.action", "set_command"}, {"Slider.value", "set_value"}, {"Slider.disabled", "set_disabled"}, {"Slider.track_color", "set_track_color"}, {"Slider.thumb_color", "set_thumb_color"}, {"Slider.action", "set_command"}, {"CheckBox.checked", "set_checked"}, {"CheckBox.disabled", "set_disabled"}, {"CheckBox.outline", "set_outline"}, {"CheckBox.check_fill", "set_check_fill"}, {"CheckBox.action", "set_command"}, {"ScrollView.overscan", "set_overscan"}, {"ScrollView.scrollbar", "set_scrollbar_visibility"}, {"ScrollView.row_height", "set_row_height"}, {"TextField.value", "set_value"}, {"TextField.placeholder", "set_placeholder"}, {"TextField.read_only", "set_read_only"}, {"TextField.multiline", "set_multiline"}, {"TextField.disabled", "set_disabled"}, {"TextField.font_size", "set_font_size"},
+            };
+            // the lookup is a ready made key, because the pair is the identity (§11.3)
+            const auto found = setters.find(key);
+            // a property every type carries has no per type entry, because it resolves against the common set (§8.2)
+            if (found != setters.end())
+                return std::string(found->second);
+            // the common set decides, because alignment is a property of every node a parent arranges (§8.2, §11.3)
+            static const std::vector<std::pair<std::string, std::string>> common_setters = [] {
+                // the names come from the catalogue, held apart so a returned view outlives this call (§8.2, §11.3)
+                std::vector<std::pair<std::string, std::string>> built;
+                for (const ElementProperty& common : common_element_properties())
+                    built.emplace_back(common.name, "set_" + common.name);
+                return built;
+            }();
+            for (const auto& entry : common_setters) {
+                // the name decides, so a common property resolves to exactly one setter (§8.2)
+                if (entry.first == property)
+                    return entry.second;
+            }
+            // an element with no setter carries none, which only the canvas reaches (§11.3)
+            return std::string{};
+        }
+
+        std::string ComponentEmitter::signal_setter_of(std::string_view element, std::string_view signal) const {
+            // a file component signal wires through the slot its facade declares, which the written name decides (§11.3)
+            if (component_named(element) != nullptr)
+                return "set_on_" + sanitize(signal);
+            // the composite key is assembled, because the map is keyed by the pair (§11.3)
+            const std::string key = std::string(element) + "." + std::string(signal);
+            // the signal to setter map is the closed catalogue of §8 (§11.3)
+            static const std::unordered_map<std::string, std::string_view> setters{
+                {"Button.clicked", "set_on_click"}, {"Slider.changed", "set_on_change"}, {"CheckBox.toggled", "set_on_toggle"}, {"ScrollView.scrolled", "set_on_scroll"}, {"TextField.changed", "set_on_change"}, {"TextField.committed", "set_on_commit"},
+            };
+            // the lookup is a ready made key, because the pair is the identity (§11.3)
+            const auto found = setters.find(key);
+            // an element with no signal carries none, which only the three widgets reach (§11.3)
+            return found == setters.end() ? std::string{} : std::string(found->second);
+        }
+
+        std::vector<std::pair<std::string, std::string>> ComponentEmitter::named_signal_params(std::string_view element, std::string_view signal) const {
+            // a file component signal declares its own parameters, which the raised values read by name (§11.3)
+            if (const CheckedComponent* component = component_named(element)) {
+                // the declared signal is located, because only it carries the parameter list (§11.3)
+                for (const CheckedSignal& declared : component->signals) {
+                    // a name mismatch means another signal, which the next iteration then takes (§11.3)
+                    if (declared.name != signal)
+                        continue;
+                    // the parameters pair type and name in declaration order, which the handler signature follows (§11.3)
+                    std::vector<std::pair<std::string, std::string>> named;
+                    for (std::size_t index = 0; index < declared.parameter_types.size(); index++) {
+                        // the C++ type is the checked spelling, which the facade setter already uses (§11.3)
+                        const std::string type = cpp_type(declared.parameter_types[index]);
+                        // the name is shared with the facade slot, so the lambda declares the same one (§14.1)
+                        named.emplace_back(type, sanitize(index < declared.parameter_names.size() ? declared.parameter_names[index] : std::string{}));
+                    }
+                    return named;
+                }
+                // a signal the file never declared carries no parameters, which only a blocked output reaches (§11.3)
+                return {};
+            }
+            // a slider change carries the new value, and the catalog names it (§11.3)
+            if (element == "Slider" && signal == "changed")
+                return {{"float", "value"}};
+            // a checkbox toggle carries the new state, which the catalog also names (§11.3)
+            if (element == "CheckBox" && signal == "toggled")
+                return {{"bool", "checked"}};
+            // a scroll reports the offset it moved to, which is the one value a viewport raises (§8.3)
+            if (element == "ScrollView" && signal == "scrolled")
+                return {{"float", "offset"}};
+            // a field raises the string it changed to, which a validation and a commit both read (§8)
+            if (element == "TextField" && (signal == "changed" || signal == "committed"))
+                return {{"std::string", "value"}};
+            // a button click carries nothing, so its handler takes no parameter (§11.3)
+            return {};
+        }
+
+        std::vector<std::pair<std::string, ValueType>> ComponentEmitter::signal_parameter_types(std::string_view element, std::string_view signal) const {
+            // the paired parameters are assembled, which both the component route and the catalog route hand back (§11.3)
+            auto pair_parameters = [](const std::vector<ValueType>& types, const std::vector<std::string>& names) {
+                // the index walks both lists, because the declaration kept them parallel (§11.1)
+                std::vector<std::pair<std::string, ValueType>> paired;
+                for (std::size_t index = 0; index < types.size() && index < names.size(); index++)
+                    paired.emplace_back(names[index], types[index]);
+                return paired;
+            };
+            // a file component signal declares its own parameters, which carry the checked types (§11.3)
+            if (const CheckedComponent* component = component_named(element)) {
+                for (const CheckedSignal& declared : component->signals)
+                    if (declared.name == signal)
+                        return pair_parameters(declared.parameter_types, declared.parameter_names);
+                // a signal the file never declared carries no parameters, which only a blocked output reaches (§11.3)
+                return {};
+            }
+            // a builtin element resolves against the catalog, where the raised types are declared (§11.3)
+            const ElementType* type = m_catalog == nullptr ? nullptr : m_catalog->find(element);
+            if (type != nullptr)
+                for (const ElementSignal& declared : type->signals)
+                    if (declared.name == signal)
+                        return pair_parameters(declared.parameter_types, declared.parameter_names);
+            // an element no catalog declares raises nothing a body can read (§11.3)
+            return {};
+        }
+
+        std::string ComponentEmitter::handler_signature(std::string_view element, std::string_view signal) const {
+            // the named parameters decide the fragment, because the catalog declares them (§11.3)
+            std::string fragment;
+            for (const std::pair<std::string, std::string>& parameter : named_signal_params(element, signal))
+                fragment += ", [[maybe_unused]] " + parameter.first + " " + parameter.second;
+            return fragment;
+        }
+
         void ComponentEmitter::collect_record_headers(const ValueType& type) {
             // a record is named by its own name, which the glue generator turned into a snake case file (§11.2, AD-17)
             if (type.is(TypeKind::Native)) {
                 // the catalog is what distinguishes a record from a plain data type, because both are native (§11.2)
-                if (m_catalog == nullptr || m_catalog->find_record(type.native_name()) == nullptr)
+                const RecordType* record = m_catalog == nullptr ? nullptr : m_catalog->find_record(type.native_name());
+                if (record == nullptr) {
+                    // a native type that is no record is looked up as a value set, which is where a ui enum hides (§11.1)
+                    if (m_catalog == nullptr)
+                        return;
+                    const NamedValueSet* set = m_catalog->find_named_value_set(type.native_name());
+                    // only a set the file declared is emitted here, because a builtin has its own header (§11.1)
+                    if (set == nullptr || !set->user)
+                        return;
+                    // a set already collected is not repeated, because the definition is written once (§11.1)
+                    if (std::find(m_ui_enums.begin(), m_ui_enums.end(), set) == m_ui_enums.end())
+                        m_ui_enums.push_back(set);
                     return;
+                }
+                // a record the file declared in ui is emitted by the header, which keeps one definition (§11.1)
+                if (record->from_ui) {
+                    // a record already collected is not repeated, because the definition is written once (§11.1)
+                    if (std::find(m_ui_structs.begin(), m_ui_structs.end(), record) == m_ui_structs.end())
+                        m_ui_structs.push_back(record);
+                    // a collection field pulls the vector header, which the emitted definition names (§8.1, §11.1)
+                    for (const RecordFieldType& field : record->fields)
+                        if (carries_vector(field.type))
+                            m_uses_vector = true;
+                    // a colour field pulls the paint header, which the emitted definition names (§11.3)
+                    for (const RecordFieldType& field : record->fields)
+                        if (field.type.is(TypeKind::Color))
+                            m_uses_color = true;
+                    return;
+                }
                 // each imported module is searched, because the record lives in exactly one of them (§11.1, §11.2, AD-17)
                 for (const std::string& module : m_modules) {
                     // the header path is the module and the snake cased record, which is what the generator wrote (§11.2)
@@ -723,12 +951,40 @@ namespace albor::compiler
                 if (property.has_default)
                     scan_expression(*property.default_value);
             }
+            // a module-scoped value joins the header needs and the length scan, because its type and value show (§11.1)
+            if (m_globals != nullptr)
+                for (const CheckedGlobal& global : *m_globals) {
+                    // a collection anywhere in the declared type pulls the vector header into the facade (§8.1, §14.1)
+                    if (carries_vector(global.type))
+                        m_uses_vector = true;
+                    // a record anywhere in the declared type pulls the header that declares its struct (§11.2, AD-17)
+                    collect_record_headers(global.type);
+                    // the type is validated the same way, because a module value is checked like a property (§11.1)
+                    validate_type(global.type, global.span);
+                    // the value is scanned for physical lengths, because their density is undefined (§11.3, AD-27)
+                    scan_expression(*global.value);
+                }
             // the tree is walked, which finds a repeat, a native element or a physical length (§11.3)
             if (m_component.root != nullptr)
                 validate_node(*m_component.root);
         }
 
         void ComponentEmitter::validate_node(const CheckedNode& node) {
+            // a conditional materializes a body while its condition holds, so the condition is scanned (§11.1)
+            if (node.kind == TreeNodeKind::Conditional) {
+                // the condition is scanned for physical lengths, because their density is undefined (§11.1, AD-27)
+                if (node.condition != nullptr) {
+                    scan_expression(*node.condition);
+                    scan_color(*node.condition);
+                }
+                // the body is validated as a tree of its own, because a body is made of those nodes (§11.1)
+                if (node.conditional_body != nullptr)
+                    validate_node(*node.conditional_body);
+                // the children are walked, because a nested problem matters just as much (§11.3)
+                for (const std::shared_ptr<CheckedNode>& child : node.children)
+                    validate_node(*child);
+                return;
+            }
             // a repeat materializes keyed rows, so it is checked against what a row identity needs (§18.1, AD-13)
             if (node.kind == TreeNodeKind::Repeat) {
                 // the source element must be a record, because a row is keyed by a declared field (§18.1, AD-13)
@@ -739,6 +995,9 @@ namespace albor::compiler
                     m_blocked = true;
                     return;
                 }
+                // a conditional inside a row is refused, because a row is built once and never reconciled (§11.1, AD-13)
+                if (node.repeat_body != nullptr)
+                    reject_conditionals_in_body(*node.repeat_body);
                 // the body is validated as a tree of its own, because a row is made of those nodes (§8.1, §18.1)
                 if (node.repeat_body != nullptr)
                     validate_node(*node.repeat_body);
@@ -748,7 +1007,7 @@ namespace albor::compiler
                 return;
             }
             // an element outside the widget set is native, which has no generated construction path (§11.3, AD-17)
-            if (!widget_info().contains(std::string_view(node.element_type))) {
+            if (!widget_info().contains(std::string_view(node.element_type)) && component_named(std::string_view(node.element_type)) == nullptr) {
                 // the problem names the type, because that is what the author wrote (§11.3)
                 m_diagnostics.add(Diagnostic::Severity::Error, node.span, "E0501", "'" + node.element_type + "' is not a generated element type");
                 // the blocking flag is set, which empties the generated output (§11.3)
@@ -756,6 +1015,11 @@ namespace albor::compiler
             }
             // each assignment is scanned for its type and its expressions (§11.3)
             for (const CheckedAssignment& assignment : node.assignments) {
+                // a collection anywhere in the assigned type pulls the vector header, which a sink names (§8.1, §14.1)
+                if (carries_vector(assignment.type))
+                    m_uses_vector = true;
+                // a record anywhere in the assigned type pulls the header that declares its struct (§11.2, AD-17)
+                collect_record_headers(assignment.type);
                 // the value type is rejected, because a native or a collection value cannot be built (§11.3)
                 validate_type(assignment.type, assignment.span);
                 // the value is scanned for physical lengths, because their density is undefined (§11.3, AD-27)
@@ -765,6 +1029,8 @@ namespace albor::compiler
             }
             // each handler body is scanned the same way, because it may hold anything (§11.3)
             for (const CheckedHandler& handler : node.handlers) {
+                // the raised parameters are typed here, because a conversion in the body reads them (§11.3)
+                m_signal_parameter_types = signal_parameter_types(node.element_type, handler.name);
                 // each statement is scanned on its own, because one problem must not hide the rest (§11.3)
                 for (const CheckedStatement& statement : handler.body) {
                     // an assignment carries its value, which is scanned (§11.3)
@@ -782,15 +1048,33 @@ namespace albor::compiler
                         scan_color(*argument);
                     }
                 }
+                // the parameters are cleared, because the next handler binds its own (§11.3)
+                m_signal_parameter_types.clear();
             }
             // the children are walked, because a nested problem matters just as much (§11.3)
             for (const std::shared_ptr<CheckedNode>& child : node.children)
                 validate_node(*child);
         }
 
+        void ComponentEmitter::reject_conditionals_in_body(const CheckedNode& node) {
+            // a conditional is reported at its own span, because that is what the author must move out of the row (§11.1)
+            if (node.kind == TreeNodeKind::Conditional) {
+                // the problem names the rule, because a row is materialized once per keyed item (§11.1, AD-13)
+                m_diagnostics.add(Diagnostic::Severity::Error, node.span, "E0504", "a repeat body cannot contain a conditional, because a keyed row is built once");
+                // the blocking flag is set, which empties the generated output (§11.3)
+                m_blocked = true;
+            }
+            // a nested repeat's body is its own subtree, which is walked for the same reason (§11.1)
+            if (node.repeat_body != nullptr)
+                reject_conditionals_in_body(*node.repeat_body);
+            // the children are walked, because a conditional may hide anywhere in the row (§11.1)
+            for (const std::shared_ptr<CheckedNode>& child : node.children)
+                reject_conditionals_in_body(*child);
+        }
+
         void ComponentEmitter::validate_type(const ValueType& type, const SourceSpan& span) {
             // a scalar type translates directly, which is what every other check assumes (§11.3)
-            if (type.is(TypeKind::Bool) || type.is(TypeKind::Int) || type.is(TypeKind::Float) || type.is(TypeKind::String) || type.is(TypeKind::Color) || type.is(TypeKind::Length) || type.is(TypeKind::Align) || type.is(TypeKind::Scrollbar))
+            if (type.is(TypeKind::Bool) || type.is(TypeKind::Int) || type.is(TypeKind::Float) || type.is(TypeKind::String) || type.is(TypeKind::Color) || type.is(TypeKind::Length) || type.is(TypeKind::Align) || type.is(TypeKind::Scrollbar) || type.is(TypeKind::Command))
                 return;
             // a collection is generatable when its element is, which is the same rule applied one level in (§8.1)
             if (type.is(TypeKind::Vector)) {
@@ -802,6 +1086,12 @@ namespace albor::compiler
                 // a registered record is generatable, because the glue generator wrote its definition (§11.2)
                 if (m_catalog != nullptr && m_catalog->find_record(type.native_name()) != nullptr)
                     return;
+                // a value set the file declared in ui is generatable, because the header emits the enum (§11.1)
+                if (m_catalog != nullptr) {
+                    const NamedValueSet* set = m_catalog->find_named_value_set(type.native_name());
+                    if (set != nullptr && set->user)
+                        return;
+                }
                 // a data type the manifest declared is not a record, so nothing generates it (§11.2, AD-17)
                 m_diagnostics.add(Diagnostic::Severity::Error, span, "E0501", "a value of type '" + type.to_string() + "' cannot be generated yet");
                 // the blocking flag is set, which empties the generated output (§11.3)
@@ -881,6 +1171,10 @@ namespace albor::compiler
             // a field read walks its object, because the object may hold anything a scan must refuse (§11.2)
             if (const auto* access = dynamic_cast<const FieldAccessExpression*>(&expression))
                 scan_expression(*access->object);
+            // a construction carries field values, which are walked because any may hold a length (§11.1)
+            if (const auto* construction = dynamic_cast<const RecordConstructionExpression*>(&expression))
+                for (const ConstructionField& field : construction->fields)
+                    scan_expression(*field.value);
         }
 
         void ComponentEmitter::scan_color(const Expression& expression) {
@@ -915,15 +1209,19 @@ namespace albor::compiler
             // a grouping has an inner expression, which is walked behind it (§11.3)
             if (const auto* grouping = dynamic_cast<const GroupingExpression*>(&expression))
                 scan_color(*grouping->inner);
+            // a construction carries field values, which are walked because any may name a colour (§11.1)
+            if (const auto* construction = dynamic_cast<const RecordConstructionExpression*>(&expression))
+                for (const ConstructionField& field : construction->fields)
+                    scan_color(*field.value);
         }
 
-        void ComponentEmitter::collect(const CheckedNode& node, std::size_t parent) {
+        void ComponentEmitter::collect(const CheckedNode& node, std::size_t parent, std::size_t conditional) {
             // a repeat is not a widget, so it becomes a keyed view rather than a node of its own (§18.1, AD-13)
             if (node.kind == TreeNodeKind::Repeat) {
                 // the repeat takes the next index, which names its view member (§18.1)
                 const std::size_t index = m_repeats.size();
                 // the slot collects the repeat and the body it materializes (§18.1)
-                RepeatSlot slot{.index = index, .node = &node, .parent = parent};
+                RepeatSlot slot{.index = index, .node = &node, .parent = parent, .parent_conditional = conditional};
                 // a repeat whose container is a viewport builds only the window, which is virtualization (§8.2, AD-13)
                 if (parent != NO_PARENT && m_nodes.at(parent).node->element_type == "ScrollView")
                     slot.virtualized = true;
@@ -934,13 +1232,32 @@ namespace albor::compiler
                 m_repeats.push_back(std::move(slot));
                 return;
             }
+            // a conditional is not a widget either, so it becomes a guarded body rather than a node of its own (§11.1)
+            if (node.kind == TreeNodeKind::Conditional) {
+                // the conditional takes the next index, which names its condition member (§11.1)
+                const std::size_t index = m_conditionals.size();
+                // the slot records the container and the conditional that guards this one (§11.1)
+                ConditionalSlot slot{.index = index, .node = &node, .parent = parent, .parent_conditional = conditional};
+                // the slot is appended first, so a nested conditional finds its index during the body walk (§11.1)
+                m_conditionals.push_back(std::move(slot));
+                // the body is walked into the node list with no parent, because the conditional adopts it (§11.1)
+                if (node.conditional_body != nullptr) {
+                    // a body with no node of its own shares this container, because its rows hang here (§11.1, §18.1)
+                    const bool bodiless = node.conditional_body->kind == TreeNodeKind::Conditional || node.conditional_body->kind == TreeNodeKind::Repeat;
+                    collect(*node.conditional_body, bodiless ? parent : NO_PARENT, index);
+                }
+                return;
+            }
             // the node takes the next index, which is its slot in the build order (§8.1)
             const std::size_t index = m_nodes.size();
             // the node is appended, so its children can reference its index (§8.1)
-            m_nodes.push_back({.index = index, .node = &node, .parent = parent});
+            m_nodes.push_back({.index = index, .node = &node, .parent = parent, .conditional = conditional});
+            // a body node also joins its conditional slot, because the build and the update walk that list (§11.1)
+            if (conditional != NO_CONDITIONAL)
+                m_conditionals.at(conditional).body.push_back(m_nodes.back());
             // the children follow in order, which keeps their preorder contiguous (§8.1)
             for (const std::shared_ptr<CheckedNode>& child : node.children)
-                collect(*child, index);
+                collect(*child, index, conditional);
         }
 
         ValueType ComponentEmitter::repeat_element_type(const CheckedNode& node) const {
@@ -1007,6 +1324,18 @@ namespace albor::compiler
             return nullptr;
         }
 
+        const CheckedGlobal* ComponentEmitter::global_named(std::string_view name) const {
+            // the module values are scanned, because a file holds only a handful of them (§11.1)
+            if (m_globals != nullptr)
+                for (const CheckedGlobal& global : *m_globals) {
+                    // the name decides, so a reference resolves to exactly one declaration (§11.1)
+                    if (global.name == name)
+                        return &global;
+                }
+            // a name that is not declared is a checker defect, because the checker already resolved it (§11.1)
+            return nullptr;
+        }
+
         ValueType ComponentEmitter::type_of(const Expression& expression) const {
             // a literal carries its own type, because its kind says what it is (§11.3)
             if (const auto* literal = dynamic_cast<const LiteralExpression*>(&expression)) {
@@ -1039,10 +1368,26 @@ namespace albor::compiler
             }
             // a reference resolves against the component, which is what a generated read needs (§11.3)
             if (const auto* reference = dynamic_cast<const PropertyExpression*>(&expression)) {
-                // the declared property decides, which the checker already confirmed exists (§11.3)
+                // the signal parameters are read first, because a handler parameter shadows a property (§11.1, §11.3)
+                for (const std::pair<std::string, ValueType>& parameter : m_signal_parameter_types) {
+                    // the name decides, so a parameter types as the signal raised it (§11.3)
+                    if (parameter.first == reference->name)
+                        return parameter.second;
+                }
+                // a function parameter is read next, because a body parameter shadows a property (§11.1, §11.3)
+                for (const std::pair<std::string, ValueType>& parameter : m_function_parameters) {
+                    // the name decides, so a parameter types as the argument the call passes (§11.3)
+                    if (parameter.first == reference->name)
+                        return parameter.second;
+                }
+                // the declared property decides, because a property shadows a module-scoped value (§11.1, §11.3)
                 const CheckedProperty* property = property_named(reference->name);
-                // a missing property cannot be typed, which a checker defect would cause (§11.3)
-                return property != nullptr ? property->type : error_type();
+                if (property != nullptr)
+                    return property->type;
+                // a name no property declares may still be a module-scoped value, which types as its declaration (§11.1)
+                const CheckedGlobal* global = global_named(reference->name);
+                // a name neither declares is a checker defect, because the checker already resolved it (§11.3)
+                return global != nullptr ? global->type : error_type();
             }
             // a conversion produces its target, which is the closed rule set (§11.3)
             if (const auto* conversion = dynamic_cast<const ConversionExpression*>(&expression)) {
@@ -1060,6 +1405,14 @@ namespace albor::compiler
             // a grouping contributes nothing, so its inner expression types the whole (§11.3)
             if (const auto* grouping = dynamic_cast<const GroupingExpression*>(&expression))
                 return type_of(*grouping->inner);
+            // a call to a declared function carries the declared return type (§11.1)
+            if (const auto* call = dynamic_cast<const CallExpression*>(&expression); call != nullptr && m_function_names.count(call->function) != 0 && m_functions != nullptr)
+                for (const CheckedFunction& function : *m_functions)
+                    if (function.name == call->function)
+                        return function.return_type;
+            // a construction types as the record its written name declares, which the checker resolved (§11.1)
+            if (const auto* construction = dynamic_cast<const RecordConstructionExpression*>(&expression))
+                return m_catalog == nullptr ? error_type() : resolve_type_name(construction->type_name, *m_catalog);
             // a shape the checker already rejected cannot be typed here, which is safe because it blocked (§11.3)
             return error_type();
         }
@@ -1099,6 +1452,9 @@ namespace albor::compiler
             line(0, "");
             line(0, "namespace albor");
             line(0, "{");
+            // a command is a pointer in the facade, so a forward declaration is all a signature needs (§18.1, AD-15)
+            if (m_uses_command)
+                line(1, "class Command;");
             // the data types a snapshot carries are declared ahead, which keeps the signatures compilable (§13.2)
             if (!m_data_declarations.empty()) {
                 line(1, "// the application data types a snapshot carries, which the facade declares ahead rather than includes (§11.2, AD-17)");
@@ -1106,6 +1462,52 @@ namespace albor::compiler
                 for (const std::string& forward : m_data_declarations)
                     line(1, "struct " + forward + ";");
                 // the blank closes the forward section, which separates it from the class (§14.1)
+                line(0, "");
+            }
+            // the records the file declares in ui are emitted here, which keeps one definition behind a guard (§11.1)
+            for (const RecordType* record : m_ui_structs) {
+                // the guard macro is named after the record, so a second header that emits it is skipped (§11.1)
+                const std::string guard = "ALBOR_GENERATED_STRUCT_" + record->name;
+                // the provenance names the record, which is what a reader of the header sees (§11.1)
+                line(1, "// the " + record->name + " record the file declares in ui, which the facade carries by value (§11.1)");
+                // the guard opens, so a translation unit that includes two headers defining it takes one (§11.1)
+                line(1, "#ifndef " + guard);
+                line(1, "#define " + guard);
+                // the struct is declared with its fields, which is the shape a field read walks (§11.1)
+                line(1, "struct " + record->name);
+                line(1, "{");
+                // each field renders its C++ type and name, which is what the definition holds (§11.1)
+                for (const RecordFieldType& field : record->fields)
+                    line(2, cpp_type(field.type) + " " + field.name + ";");
+                // the struct closes, which is the whole definition (§11.1)
+                line(1, "};");
+                // the guard closes, so the definition is taken at most once per translation unit (§11.1)
+                line(1, "#endif");
+                // the blank separates one record from the next (§11.1)
+                line(0, "");
+            }
+            // the enums the file declares in ui are emitted here, which keeps one definition behind a guard (§11.1)
+            for (const NamedValueSet* set : m_ui_enums) {
+                // the guard macro is named after the set, so a second header that emits it is skipped (§11.1)
+                const std::string guard = "ALBOR_GENERATED_ENUM_" + set->name;
+                // the provenance names the set, which is what a reader of the header sees (§11.1)
+                line(1, "// the " + set->name + " enum the file declares in ui, which a property of it holds one member of (§11.1)");
+                // the guard opens, so a translation unit that includes two headers defining it takes one (§11.1)
+                line(1, "#ifndef " + guard);
+                line(1, "#define " + guard);
+                // the enum is declared with its members, which is the closed set a value may take (§11.1)
+                line(1, "enum class " + set->name);
+                line(1, "{");
+                // each member renders as an enumerator, which is the name the written form matches (§11.1)
+                for (std::size_t index = 0; index < set->members.size(); ++index) {
+                    // a trailing comma keeps the last member from needing special casing (§11.1)
+                    line(2, set->members[index].code + ",");
+                }
+                // the enum closes, which is the whole definition (§11.1)
+                line(1, "};");
+                // the guard closes, so the definition is taken at most once per translation unit (§11.1)
+                line(1, "#endif");
+                // the blank separates one set from the next (§11.1)
                 line(0, "");
             }
             line(1, "// the concrete facade of the " + m_class + " component, which hides its generated body (§14.1, AD-03)");
@@ -1159,6 +1561,68 @@ namespace albor::compiler
             line(0, "} // namespace albor");
         }
 
+        void ComponentEmitter::emit_functions() {
+            // a file with no function declares nothing here, which keeps the unit small (§11.1)
+            if (m_functions == nullptr || m_functions->empty())
+                return;
+            // the signature of each function is built once, which the forward declaration shares (§11.1)
+            std::vector<std::string> signatures;
+            signatures.reserve(m_functions->size());
+            for (const CheckedFunction& function : *m_functions) {
+                // the types are the resolved ones, which the record header already declares (§11.1)
+                std::string signature = cpp_type(function.return_type) + " " + function.name + "(";
+                for (std::size_t index = 0; index < function.parameters.size(); index++) {
+                    // a comma joins the earlier parameters, which is how a C++ parameter list reads (§11.1)
+                    if (index != 0)
+                        signature += ", ";
+                    // the parameter name is sanitised, because the written name may be a keyword (§14.1)
+                    signature += cpp_type(function.parameters.at(index).second) + " " + sanitize(function.parameters.at(index).first);
+                }
+                // the list is closed, which is what the forward declaration and the definition both need (§11.1)
+                signature += ")";
+                signatures.push_back(std::move(signature));
+            }
+            // a forward declaration precedes every definition, because a function may call one written after it (§11.1)
+            for (const std::string& signature : signatures)
+                line(0, "[[maybe_unused]] static " + signature + ";");
+            // each definition follows, which is what a call site below then reaches (§11.1)
+            for (std::size_t index = 0; index < m_functions->size(); index++) {
+                const CheckedFunction& function = m_functions->at(index);
+                line(0, "");
+                // the guard keeps one definition when two components share one unit (§11.1, AD-03b)
+                line(0, "#ifndef ALBOR_GENERATED_FN_" + function.name);
+                line(0, "#define ALBOR_GENERATED_FN_" + function.name);
+                // the parameters are published, so a reference inside the body reads the argument by name (§11.1)
+                m_function_parameters.clear();
+                for (const std::pair<std::string, ValueType>& parameter : function.parameters)
+                    m_function_parameters.push_back(parameter);
+                // the body is a single return, which is the whole of the computation in this form (§11.1)
+                line(0, "[[maybe_unused]] static " + signatures.at(index) + " {");
+                // a body with no return expression is empty, which the checker already allowed (§11.1)
+                if (function.return_value != nullptr)
+                    line(1, "return " + emit_expression(*function.return_value) + ";");
+                line(0, "}");
+                // the parameters are cleared, because the next body binds its own (§11.1)
+                m_function_parameters.clear();
+                line(0, "#endif");
+            }
+        }
+
+        void ComponentEmitter::emit_globals() {
+            // a file with no module-scoped value declares nothing here, which keeps the unit small (§11.1)
+            if (m_globals == nullptr || m_globals->empty())
+                return;
+            for (const CheckedGlobal& global : *m_globals) {
+                line(0, "");
+                // the guard keeps one definition when two components share one unit (§11.1, AD-03b)
+                line(0, "#ifndef ALBOR_GENERATED_GLOBAL_" + global.name);
+                line(0, "#define ALBOR_GENERATED_GLOBAL_" + global.name);
+                // the value is a file-level static, because a component instance does not hold it (§11.1)
+                line(0, "[[maybe_unused]] static const " + cpp_type(global.type) + " " + sanitize(global.name) + " = " + emit_expression(*global.value) + ";");
+                line(0, "#endif");
+            }
+        }
+
         void ComponentEmitter::emit_source() {
             // the implementation output is the active target, which the line helper appends to (§14.1)
             m_output = &m_source;
@@ -1196,10 +1660,13 @@ namespace albor::compiler
             // a translated emission resolves through the catalogue, which only a translated component needs (§9.2)
             if (m_uses_i18n)
                 project_headers.push_back("i18n/catalog.h");
+            // an invocation needs the command definition, which the forward declaration only names (§18.1, AD-15)
+            if (m_uses_command)
+                project_headers.push_back("commands/command.h");
             // the widget headers join the set, because each constructed class must be declared (§14.1)
             for (const NodeSlot& slot : m_nodes) {
                 // the widget info of the element names the header to include (§14.1)
-                const WidgetInfo& info = widget_info().at(std::string_view(slot.node->element_type));
+                const WidgetInfo& info = info_of(std::string_view(slot.node->element_type));
                 // the header is added once, because the set deduplicates (§14.1)
                 project_headers.push_back(std::string(info.header));
             }
@@ -1208,7 +1675,7 @@ namespace albor::compiler
                 // each body node contributes its header, because the row functions construct it (§11.3)
                 for (const NodeSlot& slot : repeat.body)
                     // the widget info of the element names the header to include (§14.1)
-                    project_headers.push_back(std::string(widget_info().at(std::string_view(slot.node->element_type)).header));
+                    project_headers.push_back(std::string(info_of(std::string_view(slot.node->element_type)).header));
             // the engine type needs its header, which every widget body uses (§14.1)
             project_headers.push_back("runtime/binding_engine.h");
             // the property type needs its header, which every body uses (§14.1)
@@ -1228,6 +1695,9 @@ namespace albor::compiler
             line(0, "");
             line(0, "namespace albor");
             line(0, "{");
+            // the file-level functions and values come first, because an evaluator or a handler below reads them (§11.1)
+            emit_functions();
+            emit_globals();
             // the printing helpers come first, because an evaluator below may call one (§11.3)
             if (m_uses_float_helper)
                 emit_float_helper();
@@ -1254,8 +1724,11 @@ namespace albor::compiler
                 m_object = "self";
                 line(2, "// the source is read once, because the rows reconcile against that one value (§18.1)");
                 line(2, "const std::vector<" + item_type(slot) + "> value = " + repeat_source_expression(slot) + ";");
+                // a guarded repeat reconciles through its entry point, because its view may be absent (§11.1, §18.1)
+                if (slot.parent_conditional != NO_CONDITIONAL)
+                    line(2, "self->reconcile" + at + "();");
                 // a windowed repeat borrows a body member, because the rows outlive this frame's local (§8.2, AD-13)
-                if (slot.virtualized) {
+                else if (slot.virtualized) {
                     line(2, "// the source is stored in the body, because the rows borrow it past this call (§8.2)");
                     line(2, "self->m_repeat_items" + at + " = value;");
                     line(2, "self->m_repeat" + at + "->set_items(self->m_repeat_items" + at + ");");
@@ -1276,6 +1749,33 @@ namespace albor::compiler
                 line(1, "void " + m_class + "::Impl::reconcile" + at + "() {");
                 reconcile(slot);
                 line(1, "}");
+            }
+            // each conditional emits its build, update and evaluator, which is what a condition change calls (§11.1)
+            for (const ConditionalSlot& slot : m_conditionals) {
+                // the suffix names every function of this conditional (§11.1)
+                const std::string at = "_" + std::to_string(slot.index);
+                line(0, "");
+                line(1, "bool " + m_class + "::Impl::evaluate_conditional" + at + "(void* raw) {");
+                line(2, "// the body is recovered from the context, which keeps the path allocation free (§13.3)");
+                line(2, "auto* self = static_cast<Impl*>(raw);");
+                m_object = "self";
+                line(2, "// the condition is read once, which is what decides whether the body exists (§11.1)");
+                line(2, "const bool value = " + conditional_condition(slot, "self") + ";");
+                // a nested conditional also needs its guard to hold, because its body sits inside its parent's (§11.1)
+                if (slot.parent_conditional != NO_CONDITIONAL) {
+                    line(2, "// a nested body exists only while its enclosing body exists (§11.1)");
+                    line(2, "self->update_conditional" + at + "(self->m_cond_present_" + std::to_string(slot.parent_conditional) + " && value);");
+                }
+                else {
+                    line(2, "// the body settles against the fresh condition, which rebuilds or destroys it (§11.1)");
+                    line(2, "self->update_conditional" + at + "(value);");
+                }
+                line(2, "// the value is returned, which the engine stores as the bound value (§13.3)");
+                line(2, "return value;");
+                line(1, "}");
+                m_object.clear();
+                emit_conditional_build(slot);
+                emit_conditional_update(slot);
             }
             line(0, "} // namespace albor");
         }
@@ -1312,7 +1812,7 @@ namespace albor::compiler
             // each widget becomes an owned pointer member, which the evaluators write through (§8.1)
             for (const NodeSlot& slot : m_nodes) {
                 // the class name is the constructed type, which decides the pointer type (§8.1)
-                const std::string_view class_name = widget_info().at(std::string_view(slot.node->element_type)).class_name;
+                const std::string class_name = info_of(std::string_view(slot.node->element_type)).class_name;
                 line(2, "// the " + slot.node->element_type + " node, which the bindings write through (§8.1)");
                 line(2, std::string(class_name) + "* m_node_" + std::to_string(slot.index) + " = nullptr;");
                 line(0, "");
@@ -1394,6 +1894,9 @@ namespace albor::compiler
             // each repeat declares its view and its row functions, which is what materializes a row (§18.1, AD-13)
             if (!m_repeats.empty())
                 emit_repeat_members();
+            // each conditional declares its body nodes, root and condition, which is what materializes a body (§11.1)
+            if (!m_conditionals.empty())
+                emit_conditional_members();
             // each canvas body node declares row local tracks, because every row owns its own (§11.3, §18.1)
             for (const RepeatSlot& slot : m_repeats) {
                 // the body is walked per node, because only a canvas publishes two dimensions (§11.3, §18.1)
@@ -1526,7 +2029,7 @@ namespace albor::compiler
             line(0, "");
             line(1, "void " + m_class + "::Impl::build() {");
             // the engine is resolved once, which every widget construction below takes (§7.2)
-            if (m_uses_engine) {
+            if (m_build_needs_engine) {
                 line(2, "// the engine settles the registered properties, which the widgets read (§7.2)");
                 line(2, "BindingEngine* const engine = owner->engine();");
                 line(0, "");
@@ -1553,6 +2056,13 @@ namespace albor::compiler
                     line(2, "owner->register_property(" + sink + ");");
                 }
             }
+            // each conditional condition joins the scope too, which the binding engine keys on (§13.3)
+            for (const ConditionalSlot& conditional : m_conditionals) {
+                // the suffix names the condition member of this conditional (§11.1)
+                const std::string at = "_" + std::to_string(conditional.index);
+                line(2, "// the condition joins the component scope, which gives the binding a unique id (§13.3)");
+                line(2, "owner->register_property(m_cond" + at + ");");
+            }
             // a default that reads no source is computed once, which is what the builder owns (§14.1)
             for (const CheckedProperty& property : m_component.properties) {
                 // the member name is the shared C++ name of the property (§14.1)
@@ -1576,30 +2086,56 @@ namespace albor::compiler
                 line(2, "const PropertyId deps_" + name + "[] = {" + dep_list(property.default_dependencies) + "};");
                 line(2, "m_" + name + ".bind_static(&Impl::compute_" + name + ", this, deps_" + name + ");");
             }
-            // each repeat claims the position its rows occupy, which must precede its siblings (§18.1, AD-13)
+            // each conditional claims the position its body occupies, which must precede its siblings (§11.1)
+            assign_conditional_offsets();
+            // each repeat claims the position its rows occupy, which may borrow a guarded body's position (§18.1, AD-13)
             assign_repeat_offsets();
             // the tree is built in preorder, which hangs every node of the facade together (§8.1)
             for (const NodeSlot& slot : m_nodes) {
+                // a conditional body node is built inside its own build, so the main pass skips it (§11.1)
+                if (slot.conditional != NO_CONDITIONAL)
+                    continue;
                 line(0, "");
                 emit_node_block(slot);
                 // each repeat inside this container is created where it was written (§18.1, AD-13)
                 for (const RepeatSlot& repeat : m_repeats) {
                     // a repeat belongs to this container, which is what makes its rows hang here (§8.1, §18.1)
-                    if (repeat.parent != slot.index)
+                    if (repeat.parent != slot.index || repeat.parent_conditional != NO_CONDITIONAL)
                         continue;
                     line(0, "");
-                    emit_repeat_reconcile(repeat);
+                    emit_repeat_materialize(repeat);
+                    emit_repeat_binding(repeat);
                 }
             }
             // the root is adopted last, which is the only owned node of the facade (§8.1)
             if (!m_nodes.empty())
                 line(2, "owner->add_child(std::move(node_0));");
+            // a guarded repeat is bound once here, because its view comes and goes with the body (§11.1, §18.1)
+            for (const RepeatSlot& repeat : m_repeats) {
+                // a repeat in the open tree was already bound beside its materialization (§18.1)
+                if (repeat.parent_conditional == NO_CONDITIONAL)
+                    continue;
+                line(0, "");
+                emit_repeat_binding(repeat);
+            }
+            // every conditional is bound, because a nested one reacts to its own condition like any other (§11.1)
+            for (const ConditionalSlot& conditional : m_conditionals) {
+                // the suffix names every member of this conditional (§11.1)
+                const std::string at = "_" + std::to_string(conditional.index);
+                line(0, "");
+                line(2, "// the condition is bound, which keeps the body live against its sources (§13.3)");
+                line(2, "const PropertyId deps_cond" + at + "[] = {" + dep_list(conditional_dependencies(conditional)) + "};");
+                line(2, "m_cond" + at + ".bind_static(&Impl::evaluate_conditional" + at + ", this, deps_cond" + at + ");");
+                // a top level condition settles once here, because a nested one is settled by its enclosing body (§11.1)
+                if (conditional.parent_conditional == NO_CONDITIONAL)
+                    line(2, "update_conditional" + at + "(" + conditional_condition(conditional, "this") + ");");
+            }
             line(1, "}");
         }
 
         void ComponentEmitter::emit_node_block(const NodeSlot& slot) {
             // the class name decides the constructor, which the element carries (§8.1)
-            const WidgetInfo& info = widget_info().at(std::string_view(slot.node->element_type));
+            const WidgetInfo& info = info_of(std::string_view(slot.node->element_type));
             // the constructor arguments depend on the engines the widget reads (§8.1)
             std::string arguments = "()";
             // a widget construction pulls the engine, which the builder resolved above (§7.2)
@@ -1686,7 +2222,7 @@ namespace albor::compiler
                 // a constant reaches the widget setter directly, which what a static value is (§14.1)
                 if (assignment.dependencies.empty()) {
                     // the setter is fetched by the element and the property, which the catalog named (§11.3)
-                    const std::string_view setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
+                    const std::string setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
                     line(2, "// apply the static " + assignment.name + ", which is the value the author wrote (§14.1)");
                     line(2, "n" + std::to_string(slot.index) + "->" + std::string(setter) + "(" + emit_expression(*assignment.value) + ");");
                 }
@@ -1715,7 +2251,7 @@ namespace albor::compiler
             // each handler wires its callback, which a widget signal triggers (§11.3)
             for (const CheckedHandler& handler : slot.node->handlers) {
                 // the callback setter comes from the element and the signal, which the catalog named (§11.3)
-                const std::string_view setter = signal_setter_of(std::string_view(slot.node->element_type), handler.name);
+                const std::string setter = signal_setter_of(std::string_view(slot.node->element_type), handler.name);
                 // the lambda carries the signal parameters by name, so the body reads what the widget raised (§11.3)
                 const std::vector<std::pair<std::string, std::string>> named = named_signal_params(slot.node->element_type, handler.name);
                 std::string lambda_parameters;
@@ -1737,7 +2273,7 @@ namespace albor::compiler
 
         void ComponentEmitter::emit_row_node_block(const NodeSlot& slot) {
             // the class name decides the constructor, which the element carries (§8.1, §18.1)
-            const WidgetInfo& info = widget_info().at(std::string_view(slot.node->element_type));
+            const WidgetInfo& info = info_of(std::string_view(slot.node->element_type));
             // the constructor arguments depend on the engines the widget reads (§8.1, §18.1)
             std::string arguments = "()";
             // a widget construction pulls the engine, which the builder resolved above (§7.2, §18.1)
@@ -1766,7 +2302,7 @@ namespace albor::compiler
                     continue;
                 }
                 // the setter is fetched by the element and the property, which the catalog named (§11.3)
-                const std::string_view setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
+                const std::string setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
                 line(2, "// apply the " + assignment.name + ", which is what this row shows (§18.1)");
                 line(2, "n" + std::to_string(slot.index) + "->" + std::string(setter) + "(" + emit_expression(*assignment.value) + ");");
             }
@@ -1776,7 +2312,7 @@ namespace albor::compiler
             // each handler wires its callback, because a row handler runs the written body (§11.3, §18.1)
             for (const CheckedHandler& handler : slot.node->handlers) {
                 // the callback setter comes from the element and the signal, which the catalog named (§11.3)
-                const std::string_view setter = signal_setter_of(std::string_view(slot.node->element_type), handler.name);
+                const std::string setter = signal_setter_of(std::string_view(slot.node->element_type), handler.name);
                 // the lambda carries the signal parameters by name, so the body reads what the widget raised (§11.3)
                 const std::vector<std::pair<std::string, std::string>> named = named_signal_params(slot.node->element_type, handler.name);
                 std::string lambda_parameters;
@@ -1813,7 +2349,7 @@ namespace albor::compiler
                     continue;
                 }
                 // the setter is the same one the build used, because both paths write the same widget (§11.3)
-                const std::string_view setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
+                const std::string setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
                 line(2, "// rewrite the " + assignment.name + ", because the row now shows another item (§18.1, AD-13)");
                 line(2, "n" + std::to_string(slot.index) + "->" + std::string(setter) + "(" + emit_expression(*assignment.value) + ");");
             }
@@ -1875,15 +2411,251 @@ namespace albor::compiler
                 }
                 // the ordinary children before the repeat are counted, because the rows start after them (§8.1, §18.1)
                 std::size_t preceding = 0;
+                // whether the repeat sits among the children, which a bare guarded one does not (§18.1, §11.1)
+                bool found = false;
                 // the siblings are walked in order, which is what fixes the row position (§8.1, §18.1)
                 for (const std::shared_ptr<CheckedNode>& child : parent->node->children) {
+                    // this repeat is located, which places its rows where it was written (§18.1, AD-13)
+                    if (child.get() == repeat.node) {
+                        found = true;
+                        continue;
+                    }
                     // the first repeat sibling ends the count, because that is where the rows begin (§18.1, AD-13)
                     if (child->kind == TreeNodeKind::Repeat)
                         break;
-                    preceding++;
+                    // only a child written before this repeat moves its rows (§18.1, AD-13)
+                    if (!found)
+                        preceding++;
+                }
+                // a repeat that is the whole guarded body takes the runtime position of that body (§11.1, §18.1)
+                if (!found && repeat.parent_conditional != NO_CONDITIONAL) {
+                    repeat.offset = 0;
+                    repeat.offset_expression = m_conditionals.at(repeat.parent_conditional).index_expression;
+                    continue;
                 }
                 repeat.offset = preceding;
             }
+        }
+
+        void ComponentEmitter::assign_conditional_offsets() {
+            // each conditional needs the child position its body takes, which is where it was written (§11.1)
+            for (ConditionalSlot& conditional : m_conditionals) {
+                // a conditional with no parent has no container to count, which the checker already refused (§11.1)
+                if (conditional.parent == NO_PARENT) {
+                    // the index stays zero, because an orphan is reported rather than emitted (§11.1)
+                    conditional.index_expression = "0";
+                    continue;
+                }
+                // the parent is located, because its children decide where the body begins (§11.1)
+                const NodeSlot* parent = nullptr;
+                for (const NodeSlot& slot : m_nodes) {
+                    // the index decides, so the parent is the one this conditional hangs from (§11.1)
+                    if (slot.index == conditional.parent)
+                        parent = &slot;
+                }
+                // a conditional whose parent is missing cannot place its body, which would be a generator defect (§11.1)
+                if (parent == nullptr) {
+                    conditional.index_expression = "0";
+                    continue;
+                }
+                // the element siblings before this conditional are counted, because each is always present (§11.1)
+                std::size_t preceding = 0;
+                // whether the conditional sits among the children, which a directly nested one does not (§11.1)
+                bool found = false;
+                // every preceding sibling contributes a term, because a repeat and a conditional are counted (§11.1)
+                std::vector<std::string> terms;
+                // the siblings are walked in order, which is what fixes the body position (§11.1)
+                for (const std::shared_ptr<CheckedNode>& child : parent->node->children) {
+                    // this conditional ends the count, because that is where the body begins (§11.1)
+                    if (child.get() == conditional.node) {
+                        found = true;
+                        break;
+                    }
+                    // an element holds exactly one position, because it is always present (§11.1)
+                    if (child->kind == TreeNodeKind::Element) {
+                        preceding++;
+                        continue;
+                    }
+                    // a repeat holds as many positions as it has rows, which is a runtime count (§8.1, §11.1)
+                    if (child->kind == TreeNodeKind::Repeat) {
+                        for (const RepeatSlot& repeat : m_repeats)
+                            if (repeat.node == child.get())
+                                terms.push_back("m_repeat_" + std::to_string(repeat.index) + "->size()");
+                        continue;
+                    }
+                    // a conditional holds one position only while it is present, which is a runtime count (§11.1)
+                    if (child->kind == TreeNodeKind::Conditional) {
+                        for (const ConditionalSlot& earlier : m_conditionals)
+                            if (earlier.node == child.get())
+                                terms.push_back("(m_cond_present_" + std::to_string(earlier.index) + " ? 1 : 0)");
+                    }
+                }
+                // the expression starts from the always present elements, because they are counted at build time (§11.1)
+                std::string expression = std::to_string(preceding);
+                // each runtime term is appended, because a repeat and a conditional move the body's position (§11.1)
+                for (const std::string& term : terms)
+                    expression += " + " + term;
+                // a directly nested conditional is not among the children, so it takes its enclosing position (§11.1)
+                if (!found && conditional.parent_conditional != NO_CONDITIONAL)
+                    expression = m_conditionals.at(conditional.parent_conditional).index_expression;
+                conditional.index_expression = expression;
+            }
+        }
+
+        std::string ComponentEmitter::conditional_condition(const ConditionalSlot& slot, const std::string& object) {
+            // the object decides how a property read renders, because a member function reads directly (§13.3)
+            m_object = object;
+            // the condition is rendered exactly as written, because the checker already typed it (§11.1)
+            const std::string rendered = emit_expression(*slot.node->condition);
+            // the object is cleared, because the caller resumes its own rendering mode (§13.3)
+            m_object.clear();
+            return rendered;
+        }
+
+        std::vector<std::string> ComponentEmitter::conditional_dependencies(const ConditionalSlot& slot) {
+            // the dependencies start as the condition's own, because a change shows or hides the body (§11.1)
+            std::vector<std::string> dependencies = slot.node->condition_dependencies;
+            // a body that reads a component property needs a rebuild when that property changes (§11.1)
+            for (const NodeSlot& body : slot.body) {
+                // each assignment contributes, because a body shows whatever its bindings compute (§13.3)
+                for (const CheckedAssignment& assignment : body.node->assignments) {
+                    // each source joins once, because the engine keeps a set (§7.3, AD-04a)
+                    for (const std::string& source : assignment.dependencies) {
+                        // a duplicate would register the same id twice (§7.3, AD-04a)
+                        if (std::find(dependencies.begin(), dependencies.end(), source) == dependencies.end())
+                            dependencies.push_back(source);
+                    }
+                }
+            }
+            return dependencies;
+        }
+
+        void ComponentEmitter::emit_conditional_members() {
+            // each conditional contributes a root, a presence flag and a condition, which is what a body needs (§11.1)
+            for (const ConditionalSlot& slot : m_conditionals) {
+                // the suffix names every member of this conditional, which keeps them unique across conditionals (§11.1)
+                const std::string at = "_" + std::to_string(slot.index);
+                line(0, "");
+                // the body root node pointers are already members, because a body node joins the main node list (§11.1)
+                line(2, "// the owning root of this conditional body, which the tree holds while the condition holds (§11.1)");
+                line(2, "std::unique_ptr<UiNode> m_cond_root" + at + ";");
+                line(0, "");
+                line(2, "// the raw identity of the inserted body root, which removes it after the owner moved into the parent (§11.1)");
+                line(2, "UiNode* m_cond_node" + at + " = nullptr;");
+                line(0, "");
+                line(2, "// whether this conditional body currently exists, which is what an update guards on (§11.1)");
+                line(2, "bool m_cond_present" + at + " = false;");
+                line(0, "");
+                line(2, "// the condition the body hangs on, which the engine keeps current (§11.1, §13.3)");
+                line(2, "Property<bool> m_cond" + at + ";");
+                line(0, "");
+                line(2, "// materialize or destroy the body against the condition, which is what a change does (§11.1)");
+                line(2, "void update_conditional" + at + "(bool present);");
+                line(0, "");
+                line(2, "// build the body nodes, which runs once each time the condition becomes true (§11.1)");
+                line(2, "void build_conditional" + at + "();");
+                line(0, "");
+                line(2, "// recompute the condition and rebuild the body, which is what a source change does (§11.1)");
+                line(2, "static bool evaluate_conditional" + at + "(void* raw);");
+            }
+        }
+
+        void ComponentEmitter::emit_conditional_build(const ConditionalSlot& slot) {
+            // the suffix names every function of this conditional, which keeps them unique (§11.1)
+            const std::string at = "_" + std::to_string(slot.index);
+            line(0, "");
+            line(1, "void " + m_class + "::Impl::build_conditional" + at + "() {");
+            // this body's own widgets decide whether the engine is resolved, because another body may need none (§11.1)
+            bool body_needs_engine = false;
+            for (const NodeSlot& body : slot.body)
+                body_needs_engine = body_needs_engine || info_of(std::string_view(body.node->element_type)).needs_engine;
+            // the engine is resolved once, because a widget construction takes it (§7.2)
+            if (body_needs_engine) {
+                line(2, "// the engine settles the registered properties, which the widgets read (§7.2)");
+                line(2, "BindingEngine* const engine = owner->engine();");
+            }
+            // the body is built in preorder, which hangs the body together exactly as written (§8.1)
+            for (const NodeSlot& body : slot.body) {
+                // each body node is a plain node block, because a body has a single instance (§11.1)
+                line(0, "");
+                emit_node_block(body);
+            }
+            // the body root is stored, because the conditional owns it from here (§11.1)
+            if (!slot.body.empty()) {
+                line(2, "m_cond_root" + at + " = std::move(node_" + std::to_string(slot.body.front().index) + ");");
+                // the raw identity is kept beside the owner, because removal reads it after the owner moved (§11.1)
+                line(2, "m_cond_node" + at + " = m_cond_root" + at + ".get();");
+            }
+            // each repeat this body guards materializes now, because its container exists (§11.1, §18.1)
+            for (const RepeatSlot& repeat : m_repeats) {
+                // a repeat this conditional guards is the one whose rows appear with the body (§11.1, §18.1)
+                if (repeat.parent_conditional != slot.index)
+                    continue;
+                line(0, "");
+                emit_repeat_materialize(repeat);
+            }
+            line(1, "}");
+        }
+
+        void ComponentEmitter::emit_conditional_update(const ConditionalSlot& slot) {
+            // the suffix names every member of this conditional, which keeps them unique (§11.1)
+            const std::string at = "_" + std::to_string(slot.index);
+            // a body that is itself a conditional owns no node of its own, because it only guards the inner one (§11.1)
+            const bool has_root = !slot.body.empty();
+            line(0, "");
+            line(1, "void " + m_class + "::Impl::update_conditional" + at + "(bool present) {");
+            // an unchanged presence does nothing, because there is no body to add or remove (§11.1)
+            line(2, "// the update is a transition, so an unchanged presence leaves the tree alone (§11.1)");
+            line(2, "if (present == m_cond_present" + at + ")");
+            line(3, "return;");
+            line(2, "m_cond_present" + at + " = present;");
+            // the body appears when the condition turns true, so it is built and adopted once (§11.1)
+            line(2, "if (present) {");
+            // the build runs even for a body with no node, because it materializes the repeats it guards (§11.1, §18.1)
+            line(3, "build_conditional" + at + "();");
+            // the body is inserted at the position the conditional was written at (§11.1)
+            if (has_root && slot.parent != NO_PARENT) {
+                // the index counts the present siblings, because adjacent bodies must keep their order (§11.1)
+                line(3, "const std::size_t position" + at + " = " + slot.index_expression + ";");
+                line(3, "m_node_" + std::to_string(slot.parent) + "->insert_child(position" + at + ", std::move(m_cond_root" + at + "));");
+            }
+            // each nested conditional settles now, because its enclosing body exists (§11.1)
+            for (const ConditionalSlot& nested : m_conditionals) {
+                // a nested conditional is one this body guards, so its condition is read here (§11.1)
+                if (nested.parent_conditional != slot.index)
+                    continue;
+                const std::string nested_at = "_" + std::to_string(nested.index);
+                line(3, "update_conditional" + nested_at + "(" + conditional_condition(nested, "this") + ");");
+            }
+            line(2, "}");
+            // the body disappears when the condition turns false, so it is destroyed at once (§11.1)
+            line(2, "else {");
+            // each nested conditional is torn down first, because its body hangs from a node destroyed below (§11.1)
+            for (const ConditionalSlot& nested : m_conditionals) {
+                // a nested conditional is one this body guards, so it is removed with the body (§11.1)
+                if (nested.parent_conditional != slot.index)
+                    continue;
+                const std::string nested_at = "_" + std::to_string(nested.index);
+                line(3, "update_conditional" + nested_at + "(false);");
+            }
+            // each repeat this body guards is torn down, because its rows hang from a node about to go (§11.1, §18.1)
+            for (const RepeatSlot& repeat : m_repeats) {
+                // a repeat this conditional guards is the one whose rows disappear with the body (§11.1, §18.1)
+                if (repeat.parent_conditional != slot.index)
+                    continue;
+                emit_repeat_teardown(repeat);
+            }
+            if (has_root && slot.parent != NO_PARENT) {
+                line(3, "// the root is removed from the tree, which takes it out of the frame (§11.1)");
+                line(3, "m_cond_root" + at + " = m_node_" + std::to_string(slot.parent) + "->remove_child(m_cond_node" + at + ");");
+            }
+            // every body node pointer is cleared, because the evaluators guard on absence (§11.1)
+            for (const NodeSlot& body : slot.body)
+                line(3, "m_node_" + std::to_string(body.index) + " = nullptr;");
+            line(3, "m_cond_root" + at + ".reset();");
+            line(3, "m_cond_node" + at + " = nullptr;");
+            line(2, "}");
+            line(1, "}");
         }
 
         void ComponentEmitter::emit_repeat_row_functions_all() {
@@ -1958,7 +2730,7 @@ namespace albor::compiler
 
         void ComponentEmitter::emit_row_walk(const NodeSlot& slot) {
             // the concrete class is what the walk casts to, because an assignment needs the widget setter (§11.3, §18.1)
-            const std::string cls(widget_info().at(std::string_view(slot.node->element_type)).class_name);
+            const std::string cls(info_of(std::string_view(slot.node->element_type)).class_name);
             // the body root is the node the view handed back, so its walk is a cast rather than a descent (§18.1, AD-13)
             if (slot.row_path.empty()) {
                 line(2, "// the body root is the row itself, which the view handed back (§18.1, AD-13)");
@@ -1973,9 +2745,11 @@ namespace albor::compiler
             line(2, cls + "* const n" + std::to_string(slot.index) + " = static_cast<" + cls + "*>(static_cast<UiNode*>(n" + std::to_string(parent) + ")->child_at(" + std::to_string(position) + "));");
         }
 
-        void ComponentEmitter::emit_repeat_reconcile(const RepeatSlot& slot) {
+        void ComponentEmitter::emit_repeat_materialize(const RepeatSlot& slot) {
             // the suffix names every function of this repeat, which keeps them unique across repeats (§18.1)
             const std::string at = "_" + std::to_string(slot.index);
+            // the container is the node the rows hang from, which exists wherever this repeat is built (§8.1, §18.1)
+            const std::string container = "m_node_" + std::to_string(slot.parent);
             // a windowed repeat hangs under a viewport, so it owns its own rows (§8.2, AD-13)
             if (slot.virtualized) {
                 // the view is built in a local, because the tree owns it once it is adopted (§8.2, AD-13)
@@ -1983,35 +2757,55 @@ namespace albor::compiler
                 line(2, "// the windowed view owns the rows, keyed by the manifest identity (§8.2, AD-13)");
                 line(2, "auto " + rows + " = std::make_unique<albor::model::ScrollableRows<" + item_type(slot) + ">>(0.0f, 64);");
                 line(2, "// the row height comes from the viewport, which makes an index a position (§8.2, AD-13)");
-                line(2, rows + "->set_row_extent(n" + std::to_string(slot.parent) + "->row_height());");
+                line(2, rows + "->set_row_extent(" + container + "->row_height());");
                 line(2, "// the three plain functions the rows are built and matched through (§13.3, §18.1)");
                 line(2, rows + "->set_view(&Impl::build_row" + at + ", &Impl::update_row" + at + ", &Impl::key_of" + at + ", this);");
                 line(2, "// the rows are reconciled now, so the tree is complete at construction (§18.1)");
                 line(2, "m_repeat_items" + at + " = m_repeat_source" + at + ".get();");
                 line(2, rows + "->set_items(m_repeat_items" + at + ");");
-                line(2, "// the sink joins the component scope, which gives the reconcile a unique id (§13.3, §18.1)");
-                line(2, "owner->register_property(m_repeat_source" + at + ");");
-                line(2, "// the binding is declared here, because the evaluator below writes through it (§13.3, §18.1)");
-                line(2, "const PropertyId deps_repeat" + at + "[] = {" + dep_list(repeat_dependencies(slot)) + "};");
-                line(2, "m_repeat_source" + at + ".bind_static(&Impl::evaluate_repeat" + at + ", this, deps_repeat" + at + ");");
-                line(2, "// the source reaches the rows, which borrow a member that outlives them (§8.2, AD-13)");
-                line(2, rows + "->set_items(m_repeat_items" + at + ");");
                 line(2, "// the viewport adopts the view, which is what hands ownership to the tree (§8.2, AD-13)");
-                line(2, "n" + std::to_string(slot.parent) + "->add_child(std::move(" + rows + "));");
+                line(2, container + "->add_child(std::move(" + rows + "));");
                 line(2, "// the body keeps a view onto the rows, because the tree owns them from here (§8.2, AD-13)");
-                line(2, "m_repeat" + at + " = static_cast<albor::model::ScrollableRows<" + item_type(slot) + ">*>(n" + std::to_string(slot.parent) + "->child_at(0));");
+                line(2, "m_repeat" + at + " = static_cast<albor::model::ScrollableRows<" + item_type(slot) + ">*>(" + container + "->child_at(0));");
                 return;
             }
             // the view is built against the container, because its rows hang where the repeat was written (§8.1, §18.1)
             line(2, "// the view owns the rows this repeat materializes, keyed by the manifest identity (§18.1, AD-13)");
-            line(2, "m_repeat" + at + " = std::make_unique<albor::model::KeyedView<" + item_type(slot) + ">>(n" + std::to_string(slot.parent) + ", " + std::to_string(slot.offset) + ");");
+            line(2, "m_repeat" + at + " = std::make_unique<albor::model::KeyedView<" + item_type(slot) + ">>(" + container + ", " + std::to_string(slot.offset) + ");");
             line(2, "// the rows are reconciled now, so the tree is complete at construction (§18.1)");
             reconcile(slot);
+        }
+
+        void ComponentEmitter::emit_repeat_binding(const RepeatSlot& slot) {
+            // the suffix names every function of this repeat, which keeps them unique across repeats (§18.1)
+            const std::string at = "_" + std::to_string(slot.index);
             // the sink joins the component scope, which gives the reconcile a unique id (§13.3, §18.1)
+            line(2, "// the sink joins the component scope, which gives the reconcile a unique id (§13.3, §18.1)");
             line(2, "owner->register_property(m_repeat_source" + at + ");");
             // the binding is declared here, because the evaluator below writes through it (§13.3, §18.1)
+            line(2, "// the binding is declared here, because the evaluator below writes through it (§13.3, §18.1)");
             line(2, "const PropertyId deps_repeat" + at + "[] = {" + dep_list(repeat_dependencies(slot)) + "};");
             line(2, "m_repeat_source" + at + ".bind_static(&Impl::evaluate_repeat" + at + ", this, deps_repeat" + at + ");");
+        }
+
+        void ComponentEmitter::emit_repeat_teardown(const RepeatSlot& slot) {
+            // the suffix names every function of this repeat, which keeps them unique across repeats (§18.1)
+            const std::string at = "_" + std::to_string(slot.index);
+            // a repeat that is the whole guarded body owns its rows, so they are removed explicitly (§11.1, §18.1)
+            const bool bare = !slot.offset_expression.empty();
+            // a windowed repeat hands its view node back, because the row owner is the tree (§8.2, AD-13)
+            if (slot.virtualized) {
+                // a windowed body view is a child of the container, so it is removed from the tree (§8.2, AD-13)
+                if (bare)
+                    line(3, "(void)m_node_" + std::to_string(slot.parent) + "->remove_child(m_repeat" + at + ");");
+                line(3, "m_repeat" + at + " = nullptr;");
+                return;
+            }
+            // a body that owns its rows directly has them removed from the container (§18.1, AD-13)
+            if (bare)
+                line(3, "m_repeat" + at + "->clear();");
+            // the view stops naming the rows, because they died with the body or were cleared above (§11.1, §18.1)
+            line(3, "m_repeat" + at + ".reset();");
         }
 
         void ComponentEmitter::reconcile(const RepeatSlot& slot) {
@@ -2022,6 +2816,9 @@ namespace albor::compiler
             // the item binding is not in scope here, because the source is a component property (§8.1, §18.1)
             m_repeat_item_name.clear();
             m_repeat_index_name.clear();
+            // a guarded view exists only while its body does, so an absent body has nothing to reconcile (§11.1, §18.1)
+            if (slot.parent_conditional != NO_CONDITIONAL)
+                line(2, "if (m_repeat" + at + " == nullptr) return;");
             // the rows are reconciled against the source, matching by identity (§18.1, AD-13)
             if (slot.virtualized) {
                 line(2, "m_repeat_items" + at + " = m_repeat_source" + at + ".get();");
@@ -2029,6 +2826,9 @@ namespace albor::compiler
                 m_object.clear();
                 return;
             }
+            // a body that is the whole guarded repeat takes the runtime position of that body (§11.1, §18.1)
+            if (!slot.offset_expression.empty())
+                line(2, "m_repeat" + at + "->set_offset(" + slot.offset_expression + ");");
             line(2, "m_repeat" + at + "->reconcile(this, " + emit_expression(*slot.node->repeat_source) + ", &Impl::build_row" + at + ", &Impl::update_row" + at + ", &Impl::key_of" + at + ");");
             m_object.clear();
         }
@@ -2090,7 +2890,15 @@ namespace albor::compiler
                     line(2, "auto* self = static_cast<Impl*>(raw);");
                     m_object = "self";
                     line(2, "// the value is computed once, which the widget and the sink both take (§13.3)");
-                    line(2, "const " + cpp_type(assignment.type) + " value = " + emit_expression(*assignment.value) + ";");
+                    // a pointer value stays mutable, because the widget setter takes a non-const command (§18.1, AD-15)
+                    const std::string value_type = cpp_type(assignment.type);
+                    line(2, (value_type.ends_with('*') ? std::string() : std::string("const ")) + value_type + " value = " + emit_expression(*assignment.value) + ";");
+                    // a body that is not built writes nothing, because the node does not exist yet (§11.1)
+                    if (slot.conditional != NO_CONDITIONAL) {
+                        line(2, "// the conditional body may be absent, so nothing is written when it is (§11.1)");
+                        line(2, "if (self->m_node_" + std::to_string(slot.index) + " == nullptr)");
+                        line(3, "return value;");
+                    }
                     // the widget setter receives the value, which is what makes the binding visible (§13.3)
                     if (slot.node->element_type == "Canvas" && (assignment.name == "width" || assignment.name == "height")) {
                         // the width track updates first, which the intrinsic size then combines (§13.3)
@@ -2114,7 +2922,7 @@ namespace albor::compiler
                         line(2, "(void)value;");
                     }
                     else {
-                        const std::string_view setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
+                        const std::string setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
                         line(2, "// the widget shows the computed value, which is what makes the binding visible (§13.3)");
                         line(2, "self->m_node_" + std::to_string(slot.index) + "->" + std::string(setter) + "(value);");
                     }
@@ -2163,12 +2971,78 @@ namespace albor::compiler
                     m_signal_parameters.clear();
                     for (const std::pair<std::string, std::string>& parameter : named_signal_params(slot.node->element_type, handler.name))
                         m_signal_parameters.push_back(parameter.second);
-                    // each statement is emitted as a property write or a signal invocation (§11.3)
+                    // their types are published too, because a conversion in the body resolves against them (§11.3)
+                    m_signal_parameter_types = signal_parameter_types(slot.node->element_type, handler.name);
+                    // each statement is emitted as a write, a signal invocation or a built-in method (§11.3)
                     for (const CheckedStatement& statement : handler.body) {
                         // an assignment writes the target property, which the engine settles (§11.3)
                         if (statement.kind == HandlerStatementKind::Assignment) {
                             line(2, "// the written assignment runs, which updates the component property (§11.3)");
                             line(2, "self->m_" + sanitize(statement.target) + ".set(" + emit_expression(*statement.value) + ");");
+                        }
+                        // a built-in method either fires a command or mutates a collection in place (§11.1, §18.1)
+                        else if (statement.kind == HandlerStatementKind::PropertyMethod) {
+                            // the property name is shared, because the mutation writes through it (§11.3)
+                            const std::string property = "self->m_" + sanitize(statement.target);
+                            // a command invocation fires the action in the slot and needs no working copy (§18.1, AD-15)
+                            if (statement.method == "invoke") {
+                                line(2, "// the shared action is invoked, and an unfilled slot makes it a no-op (§18.1, AD-15)");
+                                line(2, "if (Command* command = " + property + ".get())");
+                                line(3, "(void)command->invoke();");
+                            }
+                            // clear drops every element, which needs no working copy (§11.1)
+                            else if (statement.method == "clear") {
+                                line(2, "// the collection is emptied, which the engine settles (§11.1)");
+                                line(2, property + ".set({});");
+                            }
+                            else {
+                                // the mutation is scoped, so each statement owns its working names (§11.1)
+                                line(2, "{");
+                                // a working copy is taken, because the mutation rebuilds the vector it sets back (§11.1)
+                                line(3, "// a working copy of the collection is taken, which the mutation rebuilds (§11.1)");
+                                line(3, "auto list = " + property + ".get();");
+                                // the index is bound once, because both the bounds check and the access read it (§11.1)
+                                if (statement.method == "remove_at" || statement.method == "set") {
+                                    line(3, "// the index is read once, because the bounds check and the access agree on it (§11.1)");
+                                    line(3, "const int index = " + emit_expression(*statement.arguments.at(0)) + ";");
+                                }
+                                // the element is appended, which grows the collection by one (§11.1)
+                                if (statement.method == "append") {
+                                    line(3, "// the element is pushed, which grows the collection by one (§11.1)");
+                                    line(3, "list.push_back(" + emit_expression(*statement.arguments.at(0)) + ");");
+                                }
+                                // the element at the index is erased, which shrinks the collection by one (§11.1)
+                                else if (statement.method == "remove_at") {
+                                    line(3, "// the element is erased when the index is in range, which shrinks the collection (§11.1)");
+                                    line(3, "if (index >= 0 && index < static_cast<int>(list.size()))");
+                                    line(4, "list.erase(list.begin() + index);");
+                                }
+                                // the element at the index is replaced, which keeps the collection size (§11.1)
+                                else if (statement.method == "set") {
+                                    line(3, "// the element is replaced when the index is in range, which keeps the size (§11.1)");
+                                    line(3, "if (index >= 0 && index < static_cast<int>(list.size()))");
+                                    line(4, "list[static_cast<std::size_t>(index)] = " + emit_expression(*statement.arguments.at(1)) + ";");
+                                }
+                                // the rebuilt collection is set back, which the engine settles (§11.1)
+                                line(3, "// the rebuilt collection is set back, which the engine settles (§11.1)");
+                                line(3, property + ".set(std::move(list));");
+                                line(2, "}");
+                            }
+                        }
+                        // a field write copies the record, writes the field and sets it back (§11.1)
+                        else if (statement.kind == HandlerStatementKind::FieldAssignment) {
+                            // the property name is shared, because the write goes through it (§11.3)
+                            const std::string property = "self->m_" + sanitize(statement.target);
+                            // the mutation is scoped, so the statement owns its working name (§11.1)
+                            line(2, "{");
+                            // a working copy is taken, because the field write rebuilds the record it sets back (§11.1)
+                            line(3, "// a working copy of the record is taken, which the field write rebuilds (§11.1)");
+                            line(3, "auto record = " + property + ".get();");
+                            // the field is assigned, which is the whole point of the write (§11.1)
+                            line(3, "record." + statement.field + " = " + emit_expression(*statement.value) + ";");
+                            // the rebuilt record is set back, which the engine settles (§11.1)
+                            line(3, property + ".set(std::move(record));");
+                            line(2, "}");
                         }
                         // an invocation reports the slot, which the host installed (§11.3)
                         else {
@@ -2188,6 +3062,7 @@ namespace albor::compiler
                     line(1, "}");
                     m_object.clear();
                     m_signal_parameters.clear();
+                    m_signal_parameter_types.clear();
                 }
             }
         }
@@ -2222,7 +3097,7 @@ namespace albor::compiler
                     for (std::size_t index = 0; index + 1 < call.arguments.size(); index++)
                         arguments += (arguments.empty() ? "" : ", ") + emit_expression(*call.arguments[index]);
                     const std::string colour = emit_expression(*call.arguments.back());
-                    // the numbers are split into origin and size, which is what the rect is built from (§6.4)
+                    // the numbers split into origin and size, which the rect builds from (§6.4)
                     std::vector<std::string> numbers;
                     std::string current;
                     for (const char character : arguments) {
@@ -2301,6 +3176,38 @@ namespace albor::compiler
             line(1, "}");
         }
 
+        std::string ComponentEmitter::emit_record_construction(const RecordConstructionExpression& construction) {
+            // the written name resolves to the record, which the checker already confirmed exists (§11.1)
+            const ValueType type = m_catalog == nullptr ? error_type() : resolve_type_name(construction.type_name, *m_catalog);
+            // only a record renders here, because the checker rejected any other construction (§11.1)
+            const RecordType* record = type.is(TypeKind::Native) ? m_catalog->find_record(type.native_name()) : nullptr;
+            // a construction the checker rejected cannot render, which the empty literal stands in for (§11.3)
+            if (record == nullptr)
+                return emit_string_literal({});
+            // the record's name opens the initialiser, which is the type the value lands in (§11.1)
+            std::string out = cpp_type(type) + "{";
+            // each field is offered its written value, because designated initializers follow declaration order (§11.1)
+            for (const RecordFieldType& field : record->fields) {
+                // the written field is looked up per declared field, because the written order may differ (§11.1)
+                const ConstructionField* provided = nullptr;
+                for (const ConstructionField& candidate : construction.fields)
+                    if (candidate.name == field.name) {
+                        // the match is kept, because the value renders for exactly this field (§11.1)
+                        provided = &candidate;
+                        break;
+                    }
+                // a field the construction left out stays value initialised, which a partial construction means (§11.1)
+                if (provided == nullptr)
+                    continue;
+                // a comma joins the earlier fields, which is how an initialiser list reads (§11.1)
+                if (out.back() != '{')
+                    out += ", ";
+                out += "." + field.name + " = " + emit_expression(*provided->value);
+            }
+            // the closing brace ends the initialiser (§11.1)
+            return out + "}";
+        }
+
         std::string ComponentEmitter::emit_expression(const Expression& expression) {
             // a literal renders from its value, which carries its own spelling (§11.3)
             if (const auto* literal = dynamic_cast<const LiteralExpression*>(&expression))
@@ -2308,6 +3215,9 @@ namespace albor::compiler
             // a translation is resolved through the catalog, which is what makes @tr mean something (§9.2, §11.3)
             if (const auto* translation = dynamic_cast<const TranslationExpression*>(&expression))
                 return "albor::i18n::translate(" + emit_string_literal(translation->text) + ")";
+            // a construction renders in the record's declared field order, which designated initializers require (§11.1)
+            if (const auto* construction = dynamic_cast<const RecordConstructionExpression*>(&expression))
+                return emit_record_construction(*construction);
             // a reference reads the property member, which is the reactive value (§11.3)
             if (const auto* reference = dynamic_cast<const PropertyExpression*>(&expression)) {
                 // a repeat item is the row parameter, because the body binds it for the row being built (§11.1, §18.1)
@@ -2327,6 +3237,15 @@ namespace albor::compiler
                     if (parameter == reference->name)
                         return parameter;
                 }
+                // a function parameter is the argument the static function received, which the body reads by name (§11.1)
+                for (const std::pair<std::string, ValueType>& parameter : m_function_parameters) {
+                    // the name decides, so a parameter resolves to the argument the call passed (§11.1)
+                    if (parameter.first == reference->name)
+                        return sanitize(parameter.first);
+                }
+                // a name no property declares may still be a module-scoped value, which is the file-level static (§11.1)
+                if (property_named(reference->name) == nullptr && global_named(reference->name) != nullptr)
+                    return sanitize(reference->name);
                 return m_object + "->m_" + sanitize(reference->name) + ".get()";
             }
             // a conversion renders through its operand, which the operand type decides (§11.3)
@@ -2351,8 +3270,10 @@ namespace albor::compiler
             if (const auto* access = dynamic_cast<const FieldAccessExpression*>(&expression)) {
                 // a written value renders as the enumerator the set declares, which the checker resolved (§11.1, §8.2)
                 if (const auto* set_name = dynamic_cast<const PropertyExpression*>(access->object.get()); set_name != nullptr) {
+                    // the catalog carries a declared set first, and the builtin table is the fallback (§11.1)
+                    const NamedValueSet* set = m_catalog != nullptr ? m_catalog->find_named_value_set(set_name->name) : find_named_value_set(set_name->name);
                     // the name decides, so a written value resolves to exactly one set (§11.1)
-                    if (const NamedValueSet* set = find_named_value_set(set_name->name); set != nullptr) {
+                    if (set != nullptr) {
                         // the member decides the enumerator, because the two spellings differ (§11.3, §8.2)
                         if (const NamedValueMember* member = set->find_member(access->field); member != nullptr)
                             return "albor::" + (set->cpp_name.empty() ? set->name : set->cpp_name) + "::" + member->code;
@@ -2408,6 +3329,19 @@ namespace albor::compiler
         }
 
         std::string ComponentEmitter::emit_call(const CallExpression& call) {
+            // a call to a declared function renders as a plain C++ call, which the static function above defines (§11.1)
+            if (m_function_names.count(call.function) != 0) {
+                // the arguments render in written order, because the call reads them left to right (§11.1)
+                std::string out = call.function + "(";
+                for (std::size_t index = 0; index < call.arguments.size(); index++) {
+                    // a comma joins the earlier arguments, which is how a C++ argument list reads (§11.1)
+                    if (index != 0)
+                        out += ", ";
+                    out += emit_expression(*call.arguments.at(index));
+                }
+                // the list is closed, which is what a call needs (§11.1)
+                return out + ")";
+            }
             // the colour renders first, because every operation is a method on it (§6.1)
             const std::string colour = emit_expression(*call.arguments.at(0));
             // the amount renders second, because it is the fraction or alpha the operation works by (§6.1)
@@ -2568,6 +3502,8 @@ namespace albor::compiler
             m_nodes.clear();
             // the repeats are cleared with the tree, because both are rebuilt per component (§18.1, AD-13)
             m_repeats.clear();
+            // the conditionals are cleared with them, because both are rebuilt per component (§11.1)
+            m_conditionals.clear();
             // the body counter restarts, because body names need only be unique within one component (§18.1, AD-13)
             m_body_count = 0;
             // the walk starts at the root, which has no parent (§8.1)
@@ -2576,9 +3512,12 @@ namespace albor::compiler
             // the engine and the colour flags are gathered from the tree, which the headers need (§14.1)
             for (const NodeSlot& slot : m_nodes) {
                 // the widget info decides when each engine is needed, which the builder then resolves (§14.1)
-                const WidgetInfo& info = widget_info().at(std::string_view(slot.node->element_type));
+                const WidgetInfo& info = info_of(std::string_view(slot.node->element_type));
                 // the engine flag rises with each widget, because the builder resolves it once (§14.1)
                 m_uses_engine = m_uses_engine || info.needs_engine;
+                // a widget outside a conditional body needs the builder's engine, because a body resolves its own (§11.1)
+                if (slot.conditional == NO_CONDITIONAL)
+                    m_build_needs_engine = m_build_needs_engine || info.needs_engine;
                 // the text engine flag rises with each label, because the body stores it (§14.1)
                 m_uses_text_engine = m_uses_text_engine || info.needs_text_engine;
                 // the canvas flag rises with each canvas, which adds the geometry header (§14.1)
@@ -2595,7 +3534,7 @@ namespace albor::compiler
                 // each body node is scanned alone, because the row functions are a separate path (§11.3)
                 for (const NodeSlot& slot : repeat.body) {
                     // the widget info decides when each engine is needed, exactly as an ordinary node does (§11.3)
-                    const WidgetInfo& info = widget_info().at(std::string_view(slot.node->element_type));
+                    const WidgetInfo& info = info_of(std::string_view(slot.node->element_type));
                     // the engine flag rises with each widget, because the builder resolves it once (§14.1)
                     m_uses_engine = m_uses_engine || info.needs_engine;
                     // the text engine flag rises with each label, because the row functions store it (§9.1)
@@ -2612,11 +3551,21 @@ namespace albor::compiler
             // the colour flag rises with any colour surface, which the paint header then joins (§14.1)
             for (const CheckedProperty& property : m_component.properties)
                 m_uses_color = m_uses_color || property.type.is(TypeKind::Color);
+            // a command slot or an action binding names the command type, which the header then forwards (§18.1, AD-15)
+            for (const CheckedProperty& property : m_component.properties)
+                m_uses_command = m_uses_command || property.type.is(TypeKind::Command);
+            // an action assignment binds a command to a widget, so it carries the same need (§18.1, AD-15)
+            for (const NodeSlot& slot : m_nodes)
+                for (const CheckedAssignment& assignment : slot.node->assignments)
+                    m_uses_command = m_uses_command || assignment.type.is(TypeKind::Command);
             // the signal parameters carry the same need, which the facade signatures then spell (§14.1)
             for (const CheckedSignal& signal : m_component.signals) {
                 // each parameter is checked, because any one of them forces the header (§14.1)
-                for (const ValueType& parameter : signal.parameter_types)
+                for (const ValueType& parameter : signal.parameter_types) {
                     m_uses_color = m_uses_color || parameter.is(TypeKind::Color);
+                    // a command parameter names the command type, which the header then forwards (§18.1, AD-15)
+                    m_uses_command = m_uses_command || parameter.is(TypeKind::Command);
+                }
             }
             // the defaults may hold colour text as well, which the include set must not miss (§11.3)
             for (const CheckedProperty& property : m_component.properties) {
@@ -2624,6 +3573,14 @@ namespace albor::compiler
                 if (property.has_default)
                     scan_color(*property.default_value);
             }
+            // a module-scoped value may hold colour text too, which the include set must not miss (§11.1)
+            if (m_globals != nullptr)
+                for (const CheckedGlobal& global : *m_globals) {
+                    // a colour-typed value pulls the paint header, which its constructor call requires (§11.1)
+                    m_uses_color = m_uses_color || global.type.is(TypeKind::Color);
+                    // the initial value is walked, because a colour literal may sit anywhere inside it (§11.1)
+                    scan_color(*global.value);
+                }
             // the header is emitted first, which the implementation then includes (§14.1)
             emit_header();
             // the implementation follows, which defines everything the header declared (§14.1)
@@ -2656,7 +3613,7 @@ namespace albor::compiler
         std::vector<std::string> chunk_contents;
         for (const CheckedComponent& component : file.components) {
             // the emitter is built per component, because the output files are per component (§14.1)
-            ComponentEmitter emitter(component, m_diagnostics, m_catalog, file.imported_modules);
+            ComponentEmitter emitter(component, m_diagnostics, m_catalog, file.imported_modules, &file.functions, &file.globals, &file.components);
             // a component that was blocked empties the whole output, which the driver then treats as failed (§11.3)
             if (!emitter.emit())
                 return {};

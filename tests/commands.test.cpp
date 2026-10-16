@@ -209,7 +209,8 @@ TEST(Command, ASelectionScopedActionRefusesAnEmptySelection) {
     // arrange
     CommandRegistry registry;
     registry.set_selection_source([] { return SelectionSpan{.first = 0, .last = 0}; });
-    Command& erase = registry.declare("row.erase", "Delete Rows");
+    auto erase_owned = registry.declare("row.erase", "Delete Rows");
+    Command& erase = *erase_owned;
     erase.set_selection_required(true);
     std::size_t runs = 0;
     erase.set_action([&runs](const CommandInvocation&) { runs++; });
@@ -225,7 +226,8 @@ TEST(Command, ASelectionScopedActionResolvesTheRangeAtInvocationTime) {
     CommandRegistry registry;
     SelectionSpan current{.first = 2, .last = 5};
     registry.set_selection_source([&current] { return current; });
-    Command& erase = registry.declare("row.erase", "Delete Rows");
+    auto erase_owned = registry.declare("row.erase", "Delete Rows");
+    Command& erase = *erase_owned;
     erase.set_selection_required(true);
     std::size_t observed = 0;
     erase.set_action([&observed](const CommandInvocation& invocation) { observed = invocation.selection.count(); });
@@ -234,6 +236,40 @@ TEST(Command, ASelectionScopedActionResolvesTheRangeAtInvocationTime) {
     (void)erase.invoke();
     // assert the range is read when the action runs, because one command serves many controls (§18.3)
     EXPECT_EQ(observed, std::size_t{9});
+}
+
+TEST(Command, ACommandOutlivingItsRegistryResolvesNoSelection) {
+    // arrange a borrowed command whose registry is destroyed while the command lives on (§18.1)
+    std::unique_ptr<Command> erase_owned;
+    {
+        CommandRegistry registry;
+        registry.set_selection_source([] { return SelectionSpan{.first = 1, .last = 4}; });
+        erase_owned = registry.declare("row.erase", "Delete Rows");
+        erase_owned->set_selection_required(true);
+        // assert the installed source is read while the owning registry lives (§18.3)
+        EXPECT_EQ(erase_owned->resolve_selection().count(), std::size_t{3});
+    }
+    // act the registry is gone, so the command resolves against no source
+    const SelectionSpan after = erase_owned->resolve_selection();
+    // assert the dangling source is not read, because the registry owned it and is gone (§18.1)
+    EXPECT_TRUE(after.empty());
+}
+
+TEST(Command, ACommandOutlivingItsRegistryRecordsNoUndo) {
+    // arrange a borrowed command that carries a reversal and outlives its registry (§18.1, §18.4)
+    std::unique_ptr<Command> erase_owned;
+    {
+        CommandRegistry registry;
+        erase_owned = registry.declare("row.erase", "Delete Rows");
+        erase_owned->set_undo_entry(UndoEntry{.label = "Delete", .undo = [](const CommandInvocation&) {}, .redo = [](const CommandInvocation&) {}});
+    }
+    std::size_t runs = 0;
+    erase_owned->set_action([&runs](const CommandInvocation&) { runs++; });
+    // act the registry is gone, so the command records its reversal against no stack
+    const InvocationOutcome outcome = erase_owned->invoke();
+    // assert the action still runs, because a borrowed command outlives the stack it recorded on (§18.1)
+    EXPECT_EQ(outcome, InvocationOutcome::Invoked);
+    EXPECT_EQ(runs, std::size_t{1});
 }
 
 TEST(UndoStack, AnEmptyStackOffersNeitherDirection) {
@@ -409,7 +445,8 @@ TEST(RedoCommand, ItBecomesEnabledOnlyAfterAReversal) {
 TEST(CommandRegistry, ACommandIsFoundByItsAuthorAssignedId) {
     // arrange
     CommandRegistry registry;
-    Command& save = registry.declare("file.save", "Save");
+    auto save_owned = registry.declare("file.save", "Save");
+    Command& save = *save_owned;
     // act
     Command* found = registry.find("file.save");
     // assert the author assigned id is the selector, and the runtime identity is not (§18.1, AD-11)
@@ -421,7 +458,7 @@ TEST(CommandRegistry, ACommandIsFoundByItsAuthorAssignedId) {
 TEST(CommandRegistry, AnAbsentIdNamesNoCommand) {
     // arrange
     CommandRegistry registry;
-    registry.declare("file.save", "Save");
+    auto absent_owned = registry.declare("file.save", "Save");
     // act and assert a selector that matches nothing is refused rather than guessed at (§18.1, AD-11)
     EXPECT_EQ(registry.find("file"), nullptr);
     EXPECT_EQ(registry.find(""), nullptr);
@@ -430,7 +467,7 @@ TEST(CommandRegistry, AnAbsentIdNamesNoCommand) {
 TEST(CommandRegistry, AnUnnamedCommandIsNotAddressable) {
     // arrange
     CommandRegistry registry;
-    registry.declare("", "Save");
+    auto unnamed_owned = registry.declare("", "Save");
     // act and assert a command the author never named stays out of the selector index (§18.1, AD-11)
     EXPECT_EQ(registry.find(""), nullptr);
 }
@@ -438,7 +475,8 @@ TEST(CommandRegistry, AnUnnamedCommandIsNotAddressable) {
 TEST(CommandRegistry, EachInvocationContributesExactlyOneEntryWhateverInvokedIt) {
     // arrange
     CommandRegistry registry;
-    Command& save = registry.declare("file.save", "Save");
+    auto save_owned = registry.declare("file.save", "Save");
+    Command& save = *save_owned;
     std::vector<InvocationSource> reversed;
     save.set_action([](const CommandInvocation&) {});
     save.set_undo_entry(UndoEntry{.label = "Save", .undo = [&reversed](const CommandInvocation& invocation) { reversed.push_back(invocation.source); }, .redo = [](const CommandInvocation&) {}});
@@ -459,7 +497,8 @@ TEST(CommandRegistry, EachInvocationContributesExactlyOneEntryWhateverInvokedIt)
 TEST(CommandRegistry, ARepeatedActionInsideOneGroupContributesOneEntry) {
     // arrange
     CommandRegistry registry;
-    Command& erase = registry.declare("row.erase", "Delete Rows");
+    auto erase_owned = registry.declare("row.erase", "Delete Rows");
+    Command& erase = *erase_owned;
     std::size_t undone = 0;
     std::size_t redone = 0;
     erase.set_action([](const CommandInvocation&) {});
@@ -496,7 +535,8 @@ TEST(CommandRegistry, TheHistoryFeedsTheUndoAndRedoCommands) {
 TEST(ShortcutTable, AnAcceleratorRoutesToItsCommand) {
     // arrange
     CommandRegistry registry;
-    Command& save = registry.declare("file.save", "Save");
+    auto save_owned = registry.declare("file.save", "Save");
+    Command& save = *save_owned;
     const Shortcut shortcut{.key = Key::S, .modifiers = Modifiers{.command = true}};
     // act
     registry.shortcuts().bind(shortcut, save.id());
@@ -518,7 +558,8 @@ TEST(ShortcutTable, AnUnboundAcceleratorNamesNoCommand) {
 TEST(ShortcutTable, ACommandWithNoModifierRoutesOnItsOwn) {
     // arrange
     CommandRegistry registry;
-    Command& save = registry.declare("file.save", "Save");
+    auto save_owned = registry.declare("file.save", "Save");
+    Command& save = *save_owned;
     const Shortcut plain{.key = Key::S};
     const Shortcut modified{.key = Key::S, .modifiers = Modifiers{.command = true}};
     // act
@@ -533,7 +574,8 @@ TEST(ShortcutTable, ACommandWithNoModifierRoutesOnItsOwn) {
 TEST(ShortcutTable, ACommandPresentsEveryAcceleratorBoundToIt) {
     // arrange
     CommandRegistry registry;
-    Command& save = registry.declare("file.save", "Save");
+    auto save_owned = registry.declare("file.save", "Save");
+    Command& save = *save_owned;
     // act
     registry.shortcuts().bind(Shortcut{.key = Key::S, .modifiers = Modifiers{.command = true}}, save.id());
     registry.shortcuts().bind(Shortcut{.key = Key::F1, .modifiers = Modifiers{.control = true}}, save.id());
@@ -554,8 +596,10 @@ TEST(ShortcutTable, AnAcceleratorIsThePortableSpellingOfAKey) {
 TEST(ShortcutTable, RebindingAnAcceleratorReleasesItsPreviousOwner) {
     // arrange
     CommandRegistry registry;
-    Command& save = registry.declare("file.save", "Save");
-    Command& other = registry.declare("file.open", "Open");
+    auto save_owned = registry.declare("file.save", "Save");
+    Command& save = *save_owned;
+    auto other_owned = registry.declare("file.open", "Open");
+    Command& other = *other_owned;
     const Shortcut shortcut{.key = Key::S, .modifiers = Modifiers{.command = true}};
     registry.shortcuts().bind(shortcut, save.id());
     // act
@@ -569,9 +613,42 @@ TEST(ShortcutTable, RebindingAnAcceleratorReleasesItsPreviousOwner) {
 TEST(ShortcutTable, AnAcceleratorNamingNoKeyBindsNothing) {
     // arrange
     CommandRegistry registry;
-    Command& save = registry.declare("file.save", "Save");
+    auto save_owned = registry.declare("file.save", "Save");
+    Command& save = *save_owned;
     // act
     registry.shortcuts().bind(Shortcut{.key = Key::None}, save.id());
     // assert no key can ever match it, so nothing is registered (§18.5)
     EXPECT_EQ(registry.shortcuts().size(), std::size_t{0});
+}
+
+TEST(CommandRegistry, ALeavingCommandReleasesItsShortcuts) {
+    // arrange a command owns an accelerator, which the registry's table holds (§18.5)
+    CommandRegistry registry;
+    const Shortcut shortcut{.key = Key::S, .modifiers = Modifiers{.command = true}};
+    {
+        auto save_owned = registry.declare("file.save", "Save");
+        registry.shortcuts().bind(shortcut, save_owned->id());
+        ASSERT_TRUE(registry.shortcuts().bound(shortcut));
+        // act the command is destroyed while the registry lives on (§18.1, §18.5)
+    }
+    // assert the accelerator left with its command, so no key routes into a command that is gone (§18.5)
+    EXPECT_FALSE(registry.shortcuts().bound(shortcut));
+    EXPECT_EQ(registry.shortcuts().size(), std::size_t{0});
+    EXPECT_EQ(registry.find_shortcut(shortcut), nullptr);
+}
+
+TEST(CommandRegistry, RemovingOneOfTwoCommandsSharingAnIdKeepsTheSurvivor) {
+    // arrange two commands share one author assigned id, which the later join wins in the index (§18.1, AD-11)
+    CommandRegistry registry;
+    auto first_owned = registry.declare("file.save", "Save");
+    Command& first = *first_owned;
+    {
+        auto second_owned = registry.declare("file.save", "Save Again");
+        // act the later duplicate is destroyed while the earlier one stays indexed (§18.1)
+    }
+    // assert the author id still reaches the surviving command, because the index was re-pointed (§18.1, AD-11)
+    Command* found = registry.find("file.save");
+    ASSERT_NE(found, nullptr);
+    EXPECT_EQ(found->id(), first.id());
+    EXPECT_EQ(registry.size(), std::size_t{1});
 }

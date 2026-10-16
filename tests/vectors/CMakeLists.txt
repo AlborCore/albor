@@ -24,5 +24,40 @@ albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/recor
 # the virtualized facade is generated with the manifest, which declares the records it repeats (§8.2, AD-13)
 albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/scroll_log.ui" --manifest "${CMAKE_CURRENT_SOURCE_DIR}/task.manifest")
 
+# the conditional facade is generated, which proves a guarded body and a visible property compile (§11.1)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/conditional_panel.ui")
+
+# the ordered conditional facade is generated, which proves adjacent guarded bodies keep their order (§11.1)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/ordered_panel.ui")
+
+# the nested conditional facade is generated, which proves a guarded body inside a guarded body follows both (§11.1)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/nested_panel.ui")
+
+# the directly nested conditional facade is generated, which proves a conditional body that is a conditional follows both (§11.1)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/nested_direct_panel.ui")
+
+# the guarded repeat facade is generated, which proves a repeat inside a conditional body materializes with it (§11.1, §18.1)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/guarded_repeat_panel.ui" --manifest "${CMAKE_CURRENT_SOURCE_DIR}/task.manifest")
+
+# the guarded flat repeat facade is generated, which proves a repeat that is the whole conditional body appears with it (§11.1, §18.1)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/guarded_flat_repeat_panel.ui" --manifest "${CMAKE_CURRENT_SOURCE_DIR}/task.manifest")
+
+# the collection facade is generated, which proves a handler mutates a vector property in place (§11.1)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/collection_panel.ui")
+
+# the struct facade is generated, which proves a ui-declared struct compiles into a facade (§11.1)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/frame_panel.ui")
+
+# the enum facade is generated, which proves a ui-declared enum compiles into a facade (§11.1)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/status_panel.ui")
+
+# the field-write facade is generated, which proves a handler writes one field and a signal carries a record (§11.1)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/field_panel.ui")
+
+# the function facade is generated, which proves a ui-declared function compiles into a facade (§11.1)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/fn_panel.ui")
+
+# the command facade is generated, which proves a command property binds to a widget action (§18.1, AD-15)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/command_panel.ui")
 # the generated header reaches the test binary, because the suite includes the facade it exercises (§11.3)
 target_include_directories(albor-tests PRIVATE "${CMAKE_BINARY_DIR}/generated/albor-vector-fixture")

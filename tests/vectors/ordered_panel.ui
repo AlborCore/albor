@@ -1,0 +1,16 @@
+// the ordered conditional fixture, which proves adjacent guarded bodies keep the order they were written in (§11.1)
+
+component OrderedPanel {
+    inout property<bool> first;
+    inout property<bool> second;
+
+    Column {
+        if first {
+            Label { text: "first"; }
+        }
+
+        if second {
+            Label { text: "second"; }
+        }
+    }
+}

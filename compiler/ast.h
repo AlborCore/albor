@@ -278,6 +278,36 @@ namespace albor::compiler
         static ExpressionPtr make(std::vector<ExpressionPtr> elements, SourceSpan span);
     };
 
+    // one named field of a construction, which pairs the declared name with the value it takes (§11.1)
+    struct ConstructionField
+    {
+        // the field name as written, which the record declaration resolves (§11.1)
+        std::string name;
+
+        // the value assigned to it, which the checker types against the declared field (§11.1)
+        ExpressionPtr value;
+    };
+
+    // a construction of a record value, written Type{field: value}, which is how an author writes one (§11.1)
+    class RecordConstructionExpression : public Expression
+    {
+    public:
+        // the record type as written, which the checker resolves against the declared types (§11.1)
+        std::string type_name;
+
+        // the fields in written order, each pairing its name with its value (§11.1)
+        std::vector<ConstructionField> fields;
+
+        // where the braces were written (§11.1)
+        SourceSpan span;
+
+        // hand out where the braces were written (§11.1)
+        [[nodiscard]] const SourceSpan& location() const override { return span; }
+
+        // build a construction, which the parser makes once it has read the field list (§11.1)
+        static ExpressionPtr make(std::string type_name, std::vector<ConstructionField> fields, SourceSpan span);
+    };
+
     // a read of one field of a record, written item.title, which is how a repeat body reaches its item (§11.2, AD-17)
     class FieldAccessExpression : public Expression
     {
@@ -298,30 +328,42 @@ namespace albor::compiler
         static ExpressionPtr make(ExpressionPtr object, std::string field, SourceSpan span);
     };
 
-    // the statements a handler body may contain, which is a closed set of two forms (§11.1)
+    // the statements a handler body may contain, which is a closed set of four forms (§11.1)
     enum class HandlerStatementKind
     {
         // an assignment to a declared property (§11.1)
         Assignment,
 
         // an invocation of a declared signal (§11.1)
-        SignalInvocation
+        SignalInvocation,
+
+        // a built-in method call on a declared collection property, which mutates it in place (§11.1)
+        PropertyMethod,
+
+        // an assignment to one field of a declared record property, which mutates the record in place (§11.1)
+        FieldAssignment
     };
 
-    // one statement inside a handler body, which is either an assignment or a signal invocation (§11.1)
+    // one statement inside a handler body, which is one of the four forms above (§11.1)
     class HandlerStatement
     {
     public:
         // what kind of statement this is, which decides which fields below are set (§11.1)
         HandlerStatementKind kind = HandlerStatementKind::Assignment;
 
-        // the property being assigned or the signal being invoked, which is a declared name (§11.1)
+        // the property being assigned, the signal being invoked or the collection the method runs on (§11.1)
         std::string target;
 
-        // the assigned value, which is empty for a signal invocation (§11.1)
+        // the built-in method name, which is empty for an assignment, a signal invocation and a field write (§11.1)
+        std::string method;
+
+        // the field of a record the write reaches, which is empty for every other form (§11.1)
+        std::string field;
+
+        // the assigned value, which is empty for a signal invocation and a method call (§11.1)
         ExpressionPtr value;
 
-        // the signal arguments, which are empty for an assignment (§11.1)
+        // the signal arguments or the method arguments, which are empty for an assignment (§11.1)
         std::vector<ExpressionPtr> arguments;
 
         // where the statement was written (§11.1)
@@ -336,6 +378,57 @@ namespace albor::compiler
 
         // the parameter types as written, which the manifest and the facade agree on (§11.1)
         std::vector<std::string> parameter_types;
+
+        // the parameter names in declaration order, which a handler body reads the raised value by (§11.1)
+        std::vector<std::string> parameter_names;
+
+        // where the declaration was written (§11.1)
+        SourceSpan span;
+    };
+
+    // one parameter of a function, which names a value its body reads (§11.1)
+    struct FunctionParameter
+    {
+        // the name the body writes to read the argument (§11.1)
+        std::string name;
+
+        // the type as written, which the checker resolves against the catalog (§11.1)
+        std::string type;
+
+        // where the parameter was written (§11.1)
+        SourceSpan span;
+    };
+
+    // a function the file declares, which is a pure named computation a binding may call (§11.1)
+    struct FunctionDeclaration
+    {
+        // the declared name, which a call resolves against (§11.1)
+        std::string name;
+
+        // the parameters in written order, which the arguments must match (§11.1)
+        std::vector<FunctionParameter> parameters;
+
+        // the return type as written, which the checker resolves against the catalog (§11.1)
+        std::string return_type;
+
+        // the returned expression, which is the whole of the body in this form (§11.1)
+        ExpressionPtr return_value;
+
+        // where the declaration was written (§11.1)
+        SourceSpan span;
+    };
+
+    // a module-scoped named value the file declares, which several components read (§11.1)
+    struct GlobalDeclaration
+    {
+        // the declared name, which a reference resolves against (§11.1)
+        std::string name;
+
+        // the declared type as written, which the checker resolves against the catalog (§11.1)
+        std::string type;
+
+        // the initial value, which is the whole of the declaration in this form (§11.1)
+        ExpressionPtr value;
 
         // where the declaration was written (§11.1)
         SourceSpan span;
@@ -396,14 +489,20 @@ namespace albor::compiler
         SourceSpan span;
     };
 
-    // the kinds of child element a tree node may contain, which is a closed set of two (§11.1)
+    // the kinds of child element a tree node may contain, which is a closed set of four (§11.1)
     enum class TreeNodeKind
     {
         // a declared element type such as Column or Button, which the manifest or the widget catalog resolves (§11.1)
         Element,
 
         // a repeated element, whose body is instantiated once per item (§11.1)
-        Repeat
+        Repeat,
+
+        // a conditional element, whose body exists only while the condition holds (§11.1)
+        Conditional,
+
+        // the content point a base declares, which a derived component's elements replace (§11.1)
+        Slot
     };
 
     // one drawing call inside a draw block, which the codegen emits into the canvas body (§6.4, §11.1)
@@ -459,6 +558,12 @@ namespace albor::compiler
         // the body of a repeat, which is the element instantiated per item (§11.1)
         std::unique_ptr<TreeNode> repeat_body;
 
+        // the condition of a conditional, which decides whether the body exists (§11.1)
+        ExpressionPtr condition;
+
+        // the body of a conditional, which is the element that exists while the condition holds (§11.1)
+        std::unique_ptr<TreeNode> conditional_body;
+
         // where the node was written (§11.1)
         SourceSpan span;
     };
@@ -473,11 +578,56 @@ namespace albor::compiler
         SourceSpan span;
     };
 
+    // one field a struct declares, whose type a field read resolves to (§11.1)
+    struct StructField
+    {
+        // the field name as written, which a binding addresses after the dot (§11.1)
+        std::string name;
+
+        // the type as written, which the registration pass resolves against the catalog (§11.1)
+        std::string type;
+
+        // where the field was written (§11.1)
+        SourceSpan span;
+    };
+
+    // a struct the file declares at its top level, which a property or a signal may then carry (§11.1)
+    struct StructDeclaration
+    {
+        // the struct name as written, which becomes the record type a field read resolves against (§11.1)
+        std::string name;
+
+        // the fields in declaration order, which is the shape a field read walks (§11.1)
+        std::vector<StructField> fields;
+
+        // where the declaration was written (§11.1)
+        SourceSpan span;
+    };
+
+    // an enum the file declares at its top level, which a property may then hold one member of (§11.1)
+    struct EnumDeclaration
+    {
+        // the enum name as written, which becomes the named value set a member resolves against (§11.1)
+        std::string name;
+
+        // the member names in declaration order, which is the closed set a value may take (§11.1)
+        std::vector<std::string> members;
+
+        // where the declaration was written (§11.1)
+        SourceSpan span;
+    };
+
     // a whole parsed component, which is the unit the checker and the codegen both take (§11.1)
     struct ComponentDeclaration
     {
         // the component name as written, which becomes the generated facade class name (§11.1, AD-03a)
         std::string name;
+
+        // the base component as written, which is empty when the component derives from none (§11.1)
+        std::string base;
+
+        // where the base was written, which is what a diagnostic about it points at (§11.1)
+        SourceSpan base_span;
 
         // the modules the component refers to (§11.1, AD-17)
         std::vector<ImportDeclaration> imports;
@@ -490,6 +640,9 @@ namespace albor::compiler
 
         // the root element of the component, which is empty when the component declares none (§11.1)
         std::unique_ptr<TreeNode> root;
+
+        // the content elements a derived component supplies for the base's children slot (§11.1)
+        std::vector<std::unique_ptr<TreeNode>> content;
 
         // where the declaration starts, which is what a driver reports against (§11.1)
         SourceSpan span;

@@ -1,0 +1,67 @@
+site_name: Albor Guide
+site_description: User guide for Albor, a cross-platform declarative UI framework for C++
+repo_url: https://github.com/AlborCore/albor
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - pymdownx.details
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - The .ui language:
+      - ui-language/index.md
+      - Components: ui-language/components.md
+      - Properties: ui-language/properties.md
+      - Expressions and bindings: ui-language/expressions.md
+      - Types: ui-language/types.md
+      - Signals and handlers: ui-language/handlers.md
+      - Control flow: ui-language/control-flow.md
+  - Concepts:
+      - Properties and bindings: concepts/bindings.md
+      - Commands: concepts/commands.md
+      - Layout: concepts/layout.md
+      - Rendering: concepts/rendering.md
+      - Style and theming: concepts/theming.md
+      - Internationalization: concepts/i18n.md
+      - Native components: concepts/native-components.md
+  - Components:
+      - Overview: components/index.md
+      - Label: components/label.md
+      - Button: components/button.md
+      - TextField: components/text-field.md
+      - Slider: components/slider.md
+      - CheckBox: components/checkbox.md
+      - Canvas: components/canvas.md
+      - ScrollView: components/scroll-view.md
+      - Column: components/column.md
+      - Row: components/row.md
+      - Padding: components/padding.md
+      - Stack: components/stack.md
+      - Grid: components/grid.md
+  - Tooling: tooling.md
+  - Status and platforms: status.md

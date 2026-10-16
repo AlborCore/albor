@@ -1,0 +1,13 @@
+// the enum fixture, which proves a ui-declared enum compiles into a facade (§11.1)
+
+enum Status {
+    Todo,
+    Doing,
+    Done
+}
+
+component StatusPanel {
+    in property<Status> status;
+
+    Column {}
+}

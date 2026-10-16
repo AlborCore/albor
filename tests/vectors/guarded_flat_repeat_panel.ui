@@ -1,0 +1,18 @@
+import task;
+
+// the guarded flat repeat fixture, which proves a repeat that is the whole conditional body appears with it (§11.1, §18.1)
+
+component GuardedFlatRepeatPanel {
+    inout property<bool> show;
+    inout property<vector<Task>> tasks;
+
+    Column {
+        Label { text: "always"; }
+
+        if show {
+            Repeat(task in tasks) {
+                Label { text: task.title; }
+            }
+        }
+    }
+}

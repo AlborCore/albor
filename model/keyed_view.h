@@ -96,6 +96,17 @@ namespace albor::model
             survivors.clear();
         }
 
+        // move the position the first row occupies, because a guarded body shifts it (§18.1, §11.1)
+        void set_offset(std::size_t offset) { m_offset = offset; }
+
+        // remove every row from the parent, which is what a torn-down guarded body does (§18.1, AD-13)
+        void clear() {
+            // each row is handed back and destroyed, because the view no longer names it (§18.1, AD-13)
+            for (const Row& row : m_rows)
+                (void)m_parent->remove_child(row.node);
+            m_rows.clear();
+        }
+
         // hand out how many rows the view holds, which is a count of items rather than of positions (§18.1)
         [[nodiscard]] std::size_t size() const { return m_rows.size(); }
 

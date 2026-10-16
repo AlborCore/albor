@@ -1,0 +1,14 @@
+// the directly nested conditional fixture, which proves a conditional body that is itself a conditional follows both (§11.1)
+
+component NestedDirectPanel {
+    inout property<bool> outer;
+    inout property<bool> inner;
+
+    Column {
+        if outer {
+            if inner {
+                Label { text: "inner"; }
+            }
+        }
+    }
+}

@@ -117,4 +117,16 @@ namespace albor::compiler
         node->span = span;
         return node;
     }
+
+    ExpressionPtr RecordConstructionExpression::make(std::string type_name, std::vector<ConstructionField> fields, SourceSpan span) {
+        // the node is allocated before it is filled, because the caller only holds the owning pointer (§11.1)
+        auto node = std::make_unique<RecordConstructionExpression>();
+        // the type name is moved in, because the checker resolves it against the declared types (§11.1)
+        node->type_name = std::move(type_name);
+        // the fields are moved in, because only one tree may own their values (§11.1)
+        node->fields = std::move(fields);
+        // the span covers the braces, so a diagnostic about the construction points at them (§11.1)
+        node->span = span;
+        return node;
+    }
 } // namespace albor::compiler
