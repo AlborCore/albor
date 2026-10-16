@@ -16,5 +16,6 @@ add_executable(albor-hello-window ${CPP_SOURCES})
 target_include_directories(albor-hello-window PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_features(albor-hello-window PRIVATE cxx_std_23)
 
-# the framework modules arrive transitively through the two backends, which keeps the link line free of duplicates (AD-19)
-target_link_libraries(albor-hello-window PRIVATE albor-platform-macos-auto albor-render-skia-auto)
+# the framework modules arrive transitively through the backends, and the application needs a text engine and a
+# renderer even without one text draw, so the skia engine installs itself at load beside the metal backend (§6.2)
+target_link_libraries(albor-hello-window PRIVATE albor-platform-macos-auto albor-render-skia-auto albor-text-skia-auto)

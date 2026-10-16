@@ -4,13 +4,13 @@
 
 namespace albor
 {
-    std::shared_ptr<const ShapedRun> ShapedRun::make(std::vector<Line> lines, float font_size, std::uint64_t font_hash) {
+    std::shared_ptr<const ShapedRun> ShapedRun::make(std::vector<Line> lines, float font_size, std::uint64_t font_hash, ShapeSource source) {
         // a run is shared as an immutable snapshot, because the render thread only ever reads it (§10.5, AD-18)
-        return std::shared_ptr<const ShapedRun>(new ShapedRun(std::move(lines), font_size, font_hash));
+        return std::shared_ptr<const ShapedRun>(new ShapedRun(std::move(lines), font_size, font_hash, source));
     }
 
-    ShapedRun::ShapedRun(std::vector<Line> lines, float font_size, std::uint64_t font_hash) :
-        m_lines(std::move(lines)), m_font_size(font_size), m_font_hash(font_hash) {}
+    ShapedRun::ShapedRun(std::vector<Line> lines, float font_size, std::uint64_t font_hash, ShapeSource source) :
+        m_lines(std::move(lines)), m_font_size(font_size), m_font_hash(font_hash), m_source(source) {}
 
     float ShapedRun::font_size() const {
         // the size is what every line of the run was shaped at (§9.1)
@@ -20,6 +20,11 @@ namespace albor
     std::uint64_t ShapedRun::font_hash() const {
         // the hash is the font's identity, and zero means the engine reported none (§15, AD-34)
         return m_font_hash;
+    }
+
+    ShapeSource ShapedRun::shape_source() const {
+        // the source decides the command a recorder emits, so it travels with the immutable run (§9.1, AD-34)
+        return m_source;
     }
 
     const std::vector<ShapedRun::Line>& ShapedRun::lines() const {

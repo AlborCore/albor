@@ -95,13 +95,13 @@ namespace albor
     }
 
     void SceneRecorder::draw_text(const TextLayout& layout, Point origin, const Paint& paint) {
-        // a run the renderer cannot draw through a typeface it holds expands into outlines instead (§15, AD-34)
-        if (layout.run != nullptr && layout.run->font_hash() != 0) {
+        // an embedded run the platform renderer cannot hold expands into outlines instead (§15, AD-34)
+        if (layout.run != nullptr && layout.run->font_hash() != 0 && layout.run->shape_source() == ShapeSource::Embedded) {
             // the expansion is the AD-34 path, and it is what makes embedded text reach a surface (§6.4)
             record_embedded_run(layout, origin, paint);
             return;
         }
-        // the origin is mapped now, because the render thread cannot ask where the ui thread drew it (§6.1, AD-18)
+        // a platform run goes through the text command at the mapped origin, drawn by the typeface a renderer holds (§9.1)
         record(DrawCommand::text(layout, to_scene(origin), paint));
     }
 

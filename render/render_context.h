@@ -73,7 +73,7 @@ namespace albor
         // replay a retained picture's commands in order under a transform (§6.4, AD-06)
         virtual void draw_picture(const std::shared_ptr<const PictureResource>& picture, const Transform& transform) = 0;
 
-        // draw a retained immutable image into a destination rectangle (§6.4, AD-06)
+        // draw an image into a destination rectangle where bytes are premultiplied and alpha modulates (§6.4, AD-26)
         virtual void draw_image(const std::shared_ptr<const ImageResource>& image, const Rect& destination, const Paint& paint) = 0;
     };
 

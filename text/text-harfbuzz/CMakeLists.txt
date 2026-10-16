@@ -33,7 +33,10 @@ target_compile_features(albor-text-harfbuzz PUBLIC cxx_std_23)
 target_include_directories(albor-text-harfbuzz SYSTEM PRIVATE ${ALBOR_SKIA_INCLUDE_ROOT} ${HARFBUZZ_INCLUDE_DIRS})
 
 # the engine shapes with harfbuzz over a freetype face, and issues the typeface the renderer draws with (§9.1, AD-28)
-target_link_libraries(albor-text-harfbuzz PUBLIC albor-text PRIVATE albor-skia)
+#
+# the engine resolves and reports fonts through the registry, because a run is keyed on the content
+# hash of its bytes and a backend with no platform font access loads from the registry (§15, AD-34)
+target_link_libraries(albor-text-harfbuzz PUBLIC albor-text PRIVATE albor-skia albor-resources)
 
 # the resolver reaches core text, which is the platform typeface source this engine draws from (§9.1, AD-28)
 if(APPLE)

@@ -621,7 +621,9 @@ TEST(EmbeddedTextCallerChecks, ARunTheRendererCanDrawStillGoesThroughTheTextComm
     SkiaTextEngine oracle;
     const TextLayout layout = oracle.measure("Albor", 0.0f, 20.0f);
     ASSERT_NE(layout.run, nullptr);
-    ASSERT_TRUE(layout.run->font_hash() == 0u);
+    // assert the run carries a registered identity, which is what lets a backend without the platform draw it (§15, AD-34)
+    ASSERT_NE(layout.run->font_hash(), 0u);
+    ASSERT_NE(resources::FontRegistry::find_hash(layout.run->font_hash()), nullptr);
     SceneBuilder builder;
     EmbeddedTextNode node;
     node.m_layout = layout;
