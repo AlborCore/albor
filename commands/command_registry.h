@@ -14,7 +14,7 @@
 
 namespace albor
 {
-    // the services an application's commands share, which indexes them without keeping any alive (§18.1)
+    // the owner of an application's commands, their accelerators, their selection and their history (§18.1)
     class CommandRegistry
     {
     public:
@@ -27,14 +27,8 @@ namespace albor
         CommandRegistry& operator=(CommandRegistry&&) = delete;
         ~CommandRegistry();
 
-        // declare a command, which the caller owns and the registry only indexes for lookup (§18.1)
-        [[nodiscard]] std::unique_ptr<Command> declare(std::string explicit_id, std::string label = {});
-
-        // index a command the caller already owns, which binds it to this registry's history and selection (§18.1)
-        void join(Command& command);
-
-        // drop a command from the index, which its own destructor calls so no entry is ever left dangling (§18.1)
-        void leave(Command& command);
+        // declare a command, which the registry owns for as long as the application lives (§18.1)
+        Command& declare(std::string explicit_id, std::string label = {});
 
         // find a command by the author assigned id, which is the only selector automation may use (§18.1, AD-11)
         [[nodiscard]] Command* find(std::string_view explicit_id);
@@ -45,8 +39,8 @@ namespace albor
         // find the command an accelerator names, which is where a key press is routed (§18.5)
         [[nodiscard]] Command* find_shortcut(const Shortcut& shortcut);
 
-        // hand out every indexed command in join order, which is what a menu presents (§18.1)
-        [[nodiscard]] const std::vector<Command*>& commands() const;
+        // hand out every declared command in declaration order, which is what a menu presents (§18.1)
+        [[nodiscard]] const std::vector<std::unique_ptr<Command>>& commands() const;
 
         // hand out how many commands are declared, which a registry test asserts on (§18.1)
         [[nodiscard]] std::size_t size() const;
@@ -73,8 +67,8 @@ namespace albor
         // refresh the undo and redo commands, which is what the stack calls whenever it moves (§18.4)
         void refresh_history_commands();
 
-        // the indexed commands, which the caller owns and the registry only borrows for lookup (§18.1)
-        std::vector<Command*> m_commands;
+        // the declared commands, which the registry owns and hands out as references (§18.1)
+        std::vector<std::unique_ptr<Command>> m_commands;
 
         // the author assigned ids, which are the only selectors automation is allowed to use (§18.1, AD-11)
         std::map<std::string, CommandId, std::less<>> m_by_explicit_id;

@@ -434,7 +434,7 @@ TEST(SemanticCommands, AMultiLineValueDoesNotSplitTheDumpIntoMoreLines) {
     const AutomationResult result = session.handle("semantic.tree");
     // assert the payload holds one line per node, which is what a client splits on (§10.3)
     ASSERT_TRUE(result.ok);
-    const std::size_t lines = static_cast<std::size_t>(std::count(result.payload.begin(), result.payload.end(), '\n'));
+    const std::size_t lines = std::count(result.payload.begin(), result.payload.end(), '\n');
     EXPECT_EQ(lines, 1u);
     // assert the break is spelled as an escape, so a client reads the value back whole (§10.3)
     EXPECT_NE(result.payload.find("value=first\\nsecond"), std::string::npos);

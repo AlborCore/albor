@@ -1584,8 +1584,7 @@ TEST(ShortcutRoutingChecks, AWindowWithNoRegistryRoutesNoAccelerator) {
 TEST(ShortcutRoutingChecks, AModifiedAcceleratorRunsBeforeTheFocusedNode) {
     // arrange
     CommandRegistry commands;
-    auto save_owned = commands.declare("file.save", "Save");
-    Command& save = *save_owned;
+    Command& save = commands.declare("file.save", "Save");
     std::size_t runs = 0;
     InvocationSource route = InvocationSource::Pointer;
     save.set_action([&runs, &route](const CommandInvocation& invocation) {
@@ -1613,8 +1612,7 @@ TEST(ShortcutRoutingChecks, AModifiedAcceleratorRunsBeforeTheFocusedNode) {
 TEST(ShortcutRoutingChecks, AnUnmodifiedAcceleratorRunsOnlyAfterTheCaretDeclines) {
     // arrange
     CommandRegistry commands;
-    auto save_owned = commands.declare("file.save", "Save");
-    Command& save = *save_owned;
+    Command& save = commands.declare("file.save", "Save");
     std::size_t runs = 0;
     save.set_action([&runs](const CommandInvocation&) { runs++; });
     commands.shortcuts().bind(Shortcut{.key = Key::S}, save.id());
@@ -1641,8 +1639,7 @@ TEST(ShortcutRoutingChecks, AnUnmodifiedAcceleratorRunsOnlyAfterTheCaretDeclines
 TEST(ShortcutRoutingChecks, ADisabledCommandStillConsumesItsKey) {
     // arrange
     CommandRegistry commands;
-    auto save_owned = commands.declare("file.save", "Save");
-    Command& save = *save_owned;
+    Command& save = commands.declare("file.save", "Save");
     std::size_t runs = 0;
     save.set_action([&runs](const CommandInvocation&) { runs++; });
     commands.shortcuts().bind(Shortcut{.key = Key::S, .modifiers = Modifiers{.command = true}}, save.id());
@@ -1685,8 +1682,7 @@ TEST(ShortcutRoutingChecks, AnUnboundAcceleratorBelongsToTheCaret) {
 TEST(ShortcutRoutingChecks, TwoAcceleratorsIntoOneCommandContributeTwoHistoryEntries) {
     // arrange
     CommandRegistry commands;
-    auto save_owned = commands.declare("file.save", "Save");
-    Command& save = *save_owned;
+    Command& save = commands.declare("file.save", "Save");
     save.set_action([](const CommandInvocation&) {});
     save.set_undo_entry(UndoEntry{.label = "Save", .undo = [](const CommandInvocation&) {}, .redo = [](const CommandInvocation&) {}});
     commands.shortcuts().bind(Shortcut{.key = Key::S, .modifiers = Modifiers{.command = true}}, save.id());

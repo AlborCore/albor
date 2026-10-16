@@ -3,7 +3,6 @@
 #include <cstdio>
 #include <memory>
 #include <string>
-#include <vector>
 
 #include "application/application.h"
 #include "commands/command_registry.h"
@@ -37,8 +36,6 @@ namespace
             return "accessibility";
         case albor::InvocationSource::UndoRedo:
             return "undo";
-        case albor::InvocationSource::Handler:
-            return "handler";
         }
         return "unknown";
     }
@@ -53,11 +50,9 @@ namespace
     std::unique_ptr<albor::UiNode> build_scene(albor::BindingEngine& engine, albor::TextEngine& text) {
         // the registry is the application's own, so every window and every control reads one object (§18.1)
         albor::CommandRegistry& commands = albor::Application::instance().commands();
-        // the commands are held past this call, because the tree that binds to them outlives it (§18.1)
-        static std::vector<std::unique_ptr<albor::Command>> held;
+
         // the save action, which three consumers below all bind to rather than each owning a copy (§18.1)
-        held.push_back(commands.declare("file.save", "Save"));
-        albor::Command& save = *held.back();
+        albor::Command& save = commands.declare("file.save", "Save");
         save.set_action([&save](const albor::CommandInvocation& invocation) {
             // the label is a published field, so writing it here repaints both bound buttons at once (§18.2)
             save.set_label(std::string("Save — last from the ") + route_name(invocation.source) + " route");
@@ -70,8 +65,7 @@ namespace
         });
 
         // the delete action, which is a second shared object and demonstrates the selection scope (§18.3)
-        held.push_back(commands.declare("row.erase", "Delete Rows"));
-        albor::Command& erase = *held.back();
+        albor::Command& erase = commands.declare("row.erase", "Delete Rows");
         erase.set_action([&erase](const albor::CommandInvocation& invocation) {
             // a selection scoped action reports the range it ran over, which is what an action over rows needs (§18.3)
             erase.set_label(std::string("Delete Rows — ran over ") + std::to_string(invocation.selection.count()) + " rows");

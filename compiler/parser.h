@@ -16,18 +16,6 @@ namespace albor::compiler
         // the modules the file refers to, which are resolved against the manifest set (§11.1, AD-17)
         std::vector<ImportDeclaration> imports;
 
-        // the structs the file declares at its top level, which the registration pass turns into records (§11.1)
-        std::vector<StructDeclaration> structs;
-
-        // the enums the file declares at its top level, which the registration pass turns into value sets (§11.1)
-        std::vector<EnumDeclaration> enums;
-
-        // the functions the file declares at its top level, which a binding may call (§11.1)
-        std::vector<FunctionDeclaration> functions;
-
-        // the module-scoped values the file declares at its top level, which several components read (§11.1)
-        std::vector<GlobalDeclaration> globals;
-
         // the components the file declares, which is what the checker and the codegen take (§11.1)
         std::vector<ComponentDeclaration> components;
     };
@@ -76,26 +64,11 @@ namespace albor::compiler
         // read a type name, which is bracketed for a property and bare for a signal parameter (§11.1, §11.2)
         [[nodiscard]] std::string expect_type_name(bool bracketed);
 
-        // read the units between the angle brackets of a generic type, which the closing angle ends (§11.1)
-        [[nodiscard]] std::string read_type_angles();
-
-        // read one declaration of the file, an import, struct, enum, function, global or component (§11.1)
+        // read one declaration of the file, which is either an import or a component (§11.1)
         void parse_declaration(SourceFile& file);
 
         // read an import, which names a manifest module (§11.1, AD-17)
         void parse_import(SourceFile& file);
-
-        // read a struct declaration with its fields, which a property or a signal may then carry (§11.1)
-        void parse_struct(SourceFile& file);
-
-        // read an enum declaration with its members, which a property may then hold one of (§11.1)
-        void parse_enum(SourceFile& file);
-
-        // read a function declaration with its parameters and body, which a binding may call (§11.1)
-        void parse_function(SourceFile& file);
-
-        // read a module-scoped value declaration, which several components then read (§11.1)
-        void parse_global(SourceFile& file);
 
         // read a component declaration, including its members and its root element (§11.1)
         std::unique_ptr<ComponentDeclaration> parse_component();
@@ -114,9 +87,6 @@ namespace albor::compiler
 
         // read a repeat, whose body is instantiated once per item (§11.1)
         std::unique_ptr<TreeNode> parse_repeat();
-
-        // read a conditional, whose body exists only while the condition holds (§11.1)
-        std::unique_ptr<TreeNode> parse_conditional();
 
         // read the members of an element, which are assignments, handlers and children (§11.1)
         void parse_tree_body(TreeNode& node);
@@ -189,9 +159,6 @@ namespace albor::compiler
 
         // the offset of the unit the parser is on (§11.1)
         std::size_t m_index = 0;
-
-        // whether an identifier may open a record construction, which a conditional condition suspends (§11.1)
-        bool m_allow_construction = true;
 
         // the last unit of the stream, which every lookahead is clamped to so a read is never out of range (§11.1)
         Token m_end;

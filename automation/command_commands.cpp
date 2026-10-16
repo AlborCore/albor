@@ -68,7 +68,7 @@ namespace albor::automation
             // the dump accumulates line by line, which is what a client parses (§10.3)
             std::ostringstream out;
             // every command contributes one line, in declaration order (§18.1)
-            for (const Command* command : commands.commands()) {
+            for (const std::unique_ptr<Command>& command : commands.commands()) {
                 // an unnamed command is dumped with a dash, because a reader reaches it though a client cannot (AD-11)
                 const std::string id = command->identified() ? command->explicit_id() : std::string("-");
                 // the two states are words rather than numbers, so a client cannot mistake one for the other (§18.2)

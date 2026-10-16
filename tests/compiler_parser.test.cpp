@@ -202,73 +202,6 @@ TEST(Parser, ReadsAnUnqualifiedImport) {
     EXPECT_EQ(file.imports.at(0).module, "albor");
 }
 
-TEST(Parser, ReadsAStructWithItsFields) {
-    // arrange, act
-    const SourceFile file = parse("struct Frame { float width; float height; }");
-    // assert
-    ASSERT_EQ(file.structs.size(), 1U);
-    const StructDeclaration& frame = file.structs.at(0);
-    EXPECT_EQ(frame.name, "Frame");
-    ASSERT_EQ(frame.fields.size(), 2U);
-    EXPECT_EQ(frame.fields.at(0).name, "width");
-    EXPECT_EQ(frame.fields.at(0).type, "float");
-    EXPECT_EQ(frame.fields.at(1).name, "height");
-    EXPECT_EQ(frame.fields.at(1).type, "float");
-}
-
-TEST(Parser, ReadsAStructFieldWithAParametricType) {
-    // arrange, act
-    const SourceFile file = parse("struct Box { vector<string> items; }");
-    // assert
-    ASSERT_EQ(file.structs.size(), 1U);
-    ASSERT_EQ(file.structs.at(0).fields.size(), 1U);
-    EXPECT_EQ(file.structs.at(0).fields.at(0).name, "items");
-    EXPECT_EQ(file.structs.at(0).fields.at(0).type, "vector<string>");
-}
-
-TEST(Parser, ReportsAStructWithNoName) {
-    // arrange
-    DiagnosticList diagnostics;
-    // act
-    parse("struct { float width; }", diagnostics);
-    // assert
-    ASSERT_GE(diagnostics.count(), 1U);
-    EXPECT_EQ(first(diagnostics).code, "E0203");
-}
-
-TEST(Parser, ReadsAnEnumWithItsMembers) {
-    // arrange, act
-    const SourceFile file = parse("enum Status { Todo, Doing, Done }");
-    // assert
-    ASSERT_EQ(file.enums.size(), 1U);
-    const EnumDeclaration& status = file.enums.at(0);
-    EXPECT_EQ(status.name, "Status");
-    ASSERT_EQ(status.members.size(), 3U);
-    EXPECT_EQ(status.members.at(0), "Todo");
-    EXPECT_EQ(status.members.at(1), "Doing");
-    EXPECT_EQ(status.members.at(2), "Done");
-}
-
-TEST(Parser, ReadsAnEnumWithASingleMember) {
-    // arrange, act
-    const SourceFile file = parse("enum Level { Only }");
-    // assert
-    ASSERT_EQ(file.enums.size(), 1U);
-    EXPECT_EQ(file.enums.at(0).name, "Level");
-    ASSERT_EQ(file.enums.at(0).members.size(), 1U);
-    EXPECT_EQ(file.enums.at(0).members.at(0), "Only");
-}
-
-TEST(Parser, ReportsAnEnumWithNoName) {
-    // arrange
-    DiagnosticList diagnostics;
-    // act
-    parse("enum { Todo, Done }", diagnostics);
-    // assert
-    ASSERT_GE(diagnostics.count(), 1U);
-    EXPECT_EQ(first(diagnostics).code, "E0203");
-}
-
 TEST(Parser, ReadsTheExampleComponentWhole) {
     // arrange, act
     const SourceFile file = parse(MAIN_VIEW);
@@ -348,16 +281,6 @@ TEST(Parser, ReadsASignalWithParameters) {
     ASSERT_EQ(signal.parameter_types.size(), 2U);
     EXPECT_EQ(signal.parameter_types.at(0), "float");
     EXPECT_EQ(signal.parameter_types.at(1), "int");
-}
-
-TEST(Parser, ReadsASignalWithARecordParameter) {
-    // arrange, act
-    const SourceFile file = parse("struct Frame { float width; } component C { signal frame_changed(Frame frame); }");
-    // assert
-    const SignalDeclaration& signal = file.components.at(0).signals.at(0);
-    EXPECT_EQ(signal.name, "frame_changed");
-    ASSERT_EQ(signal.parameter_types.size(), 1U);
-    EXPECT_EQ(signal.parameter_types.at(0), "Frame");
 }
 
 TEST(Parser, ReportsAComponentThatIsNeverClosed) {
@@ -536,79 +459,6 @@ TEST(Parser, ReportsARepeatWithNoBody) {
     EXPECT_EQ(first(diagnostics).code, "E0203");
 }
 
-TEST(Parser, ReadsAConditionalWithAConditionAndBody) {
-    // arrange, act
-    const SourceFile file = parse("component C { Column { if show { Label { text: \"x\"; } } } }");
-    // assert
-    const TreeNode& conditional = *file.components.at(0).root->children.at(0);
-    EXPECT_EQ(conditional.kind, TreeNodeKind::Conditional);
-    EXPECT_EQ(shape(conditional.condition), "show");
-    ASSERT_TRUE(conditional.conditional_body != nullptr);
-    EXPECT_EQ(conditional.conditional_body->element_type, "Label");
-}
-
-TEST(Parser, ReadsAConditionalWithAComparisonCondition) {
-    // arrange, act
-    const SourceFile file = parse("component C { if count > 3 { Label {} } }");
-    // assert
-    const TreeNode& conditional = *file.components.at(0).root;
-    EXPECT_EQ(conditional.kind, TreeNodeKind::Conditional);
-    EXPECT_EQ(shape(conditional.condition), "(count > 3)");
-}
-
-TEST(Parser, ReportsAConditionalWithNoBody) {
-    // arrange
-    DiagnosticList diagnostics;
-    // act
-    parse("component C { if show {} }", diagnostics);
-    // assert
-    ASSERT_GE(diagnostics.count(), 1U);
-    EXPECT_EQ(first(diagnostics).code, "E0203");
-}
-
-TEST(Parser, ReadsACollectionAppendStatement) {
-    // arrange, act
-    const SourceFile file = parse("component C { inout property<vector<string>> items; Button { on_clicked: { items.append(\"x\"); } } }");
-    // assert
-    const HandlerStatement& statement = file.components.at(0).root->handlers.at(0).body.at(0);
-    EXPECT_EQ(statement.kind, HandlerStatementKind::PropertyMethod);
-    EXPECT_EQ(statement.target, "items");
-    EXPECT_EQ(statement.method, "append");
-    ASSERT_EQ(statement.arguments.size(), 1U);
-}
-
-TEST(Parser, ReadsAClearStatementWithNoArgument) {
-    // arrange, act
-    const SourceFile file = parse("component C { inout property<vector<int>> items; Button { on_clicked: { items.clear(); } } }");
-    // assert
-    const HandlerStatement& statement = file.components.at(0).root->handlers.at(0).body.at(0);
-    EXPECT_EQ(statement.kind, HandlerStatementKind::PropertyMethod);
-    EXPECT_EQ(statement.method, "clear");
-    EXPECT_TRUE(statement.arguments.empty());
-}
-
-TEST(Parser, ReadsASetStatementWithTwoArguments) {
-    // arrange, act
-    const SourceFile file = parse("component C { inout property<vector<string>> items; Button { on_clicked: { items.set(0, \"y\"); } } }");
-    // assert
-    const HandlerStatement& statement = file.components.at(0).root->handlers.at(0).body.at(0);
-    EXPECT_EQ(statement.kind, HandlerStatementKind::PropertyMethod);
-    EXPECT_EQ(statement.method, "set");
-    ASSERT_EQ(statement.arguments.size(), 2U);
-}
-
-TEST(Parser, ReadsAFieldAssignmentStatement) {
-    // arrange, act
-    const SourceFile file = parse("struct Frame { float width; } component C { inout property<Frame> frame; Button { on_clicked: { frame.width = 10.0; } } }");
-    // assert
-    const HandlerStatement& statement = file.components.at(0).root->handlers.at(0).body.at(0);
-    EXPECT_EQ(statement.kind, HandlerStatementKind::FieldAssignment);
-    EXPECT_EQ(statement.target, "frame");
-    EXPECT_EQ(statement.field, "width");
-    EXPECT_TRUE(statement.value != nullptr);
-    EXPECT_TRUE(statement.arguments.empty());
-}
-
 TEST(Parser, ReadsEachLiteralKind) {
     // arrange
     const std::string_view source = "component C { B { a: 42; b: 1.5; c: \"text\"; d: #FF0000; e: 12px; f: true; } }";
@@ -683,15 +533,14 @@ TEST(Parser, ReadsEachBuiltinConversion) {
     EXPECT_EQ(as_conversion(assignments.at(3).value).target_type, "bool");
 }
 
-TEST(Parser, ReadsACallToADeclaredFunctionAsItsOwnForm) {
-    // arrange, act
-    const SourceFile file = parse("component C { B { text: tick(1); } }");
+TEST(Parser, ReportsACallThatIsNotABuiltinConversion) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    parse("component C { B { text: widget(1); } }", diagnostics);
     // assert
-    const ExpressionPtr& value = file.components.at(0).root->assignments.at(0).value;
-    ASSERT_NE(dynamic_cast<CallExpression*>(value.get()), nullptr);
-    const auto& call = static_cast<const CallExpression&>(*value);
-    EXPECT_EQ(call.function, "tick");
-    EXPECT_EQ(call.arguments.size(), 1U);
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0203");
 }
 
 TEST(Parser, ReadsAUnaryApplicationAndAGroupingAsTheirOwnForms) {
@@ -1210,116 +1059,4 @@ TEST(Parser, ReportsAListWhoseClosingBracketIsMissing) {
     parse("component C { in property<vector<int>> items: [1, 2; Column {} }", diagnostics);
     // assert the problem is reported rather than the list absorbing the rest of the file (§11.1)
     EXPECT_TRUE(diagnostics.count() > 0U);
-}
-
-TEST(Parser, ReadsAFunctionDeclarationWithParametersAndAReturn) {
-    // arrange, act a file declares a function whose body returns an expression (§11.1)
-    const SourceFile file = parse("fn tick_step(low: float, high: float): float { return (high - low) / 10.0; } component C { Column {} }");
-    // assert the function is kept, because a call resolves against it (§11.1)
-    ASSERT_EQ(file.functions.size(), 1U);
-    const FunctionDeclaration& function = file.functions.at(0);
-    // assert the name and the return type come straight from the declaration (§11.1)
-    EXPECT_EQ(function.name, "tick_step");
-    EXPECT_EQ(function.return_type, "float");
-    // assert the parameters are kept in written order, because the arguments must match them (§11.1)
-    ASSERT_EQ(function.parameters.size(), 2U);
-    EXPECT_EQ(function.parameters.at(0).name, "low");
-    EXPECT_EQ(function.parameters.at(0).type, "float");
-    EXPECT_EQ(function.parameters.at(1).name, "high");
-    EXPECT_EQ(function.parameters.at(1).type, "float");
-    // assert the returned expression was parsed, because the codegen emits its body (§11.1)
-    ASSERT_NE(function.return_value, nullptr);
-    EXPECT_NE(dynamic_cast<BinaryExpression*>(function.return_value.get()), nullptr);
-}
-
-TEST(Parser, ReadsAGlobalDeclarationWithItsValue) {
-    // arrange, act
-    const SourceFile file = parse("global gap: float = 2.5; component C { Label {} }");
-    // assert
-    ASSERT_EQ(file.globals.size(), 1U);
-    EXPECT_EQ(file.globals.at(0).name, "gap");
-    EXPECT_EQ(file.globals.at(0).type, "float");
-    ASSERT_NE(file.globals.at(0).value, nullptr);
-    EXPECT_EQ(as_literal(file.globals.at(0).value).text, "2.5");
-}
-
-TEST(Parser, ReadsARecordConstructionInWrittenOrder) {
-    // arrange, act
-    const SourceFile file = parse("global p: Point = Point{y: 2.0, x: 1.0}; component C { Label {} }");
-    // assert
-    ASSERT_EQ(file.globals.size(), 1U);
-    const auto* construction = dynamic_cast<const RecordConstructionExpression*>(file.globals.at(0).value.get());
-    ASSERT_NE(construction, nullptr);
-    EXPECT_EQ(construction->type_name, "Point");
-    ASSERT_EQ(construction->fields.size(), 2U);
-    EXPECT_EQ(construction->fields.at(0).name, "y");
-    EXPECT_EQ(construction->fields.at(1).name, "x");
-}
-
-TEST(Parser, SuspendsAConstructionAcrossAConditionalCondition) {
-    // arrange, act
-    const SourceFile file = parse("component C { if flag { Column {} } }");
-    // assert
-    ASSERT_EQ(file.components.size(), 1U);
-    const TreeNode& root = *file.components.at(0).root;
-    EXPECT_EQ(root.kind, TreeNodeKind::Conditional);
-    EXPECT_NE(dynamic_cast<const PropertyExpression*>(root.condition.get()), nullptr);
-}
-
-TEST(Parser, ReadsAnInheritanceHeaderOnAComponent) {
-    // arrange, act the derived component names its base after a colon (§11.1)
-    const SourceFile file = parse("component Base { Column { @children } } component Wide : Base { Label {} }");
-    // assert the base name is kept, because the merge pass looks it up by it (§11.1)
-    ASSERT_EQ(file.components.size(), 2U);
-    const ComponentDeclaration& derived = file.components.at(1);
-    EXPECT_EQ(derived.base, "Base");
-    // assert the base span covers the written name, because an unknown base points at it (§11.1)
-    EXPECT_FALSE(derived.base_span.empty());
-    // assert the content element landed in content rather than root, because a derived body declares no root (§11.1)
-    EXPECT_EQ(derived.root, nullptr);
-    ASSERT_EQ(derived.content.size(), 1U);
-    EXPECT_EQ(derived.content.at(0)->element_type, "Label");
-}
-
-TEST(Parser, ReadsSeveralContentElementsInADerivedComponent) {
-    // arrange, act the derived body holds two elements, which both fill the one slot (§11.1)
-    const SourceFile file = parse("component Base { Column { @children } } component Wide : Base { Label {} Button {} }");
-    // assert both were kept in written order, because the fill inserts them in that order (§11.1)
-    ASSERT_EQ(file.components.size(), 2U);
-    ASSERT_EQ(file.components.at(1).content.size(), 2U);
-    EXPECT_EQ(file.components.at(1).content.at(0)->element_type, "Label");
-    EXPECT_EQ(file.components.at(1).content.at(1)->element_type, "Button");
-}
-
-TEST(Parser, ReadsChildrenAsASlotInsideTheRoot) {
-    // arrange, act the marker is written inside the root element, which is where a base declares the content point (§11.1)
-    const SourceFile file = parse("component Base { in property<string> t; Column { Label { text: t; } @children } }");
-    // assert the root kept the marker as a slot node, because a fill replaces exactly that node (§11.1)
-    ASSERT_EQ(file.components.size(), 1U);
-    const TreeNode& root = *file.components.at(0).root;
-    ASSERT_EQ(root.children.size(), 2U);
-    EXPECT_EQ(root.children.at(1)->kind, TreeNodeKind::Slot);
-}
-
-TEST(Parser, ReadsSignalParameterNamesBesideTheirTypes) {
-    // arrange, act a signal declares parameters, which a handler body reads by name (§11.1)
-    const SourceFile file = parse("component C { signal hit(float v, string s); Column {} }");
-    // assert both names were kept beside their types, because the signature uses the types and the body the names (§11.1)
-    ASSERT_EQ(file.components.size(), 1U);
-    ASSERT_EQ(file.components.at(0).signals.size(), 1U);
-    const SignalDeclaration& signal = file.components.at(0).signals.at(0);
-    EXPECT_EQ(signal.parameter_types.at(0), "float");
-    EXPECT_EQ(signal.parameter_names.at(0), "v");
-    EXPECT_EQ(signal.parameter_types.at(1), "string");
-    EXPECT_EQ(signal.parameter_names.at(1), "s");
-}
-
-TEST(Parser, ReportsChildrenWrittenAtComponentLevel) {
-    // arrange a stray marker outside any element, because only an element declares the content point (§11.1)
-    DiagnosticList diagnostics;
-    // act the file is parsed, which the member rule refuses (§11.1)
-    parse("component Base { @children } component C { Label {} }", diagnostics);
-    // assert the marker is reported, because a component body holds properties, signals or the root element (§11.1)
-    ASSERT_GE(diagnostics.count(), 1U);
-    EXPECT_EQ(first(diagnostics).code, "E0203");
 }

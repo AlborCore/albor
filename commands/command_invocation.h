@@ -32,10 +32,7 @@ namespace albor
         Accessibility,
 
         // the undo or redo command replaying history, which is the reversal route (§18.4)
-        UndoRedo,
-
-        // a .ui handler body that fired the command itself, which is the declarative route (§11.1, §18.3)
-        Handler
+        UndoRedo
     };
 
     // why an invocation did or did not run, which automation reports and a consumer may ignore (§18.3)

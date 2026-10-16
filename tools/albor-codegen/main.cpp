@@ -133,10 +133,6 @@ int main(int argc, char** argv) {
     const std::vector<albor::compiler::Token> tokens = albor::compiler::Lexer(source, diagnostics).tokenize();
     // the parser turns the tokens into an untyped tree (§11.1)
     const albor::compiler::SourceFile file = albor::compiler::Parser(tokens, diagnostics).parse();
-    // the structs the file declares join the catalog, which is what makes a property of one resolve (§11.1)
-    albor::compiler::register_ui_structs(file, catalog, diagnostics);
-    // the enums the file declares join the catalog, which is what makes a property of one hold a member (§11.1)
-    albor::compiler::register_ui_enums(file, catalog);
     // the checker resolves the tree against the catalog, which holds the builtins and records (§11.2, §8)
     const albor::compiler::CheckedFile checked = albor::compiler::TypeChecker(catalog, diagnostics).check(file);
     // a blocking problem stops the driver before any generation, which is what a console compile reports (§11.1)

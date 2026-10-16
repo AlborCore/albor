@@ -1070,208 +1070,6 @@ component MainView {
 }
 ```
 
-The language is deliberately small and closed. Every form below is a settled part of the grammar and
-compiles to native C++ under AD-01 — there is no interpreter and no per-binding heap allocation
-(§13.3).
-
-#### Handler Statements
-
-A handler body is a closed grammar of exactly four statement forms, each of which reaches a member of
-*this* component and nothing beyond it:
-
-- **assignment** — `click_count = click_count + 1;` writes a declared `inout` property.
-- **signal invocation** — `run_clicked();` or `frame_changed(frame);` emits a declared signal, whose
-  payload may be a scalar or a record passed by value.
-- **built-in method** — `items.append("row");` mutates a `vector<T>` property in place (the closed
-  set is `append`, `remove_at`, `clear` and `set`); `save.invoke();` fires a `command` property the
-  application filled, carrying no argument and recording no write, with `invoke` as its only method.
-- **field write** — `frame.width = 10.0;` writes one field of a record-typed `inout` property. The
-  working copy is taken, the field is assigned, and the rebuilt record is set back.
-
-A handler cannot call an arbitrary method or reach a property of another component. That boundary is
-deliberate, and the four forms above are the whole of what a handler may express today.
-
-#### Conditional Rendering
-
-Two distinct forms express presence, and they are not interchangeable (§8.1):
-
-- **conditional instantiation** — `if show { Label { text: label_text; } }` instantiates the element
-  only while the condition holds. A non-present element occupies no layout and rebuilds from scratch
-  when it reappears.
-- **a visibility property** — `visible: show;` keeps the element in the tree with its identity,
-  bindings and state intact, but hides it from layout and drawing while false. A control hidden and
-  shown this way does not lose what the user typed, does not re-fire initialisation, and leaves focus
-  traversal only while hidden.
-
-The first is for a mutually exclusive pair where only one is ever valid; the second is for a tabbed
-surface whose panels must survive being switched away from.
-
-#### Declared Types
-
-A `.ui` file declares its own records and value sets, so a compound value or an enumerated property
-needs no manifest entry and no builtin (§11.2, AD-17):
-
-```text
-struct Frame {
-    float width;
-    float height;
-}
-
-enum Status { Todo, Doing, Done }
-
-component Plot {
-    inout property<Frame> frame;
-    in property<Status> status;
-
-    signal frame_changed(Frame frame);
-}
-```
-
-A record crosses a signal by value, and a field of a record-typed property is written in place (see
-the field-write form above). The compiler emits the record and the enumeration as guarded native
-types, and a `.ui`-declared type is resolved before the manifest catalog is consulted.
-
-A record is also constructed as a value with `Frame { width: 16.0, height: 9.0 };`. Named fields
-make the written order free, and a field the construction leaves out is value-initialised, so
-`Frame { width: 16.0 }` is a complete value with `height` at zero. The compiler emits the fields in
-the order the record declared them, because that is the order a C++ designated initialiser requires.
-A construction names a record and nothing else; constructing any other type is rejected.
-
-#### Functions
-
-A `.ui` file declares a pure named computation that a binding may call:
-
-```text
-fn tick_step(low: float, high: float): float {
-    return (high - low) / 10.0;
-}
-
-component Axis {
-    in property<float> low;
-    in property<float> high;
-
-    Label { text: string(tick_step(low, high)); }
-}
-```
-
-A function reads only its parameters, so it carries no dependencies and cannot be self-referential —
-which is exactly what a binding that computes its own result could never be. It compiles to a static
-C++ function, matching the plain-static-function binding convention of §13.3. A call resolves a
-declared function before any builtin of the same name; the parameters are typed and the argument
-arity and types are checked.
-
-#### Module-Scoped Values
-
-A `.ui` file declares a module-scoped named value that the bindings of the file read:
-
-```text
-global banner: string = "Albor";
-
-component Panel {
-    Column {
-        Label { text: banner; }
-    }
-}
-```
-
-A module in this language is one `.ui` file, so the value is visible to every component the file
-declares and to nothing outside it. The type is required, because the initializer is checked
-against it rather than inferred from it, and the value is read-only — a write reports against the
-declaration, which is what makes it safe to share.
-
-A read resolves after every local scope — function parameters, a repeat item, a signal parameter,
-the component's own properties — so a property of the same name shadows it. A module-scoped value
-never changes, so reading one adds no binding dependency: there is no change that could make the
-binding re-run (§7.3, AD-04a). The initializer is an ordinary expression of the file's own scope,
-so it may construct a record (`Frame { width: 16.0 }`) or call a declared `fn` above, but it may
-not read another module-scoped value — which keeps the set free of cycles with no ordering rule.
-
-It compiles to a file-level `static const` guarded by name — the same shape a `fn` takes — and a
-read renders as that plain name in the generated binding function: no `std::function`, no
-per-binding allocation (§13.3).
-
-#### Component Composition
-
-A component the file declares is itself an element type of that file:
-
-```text
-// Example: App.ui
-component Greeting {
-    in property<string> title;
-    signal dismissed();
-
-    Column {
-        Label { text: title; }
-    }
-}
-
-component App {
-    in property<string> name;
-
-    Greeting {
-        title: name;
-        on_dismissed: { }
-    }
-}
-```
-
-An element name resolves against the file's own components before the catalog, so a declared name
-shadows a manifest-native type of the same spelling — the same precedence a type name follows. An
-instance assigns against the component's own properties and attaches handlers to the signals it
-declares through the ordinary eager-push path: an assignment with a source becomes a binding whose
-dependencies are the source's `PropertyId`s and whose write lands on the instance's setter (§13.3,
-§14.1), and a handler subscribes to the signal the facade raises.
-
-Composition is same-file and one direction: a component instantiates only components its own file
-declares, an instance takes no children — content is what a derived component supplies alone, so
-children written on an instance are refused — and a component graph that instantiates itself is
-refused outright.
-
-For codegen (§14.1) each instance is a member that constructs the sibling's concrete facade with
-both engines and includes its generated header: the opaque-body boundary AD-03 draws around a
-manifest component applies across a file boundary the same way. Nothing beyond the facade itself
-intervenes, and no runtime registry of components exists, because the file's component list exists
-only while the file compiles (AD-01).
-
-#### Inheritance and Slotted Content
-
-A component may derive from one the same file declares:
-
-```text
-// Example: Panel.ui
-component Panel {
-    in property<string> title;
-
-    Column {
-        Label { text: title; }
-        @children
-    }
-}
-
-component Wide : Panel {
-    Label { text: "Wide"; }
-}
-```
-
-`@children` marks the content point inside the base's tree — at most one per component, because two
-could never both be filled. The derived body carries content elements instead of a root; the fill
-operates on a clone of the base's checked tree, leaving the base's own body untouched, and each
-content element lands where the marker sat in the order the body wrote it. Content with no slot to
-fill is refused, a second slot is refused, and a slot written inside content is refused and dropped
-— only a base declares the content point.
-
-A base that is never derived shows no content point: the marker is stripped from every checked tree
-before codegen, so a base used directly builds exactly what it declares and no slot reaches
-generated code. A derived component may redeclare an inherited property with its own default — the
-type and direction must match, and the redeclaration replaces the default — so a base may carry a
-default a derived body narrows.
-
-The derivation stops at one level: the base must be a component the same file declares and must
-itself derive from nothing, so an unknown name and a deeper chain are both refused. The whole
-result flattens during the check: the derived facade carries the merged member set and the spliced
-tree, and the splice is a compile-time copy with no runtime slot, no content API and no change to
-`UiNode`. Release sees only the native code the splice produced (AD-01, AD-02).
-
 ### 11.2 Native Component Manifests (AD-17)
 
 Application-defined custom views and native C++ objects exposed to `.ui` are declared in `.ui-manifest` files:
@@ -1368,7 +1166,7 @@ Every architectural decision from Phase 0 is formally settled for production imp
 | **AD-12** | Live Reload Model | **Decided** | Out-of-process dev service emits serialized IR/patches; in-app reload adapter updates live UI tree. |
 | **AD-13** | Virtualization & Keys | **Decided** | Model views virtualize materialized nodes; rows keyed by stable `ItemKey` identifiers. |
 | **AD-14** | Text/Layout Dependency | **Decided** | Text measurement via `TextEngine` is a prerequisite contract for layout calculation. |
-| **AD-15** | Command Abstraction | **Decided** | `Command` objects bind actions across buttons, shortcuts, menus, automation, and a `.ui` control bound through `action:` or fired from a handler's `invoke`. Enablement is observed from one object rather than copied per consumer; enabled and visible are two published states that route differently; the undo stack sits behind the object so one invocation contributes one entry. See §18. |
+| **AD-15** | Command Abstraction | **Decided** | `Command` objects bind actions across buttons, shortcuts, menus, and automation. Enablement is observed from one object rather than copied per consumer; enabled and visible are two published states that route differently; the undo stack sits behind the object so one invocation contributes one entry. See §18. |
 | **AD-16** | Platform Strategy | **Decided** | Direct platform adapters behind `PlatformWindow`. macOS AppKit + Metal + `CVDisplayLink` first. |
 | **AD-17** | Native Manifest | **Decided** | Single source of truth for native components; compiler generates C++ glue and never parses C++. |
 | **AD-18a**| Stage Division | **Decided** | UI thread produces `FrameScene`; render thread executes GPU drawing commands. |
@@ -1694,8 +1492,7 @@ enum class InvocationSource
     Menu,
     Automation,
     Accessibility,
-    UndoRedo,
-    Handler
+    UndoRedo
 };
 
 // one invocation, carrying whatever the action needs at the moment it runs (§18.3, §18.4)
@@ -1742,12 +1539,6 @@ public:
 };
 }
 ```
-
-**Ownership.** The application owns its commands, and the registry indexes them rather than keeping
-any alive. `declare` hands back a `unique_ptr` the caller keeps, `join` records a command the caller
-owns elsewhere, and a command leaves the index through its own destructor, so no entry outlives what
-it points at. The registry keeps what is genuinely its own — the author-assigned id table, the undo
-stack, the shortcut table, the selection source, and the two history commands it builds on first use.
 
 Four rules are load-bearing, and each of them is a boundary rather than a convenience:
 
@@ -1984,13 +1775,10 @@ name and would have pulled a second concern into it:
   weight as the rest of §8. This section fixes the contract they consume — a label, an enabled
   state, a visible state, an invocation, and `ShortcutTable::display` for the accelerator text — and
   leaves their construction to the widget layer.
-- **Language exposure.** A `.ui` file names a command three ways — a declared `in property<command>`
-  slot, an `action:` binding on a control, and an `invoke` statement in a handler (§11.1) — and every
-  one of them fires the shared object the application owns, carrying no argument. Carrying one is
-  unsettled: `CommandArgument`'s integer is unsigned where a `.ui` integer is not, so the mapping
-  needs a decision before the statement grows a parameter. `.ui` composition and slotted content
-  (§11.1) are settled and wait on nothing here — the element grammar took both, and a base can hand
-  its content a command and invoke it.
+- **Language exposure.** A `.ui` file cannot declare a command. Exposing one requires an entry in the
+  element catalogue (§11.1), a setter in the codegen tables (§11.3) and a native type in the
+  manifest (§11.2, AD-17). Until those exist, a command is a C++-side object and a form that mixes
+  one with a generated tree builds the command-bound control imperatively.
 - **A selection model.** §18.3 defines the span and the injection point; the model that fills them
   belongs to the control that owns a selection.
 - **Automation-driven enablement.** There is deliberately no such path. An automation client observes
