@@ -215,6 +215,19 @@ TEST(SkiaTextEngineChecks, AWrappedRunShapesIntoSeveralBaselines) {
     EXPECT_GT(wrapped.run->lines().back().origin.y, wrapped.run->lines().front().origin.y);
 }
 
+TEST(SkiaTextEngineChecks, ATrailingBreakGivesTheEmptyRowItsOwnBaseline) {
+    // arrange
+    SkiaTextEngine engine;
+    // act a value that ends in a break shapes an empty row after it (§9.1)
+    const TextLayout layout = engine.measure("a\nb\n", 1000.0f);
+    // assert the empty trailing row stands, which is the caret stop past the break (§9.1)
+    ASSERT_GE(layout.run->lines().size(), 3u);
+    const ShapedRun::Line& empty = layout.run->lines().back();
+    EXPECT_TRUE(empty.glyphs.empty());
+    // assert the empty row hangs from its own baseline below the row before it, not the default origin (§9.1)
+    EXPECT_GT(empty.origin.y, layout.run->lines()[layout.run->lines().size() - 2].origin.y);
+}
+
 TEST(SkiaTextEngineChecks, AWrappedRunShapesEveryGlyphButTheSpacesItBreaksOn) {
     // arrange
     SkiaTextEngine engine;

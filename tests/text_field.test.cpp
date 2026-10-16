@@ -122,7 +122,12 @@ namespace
             // every line carries its span, its baseline and its advance (§9.1)
             float width = 0.0f;
             // the extents are computed before the run moves the lines, because the move takes their glyphs (§9.1)
-            for (ShapedRun::Line& line : lines) {
+            for (std::size_t index = 0; index < lines.size(); index++) {
+                // the line is addressed once, because its index carries the baseline every row hangs from (§9.1)
+                ShapedRun::Line& line = lines[index];
+                // a row that shaped no glyph still hangs from its own baseline, which a caret maps against (§9.1)
+                if (line.glyphs.empty())
+                    line.origin = Point{.x = 0.0f, .y = HEIGHT * 0.8f + static_cast<float>(index) * HEIGHT};
                 // the advance a caret stops at is what the line is (§9.1)
                 line.width = static_cast<float>(line.glyphs.size()) * ADVANCE;
                 // the pair is what every line box ties the paint to (§9.1)
@@ -2554,4 +2559,408 @@ TEST(TextFieldImeChecks, AMarkOnAFieldWithNoEngineHoldsNoDisplayRun) {
     EXPECT_EQ(field.marked_text(), "abc");
     EXPECT_FALSE(changed);
     EXPECT_TRUE(field.value().empty());
+}
+
+TEST(TextFieldScrollChecks, AFittingFieldDoesNotScroll) {
+    // arrange a two line field given a plate tall enough to show both lines (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("ab\ncd");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    // assert content inside the plate offers no scroll, which is the zero range (§8.2)
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+    EXPECT_FLOAT_EQ(field.maximum_scroll_offset(), 0.0f);
+}
+
+TEST(TextFieldScrollChecks, AnOverflowingFieldReportsItsScrollRange) {
+    // arrange a four line field given a plate of one line, which is what a fixed form field is (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    // assert the range is the content height past the plate, which four lines over one is (§8.2)
+    EXPECT_FLOAT_EQ(field.maximum_scroll_offset(), 44.0f);
+}
+
+TEST(TextFieldScrollChecks, MovingTheCaretPastTheBottomScrollsTheCaretIntoView) {
+    // arrange a four line field in a one line plate, where the last line sits below the window (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    // act the caret moves onto the last line, which the plate could not show (§8.3)
+    field.set_caret(7);
+    // assert the viewport followed the caret, so its line is on screen (§8.3)
+    EXPECT_GT(field.scroll_offset(), 0.0f);
+    // assert the caret line box lies inside the plate, which is what on screen means (§8.3)
+    const Rect caret = field.caret_rect();
+    EXPECT_GE(caret.y, 0.0f);
+    EXPECT_LE(caret.y + caret.height, 20.0f + 0.001f);
+}
+
+TEST(TextFieldScrollChecks, MovingTheCaretBackToTheTopScrollsBack) {
+    // arrange a field whose caret already scrolled the plate to the bottom (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    field.set_caret(7);
+    ASSERT_GT(field.scroll_offset(), 0.0f);
+    // act the caret returns to the first line (§8.3)
+    field.set_caret(0);
+    // assert the plate scrolled back, because the first line is at the top of the content (§8.3)
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+}
+
+TEST(TextFieldScrollChecks, TheScrollOffsetClampsWhenTheContentShrinks) {
+    // arrange a field scrolled to the bottom of a tall value (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    field.scroll_to(field.maximum_scroll_offset());
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 44.0f);
+    // act the value shrinks to a run that fits the plate (§8.2)
+    field.set_value("ab");
+    // assert the offset came back inside the new range, which is empty (§8.2)
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+}
+
+TEST(TextFieldScrollChecks, TheCaretRectReportsTheScrolledPosition) {
+    // arrange a field whose last line the caret brought into view (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    field.set_caret(7);
+    // act
+    const Rect caret = field.caret_rect();
+    // assert the bar sits at the content top minus the scroll plus the line box, which is four here (§9.1)
+    EXPECT_NEAR(caret.y, 4.0f, 0.001f);
+    // assert the bar keeps the line height, because a caret is a line box bar (§9.1)
+    EXPECT_NEAR(caret.height, 16.0f, 0.001f);
+}
+
+TEST(TextFieldScrollChecks, APressInScrolledContentResolvesTheRightByte) {
+    // arrange a four line field scrolled to the bottom, where a low plate y covers the last line (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    field.scroll_to(field.maximum_scroll_offset());
+    // act a press near the top of the plate lands over the last line of the scrolled content (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{.x = 0.0f, .y = 4.0f}};
+    field.dispatch_event(press);
+    // assert the byte is the last line's first character, which the offset accounted for (§8.3)
+    EXPECT_EQ(field.caret(), 6u);
+}
+
+TEST(TextFieldScrollChecks, ASelectionPaintsTranslatedByTheOffset) {
+    // arrange a selected field scrolled so its early lines sit above the plate (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd");
+    field.select_all();
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    field.scroll_to(field.maximum_scroll_offset());
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 80.0f}, 1.0f));
+    // act
+    field.render(recorder);
+    // assert a highlight rect was carried above the plate, which only the scroll translation does (§6.1)
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_FALSE(rects.empty());
+    // the least y is the highest highlight, which a translated selection puts above the plate top (§6.1)
+    float highest = rects.front().y;
+    for (const Rect& rect : rects)
+        highest = std::min(highest, rect.y);
+    EXPECT_LT(highest, 0.0f);
+}
+
+TEST(TextFieldScrollChecks, ADragPastTheBottomScrollsWithoutChangingTheSelectionBytes) {
+    // arrange a five line field in a one line plate, which the drag must scroll (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd\ne");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    Event press{.kind = EventKind::PointerDown, .position = Point{.x = 0.0f, .y = 4.0f}};
+    field.dispatch_event(press);
+    ASSERT_EQ(field.selection_start(), 0u);
+    // act the drag runs past the plate's bottom edge, which is what reaching a hidden line means (§8.3)
+    Event drag{.kind = EventKind::PointerMove, .position = Point{.x = 0.0f, .y = 60.0f}};
+    field.dispatch_event(drag);
+    // assert the content scrolled, so a line outside the window came into reach (§8.3)
+    EXPECT_GT(field.scroll_offset(), 0.0f);
+    // assert the selection extends to the last line's first byte, which the scrolled press resolved (§8.3)
+    EXPECT_EQ(field.selection_start(), 0u);
+    EXPECT_EQ(field.selection_end(), 8u);
+}
+
+TEST(TextFieldScrollChecks, AReleaseEndsTheScrollAndASecondDragRestartsIt) {
+    // arrange a field whose drag already scrolled the content away from the top (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd\ne");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    Event press{.kind = EventKind::PointerDown, .position = Point{.x = 0.0f, .y = 4.0f}};
+    field.dispatch_event(press);
+    Event drag{.kind = EventKind::PointerMove, .position = Point{.x = 0.0f, .y = 60.0f}};
+    field.dispatch_event(drag);
+    ASSERT_GT(field.scroll_offset(), 0.0f);
+    Event release{.kind = EventKind::PointerUp, .position = Point{.x = 0.0f, .y = 60.0f}};
+    field.dispatch_event(release);
+    const float scrolled = field.scroll_offset();
+    // act a move after the release drags nothing, so the offset holds where the release left it (§8.3)
+    Event move_after{.kind = EventKind::PointerMove, .position = Point{.x = 0.0f, .y = 60.0f}};
+    field.dispatch_event(move_after);
+    // assert the released drag no longer scrolls, because the press that carried it ended (§8.3)
+    EXPECT_FLOAT_EQ(field.scroll_offset(), scrolled);
+}
+
+TEST(TextFieldScrollChecks, ScrollToClampsIntoTheRange) {
+    // arrange a four line field whose range is the content past the plate (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    // act a scroll above the leading edge, then one past the trailing edge (§8.2)
+    field.scroll_to(-10.0f);
+    // assert the offset stopped at the leading edge, because the content has no earlier place (§8.2)
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+    // act the far overshoot, which the range alone bounds (§8.2)
+    field.scroll_to(9999.0f);
+    // assert the offset stopped at the content end, which is the range the content defines (§8.2)
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 44.0f);
+}
+
+TEST(TextFieldScrollChecks, ASteadyScrollToTheSameOffsetRedrawsNothing) {
+    // arrange a field already sitting at the leading edge (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    field.clear_dirty();
+    // act a scroll that moves nowhere, because the offset already is zero (§8.2)
+    field.scroll_to(0.0f);
+    // assert the frame is unchanged, because a scroll with no movement changes no pixels (§6.1)
+    EXPECT_FALSE(field.render_dirty());
+}
+
+TEST(TextFieldScrollChecks, ASingleLineFieldNeverScrolls) {
+    // arrange a single line field with a long value in a plate that shows one line (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abcdefghijklmnopqrstuvwxyz");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    // act the caret moves to the far end, which a single line still does without a scroll (§8.3)
+    field.set_caret(26);
+    // assert the offset stayed at the leading edge, because one line has nowhere to scroll (§8.2)
+    EXPECT_FLOAT_EQ(field.maximum_scroll_offset(), 0.0f);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+    // act a drag runs past the bottom edge, which must not scroll a single line field (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{.x = 0.0f, .y = 10.0f}};
+    field.dispatch_event(press);
+    Event drag{.kind = EventKind::PointerMove, .position = Point{.x = 0.0f, .y = 100.0f}};
+    field.dispatch_event(drag);
+    // assert nothing scrolled, because only a multi line field has rows to move (§8.2)
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+}
+
+TEST(TextFieldScrollChecks, AScrollingCaretMoveNeverTouchesTheValue) {
+    // arrange a scrolled field holding a value and a caret the scroll will carry (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    field.set_caret(7);
+    const std::string before_value = field.value();
+    const std::size_t before_caret = field.caret();
+    // act the plate scrolls, which is a view change and not an edit (§8.2)
+    field.scroll_to(0.0f);
+    // assert neither the value nor the caret moved, because scrolling is visual only (§8.2)
+    EXPECT_EQ(field.value(), before_value);
+    EXPECT_EQ(field.caret(), before_caret);
+    EXPECT_FALSE(field.has_selection());
+}
+
+TEST(TextFieldScrollChecks, TypingABreakAtTheBottomKeepsTheCaretLineInView) {
+    // arrange a field scrolled so its last line fills the plate, with the caret at the end (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    field.set_caret(5);
+    ASSERT_GT(field.scroll_offset(), 0.0f);
+    // act a break is typed at the end, which opens an empty line below (§8.3)
+    Event event{.kind = EventKind::KeyDown, .key = Key::Return};
+    field.dispatch_event(event);
+    // assert the empty line the caret moved onto stayed on screen, not scrolled back to the top (§8.3)
+    EXPECT_GT(field.scroll_offset(), 0.0f);
+    const Rect caret = field.caret_rect();
+    EXPECT_GE(caret.y, 0.0f);
+    EXPECT_LE(caret.y + caret.height, 20.0f + 0.001f);
+}
+
+TEST(TextFieldScrollChecks, AProgrammaticScrollSurvivesARelayout) {
+    // arrange a field scrolled to the bottom while its caret stays at the top (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    field.scroll_to(44.0f);
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 44.0f);
+    // act the plate is laid out again, which must not snap the view back to the caret (§8.2)
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    // assert the programmatic scroll is still where the caller put it (§8.2)
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 44.0f);
+}
+
+TEST(TextFieldScrollChecks, ARelayoutClampsAProgrammaticScrollIntoRange) {
+    // arrange a field scrolled to the bottom of a tall value (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    field.scroll_to(44.0f);
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 44.0f);
+    // act the plate grows tall enough to show the whole value (§8.2)
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 64.0f}));
+    // assert the offset came back inside the now empty range (§8.2)
+    EXPECT_FLOAT_EQ(field.maximum_scroll_offset(), 0.0f);
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+}
+
+TEST(TextFieldScrollChecks, AnEditWrapsAtTheWidthThePlateLastMeasured) {
+    // arrange a wide value wrapped by a layout pass, and a handler that samples the range inside an edit (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("abcdefghijklmnopqrstuvwxyz");
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{80.0f, 400.0f}), measured);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{80.0f, 20.0f}));
+    float range_in_edit = -1.0f;
+    field.set_on_change([&field, &range_in_edit](const std::string&) { range_in_edit = field.maximum_scroll_offset(); });
+    // act an edit lands on the wrapped value, which must keep wrapping like the plate (§8.2)
+    Event event{.kind = EventKind::TextInput, .text = "z"};
+    field.dispatch_event(event);
+    // assert the range inside the edit is the wrapped one, not a single unbounded line (§8.2)
+    EXPECT_GT(range_in_edit, 0.0f);
+}
+
+TEST(TextFieldScrollChecks, ACompositionInAScrolledFieldPaintsByTheCaretLine) {
+    // arrange a width wrapped field whose caret sits on a line the plate cannot show (§8.3, §9.1)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("abcdefghij");
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{55.0f, 400.0f}), measured);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{55.0f, 20.0f}));
+    field.set_caret(9);
+    ASSERT_GT(field.scroll_offset(), 0.0f);
+    // act a composition opens at the caret, which the field paints under (§8.3)
+    Event mark{.kind = EventKind::Composing, .text = "Z"};
+    field.dispatch_event(mark);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 40.0f}, 1.0f));
+    field.render(recorder);
+    // assert the mark underline lands on the caret's line inside the plate, not above it (§8.2)
+    float underline_y = -1.0f;
+    for (const Rect& rect : rect_commands(*recorder.scene()))
+        if (rect.height == 1.0f)
+            underline_y = rect.y;
+    EXPECT_GE(underline_y, 0.0f);
+    EXPECT_LE(underline_y, 20.0f);
+}
+
+TEST(TextFieldScrollChecks, ASingleLineFieldCannotBeScrolledProgrammatically) {
+    // arrange a single line field in a plate shorter than its line, which a parent may clamp to (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abcdef");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 10.0f}));
+    // assert a single line offers no range even when the plate is short (§8.2)
+    EXPECT_FLOAT_EQ(field.maximum_scroll_offset(), 0.0f);
+    // act a programmatic scroll asks for one, which must be refused (§8.2)
+    field.scroll_to(8.0f);
+    // assert nothing scrolled, because one line has nowhere to move (§8.2)
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+}
+
+TEST(TextFieldScrollChecks, TheTextOriginFollowsTheScroll) {
+    // arrange a field whose caret brought the plate down to the last line (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    field.set_caret(7);
+    ASSERT_GT(field.scroll_offset(), 0.0f);
+    // act
+    const Point origin = field.text_origin();
+    // assert the first byte is placed under the same scroll the paint uses (§8.2)
+    EXPECT_FLOAT_EQ(origin.y, -field.scroll_offset());
+}
+
+TEST(TextFieldScrollChecks, AProgrammaticSelectionScrollsItsActiveEndIntoView) {
+    // arrange a tall field whose caret starts at the top, with the whole value below the plate (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+    // act the whole value is selected, which moves the active end to the last line (§8.3)
+    field.select_all();
+    // assert the active end was brought into view, so the selection is usable (§8.3)
+    EXPECT_GT(field.scroll_offset(), 0.0f);
+}
+
+TEST(TextFieldScrollChecks, SettingAValueFollowsTheCaretItKept) {
+    // arrange a tall field whose caret sits on the last line while the view is at the top (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    field.set_caret(7);
+    field.scroll_to(0.0f);
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 0.0f);
+    // act a new value of the same shape is set, which keeps the caret byte (§8.3)
+    field.set_value("w\nx\ny\nz");
+    // assert the kept caret was brought back on screen (§8.3)
+    EXPECT_GT(field.scroll_offset(), 0.0f);
+}
+
+TEST(TextFieldScrollChecks, ADragPastTheEdgeKeepsTheDraggedEndInView) {
+    // arrange a ten line field in a one line plate, whose whole value is not yet on screen (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_value("a\nb\nc\nd\ne\nf\ng\nh\ni\nj");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    Event press{.kind = EventKind::PointerDown, .position = Point{.x = 0.0f, .y = 4.0f}};
+    field.dispatch_event(press);
+    // act the pointer is dragged far below the plate in one move, so the view must follow it (§8.3)
+    Event drag{.kind = EventKind::PointerMove, .position = Point{.x = 0.0f, .y = 1000.0f}};
+    field.dispatch_event(drag);
+    // assert the view followed the dragged end and stopped inside the content it can show (§8.2, §8.3)
+    EXPECT_GT(field.scroll_offset(), 0.0f);
+    EXPECT_LE(field.scroll_offset(), field.maximum_scroll_offset());
+    const Rect caret = field.caret_rect();
+    EXPECT_GE(caret.y, 0.0f);
+    EXPECT_LE(caret.y + caret.height, 20.0f + 0.001f);
 }

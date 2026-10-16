@@ -27,6 +27,8 @@ namespace albor
         if (m_multiline && m_text_engine != nullptr) {
             // the ceiling is honoured in run space, because the inset sits outside the run (§8.2)
             const float ceiling = constraints.maximum.width > 0.0f ? std::max(0.0f, constraints.maximum.width - m.text_field_padding * 2.0f) : 0.0f;
+            // the ceiling is remembered, because the edit path must wrap at the same width the paint does (§8.2)
+            m_measure_width = ceiling;
             // both runs are laid out at that ceiling, because the hint wraps like the value (§8.2)
             m_layout = m_text_engine->measure(m_value, ceiling, m_font_size);
             m_placeholder_layout = m_text_engine->measure(m_placeholder, ceiling, m_font_size);
@@ -53,6 +55,8 @@ namespace albor
     void TextField::arrange(const Rect& bounds) {
         // the component arranges its own bounds and its children, because a widget is a component (§8.2)
         Component::arrange(bounds);
+        // the offset is clamped into the new range, and not re-followed, so a programmatic scroll survives (§8.2)
+        m_scroll_offset = clamped_scroll_offset(m_scroll_offset);
     }
 
     void TextField::paint_content(RenderContext& context) {
@@ -67,16 +71,16 @@ namespace albor
         const bool shows_placeholder = !has_marked_text() && m_value.empty() && !m_placeholder.empty();
         // the run that paints is the one the present state displays (§6.1)
         const TextLayout& displayed = has_marked_text() ? m_marked_layout : (shows_placeholder ? m_placeholder_layout : m_layout);
-        // the line hangs vertically centred, because a field is fixed height and the run is its guest (§8.2)
-        const float centered_y = bounds().y + std::max(0.0f, (bounds().height - displayed.size.height) * 0.5f);
+        // the run hangs where the value hangs, so the text and the caret share one top, carried up by the scroll (§8.2)
+        const float draw_y = displayed_top(displayed);
         // the content is clipped into the plate, because a run wider than the field must not bleed over it (§6.2)
         context.save();
         context.clip_rect(bounds());
         // the selection is painted under the value, because a highlight sits behind the text it covers (§6.1)
         paint_selection(context);
-        // the hint or the value or the mark records at the inset and the centre (§6.1)
+        // the hint or the value or the mark records at the inset and the scrolled top (§6.1)
         if (!displayed.empty())
-            context.draw_text(displayed, Point{.x = origin.x, .y = centered_y}, {.fill = resolve(has_marked_text() ? value_colors() : (shows_placeholder ? placeholder_colors() : value_colors()), has_marked_text() ? m_foreground : (shows_placeholder ? m_placeholder_foreground : m_foreground))});
+            context.draw_text(displayed, Point{.x = origin.x, .y = draw_y}, {.fill = resolve(has_marked_text() ? value_colors() : (shows_placeholder ? placeholder_colors() : value_colors()), has_marked_text() ? m_foreground : (shows_placeholder ? m_placeholder_foreground : m_foreground))});
         // the mark rides under the provisional string, which is what a composition announces with (§8.3)
         if (has_marked_text())
             paint_mark_underline(context);
@@ -199,8 +203,8 @@ namespace albor
         // the span is resolved once, because every line reads the same pair (§8.3)
         const std::size_t span_start = selection_start();
         const std::size_t span_end = selection_end();
-        // the run hangs vertically centred, which is the same decision the text paint makes (§8.2)
-        const float draw_y = bounds().y + std::max(0.0f, (bounds().height - m_layout.size.height) * 0.5f);
+        // the run hangs where the text paint places it, carried up by the scroll (§8.2)
+        const float draw_y = content_top() - m_scroll_offset;
         // every line the span crosses contributes its own highlight, which is what a selection over lines is (§8.3)
         for (std::size_t index = 0; index < m_layout.run->lines().size(); index++) {
             // the line is read for its own bytes, which is what the span clamps against (§9.1)
@@ -359,6 +363,8 @@ namespace albor
                 if (next != std::min(m_caret, m_value.size())) {
                     m_caret = next;
                     m_anchor = next;
+                    // the viewport follows the caret, so a move onto a hidden line scrolls it on screen (§8.3)
+                    ensure_caret_visible();
                     invalidate();
                 }
                 return;
@@ -372,6 +378,8 @@ namespace albor
                 if (next != std::min(m_caret, m_value.size())) {
                     m_caret = next;
                     m_anchor = next;
+                    // the viewport follows the caret, so a move onto a hidden line scrolls it on screen (§8.3)
+                    ensure_caret_visible();
                     invalidate();
                 }
                 return;
@@ -494,8 +502,8 @@ namespace albor
                 composed.append(m_value, span_end, std::string::npos);
                 // the mark sits where the replaced span stood, which is what an insertion method does (§8.3)
                 composed.insert(span_start, m_marked);
-                // the composed run shapes over an unbounded width, which is what a mark draws against (§9.1)
-                m_marked_layout = m_text_engine->measure(composed, 0.0f, m_font_size);
+                // the mark run shapes at the ceiling the value used, so it wraps the same way (§9.1)
+                m_marked_layout = m_text_engine->measure(composed, m_measure_width, m_font_size);
             }
             else {
                 // no engine means no display run, which is what an unmeasurable mark is (§9.1)
@@ -528,6 +536,8 @@ namespace albor
             // a move over a run the engine did not shape extends nothing, which an empty value gives (§9.1)
             if (m_layout.run == nullptr || m_layout.run->lines().empty() || m_value.empty())
                 return;
+            // a pointer past an edge scrolls the content, so a drag can reach a line outside the viewport (§8.3)
+            autoscroll_for_drag(event.position);
             // the move is resolved against the row it landed on, which is what a drag across rows means (§9.1)
             extend_caret(byte_at_point(event.position));
             return;
@@ -597,6 +607,8 @@ namespace albor
         m_anchor = m_caret;
         // a new value has a new run, so the layout passes must run again (§8.2, §9.1)
         remeasure();
+        // the viewport follows the caret the write held, so a tall value does not hide it (§8.3)
+        ensure_caret_visible();
     }
 
     const std::string& TextField::value() const {
@@ -699,6 +711,8 @@ namespace albor
         m_goal_x = caret_goal_x();
         // the caret comes back into view, which is what every move does on every platform (§8.3)
         restart_blink();
+        // the viewport follows the caret, so a move into a hidden line scrolls it on screen (§8.3)
+        ensure_caret_visible();
         // a caret move is visual only, because the value did not change (§6.1)
         invalidate();
     }
@@ -764,15 +778,17 @@ namespace albor
         // a run the engine did not shape has no row to resolve against, so the first one stands (§9.1)
         if (m_layout.run == nullptr || m_layout.run->lines().empty())
             return 0;
-        // the run hangs vertically centred, which is the same decision the text paint makes (§8.2)
-        const float top = bounds().y + std::max(0.0f, (bounds().height - m_layout.size.height) * 0.5f);
+        // the run hangs where the text paint places it, carried up by the scroll (§8.2)
+        const float top = content_top();
+        // the pointer is a plate coordinate, so it is turned back into the content space the run lives in (§8.3)
+        const float content_y = pointer_y + m_scroll_offset;
         // every row is asked which band of the run the pointer fell in (§8.3)
         const std::vector<ShapedRun::Line>& lines = m_layout.run->lines();
         for (std::size_t index = 0; index < lines.size(); index++) {
             // the band runs from above the ascent to below the descent of the row (§9.1)
             const float band_top = top + lines[index].origin.y - lines[index].ascent;
             // a pointer above this band belongs to an earlier row (§8.3)
-            if (pointer_y < band_top)
+            if (content_y < band_top)
                 return index == 0 ? 0 : index - 1;
         }
         // a pointer past the last band clamps to the last row, because the plate ends there (§8.3)
@@ -851,6 +867,86 @@ namespace albor
         return m_layout.run->x_at_byte(line, clamped);
     }
 
+    float TextField::content_top() const {
+        // the run hangs vertically centred while it fits, and from the plate top while it overflows (§8.2)
+        return bounds().y + std::max(0.0f, (bounds().height - m_layout.size.height) * 0.5f);
+    }
+
+    float TextField::displayed_top(const TextLayout& displayed) const {
+        // a run the value backs hangs where the value run hangs, so the text, the caret and the selection agree (§8.2)
+        if (m_layout.size.height > 0.0f)
+            return content_top() - m_scroll_offset;
+        // a run with no value behind it centres on its own height, as a hint or first composition does (§8.2)
+        return bounds().y + std::max(0.0f, (bounds().height - displayed.size.height) * 0.5f) - m_scroll_offset;
+    }
+
+    float TextField::clamped_scroll_offset(float offset) const {
+        // the offset never leaves the range the content defines, which is what keeps the plate honest (§8.2)
+        return std::clamp(offset, 0.0f, maximum_scroll_offset());
+    }
+
+    void TextField::ensure_caret_visible() {
+        // a single line field never scrolls, because its run is the one row it shows (§8.2)
+        if (!m_multiline)
+            return;
+        // a run the engine did not shape has no line to follow, so nothing scrolls (§9.1)
+        if (m_layout.run == nullptr || m_layout.run->lines().empty())
+            return;
+        // an unarranged field has no viewport to scroll within (§6.2)
+        if (bounds().empty())
+            return;
+        // the line the caret stands on is the one that must be on screen (§8.3)
+        const std::size_t clamped = std::min(m_caret, m_value.size());
+        const std::size_t index = m_layout.run->line_at_byte(clamped);
+        const ShapedRun::Line& line = m_layout.run->lines()[index];
+        // the line box sits in content space, which is where the caret is before the scroll carries it (§9.1)
+        const float content_origin = content_top();
+        const float line_top = content_origin + line.origin.y - line.ascent;
+        const float line_bottom = content_origin + line.origin.y + line.descent;
+        // the viewport is the plate the caret must stay inside (§8.2)
+        const float viewport_top = bounds().y;
+        const float viewport_bottom = bounds().y + bounds().height;
+        // the offset the caret asks for starts where the scroll already is (§8.3)
+        float target = m_scroll_offset;
+        // a caret above the window scrolls the content down, so the line reaches the top edge (§8.3)
+        if (line_top - m_scroll_offset < viewport_top)
+            target = line_top - viewport_top;
+        // a caret below the window scrolls the content up, so the line reaches the bottom edge (§8.3)
+        else if (line_bottom - m_scroll_offset > viewport_bottom)
+            target = line_bottom - viewport_bottom;
+        // the offset is written through the one clamp, so it never leaves the range (§8.2)
+        const float previous = m_scroll_offset;
+        m_scroll_offset = clamped_scroll_offset(target);
+        // content that moved under the caret changes the frame, so the follow invalidates for itself (§6.1)
+        if (m_scroll_offset != previous)
+            invalidate();
+    }
+
+    void TextField::autoscroll_for_drag(Point logical_position) {
+        // a single line field never scrolls under a drag, because its run has one row (§8.2)
+        if (!m_multiline)
+            return;
+        // the offset the overshoot asks for starts where the scroll already is (§8.3)
+        float target = m_scroll_offset;
+        // the viewport the pointer must stay inside is the plate (§8.2)
+        const float viewport_top = bounds().y;
+        const float viewport_bottom = bounds().y + bounds().height;
+        // a pointer past the bottom edge scrolls by its overshoot, so the drag tracks how far the pointer went (§8.3)
+        if (logical_position.y > viewport_bottom)
+            target = m_scroll_offset + (logical_position.y - viewport_bottom);
+        // a pointer past the top edge scrolls by its overshoot the same way (§8.3)
+        else if (logical_position.y < viewport_top)
+            target = m_scroll_offset - (viewport_top - logical_position.y);
+        // the offset is written through the one clamp, so a drag cannot scroll past the content (§8.2)
+        const float clamped = clamped_scroll_offset(target);
+        // an unchanged offset moved nothing, which is what a drag inside the plate reports (§8.3)
+        if (clamped == m_scroll_offset)
+            return;
+        // the content moved under the drag, so the frame changes (§6.1)
+        m_scroll_offset = clamped;
+        invalidate();
+    }
+
     std::size_t TextField::caret() const {
         // the offset is the active end of a selection and where the next edit lands (§8.3)
         return m_caret;
@@ -864,6 +960,8 @@ namespace albor
         m_anchor = std::min(first, last);
         // an equal pair collapses, which is what selecting a degenerate span means (§8.3)
         m_caret = std::max(first, last);
+        // the viewport follows the active end, so a programmatic selection is not left off screen (§8.3)
+        ensure_caret_visible();
         // a selection change is visual only, because the value did not change (§6.1)
         invalidate();
     }
@@ -894,6 +992,8 @@ namespace albor
         m_anchor = 0;
         // the caret takes the far end, because the active end extends to it (§8.3)
         m_caret = m_value.size();
+        // the viewport follows the far end, so a select all over a tall value shows its caret (§8.3)
+        ensure_caret_visible();
         // a selection change is visual only, because the value did not change (§6.1)
         invalidate();
     }
@@ -943,16 +1043,17 @@ namespace albor
             return;
         // the metrics carry the inset, which is where the run starts (§8.2)
         const ControlMetrics& m = metrics();
-        // the one line a composed display is shaped into is what the mark rides under (§9.1)
-        const ShapedRun::Line& line = m_marked_layout.run->lines().front();
         // the mark covers the bytes the caret commit opened in the composed string (§8.3)
         const std::size_t from = std::min(m_caret, m_value.size());
         const std::size_t to = std::min(from + m_marked.size(), m_value.size() + m_marked.size());
+        // the line the mark begins on is the one it rides under, which a wrapped mark moves off the first row (§9.1)
+        const std::size_t index = m_marked_layout.run->line_at_byte(from);
+        const ShapedRun::Line& line = m_marked_layout.run->lines()[index];
         // the underline starts where the caret held the composed run's bytes (§8.3)
-        const float start_x = bounds().x + m.text_field_padding + line.origin.x + m_marked_layout.run->x_at_byte(0, from);
-        const float end_x = bounds().x + m.text_field_padding + line.origin.x + m_marked_layout.run->x_at_byte(0, to);
-        // the composed run hangs vertically centred, which is the same decision the paint makes (§8.2)
-        const float draw_y = bounds().y + std::max(0.0f, (bounds().height - m_marked_layout.size.height) * 0.5f);
+        const float start_x = bounds().x + m.text_field_padding + line.origin.x + m_marked_layout.run->x_at_byte(index, from);
+        const float end_x = bounds().x + m.text_field_padding + line.origin.x + m_marked_layout.run->x_at_byte(index, to);
+        // the composed run hangs where the value hangs, so the mark and the caret share one top (§8.2)
+        const float draw_y = displayed_top(m_marked_layout);
         // the bar is one thin line under the baseline, which is where a mark reads (§8.3)
         context.draw_rect(Rect{.x = start_x, .y = draw_y + line.origin.y + 1.0f, .width = std::max(0.0f, end_x - start_x), .height = 1.0f}, {.fill = resolve(caret_colors(), m_caret_foreground)});
     }
@@ -1058,8 +1159,8 @@ namespace albor
         const ShapedRun::Line& line = m_layout.run->lines()[index];
         // the x is one inset in plus the run offset, which is where the caret stands over the value (§9.1)
         const float x = bounds().x + m.text_field_padding + line.origin.x + m_layout.run->x_at_byte(index, clamped);
-        // the run hangs vertically centred, which is the same decision the paint makes (§8.2)
-        const float draw_y = bounds().y + std::max(0.0f, (bounds().height - m_layout.size.height) * 0.5f);
+        // the run hangs where the paint places it, carried up by the scroll (§8.2)
+        const float draw_y = content_top() - m_scroll_offset;
         // the line box is the ascent and descent of the caret's own line, which a line above the first hangs lower (§9.1)
         const float top = draw_y + line.origin.y - line.ascent;
         // the rect is the bar the caret draws at (§9.1)
@@ -1069,8 +1170,8 @@ namespace albor
     Point TextField::text_origin() const {
         // the metrics carry the inset, which is where the text starts (§8.2)
         const ControlMetrics& m = metrics();
-        // the line hangs vertically centred, which is the same decision the paint makes (§8.2)
-        return Point{.x = bounds().x + m.text_field_padding, .y = bounds().y + std::max(0.0f, (bounds().height - m_layout.size.height) * 0.5f)};
+        // the first byte paints where the run hangs, carried up by the scroll like the value and the caret (§8.2)
+        return Point{.x = bounds().x + m.text_field_padding, .y = content_top() - m_scroll_offset};
     }
 
     void TextField::set_on_change(std::function<void(const std::string&)> handler) {
@@ -1086,6 +1187,33 @@ namespace albor
     const TextLayout& TextField::layout() const {
         // the run is what the paint draws and what the measure pass produced (§9.1)
         return m_layout;
+    }
+
+    float TextField::scroll_offset() const {
+        // the offset is what the paint translates by and the caret keeps the line inside of (§8.2)
+        return m_scroll_offset;
+    }
+
+    float TextField::maximum_scroll_offset() const {
+        // a single line field never scrolls, so its range is empty whatever the plate (§8.2)
+        if (!m_multiline)
+            return 0.0f;
+        // content that fits has no scroll range, and an unarranged field has none either (§8.2)
+        if (bounds().empty())
+            return 0.0f;
+        return std::max(0.0f, m_layout.size.height - bounds().height);
+    }
+
+    void TextField::scroll_to(float offset) {
+        // the destination is clamped into the range, which is what stops a write overshooting the content (§8.2)
+        const float clamped = clamped_scroll_offset(offset);
+        // an unchanged destination draws nothing new, because the paint would be the same (§6.1)
+        if (clamped == m_scroll_offset)
+            return;
+        // the offset is stored first, so the invalidation walks a field that already shows it (§6.1)
+        m_scroll_offset = clamped;
+        // the content moved, so the frame changes (§6.1)
+        invalidate();
     }
 
     void TextField::replace_range(std::size_t start, std::size_t end, std::string_view text) {
@@ -1113,6 +1241,8 @@ namespace albor
         remeasure();
         // the caret comes back into view, because typing holds it solid (§8.3)
         restart_blink();
+        // the viewport follows the caret, so typing past the last visible line scrolls it on screen (§8.3)
+        ensure_caret_visible();
         // the edit is recorded after the state, which is what the entry needs from both ends (§18)
         record_edit(before, before_caret);
         // the handler runs after the state, so a validation reads the value that was kept (§8)
@@ -1157,6 +1287,8 @@ namespace albor
         m_anchor = m_caret;
         // the run is remeasured, because the value changed (§9.1)
         remeasure();
+        // the viewport follows the restored caret, so a reversal brings its line on screen (§8.3)
+        ensure_caret_visible();
         // the handler runs after the state, so a validation reads the value that was kept (§18)
         if (m_on_change)
             m_on_change(m_value);
@@ -1182,6 +1314,8 @@ namespace albor
             m_goal_x = m_layout.run->x_at_byte(new_line, clamped);
         // the caret comes back into view, which is what every move does (§8.3)
         restart_blink();
+        // the viewport follows the caret, so a drag into a hidden line scrolls it on screen (§8.3)
+        ensure_caret_visible();
         // a drag extension is visual only, because the value did not change (§6.1)
         invalidate();
     }
@@ -1191,17 +1325,22 @@ namespace albor
         if (m_text_engine == nullptr) {
             m_layout = TextLayout{};
             m_placeholder_layout = TextLayout{};
+            // a field with no run has nothing to scroll, so the offset returns to the leading edge (§8.2)
+            m_scroll_offset = 0.0f;
             invalidate_layout();
             invalidate();
             return;
         }
-        // the runs are measured unbounded, because a field never wraps its value in this shape (§8.2)
-        m_layout = m_text_engine->measure(m_value, 0.0f, m_font_size);
+        // the runs are measured at the width the plate last wrapped at, so the edit path matches the paint (§8.2)
+        const float width = m_multiline ? m_measure_width : 0.0f;
+        m_layout = m_text_engine->measure(m_value, width, m_font_size);
         // the hint run is measured too, because an empty field shows it (§8)
-        m_placeholder_layout = m_text_engine->measure(m_placeholder, 0.0f, m_font_size);
+        m_placeholder_layout = m_text_engine->measure(m_placeholder, width, m_font_size);
         // a fresh base run invalidates the composed one, because the mark is measured against a new value (§8.3)
         m_marked_layout = TextLayout{};
         m_marked.clear();
+        // a shorter run shrinks the scroll range, so the offset is clamped back into it (§8.2)
+        m_scroll_offset = clamped_scroll_offset(m_scroll_offset);
         // a text change is a size change, so the layout passes must run again (§8.2)
         invalidate_layout();
         // the value paint changed either way, which is what an edit means (§6.1)

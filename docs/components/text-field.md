@@ -1,6 +1,7 @@
 # TextField
 
 A leaf that edits a string the user types — a form field, a search box, a value editor.
+Single-line by default; set `multiline` for a wrapping, scrolling editor.
 
 ## Properties
 
@@ -9,7 +10,7 @@ A leaf that edits a string the user types — a form field, a search box, a valu
 | `value` | `string` | the current text |
 | `placeholder` | `string` | the hint shown while empty |
 | `read_only` | `bool` | displays but refuses editing |
-| `multiline` | `bool` | accepts line breaks |
+| `multiline` | `bool` | accepts line breaks, wraps, and scrolls its own viewport |
 | `disabled` | `bool` | refuses all interaction |
 | `font_size` | `float` | density-scaled; accepts `px` |
 
@@ -53,6 +54,39 @@ component NameForm {
         Label { text: @tr("typed ") + string(name); }
     }
 }
+```
+
+## Multi-line fields
+
+`multiline: true` turns the field into a wrapping, scrolling editor. The value wraps at the
+width the parent offers, and the field measures to its wrapped run — so it grows as lines are
+added, until the parent's constraints cap its height
+([Layout](../concepts/layout.md#the-two-phases)). Past that cap the field scrolls its own
+vertical viewport instead of letting the text clip:
+
+```text
+TextField {
+    id: notes;
+    multiline: true;
+    value: notes_text;
+    on_changed: { notes_text = value; }   // the same two-way pattern as the single-line case
+}
+```
+
+The caret drives the scroll: moving, typing or pasting the caret onto a line outside the box
+brings it back into view, and dragging a selection past an edge autoscrolls. The composition
+underline and the IME anchor follow the scrolled caret. The field draws no scrollbar — it is an
+editor, not a [ScrollView](scroll-view.md).
+
+Scrolling is visual only. It never changes the value, the caret byte, the selection, the
+clipboard or the undo history; a single-line field never scrolls, whatever its width.
+
+From C++, the scroll is observable and drivable on any field:
+
+```cpp
+field->scroll_offset();          // how far the content is scrolled from its leading edge
+field->maximum_scroll_offset();  // zero while the text fits
+field->scroll_to(0.0f);          // clamped into [0, maximum_scroll_offset()]
 ```
 
 ## Notes

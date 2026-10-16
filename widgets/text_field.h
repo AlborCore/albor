@@ -175,6 +175,15 @@ namespace albor
         // hand out the run the value was measured at, which the paint draws and the tests read (§9.1)
         [[nodiscard]] const TextLayout& layout() const;
 
+        // hand out how far the content is scrolled from its leading edge, which the paint translates by (§8.2)
+        [[nodiscard]] float scroll_offset() const;
+
+        // hand out how far the content can still scroll, which is zero while it fits (§8.2)
+        [[nodiscard]] float maximum_scroll_offset() const;
+
+        // move the offset to an absolute place, clamped into the range, which a programmatic scroll is (§8.2)
+        void scroll_to(float offset);
+
     private:
         // replace the bytes of a span with the text given, which is what every mutation goes through to signal once (§8)
         void replace_range(std::size_t start, std::size_t end, std::string_view text);
@@ -223,6 +232,21 @@ namespace albor
 
         // the x coordinate of the caret within the line it stands on, which a vertical move keeps (§8.3)
         [[nodiscard]] float caret_goal_x() const;
+
+        // hand out where the run's top edge sits before the scroll, which the paint and the caret hang from (§8.2)
+        [[nodiscard]] float content_top() const;
+
+        // hand out where a displayed run paints from, the value top when it has a value, else the plate mid (§8.2)
+        [[nodiscard]] float displayed_top(const TextLayout& displayed) const;
+
+        // hand out the scroll offset clamped into the range, which is the single clamp every writer uses (§8.2)
+        [[nodiscard]] float clamped_scroll_offset(float offset) const;
+
+        // scroll so the caret's line is inside the viewport, which is what keeps the caret on screen (§8.3)
+        void ensure_caret_visible();
+
+        // scroll the content by the overshoot of a drag past an edge, then the caret follow bounds where it lands (§8.3)
+        void autoscroll_for_drag(Point logical_position);
 
         // schedule the blink on the engine the tree was handed, because time is the engine's to advance (§7.3)
         void start_blink();
@@ -301,6 +325,12 @@ namespace albor
 
         // whether the field edits more than one line, which wraps the runs and grows the plate (§8.2)
         bool m_multiline = false;
+
+        // how far the content is scrolled from its leading edge, which the caret drives and never the value (§8.2)
+        float m_scroll_offset = 0.0f;
+
+        // the width the wrapped runs were last measured at, which the edit path reuses so it wraps like the paint (§8.2)
+        float m_measure_width = 0.0f;
 
         // the size the runs are measured at (§9.1)
         float m_font_size = TextEngine::DEFAULT_FONT_SIZE;
