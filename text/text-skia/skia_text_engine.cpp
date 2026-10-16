@@ -222,8 +222,11 @@ namespace albor
             // the byte the row begins at is what a press on its left edge resolves to (§9.1)
             line.start_byte = static_cast<std::size_t>(line_metrics[index].fStartIndex);
             // a row that shaped nothing ends where it began, because it advanced no byte (§9.1)
-            if (line.glyphs.empty())
+            if (line.glyphs.empty()) {
                 line.end_byte = static_cast<std::size_t>(line_metrics[index].fStartIndex);
+                // the empty row still hangs from its own baseline, which the metrics carry for every row (§9.1)
+                line.origin = Point{.x = 0.0f, .y = static_cast<float>(line_metrics[index].fBaseline)};
+            }
         }
         // the layout starts as an unmeasured default, so a run that shaped no line reports nothing (§9.1)
         TextLayout layout;
