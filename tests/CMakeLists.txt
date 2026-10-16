@@ -62,9 +62,17 @@ if(APPLE)
     # the accessibility suite walks the application kit hierarchy the macos bridge publishes into, because the
     # role mapping is only reachable once the bridge hands its tree to that hierarchy (§10.2, AD-16). the suite is
     # an objective c++ source and links the framework itself, because the bridge keeps its platform link private (§3.2)
-    target_sources(albor-tests PRIVATE "./conditional/accessibility_role.macos.mm")
-    set_source_files_properties("./conditional/accessibility_role.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_sources(albor-tests PRIVATE "./conditional/accessibility_role.test.macos.mm")
+    set_source_files_properties("./conditional/accessibility_role.test.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(albor-tests PRIVATE "-framework AppKit" "-framework Foundation")
+
+    # the popup suite drives the appkit window adapter directly, because the popup shape is a native appkit surface
+    # (§5.1, AD-16). the adapter is linked plain rather than through its -auto interface, because only the whole-archive
+    # form pulls both platform_install units and collides on albor_platform_marker; the plain link pulls the window
+    # unit on demand and installs nothing, which the suite does not need because it calls the create factory directly
+    target_sources(albor-tests PRIVATE "./conditional/platform_window_popup.test.macos.mm")
+    set_source_files_properties("./conditional/platform_window_popup.test.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(albor-tests PRIVATE albor-platform-macos)
 
     # the backend lifecycle suite destroys a second gpu context in one process, which the metal driver traps on
     # after ganesh has used it. the trap kills the process, so no release run could finish while the suite is in,
