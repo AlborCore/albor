@@ -480,11 +480,23 @@ namespace albor
 
         // whether the window is currently on screen, which appkit does not report directly
         bool visible = false;
+
+        // whether the window is a popup, which the show path and the dismissal monitor consult (§5.1)
+        bool popup = false;
+
+        // the local monitor that dismisses the popup on an outside click, which is removed before the state dies (§5.1)
+        id dismiss_monitor = nil;
+
+        // the deactivation observer, which dismisses the popup when the application resigns active (§5.1, §8.4)
+        id deactivate_observer = nil;
     };
 
     namespace
     {
         NSWindowStyleMask style_mask_for(const WindowOptions& options) {
+            // a popup is a borderless transient surface, which appkit draws with no chrome at all (§5.1)
+            if (options.role == WindowRole::Popup)
+                return NSWindowStyleMaskBorderless;
             // every albor window is titled and closable, which is what the documented role mask asks for (§5.3)
             NSWindowStyleMask mask = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable;
             // a window the user may not resize simply omits the resizable bit (§5.1)
@@ -507,6 +519,19 @@ namespace albor
             const CGFloat scale = window.backingScaleFactor;
             return WindowMetrics::from_logical(Size{static_cast<float>(bounds.size.width), static_cast<float>(bounds.size.height)}, static_cast<float>(scale));
         }
+
+        // the dismissal a popup shares between its outside click monitor and its deactivation observer (§5.1, §8.4)
+        void dismiss_popup(const std::shared_ptr<MacosWindowState>& state) {
+            // an already hidden popup is not dismissed, so its hook never fires a second time (§5.1, §5.2)
+            if (state->window == nil || !state->visible)
+                return;
+            // the popup is ordered out, which is the whole of a dismissal for a transient surface (§5.1)
+            [state->window orderOut:nil];
+            state->visible = false;
+            // the framework is told the popup closed, so its owner can re-arm and tear it down (§5.2)
+            if (state->listener != nullptr)
+                state->listener->on_platform_closed();
+        }
     } // namespace
 
     std::unique_ptr<MacosPlatformWindow> MacosPlatformWindow::create(const WindowOptions& options) {
@@ -522,8 +547,28 @@ namespace albor
         const double origin_x = 120.0 + 80.0 * static_cast<double>(window_ordinal);
         const double origin_y = 120.0 + 60.0 * static_cast<double>(window_ordinal);
         const NSRect frame = NSMakeRect(origin_x, origin_y, static_cast<double>(options.size.width), static_cast<double>(options.size.height));
-        // the native window is created with the documented titled, closable and resizable mask (§5.3)
-        NSWindow* window = [[NSWindow alloc] initWithContentRect:frame styleMask:style_mask_for(options) backing:NSBackingStoreBuffered defer:NO];
+        // the popup role builds a panel, which is the appkit surface that floats without activating (§5.1)
+        const bool popup = options.role == WindowRole::Popup;
+        NSWindow* window = nil;
+        if (popup) {
+            // a popup is borderless and never activates the application when it shows (§5.1)
+            NSPanel* panel = [[NSPanel alloc] initWithContentRect:frame styleMask:(style_mask_for(options) | NSWindowStyleMaskNonactivatingPanel) backing:NSBackingStoreBuffered defer:NO];
+            // a popup floats above the ordinary windows, which is what keeps a dropdown above its trigger (§5.1)
+            panel.level = NSFloatingWindowLevel;
+            // the panel takes key only when a control inside it asks for the keyboard (§5.1)
+            panel.becomesKeyOnlyIfNeeded = YES;
+            // the panel hides when the application deactivates, which is the cross application dismissal of §8.4
+            panel.hidesOnDeactivate = YES;
+            // a borderless panel carries a shadow over a clear background (§5.1)
+            panel.hasShadow = YES;
+            panel.opaque = NO;
+            panel.backgroundColor = [NSColor clearColor];
+            window = panel;
+        }
+        else {
+            // a titled window is created with the documented titled, closable and resizable mask (§5.3)
+            window = [[NSWindow alloc] initWithContentRect:frame styleMask:style_mask_for(options) backing:NSBackingStoreBuffered defer:NO];
+        }
         if (window == nil)
             return nullptr;
         window.title = [NSString stringWithUTF8String:options.title.c_str()];
@@ -540,6 +585,9 @@ namespace albor
         state->window = window;
         state->content_view = content;
         state->layer = static_cast<CAMetalLayer*>(content.layer);
+        // a popup presents over a clear background, so its layer is non opaque and the compositor may blend it (§5.1)
+        if (popup)
+            state->layer.opaque = NO;
         // the delegate is the veto point of a native close request, which the framework answers (§5.2)
         AlborWindowDelegate* delegate = [[AlborWindowDelegate alloc] init];
         state->window_delegate = delegate;
@@ -569,6 +617,29 @@ namespace albor
                                                     // the framework receives the metrics the platform now reports (§9.1)
                                                     state->listener->on_platform_resize(metrics_of(state->window));
                                                   }];
+        // the popup flag is kept so the show path knows not to activate, and the teardown knows it owns a monitor (§5.1)
+        state->popup = popup;
+        // a popup dismisses on a click outside its bounds, which is the outside dismissal of §5.1
+        if (popup) {
+            // the handler dismisses on a press that reached a window other than the popup (§5.1)
+            NSEvent* (^dismiss)(NSEvent*) = ^NSEvent*(NSEvent* event) {
+              // a click that reached the popup itself is not an outside click, so it passes through (§5.1)
+              if (event.window != state->window)
+                  dismiss_popup(state);
+              // the click is returned, so it still reaches whatever the user actually clicked (§5.1)
+              return event;
+            };
+            // the monitor watches the press events, so a release or a drag never dismisses the popup (§5.1)
+            state->dismiss_monitor = [NSEvent addLocalMonitorForEventsMatchingMask:(NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown | NSEventMaskOtherMouseDown) handler:dismiss];
+            // a deactivating panel hides itself, so the framework is told here, on the posting thread (§5.1, §8.4)
+            state->deactivate_observer = [center addObserverForName:NSApplicationDidResignActiveNotification
+                                                             object:application
+                                                              queue:nil
+                                                         usingBlock:^(NSNotification*) {
+                                                           // the deactivation dismisses through the shared path (§5.1)
+                                                           dismiss_popup(state);
+                                                         }];
+        }
         // a new window moves the cascade along, so a later window does not stack on this one (§5.3)
         window_ordinal++;
         // the accent colour changes on the system settings, announced through the distributed center (§8.4)
@@ -610,6 +681,16 @@ namespace albor
             [[NSDistributedNotificationCenter defaultCenter] removeObserver:m_state->accent_observer];
             m_state->accent_observer = nil;
         }
+        // the dismissal monitor is removed, because it captured the state and would keep the window alive (§5.1)
+        if (m_state->dismiss_monitor != nil) {
+            [NSEvent removeMonitor:m_state->dismiss_monitor];
+            m_state->dismiss_monitor = nil;
+        }
+        // the deactivation observer is removed, because it captured the state and would outlive the window (§5.1, §8.4)
+        if (m_state->deactivate_observer != nil) {
+            [[NSNotificationCenter defaultCenter] removeObserver:m_state->deactivate_observer];
+            m_state->deactivate_observer = nil;
+        }
         // the native window is closed last, so the layer and its drawables die with it (§6.3)
         [m_state->window close];
         // the native objects are dropped with the state, which releases them under arc (§5.3)
@@ -635,9 +716,15 @@ namespace albor
         // a window with no native window cannot be shown (§5.3)
         if (m_state->window == nil)
             return;
-        [m_state->window makeKeyAndOrderFront:nil];
-        // the application is activated so that the window takes focus and the pacing source ticks (§4.1)
-        [[NSApplication sharedApplication] activateIgnoringOtherApps:YES];
+        // a popup is non activating, so it is ordered front without taking key (§5.1)
+        if (m_state->popup) {
+            [m_state->window orderFront:nil];
+        }
+        else {
+            [m_state->window makeKeyAndOrderFront:nil];
+            // the application is activated so that the window takes focus and the pacing source ticks (§4.1)
+            [[NSApplication sharedApplication] activateIgnoringOtherApps:YES];
+        }
         m_state->visible = true;
     }
 
