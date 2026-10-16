@@ -3,10 +3,10 @@ name: build
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
-  packages: write
   pull-requests: read
 
 concurrency:
@@ -39,72 +39,55 @@ jobs:
     if: |-
       !cancelled() &&
       (github.event_name != 'push' || github.ref == 'refs/heads/main' || needs.check-pr.outputs.has_pr != 'true')
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: macOS
             os: macos-latest
+            vcpkg-root: /usr/local/share/vcpkg
             setup: |
               # the vcpkg binary cache root must exist before vcpkg runs
               mkdir -p .vcpkg-cache
-              # the release preset launches the compiler through ccache, which the runner image does not ship it
+              # the release preset launches the compiler through ccache, which the runner image does not ship
               HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
               ccache --max-size 2G
               # the preset is c++23, so take the newest xcode the image carries rather than its default
               sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
-              # install mono, NuGet dependency
-              HOMEBREW_NO_AUTO_UPDATE=1 brew install mono
-              # bootstrap vcpkg
-              ./vcpkg/bootstrap-vcpkg.sh
           # windows (win32 + direct3d) is disabled until a win32 platform backend exists:
           # platform/macos is added unconditionally by the top level CMakeLists.txt
           # - name: Windows
           #   os: windows-latest
-          #   setup: |
-          #     # install dependencies
-          #     choco install ccache
-          #     # bootstrap vcpkg
-          #     ./vcpkg/bootstrap-vcpkg.sh
+          #   vcpkg-root: C:\vcpkg
+          #   setup: choco install ccache
           # linux (wayland/x11 + vulkan) is disabled for the same reason as windows
           # - name: Linux
           #   os: ubuntu-latest
-          #   setup: |
-          #     # install dependencies
-          #     sudo apt-get update && sudo apt-get install -y ccache mono
-          #     # bootstrap vcpkg
-          #     ./vcpkg/bootstrap-vcpkg.sh
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 180
-    defaults:
-      run:
-        shell: bash
+          #   vcpkg-root: /usr/local/share/vcpkg
+          #   setup: sudo apt-get update && sudo apt-get install -y ccache
     env:
-      VCPKG_ROOT: ./vcpkg
-      FEED_URL: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
-      VCPKG_BINARY_SOURCES: >-
-        clear;nuget,https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json,${{ github.ref == 'refs/heads/main' && 'readwrite' || 'readwrite' }}
+      VCPKG_ROOT: ${{ matrix.vcpkg-root }}
+      VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
       CCACHE_DIR: ${{ github.workspace }}/.ccache
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
 
       - name: platform setup
         run: ${{ matrix.setup }}
 
-      - name: Authenticate to the NuGet feed
-        shell: bash
-        run: |
-          VCPKG=./vcpkg/vcpkg
-          [ "$RUNNER_OS" = "Windows" ] && VCPKG=./vcpkg/vcpkg.exe
-          NUGET="$($VCPKG fetch nuget | tail -n 1)"
-          RUN=""
-          [ "$RUNNER_OS" != "Windows" ] && RUN="mono"
-          $RUN "$NUGET" sources add -Source "$FEED_URL" -Name GitHubPackages \
-            -UserName "${{ github.repository_owner }}" \
-            -Password "${{ secrets.GITHUB_TOKEN }}" -StorePasswordInClearText
-          $RUN "$NUGET" setapikey "${{ secrets.GITHUB_TOKEN }}" -Source "$FEED_URL"
+      - name: restore the vcpkg binary cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ github.workspace }}/.vcpkg-cache
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}-${{ github.run_id }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}-
+            vcpkg-${{ runner.os }}-
 
       - name: restore the ccache directory
         uses: actions/cache@v5
