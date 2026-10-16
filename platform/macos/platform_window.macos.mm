@@ -486,6 +486,9 @@ namespace albor
 
         // the local monitor that dismisses the popup on an outside click, which is removed before the state dies (§5.1)
         id dismiss_monitor = nil;
+
+        // the deactivation observer, which dismisses the popup when the application resigns active (§5.1, §8.4)
+        id deactivate_observer = nil;
     };
 
     namespace
@@ -516,6 +519,19 @@ namespace albor
             const CGFloat scale = window.backingScaleFactor;
             return WindowMetrics::from_logical(Size{static_cast<float>(bounds.size.width), static_cast<float>(bounds.size.height)}, static_cast<float>(scale));
         }
+
+        // the dismissal a popup shares between its outside click monitor and its deactivation observer (§5.1, §8.4)
+        void dismiss_popup(const std::shared_ptr<MacosWindowState>& state) {
+            // an already hidden popup is not dismissed, so its hook never fires a second time (§5.1, §5.2)
+            if (state->window == nil || !state->visible)
+                return;
+            // the popup is ordered out, which is the whole of a dismissal for a transient surface (§5.1)
+            [state->window orderOut:nil];
+            state->visible = false;
+            // the framework is told the popup closed, so its owner can re-arm and tear it down (§5.2)
+            if (state->listener != nullptr)
+                state->listener->on_platform_closed();
+        }
     } // namespace
 
     std::unique_ptr<MacosPlatformWindow> MacosPlatformWindow::create(const WindowOptions& options) {
@@ -541,6 +557,8 @@ namespace albor
             panel.level = NSFloatingWindowLevel;
             // the panel takes key only when a control inside it asks for the keyboard (§5.1)
             panel.becomesKeyOnlyIfNeeded = YES;
+            // the panel hides when the application deactivates, which is the cross application dismissal of §8.4
+            panel.hidesOnDeactivate = YES;
             // a borderless panel carries a shadow over a clear background (§5.1)
             panel.hasShadow = YES;
             panel.opaque = NO;
@@ -567,6 +585,9 @@ namespace albor
         state->window = window;
         state->content_view = content;
         state->layer = static_cast<CAMetalLayer*>(content.layer);
+        // a popup presents over a clear background, so its layer is non opaque and the compositor may blend it (§5.1)
+        if (popup)
+            state->layer.opaque = NO;
         // the delegate is the veto point of a native close request, which the framework answers (§5.2)
         AlborWindowDelegate* delegate = [[AlborWindowDelegate alloc] init];
         state->window_delegate = delegate;
@@ -603,19 +624,21 @@ namespace albor
             // the handler dismisses on a press that reached a window other than the popup (§5.1)
             NSEvent* (^dismiss)(NSEvent*) = ^NSEvent*(NSEvent* event) {
               // a click that reached the popup itself is not an outside click, so it passes through (§5.1)
-              if (state->window == nil || event.window == state->window)
-                  return event;
-              // the popup is ordered out, which is the whole of a dismissal for a transient surface (§5.1)
-              [state->window orderOut:nil];
-              state->visible = false;
-              // the framework is told the popup closed, so its owner can re-arm and tear it down (§5.2)
-              if (state->listener != nullptr)
-                  state->listener->on_platform_closed();
+              if (event.window != state->window)
+                  dismiss_popup(state);
               // the click is returned, so it still reaches whatever the user actually clicked (§5.1)
               return event;
             };
             // the monitor watches the press events, so a release or a drag never dismisses the popup (§5.1)
             state->dismiss_monitor = [NSEvent addLocalMonitorForEventsMatchingMask:(NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown | NSEventMaskOtherMouseDown) handler:dismiss];
+            // a deactivating panel hides itself, so the framework is told here, on the posting thread (§5.1, §8.4)
+            state->deactivate_observer = [center addObserverForName:NSApplicationDidResignActiveNotification
+                                                             object:application
+                                                              queue:nil
+                                                         usingBlock:^(NSNotification*) {
+                                                           // the deactivation dismisses through the shared path (§5.1)
+                                                           dismiss_popup(state);
+                                                         }];
         }
         // a new window moves the cascade along, so a later window does not stack on this one (§5.3)
         window_ordinal++;
@@ -662,6 +685,11 @@ namespace albor
         if (m_state->dismiss_monitor != nil) {
             [NSEvent removeMonitor:m_state->dismiss_monitor];
             m_state->dismiss_monitor = nil;
+        }
+        // the deactivation observer is removed, because it captured the state and would outlive the window (§5.1, §8.4)
+        if (m_state->deactivate_observer != nil) {
+            [[NSNotificationCenter defaultCenter] removeObserver:m_state->deactivate_observer];
+            m_state->deactivate_observer = nil;
         }
         // the native window is closed last, so the layer and its drawables die with it (§6.3)
         [m_state->window close];

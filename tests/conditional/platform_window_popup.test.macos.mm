@@ -168,3 +168,104 @@ TEST(MacosPopupWindow, AClickInsideThePopupDoesNotDismissIt) {
     // assert the popup stays on screen, which the inside click leaves it (§5.1)
     EXPECT_TRUE(platform->visible());
 }
+
+TEST(MacosPopupWindow, AClickWhileThePopupIsHiddenReportsNothing) {
+    // arrange a created popup that was never shown, which the hidden guard protects (§5.1)
+    WindowOptions options;
+    options.role = WindowRole::Popup;
+    options.title = "popup-hidden";
+    options.size = albor::Size{200.0f, 300.0f};
+    std::unique_ptr<MacosPlatformWindow> platform = MacosPlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    // arrange a press outside the hidden popup, which the monitor would otherwise read as a dismissal (§5.1)
+    NSWindow* outside = [[NSWindow alloc] initWithContentRect:NSMakeRect(0.0, 0.0, 50.0, 50.0) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+    NSEvent* click = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:NSMakePoint(1.0, 1.0) modifierFlags:0 timestamp:0.0 windowNumber:outside.windowNumber context:nil eventNumber:1 clickCount:1 pressure:1.0];
+    // act
+    [[NSApplication sharedApplication] sendEvent:click];
+    // assert a hidden popup is never dismissed, so its hook does not fire (§5.1)
+    EXPECT_EQ(listener.closed, 0);
+    // assert the popup stays off screen, which an outside press cannot change (§5.1)
+    EXPECT_FALSE(platform->visible());
+}
+
+TEST(MacosPopupWindow, ASecondOutsideClickDoesNotReportClosedAgain) {
+    // arrange a shown popup that a first outside press dismisses (§5.1)
+    WindowOptions options;
+    options.role = WindowRole::Popup;
+    options.title = "popup-once";
+    options.size = albor::Size{200.0f, 300.0f};
+    std::unique_ptr<MacosPlatformWindow> platform = MacosPlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    platform->show();
+    NSWindow* outside = [[NSWindow alloc] initWithContentRect:NSMakeRect(0.0, 0.0, 50.0, 50.0) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+    NSEvent* first = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:NSMakePoint(1.0, 1.0) modifierFlags:0 timestamp:0.0 windowNumber:outside.windowNumber context:nil eventNumber:1 clickCount:1 pressure:1.0];
+    [[NSApplication sharedApplication] sendEvent:first];
+    ASSERT_EQ(listener.closed, 1);
+    // arrange a second outside press, which arrives while the popup is already hidden (§5.1)
+    NSEvent* second = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:NSMakePoint(1.0, 1.0) modifierFlags:0 timestamp:0.0 windowNumber:outside.windowNumber context:nil eventNumber:2 clickCount:1 pressure:1.0];
+    // act
+    [[NSApplication sharedApplication] sendEvent:second];
+    // assert the dismissal raises its hook exactly once, which the hidden guard holds (§5.1, §5.2)
+    EXPECT_EQ(listener.closed, 1);
+}
+
+TEST(MacosPopupWindow, ADeactivationDismissesThePopupAndReportsClosed) {
+    // arrange a shown popup, which a deactivation dismisses (§8.4)
+    WindowOptions options;
+    options.role = WindowRole::Popup;
+    options.title = "popup-deactivate";
+    options.size = albor::Size{200.0f, 300.0f};
+    std::unique_ptr<MacosPlatformWindow> platform = MacosPlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    platform->show();
+    // act the application resigns active, which appkit announces to the observer (§8.4)
+    [[NSNotificationCenter defaultCenter] postNotificationName:NSApplicationDidResignActiveNotification object:[NSApplication sharedApplication]];
+    // assert the framework was told the popup closed, which the deactivation reports through the shared path (§5.2)
+    EXPECT_EQ(listener.closed, 1);
+    // assert the framework records the popup as gone, which the dismissal sets (§5.1)
+    EXPECT_FALSE(platform->visible());
+}
+
+TEST(MacosPopupWindow, ANormalWindowIsNotClosedByDeactivation) {
+    // arrange a shown normal window, which does not hide on deactivation (§5.3)
+    WindowOptions options;
+    options.title = "normal-deactivate";
+    options.size = albor::Size{200.0f, 300.0f};
+    std::unique_ptr<MacosPlatformWindow> platform = MacosPlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    platform->show();
+    // act
+    [[NSNotificationCenter defaultCenter] postNotificationName:NSApplicationDidResignActiveNotification object:[NSApplication sharedApplication]];
+    // assert a non popup raises no close, because only a popup dismisses on deactivation (§5.1)
+    EXPECT_EQ(listener.closed, 0);
+    // assert the ordinary window stays on screen, which a deactivation leaves it (§5.3)
+    EXPECT_TRUE(platform->visible());
+}
+
+TEST(MacosPopupWindow, ThePopupLayerIsNonopaque) {
+    // arrange a popup option set, which the transparent layer serves (§5.1)
+    WindowOptions options;
+    options.role = WindowRole::Popup;
+    options.title = "popup-layer";
+    options.size = albor::Size{200.0f, 300.0f};
+    // act
+    std::unique_ptr<MacosPlatformWindow> platform = MacosPlatformWindow::create(options);
+    // assert
+    ASSERT_NE(platform, nullptr);
+    NSView* content = nil;
+    for (NSWindow* window in [NSApplication sharedApplication].windows) {
+        if ([window.title isEqualToString:@"popup-layer"])
+            content = window.contentView;
+    }
+    ASSERT_NE(content, nil);
+    // assert the metal layer is non opaque, so the compositor may blend the popup over what lies beneath (§5.1)
+    EXPECT_FALSE(content.layer.opaque);
+}
