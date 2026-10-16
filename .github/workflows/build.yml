@@ -34,7 +34,7 @@ jobs:
           echo "has_pr=$( [ "$count" -gt 0 ] && echo true || echo false )" >> "$GITHUB_OUTPUT"
 
   build:
-    name: build
+    name: build (${{ matrix.name }})
     needs: [check-pr]
     if: |-
       !cancelled() &&
@@ -54,16 +54,26 @@ jobs:
               # the preset is c++23, so take the newest xcode the image carries rather than its default
               sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
               # install mono, NuGet dependency
-              brew install mono
+              HOMEBREW_NO_AUTO_UPDATE=1 brew install mono
+              # bootstrap vcpkg
+              ./vcpkg/bootstrap-vcpkg.sh
           # windows (win32 + direct3d) is disabled until a win32 platform backend exists:
           # platform/macos is added unconditionally by the top level CMakeLists.txt
           # - name: Windows
           #   os: windows-latest
-          #   setup: choco install ccache
+          #   setup: |
+          #     # install dependencies
+          #     choco install ccache
+          #     # bootstrap vcpkg
+          #     ./vcpkg/bootstrap-vcpkg.sh
           # linux (wayland/x11 + vulkan) is disabled for the same reason as windows
           # - name: Linux
           #   os: ubuntu-latest
-          #   setup: sudo apt-get update && sudo apt-get install -y ccache
+          #   setup: |
+          #     # install dependencies
+          #     sudo apt-get update && sudo apt-get install -y ccache mono
+          #     # bootstrap vcpkg
+          #     ./vcpkg/bootstrap-vcpkg.sh
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
     defaults:
@@ -77,7 +87,8 @@ jobs:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
     steps:
       - uses: actions/checkout@v7
-        with: { submodules: true }
+        with:
+          submodules: true
 
       - name: platform setup
         run: ${{ matrix.setup }}
