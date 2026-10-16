@@ -8,8 +8,10 @@ a collection.
 ```text
 Column {
     if show_details {
-        Label { text: detail_text; }
-        Button { text: @tr("Hide"); on_clicked: { show_details = false; } }
+        Column {
+            Label { text: detail_text; }
+            Button { text: @tr("Hide"); on_clicked: { show_details = false; } }
+        }
     }
 }
 ```

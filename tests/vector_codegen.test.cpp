@@ -4,6 +4,12 @@
 
 #include <gtest/gtest.h>
 
+#include "conditional_panel.h"
+#include "guarded_flat_repeat_panel.h"
+#include "guarded_repeat_panel.h"
+#include "nested_direct_panel.h"
+#include "nested_panel.h"
+#include "ordered_panel.h"
 #include "record_panel.h"
 #include "runtime/binding_engine.h"
 #include "scroll_log.h"
@@ -11,6 +17,7 @@
 #include "text/text_engine.h"
 #include "ui/scene_builder.h"
 #include "vector_panel.h"
+#include "widgets/label.h"
 #include "window/window_metrics.h"
 
 using namespace albor;
@@ -182,6 +189,278 @@ TEST(RepeatCodegen, ARowSurvivesItsItemMoving) {
     engine.settle();
     // assert the same node now shows the last item, because the row moved rather than being rebuilt (§18.1, AD-13)
     EXPECT_EQ(static_cast<UiNode&>(list).child_at(0)->child_at(3), first);
+}
+
+TEST(ConditionalCodegen, AConditionalBodyAppearsAndDisappears) {
+    // arrange a panel whose guarded body starts absent, because the condition is false (§11.1)
+    BindingEngine engine;
+    ConditionalPanel panel(&engine, nullptr);
+    // act the column is read before the condition holds, which leaves the static siblings (§11.1)
+    const std::size_t without = static_cast<UiNode&>(panel).child_at(0)->child_count();
+    // act the condition turns true, which the engine settles into a body (§7.3, §11.1)
+    panel.set_show(true);
+    engine.settle();
+    // assert the body appeared, which is what a true condition materializes (§11.1)
+    EXPECT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), without + 1);
+}
+
+TEST(ConditionalCodegen, ARemovedConditionalBodyLeavesTheTree) {
+    // arrange a panel whose body is materialized once, which is what a holding condition does (§11.1)
+    BindingEngine engine;
+    ConditionalPanel panel(&engine, nullptr);
+    // act the condition holds, so the body is built and adopted (§11.1)
+    panel.set_show(true);
+    engine.settle();
+    const std::size_t while_present = static_cast<UiNode&>(panel).child_at(0)->child_count();
+    // act the condition stops holding, which destroys the body (§11.1)
+    panel.set_show(false);
+    engine.settle();
+    // assert the body left the tree, because a false condition removes it rather than hiding it (§11.1)
+    EXPECT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), while_present - 1);
+}
+
+TEST(ConditionalCodegen, AReheldConditionalBodyReappearsOnce) {
+    // arrange a panel whose body was shown and then removed, which is the toggle a removal gets wrong (§11.1)
+    BindingEngine engine;
+    ConditionalPanel panel(&engine, nullptr);
+    // act
+    panel.set_show(true);
+    engine.settle();
+    // act
+    panel.set_show(false);
+    engine.settle();
+    // act the condition holds again, which must re-adopt exactly one body (§11.1)
+    panel.set_show(true);
+    engine.settle();
+    // assert one body is present, because a dangling root would leave the removed body behind (§11.1)
+    const std::size_t restored = static_cast<UiNode&>(panel).child_at(0)->child_count();
+    // act the condition drops once more, which removes the one body that was re-adopted (§11.1)
+    panel.set_show(false);
+    engine.settle();
+    // assert the tree is back to the static siblings, because no copy was left dangling (§11.1)
+    EXPECT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), restored - 1);
+}
+
+TEST(ConditionalCodegen, AdjacentBodiesKeepTheWrittenOrder) {
+    // arrange a panel with two adjacent conditionals, which is the case a shared offset reverses (§11.1)
+    BindingEngine engine;
+    OrderedPanel panel(&engine, nullptr);
+    // act the first body appears first, which occupies the only position while the second is absent (§11.1)
+    panel.set_first(true);
+    engine.settle();
+    // act the second body appears after, which must follow the first because it was written second (§11.1)
+    panel.set_second(true);
+    engine.settle();
+    // assert the first row is the first body, because the sibling order is the written order (§11.1)
+    ASSERT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), 2U);
+    const auto* first = dynamic_cast<const Label*>(static_cast<UiNode&>(panel).child_at(0)->child_at(0));
+    const auto* second = dynamic_cast<const Label*>(static_cast<UiNode&>(panel).child_at(0)->child_at(1));
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    EXPECT_EQ(first->text(), "first");
+    EXPECT_EQ(second->text(), "second");
+}
+
+TEST(ConditionalCodegen, RemovingTheFirstBodyKeepsTheSecond) {
+    // arrange both bodies shown, which lays them out in written order (§11.1)
+    BindingEngine engine;
+    OrderedPanel panel(&engine, nullptr);
+    // act
+    panel.set_first(true);
+    panel.set_second(true);
+    engine.settle();
+    ASSERT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), 2U);
+    // act the first body is removed, which must not disturb the second (§11.1)
+    panel.set_first(false);
+    engine.settle();
+    // assert only the second survives, because removal is by identity rather than by position (§11.1)
+    ASSERT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), 1U);
+    const auto* only = dynamic_cast<const Label*>(static_cast<UiNode&>(panel).child_at(0)->child_at(0));
+    ASSERT_NE(only, nullptr);
+    EXPECT_EQ(only->text(), "second");
+}
+
+TEST(ConditionalCodegen, ANestedBodyFollowsBothConditions) {
+    // arrange a panel whose guarded body holds another guarded body (§11.1)
+    BindingEngine engine;
+    NestedPanel panel(&engine, nullptr);
+    // act the inner condition holds while the outer does not, which must show nothing (§11.1)
+    panel.set_inner(true);
+    engine.settle();
+    EXPECT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), 0U);
+    // act the outer condition holds, which reveals the outer body and with it the inner one (§11.1)
+    panel.set_outer(true);
+    engine.settle();
+    ASSERT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), 1U);
+    // assert the inner body appeared inside the outer body, because both conditions hold (§11.1)
+    EXPECT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_at(0)->child_count(), 2U);
+}
+
+TEST(ConditionalCodegen, ANestedBodyTogglesOnItsOwnCondition) {
+    // arrange a panel whose outer body holds an inner body, both shown (§11.1)
+    BindingEngine engine;
+    NestedPanel panel(&engine, nullptr);
+    panel.set_outer(true);
+    panel.set_inner(true);
+    engine.settle();
+    ASSERT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_at(0)->child_count(), 2U);
+    // act the inner condition drops, which removes only the inner body (§11.1)
+    panel.set_inner(false);
+    engine.settle();
+    EXPECT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_at(0)->child_count(), 1U);
+    // act the inner condition holds again, which re-adopts one inner body (§11.1)
+    panel.set_inner(true);
+    engine.settle();
+    EXPECT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_at(0)->child_count(), 2U);
+}
+
+TEST(ConditionalCodegen, RemovingTheOuterBodyTakesTheInner) {
+    // arrange a panel whose outer and inner bodies both hold (§11.1)
+    BindingEngine engine;
+    NestedPanel panel(&engine, nullptr);
+    panel.set_outer(true);
+    panel.set_inner(true);
+    engine.settle();
+    ASSERT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), 1U);
+    // act the outer condition drops, which removes the outer body and the inner one with it (§11.1)
+    panel.set_outer(false);
+    engine.settle();
+    // assert the outer body left the tree, because a false condition removes it (§11.1)
+    EXPECT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), 0U);
+    // act the outer condition holds again, which must re-adopt exactly one outer body with its inner one (§11.1)
+    panel.set_outer(true);
+    engine.settle();
+    ASSERT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), 1U);
+    // assert the inner body returned with the outer one, because its condition still holds (§11.1)
+    EXPECT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_at(0)->child_count(), 2U);
+}
+
+TEST(ConditionalCodegen, ADirectlyNestedBodyFollowsBothConditions) {
+    // arrange a panel whose conditional body is itself a conditional, which owns no node of its own (§11.1)
+    BindingEngine engine;
+    NestedDirectPanel panel(&engine, nullptr);
+    // act only the inner condition holds, which must show nothing because the outer does not (§11.1)
+    panel.set_inner(true);
+    engine.settle();
+    EXPECT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), 0U);
+    // act the outer condition holds, which reveals the inner body directly (§11.1)
+    panel.set_outer(true);
+    engine.settle();
+    ASSERT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), 1U);
+    // assert the inner label is present, because both conditions hold (§11.1)
+    const auto* label = dynamic_cast<const Label*>(static_cast<UiNode&>(panel).child_at(0)->child_at(0));
+    ASSERT_NE(label, nullptr);
+    EXPECT_EQ(label->text(), "inner");
+}
+
+TEST(ConditionalCodegen, ADirectlyNestedBodyReactsToTheOuterCondition) {
+    // arrange a panel whose directly nested body is shown, because both conditions hold (§11.1)
+    BindingEngine engine;
+    NestedDirectPanel panel(&engine, nullptr);
+    panel.set_outer(true);
+    panel.set_inner(true);
+    engine.settle();
+    ASSERT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), 1U);
+    // act the outer condition drops, which takes the inner body with it (§11.1)
+    panel.set_outer(false);
+    engine.settle();
+    EXPECT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), 0U);
+    // act the outer condition holds again, which re-adopts the inner body once (§11.1)
+    panel.set_outer(true);
+    engine.settle();
+    EXPECT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), 1U);
+}
+
+TEST(ConditionalCodegen, ARepeatInsideABodyMaterializesWithTheBody) {
+    // arrange a panel whose conditional body wraps a repeat, which is what a guarded list is (§11.1, §18.1)
+    BindingEngine engine;
+    GuardedRepeatPanel panel(&engine, nullptr);
+    // act the source is filled before the condition holds, which must show nothing (§11.1)
+    panel.set_tasks(std::vector<Task>{Task{.key = "a", .title = "first", .done = false}, Task{.key = "b", .title = "second", .done = false}});
+    engine.settle();
+    EXPECT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), 1U);
+    // act the condition holds, which builds the body and its rows together (§11.1, §18.1)
+    panel.set_show(true);
+    engine.settle();
+    ASSERT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), 2U);
+    // assert the body carries one row per item, because the repeat materialized with the body (§18.1)
+    EXPECT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_at(1)->child_count(), 2U);
+}
+
+TEST(ConditionalCodegen, RemovingTheBodyRemovesTheGuardedRows) {
+    // arrange a panel whose guarded body carries rows, which is the case a removal gets wrong (§11.1, §18.1)
+    BindingEngine engine;
+    GuardedRepeatPanel panel(&engine, nullptr);
+    panel.set_show(true);
+    panel.set_tasks(std::vector<Task>{Task{.key = "a", .title = "first", .done = false}});
+    engine.settle();
+    ASSERT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), 2U);
+    // act the condition drops, which destroys the body and the rows it carries (§11.1, §18.1)
+    panel.set_show(false);
+    engine.settle();
+    // assert the body left the tree, because a false condition removes it rather than hiding it (§11.1)
+    EXPECT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), 1U);
+}
+
+TEST(ConditionalCodegen, ARevealedBodyRebuildsItsRows) {
+    // arrange a panel whose guarded body was shown and then removed, which is the toggle a rebuild gets wrong (§11.1)
+    BindingEngine engine;
+    GuardedRepeatPanel panel(&engine, nullptr);
+    panel.set_show(true);
+    panel.set_tasks(std::vector<Task>{Task{.key = "a", .title = "first", .done = false}});
+    engine.settle();
+    panel.set_show(false);
+    engine.settle();
+    // act the condition holds again, which must rebuild the body and its rows once (§11.1, §18.1)
+    panel.set_show(true);
+    engine.settle();
+    ASSERT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), 2U);
+    // assert the rows are back, because a dangling view would leave them behind or double them (§18.1)
+    EXPECT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_at(1)->child_count(), 1U);
+}
+
+TEST(ConditionalCodegen, AGuardedRowReconcilesWhileTheBodyHolds) {
+    // arrange a panel whose guarded body carries two rows, which is what a source change reconciles (§18.1, AD-13)
+    BindingEngine engine;
+    GuardedRepeatPanel panel(&engine, nullptr);
+    panel.set_show(true);
+    panel.set_tasks(std::vector<Task>{Task{.key = "a", .title = "first", .done = false}, Task{.key = "b", .title = "second", .done = false}});
+    engine.settle();
+    // act the middle item goes, which must reconcile the rows inside the body (§18.1, AD-13)
+    panel.set_tasks(std::vector<Task>{Task{.key = "b", .title = "second", .done = false}});
+    engine.settle();
+    // assert only one row remains, because the guarded view reconciled by identity (§18.1, AD-13)
+    ASSERT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), 2U);
+    EXPECT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_at(1)->child_count(), 1U);
+}
+
+TEST(ConditionalCodegen, ARepeatAsTheWholeBodyAppearsWithTheBody) {
+    // arrange a panel whose conditional body is the repeat itself, which owns no container of its own (§11.1, §18.1)
+    BindingEngine engine;
+    GuardedFlatRepeatPanel panel(&engine, nullptr);
+    // act the source is filled while the condition is false, which must show nothing (§11.1)
+    panel.set_tasks(std::vector<Task>{Task{.key = "a", .title = "first", .done = false}, Task{.key = "b", .title = "second", .done = false}});
+    engine.settle();
+    EXPECT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), 1U);
+    // act the condition holds, which materializes the rows in the container directly (§11.1, §18.1)
+    panel.set_show(true);
+    engine.settle();
+    EXPECT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), 3U);
+}
+
+TEST(ConditionalCodegen, ARemovedFlatBodyTakesItsRows) {
+    // arrange a panel whose whole body is a repeat, shown with two rows (§11.1, §18.1)
+    BindingEngine engine;
+    GuardedFlatRepeatPanel panel(&engine, nullptr);
+    panel.set_show(true);
+    panel.set_tasks(std::vector<Task>{Task{.key = "a", .title = "first", .done = false}, Task{.key = "b", .title = "second", .done = false}});
+    engine.settle();
+    ASSERT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), 3U);
+    // act the condition drops, which removes the rows the body owned directly (§11.1, §18.1)
+    panel.set_show(false);
+    engine.settle();
+    // assert only the static sibling remains, because the rows left with the body (§18.1)
+    EXPECT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), 1U);
 }
 
 namespace

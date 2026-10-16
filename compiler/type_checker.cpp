@@ -158,6 +158,8 @@ namespace albor::compiler
         // the function bodies are resolved next, because a body may call any signature the file declares (§11.1)
         for (std::size_t index = 0; index < file.functions.size() && index < checked.functions.size(); index++)
             check_function(file.functions[index], checked.functions[index]);
+        // a function that calls itself through a cycle is rejected, because the C++ would recurse forever (§11.1)
+        detect_function_cycles(checked.functions);
         // the module-scoped types resolve next, so an initializer may name any value the file declares (§11.1)
         check_global_signatures(file, checked.globals);
         // the initial values follow their signatures, because one may call a function the file declares (§11.1)
@@ -492,6 +494,98 @@ namespace albor::compiler
         out.return_value = std::shared_ptr<const Expression>(declaration.return_value.get(), [](const Expression*) {});
     }
 
+    void TypeChecker::collect_function_calls(const Expression& expression, std::vector<std::string>& calls) const {
+        // a call names a function, which is an edge whatever it resolves to (§11.1)
+        if (const auto* call = dynamic_cast<const CallExpression*>(&expression)) {
+            // the name is recorded, because a declared function makes it an edge (§11.1)
+            calls.push_back(call->function);
+            // every argument is walked, because a call may nest another (§11.1)
+            for (const ExpressionPtr& argument : call->arguments)
+                collect_function_calls(*argument, calls);
+        }
+        // a conversion wraps a value, which is walked behind it (§11.1)
+        if (const auto* conversion = dynamic_cast<const ConversionExpression*>(&expression))
+            collect_function_calls(*conversion->value, calls);
+        // a binary application has two operands, which are both walked (§11.1)
+        if (const auto* binary = dynamic_cast<const BinaryExpression*>(&expression)) {
+            collect_function_calls(*binary->left, calls);
+            collect_function_calls(*binary->right, calls);
+        }
+        // a unary application has one operand, which is walked behind it (§11.1)
+        if (const auto* unary = dynamic_cast<const UnaryExpression*>(&expression))
+            collect_function_calls(*unary->value, calls);
+        // a grouping has an inner expression, which is walked behind it (§11.1)
+        if (const auto* grouping = dynamic_cast<const GroupingExpression*>(&expression))
+            collect_function_calls(*grouping->inner, calls);
+        // a bracketed list has elements, each of which is walked in order (§11.1)
+        if (const auto* array = dynamic_cast<const ArrayExpression*>(&expression))
+            for (const ExpressionPtr& element : array->elements)
+                collect_function_calls(*element, calls);
+        // a construction has field values, each of which is walked in order (§11.1)
+        if (const auto* construction = dynamic_cast<const RecordConstructionExpression*>(&expression))
+            for (const ConstructionField& field : construction->fields)
+                collect_function_calls(*field.value, calls);
+        // a field read has an object, which is walked behind it (§11.1)
+        if (const auto* access = dynamic_cast<const FieldAccessExpression*>(&expression))
+            collect_function_calls(*access->object, calls);
+    }
+
+    void TypeChecker::detect_function_cycles(const std::vector<CheckedFunction>& functions) {
+        // the declared names decide which a call resolves to, because a builtin is never a node (§11.1)
+        std::map<std::string, SourceSpan> declared;
+        for (const CheckedFunction& function : functions)
+            declared.emplace(function.name, function.span);
+        // the adjacency list maps one function to the functions its body calls (§11.1)
+        std::map<std::string, std::vector<std::pair<std::string, SourceSpan>>> edges;
+        for (const CheckedFunction& function : functions) {
+            // every function gets an entry, because the walk reaches each of them (§11.1)
+            std::vector<std::pair<std::string, SourceSpan>>& targets = edges[function.name];
+            // a body with no return calls nothing, because there is no expression to walk (§11.1)
+            if (function.return_value == nullptr)
+                continue;
+            // the called names are collected in written order, which the walk then follows (§11.1)
+            std::vector<std::string> calls;
+            collect_function_calls(*function.return_value, calls);
+            // each call that names a declared function becomes an edge (§11.1)
+            for (const std::string& called : calls) {
+                // the declaration decides, because a builtin name is not a node (§11.1)
+                const auto found = declared.find(called);
+                if (found != declared.end())
+                    targets.emplace_back(called, found->second);
+            }
+        }
+        // the colour map orders the walk, because a gray edge back to the open path is the cycle (§11.1)
+        std::map<std::string, int> colour;
+        for (const CheckedFunction& function : functions) {
+            // a finished function is skipped, because every path from it was already walked (§11.1)
+            if (colour[function.name] == 2)
+                continue;
+            visit_function(function.name, edges, colour);
+        }
+    }
+
+    void TypeChecker::visit_function(const std::string& name, const std::map<std::string, std::vector<std::pair<std::string, SourceSpan>>>& edges, std::map<std::string, int>& colour) {
+        // the function opens, because a path from it is now being walked (§11.1)
+        colour[name] = 1;
+        // each edge decides, because a cycle is reachable from any member of it (§11.1)
+        const auto found = edges.find(name);
+        if (found != edges.end()) {
+            for (const std::pair<std::string, SourceSpan>& target : found->second) {
+                // a gray target closes the cycle, because the path already opened it (§11.1)
+                if (colour[target.first] == 1) {
+                    // the problem points at the call, because that is where the recursion was written (§11.1)
+                    m_diagnostics.add(Diagnostic::Severity::Error, target.second, "E0431", "'" + name + "' calls itself through a cycle of functions");
+                    continue;
+                }
+                // an unvisited target is walked, because its own edges may return (§11.1)
+                if (colour[target.first] == 0)
+                    visit_function(target.first, edges, colour);
+            }
+        }
+        // the function closes, because every path from it has been walked (§11.1)
+        colour[name] = 2;
+    }
+
     void TypeChecker::check_global_signatures(const SourceFile& file, std::vector<CheckedGlobal>& out) {
         // every type is resolved before any value, so one initializer may name another file-level name (§11.1)
         for (const GlobalDeclaration& declaration : file.globals) {
@@ -791,7 +885,7 @@ namespace albor::compiler
         // a repeat with no body was already reported by the parser (§11.1)
         if (node.repeat_body != nullptr) {
             // the body sees the component declarations and its own item binding (§11.1)
-            const Scope inner{.properties = scope.properties, .repeat = out.get()};
+            const Scope inner{.properties = scope.properties, .repeat = out.get(), .globals = scope.globals};
             // the body is checked against that scope, which is what makes the item resolvable (§11.1)
             out->repeat_body = resolve_node(*node.repeat_body, inner);
         }

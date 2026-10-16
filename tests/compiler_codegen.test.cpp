@@ -238,6 +238,31 @@ component C {
     EXPECT_TRUE(has_code(diagnostics, "E0503"));
 }
 
+TEST(Codegen, AConditionalInsideARepeatBodyBlocksTheOutput) {
+    // arrange a conditional written inside a keyed row, which a row built once cannot reconcile (§11.1, AD-13)
+    DiagnosticList diagnostics;
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // the record carries the key a row is matched on, which the manifest declares (§18.1, AD-13)
+    catalog.add_record(RecordType{.name = "Task", .fields = {RecordFieldType{.name = "id", .type = scalar(TypeKind::String), .is_key = true}, RecordFieldType{.name = "done", .type = scalar(TypeKind::Bool), .is_key = false}, RecordFieldType{.name = "title", .type = scalar(TypeKind::String), .is_key = false}}});
+    const std::string_view source = R"(
+component task_board {
+    inout property<vector<Task>> tasks;
+    Column {
+        Repeat(task in tasks) {
+            if task.done {
+                Label { text: task.title; }
+            }
+        }
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert the conditional is refused rather than throwing, which the row emitter would do (§11.1, AD-13)
+    EXPECT_TRUE(files.empty());
+    EXPECT_TRUE(has_code(diagnostics, "E0504"));
+}
+
 TEST(Codegen, APhysicalPixelLengthBlocksTheOutput) {
     // arrange
     DiagnosticList diagnostics;
@@ -1671,6 +1696,21 @@ TEST(Codegen, EmitsAFunctionAsAGuardedStaticDefinition) {
     EXPECT_TRUE(contains(cpp.content, "return (x * 2.0f);"));
     // the call renders as a plain C++ call, which the static function above defines (§11.1)
     EXPECT_TRUE(contains(cpp.content, "double(self->m_amount.get())"));
+}
+
+TEST(Codegen, AFunctionParameterConvertsByItsDeclaredType) {
+    // arrange diagnostics, because the function and its call must both generate (§11.1)
+    DiagnosticList diagnostics;
+    // act a function converts one of its integer parameters to text inside its own body (§11.3)
+    const std::string_view source = "fn label(x: int): string { return string(x); } component C { Label { text: label(2); } }";
+    // assert the file generates, because the conversion and the call both resolved (§11.3)
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    EXPECT_FALSE(files.empty());
+    EXPECT_FALSE(diagnostics.has_errors());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // the parameter types as an integer, so the conversion spells a whole number rather than a float (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "return std::to_string(x);"));
+    EXPECT_FALSE(contains(cpp.content, "_float_to_text(x)"));
 }
 
 TEST(Codegen, EmitsACommandActionBinding) {

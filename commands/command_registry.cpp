@@ -12,8 +12,12 @@ namespace albor
 
     CommandRegistry::~CommandRegistry() {
         // borrowed commands are detached first, so none calls back into a registry already gone (§18.1)
-        for (Command* command : m_commands)
+        for (Command* command : m_commands) {
+            // the borrowed pointers are dropped before the members they point at, so a later invoke reads none (§18.1)
+            command->bind_undo_stack(nullptr);
+            command->bind_selection_source(nullptr);
             command->m_registry = nullptr;
+        }
         // the history commands are released before the stack, because each of them observes the stack (§18.4)
         m_redo_command.reset();
         // the undo command is released for the same reason, because it observes the stack as well (§18.4)
@@ -54,9 +58,33 @@ namespace albor
     void CommandRegistry::leave(Command& command) {
         // the borrowed pointer is dropped, which is what stops a destroyed command being handed out (§18.1)
         m_commands.erase(std::remove(m_commands.begin(), m_commands.end(), &command), m_commands.end());
-        // the id index is cleared too, but only for a command that carried an author assigned id (§18.1, AD-11)
-        if (command.identified())
-            m_by_explicit_id.erase(command.explicit_id());
+        // every accelerator the command owned is unbound, so no key routes into a command that is gone (§18.5)
+        const std::vector<Shortcut> owned = m_shortcuts.for_command(command.id());
+        for (const Shortcut& shortcut : owned)
+            (void)m_shortcuts.unbind(shortcut);
+        // the id index is re-pointed or cleared, but only for a command that carried an author assigned id (§18.1, AD-11)
+        if (command.identified()) {
+            const auto found = m_by_explicit_id.find(command.explicit_id());
+            // the index names this command, so it must name a survivor or leave the table entirely (§18.1, AD-11)
+            if (found != m_by_explicit_id.end() && found->second == command.id()) {
+                // a command still indexed under the same author id is the one the selector should reach (§18.1, AD-11)
+                Command* survivor = nullptr;
+                for (Command* other : m_commands) {
+                    // the first indexed duplicate is the survivor, because any of them is the named action (§18.1)
+                    if (other->identified() && other->explicit_id() == command.explicit_id()) {
+                        survivor = other;
+                        break;
+                    }
+                }
+                if (survivor != nullptr)
+                    found->second = survivor->id();
+                else
+                    m_by_explicit_id.erase(found);
+            }
+        }
+        // the borrowed pointers are dropped with the index, so a later invoke reads neither freed member (§18.1)
+        command.bind_undo_stack(nullptr);
+        command.bind_selection_source(nullptr);
         // the back reference is cleared, so a later join to another registry starts clean (§18.1)
         command.m_registry = nullptr;
     }

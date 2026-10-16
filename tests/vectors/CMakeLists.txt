@@ -27,6 +27,21 @@ albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/scrol
 # the conditional facade is generated, which proves a guarded body and a visible property compile (§11.1)
 albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/conditional_panel.ui")
 
+# the ordered conditional facade is generated, which proves adjacent guarded bodies keep their order (§11.1)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/ordered_panel.ui")
+
+# the nested conditional facade is generated, which proves a guarded body inside a guarded body follows both (§11.1)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/nested_panel.ui")
+
+# the directly nested conditional facade is generated, which proves a conditional body that is a conditional follows both (§11.1)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/nested_direct_panel.ui")
+
+# the guarded repeat facade is generated, which proves a repeat inside a conditional body materializes with it (§11.1, §18.1)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/guarded_repeat_panel.ui" --manifest "${CMAKE_CURRENT_SOURCE_DIR}/task.manifest")
+
+# the guarded flat repeat facade is generated, which proves a repeat that is the whole conditional body appears with it (§11.1, §18.1)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/guarded_flat_repeat_panel.ui" --manifest "${CMAKE_CURRENT_SOURCE_DIR}/task.manifest")
+
 # the collection facade is generated, which proves a handler mutates a vector property in place (§11.1)
 albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/collection_panel.ui")
 

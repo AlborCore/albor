@@ -341,6 +341,15 @@ namespace albor::compiler
         // resolve the body of one function against its own parameters, which is the second pass (§11.1)
         void check_function(const FunctionDeclaration& declaration, CheckedFunction& out);
 
+        // reject a declared function that calls itself through a cycle, because the C++ would recurse (§11.1)
+        void detect_function_cycles(const std::vector<CheckedFunction>& functions);
+
+        // collect the declared functions one expression calls, which is the edge set a cycle walk reads (§11.1)
+        void collect_function_calls(const Expression& expression, std::vector<std::string>& calls) const;
+
+        // walk one function's call edges, reporting an edge that returns to the open path (§11.1)
+        void visit_function(const std::string& name, const std::map<std::string, std::vector<std::pair<std::string, SourceSpan>>>& edges, std::map<std::string, int>& colour);
+
         // resolve the declared type of every module-scoped value first, so an initializer may name any of them (§11.1)
         void check_global_signatures(const SourceFile& file, std::vector<CheckedGlobal>& out);
 

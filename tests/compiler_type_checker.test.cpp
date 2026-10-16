@@ -1825,6 +1825,16 @@ TEST(TypeChecker, APropertyShadowsAGlobalOfTheSameName) {
     EXPECT_EQ(handler.body.at(0).dependencies.at(0), "wide");
 }
 
+TEST(TypeChecker, ARepeatBodyReadsAGlobal) {
+    // arrange, act
+    const CheckedFile file = check("global gap: float = 2.5; component C { in property<vector<int>> items; Column { Repeat(item in items) { Label { text: string(gap); } } } }");
+    // assert the body resolves through the module scope, which a component child and a row body both see (§11.1)
+    const CheckedNode& repeat = *only(file).root->children.at(0);
+    ASSERT_TRUE(repeat.repeat_body != nullptr);
+    ASSERT_EQ(repeat.repeat_body->assignments.size(), 1U);
+    EXPECT_TRUE(repeat.repeat_body->assignments.at(0).dependencies.empty());
+}
+
 TEST(TypeChecker, TypesARecordConstructionAgainstTheRecord) {
     // arrange, act
     const CheckedFile file = check("struct Frame { float w; float h; } global box: Frame = Frame{h: 2.0, w: 1.0}; component C { Label {} }");
@@ -1968,6 +1978,35 @@ TEST(TypeChecker, ReportsARedeclaredPropertyOfAnotherType) {
     // assert the redeclaration is reported, because the inherited type is the contract (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0424");
+}
+
+TEST(TypeChecker, ReportsADirectlyRecursiveFunction) {
+    // arrange a function whose body calls itself, because the generated C++ would recurse forever (§11.1)
+    DiagnosticList diagnostics;
+    // act the file is checked, which the cycle walk refuses (§11.1)
+    check("fn loop(x: int): int { return loop(x); } component C { Label { text: string(loop(1)); } }", diagnostics);
+    // assert the recursion is reported, because a cycle has no base case the compiler can see (§11.1)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0431");
+}
+
+TEST(TypeChecker, ReportsAMutuallyRecursiveFunction) {
+    // arrange two functions that call each other, because the cycle spans both declarations (§11.1)
+    DiagnosticList diagnostics;
+    // act the file is checked, which the cycle walk refuses (§11.1)
+    check("fn ping(x: int): int { return pong(x); } fn pong(x: int): int { return ping(x); } component C { Label { text: string(ping(1)); } }", diagnostics);
+    // assert the recursion is reported, because neither function has a base case (§11.1)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0431");
+}
+
+TEST(TypeChecker, AcceptsAFunctionThatCallsAnother) {
+    // arrange a chain with no return edge, because a cycle needs a call back to a caller (§11.1)
+    DiagnosticList diagnostics;
+    // act the file is checked, which the cycle walk accepts (§11.1)
+    check("fn twice(x: int): int { return add(x, x); } fn add(a: int, b: int): int { return a + b; } component C { Label { text: string(twice(1)); } }", diagnostics);
+    // assert nothing is reported, because a call forward is not a cycle (§11.1)
+    EXPECT_EQ(diagnostics.count(), 0U);
 }
 
 TEST(TypeChecker, ReportsAnUnknownBaseComponent) {

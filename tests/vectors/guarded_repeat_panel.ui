@@ -1,0 +1,20 @@
+import task;
+
+// the guarded repeat fixture, which proves a repeat inside a conditional body materializes with the body (§11.1, §18.1)
+
+component GuardedRepeatPanel {
+    inout property<bool> show;
+    inout property<vector<Task>> tasks;
+
+    Column {
+        Label { text: "always"; }
+
+        if show {
+            Column {
+                Repeat(task in tasks) {
+                    Label { text: task.title; }
+                }
+            }
+        }
+    }
+}

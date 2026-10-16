@@ -1,0 +1,18 @@
+// the nested conditional fixture, which proves a guarded body inside a guarded body follows both conditions (§11.1)
+
+component NestedPanel {
+    inout property<bool> outer;
+    inout property<bool> inner;
+
+    Column {
+        if outer {
+            Column {
+                Label { text: "outer"; }
+
+                if inner {
+                    Label { text: "inner"; }
+                }
+            }
+        }
+    }
+}

@@ -346,6 +346,12 @@ namespace albor::compiler
 
                 // whether the repeat hangs directly under a viewport, which decides a windowed view (§8.2, AD-13)
                 bool virtualized = false;
+
+                // the conditional that guards this repeat, which is NO_CONDITIONAL when it stands in the open tree (§11.1)
+                std::size_t parent_conditional = NO_CONDITIONAL;
+
+                // the runtime position the rows take, which a guarded body shifts as its siblings appear (§18.1, §11.1)
+                std::string offset_expression;
             };
 
             // one conditional and the body it materializes while the condition holds, which is a single instance (§11.1)
@@ -363,8 +369,8 @@ namespace albor::compiler
                 // the body nodes in preorder, which are the nodes the body is made of (§11.1)
                 std::vector<NodeSlot> body;
 
-                // the child position the body takes, which keeps the body where the conditional was written (§11.1)
-                std::size_t offset = 0;
+                // the runtime index expression, which counts the present earlier siblings the body must follow (§11.1)
+                std::string index_expression;
 
                 // the conditional that guards this one, which is NO_CONDITIONAL when it hangs at the top (§11.1)
                 std::size_t parent_conditional = NO_CONDITIONAL;
@@ -404,6 +410,9 @@ namespace albor::compiler
 
             // walk one node for the blocking conditions, which reports every problem it finds (§11.3)
             void validate_node(const CheckedNode& node);
+
+            // report every conditional inside a repeat body, which a keyed row cannot reconcile (§11.1, AD-13)
+            void reject_conditionals_in_body(const CheckedNode& node);
 
             // reject a type codegen cannot translate, which is a native or a collection type (§11.3)
             void validate_type(const ValueType& type, const SourceSpan& span);
@@ -540,8 +549,14 @@ namespace albor::compiler
             // emit the rewrite of one row body node, which walks from the row root to reach it (§18.1, AD-13)
             void emit_row_update_block(const NodeSlot& slot);
 
-            // emit the reconcile call of one repeat, which materializes the rows its source carries (§18.1, AD-13)
-            void emit_repeat_reconcile(const RepeatSlot& slot);
+            // emit the view construction of one repeat, which materializes the rows its source carries (§18.1, AD-13)
+            void emit_repeat_materialize(const RepeatSlot& slot);
+
+            // emit the source registration and binding of one repeat, which keeps the rows live (§18.1, AD-13)
+            void emit_repeat_binding(const RepeatSlot& slot);
+
+            // emit the view teardown of one repeat, which a guarded body runs when its condition drops (§11.1, §18.1)
+            void emit_repeat_teardown(const RepeatSlot& slot);
 
             // emit the reconcile statement itself, which the builder and the source binding both call (§18.1, AD-13)
             void reconcile(const RepeatSlot& slot);
@@ -630,8 +645,8 @@ namespace albor::compiler
             // the declared function names, which tell a function call apart from a colour operation (§11.1)
             std::unordered_set<std::string> m_function_names;
 
-            // the parameters of the function body being emitted, which read the arguments by name (§11.1)
-            std::vector<std::string> m_function_parameters;
+            // the parameters of the function body being emitted, which read the arguments by name and type (§11.1)
+            std::vector<std::pair<std::string, ValueType>> m_function_parameters;
 
             // whether the body being emitted is a draw block, which is what exposes the canvas extent (§6.4)
             bool m_draw_extent = false;
@@ -641,6 +656,9 @@ namespace albor::compiler
 
             // whether any node constructs through the engine, which the builder then resolves (§7.2)
             bool m_uses_engine = false;
+
+            // whether a node outside a conditional body constructs through the engine, which the builder resolves (§11.1)
+            bool m_build_needs_engine = false;
 
             // whether any node constructs through the text engine, which the body then stores (§9.1)
             bool m_uses_text_engine = false;
@@ -977,6 +995,9 @@ namespace albor::compiler
                     m_blocked = true;
                     return;
                 }
+                // a conditional inside a row is refused, because a row is built once and never reconciled (§11.1, AD-13)
+                if (node.repeat_body != nullptr)
+                    reject_conditionals_in_body(*node.repeat_body);
                 // the body is validated as a tree of its own, because a row is made of those nodes (§8.1, §18.1)
                 if (node.repeat_body != nullptr)
                     validate_node(*node.repeat_body);
@@ -1033,6 +1054,22 @@ namespace albor::compiler
             // the children are walked, because a nested problem matters just as much (§11.3)
             for (const std::shared_ptr<CheckedNode>& child : node.children)
                 validate_node(*child);
+        }
+
+        void ComponentEmitter::reject_conditionals_in_body(const CheckedNode& node) {
+            // a conditional is reported at its own span, because that is what the author must move out of the row (§11.1)
+            if (node.kind == TreeNodeKind::Conditional) {
+                // the problem names the rule, because a row is materialized once per keyed item (§11.1, AD-13)
+                m_diagnostics.add(Diagnostic::Severity::Error, node.span, "E0504", "a repeat body cannot contain a conditional, because a keyed row is built once");
+                // the blocking flag is set, which empties the generated output (§11.3)
+                m_blocked = true;
+            }
+            // a nested repeat's body is its own subtree, which is walked for the same reason (§11.1)
+            if (node.repeat_body != nullptr)
+                reject_conditionals_in_body(*node.repeat_body);
+            // the children are walked, because a conditional may hide anywhere in the row (§11.1)
+            for (const std::shared_ptr<CheckedNode>& child : node.children)
+                reject_conditionals_in_body(*child);
         }
 
         void ComponentEmitter::validate_type(const ValueType& type, const SourceSpan& span) {
@@ -1184,7 +1221,7 @@ namespace albor::compiler
                 // the repeat takes the next index, which names its view member (§18.1)
                 const std::size_t index = m_repeats.size();
                 // the slot collects the repeat and the body it materializes (§18.1)
-                RepeatSlot slot{.index = index, .node = &node, .parent = parent};
+                RepeatSlot slot{.index = index, .node = &node, .parent = parent, .parent_conditional = conditional};
                 // a repeat whose container is a viewport builds only the window, which is virtualization (§8.2, AD-13)
                 if (parent != NO_PARENT && m_nodes.at(parent).node->element_type == "ScrollView")
                     slot.virtualized = true;
@@ -1204,8 +1241,11 @@ namespace albor::compiler
                 // the slot is appended first, so a nested conditional finds its index during the body walk (§11.1)
                 m_conditionals.push_back(std::move(slot));
                 // the body is walked into the node list with no parent, because the conditional adopts it (§11.1)
-                if (node.conditional_body != nullptr)
-                    collect(*node.conditional_body, NO_PARENT, index);
+                if (node.conditional_body != nullptr) {
+                    // a body with no node of its own shares this container, because its rows hang here (§11.1, §18.1)
+                    const bool bodiless = node.conditional_body->kind == TreeNodeKind::Conditional || node.conditional_body->kind == TreeNodeKind::Repeat;
+                    collect(*node.conditional_body, bodiless ? parent : NO_PARENT, index);
+                }
                 return;
             }
             // the node takes the next index, which is its slot in the build order (§8.1)
@@ -1331,6 +1371,12 @@ namespace albor::compiler
                 // the signal parameters are read first, because a handler parameter shadows a property (§11.1, §11.3)
                 for (const std::pair<std::string, ValueType>& parameter : m_signal_parameter_types) {
                     // the name decides, so a parameter types as the signal raised it (§11.3)
+                    if (parameter.first == reference->name)
+                        return parameter.second;
+                }
+                // a function parameter is read next, because a body parameter shadows a property (§11.1, §11.3)
+                for (const std::pair<std::string, ValueType>& parameter : m_function_parameters) {
+                    // the name decides, so a parameter types as the argument the call passes (§11.3)
                     if (parameter.first == reference->name)
                         return parameter.second;
                 }
@@ -1549,7 +1595,7 @@ namespace albor::compiler
                 // the parameters are published, so a reference inside the body reads the argument by name (§11.1)
                 m_function_parameters.clear();
                 for (const std::pair<std::string, ValueType>& parameter : function.parameters)
-                    m_function_parameters.push_back(sanitize(parameter.first));
+                    m_function_parameters.push_back(parameter);
                 // the body is a single return, which is the whole of the computation in this form (§11.1)
                 line(0, "[[maybe_unused]] static " + signatures.at(index) + " {");
                 // a body with no return expression is empty, which the checker already allowed (§11.1)
@@ -1678,8 +1724,11 @@ namespace albor::compiler
                 m_object = "self";
                 line(2, "// the source is read once, because the rows reconcile against that one value (§18.1)");
                 line(2, "const std::vector<" + item_type(slot) + "> value = " + repeat_source_expression(slot) + ";");
+                // a guarded repeat reconciles through its entry point, because its view may be absent (§11.1, §18.1)
+                if (slot.parent_conditional != NO_CONDITIONAL)
+                    line(2, "self->reconcile" + at + "();");
                 // a windowed repeat borrows a body member, because the rows outlive this frame's local (§8.2, AD-13)
-                if (slot.virtualized) {
+                else if (slot.virtualized) {
                     line(2, "// the source is stored in the body, because the rows borrow it past this call (§8.2)");
                     line(2, "self->m_repeat_items" + at + " = value;");
                     line(2, "self->m_repeat" + at + "->set_items(self->m_repeat_items" + at + ");");
@@ -1712,8 +1761,15 @@ namespace albor::compiler
                 m_object = "self";
                 line(2, "// the condition is read once, which is what decides whether the body exists (§11.1)");
                 line(2, "const bool value = " + conditional_condition(slot, "self") + ";");
-                line(2, "// the body settles against the fresh condition, which rebuilds or destroys it (§11.1)");
-                line(2, "self->update_conditional" + at + "(value);");
+                // a nested conditional also needs its guard to hold, because its body sits inside its parent's (§11.1)
+                if (slot.parent_conditional != NO_CONDITIONAL) {
+                    line(2, "// a nested body exists only while its enclosing body exists (§11.1)");
+                    line(2, "self->update_conditional" + at + "(self->m_cond_present_" + std::to_string(slot.parent_conditional) + " && value);");
+                }
+                else {
+                    line(2, "// the body settles against the fresh condition, which rebuilds or destroys it (§11.1)");
+                    line(2, "self->update_conditional" + at + "(value);");
+                }
                 line(2, "// the value is returned, which the engine stores as the bound value (§13.3)");
                 line(2, "return value;");
                 line(1, "}");
@@ -1973,7 +2029,7 @@ namespace albor::compiler
             line(0, "");
             line(1, "void " + m_class + "::Impl::build() {");
             // the engine is resolved once, which every widget construction below takes (§7.2)
-            if (m_uses_engine) {
+            if (m_build_needs_engine) {
                 line(2, "// the engine settles the registered properties, which the widgets read (§7.2)");
                 line(2, "BindingEngine* const engine = owner->engine();");
                 line(0, "");
@@ -2030,10 +2086,10 @@ namespace albor::compiler
                 line(2, "const PropertyId deps_" + name + "[] = {" + dep_list(property.default_dependencies) + "};");
                 line(2, "m_" + name + ".bind_static(&Impl::compute_" + name + ", this, deps_" + name + ");");
             }
-            // each repeat claims the position its rows occupy, which must precede its siblings (§18.1, AD-13)
-            assign_repeat_offsets();
             // each conditional claims the position its body occupies, which must precede its siblings (§11.1)
             assign_conditional_offsets();
+            // each repeat claims the position its rows occupy, which may borrow a guarded body's position (§18.1, AD-13)
+            assign_repeat_offsets();
             // the tree is built in preorder, which hangs every node of the facade together (§8.1)
             for (const NodeSlot& slot : m_nodes) {
                 // a conditional body node is built inside its own build, so the main pass skips it (§11.1)
@@ -2044,28 +2100,35 @@ namespace albor::compiler
                 // each repeat inside this container is created where it was written (§18.1, AD-13)
                 for (const RepeatSlot& repeat : m_repeats) {
                     // a repeat belongs to this container, which is what makes its rows hang here (§8.1, §18.1)
-                    if (repeat.parent != slot.index)
+                    if (repeat.parent != slot.index || repeat.parent_conditional != NO_CONDITIONAL)
                         continue;
                     line(0, "");
-                    emit_repeat_reconcile(repeat);
+                    emit_repeat_materialize(repeat);
+                    emit_repeat_binding(repeat);
                 }
             }
             // the root is adopted last, which is the only owned node of the facade (§8.1)
             if (!m_nodes.empty())
                 line(2, "owner->add_child(std::move(node_0));");
-            // each top level conditional settles once the tree exists, because its parent is now built (§11.1)
-            for (const ConditionalSlot& conditional : m_conditionals) {
-                // a nested conditional is settled inside its parent build, so only a top level one runs here (§11.1)
-                if (conditional.parent_conditional != NO_CONDITIONAL)
+            // a guarded repeat is bound once here, because its view comes and goes with the body (§11.1, §18.1)
+            for (const RepeatSlot& repeat : m_repeats) {
+                // a repeat in the open tree was already bound beside its materialization (§18.1)
+                if (repeat.parent_conditional == NO_CONDITIONAL)
                     continue;
+                line(0, "");
+                emit_repeat_binding(repeat);
+            }
+            // every conditional is bound, because a nested one reacts to its own condition like any other (§11.1)
+            for (const ConditionalSlot& conditional : m_conditionals) {
                 // the suffix names every member of this conditional (§11.1)
                 const std::string at = "_" + std::to_string(conditional.index);
                 line(0, "");
                 line(2, "// the condition is bound, which keeps the body live against its sources (§13.3)");
                 line(2, "const PropertyId deps_cond" + at + "[] = {" + dep_list(conditional_dependencies(conditional)) + "};");
                 line(2, "m_cond" + at + ".bind_static(&Impl::evaluate_conditional" + at + ", this, deps_cond" + at + ");");
-                // the condition settles once here, because a bind may not fire immediately (§11.1)
-                line(2, "update_conditional" + at + "(" + conditional_condition(conditional, "this") + ");");
+                // a top level condition settles once here, because a nested one is settled by its enclosing body (§11.1)
+                if (conditional.parent_conditional == NO_CONDITIONAL)
+                    line(2, "update_conditional" + at + "(" + conditional_condition(conditional, "this") + ");");
             }
             line(1, "}");
         }
@@ -2348,12 +2411,27 @@ namespace albor::compiler
                 }
                 // the ordinary children before the repeat are counted, because the rows start after them (§8.1, §18.1)
                 std::size_t preceding = 0;
+                // whether the repeat sits among the children, which a bare guarded one does not (§18.1, §11.1)
+                bool found = false;
                 // the siblings are walked in order, which is what fixes the row position (§8.1, §18.1)
                 for (const std::shared_ptr<CheckedNode>& child : parent->node->children) {
+                    // this repeat is located, which places its rows where it was written (§18.1, AD-13)
+                    if (child.get() == repeat.node) {
+                        found = true;
+                        continue;
+                    }
                     // the first repeat sibling ends the count, because that is where the rows begin (§18.1, AD-13)
                     if (child->kind == TreeNodeKind::Repeat)
                         break;
-                    preceding++;
+                    // only a child written before this repeat moves its rows (§18.1, AD-13)
+                    if (!found)
+                        preceding++;
+                }
+                // a repeat that is the whole guarded body takes the runtime position of that body (§11.1, §18.1)
+                if (!found && repeat.parent_conditional != NO_CONDITIONAL) {
+                    repeat.offset = 0;
+                    repeat.offset_expression = m_conditionals.at(repeat.parent_conditional).index_expression;
+                    continue;
                 }
                 repeat.offset = preceding;
             }
@@ -2364,8 +2442,8 @@ namespace albor::compiler
             for (ConditionalSlot& conditional : m_conditionals) {
                 // a conditional with no parent has no container to count, which the checker already refused (§11.1)
                 if (conditional.parent == NO_PARENT) {
-                    // the offset stays zero, because an orphan is reported rather than emitted (§11.1)
-                    conditional.offset = 0;
+                    // the index stays zero, because an orphan is reported rather than emitted (§11.1)
+                    conditional.index_expression = "0";
                     continue;
                 }
                 // the parent is located, because its children decide where the body begins (§11.1)
@@ -2377,21 +2455,50 @@ namespace albor::compiler
                 }
                 // a conditional whose parent is missing cannot place its body, which would be a generator defect (§11.1)
                 if (parent == nullptr) {
-                    conditional.offset = 0;
+                    conditional.index_expression = "0";
                     continue;
                 }
-                // the element and repeat siblings before this conditional are counted, because each holds a slot (§11.1)
+                // the element siblings before this conditional are counted, because each is always present (§11.1)
                 std::size_t preceding = 0;
+                // whether the conditional sits among the children, which a directly nested one does not (§11.1)
+                bool found = false;
+                // every preceding sibling contributes a term, because a repeat and a conditional are counted (§11.1)
+                std::vector<std::string> terms;
                 // the siblings are walked in order, which is what fixes the body position (§11.1)
                 for (const std::shared_ptr<CheckedNode>& child : parent->node->children) {
                     // this conditional ends the count, because that is where the body begins (§11.1)
-                    if (child.get() == conditional.node)
+                    if (child.get() == conditional.node) {
+                        found = true;
                         break;
-                    // an element or a repeat holds a position, because it is always present (§11.1)
-                    if (child->kind == TreeNodeKind::Element || child->kind == TreeNodeKind::Repeat)
+                    }
+                    // an element holds exactly one position, because it is always present (§11.1)
+                    if (child->kind == TreeNodeKind::Element) {
                         preceding++;
+                        continue;
+                    }
+                    // a repeat holds as many positions as it has rows, which is a runtime count (§8.1, §11.1)
+                    if (child->kind == TreeNodeKind::Repeat) {
+                        for (const RepeatSlot& repeat : m_repeats)
+                            if (repeat.node == child.get())
+                                terms.push_back("m_repeat_" + std::to_string(repeat.index) + "->size()");
+                        continue;
+                    }
+                    // a conditional holds one position only while it is present, which is a runtime count (§11.1)
+                    if (child->kind == TreeNodeKind::Conditional) {
+                        for (const ConditionalSlot& earlier : m_conditionals)
+                            if (earlier.node == child.get())
+                                terms.push_back("(m_cond_present_" + std::to_string(earlier.index) + " ? 1 : 0)");
+                    }
                 }
-                conditional.offset = preceding;
+                // the expression starts from the always present elements, because they are counted at build time (§11.1)
+                std::string expression = std::to_string(preceding);
+                // each runtime term is appended, because a repeat and a conditional move the body's position (§11.1)
+                for (const std::string& term : terms)
+                    expression += " + " + term;
+                // a directly nested conditional is not among the children, so it takes its enclosing position (§11.1)
+                if (!found && conditional.parent_conditional != NO_CONDITIONAL)
+                    expression = m_conditionals.at(conditional.parent_conditional).index_expression;
+                conditional.index_expression = expression;
             }
         }
 
@@ -2433,6 +2540,9 @@ namespace albor::compiler
                 line(2, "// the owning root of this conditional body, which the tree holds while the condition holds (§11.1)");
                 line(2, "std::unique_ptr<UiNode> m_cond_root" + at + ";");
                 line(0, "");
+                line(2, "// the raw identity of the inserted body root, which removes it after the owner moved into the parent (§11.1)");
+                line(2, "UiNode* m_cond_node" + at + " = nullptr;");
+                line(0, "");
                 line(2, "// whether this conditional body currently exists, which is what an update guards on (§11.1)");
                 line(2, "bool m_cond_present" + at + " = false;");
                 line(0, "");
@@ -2455,8 +2565,12 @@ namespace albor::compiler
             const std::string at = "_" + std::to_string(slot.index);
             line(0, "");
             line(1, "void " + m_class + "::Impl::build_conditional" + at + "() {");
+            // this body's own widgets decide whether the engine is resolved, because another body may need none (§11.1)
+            bool body_needs_engine = false;
+            for (const NodeSlot& body : slot.body)
+                body_needs_engine = body_needs_engine || info_of(std::string_view(body.node->element_type)).needs_engine;
             // the engine is resolved once, because a widget construction takes it (§7.2)
-            if (m_uses_engine) {
+            if (body_needs_engine) {
                 line(2, "// the engine settles the registered properties, which the widgets read (§7.2)");
                 line(2, "BindingEngine* const engine = owner->engine();");
             }
@@ -2467,17 +2581,18 @@ namespace albor::compiler
                 emit_node_block(body);
             }
             // the body root is stored, because the conditional owns it from here (§11.1)
-            if (!slot.body.empty())
+            if (!slot.body.empty()) {
                 line(2, "m_cond_root" + at + " = std::move(node_" + std::to_string(slot.body.front().index) + ");");
-            // each nested conditional builds after the body, because its parent now exists (§11.1)
-            for (const ConditionalSlot& nested : m_conditionals) {
-                // a nested conditional is one this body guards, so its update runs inside this build (§11.1)
-                if (nested.parent_conditional != slot.index)
+                // the raw identity is kept beside the owner, because removal reads it after the owner moved (§11.1)
+                line(2, "m_cond_node" + at + " = m_cond_root" + at + ".get();");
+            }
+            // each repeat this body guards materializes now, because its container exists (§11.1, §18.1)
+            for (const RepeatSlot& repeat : m_repeats) {
+                // a repeat this conditional guards is the one whose rows appear with the body (§11.1, §18.1)
+                if (repeat.parent_conditional != slot.index)
                     continue;
-                const std::string nested_at = "_" + std::to_string(nested.index);
                 line(0, "");
-                line(2, "// the nested conditional settles now, because its parent exists (§11.1)");
-                line(2, "update_conditional" + nested_at + "(" + conditional_condition(nested, "this") + ");");
+                emit_repeat_materialize(repeat);
             }
             line(1, "}");
         }
@@ -2485,29 +2600,60 @@ namespace albor::compiler
         void ComponentEmitter::emit_conditional_update(const ConditionalSlot& slot) {
             // the suffix names every member of this conditional, which keeps them unique (§11.1)
             const std::string at = "_" + std::to_string(slot.index);
+            // a body that is itself a conditional owns no node of its own, because it only guards the inner one (§11.1)
+            const bool has_root = !slot.body.empty();
             line(0, "");
             line(1, "void " + m_class + "::Impl::update_conditional" + at + "(bool present) {");
-            // the body appears when the condition turns true and it is not there yet (§11.1)
-            line(2, "// the body is built and adopted the first time the condition holds (§11.1)");
-            line(2, "if (present && !m_cond_present" + at + ") {");
+            // an unchanged presence does nothing, because there is no body to add or remove (§11.1)
+            line(2, "// the update is a transition, so an unchanged presence leaves the tree alone (§11.1)");
+            line(2, "if (present == m_cond_present" + at + ")");
+            line(3, "return;");
+            line(2, "m_cond_present" + at + " = present;");
+            // the body appears when the condition turns true, so it is built and adopted once (§11.1)
+            line(2, "if (present) {");
+            // the build runs even for a body with no node, because it materializes the repeats it guards (§11.1, §18.1)
             line(3, "build_conditional" + at + "();");
             // the body is inserted at the position the conditional was written at (§11.1)
-            if (slot.parent != NO_PARENT)
-                line(3, "m_node_" + std::to_string(slot.parent) + "->insert_child(" + std::to_string(slot.offset) + ", std::move(m_cond_root" + at + "));");
-            line(3, "m_cond_present" + at + " = true;");
+            if (has_root && slot.parent != NO_PARENT) {
+                // the index counts the present siblings, because adjacent bodies must keep their order (§11.1)
+                line(3, "const std::size_t position" + at + " = " + slot.index_expression + ";");
+                line(3, "m_node_" + std::to_string(slot.parent) + "->insert_child(position" + at + ", std::move(m_cond_root" + at + "));");
+            }
+            // each nested conditional settles now, because its enclosing body exists (§11.1)
+            for (const ConditionalSlot& nested : m_conditionals) {
+                // a nested conditional is one this body guards, so its condition is read here (§11.1)
+                if (nested.parent_conditional != slot.index)
+                    continue;
+                const std::string nested_at = "_" + std::to_string(nested.index);
+                line(3, "update_conditional" + nested_at + "(" + conditional_condition(nested, "this") + ");");
+            }
             line(2, "}");
-            // the body disappears when the condition turns false and it is there (§11.1)
-            line(2, "// the body is destroyed the moment the condition stops holding (§11.1)");
-            line(2, "else if (!present && m_cond_present" + at + ") {");
-            if (slot.parent != NO_PARENT) {
+            // the body disappears when the condition turns false, so it is destroyed at once (§11.1)
+            line(2, "else {");
+            // each nested conditional is torn down first, because its body hangs from a node destroyed below (§11.1)
+            for (const ConditionalSlot& nested : m_conditionals) {
+                // a nested conditional is one this body guards, so it is removed with the body (§11.1)
+                if (nested.parent_conditional != slot.index)
+                    continue;
+                const std::string nested_at = "_" + std::to_string(nested.index);
+                line(3, "update_conditional" + nested_at + "(false);");
+            }
+            // each repeat this body guards is torn down, because its rows hang from a node about to go (§11.1, §18.1)
+            for (const RepeatSlot& repeat : m_repeats) {
+                // a repeat this conditional guards is the one whose rows disappear with the body (§11.1, §18.1)
+                if (repeat.parent_conditional != slot.index)
+                    continue;
+                emit_repeat_teardown(repeat);
+            }
+            if (has_root && slot.parent != NO_PARENT) {
                 line(3, "// the root is removed from the tree, which takes it out of the frame (§11.1)");
-                line(3, "m_cond_root" + at + " = m_node_" + std::to_string(slot.parent) + "->remove_child(m_cond_root" + at + ".get());");
+                line(3, "m_cond_root" + at + " = m_node_" + std::to_string(slot.parent) + "->remove_child(m_cond_node" + at + ");");
             }
             // every body node pointer is cleared, because the evaluators guard on absence (§11.1)
             for (const NodeSlot& body : slot.body)
                 line(3, "m_node_" + std::to_string(body.index) + " = nullptr;");
             line(3, "m_cond_root" + at + ".reset();");
-            line(3, "m_cond_present" + at + " = false;");
+            line(3, "m_cond_node" + at + " = nullptr;");
             line(2, "}");
             line(1, "}");
         }
@@ -2599,9 +2745,11 @@ namespace albor::compiler
             line(2, cls + "* const n" + std::to_string(slot.index) + " = static_cast<" + cls + "*>(static_cast<UiNode*>(n" + std::to_string(parent) + ")->child_at(" + std::to_string(position) + "));");
         }
 
-        void ComponentEmitter::emit_repeat_reconcile(const RepeatSlot& slot) {
+        void ComponentEmitter::emit_repeat_materialize(const RepeatSlot& slot) {
             // the suffix names every function of this repeat, which keeps them unique across repeats (§18.1)
             const std::string at = "_" + std::to_string(slot.index);
+            // the container is the node the rows hang from, which exists wherever this repeat is built (§8.1, §18.1)
+            const std::string container = "m_node_" + std::to_string(slot.parent);
             // a windowed repeat hangs under a viewport, so it owns its own rows (§8.2, AD-13)
             if (slot.virtualized) {
                 // the view is built in a local, because the tree owns it once it is adopted (§8.2, AD-13)
@@ -2609,35 +2757,55 @@ namespace albor::compiler
                 line(2, "// the windowed view owns the rows, keyed by the manifest identity (§8.2, AD-13)");
                 line(2, "auto " + rows + " = std::make_unique<albor::model::ScrollableRows<" + item_type(slot) + ">>(0.0f, 64);");
                 line(2, "// the row height comes from the viewport, which makes an index a position (§8.2, AD-13)");
-                line(2, rows + "->set_row_extent(n" + std::to_string(slot.parent) + "->row_height());");
+                line(2, rows + "->set_row_extent(" + container + "->row_height());");
                 line(2, "// the three plain functions the rows are built and matched through (§13.3, §18.1)");
                 line(2, rows + "->set_view(&Impl::build_row" + at + ", &Impl::update_row" + at + ", &Impl::key_of" + at + ", this);");
                 line(2, "// the rows are reconciled now, so the tree is complete at construction (§18.1)");
                 line(2, "m_repeat_items" + at + " = m_repeat_source" + at + ".get();");
                 line(2, rows + "->set_items(m_repeat_items" + at + ");");
-                line(2, "// the sink joins the component scope, which gives the reconcile a unique id (§13.3, §18.1)");
-                line(2, "owner->register_property(m_repeat_source" + at + ");");
-                line(2, "// the binding is declared here, because the evaluator below writes through it (§13.3, §18.1)");
-                line(2, "const PropertyId deps_repeat" + at + "[] = {" + dep_list(repeat_dependencies(slot)) + "};");
-                line(2, "m_repeat_source" + at + ".bind_static(&Impl::evaluate_repeat" + at + ", this, deps_repeat" + at + ");");
-                line(2, "// the source reaches the rows, which borrow a member that outlives them (§8.2, AD-13)");
-                line(2, rows + "->set_items(m_repeat_items" + at + ");");
                 line(2, "// the viewport adopts the view, which is what hands ownership to the tree (§8.2, AD-13)");
-                line(2, "n" + std::to_string(slot.parent) + "->add_child(std::move(" + rows + "));");
+                line(2, container + "->add_child(std::move(" + rows + "));");
                 line(2, "// the body keeps a view onto the rows, because the tree owns them from here (§8.2, AD-13)");
-                line(2, "m_repeat" + at + " = static_cast<albor::model::ScrollableRows<" + item_type(slot) + ">*>(n" + std::to_string(slot.parent) + "->child_at(0));");
+                line(2, "m_repeat" + at + " = static_cast<albor::model::ScrollableRows<" + item_type(slot) + ">*>(" + container + "->child_at(0));");
                 return;
             }
             // the view is built against the container, because its rows hang where the repeat was written (§8.1, §18.1)
             line(2, "// the view owns the rows this repeat materializes, keyed by the manifest identity (§18.1, AD-13)");
-            line(2, "m_repeat" + at + " = std::make_unique<albor::model::KeyedView<" + item_type(slot) + ">>(n" + std::to_string(slot.parent) + ", " + std::to_string(slot.offset) + ");");
+            line(2, "m_repeat" + at + " = std::make_unique<albor::model::KeyedView<" + item_type(slot) + ">>(" + container + ", " + std::to_string(slot.offset) + ");");
             line(2, "// the rows are reconciled now, so the tree is complete at construction (§18.1)");
             reconcile(slot);
+        }
+
+        void ComponentEmitter::emit_repeat_binding(const RepeatSlot& slot) {
+            // the suffix names every function of this repeat, which keeps them unique across repeats (§18.1)
+            const std::string at = "_" + std::to_string(slot.index);
             // the sink joins the component scope, which gives the reconcile a unique id (§13.3, §18.1)
+            line(2, "// the sink joins the component scope, which gives the reconcile a unique id (§13.3, §18.1)");
             line(2, "owner->register_property(m_repeat_source" + at + ");");
             // the binding is declared here, because the evaluator below writes through it (§13.3, §18.1)
+            line(2, "// the binding is declared here, because the evaluator below writes through it (§13.3, §18.1)");
             line(2, "const PropertyId deps_repeat" + at + "[] = {" + dep_list(repeat_dependencies(slot)) + "};");
             line(2, "m_repeat_source" + at + ".bind_static(&Impl::evaluate_repeat" + at + ", this, deps_repeat" + at + ");");
+        }
+
+        void ComponentEmitter::emit_repeat_teardown(const RepeatSlot& slot) {
+            // the suffix names every function of this repeat, which keeps them unique across repeats (§18.1)
+            const std::string at = "_" + std::to_string(slot.index);
+            // a repeat that is the whole guarded body owns its rows, so they are removed explicitly (§11.1, §18.1)
+            const bool bare = !slot.offset_expression.empty();
+            // a windowed repeat hands its view node back, because the row owner is the tree (§8.2, AD-13)
+            if (slot.virtualized) {
+                // a windowed body view is a child of the container, so it is removed from the tree (§8.2, AD-13)
+                if (bare)
+                    line(3, "(void)m_node_" + std::to_string(slot.parent) + "->remove_child(m_repeat" + at + ");");
+                line(3, "m_repeat" + at + " = nullptr;");
+                return;
+            }
+            // a body that owns its rows directly has them removed from the container (§18.1, AD-13)
+            if (bare)
+                line(3, "m_repeat" + at + "->clear();");
+            // the view stops naming the rows, because they died with the body or were cleared above (§11.1, §18.1)
+            line(3, "m_repeat" + at + ".reset();");
         }
 
         void ComponentEmitter::reconcile(const RepeatSlot& slot) {
@@ -2648,6 +2816,9 @@ namespace albor::compiler
             // the item binding is not in scope here, because the source is a component property (§8.1, §18.1)
             m_repeat_item_name.clear();
             m_repeat_index_name.clear();
+            // a guarded view exists only while its body does, so an absent body has nothing to reconcile (§11.1, §18.1)
+            if (slot.parent_conditional != NO_CONDITIONAL)
+                line(2, "if (m_repeat" + at + " == nullptr) return;");
             // the rows are reconciled against the source, matching by identity (§18.1, AD-13)
             if (slot.virtualized) {
                 line(2, "m_repeat_items" + at + " = m_repeat_source" + at + ".get();");
@@ -2655,6 +2826,9 @@ namespace albor::compiler
                 m_object.clear();
                 return;
             }
+            // a body that is the whole guarded repeat takes the runtime position of that body (§11.1, §18.1)
+            if (!slot.offset_expression.empty())
+                line(2, "m_repeat" + at + "->set_offset(" + slot.offset_expression + ");");
             line(2, "m_repeat" + at + "->reconcile(this, " + emit_expression(*slot.node->repeat_source) + ", &Impl::build_row" + at + ", &Impl::update_row" + at + ", &Impl::key_of" + at + ");");
             m_object.clear();
         }
@@ -3064,10 +3238,10 @@ namespace albor::compiler
                         return parameter;
                 }
                 // a function parameter is the argument the static function received, which the body reads by name (§11.1)
-                for (const std::string& parameter : m_function_parameters) {
+                for (const std::pair<std::string, ValueType>& parameter : m_function_parameters) {
                     // the name decides, so a parameter resolves to the argument the call passed (§11.1)
-                    if (parameter == sanitize(reference->name))
-                        return parameter;
+                    if (parameter.first == reference->name)
+                        return sanitize(parameter.first);
                 }
                 // a name no property declares may still be a module-scoped value, which is the file-level static (§11.1)
                 if (property_named(reference->name) == nullptr && global_named(reference->name) != nullptr)
@@ -3341,6 +3515,9 @@ namespace albor::compiler
                 const WidgetInfo& info = info_of(std::string_view(slot.node->element_type));
                 // the engine flag rises with each widget, because the builder resolves it once (§14.1)
                 m_uses_engine = m_uses_engine || info.needs_engine;
+                // a widget outside a conditional body needs the builder's engine, because a body resolves its own (§11.1)
+                if (slot.conditional == NO_CONDITIONAL)
+                    m_build_needs_engine = m_build_needs_engine || info.needs_engine;
                 // the text engine flag rises with each label, because the body stores it (§14.1)
                 m_uses_text_engine = m_uses_text_engine || info.needs_text_engine;
                 // the canvas flag rises with each canvas, which adds the geometry header (§14.1)

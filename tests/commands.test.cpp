@@ -238,6 +238,40 @@ TEST(Command, ASelectionScopedActionResolvesTheRangeAtInvocationTime) {
     EXPECT_EQ(observed, std::size_t{9});
 }
 
+TEST(Command, ACommandOutlivingItsRegistryResolvesNoSelection) {
+    // arrange a borrowed command whose registry is destroyed while the command lives on (§18.1)
+    std::unique_ptr<Command> erase_owned;
+    {
+        CommandRegistry registry;
+        registry.set_selection_source([] { return SelectionSpan{.first = 1, .last = 4}; });
+        erase_owned = registry.declare("row.erase", "Delete Rows");
+        erase_owned->set_selection_required(true);
+        // assert the installed source is read while the owning registry lives (§18.3)
+        EXPECT_EQ(erase_owned->resolve_selection().count(), std::size_t{3});
+    }
+    // act the registry is gone, so the command resolves against no source
+    const SelectionSpan after = erase_owned->resolve_selection();
+    // assert the dangling source is not read, because the registry owned it and is gone (§18.1)
+    EXPECT_TRUE(after.empty());
+}
+
+TEST(Command, ACommandOutlivingItsRegistryRecordsNoUndo) {
+    // arrange a borrowed command that carries a reversal and outlives its registry (§18.1, §18.4)
+    std::unique_ptr<Command> erase_owned;
+    {
+        CommandRegistry registry;
+        erase_owned = registry.declare("row.erase", "Delete Rows");
+        erase_owned->set_undo_entry(UndoEntry{.label = "Delete", .undo = [](const CommandInvocation&) {}, .redo = [](const CommandInvocation&) {}});
+    }
+    std::size_t runs = 0;
+    erase_owned->set_action([&runs](const CommandInvocation&) { runs++; });
+    // act the registry is gone, so the command records its reversal against no stack
+    const InvocationOutcome outcome = erase_owned->invoke();
+    // assert the action still runs, because a borrowed command outlives the stack it recorded on (§18.1)
+    EXPECT_EQ(outcome, InvocationOutcome::Invoked);
+    EXPECT_EQ(runs, std::size_t{1});
+}
+
 TEST(UndoStack, AnEmptyStackOffersNeitherDirection) {
     // arrange
     UndoStack stack;
@@ -585,4 +619,36 @@ TEST(ShortcutTable, AnAcceleratorNamingNoKeyBindsNothing) {
     registry.shortcuts().bind(Shortcut{.key = Key::None}, save.id());
     // assert no key can ever match it, so nothing is registered (§18.5)
     EXPECT_EQ(registry.shortcuts().size(), std::size_t{0});
+}
+
+TEST(CommandRegistry, ALeavingCommandReleasesItsShortcuts) {
+    // arrange a command owns an accelerator, which the registry's table holds (§18.5)
+    CommandRegistry registry;
+    const Shortcut shortcut{.key = Key::S, .modifiers = Modifiers{.command = true}};
+    {
+        auto save_owned = registry.declare("file.save", "Save");
+        registry.shortcuts().bind(shortcut, save_owned->id());
+        ASSERT_TRUE(registry.shortcuts().bound(shortcut));
+        // act the command is destroyed while the registry lives on (§18.1, §18.5)
+    }
+    // assert the accelerator left with its command, so no key routes into a command that is gone (§18.5)
+    EXPECT_FALSE(registry.shortcuts().bound(shortcut));
+    EXPECT_EQ(registry.shortcuts().size(), std::size_t{0});
+    EXPECT_EQ(registry.find_shortcut(shortcut), nullptr);
+}
+
+TEST(CommandRegistry, RemovingOneOfTwoCommandsSharingAnIdKeepsTheSurvivor) {
+    // arrange two commands share one author assigned id, which the later join wins in the index (§18.1, AD-11)
+    CommandRegistry registry;
+    auto first_owned = registry.declare("file.save", "Save");
+    Command& first = *first_owned;
+    {
+        auto second_owned = registry.declare("file.save", "Save Again");
+        // act the later duplicate is destroyed while the earlier one stays indexed (§18.1)
+    }
+    // assert the author id still reaches the surviving command, because the index was re-pointed (§18.1, AD-11)
+    Command* found = registry.find("file.save");
+    ASSERT_NE(found, nullptr);
+    EXPECT_EQ(found->id(), first.id());
+    EXPECT_EQ(registry.size(), std::size_t{1});
 }
