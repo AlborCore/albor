@@ -40,7 +40,7 @@ target_compile_features(albor-text-skia PUBLIC cxx_std_23)
 target_include_directories(albor-text-skia SYSTEM PUBLIC ${ALBOR_SKIA_INCLUDE_DIRS})
 
 # the backend implements the text contract and reaches skparagraph, which carries the shaper and the icu unicode (§9.1)
-target_link_libraries(albor-text-skia PUBLIC albor-text PRIVATE albor-skia)
+target_link_libraries(albor-text-skia PUBLIC albor-text PRIVATE albor-skia albor-resources)
 
 # the system font collection comes from core text, which is the platform half of shaping (§9.1)
 target_link_libraries(albor-text-skia PRIVATE "-framework CoreText" "-framework CoreFoundation")

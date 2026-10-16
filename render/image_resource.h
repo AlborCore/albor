@@ -7,14 +7,14 @@
 
 namespace albor
 {
-    // how the bytes of an image resource are laid out, which the backend translates into a texture (§6.4, AD-06)
+    // how the bytes of an image resource are laid out, which the backend translates into a texture (§6.4, AD-26)
     enum class ImageFormat
     {
-        // four bytes per pixel in red, green, blue and alpha order
+        // four bytes per pixel in premultiplied rgb(a), matching the skia reference (§6.4, AD-26)
         RGBA8,
     };
 
-    // the immutable pixel data a domain view retains off the ui thread, which the backend uploads once (§6.4, AD-06)
+    // the immutable pixel data a domain view retains off the ui thread, which the backend uploads once (§6.4, AD-26)
     class ImageResource
     {
     public:
@@ -27,7 +27,7 @@ namespace albor
         ImageResource& operator=(ImageResource&&) = delete;
         ~ImageResource() = default;
 
-        // hand out the identifier the factory stamped the image with, which the backend keys its gpu cache on (§6.4, AD-06)
+        // hand out the identifier the factory stamped, which the backend keys its gpu cache on (§6.4, AD-26)
         [[nodiscard]] std::uint64_t id() const;
 
         // hand out the width in pixels (§6.4)
@@ -42,7 +42,7 @@ namespace albor
         // hand out the byte count of one pixel row (§6.4)
         [[nodiscard]] std::size_t row_bytes() const;
 
-        // hand out the raw pixel bytes the backend uploads (§6.4)
+        // hand out the premultiplied raw pixel bytes the backend uploads (§6.4, AD-26)
         [[nodiscard]] std::span<const std::uint8_t> pixels() const;
 
         // report how many bytes a format consumes per pixel (§6.4)

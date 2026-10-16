@@ -156,6 +156,9 @@ add_subdirectory(render/render-skia)
 # the cpu reference backend that ci compares against, which is not a platform adapter (§3.2, AD-26)
 add_subdirectory(render/render-software)
 
+# the blend2d cpu backend, a portable alternative to the skia reference (§3.2, AD-26)
+add_subdirectory(render/render-blend2d)
+
 # the macos appkit adapter with its display link pacing (§3.2, AD-16)
 add_subdirectory(platform/macos)
 add_subdirectory(platform/headless)

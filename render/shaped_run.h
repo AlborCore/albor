@@ -10,6 +10,16 @@
 
 namespace albor
 {
+    // how a shaped run reaches a surface, which decides the command a recorder emits for it (§9.1, AD-34)
+    enum class ShapeSource : std::uint8_t
+    {
+        // the run carries a typeface the platform renderer draws directly, which the platform engine issues (§9.1, AD-28)
+        Platform,
+
+        // the run's glyphs reach any surface as tessellated outlines, which is the portable path of AD-34 (§15, AD-34)
+        Embedded,
+    };
+
     // one positioned glyph, which is the unit a shaped run is made of (§9.1)
     struct ShapedGlyph
     {
@@ -61,11 +71,14 @@ namespace albor
             friend bool operator==(const Line& lhs, const Line& rhs) = default;
         };
 
-        // build a run over its lines and the size, with the content hash that identifies the font it came from (§15)
-        [[nodiscard]] static std::shared_ptr<const ShapedRun> make(std::vector<Line> lines, float font_size, std::uint64_t font_hash = 0);
+        // build a run over its lines and the size, with the identity of the font it came from and its source (§15)
+        [[nodiscard]] static std::shared_ptr<const ShapedRun> make(std::vector<Line> lines, float font_size, std::uint64_t font_hash = 0, ShapeSource source = ShapeSource::Embedded);
 
         // the content hash of the font this run was shaped from, which is zero when the engine has none (§15, AD-34)
         [[nodiscard]] std::uint64_t font_hash() const;
+
+        // how this run reaches a surface, which a recorder reads to choose the command it emits (§9.1, AD-34)
+        [[nodiscard]] ShapeSource shape_source() const;
 
         // the font size the whole run was shaped at, which a renderer builds its font from (§9.1)
         [[nodiscard]] float font_size() const;
@@ -99,7 +112,7 @@ namespace albor
 
     private:
         // a run is only ever built through make, because it is shared as an immutable snapshot (§10.5, AD-18)
-        explicit ShapedRun(std::vector<Line> lines, float font_size, std::uint64_t font_hash);
+        explicit ShapedRun(std::vector<Line> lines, float font_size, std::uint64_t font_hash, ShapeSource source);
 
         // the shaped lines of the run, which never change once the run exists (§10.5)
         std::vector<Line> m_lines;
@@ -109,5 +122,8 @@ namespace albor
 
         // the content hash of the font this run was shaped from, which identifies it across platforms (§15, AD-34)
         std::uint64_t m_font_hash = 0;
+
+        // how this run reaches a surface, which a recorder reads to choose the command it emits (§9.1, AD-34)
+        ShapeSource m_source = ShapeSource::Embedded;
     };
 } // namespace albor
