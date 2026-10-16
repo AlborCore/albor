@@ -209,7 +209,8 @@ TEST(Command, ASelectionScopedActionRefusesAnEmptySelection) {
     // arrange
     CommandRegistry registry;
     registry.set_selection_source([] { return SelectionSpan{.first = 0, .last = 0}; });
-    Command& erase = registry.declare("row.erase", "Delete Rows");
+    auto erase_owned = registry.declare("row.erase", "Delete Rows");
+    Command& erase = *erase_owned;
     erase.set_selection_required(true);
     std::size_t runs = 0;
     erase.set_action([&runs](const CommandInvocation&) { runs++; });
@@ -225,7 +226,8 @@ TEST(Command, ASelectionScopedActionResolvesTheRangeAtInvocationTime) {
     CommandRegistry registry;
     SelectionSpan current{.first = 2, .last = 5};
     registry.set_selection_source([&current] { return current; });
-    Command& erase = registry.declare("row.erase", "Delete Rows");
+    auto erase_owned = registry.declare("row.erase", "Delete Rows");
+    Command& erase = *erase_owned;
     erase.set_selection_required(true);
     std::size_t observed = 0;
     erase.set_action([&observed](const CommandInvocation& invocation) { observed = invocation.selection.count(); });
@@ -409,7 +411,8 @@ TEST(RedoCommand, ItBecomesEnabledOnlyAfterAReversal) {
 TEST(CommandRegistry, ACommandIsFoundByItsAuthorAssignedId) {
     // arrange
     CommandRegistry registry;
-    Command& save = registry.declare("file.save", "Save");
+    auto save_owned = registry.declare("file.save", "Save");
+    Command& save = *save_owned;
     // act
     Command* found = registry.find("file.save");
     // assert the author assigned id is the selector, and the runtime identity is not (§18.1, AD-11)
@@ -421,7 +424,7 @@ TEST(CommandRegistry, ACommandIsFoundByItsAuthorAssignedId) {
 TEST(CommandRegistry, AnAbsentIdNamesNoCommand) {
     // arrange
     CommandRegistry registry;
-    registry.declare("file.save", "Save");
+    auto absent_owned = registry.declare("file.save", "Save");
     // act and assert a selector that matches nothing is refused rather than guessed at (§18.1, AD-11)
     EXPECT_EQ(registry.find("file"), nullptr);
     EXPECT_EQ(registry.find(""), nullptr);
@@ -430,7 +433,7 @@ TEST(CommandRegistry, AnAbsentIdNamesNoCommand) {
 TEST(CommandRegistry, AnUnnamedCommandIsNotAddressable) {
     // arrange
     CommandRegistry registry;
-    registry.declare("", "Save");
+    auto unnamed_owned = registry.declare("", "Save");
     // act and assert a command the author never named stays out of the selector index (§18.1, AD-11)
     EXPECT_EQ(registry.find(""), nullptr);
 }
@@ -438,7 +441,8 @@ TEST(CommandRegistry, AnUnnamedCommandIsNotAddressable) {
 TEST(CommandRegistry, EachInvocationContributesExactlyOneEntryWhateverInvokedIt) {
     // arrange
     CommandRegistry registry;
-    Command& save = registry.declare("file.save", "Save");
+    auto save_owned = registry.declare("file.save", "Save");
+    Command& save = *save_owned;
     std::vector<InvocationSource> reversed;
     save.set_action([](const CommandInvocation&) {});
     save.set_undo_entry(UndoEntry{.label = "Save", .undo = [&reversed](const CommandInvocation& invocation) { reversed.push_back(invocation.source); }, .redo = [](const CommandInvocation&) {}});
@@ -459,7 +463,8 @@ TEST(CommandRegistry, EachInvocationContributesExactlyOneEntryWhateverInvokedIt)
 TEST(CommandRegistry, ARepeatedActionInsideOneGroupContributesOneEntry) {
     // arrange
     CommandRegistry registry;
-    Command& erase = registry.declare("row.erase", "Delete Rows");
+    auto erase_owned = registry.declare("row.erase", "Delete Rows");
+    Command& erase = *erase_owned;
     std::size_t undone = 0;
     std::size_t redone = 0;
     erase.set_action([](const CommandInvocation&) {});
@@ -496,7 +501,8 @@ TEST(CommandRegistry, TheHistoryFeedsTheUndoAndRedoCommands) {
 TEST(ShortcutTable, AnAcceleratorRoutesToItsCommand) {
     // arrange
     CommandRegistry registry;
-    Command& save = registry.declare("file.save", "Save");
+    auto save_owned = registry.declare("file.save", "Save");
+    Command& save = *save_owned;
     const Shortcut shortcut{.key = Key::S, .modifiers = Modifiers{.command = true}};
     // act
     registry.shortcuts().bind(shortcut, save.id());
@@ -518,7 +524,8 @@ TEST(ShortcutTable, AnUnboundAcceleratorNamesNoCommand) {
 TEST(ShortcutTable, ACommandWithNoModifierRoutesOnItsOwn) {
     // arrange
     CommandRegistry registry;
-    Command& save = registry.declare("file.save", "Save");
+    auto save_owned = registry.declare("file.save", "Save");
+    Command& save = *save_owned;
     const Shortcut plain{.key = Key::S};
     const Shortcut modified{.key = Key::S, .modifiers = Modifiers{.command = true}};
     // act
@@ -533,7 +540,8 @@ TEST(ShortcutTable, ACommandWithNoModifierRoutesOnItsOwn) {
 TEST(ShortcutTable, ACommandPresentsEveryAcceleratorBoundToIt) {
     // arrange
     CommandRegistry registry;
-    Command& save = registry.declare("file.save", "Save");
+    auto save_owned = registry.declare("file.save", "Save");
+    Command& save = *save_owned;
     // act
     registry.shortcuts().bind(Shortcut{.key = Key::S, .modifiers = Modifiers{.command = true}}, save.id());
     registry.shortcuts().bind(Shortcut{.key = Key::F1, .modifiers = Modifiers{.control = true}}, save.id());
@@ -554,8 +562,10 @@ TEST(ShortcutTable, AnAcceleratorIsThePortableSpellingOfAKey) {
 TEST(ShortcutTable, RebindingAnAcceleratorReleasesItsPreviousOwner) {
     // arrange
     CommandRegistry registry;
-    Command& save = registry.declare("file.save", "Save");
-    Command& other = registry.declare("file.open", "Open");
+    auto save_owned = registry.declare("file.save", "Save");
+    Command& save = *save_owned;
+    auto other_owned = registry.declare("file.open", "Open");
+    Command& other = *other_owned;
     const Shortcut shortcut{.key = Key::S, .modifiers = Modifiers{.command = true}};
     registry.shortcuts().bind(shortcut, save.id());
     // act
@@ -569,7 +579,8 @@ TEST(ShortcutTable, RebindingAnAcceleratorReleasesItsPreviousOwner) {
 TEST(ShortcutTable, AnAcceleratorNamingNoKeyBindsNothing) {
     // arrange
     CommandRegistry registry;
-    Command& save = registry.declare("file.save", "Save");
+    auto save_owned = registry.declare("file.save", "Save");
+    Command& save = *save_owned;
     // act
     registry.shortcuts().bind(Shortcut{.key = Key::None}, save.id());
     // assert no key can ever match it, so nothing is registered (§18.5)

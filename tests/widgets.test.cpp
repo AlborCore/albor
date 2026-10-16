@@ -3406,7 +3406,7 @@ TEST(FocusStateChecks, AHoverOutranksAFocus) {
     StubTextEngine text_engine;
     Button button(&engine, &text_engine, "Press");
     button.set_focused(true);
-    Event enter{EventKind::PointerEnter};
+    Event enter{.kind = EventKind::PointerEnter};
     // act
     button.dispatch_event(enter);
     // assert the pointer is the stronger signal, because the user is pointing at the control (§8.3)
@@ -3713,7 +3713,7 @@ TEST(ControlStateVisuals, ACanvasGoesHoveredFromAPointerEnter) {
     // arrange a canvas, which had no dispatch at all and so could never leave the normal state (§8.3)
     BindingEngine engine;
     Canvas canvas(&engine);
-    Event enter{EventKind::PointerEnter};
+    Event enter{.kind = EventKind::PointerEnter};
     // act
     canvas.dispatch_event(enter);
     // assert the canvas reports hovered, because the transition now reaches it (§8.3)
@@ -3729,7 +3729,7 @@ TEST(ControlStateVisuals, ACanvasDrawsADifferentPlateWhenHovered) {
     canvas.set_theme(&theme);
     canvas.set_intrinsic_size(Size{20.0f, 20.0f});
     canvas.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
-    Event enter{EventKind::PointerEnter};
+    Event enter{.kind = EventKind::PointerEnter};
     // act
     canvas.dispatch_event(enter);
     SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
@@ -3746,7 +3746,7 @@ TEST(ControlStateVisuals, ALabelGoesHoveredFromAPointerEnter) {
     BindingEngine engine;
     StubTextEngine text_engine;
     Label label(&engine, &text_engine, "Text");
-    Event enter{EventKind::PointerEnter};
+    Event enter{.kind = EventKind::PointerEnter};
     // act
     label.dispatch_event(enter);
     // assert the label reports hovered, because the transition now reaches it (§8.3)
@@ -3762,7 +3762,7 @@ TEST(ControlStateVisuals, ALabelResolvesTheHoveredForeground) {
     Label label(&engine, &text_engine, "Text");
     label.set_theme(&theme);
     label.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
-    Event enter{EventKind::PointerEnter};
+    Event enter{.kind = EventKind::PointerEnter};
     // act
     label.dispatch_event(enter);
     SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
@@ -3843,7 +3843,7 @@ TEST(ControlStateVisuals, AHiddenCanvasTakesNoEvent) {
     BindingEngine engine;
     Canvas canvas(&engine);
     canvas.set_visible(false);
-    Event enter{EventKind::PointerEnter};
+    Event enter{.kind = EventKind::PointerEnter};
     // act
     canvas.dispatch_event(enter);
     // assert the transition was skipped, because a hidden control is not a hover target (§8.3)
@@ -3864,7 +3864,7 @@ TEST(ControlStateVisuals, AHiddenLabelTakesNoEvent) {
     StubTextEngine text_engine;
     Label label(&engine, &text_engine, "Text");
     label.set_visible(false);
-    Event enter{EventKind::PointerEnter};
+    Event enter{.kind = EventKind::PointerEnter};
     // act
     label.dispatch_event(enter);
     // assert the transition was skipped, because a hidden control is not a hover target (§8.3)

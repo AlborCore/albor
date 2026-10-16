@@ -8,7 +8,6 @@
 #include "core/scrollable_content.h"
 #include "runtime/binding_engine.h"
 #include "semantics/semantic_node.h"
-#include "ui/component.h"
 #include "ui/ui_event.h"
 #include "ui/ui_node.h"
 #include "widgets/scroll_view.h"

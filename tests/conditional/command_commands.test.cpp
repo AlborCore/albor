@@ -48,8 +48,10 @@ namespace
 TEST(CommandCommands, ADumpNamesEveryCommandWithItsTwoPublishedStates) {
     // arrange
     Fixture fixture;
-    Command& save = fixture.commands.declare("file.save", "Save");
-    Command& erase = fixture.commands.declare("row.erase", "Delete Rows");
+    auto save_owned = fixture.commands.declare("file.save", "Save");
+    Command& save = *save_owned;
+    auto erase_owned = fixture.commands.declare("row.erase", "Delete Rows");
+    Command& erase = *erase_owned;
     save.set_enabled(false);
     erase.set_visible(false);
     // act
@@ -63,7 +65,7 @@ TEST(CommandCommands, ADumpNamesEveryCommandWithItsTwoPublishedStates) {
 TEST(CommandCommands, AnUnnamedCommandIsDumpedButNotSelectable) {
     // arrange
     Fixture fixture;
-    fixture.commands.declare("", "Anonymous");
+    auto anonymous_owned = fixture.commands.declare("", "Anonymous");
     // act
     const AutomationResult dumped = fixture.run("command.list");
     const AutomationResult invoked = fixture.run("command.invoke Anonymous");
@@ -75,7 +77,8 @@ TEST(CommandCommands, AnUnnamedCommandIsDumpedButNotSelectable) {
 TEST(CommandCommands, OneCommandReportsItsOwnState) {
     // arrange
     Fixture fixture;
-    Command& save = fixture.commands.declare("file.save", "Save");
+    auto save_owned = fixture.commands.declare("file.save", "Save");
+    Command& save = *save_owned;
     save.set_enabled(false);
     // act
     const AutomationResult result = fixture.run("command.get file.save");
@@ -87,7 +90,7 @@ TEST(CommandCommands, OneCommandReportsItsOwnState) {
 TEST(CommandCommands, AnAbsentIdIsRefusedRatherThanGuessed) {
     // arrange
     Fixture fixture;
-    fixture.commands.declare("file.save", "Save");
+    auto absent_owned = fixture.commands.declare("file.save", "Save");
     // act and assert a selector that matches nothing is refused with the reason (AD-11)
     EXPECT_FALSE(fixture.run("command.get file").ok);
     EXPECT_FALSE(fixture.run("command.invoke file").ok);
@@ -97,7 +100,8 @@ TEST(CommandCommands, AnAbsentIdIsRefusedRatherThanGuessed) {
 TEST(CommandCommands, AnAllowedClientInvokesTheSameActionAControlRuns) {
     // arrange
     Fixture fixture;
-    Command& save = fixture.commands.declare("file.save", "Save");
+    auto save_owned = fixture.commands.declare("file.save", "Save");
+    Command& save = *save_owned;
     std::size_t runs = 0;
     InvocationSource route = InvocationSource::Pointer;
     save.set_action([&runs, &route](const CommandInvocation& invocation) {
@@ -115,7 +119,8 @@ TEST(CommandCommands, AnAllowedClientInvokesTheSameActionAControlRuns) {
 TEST(CommandCommands, ADisabledCommandIsRefusedRatherThanForced) {
     // arrange
     Fixture fixture;
-    Command& save = fixture.commands.declare("file.save", "Save");
+    auto save_owned = fixture.commands.declare("file.save", "Save");
+    Command& save = *save_owned;
     std::size_t runs = 0;
     save.set_action([&runs](const CommandInvocation&) { runs++; });
     save.set_enabled(false);
@@ -130,7 +135,8 @@ TEST(CommandCommands, ADisabledCommandIsRefusedRatherThanForced) {
 TEST(CommandCommands, AHiddenCommandIsRefusedRatherThanForced) {
     // arrange
     Fixture fixture;
-    Command& erase = fixture.commands.declare("row.erase", "Delete Rows");
+    auto erase_owned = fixture.commands.declare("row.erase", "Delete Rows");
+    Command& erase = *erase_owned;
     erase.set_visible(false);
     // act
     const AutomationResult result = fixture.run("command.invoke row.erase");
@@ -143,7 +149,8 @@ TEST(CommandCommands, ASelectionScopedInvocationReportsTheRangeItRanOver) {
     // arrange
     Fixture fixture;
     fixture.commands.set_selection_source([] { return SelectionSpan{.first = 2, .last = 7}; });
-    Command& erase = fixture.commands.declare("row.erase", "Delete Rows");
+    auto erase_owned = fixture.commands.declare("row.erase", "Delete Rows");
+    Command& erase = *erase_owned;
     erase.set_selection_required(true);
     std::size_t runs = 0;
     erase.set_action([&runs](const CommandInvocation&) { runs++; });
@@ -158,7 +165,8 @@ TEST(CommandCommands, ASelectionScopedInvocationReportsTheRangeItRanOver) {
 TEST(CommandCommands, ACommandThatTakesAnArgumentReceivesIt) {
     // arrange
     Fixture fixture;
-    Command& erase = fixture.commands.declare("row.erase", "Delete Rows");
+    auto erase_owned = fixture.commands.declare("row.erase", "Delete Rows");
+    Command& erase = *erase_owned;
     std::string observed;
     erase.set_action([&observed](const CommandInvocation& invocation) { observed = std::get<std::string>(invocation.argument); });
     // act
@@ -171,7 +179,8 @@ TEST(CommandCommands, ACommandThatTakesAnArgumentReceivesIt) {
 TEST(CommandCommands, TheHistoryIsAnsweredThroughTheWire) {
     // arrange
     Fixture fixture;
-    Command& save = fixture.commands.declare("file.save", "Save");
+    auto save_owned = fixture.commands.declare("file.save", "Save");
+    Command& save = *save_owned;
     int undone = 0;
     save.set_action([](const CommandInvocation&) {});
     save.set_undo_entry(UndoEntry{.label = "Save", .undo = [&undone](const CommandInvocation&) { undone++; }, .redo = [](const CommandInvocation&) {}});
@@ -198,7 +207,8 @@ TEST(CommandCommands, ReversingAnEmptyHistoryIsRefused) {
 TEST(CommandCommands, AnUnpermittedCommandNeverReachesTheApplication) {
     // arrange a host that registered the whole family but permits only part of it (§10.3, AD-10)
     CommandRegistry commands;
-    Command& save = commands.declare("file.save", "Save");
+    auto save_owned = commands.declare("file.save", "Save");
+    Command& save = *save_owned;
     std::size_t runs = 0;
     save.set_action([&runs](const CommandInvocation&) { runs++; });
     AutomationRegistry registry;

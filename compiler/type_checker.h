@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -14,7 +15,7 @@
 
 namespace albor::compiler
 {
-    // the checked tree shares the expressions the parser built, because re-owning them would duplicate the whole ast (§11.1)
+    // the checked tree shares the parser's expressions, because re-owning them would duplicate the whole ast (§11.1)
     using SharedExpression = std::shared_ptr<const Expression>;
 
     // one property a component declares, resolved to the type it was written with (§11.1)
@@ -51,6 +52,44 @@ namespace albor::compiler
         // the parameter types in declaration order, which an invocation must match (§11.1)
         std::vector<ValueType> parameter_types;
 
+        // the parameter names in declaration order, which a handler body reads the raised value by (§11.1)
+        std::vector<std::string> parameter_names;
+
+        // where the declaration was written (§11.1)
+        SourceSpan span;
+    };
+
+    // one resolved function, which a binding may call as a named pure computation (§11.1)
+    struct CheckedFunction
+    {
+        // the declared name, which a call resolves against (§11.1)
+        std::string name;
+
+        // the parameter names and their resolved types, which the arguments must match (§11.1)
+        std::vector<std::pair<std::string, ValueType>> parameters;
+
+        // the resolved return type, which a call carries as its own type (§11.1)
+        ValueType return_type;
+
+        // the returned expression, whose dependencies are empty because a function reads only its parameters (§11.1)
+        SharedExpression return_value;
+
+        // where the declaration was written (§11.1)
+        SourceSpan span;
+    };
+
+    // one resolved module-scoped value, which several components read as a named constant (§11.1)
+    struct CheckedGlobal
+    {
+        // the declared name, which a reference resolves against (§11.1)
+        std::string name;
+
+        // the resolved declared type, which every read carries as its own (§11.1)
+        ValueType type;
+
+        // the initial value, whose dependencies are empty because a global reads only its own scope (§11.1)
+        SharedExpression value;
+
         // where the declaration was written (§11.1)
         SourceSpan span;
     };
@@ -83,14 +122,23 @@ namespace albor::compiler
         // what kind of statement this is, which decides which fields below are set (§11.1)
         HandlerStatementKind kind = HandlerStatementKind::Assignment;
 
-        // the property being assigned or the signal being invoked (§11.1)
+        // the property being assigned, the signal invoked or the collection the method runs on (§11.1)
         std::string target;
 
-        // the assigned value, which is absent for an invocation (§11.1)
+        // the built-in method name, which is empty for an assignment, a signal invocation and a field write (§11.1)
+        std::string method;
+
+        // the field of a record the write reaches, which is empty for every other form (§11.1)
+        std::string field;
+
+        // the assigned value, which is absent for an invocation and a method call (§11.1)
         SharedExpression value;
 
-        // the invocation arguments, which are empty for an assignment (§11.1)
+        // the invocation or method arguments, which are empty for an assignment (§11.1)
         std::vector<SharedExpression> arguments;
+
+        // the element type of a collection method, which is what the mutation works with (§11.1)
+        ValueType element;
 
         // the component properties the statement reads, which the graph walk orders by (§7.3, AD-04a)
         std::vector<std::string> dependencies;
@@ -173,6 +221,15 @@ namespace albor::compiler
         // the component properties the repeated source reads, which the graph walk orders by (§7.3, AD-04a)
         std::vector<std::string> repeat_dependencies;
 
+        // the condition expression of a conditional, which decides whether the body exists (§11.1)
+        SharedExpression condition;
+
+        // the component properties the condition reads, which the graph walk orders by (§7.3, AD-04a)
+        std::vector<std::string> condition_dependencies;
+
+        // the checked body of a conditional, which is the element that exists while the condition holds (§11.1)
+        std::shared_ptr<CheckedNode> conditional_body;
+
         // where the node was written (§11.1)
         SourceSpan span;
     };
@@ -205,6 +262,12 @@ namespace albor::compiler
         // the checked components in declaration order (§11.1)
         std::vector<CheckedComponent> components;
 
+        // the checked functions in declaration order, which a component binding may call (§11.1)
+        std::vector<CheckedFunction> functions;
+
+        // the checked module-scoped values in declaration order, which a component expression may read (§11.1)
+        std::vector<CheckedGlobal> globals;
+
         // the manifest modules the file imported, which name where a record header lives (§11.1, §11.2, AD-17)
         std::vector<std::string> imported_modules;
     };
@@ -232,6 +295,12 @@ namespace albor::compiler
             // the signal the handler body sits inside, whose parameters the body reads by name (§11.1)
             const ElementSignal* handler_signal = nullptr;
 
+            // the function parameters the body sits inside, which shadow every property of the same name (§11.1)
+            const std::vector<std::pair<std::string, ValueType>>* function_parameters = nullptr;
+
+            // the module-scoped values an expression reads, which a component scope carries and no function sees (§11.1)
+            const std::vector<CheckedGlobal>* globals = nullptr;
+
             // whether the scope sits inside a draw block, which is what exposes the canvas extent (§6.4)
             bool in_draw = false;
 
@@ -245,17 +314,59 @@ namespace albor::compiler
         // resolve the declarations of one component, which is the first pass (§11.1)
         void resolve_declarations(const ComponentDeclaration& component, CheckedComponent& out);
 
+        // merge the members a base declares under a derived component's own, which the scope resolves against (§11.1)
+        [[nodiscard]] bool merge_inherited(const SourceFile& file, std::size_t index, std::vector<CheckedComponent>& out);
+
+        // type the defaults a component's own declarations carry against the merged list they resolve in (§11.1)
+        void type_own_defaults(const ComponentDeclaration& component, CheckedComponent& out);
+
+        // publish the element type each file component exposes, which an instance resolves before the catalog (§11.1)
+        void publish_component_types(const std::vector<CheckedComponent>& checked, const std::vector<bool>& inherited);
+
+        // resolve every component tree with its base's checked tree in hand, which a derived body splices into (§11.1)
+        void resolve_component_trees(const SourceFile& file, std::vector<CheckedComponent>& out);
+
+        // reject a graph of component elements that instantiates itself, which would build forever (§11.1)
+        void detect_instantiation_cycles(const std::vector<CheckedComponent>& checked);
+
+        // walk one component's instantiation edges, reporting an edge that returns to the open path (§11.1)
+        void visit_instantiation(const std::string& name, const std::map<std::string, std::vector<std::pair<std::string, SourceSpan>>>& edges, std::map<std::string, int>& colour);
+
+        // collect the component elements one checked tree instantiates, which is the edge set a cycle walk reads (§11.1)
+        void collect_instantiation_edges(const CheckedNode& node, std::vector<std::pair<std::string, SourceSpan>>& targets) const;
+
+        // resolve the signatures of every function first, so a call may appear before its declaration (§11.1)
+        void check_function_signatures(const SourceFile& file, std::vector<CheckedFunction>& out);
+
+        // resolve the body of one function against its own parameters, which is the second pass (§11.1)
+        void check_function(const FunctionDeclaration& declaration, CheckedFunction& out);
+
+        // resolve the declared type of every module-scoped value first, so an initializer may name any of them (§11.1)
+        void check_global_signatures(const SourceFile& file, std::vector<CheckedGlobal>& out);
+
+        // resolve the initial value of one module-scoped value against its declared type, which is the second pass (§11.1)
+        void check_global_value(const GlobalDeclaration& declaration, CheckedGlobal& out);
+
+        // report whether the name is a module-scoped value, which is what a write to it is reported against (§11.1)
+        [[nodiscard]] bool is_global(std::string_view name) const;
+
+        // report a write to a module-scoped value, because one is read-only wherever a write appears (§11.1)
+        void report_read_only(std::string_view name, SourceSpan span);
+
         // report a name the component declares twice, because a reference would be ambiguous (§11.1)
         void report_duplicate(std::string_view name, SourceSpan span);
 
         // resolve the root element, which is the second pass (§11.1)
-        void resolve_tree(const ComponentDeclaration& component, CheckedComponent& out);
+        void resolve_tree(const ComponentDeclaration& component, CheckedComponent& out, const CheckedComponent* base);
 
         // resolve one tree node against the scope it appears in (§11.1)
         std::shared_ptr<CheckedNode> resolve_node(const TreeNode& node, const Scope& scope);
 
         // resolve the repeat form, whose body sees the item binding (§11.1)
         std::shared_ptr<CheckedNode> resolve_repeat(const TreeNode& node, const Scope& scope);
+
+        // resolve the conditional form, whose body exists only while the condition holds (§11.1)
+        std::shared_ptr<CheckedNode> resolve_conditional(const TreeNode& node, const Scope& scope);
 
         // resolve the assignments of an element against its type (§11.1)
         void resolve_assignments(const TreeNode& node, const ElementType& type, const Scope& scope, CheckedNode& out);
@@ -283,6 +394,9 @@ namespace albor::compiler
 
         // type a bracketed list, whose elements must agree because a collection has one element type (§8.1)
         ValueType type_array(const ArrayExpression& array, const Scope& scope, std::vector<std::string>& dependencies);
+
+        // resolve a record construction against the record the catalog declares, which is how a value is written (§11.1)
+        ValueType type_record_construction(const RecordConstructionExpression& construction, const Scope& scope, std::vector<std::string>& dependencies);
 
         // type a field read, which resolves the object first and then the field the manifest declared (§11.2, AD-17)
         ValueType type_field_access(const FieldAccessExpression& access, const Scope& scope, std::vector<std::string>& dependencies);
@@ -353,7 +467,25 @@ namespace albor::compiler
         // the signals of the component being checked, which a handler resolves against (§11.1)
         const std::vector<CheckedSignal>* m_signals = nullptr;
 
+        // the resolved function signatures of the file, which a call resolves against wherever it appears (§11.1)
+        const std::vector<CheckedFunction>* m_functions = nullptr;
+
+        // the module-scoped values of the file, which a component expression reads and no function body sees (§11.1)
+        const std::vector<CheckedGlobal>* m_globals = nullptr;
+
         // the declared names of the component being checked, with the span each was written at (§11.1)
         std::vector<std::pair<std::string, SourceSpan>> m_declared;
+
+        // the index each file component sits at by name, which a base and an element both resolve against (§11.1)
+        std::map<std::string, std::size_t> m_component_index;
+
+        // the element types the file's own components expose to an instance, which resolve before the catalog (§11.1)
+        std::map<std::string, ElementType> m_file_component_types;
     };
+
+    // register the structs a file declares, turning each into a record the catalog resolves before the check (§11.1)
+    void register_ui_structs(const SourceFile& file, ElementCatalog& catalog, DiagnosticList& diagnostics);
+
+    // register the enums a file declares, turning each into a value set the catalog resolves before the check (§11.1)
+    void register_ui_enums(const SourceFile& file, ElementCatalog& catalog);
 } // namespace albor::compiler

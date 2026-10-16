@@ -5,68 +5,21 @@
 
 namespace albor::compiler
 {
-    namespace
-    {
-        // the wrappers that make a snapshot and a vector read as the author wrote them (§10.5, §13.2, §8.1)
-        constexpr std::string_view SNAPSHOT_OPEN = "Snapshot<";
-        constexpr std::string_view SNAPSHOT_CLOSE = ">";
-        constexpr std::string_view VECTOR_OPEN = "vector<";
-        constexpr std::string_view VECTOR_CLOSE = ">";
-
-        // a parameter form is the wrapper, the element and the closing angle, so this is the shortest it can be (§11.1)
-        constexpr std::size_t SHORTEST_PARAMETRIC = 10;
-
-        // resolve a type name as written, against the catalog that holds the native types (§11.1, §11.2, AD-17)
-        ValueType resolve_type_name(std::string_view written, const ElementCatalog& catalog) {
-            // a scalar name is one the language spells without brackets (§11.1)
-            if (written == "bool")
-                return scalar(TypeKind::Bool);
-            // an integer is spelled int (§11.1)
-            if (written == "int")
-                return scalar(TypeKind::Int);
-            // a floating point number is spelled float (§11.1)
-            if (written == "float")
-                return scalar(TypeKind::Float);
-            // a text value is spelled string (§11.1)
-            if (written == "string")
-                return scalar(TypeKind::String);
-            // a colour is spelled color (§11.1)
-            if (written == "color")
-                return scalar(TypeKind::Color);
-            // a length is spelled length, so a declared length and a literal length agree (§11.1, AD-27)
-            if (written == "length")
-                return scalar(TypeKind::Length);
-            // a snapshot is written Snapshot<T>, whose element may itself nest (§10.5, §13.2)
-            if (written.substr(0, SNAPSHOT_OPEN.size()) == SNAPSHOT_OPEN && written.size() >= SHORTEST_PARAMETRIC && written.substr(written.size() - SNAPSHOT_CLOSE.size()) == SNAPSHOT_CLOSE) {
-                // the element is the part between the brackets, which resolves the same way (§10.5, §13.2)
-                const std::string_view inner = written.substr(SNAPSHOT_OPEN.size(), written.size() - SNAPSHOT_OPEN.size() - SNAPSHOT_CLOSE.size());
-                // the wrapper is rebuilt rather than trusted, so a malformed element still resolves (§10.5, §13.2)
-                return ValueType::parameterized(TypeKind::Snapshot, resolve_type_name(inner, catalog));
-            }
-            // a vector is written vector<T>, whose element may itself nest (§8.1)
-            if (written.substr(0, VECTOR_OPEN.size()) == VECTOR_OPEN && written.size() >= SHORTEST_PARAMETRIC && written.substr(written.size() - VECTOR_CLOSE.size()) == VECTOR_CLOSE) {
-                // the element is the part between the brackets, which resolves the same way (§8.1)
-                const std::string_view inner = written.substr(VECTOR_OPEN.size(), written.size() - VECTOR_OPEN.size() - VECTOR_CLOSE.size());
-                // the wrapper is rebuilt rather than trusted, so a malformed element still resolves (§8.1)
-                return ValueType::parameterized(TypeKind::Vector, resolve_type_name(inner, catalog));
-            }
-            // a record is a named type a repeat walks, and it resolves like any other manifest name (§11.2, AD-17, AD-13)
-            if (catalog.find_record(written) != nullptr)
-                return ValueType::native(std::string(written));
-            // anything else is a native type, which the catalog holds only if a manifest declared it (§11.2, AD-17)
-            if (catalog.find(written) != nullptr || catalog.holds_native(written))
-                return ValueType::native(std::string(written));
-            // an unknown name resolves to the error type, so nothing downstream raises a second complaint (§11.1)
-            return error_type();
-        }
-    } // namespace
-
     std::optional<ValueType> TypeChecker::Scope::lookup(std::string_view name) const {
         // a draw block reads the canvas extent, which is the node it paints into (§6.4)
         if (in_draw) {
             // the arranged width is the only width a drawing can be correct against (§6.4)
             if (name == "canvas_width" || name == "canvas_height")
                 return scalar(TypeKind::Float);
+        }
+        // the function parameters are checked first, because they are the nearest scope and shadow a property (§11.1)
+        if (function_parameters != nullptr) {
+            // each parameter is named by the declaration, so the body reads the argument by that name (§11.1)
+            for (const std::pair<std::string, ValueType>& parameter : *function_parameters) {
+                // the name decides, so a parameter resolves to exactly one type (§11.1)
+                if (parameter.first == name)
+                    return parameter.second;
+            }
         }
         // the repeat bindings are checked first, because they are the nearest scope (§11.1)
         if (repeat != nullptr) {
@@ -87,11 +40,19 @@ namespace albor::compiler
             }
         }
         // the declarations are scanned, because every scope is built from a resolved component (§11.1)
-        for (const CheckedProperty& property : *properties) {
-            // the name decides, so a reference resolves to exactly one declaration (§11.1)
-            if (property.name == name)
-                return property.type;
-        }
+        if (properties != nullptr)
+            for (const CheckedProperty& property : *properties) {
+                // the name decides, so a reference resolves to exactly one declaration (§11.1)
+                if (property.name == name)
+                    return property.type;
+            }
+        // the module-scoped values are consulted last, because a component's own declarations shadow them (§11.1)
+        if (globals != nullptr)
+            for (const CheckedGlobal& global : *globals) {
+                // the name decides, so a reference resolves to exactly one declaration (§11.1)
+                if (global.name == name)
+                    return global.type;
+            }
         // a name the scope does not hold was already reported, so nothing is returned (§11.1)
         return std::nullopt;
     }
@@ -99,13 +60,123 @@ namespace albor::compiler
     TypeChecker::TypeChecker(const ElementCatalog& catalog, DiagnosticList& diagnostics) :
         m_catalog(catalog), m_diagnostics(diagnostics) {}
 
+    namespace
+    {
+        // copy a checked subtree, because a derived body must not disturb the base's own checked tree (§11.1)
+        std::shared_ptr<CheckedNode> clone_node(const CheckedNode& source) {
+            // the copy takes the shallow member set, because the expressions are shared rather than owned (§11.1)
+            std::shared_ptr<CheckedNode> copy = std::make_shared<CheckedNode>(source);
+            // the children are copied one by one, because each child is its own subtree (§11.1)
+            copy->children.clear();
+            for (const std::shared_ptr<CheckedNode>& child : source.children)
+                copy->children.push_back(clone_node(*child));
+            // a repeat body is its own subtree too, so it is copied the same way (§11.1)
+            if (source.repeat_body != nullptr)
+                copy->repeat_body = clone_node(*source.repeat_body);
+            // a conditional body is copied for the same reason (§11.1)
+            if (source.conditional_body != nullptr)
+                copy->conditional_body = clone_node(*source.conditional_body);
+            return copy;
+        }
+
+        // collect every children slot in a subtree, which is what a fill edits and a diagnostic points at (§11.1)
+        void collect_slot_spans(const CheckedNode& node, std::vector<SourceSpan>& out) {
+            // each child is scanned, because the marker sits among them or deeper (§11.1)
+            for (const std::shared_ptr<CheckedNode>& child : node.children) {
+                // a marker is recorded by its span, because a report points at it (§11.1)
+                if (child->kind == TreeNodeKind::Slot)
+                    out.push_back(child->span);
+                else
+                    collect_slot_spans(*child, out);
+            }
+            // a repeat body carries children of its own, because a marker may sit inside one (§11.1)
+            if (node.repeat_body != nullptr)
+                collect_slot_spans(*node.repeat_body, out);
+            // a conditional body is the same, because its element is part of the tree (§11.1)
+            if (node.conditional_body != nullptr)
+                collect_slot_spans(*node.conditional_body, out);
+        }
+
+        // replace every children slot with the content a derived component wrote, reporting whether one was found (§11.1)
+        bool fill_slots(CheckedNode& node, const std::vector<std::shared_ptr<CheckedNode>>& content) {
+            bool filled = false;
+            // the direct children are scanned first, because the marker sits among them (§11.1)
+            for (std::size_t index = 0; index < node.children.size();) {
+                // a marker is the content point, which the content replaces in place (§11.1)
+                if (node.children[index]->kind == TreeNodeKind::Slot) {
+                    // the marker is erased, because the content now stands where it was (§11.1)
+                    node.children.erase(node.children.begin() + static_cast<std::ptrdiff_t>(index));
+                    // the content is inserted at that position, because that is the order the base wrote (§11.1)
+                    node.children.insert(node.children.begin() + static_cast<std::ptrdiff_t>(index), content.begin(), content.end());
+                    filled = true;
+                    // the scan continues after the inserted run, because nothing there is a marker (§11.1)
+                    index += content.size();
+                    continue;
+                }
+                // the next child is taken, because a marker is only where one is written (§11.1)
+                index++;
+            }
+            // the children are walked as well, because a marker may sit deeper (§11.1)
+            for (const std::shared_ptr<CheckedNode>& child : node.children)
+                if (fill_slots(*child, content))
+                    filled = true;
+            // a repeat body is walked too, because its element may carry the marker (§11.1)
+            if (node.repeat_body != nullptr && fill_slots(*node.repeat_body, content))
+                filled = true;
+            // a conditional body is walked for the same reason (§11.1)
+            if (node.conditional_body != nullptr && fill_slots(*node.conditional_body, content))
+                filled = true;
+            return filled;
+        }
+
+        // drop every children marker, because a base used directly shows no content point (§11.1)
+        void strip_slots(CheckedNode& node) {
+            // the empty markers are erased, because nothing filled them (§11.1)
+            std::erase_if(node.children, [](const std::shared_ptr<CheckedNode>& child) { return child->kind == TreeNodeKind::Slot; });
+            // each remaining child is walked, because a marker may sit deeper (§11.1)
+            for (const std::shared_ptr<CheckedNode>& child : node.children)
+                strip_slots(*child);
+            // a repeat body carries children of its own, so it is walked the same way (§11.1)
+            if (node.repeat_body != nullptr)
+                strip_slots(*node.repeat_body);
+            // a conditional body is walked for the same reason (§11.1)
+            if (node.conditional_body != nullptr)
+                strip_slots(*node.conditional_body);
+        }
+    } // namespace
+
     CheckedFile TypeChecker::check(const SourceFile& file) {
         // the file is assembled as the components are checked, so one mistake costs one component (§11.1)
         CheckedFile checked;
         // the imports name the manifest modules, which is what a record header path is built from (§11.1, AD-17)
         for (const ImportDeclaration& imported : file.imports)
             checked.imported_modules.push_back(imported.module);
-        // the components are checked in declaration order, because the result preserves it (§11.1)
+        // the function signatures are resolved first, so a call may appear before the declaration it names (§11.1)
+        check_function_signatures(file, checked.functions);
+        // the signatures are published, because a body resolves its calls against them (§11.1)
+        m_functions = &checked.functions;
+        // the function bodies are resolved next, because a body may call any signature the file declares (§11.1)
+        for (std::size_t index = 0; index < file.functions.size() && index < checked.functions.size(); index++)
+            check_function(file.functions[index], checked.functions[index]);
+        // the module-scoped types resolve next, so an initializer may name any value the file declares (§11.1)
+        check_global_signatures(file, checked.globals);
+        // the initial values follow their signatures, because one may call a function the file declares (§11.1)
+        for (std::size_t index = 0; index < file.globals.size() && index < checked.globals.size(); index++)
+            check_global_value(file.globals[index], checked.globals[index]);
+        // the module-scoped values are published, because a component expression resolves against them (§11.1)
+        m_globals = &checked.globals;
+        // every component name is indexed, because a duplicate reports once and a base resolves wherever written (§11.1)
+        m_component_index.clear();
+        for (std::size_t index = 0; index < file.components.size(); index++) {
+            // the name decides the slot, because an element reference and a base both resolve by it (§11.1)
+            const std::string& name = file.components[index].name;
+            // a name the file declares twice is reported, because a reference to it would be ambiguous (§11.1)
+            if (m_component_index.contains(name))
+                m_diagnostics.add(Diagnostic::Severity::Error, file.components[index].span, "E0401", "'" + name + "' is declared more than once in this file");
+            else
+                m_component_index.emplace(name, index);
+        }
+        // the component declarations are resolved in declaration order, because the result preserves it (§11.1)
         for (const ComponentDeclaration& component : file.components) {
             // the component is assembled locally, because the pass state belongs to one declaration (§11.1)
             CheckedComponent out;
@@ -117,22 +188,365 @@ namespace albor::compiler
             m_declared.clear();
             // the first pass resolves the declarations, so a reference may appear before them (§11.1)
             resolve_declarations(component, out);
-            // the declarations are published, because the second pass resolves handlers against them (§11.1)
-            m_properties = &out.properties;
-            // the signals are published, because the second pass resolves invocations against them (§11.1)
-            m_signals = &out.signals;
-            // the second pass resolves the tree against what the first pass found (§11.1)
-            resolve_tree(component, out);
-            // the static graph is walked once the tree is typed, because it is built from the bindings (§7.3, AD-04a)
-            detect_cycles(out);
-            // the component is kept, because a diagnostic already blocks codegen (§11.1)
+            // the component is kept, because the merge pass below runs over the whole file (§11.1)
             checked.components.push_back(std::move(out));
         }
+        // a derived component gains its base's members, because the merged list is what its body resolves against (§11.1)
+        std::vector<bool> inherited(file.components.size(), true);
+        for (std::size_t index = 0; index < file.components.size(); index++)
+            if (!file.components[index].base.empty())
+                inherited[index] = merge_inherited(file, index, checked.components);
+        // each component publishes its element type after the merge, so an instance sees the inherited members too (§11.1)
+        publish_component_types(checked.components, inherited);
+        // the trees are resolved bases first, because a derived body splices into the checked tree of its base (§11.1)
+        resolve_component_trees(file, checked.components);
+        // a graph of component elements that instantiates itself is rejected, because it would build forever (§11.1)
+        detect_instantiation_cycles(checked.components);
+        // an empty children slot is dropped from every tree, because a base used directly shows no content point (§11.1)
+        for (CheckedComponent& component : checked.components)
+            if (component.root != nullptr)
+                strip_slots(*component.root);
         // the pass state is cleared, because the checker may be reused for another file (§11.1)
         m_properties = nullptr;
         // the signals are cleared with it, because they pointed into the component that just ended (§11.1)
         m_signals = nullptr;
+        // the function signatures are cleared with it, because they pointed into the checked file (§11.1)
+        m_functions = nullptr;
+        // the module-scoped values are cleared with them, because they pointed into the checked file too (§11.1)
+        m_globals = nullptr;
+        // the component index is cleared with the rest, because it names positions in this file alone (§11.1)
+        m_component_index.clear();
+        // the published element types are cleared with it, because they were rebuilt for this file (§11.1)
+        m_file_component_types.clear();
         return checked;
+    }
+
+    bool TypeChecker::merge_inherited(const SourceFile& file, std::size_t index, std::vector<CheckedComponent>& out) {
+        // the declaration is named, because the merge rewrites the derived component against it (§11.1)
+        const ComponentDeclaration& component = file.components[index];
+        // the base must be a component this file declares, because only one carries members to inherit (§11.1)
+        const auto found = m_component_index.find(component.base);
+        if (found == m_component_index.end()) {
+            // the problem points at the base name, because that is what the author wrote (§11.1)
+            m_diagnostics.add(Diagnostic::Severity::Error, component.base_span, "E0425", "'" + component.base + "' is not a component declared in this file");
+            return false;
+        }
+        // the base must derive from none, because a derived fills its base's slot and declares none of its own (§11.1)
+        if (!file.components[found->second].base.empty()) {
+            // the problem points at the base name, because a one level deep chain is the rule (§11.1)
+            m_diagnostics.add(Diagnostic::Severity::Error, component.base_span, "E0426", "'" + component.base + "' is itself derived, so it declares no children slot of its own");
+            return false;
+        }
+        // both sides are named, because the merged set replaces the derived component's own (§11.1)
+        const CheckedComponent& base = out.at(found->second);
+        CheckedComponent& derived = out.at(index);
+        // the inherited members come first, because a redeclaration overrides one but never reorders the set (§11.1)
+        std::vector<CheckedProperty> properties = base.properties;
+        std::vector<CheckedSignal> signals = base.signals;
+        // each of the derived component's own properties is laid over the inherited set (§11.1)
+        for (const CheckedProperty& own : derived.properties) {
+            // the search finds an inherited property of the same name, which a redeclaration overrides (§11.1)
+            CheckedProperty* inherited_property = nullptr;
+            for (CheckedProperty& candidate : properties)
+                if (candidate.name == own.name) {
+                    inherited_property = &candidate;
+                    break;
+                }
+            // a property the base does not declare is simply added, because nothing precedes it (§11.1)
+            if (inherited_property == nullptr) {
+                properties.push_back(own);
+                continue;
+            }
+            // a redeclaration must agree on type and direction, because the inherited bindings read the same slot (§11.1)
+            if (inherited_property->type.to_string() != own.type.to_string() || inherited_property->direction != own.direction)
+                m_diagnostics.add(Diagnostic::Severity::Error, own.span, "E0424", "'" + own.name + "' redeclares an inherited property with a different type or direction");
+            // the redeclaration takes the slot, because the derived default is what the facade initialises with (§11.1)
+            *inherited_property = own;
+        }
+        // each of the derived component's own signals joins the inherited set, because a duplicate would split it (§11.1)
+        for (const CheckedSignal& own : derived.signals) {
+            // an inherited signal of the same name is a duplicate, because only one callback setter may exist (§11.1)
+            const bool duplicate = std::any_of(signals.begin(), signals.end(), [&own](const CheckedSignal& signal) { return signal.name == own.name; });
+            if (duplicate) {
+                // the collision is reported against the later one, because the base one is what the author meant (§11.1)
+                m_diagnostics.add(Diagnostic::Severity::Error, own.span, "E0401", "'" + own.name + "' is declared more than once in this component");
+                continue;
+            }
+            // the signal is kept, because it is part of what the merged body raises (§11.1)
+            signals.push_back(own);
+        }
+        // a derived property colliding with an inherited signal duplicates, because a name means one thing (§11.1)
+        for (const CheckedProperty& own : derived.properties)
+            for (const CheckedSignal& signal : base.signals)
+                if (own.name == signal.name)
+                    m_diagnostics.add(Diagnostic::Severity::Error, own.span, "E0401", "'" + own.name + "' is declared more than once in this component");
+        // a derived signal that collides with an inherited property is the other half of the same rule (§11.1)
+        for (const CheckedSignal& own : derived.signals)
+            for (const CheckedProperty& property : base.properties)
+                if (own.name == property.name)
+                    m_diagnostics.add(Diagnostic::Severity::Error, own.span, "E0401", "'" + own.name + "' is declared more than once in this component");
+        // the merged sets replace the derived component's own, because that is what its body resolves against (§11.1)
+        derived.properties = std::move(properties);
+        derived.signals = std::move(signals);
+        // the derived defaults are typed against the merged list, because an inherited name may appear in one (§11.1)
+        type_own_defaults(component, derived);
+        return true;
+    }
+
+    void TypeChecker::type_own_defaults(const ComponentDeclaration& component, CheckedComponent& out) {
+        // the scope is the merged list, because an inherited name may appear in a default (§11.1)
+        const Scope scope{.properties = &out.properties, .repeat = nullptr, .globals = m_globals};
+        for (const PropertyDeclaration& declaration : component.properties) {
+            // the checked property is found by name, because the merge moved the list out of written order (§11.1)
+            CheckedProperty* property = nullptr;
+            for (CheckedProperty& candidate : out.properties)
+                if (candidate.name == declaration.name) {
+                    property = &candidate;
+                    break;
+                }
+            // a property with no default has nothing to type, which the declaration already said (§11.1)
+            if (property == nullptr || !property->has_default)
+                continue;
+            // the dependencies come from the same walk, because a default is a binding (§7.3, AD-04a)
+            const ValueType value_type = type_expression(*property->default_value, scope, property->default_dependencies);
+            // the value must match the property, because nothing widens implicitly (§11.1)
+            if (!assignable(value_type, property->type))
+                report_default_mismatch(declaration, value_type, property->type);
+        }
+    }
+
+    void TypeChecker::publish_component_types(const std::vector<CheckedComponent>& checked, const std::vector<bool>& inherited) {
+        // the set starts empty, because it is rebuilt for every file the checker sees (§11.1)
+        m_file_component_types.clear();
+        for (std::size_t index = 0; index < checked.size(); index++) {
+            // a component whose merge failed publishes nothing, because its member set is incomplete (§11.1)
+            if (!inherited.at(index))
+                continue;
+            // the name decides the slot, because an instance writes the element name (§11.1)
+            const CheckedComponent& component = checked[index];
+            // a duplicate name publishes once, because the index pass already reported the second (§11.1)
+            if (m_file_component_types.contains(component.name))
+                continue;
+            // the type is assembled locally, because each component contributes its own members (§11.1)
+            ElementType type;
+            // the name is what an element writes, so an instance resolves against it (§11.1)
+            type.name = component.name;
+            // the declared properties come first, because one shadows a common property of the same name (§11.1)
+            for (const CheckedProperty& property : component.properties)
+                type.properties.push_back(ElementProperty{.name = property.name, .type = property.type, .assignable = true, .scaled_by_density = false});
+            // the common properties join, because a component arranges like any other node does (§8.2)
+            for (const ElementProperty& common : common_element_properties())
+                type.properties.push_back(common);
+            // the signals carry their parameter names, because a handler body reads the raised value by them (§11.1)
+            for (const CheckedSignal& signal : component.signals)
+                type.signals.push_back(ElementSignal{.name = signal.name, .parameter_types = signal.parameter_types, .parameter_names = signal.parameter_names});
+            // content reaches a base through a derived component, never through an instance (§11.1)
+            type.accepts_children = false;
+            // the type is published, because an element reference resolves before the catalog (§11.1)
+            m_file_component_types.emplace(component.name, std::move(type));
+        }
+    }
+
+    void TypeChecker::resolve_component_trees(const SourceFile& file, std::vector<CheckedComponent>& out) {
+        // two rounds run, bases first, because a derived body reads the checked tree its base produced (§11.1)
+        for (std::size_t round = 0; round < 2; round++) {
+            for (std::size_t index = 0; index < file.components.size(); index++) {
+                // the round skips by derivation, because a base is checked before any component that fills it (§11.1)
+                const bool derived = !file.components[index].base.empty();
+                if (derived != (round == 1))
+                    continue;
+                // the base is null unless it resolved non derived, because the merge already reported the rest (§11.1)
+                const CheckedComponent* base = nullptr;
+                if (derived) {
+                    const auto found = m_component_index.find(file.components[index].base);
+                    if (found != m_component_index.end() && file.components[found->second].base.empty())
+                        base = &out.at(found->second);
+                }
+                // the declared names are rebuilt, because a cycle report points at a declaration (§7.3, AD-04a)
+                m_declared.clear();
+                for (const CheckedProperty& property : out[index].properties)
+                    m_declared.emplace_back(property.name, property.span);
+                for (const CheckedSignal& signal : out[index].signals)
+                    m_declared.emplace_back(signal.name, signal.span);
+                // the declarations are published, because the second pass resolves handlers against them (§11.1)
+                m_properties = &out[index].properties;
+                // the signals are published, because the second pass resolves invocations against them (§11.1)
+                m_signals = &out[index].signals;
+                // the second pass resolves the tree against what the first pass found (§11.1)
+                resolve_tree(file.components[index], out[index], base);
+                // the static graph is walked once the tree is typed, because it is built from the bindings (§7.3, AD-04a)
+                detect_cycles(out[index]);
+            }
+        }
+        // the pass state is cleared, because the checker may be reused for another file (§11.1)
+        m_properties = nullptr;
+        // the signals are cleared with it, because they pointed into the checked file (§11.1)
+        m_signals = nullptr;
+    }
+
+    void TypeChecker::detect_instantiation_cycles(const std::vector<CheckedComponent>& checked) {
+        // the adjacency list maps one component to the component elements its tree instantiates (§11.1)
+        std::map<std::string, std::vector<std::pair<std::string, SourceSpan>>> edges;
+        for (const CheckedComponent& component : checked) {
+            // every component gets an entry, because the walk reaches each of them (§11.1)
+            std::vector<std::pair<std::string, SourceSpan>>& targets = edges[component.name];
+            // the tree is walked only when it exists, because a broken declaration built none (§11.1)
+            if (component.root != nullptr)
+                collect_instantiation_edges(*component.root, targets);
+        }
+        // the colour map orders the walk, because a gray edge back to the open path is the cycle (§11.1)
+        std::map<std::string, int> colour;
+        for (const CheckedComponent& component : checked) {
+            // a finished component is skipped, because every path from it was already walked (§11.1)
+            if (colour[component.name] == 2)
+                continue;
+            visit_instantiation(component.name, edges, colour);
+        }
+    }
+
+    void TypeChecker::visit_instantiation(const std::string& name, const std::map<std::string, std::vector<std::pair<std::string, SourceSpan>>>& edges, std::map<std::string, int>& colour) {
+        // the component opens, because a path from it is now being walked (§11.1)
+        colour[name] = 1;
+        // each edge decides, because a cycle is reachable from any member of it (§11.1)
+        const auto found = edges.find(name);
+        if (found != edges.end()) {
+            for (const std::pair<std::string, SourceSpan>& target : found->second) {
+                // a gray target closes the cycle, because the path already opened it (§11.1)
+                if (colour[target.first] == 1) {
+                    // the problem points at the element, because that is where the instantiation was written (§11.1)
+                    m_diagnostics.add(Diagnostic::Severity::Error, target.second, "E0429", "'" + name + "' instantiates itself through a cycle of component elements");
+                    continue;
+                }
+                // an unvisited target is walked, because its own edges may return (§11.1)
+                if (colour[target.first] == 0)
+                    visit_instantiation(target.first, edges, colour);
+            }
+        }
+        // the component closes, because every path from it has been walked (§11.1)
+        colour[name] = 2;
+    }
+
+    void TypeChecker::collect_instantiation_edges(const CheckedNode& node, std::vector<std::pair<std::string, SourceSpan>>& targets) const {
+        // an element that names a file component is an edge, because the instance builds that component (§11.1)
+        if (node.kind == TreeNodeKind::Element && m_component_index.contains(node.element_type))
+            targets.emplace_back(node.element_type, node.span);
+        // each child is walked, because the edges sit at any depth (§11.1)
+        for (const std::shared_ptr<CheckedNode>& child : node.children)
+            collect_instantiation_edges(*child, targets);
+        // a repeat body instantiates its element too, so it carries the same edges (§11.1)
+        if (node.repeat_body != nullptr)
+            collect_instantiation_edges(*node.repeat_body, targets);
+        // a conditional body is the same, because it exists at build time (§11.1)
+        if (node.conditional_body != nullptr)
+            collect_instantiation_edges(*node.conditional_body, targets);
+    }
+
+    void TypeChecker::check_function_signatures(const SourceFile& file, std::vector<CheckedFunction>& out) {
+        // every signature is resolved before any body, so a call may appear before the declaration it names (§11.1)
+        for (const FunctionDeclaration& declaration : file.functions) {
+            // the declaration is resolved locally, because one mistake must not hide the rest (§11.1)
+            CheckedFunction function;
+            // the name and the span come straight from the declaration (§11.1)
+            function.name = declaration.name;
+            function.span = declaration.span;
+            // the parameters are resolved in written order, because the arguments must match them (§11.1)
+            for (const FunctionParameter& parameter : declaration.parameters) {
+                // the written type resolves against the catalog, which is where a native type comes from (§11.2, AD-17)
+                const ValueType resolved = resolve_type_name(parameter.type, m_catalog);
+                // a type that did not resolve is reported here, because nothing downstream can (§11.1)
+                if (resolved.is_error())
+                    report_unknown_type(parameter.type, parameter.span);
+                // the parameter is kept, because a body reads the argument by that name (§11.1)
+                function.parameters.emplace_back(parameter.name, resolved);
+            }
+            // the return type resolves against the catalog, which is what a call carries as its own (§11.2, AD-17)
+            const ValueType return_type = resolve_type_name(declaration.return_type, m_catalog);
+            // a return type that did not resolve is reported here, because nothing downstream can (§11.1)
+            if (return_type.is_error())
+                report_unknown_type(declaration.return_type, declaration.span);
+            // the return type is stored, because a call takes it as the call's type (§11.1)
+            function.return_type = return_type;
+            // a name the file declares twice is reported, because a call would be ambiguous (§11.1)
+            for (const CheckedFunction& prior : out)
+                if (prior.name == function.name)
+                    m_diagnostics.add(Diagnostic::Severity::Error, function.span, "E0401", "'" + function.name + "' is declared more than once in this file");
+            // the signature is kept, because a body resolves its calls against it (§11.1)
+            out.push_back(std::move(function));
+        }
+    }
+
+    void TypeChecker::check_function(const FunctionDeclaration& declaration, CheckedFunction& out) {
+        // the parameters are the whole of the scope, because a function reads only its own arguments (§11.1)
+        const Scope scope{.properties = nullptr, .repeat = nullptr, .handler_signal = nullptr, .function_parameters = &out.parameters, .globals = nullptr, .in_draw = false};
+        // a body with no return carries no expression, so there is nothing to type (§11.1)
+        if (declaration.return_value == nullptr)
+            return;
+        // the dependencies are dropped, because a function reads only its parameters and so has none (§11.1)
+        std::vector<std::string> dependencies;
+        // the returned expression is typed against the parameters, which is the whole of the check (§11.1)
+        const ValueType value_type = type_expression(*declaration.return_value, scope, dependencies);
+        // the value must match the declared return type, because nothing widens implicitly (§11.1)
+        if (!assignable(value_type, out.return_type))
+            report_type_mismatch(*declaration.return_value, value_type, out.return_type);
+        // the returned expression is shared rather than re-owned, because the tree owns the expression (§11.1)
+        out.return_value = std::shared_ptr<const Expression>(declaration.return_value.get(), [](const Expression*) {});
+    }
+
+    void TypeChecker::check_global_signatures(const SourceFile& file, std::vector<CheckedGlobal>& out) {
+        // every type is resolved before any value, so one initializer may name another file-level name (§11.1)
+        for (const GlobalDeclaration& declaration : file.globals) {
+            // the declaration is resolved locally, because one mistake must not hide the rest (§11.1)
+            CheckedGlobal global;
+            // the name and the span come straight from the declaration (§11.1)
+            global.name = declaration.name;
+            global.span = declaration.span;
+            // the declared type resolves against the catalog, which is where a native type comes from (§11.2, AD-17)
+            const ValueType resolved = resolve_type_name(declaration.type, m_catalog);
+            // a type that did not resolve is reported here, because nothing downstream can (§11.1)
+            if (resolved.is_error())
+                report_unknown_type(declaration.type, declaration.span);
+            // the resolved type is stored, because every read carries it as its own (§11.1)
+            global.type = resolved;
+            // a name the file declares twice is reported, because a reference would be ambiguous (§11.1)
+            for (const CheckedGlobal& prior : out)
+                if (prior.name == global.name)
+                    m_diagnostics.add(Diagnostic::Severity::Error, global.span, "E0401", "'" + global.name + "' is declared more than once in this file");
+            // the signature is kept, because the value pass resolves its initializer against it (§11.1)
+            out.push_back(std::move(global));
+        }
+    }
+
+    void TypeChecker::check_global_value(const GlobalDeclaration& declaration, CheckedGlobal& out) {
+        // the value with no initializer has nothing to type, because the parser already reported the gap (§11.1)
+        if (declaration.value == nullptr)
+            return;
+        // the scope is empty on purpose, because a value reads neither a property nor another global (§11.1)
+        const Scope scope{.properties = nullptr, .repeat = nullptr};
+        // the dependencies are dropped, because a global never changes and so is never one (§7.3, AD-04a)
+        std::vector<std::string> dependencies;
+        // the initializer is typed against the empty scope, which is the whole of the check (§11.1)
+        const ValueType value_type = type_expression(*declaration.value, scope, dependencies);
+        // the value must match the declared type, because nothing widens implicitly (§11.1)
+        if (!value_type.is_error() && !assignable(value_type, out.type))
+            report_type_mismatch(*declaration.value, value_type, out.type);
+        // the initializer is shared rather than re-owned, because the tree owns the expression (§11.1)
+        out.value = std::shared_ptr<const Expression>(declaration.value.get(), [](const Expression*) {});
+    }
+
+    bool TypeChecker::is_global(std::string_view name) const {
+        // the file may declare none, which keeps the scan a null check away (§11.1)
+        if (m_globals == nullptr)
+            return false;
+        // the name decides, so exactly one declaration answers for it (§11.1)
+        for (const CheckedGlobal& global : *m_globals)
+            if (global.name == name)
+                return true;
+        return false;
+    }
+
+    void TypeChecker::report_read_only(std::string_view name, SourceSpan span) {
+        // the problem points at the write, because that is what the author must change (§11.1)
+        m_diagnostics.add(Diagnostic::Severity::Error, span, "E0422", "'" + std::string(name) + "' is a module-scoped value, which is read-only");
     }
 
     void TypeChecker::resolve_declarations(const ComponentDeclaration& component, CheckedComponent& out) {
@@ -161,19 +575,21 @@ namespace albor::compiler
             // the property is kept, because a binding resolves against it (§11.1)
             out.properties.push_back(std::move(property));
         }
-        // the defaults are typed second, because a default may read a property declared after it (§11.1)
-        for (std::size_t index = 0; index < component.properties.size(); index++) {
-            // a property with no default has nothing to type (§11.1)
-            if (!out.properties.at(index).has_default)
-                continue;
-            // the scope is the whole declaration list, because the default may read any of it (§11.1)
-            const Scope scope{.properties = &out.properties, .repeat = nullptr};
-            // the dependencies come from the same walk, because a default is a binding (§7.3, AD-04a)
-            const ValueType value_type = type_expression(*out.properties.at(index).default_value, scope, out.properties.at(index).default_dependencies);
-            // the value must match the property, because nothing widens implicitly (§11.1)
-            if (!assignable(value_type, out.properties.at(index).type)) {
-                // the mismatch points at the declaration, because that is where both types are written (§11.1)
-                report_default_mismatch(component.properties.at(index), value_type, out.properties.at(index).type);
+        // defaults type second since one may read a later property, and a derived body waits for inherited names (§11.1)
+        if (component.base.empty()) {
+            for (std::size_t index = 0; index < component.properties.size(); index++) {
+                // a property with no default has nothing to type (§11.1)
+                if (!out.properties.at(index).has_default)
+                    continue;
+                // the scope is the whole declaration list, because the default may read any of it (§11.1)
+                const Scope scope{.properties = &out.properties, .repeat = nullptr, .globals = m_globals};
+                // the dependencies come from the same walk, because a default is a binding (§7.3, AD-04a)
+                const ValueType value_type = type_expression(*out.properties.at(index).default_value, scope, out.properties.at(index).default_dependencies);
+                // the value must match the property, because nothing widens implicitly (§11.1)
+                if (!assignable(value_type, out.properties.at(index).type)) {
+                    // the mismatch points at the declaration, because that is where both types are written (§11.1)
+                    report_default_mismatch(component.properties.at(index), value_type, out.properties.at(index).type);
+                }
             }
         }
         // the signals are resolved, because a handler resolves against them (§11.1)
@@ -184,14 +600,16 @@ namespace albor::compiler
             signal.name = declaration.name;
             signal.span = declaration.span;
             // each parameter type resolves the same way a property type does (§11.1)
-            for (const std::string& written : declaration.parameter_types) {
+            for (std::size_t index = 0; index < declaration.parameter_types.size(); index++) {
                 // the type resolves against the catalog, which is where a native type comes from (§11.1, §11.2, AD-17)
-                const ValueType resolved = resolve_type_name(written, m_catalog);
+                const ValueType resolved = resolve_type_name(declaration.parameter_types[index], m_catalog);
                 // a type that did not resolve is reported here, because nothing downstream can (§11.1)
                 if (resolved.is_error())
-                    report_unknown_type(written, declaration.span);
+                    report_unknown_type(declaration.parameter_types[index], declaration.span);
                 // the parameter is kept in declaration order, because the facade signature follows it (§11.1)
                 signal.parameter_types.push_back(resolved);
+                // the name is kept beside the type, because a handler body reads the raised value by it (§11.1)
+                signal.parameter_names.push_back(index < declaration.parameter_names.size() ? declaration.parameter_names[index] : std::string{});
             }
             // a signal is kept, because a handler resolves against it (§11.1)
             out.signals.push_back(std::move(signal));
@@ -250,23 +668,70 @@ namespace albor::compiler
         m_diagnostics.add(Diagnostic::Severity::Error, declaration.span, "E0410", "the default of '" + declaration.name + "' is a " + from.to_string() + " but the property is a " + to.to_string());
     }
 
-    void TypeChecker::resolve_tree(const ComponentDeclaration& component, CheckedComponent& out) {
+    void TypeChecker::resolve_tree(const ComponentDeclaration& component, CheckedComponent& out, const CheckedComponent* base) {
+        // the scope a reference resolves in is the component's own declarations (§11.1)
+        const Scope scope{.properties = &out.properties, .repeat = nullptr, .globals = m_globals};
+        // a derived component supplies content instead of a root, which fills the base's children slot (§11.1)
+        if (!component.base.empty()) {
+            // a base that failed its merge has no tree to fill, because the merge pass already reported it (§11.1)
+            if (base == nullptr || base->root == nullptr)
+                return;
+            // the content elements are checked one by one, because several may fill the one slot (§11.1)
+            std::vector<std::shared_ptr<CheckedNode>> content;
+            for (const std::unique_ptr<TreeNode>& element : component.content)
+                content.push_back(resolve_node(*element, scope));
+            // each content element is scanned for its own marker, because only a base declares the content point (§11.1)
+            for (const std::shared_ptr<CheckedNode>& element : content) {
+                // the markers are collected, because one is enough to report (§11.1)
+                std::vector<SourceSpan> slots;
+                collect_slot_spans(*element, slots);
+                // a marker inside the content is reported and dropped, because the base carries the only one (§11.1)
+                if (!slots.empty()) {
+                    m_diagnostics.add(Diagnostic::Severity::Error, slots.front(), "E0427", "@children marks the content point of a base component, so a content element may not declare one");
+                    strip_slots(*element);
+                }
+            }
+            // the base's tree is cloned, because the fill must not disturb the base's own checked body (§11.1)
+            out.root = clone_node(*base->root);
+            // the fill walks the clone, so a marker anywhere in the base's tree accepts the content (§11.1)
+            const bool filled = fill_slots(*out.root, content);
+            // content with nowhere to land is reported, because the base declared no children slot (§11.1)
+            if (!content.empty() && !filled)
+                m_diagnostics.add(Diagnostic::Severity::Error, component.base_span, "E0428", "'" + component.base + "' declares no @children for '" + component.name + "' to fill");
+            return;
+        }
         // a component with no root has nothing to resolve, which is a declaration defect rather than a tree one (§11.1)
         if (component.root == nullptr) {
             // the missing root is reported, because a component must build something (§11.1)
             m_diagnostics.add(Diagnostic::Severity::Error, component.span, "E0402", "a component must declare a root element");
             return;
         }
-        // the scope a reference resolves in is the component's own declarations (§11.1)
-        const Scope scope{.properties = &out.properties, .repeat = nullptr};
         // the root is checked against that scope, which is the second pass (§11.1)
         out.root = resolve_node(*component.root, scope);
+        // a base declares one children slot, because two could never both be filled (§11.1)
+        std::vector<SourceSpan> slots;
+        collect_slot_spans(*out.root, slots);
+        for (std::size_t index = 1; index < slots.size(); index++)
+            m_diagnostics.add(Diagnostic::Severity::Error, slots[index], "E0427", "a component may declare one @children slot");
     }
 
     std::shared_ptr<CheckedNode> TypeChecker::resolve_node(const TreeNode& node, const Scope& scope) {
+        // the children slot resolves by itself, because it carries no type and never reaches codegen (§11.1)
+        if (node.kind == TreeNodeKind::Slot) {
+            // the node is allocated with its kind and span, because a fill or a diagnostic reads them (§11.1)
+            auto out = std::make_shared<CheckedNode>();
+            // the kind marks the content point, which a derived body replaces before codegen sees it (§11.1)
+            out->kind = TreeNodeKind::Slot;
+            // the span covers the marker, because a report about the slot points at it (§11.1)
+            out->span = node.span;
+            return out;
+        }
         // a repeat is checked by its own rule, because its body sees an extra binding (§11.1)
         if (node.kind == TreeNodeKind::Repeat)
             return resolve_repeat(node, scope);
+        // a conditional is checked by its own rule, because its body exists only while the condition holds (§11.1)
+        if (node.kind == TreeNodeKind::Conditional)
+            return resolve_conditional(node, scope);
         // the node is allocated up front, because the caller takes a shared pointer (§11.1)
         auto out = std::make_shared<CheckedNode>();
         // the kind, the name, the identity and the span come straight from the node (§11.1, AD-11)
@@ -274,8 +739,10 @@ namespace albor::compiler
         out->element_type = node.element_type;
         out->explicit_id = node.explicit_id;
         out->span = node.span;
-        // an element resolves against the catalog, which is where its properties come from (§11.1, §11.2, AD-17)
-        const ElementType* type = m_catalog.find(node.element_type);
+        // an element resolves against the file's components first, because a declared name shadows a native one (§11.1)
+        const auto own_type = m_file_component_types.find(node.element_type);
+        // the catalog decides only when no component has that name, which is the same rule a type follows (§11.1)
+        const ElementType* type = own_type != m_file_component_types.end() ? &own_type->second : m_catalog.find(node.element_type);
         // an element the catalog does not hold is reported, because nothing else can check it (§11.1)
         if (type == nullptr) {
             // the problem points at the type name, because that is what the author wrote (§11.1)
@@ -327,6 +794,30 @@ namespace albor::compiler
             const Scope inner{.properties = scope.properties, .repeat = out.get()};
             // the body is checked against that scope, which is what makes the item resolvable (§11.1)
             out->repeat_body = resolve_node(*node.repeat_body, inner);
+        }
+        return out;
+    }
+
+    std::shared_ptr<CheckedNode> TypeChecker::resolve_conditional(const TreeNode& node, const Scope& scope) {
+        // the node is allocated up front, because the caller takes a shared pointer (§11.1)
+        auto out = std::make_shared<CheckedNode>();
+        // the kind and the span come straight from the node (§11.1)
+        out->kind = TreeNodeKind::Conditional;
+        out->explicit_id = node.explicit_id;
+        out->span = node.span;
+        // the condition is shared rather than re-owned, because the tree owns the expression (§11.1)
+        out->condition = std::shared_ptr<const Expression>(node.condition.get(), [](const Expression*) {});
+        // the condition is typed in the enclosing scope, because the body does not yet exist (§11.1)
+        const ValueType condition_type = type_expression(*out->condition, scope, out->condition_dependencies);
+        // a condition must be a question, because a conditional either shows the body or does not (§11.1)
+        if (!condition_type.is_error() && !condition_type.is(TypeKind::Bool)) {
+            // the problem points at the condition, because that is what the author must change (§11.1)
+            report_type_mismatch(*out->condition, condition_type, scalar(TypeKind::Bool));
+        }
+        // a conditional with no body was already reported by the parser (§11.1)
+        if (node.conditional_body != nullptr) {
+            // the body sees the same scope, because a conditional does not introduce a binding (§11.1)
+            out->conditional_body = resolve_node(*node.conditional_body, scope);
         }
         return out;
     }
@@ -461,7 +952,7 @@ namespace albor::compiler
 
     void TypeChecker::resolve_statement(const HandlerStatement& statement, const Scope& scope, CheckedHandler& out) {
         // a statement the parser could not read carries no value, and the parser already reported it (§11.1)
-        if (statement.kind == HandlerStatementKind::Assignment && statement.value == nullptr)
+        if ((statement.kind == HandlerStatementKind::Assignment || statement.kind == HandlerStatementKind::FieldAssignment) && statement.value == nullptr)
             return;
         // the statement is assembled locally, because one mistake must not hide the rest (§11.1)
         CheckedStatement out_statement;
@@ -485,8 +976,12 @@ namespace albor::compiler
             }
             // a target that is not a declared property is reported, because there is nothing to assign (§11.1)
             if (target == nullptr) {
+                // a module-scoped value answers the name, which is what a write to one reports as (§11.1)
+                if (is_global(statement.target))
+                    report_read_only(statement.target, statement.span);
                 // the problem points at the statement, because that is where the target is written (§11.1)
-                m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0404", "'" + statement.target + "' is not a property of this component");
+                else
+                    m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0404", "'" + statement.target + "' is not a property of this component");
             }
             else {
                 // an incoming property may not be assigned from a handler, because a binding owns it (§11.1, §7)
@@ -501,7 +996,7 @@ namespace albor::compiler
                 out.writes.push_back(statement.target);
             }
         }
-        else {
+        else if (statement.kind == HandlerStatementKind::SignalInvocation) {
             // the invoked signal must be one the component declares (§11.1)
             const CheckedSignal* declared = nullptr;
             // the signals of the component are scanned, because only they can be invoked (§11.1)
@@ -538,6 +1033,172 @@ namespace albor::compiler
                 }
             }
         }
+        else if (statement.kind == HandlerStatementKind::FieldAssignment) {
+            // the assigned value shares the parsed expression, because the tree owns it (§11.1)
+            out_statement.value = std::shared_ptr<const Expression>(statement.value.get(), [](const Expression*) {});
+            // the scope is the component's own, because a handler may reach any declared property (§11.1)
+            const ValueType value_type = type_expression(*out_statement.value, scope, out_statement.dependencies);
+            // the target must be a declared property of the component (§11.1)
+            const CheckedProperty* target = nullptr;
+            // the declarations are scanned, because only they can be the target (§11.1)
+            for (const CheckedProperty& property : *scope.properties) {
+                // the name decides, so the target resolves to exactly one declaration (§11.1)
+                if (property.name == statement.target)
+                    target = &property;
+            }
+            // a target that is not a declared property is reported, because there is nothing to write into (§11.1)
+            if (target == nullptr) {
+                // a module-scoped value answers the name, which is what a write to one reports as (§11.1)
+                if (is_global(statement.target))
+                    report_read_only(statement.target, statement.span);
+                // the problem points at the statement, because that is where the target is written (§11.1)
+                else
+                    m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0404", "'" + statement.target + "' is not a property of this component");
+            }
+            // an incoming property may not be written from a handler, because a binding owns it (§11.1, §7)
+            else if (target->direction != PropertyDirection::InOut)
+                report_not_assignable(statement, statement.target);
+            // only a record carries fields, so a scalar target has none to write (§11.1)
+            else if (!target->type.is(TypeKind::Native)) {
+                // the problem names the type, because a scalar has no fields (§11.1)
+                m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0417", "'" + statement.target + "' is a " + target->type.to_string() + ", so it has no fields");
+            }
+            else {
+                // the record decides the fields, so it is resolved against the catalog (§11.2, AD-17)
+                const RecordType* record = m_catalog.find_record(target->type.native_name());
+                // a native type that is not a record carries no fields, which is reported (§11.2, AD-17)
+                if (record == nullptr) {
+                    // the problem points at the statement, because that is where the field is written (§11.1)
+                    m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0417", "'" + statement.target + "' is not a record, so it has no fields");
+                }
+                else {
+                    // the field name resolves against the declaration, which the record wrote (§11.2, AD-17)
+                    const RecordFieldType* field = record->find_field(statement.field);
+                    // a field the record does not declare cannot be written, which is reported rather than guessed (§11.2)
+                    if (field == nullptr) {
+                        // the problem points at the field name, because that is the part the author must change (§11.2)
+                        m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0416", "'" + record->name + "' has no field named '" + statement.field + "'");
+                    }
+                    // the value must match the field, because nothing widens implicitly (§11.1)
+                    else if (!assignable(value_type, field->type)) {
+                        // the mismatch points at the value, because that is what the author must change (§11.1)
+                        report_type_mismatch(*out_statement.value, value_type, field->type);
+                    }
+                    // the field is kept, because the codegen emits the write through it (§11.1)
+                    out_statement.field = statement.field;
+                    // the write is recorded, because the graph needs it to order invalidation (§7.3, AD-04a)
+                    out.writes.push_back(statement.target);
+                }
+            }
+        }
+        else {
+            // a property method runs a built-in on a declared property, so the target must be one (§11.1)
+            const CheckedProperty* target = nullptr;
+            // the declarations are scanned, because only they can be the target (§11.1)
+            for (const CheckedProperty& property : *scope.properties) {
+                // the name decides, so the target resolves to exactly one declaration (§11.1)
+                if (property.name == statement.target)
+                    target = &property;
+            }
+            // a target that is not a declared property is reported, because there is nothing to mutate (§11.1)
+            if (target == nullptr) {
+                // a module-scoped value answers the name, which is what a mutation of one reports as (§11.1)
+                if (is_global(statement.target))
+                    report_read_only(statement.target, statement.span);
+                // the problem points at the statement, because that is where the target is written (§11.1)
+                else
+                    m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0404", "'" + statement.target + "' is not a property of this component");
+            }
+            // a command property takes the one built-in that fires it, and firing writes nothing (§18.1, AD-15)
+            else if (target->type.is(TypeKind::Command)) {
+                // the method is copied, because the codegen emits it as checked (§11.1)
+                out_statement.method = statement.method;
+                // the closed set of one is matched, because any other name has no invocation to emit (§11.1, §18.1)
+                if (statement.method != "invoke") {
+                    // the problem names the method, because that is the part the author must change (§11.1)
+                    m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0418", "'" + statement.method + "' is not a command method; the closed set is invoke");
+                }
+                // a handler carries no argument to a command yet, so the bare form is the whole surface (§18.3)
+                else if (!statement.arguments.empty()) {
+                    // the problem points at the statement, because that is where the argument is written (§11.1)
+                    m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0406", "'invoke' takes 0 argument(s)");
+                }
+                // no write is recorded, because firing a command changes no property of this component (§7.3, §18.1)
+            }
+            // only a vector property carries the collection methods, because that is the closed set (§11.1)
+            else if (!target->type.is(TypeKind::Vector)) {
+                // the problem names the type, because a scalar has no collection methods (§11.1)
+                m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0419", "'" + statement.target + "' is a " + target->type.to_string() + ", so it has no collection methods");
+            }
+            // an incoming property may not be mutated from a handler, because a binding owns it (§11.1, §7)
+            else if (target->direction != PropertyDirection::InOut) {
+                report_not_assignable(statement, statement.target);
+            }
+            else {
+                // the element type is what every argument is checked against, so it is kept (§11.1)
+                out_statement.element = target->type.element();
+                // the method name decides the arity and the argument types, which are a closed set (§11.1)
+                const std::string& method = statement.method;
+                // each argument shares the parsed expression, because the tree owns it (§11.1)
+                for (const ExpressionPtr& argument : statement.arguments)
+                    out_statement.arguments.push_back(std::shared_ptr<const Expression>(argument.get(), [](const Expression*) {}));
+                // the write is recorded, because the graph needs it to order invalidation (§7.3, AD-04a)
+                out.writes.push_back(statement.target);
+                // the method is copied, because the codegen emits it as checked (§11.1)
+                out_statement.method = method;
+                // the closed set of methods is matched, because an unknown one has no mutation (§11.1)
+                if (method == "append") {
+                    // append takes exactly one element, which is the value pushed (§11.1)
+                    if (out_statement.arguments.size() != 1) {
+                        m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0406", "'append' takes 1 argument(s)");
+                    }
+                    else {
+                        // the argument must be the element type, because nothing widens implicitly (§11.1)
+                        const ValueType argument_type = type_expression(*out_statement.arguments.at(0), scope, out_statement.dependencies);
+                        if (!assignable(argument_type, out_statement.element))
+                            report_type_mismatch(*out_statement.arguments.at(0), argument_type, out_statement.element);
+                    }
+                }
+                else if (method == "remove_at") {
+                    // remove_at takes exactly one index, which is the position erased (§11.1)
+                    if (out_statement.arguments.size() != 1) {
+                        m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0406", "'remove_at' takes 1 argument(s)");
+                    }
+                    else {
+                        // the argument must be an integer, because a position is a count (§11.1)
+                        const ValueType argument_type = type_expression(*out_statement.arguments.at(0), scope, out_statement.dependencies);
+                        if (!assignable(argument_type, scalar(TypeKind::Int)))
+                            report_type_mismatch(*out_statement.arguments.at(0), argument_type, scalar(TypeKind::Int));
+                    }
+                }
+                else if (method == "clear") {
+                    // clear takes no argument, because it drops every element (§11.1)
+                    if (!out_statement.arguments.empty()) {
+                        m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0406", "'clear' takes 0 argument(s)");
+                    }
+                }
+                else if (method == "set") {
+                    // set takes an index and a value, because it replaces one element (§11.1)
+                    if (out_statement.arguments.size() != 2) {
+                        m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0406", "'set' takes 2 argument(s)");
+                    }
+                    else {
+                        // the index must be an integer, because a position is a count (§11.1)
+                        const ValueType index_type = type_expression(*out_statement.arguments.at(0), scope, out_statement.dependencies);
+                        if (!assignable(index_type, scalar(TypeKind::Int)))
+                            report_type_mismatch(*out_statement.arguments.at(0), index_type, scalar(TypeKind::Int));
+                        // the value must be the element type, because nothing widens implicitly (§11.1)
+                        const ValueType value_type = type_expression(*out_statement.arguments.at(1), scope, out_statement.dependencies);
+                        if (!assignable(value_type, out_statement.element))
+                            report_type_mismatch(*out_statement.arguments.at(1), value_type, out_statement.element);
+                    }
+                }
+                else {
+                    // a method the language does not define has no mutation, so it is reported (§11.1)
+                    m_diagnostics.add(Diagnostic::Severity::Error, statement.span, "E0418", "'" + method + "' is not a collection method; the closed set is append, remove_at, clear and set");
+                }
+            }
+        }
         // the statement is kept, because the codegen emits it as checked (§11.1)
         out.body.push_back(std::move(out_statement));
     }
@@ -545,8 +1206,12 @@ namespace albor::compiler
     void TypeChecker::resolve_children(const TreeNode& node, const ElementType& type, const Scope& scope, CheckedNode& out) {
         // a leaf takes no children, so one written under it is reported rather than dropped (§11.1, §8)
         if (!node.children.empty() && !type.accepts_children) {
-            // the problem points at the first child, because that is what cannot go here (§11.1)
-            m_diagnostics.add(Diagnostic::Severity::Error, node.children.at(0)->span, "E0407", "'" + type.name + "' cannot contain child elements");
+            // an instance of a file component takes content only through a derived one, where the slot is filled (§11.1)
+            if (m_file_component_types.contains(type.name))
+                m_diagnostics.add(Diagnostic::Severity::Error, node.children.at(0)->span, "E0430", "'" + type.name + "' takes content only through a derived component, not through an instance");
+            else
+                // the problem points at the first child, because that is what cannot go here (§11.1)
+                m_diagnostics.add(Diagnostic::Severity::Error, node.children.at(0)->span, "E0407", "'" + type.name + "' cannot contain child elements");
         }
         // the children are checked either way, because a nested mistake is worth reporting (§11.1)
         for (const std::unique_ptr<TreeNode>& child : node.children) {
@@ -583,6 +1248,9 @@ namespace albor::compiler
         // a bracketed list types as the collection its elements agree on (§8.1)
         if (const auto* array = dynamic_cast<const ArrayExpression*>(&expression))
             return type_array(*array, scope, dependencies);
+        // a construction types against the record its written name declares (§11.1)
+        if (const auto* construction = dynamic_cast<const RecordConstructionExpression*>(&expression))
+            return type_record_construction(*construction, scope, dependencies);
         // a field read resolves the object first, because the field is only known once the record is (§11.2)
         if (const auto* access = dynamic_cast<const FieldAccessExpression*>(&expression))
             return type_field_access(*access, scope, dependencies);
@@ -595,12 +1263,15 @@ namespace albor::compiler
     ValueType TypeChecker::type_field_access(const FieldAccessExpression& access, const Scope& scope, std::vector<std::string>& dependencies) {
         // a value set is written as a bare name, so it is resolved before the object is typed as a reference (§11.1)
         if (const auto* set_name = dynamic_cast<const PropertyExpression*>(access.object.get()); set_name != nullptr) {
-            // the name decides, so a written value resolves to exactly one set (§11.1)
-            if (const NamedValueSet* set = find_named_value_set(set_name->name)) {
+            // the name decides, so a written value resolves to exactly one set, declared or builtin (§11.1)
+            if (const NamedValueSet* set = m_catalog.find_named_value_set(set_name->name)) {
                 // a member the set does not carry is reported against the ones it does, which the author needs (§11.1)
                 if (set->find_member(access.field) == nullptr)
                     report_unknown_value_member(access, *set);
-                // the set decides the kind, and a member that resolved types as that kind (§11.1)
+                // a set the file declared produces the type its name resolves to, which a property of it holds (§11.1)
+                if (set->user)
+                    return ValueType::native(set->name);
+                // a builtin set decides the kind, and a member that resolved types as that kind (§11.1)
                 return scalar(set->kind);
             }
         }
@@ -617,6 +1288,17 @@ namespace albor::compiler
         }
         // a field read reaches a record only when the manifest declared one by that name (§11.2, AD-17)
         const RecordType* record = m_catalog.find_record(object.native_name());
+        // a native type that is not a record may be a value set the file declared, whose members resolve by name (§11.1)
+        if (record == nullptr) {
+            // the set is looked up by the object's name, because a property of the enum holds one member of it (§11.1)
+            if (const NamedValueSet* set = m_catalog.find_named_value_set(object.native_name()); set != nullptr && set->user) {
+                // a member the set does not carry is reported against the ones it does, which the author needs (§11.1)
+                if (set->find_member(access.field) == nullptr)
+                    report_unknown_value_member(access, *set);
+                // the set decides the type, which is what a property of it holds (§11.1)
+                return ValueType::native(set->name);
+            }
+        }
         // a native type that is not a record carries no fields, which the manifest declared as data (§11.2, AD-17)
         if (record == nullptr) {
             // the problem points at the access, because that is what the author must change (§11.2, AD-17)
@@ -660,6 +1342,46 @@ namespace albor::compiler
         return ValueType::parameterized(TypeKind::Vector, element);
     }
 
+    ValueType TypeChecker::type_record_construction(const RecordConstructionExpression& construction, const Scope& scope, std::vector<std::string>& dependencies) {
+        // the written name resolves first, because the fields must be read from somewhere (§11.1)
+        const ValueType type = resolve_type_name(construction.type_name, m_catalog);
+        // a name that resolves to nothing reports once here, because no field can resolve against it (§11.1)
+        if (type.is_error()) {
+            report_unknown_type(construction.type_name, construction.span);
+            return error_type();
+        }
+        // only a record carries fields, because a scalar construction has none to fill (§11.2, AD-17)
+        const RecordType* record = type.is(TypeKind::Native) ? m_catalog.find_record(type.native_name()) : nullptr;
+        if (record == nullptr) {
+            // the problem points at the construction, because that is what the author must change (§11.2, AD-17)
+            m_diagnostics.add(Diagnostic::Severity::Error, construction.span, "E0417", "'" + construction.type_name + "' is not a record, so it has no fields");
+            return error_type();
+        }
+        // each field is read in written order, because each pairs one declared field with a value (§11.1)
+        for (std::size_t index = 0; index < construction.fields.size(); index++) {
+            const ConstructionField& field = construction.fields.at(index);
+            // a field the record does not declare is reported against the ones it does (§11.2, AD-17)
+            const RecordFieldType* declared = record->find_field(field.name);
+            if (declared == nullptr) {
+                m_diagnostics.add(Diagnostic::Severity::Error, field.value->location(), "E0416", "'" + record->name + "' has no field named '" + field.name + "'");
+                continue;
+            }
+            // a field named twice is reported, because the construction would bind it once (§11.1)
+            for (std::size_t prior = 0; prior < index; prior++)
+                if (construction.fields.at(prior).name == field.name) {
+                    m_diagnostics.add(Diagnostic::Severity::Error, field.value->location(), "E0423", "'" + record->name + "' names field '" + field.name + "' twice");
+                    break;
+                }
+            // the value is typed next, because it must match the field it fills (§11.1)
+            const ValueType value_type = type_expression(*field.value, scope, dependencies);
+            // the value must match the declared field, because nothing widens implicitly (§11.1)
+            if (!value_type.is_error() && !assignable(value_type, declared->type))
+                report_type_mismatch(*field.value, value_type, declared->type);
+        }
+        // the construction produces exactly the record, because there is no inference (§11.1)
+        return type;
+    }
+
     ValueType TypeChecker::type_literal(const LiteralExpression& literal) {
         // the kind of the literal decides its type, because the language has no other evidence (§11.1)
         switch (literal.kind) {
@@ -699,12 +1421,13 @@ namespace albor::compiler
         }
         // a repeat binding is not a component property, so it registers no dependency (§7.3, AD-04a)
         bool is_component_property = false;
-        // the declarations are scanned, because only they are component properties (§7.3, AD-04a)
-        for (const CheckedProperty& property : *scope.properties) {
-            // the name decides, so the dependency belongs to exactly one property (§7.3, AD-04a)
-            if (property.name == reference.name)
-                is_component_property = true;
-        }
+        // the declarations are scanned, because only they are a dependency, and a function scope holds none (§11.1)
+        if (scope.properties != nullptr)
+            for (const CheckedProperty& property : *scope.properties) {
+                // the name decides, so the dependency belongs to exactly one property (§7.3, AD-04a)
+                if (property.name == reference.name)
+                    is_component_property = true;
+            }
         // a component property becomes a dependency, because the binding invalidates when it changes (§7.3, AD-04a)
         if (is_component_property) {
             // a repeated read registers the dependency once, because the engine keeps a set (§7.3, AD-04a)
@@ -734,6 +1457,37 @@ namespace albor::compiler
     }
 
     ValueType TypeChecker::type_call(const CallExpression& call, const Scope& scope, std::vector<std::string>& dependencies) {
+        // a declared function is resolved first, because it shadows a builtin of the same name (§11.1)
+        if (m_functions != nullptr)
+            for (const CheckedFunction& function : *m_functions) {
+                // the name decides, so a call resolves to exactly one declaration (§11.1)
+                if (function.name != call.function)
+                    continue;
+                // the arity must match, because a call that passes the wrong count cannot resolve (§11.1)
+                if (call.arguments.size() != function.parameters.size()) {
+                    // the report names the name and the count, because both are what the author has to change (§11.1)
+                    m_diagnostics.add(Diagnostic::Severity::Error, call.location(), "E0417", "'" + call.function + "' takes " + std::to_string(function.parameters.size()) + " arguments");
+                    return error_type();
+                }
+                // each argument is typed and checked against its parameter, because nothing widens implicitly (§11.1)
+                for (std::size_t index = 0; index < call.arguments.size(); index++) {
+                    // the argument is typed first, so the dependency list follows the written order (§7.3, AD-04a)
+                    const ValueType argument = type_expression(*call.arguments.at(index), scope, dependencies);
+                    // an argument that failed suppresses the rule, because its type is not known (§11.1)
+                    if (argument.is_error())
+                        return error_type();
+                    // the parameter it fills is the type the argument must match (§11.1)
+                    const ValueType& parameter = function.parameters.at(index).second;
+                    // the argument must fill the parameter, because nothing widens implicitly (§11.1)
+                    if (!assignable(argument, parameter)) {
+                        // the mismatch points at the argument, because that is what the author wrote (§11.1)
+                        report_type_mismatch(*call.arguments.at(index), argument, parameter);
+                        return error_type();
+                    }
+                }
+                // a call to a declared function carries the declared return type (§11.1)
+                return function.return_type;
+            }
         // a call the language does not define has no type, which the report names (§11.1)
         if (call.function != "transparentize" && call.function != "alpha" && call.function != "alpha_set") {
             // the report names the name, because that is what the author has to change (§11.1)
@@ -1022,5 +1776,58 @@ namespace albor::compiler
         // every declared property is a starting point, because a cycle is reachable from one (§7.3, AD-04a)
         for (const CheckedProperty& property : component.properties)
             visit(edges, property.name, path, finished);
+    }
+
+    namespace
+    {
+        // report whether a field type holds another record, which the first release does not emit nested (§11.1)
+        bool holds_record(const ValueType& type, const ElementCatalog& catalog) {
+            // a native name holds a record only when the catalog declares one by that name (§11.1)
+            if (type.is(TypeKind::Native))
+                return catalog.find_record(type.native_name()) != nullptr;
+            // a parameter form nests its element, which is where a held record hides (§11.1)
+            if (type.kind() == TypeKind::Vector || type.kind() == TypeKind::Snapshot)
+                return holds_record(type.element(), catalog);
+            // a scalar carries no record, which is the common case (§11.1)
+            return false;
+        }
+    } // namespace
+
+    void register_ui_structs(const SourceFile& file, ElementCatalog& catalog, DiagnosticList& diagnostics) {
+        // the structs are walked in declaration order, which is the order a field may name an earlier one (§11.1)
+        for (const StructDeclaration& declaration : file.structs) {
+            // the record starts with its name and collects the fields as they are resolved (§11.1)
+            RecordType record{.name = declaration.name, .fields = {}, .from_ui = true};
+            // each field is walked, because a field read resolves by name against the declaration (§11.1)
+            for (const StructField& field : declaration.fields) {
+                // the written type becomes the type a field read produces, resolved against the catalog (§11.1)
+                const ValueType resolved = resolve_type_name(field.type, catalog);
+                // a field that names no type is reported, because a field read would produce nothing (§11.1)
+                if (resolved.is(TypeKind::Error))
+                    diagnostics.add(Diagnostic::Severity::Error, field.span, "E0420", "a struct field must name a known type");
+                // a field that holds another record is reported, because the emitted struct does not nest one yet (§11.1)
+                else if (holds_record(resolved, catalog))
+                    diagnostics.add(Diagnostic::Severity::Error, field.span, "E0421", "a struct field may not hold another record yet");
+                // the field joins the record, which is the shape a field read walks (§11.1)
+                record.fields.push_back(RecordFieldType{.name = field.name, .type = resolved, .is_key = false});
+            }
+            // the record joins the catalog, which is what makes a property of the struct name resolve (§11.1)
+            catalog.add_record(record);
+        }
+    }
+
+    void register_ui_enums(const SourceFile& file, ElementCatalog& catalog) {
+        // the enums are walked in declaration order, which is the order a member may be read (§11.1)
+        for (const EnumDeclaration& declaration : file.enums) {
+            // the set starts with its name, marked as file declared so it resolves as a property type (§11.1)
+            NamedValueSet set{.name = declaration.name, .kind = TypeKind::Error, .user = true};
+            // each member is walked, because a member read resolves by written name against the declaration (§11.1)
+            for (const std::string& member : declaration.members) {
+                // a file declared enum spells its member the same in ui and in C++, so both forms match (§11.1, §11.3)
+                set.members.push_back(NamedValueMember{.written = member, .code = member});
+            }
+            // the set joins the catalog, which is what makes a property of the enum name resolve (§11.1)
+            catalog.add_named_value_set(set);
+        }
     }
 } // namespace albor::compiler

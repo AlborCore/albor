@@ -14,14 +14,14 @@ namespace albor
         return {.red = std::clamp(red, 0.0f, 1.0f), .green = std::clamp(green, 0.0f, 1.0f), .blue = std::clamp(blue, 0.0f, 1.0f), .alpha = std::clamp(alpha, 0.0f, 1.0f)};
     }
 
-    Color Color::with_alpha(float alpha) const {
+    Color Color::with_alpha(float opacity) const {
         // the channels are untouched, because an opacity dims coverage rather than hue (§6.3)
-        return Color::rgba(red, green, blue, alpha * this->alpha);
+        return Color::rgba(red, green, blue, opacity * alpha);
     }
 
-    Color Color::alpha_set(float alpha) const {
+    Color Color::alpha_set(float opacity) const {
         // the alpha is replaced rather than scaled, which is what an explicit opacity asks for (§6.3)
-        return Color::rgba(red, green, blue, alpha);
+        return Color::rgba(red, green, blue, opacity);
     }
 
     Color Color::transparentized(float fraction) const {

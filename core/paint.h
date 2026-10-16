@@ -26,10 +26,10 @@ namespace albor
         [[nodiscard]] static Color rgba(float red, float green, float blue, float alpha);
 
         // scale the alpha by a fraction, which is what an opacity and a fade are (§6.3)
-        [[nodiscard]] Color with_alpha(float alpha) const;
+        [[nodiscard]] Color with_alpha(float opacity) const;
 
         // replace the alpha outright, which is what a fill at a chosen opacity is (§6.3)
-        [[nodiscard]] Color alpha_set(float alpha) const;
+        [[nodiscard]] Color alpha_set(float opacity) const;
 
         // scale the alpha down by a fraction, which is what a de-emphasis tint is (§6.3)
         [[nodiscard]] Color transparentized(float fraction) const;

@@ -3,6 +3,8 @@
 #include <atomic>
 #include <utility>
 
+#include "commands/command_registry.h"
+
 namespace albor
 {
     namespace
@@ -19,6 +21,12 @@ namespace albor
 
     Command::Command(std::string explicit_id, std::string label) :
         m_state(CommandState{.enabled = true, .visible = true, .label = std::move(label)}), m_explicit_id(std::move(explicit_id)), m_id(take_command_id()) {}
+
+    Command::~Command() {
+        // the registry only indexes this command, so the leaving command removes itself rather than being owned (§18.1)
+        if (m_registry != nullptr)
+            m_registry->leave(*this);
+    }
 
     CommandId Command::id() const { return m_id; }
 

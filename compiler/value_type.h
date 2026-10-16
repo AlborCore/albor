@@ -48,7 +48,10 @@ namespace albor::compiler
         Vector,
 
         // a native component type the manifest declares, which the checker resolves by name (§11.2, AD-17)
-        Native
+        Native,
+
+        // a reference to a shared command object, which a widget action binds to (§18.1, AD-15)
+        Command
     };
 
     // one value type, which is either a scalar kind, a parameter form or a named native type (§11.1)
@@ -168,6 +171,9 @@ namespace albor::compiler
         // the fields in declaration order, where exactly one carries the identity (§11.2, AD-18)
         std::vector<RecordFieldType> fields;
 
+        // whether the file declared the record in ui rather than a manifest, so the header emits it (§11.1)
+        bool from_ui = false;
+
         // find a field by name, which is what a field read resolves against (§11.2, AD-17)
         [[nodiscard]] const RecordFieldType* find_field(std::string_view field_name) const;
 
@@ -193,6 +199,9 @@ namespace albor::compiler
 
         // the kind every member of the set produces, which is what the set resolves to (§11.1)
         TypeKind kind = TypeKind::Error;
+
+        // whether the file declared the set in ui, so it resolves as a property type and is emitted (§11.1)
+        bool user = false;
 
         // the C++ enumeration the set renders to, which is the name unless the language spells it differently (§11.3)
         std::string cpp_name;
@@ -251,6 +260,12 @@ namespace albor::compiler
         // find a record by name, which is what a vector element type resolves against (§11.2, AD-17)
         [[nodiscard]] const RecordType* find_record(std::string_view name) const;
 
+        // add a named value set the file declared in ui, which a property may then hold one member of (§11.1)
+        void add_named_value_set(const NamedValueSet& set);
+
+        // find a named value set by name, searching the declared ones then the builtin table (§11.1)
+        [[nodiscard]] const NamedValueSet* find_named_value_set(std::string_view name) const;
+
         // report whether the catalog holds a native type of either form, which is what a type name resolves (§11.2, AD-17)
         [[nodiscard]] bool holds_native(std::string_view name) const;
 
@@ -272,5 +287,11 @@ namespace albor::compiler
 
         // the known records, which a collection holds and a repeat walks (§11.2, AD-17, AD-13)
         std::vector<RecordType> m_records;
+
+        // the named value sets the file declared in ui, which a property may hold one member of (§11.1)
+        std::vector<NamedValueSet> m_named_value_sets;
     };
+
+    // resolve a type name as written against the catalog, which is what a property or a field names (§11.1, §11.2)
+    [[nodiscard]] ValueType resolve_type_name(std::string_view written, const ElementCatalog& catalog);
 } // namespace albor::compiler
