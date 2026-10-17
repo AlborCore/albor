@@ -14,7 +14,7 @@ namespace albor::i18n
     void set_locale(std::string locale);
 
     // the reading direction the current locale writes in, which is what layout mirrors (§9.2)
-    [[nodiscard]] TextDirection direction();
+    [[nodiscard]] ReadingDirection direction();
 
     // report whether a locale reads right to left, which is the only question layout asks (§9.2)
     [[nodiscard]] bool right_to_left(std::string_view locale);

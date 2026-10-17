@@ -48,9 +48,9 @@ namespace albor::i18n
         }
     }
 
-    TextDirection direction() {
+    ReadingDirection direction() {
         // the current locale decides, because direction is a property of the language (§9.2)
-        return right_to_left(locale()) ? TextDirection::RightToLeft : TextDirection::LeftToRight;
+        return right_to_left(locale()) ? ReadingDirection::RightToLeft : ReadingDirection::LeftToRight;
     }
 
     bool right_to_left(std::string_view locale) {

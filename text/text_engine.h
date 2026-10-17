@@ -11,6 +11,19 @@
 
 namespace albor
 {
+    // the reading direction a run is shaped in, which is a declared input rather than an ambient one (§9.2, §15)
+    enum class TextDirection
+    {
+        // the direction is derived from the text's own script, which is what a call site that names none gets (§9.2)
+        Inherit,
+
+        // left to right, the direction Latin, Cyrillic and Greek read in (§9.2)
+        Ltr,
+
+        // right to left, the direction Hebrew and Arabic read in (§9.2)
+        Rtl,
+    };
+
     // the text half of the framework, which every shaping backend implements and which names no shaping or platform type (§9.1, §3.5, AD-19)
     class TextEngine
     {
@@ -28,6 +41,13 @@ namespace albor
             // a backend that does not resolve a family yet measures exactly as before, so no behavior changes (§9.1)
             (void)spec;
             return measure(text, max_width, font_size);
+        }
+
+        // measure a run in a declared base direction, whose mixed-direction reordering is ICU's and deferred (§9.2, §15)
+        [[nodiscard]] virtual TextLayout measure(std::string_view text, float max_width, float font_size, const FontSpec& spec, TextDirection direction) const {
+            // a backend that does not shape directionally yet measures as before, so direction is the only addition (§9.2)
+            (void)direction;
+            return measure(text, max_width, font_size, spec);
         }
 
         // report whether the engine resolves a family or weight beyond its default face (§9.1)

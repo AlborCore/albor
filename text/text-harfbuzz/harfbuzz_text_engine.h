@@ -49,6 +49,9 @@ namespace albor::harfbuzz
         // override: measure with an explicit font selection, which resolves the family through the registry (§9.1, AD-34)
         [[nodiscard]] TextLayout measure(std::string_view text, float max_width, float font_size, const FontSpec& spec) const override;
 
+        // override: measure in a declared reading direction, which sets the buffer direction (§9.2)
+        [[nodiscard]] TextLayout measure(std::string_view text, float max_width, float font_size, const FontSpec& spec, TextDirection direction) const override;
+
         // override: report whether a face was loaded, because an engine with no face shapes nothing (§9.1)
         [[nodiscard]] bool ready() const override;
 

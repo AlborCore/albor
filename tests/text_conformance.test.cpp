@@ -30,6 +30,12 @@ namespace
     // the family the platform resolves for drawing, which must name that same face (§15, AD-28)
     const char* const FONT_FAMILY = "Arial";
 
+    // the host hebrew face the rtl checks shape with, which a host without one skips the check for (§9.2)
+    const char* const RTL_FONT_PATH = "/System/Library/Fonts/SFHebrew.ttf";
+
+    // the family the embedded rtl face is registered under, which is what a run names to reach it (§9.2, AD-34)
+    const char* const RTL_FONT_FAMILY = "SFHebrew";
+
     // the largest glyph position difference two shapers may disagree by, in logical pixels (§15, AD-25)
     constexpr float POSITION_TOLERANCE = 0.75f;
 
@@ -1355,4 +1361,103 @@ TEST(GlyphOutlineChecks, AnOutlinePairsItsVerbsWithItsPointsAtEverySize) {
     // assert the retained path is built for a real contour, which the replay draws directly (§6.4)
     ASSERT_NE(three_outline.path(), nullptr);
     EXPECT_EQ(three_outline.path()->points().size(), 3u);
+}
+
+TEST(RtlChecks, AnRtlRunShapesInTheDeclaredDirection) {
+    // arrange a host hebrew face, which is the only way to shape a real rtl script on this build (§9.2)
+    std::ifstream probe(RTL_FONT_PATH, std::ios::binary);
+    // a host without an rtl face cannot exercise the direction, which is reported rather than passing (§9.2)
+    if (!probe.good())
+        GTEST_SKIP() << "no rtl font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(RTL_FONT_FAMILY, RTL_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(RTL_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const std::string text = "\u05E9\u05DC\u05D5\u05DD";
+    // act the same text is shaped in each declared direction (§9.2)
+    const TextLayout rtl = engine->measure(text, 0.0f, 20.0f, FontSpec{}, TextDirection::Rtl);
+    const TextLayout ltr = engine->measure(text, 0.0f, 20.0f, FontSpec{}, TextDirection::Ltr);
+    // assert the rtl run shaped real glyphs, so the face covers hebrew (§9.2)
+    ASSERT_NE(rtl.run, nullptr);
+    ASSERT_NE(ltr.run, nullptr);
+    ASSERT_GE(rtl.run->lines().front().glyphs.size(), 2u);
+    EXPECT_NE(rtl.run->lines().front().glyphs.front().id, 0u);
+    // assert the run is visual order, which its descending clusters prove rather than merely differing (§9.2)
+    EXPECT_GT(rtl.run->lines().front().glyphs.front().cluster, rtl.run->lines().front().glyphs.back().cluster);
+    // assert a declared direction changed the run from the content-shaped one, which the ltr run is (§9.2)
+    EXPECT_NE(*rtl.run, *ltr.run);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(RtlChecks, AnInheritedDirectionShapesTheScriptsOwnWay) {
+    // arrange a host hebrew face, whose script is what an inherited direction defers to (§9.2)
+    std::ifstream probe(RTL_FONT_PATH, std::ios::binary);
+    // a host without an rtl face cannot exercise the direction, which is reported rather than passing (§9.2)
+    if (!probe.good())
+        GTEST_SKIP() << "no rtl font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(RTL_FONT_FAMILY, RTL_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(RTL_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const std::string text = "\u05E9\u05DC\u05D5\u05DD";
+    // act the same text is shaped with an inherited direction and with an explicit rtl one (§9.2)
+    const TextLayout inherited = engine->measure(text, 0.0f, 20.0f, FontSpec{}, TextDirection::Inherit);
+    const TextLayout rtl = engine->measure(text, 0.0f, 20.0f, FontSpec{}, TextDirection::Rtl);
+    // assert the inherited run already shaped right to left, so the default did not regress the script (§9.2)
+    ASSERT_NE(inherited.run, nullptr);
+    ASSERT_NE(rtl.run, nullptr);
+    ASSERT_GE(inherited.run->lines().front().glyphs.size(), 2u);
+    EXPECT_GT(inherited.run->lines().front().glyphs.front().cluster, inherited.run->lines().front().glyphs.back().cluster);
+    // assert inheriting the script's direction and declaring it agree, because the content chose the same (§9.2)
+    EXPECT_EQ(*inherited.run, *rtl.run);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(RtlChecks, AnRtlRunIsReproducible) {
+    // arrange the host hebrew face, shaped twice in the same declared direction (§9.2)
+    std::ifstream probe(RTL_FONT_PATH, std::ios::binary);
+    // a host without an rtl face cannot exercise the direction, which is reported rather than passing (§9.2)
+    if (!probe.good())
+        GTEST_SKIP() << "no rtl font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(RTL_FONT_FAMILY, RTL_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(RTL_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act the same direction is asked for twice, which a total function of its inputs answers identically (§15)
+    const TextLayout first = engine->measure("\u05D0\u05D1\u05D2", 0.0f, 20.0f, FontSpec{}, TextDirection::Rtl);
+    const TextLayout second = engine->measure("\u05D0\u05D1\u05D2", 0.0f, 20.0f, FontSpec{}, TextDirection::Rtl);
+    // assert the two runs are equal, so direction does not make the layout jitter (§15)
+    ASSERT_NE(first.run, nullptr);
+    ASSERT_NE(second.run, nullptr);
+    EXPECT_EQ(*first.run, *second.run);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(RtlChecks, AWrappedRtlRunKeepsItsDirectionOnEveryRow) {
+    // arrange the host hebrew face, wrapped against a ceiling that forces several rows (§9.2)
+    std::ifstream probe(RTL_FONT_PATH, std::ios::binary);
+    // a host without an rtl face cannot exercise the direction, which is reported rather than passing (§9.2)
+    if (!probe.good())
+        GTEST_SKIP() << "no rtl font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(RTL_FONT_FAMILY, RTL_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(RTL_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act a hebrew paragraph is wrapped in a declared rtl direction (§8.2, §9.2)
+    const TextLayout layout = engine->measure("\u05E9\u05DC\u05D5\u05DD \u05E2\u05D5\u05DC\u05DD \u05E9\u05DC\u05D5\u05DD \u05E2\u05D5\u05DC\u05DD", 60.0f, 20.0f, FontSpec{}, TextDirection::Rtl);
+    // assert the paragraph wrapped and every row kept the declared direction (§9.2)
+    ASSERT_NE(layout.run, nullptr);
+    ASSERT_GT(layout.run->lines().size(), 1u);
+    for (const ShapedRun::Line& line : layout.run->lines()) {
+        // a row with fewer than two glyphs cannot show an order, so only a longer row is checked (§9.2)
+        if (line.glyphs.size() < 2)
+            continue;
+        // the row is in visual order, which its descending clusters prove (§9.2)
+        EXPECT_GT(line.glyphs.front().cluster, line.glyphs.back().cluster);
+    }
+    // exit
+    resources::FontRegistry::clear();
 }

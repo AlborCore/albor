@@ -430,7 +430,7 @@ namespace albor::harfbuzz
 
     namespace
     {
-        ShapedRun::Line shape_range(const ResolvedFace& face, const void* typeface, std::string_view text, std::size_t start, std::size_t end, float font_size) {
+        ShapedRun::Line shape_range(const ResolvedFace& face, const void* typeface, std::string_view text, std::size_t start, std::size_t end, float font_size, TextDirection direction) {
             // the row carries the metrics of its line even when it holds no glyph, which a blank row needs (§9.1)
             ShapedRun::Line line;
             // an embedded run carries no typeface, because the renderer draws its glyphs as outlines (§15, AD-34)
@@ -452,8 +452,13 @@ namespace albor::harfbuzz
             std::unique_ptr<hb_buffer_t, decltype(&hb_buffer_destroy)> buffer(hb_buffer_create(), &hb_buffer_destroy);
             // the row's bytes are added as utf8, and the script and direction are guessed from them (§9.1)
             hb_buffer_add_utf8(buffer.get(), text.data() + start, static_cast<int>(end - start), 0, -1);
+            // the language is pinned to the fixed locale, because an ambient language would break identity (§15, AD-34)
+            hb_buffer_set_language(buffer.get(), hb_language_from_string(LINE_BREAK_LOCALE, -1));
             // the guess fills in script, language and direction from the buffer's contents (§9.1)
             hb_buffer_guess_segment_properties(buffer.get());
+            // a declared direction overrides the guess, while an inherited one leaves the content-derived direction (§9.2)
+            if (direction != TextDirection::Inherit)
+                hb_buffer_set_direction(buffer.get(), direction == TextDirection::Rtl ? HB_DIRECTION_RTL : HB_DIRECTION_LTR);
             // the size is set in points because the font scales its own positions to it (§9.1, AD-27)
             hb_font_set_scale(face.font, static_cast<int>(font_size * 64.0f), static_cast<int>(font_size * 64.0f));
             // the shaping pass itself, which produces the glyph ids and their positions (§9.1)
@@ -501,6 +506,11 @@ namespace albor::harfbuzz
     }
 
     TextLayout HarfbuzzTextEngine::measure(std::string_view text, float max_width, float font_size, const FontSpec& spec) const {
+        // the family and size overload lets the text pick its direction, which a call site that names none gets (§9.2)
+        return measure(text, max_width, font_size, spec, TextDirection::Inherit);
+    }
+
+    TextLayout HarfbuzzTextEngine::measure(std::string_view text, float max_width, float font_size, const FontSpec& spec, TextDirection direction) const {
         // an engine with no face measures nothing, because there is nothing to shape with (§9.1)
         if (!ready())
             return TextLayout{};
@@ -589,7 +599,7 @@ namespace albor::harfbuzz
                     // the candidate is measured over the glyphs it would draw, which drop its break byte (§8.2)
                     const std::size_t probe_end = trim_row_end(text, line_start, offset.first, true);
                     // the probe is the row the candidate would produce (§8.2)
-                    const ShapedRun::Line probe = shape_range(*face, typeface, text, line_start, probe_end, font_size);
+                    const ShapedRun::Line probe = shape_range(*face, typeface, text, line_start, probe_end, font_size, direction);
                     // a probe that fits is kept, and the first is always kept so the walk always advances (§8.2)
                     if (probe.width <= max_width || line_end == line_start) {
                         line_end = offset.first;
@@ -609,7 +619,7 @@ namespace albor::harfbuzz
             // the row draws the glyphs before its break, which keeps a newline out of the run (§9.1)
             const std::size_t content_end = trim_row_end(text, line_start, line_end, bounded);
             // the settled row is shaped over its glyph range, because the break byte is not a glyph (§9.1)
-            ShapedRun::Line row = shape_range(*face, typeface, text, line_start, content_end, font_size);
+            ShapedRun::Line row = shape_range(*face, typeface, text, line_start, content_end, font_size, direction);
             // the span ends at the break, so the next row starts where this one broke (§9.1)
             row.end_byte = line_end;
             // the row's baseline sits under every row before it, which stacks the rows down the run (§8.2)
