@@ -1438,7 +1438,7 @@ With Phase 0 prototypes formally concluded, engineering proceeds directly along 
 - **Goal:** Implement the two-pass layout contract, standard controls, and typography.
 - **Deliverables:**
   1. `layout/`: Implement measure/arrange passes, `Column`, `Row`, `Stack`.
-  2. `text/`: Implement `TextEngine` wrapping Skia's `SkParagraph` and HarfBuzz text shaping.
+  2. `text/`: Implement `TextEngine` over a vendored HarfBuzz shaper with embedded font bytes, which owns the metrics (§9.1, AD-34).
   3. `widgets/`: Implement foundational widgets: `Button`, `Label`, `Slider`, `CheckBox`, and `CustomCanvas`.
   4. `input/` & `focus/`: Implement pointer routing, keyboard navigation, and the `FocusManager`.
 
