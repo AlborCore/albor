@@ -11,6 +11,9 @@
 
 namespace albor::harfbuzz
 {
+    // the provider that turns an embedded run into drawable outline commands, which the engine builds on demand (§6.4)
+    class EmbeddedGlyphProvider;
+
     // the text engine that shapes with a vendored harfbuzz instead of a renderer bundled shaper (§9.1)
     class HarfbuzzTextEngine final : public TextEngine
     {
@@ -55,6 +58,9 @@ namespace albor::harfbuzz
         // override: the engine resolves a family, though a weight is still pending (#96) (§9.1)
         [[nodiscard]] bool resolves_font_selection() const override;
 
+        // override: hand out the resolver embedded runs draw through, which walks the carried font (§6.4, AD-34)
+        [[nodiscard]] GlyphOutlineResolver glyph_outline_resolver() const override;
+
     private:
         // load the face, the shaper and the drawing typeface, which is the whole of construction (§9.1)
         HarfbuzzTextEngine(const std::string& font_path, const std::string& family_name);
@@ -70,6 +76,9 @@ namespace albor::harfbuzz
 
         // the loaded state, which the engine owns for its whole life (§9.1)
         std::unique_ptr<HarfbuzzEngineState> m_state;
+
+        // the provider that resolves outlines by hash, built the first time a resolver is asked for (§6.4, AD-34)
+        mutable std::unique_ptr<EmbeddedGlyphProvider> m_outline_provider;
     };
 
     // install the vendored engine as the default, which is what phase 3 of the text plan does (§9.1)

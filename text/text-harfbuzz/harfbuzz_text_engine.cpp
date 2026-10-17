@@ -20,6 +20,7 @@
 #include "render/font_handle.h"
 #include "render/shaped_run.h"
 #include "resources/embedded_font.h"
+#include "text/text-harfbuzz/embedded_glyph_provider.h"
 #include "text/text-harfbuzz/harfbuzz_typeface_resolver.h"
 
 namespace albor::harfbuzz
@@ -654,6 +655,14 @@ namespace albor::harfbuzz
     bool HarfbuzzTextEngine::resolves_font_selection() const {
         // the engine resolves a family through the registry, so a selection beyond its default face is honored (§9.1)
         return true;
+    }
+
+    GlyphOutlineResolver HarfbuzzTextEngine::glyph_outline_resolver() const {
+        // the provider is built once, because it caches an engine for every font a run carries (§6.4, AD-34)
+        if (m_outline_provider == nullptr)
+            m_outline_provider = std::make_unique<EmbeddedGlyphProvider>();
+        // the resolver is handed out, and it borrows the provider the engine owns for its whole life (§6.4)
+        return m_outline_provider->resolver();
     }
 
     void install_harfbuzz_text_engine() {

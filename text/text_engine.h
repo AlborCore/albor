@@ -5,6 +5,7 @@
 #include <string>
 #include <string_view>
 
+#include "render/glyph_outline.h"
 #include "render/text_layout.h"
 #include "text/font_spec.h"
 
@@ -31,6 +32,9 @@ namespace albor
 
         // report whether the engine resolves a family or weight beyond its default face (§9.1)
         [[nodiscard]] virtual bool resolves_font_selection() const { return false; }
+
+        // the resolver embedded text draws through, which an engine that draws outlines provides (§6.4, AD-34)
+        [[nodiscard]] virtual GlyphOutlineResolver glyph_outline_resolver() const { return {}; }
 
         // report whether the engine can measure at all, which a caller checks before it sizes a scene (§9.1)
         [[nodiscard]] virtual bool ready() const = 0;

@@ -870,9 +870,8 @@ TEST(EmbeddedTextCallerChecks, ThePipelineInstallsTheResolverAnApplicationGivesI
     node->m_layout = engine->measure("Albor", 0.0f, 40.0f);
     BindingEngine bindings;
     FramePipeline pipeline(bindings, std::move(node));
-    harfbuzz::EmbeddedGlyphProvider provider;
-    // act the application installs the resolver the one way it can (§6.4, AD-34)
-    pipeline.set_outline_resolver(provider.resolver());
+    // act the resolver the engine hands out is what the pipeline installs, which is the production wiring (§6.4, AD-34)
+    pipeline.set_outline_resolver(engine->glyph_outline_resolver());
     const std::shared_ptr<const FrameScene> scene = pipeline.build(WindowMetrics::from_logical(Size{200.0f, 80.0f}, 1.0f));
     // assert a frame built through the pipeline carries outlines, which is the whole path proven (§6.1)
     ASSERT_NE(scene, nullptr);
@@ -1281,4 +1280,30 @@ TEST(DualEngineConformanceChecks, ACorruptCarriedFamilyIsSkippedRatherThanCrashi
     EXPECT_EQ(alone.run, nullptr);
     // exit
     resources::FontRegistry::clear();
+}
+
+TEST(EmbeddedTextDrawChecks, TheEngineProvidesTheOutlineResolver) {
+    // arrange the carried fixture, whose engine draws outlines and provides the resolver (§6.4, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("A", 0.0f, 20.0f);
+    ASSERT_NE(layout.run, nullptr);
+    // act the resolver the engine hands out is asked for the glyph the run carries (§6.4)
+    const GlyphOutlineResolver resolver = engine->glyph_outline_resolver();
+    ASSERT_TRUE(static_cast<bool>(resolver));
+    const std::shared_ptr<const GlyphOutline> outline = resolver(GlyphOutlineKey{.font_hash = layout.run->font_hash(), .glyph_id = layout.run->lines().front().glyphs.front().id, .font_size = 20.0f});
+    // assert the resolver walked the carried font into a real outline, which stage two replays (§6.4, §15)
+    ASSERT_NE(outline, nullptr);
+    EXPECT_FALSE(outline->empty());
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(EmbeddedTextDrawChecks, ASkiaEngineProvidesNoOutlineResolver) {
+    // arrange the oracle, which draws through a platform typeface and owns no outlines (§9.1, AD-34)
+    SkiaTextEngine engine;
+    // act, assert the default resolver is empty, so a recorder knows there is nothing to expand (§6.4)
+    EXPECT_FALSE(static_cast<bool>(engine.glyph_outline_resolver()));
 }
