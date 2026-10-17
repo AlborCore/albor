@@ -158,6 +158,9 @@ add_subdirectory(render/render-software)
 # the blend2d cpu backend, a portable alternative to the skia reference (§3.2, AD-26)
 add_subdirectory(render/render-blend2d)
 
+# the in-repo gpu backend whose retirement of skia is decided on issue 102 (§6.3, AD-26)
+add_subdirectory(render/render-albor)
+
 # the macos appkit adapter with its display link pacing (§3.2, AD-16)
 add_subdirectory(platform/macos)
 add_subdirectory(platform/headless)

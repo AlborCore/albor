@@ -51,7 +51,7 @@ target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_CONTROLS_UI="${
 # albor-alloc-probe is linked because the binary counts its heap traffic, which is how a steady state frame and a
 # cached measure are measured rather than assumed (§2.2). A shipping build never links it, so the probe is excluded
 # at link time instead of behind a flag, which is the rule of AD-04 (§2.3)
-target_link_libraries(albor-tests PRIVATE albor-render-software albor-platform-headless albor-text-harfbuzz albor-resources albor-manifest albor-accessibility albor-language-server albor-preview albor-alloc-probe albor-render-blend2d GTest::gtest_main)
+target_link_libraries(albor-tests PRIVATE albor-render-software albor-platform-headless albor-text-harfbuzz albor-resources albor-manifest albor-accessibility albor-language-server albor-preview albor-alloc-probe albor-render-blend2d albor-render-albor GTest::gtest_main)
 
 # the suite that draws through the skia render context reaches that backend directly, which is the one module the
 # other suites never link because it reaches a platform surface (§3.2, AD-16). the backend is apple only, so the
@@ -140,6 +140,17 @@ if(APPLE)
     set_source_files_properties("./conditional/blend2d_window_auto.test.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(albor-blend2d-auto-checks PRIVATE "-framework Foundation")
 endif()
+
+# the albor load time install checks need the whole archive link, which the main test binary cannot take (§6.3, AD-26)
+#
+# the main binary links albor-render-albor lazily, so the load time installer stays out of it and the suites
+# above control the factory hook themselves. this second binary links the archive whole, which runs the
+# installer at load, and asserts the marker the in-repo backend carries (§6.3)
+add_executable(albor-render-albor-auto-checks "./conditional/albor_auto.test.cpp")
+target_include_directories(albor-render-albor-auto-checks PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_features(albor-render-albor-auto-checks PRIVATE cxx_std_23)
+target_link_libraries(albor-render-albor-auto-checks PRIVATE GTest::gtest_main albor-render-albor-auto)
+gtest_discover_tests(albor-render-albor-auto-checks DISCOVERY_TIMEOUT 60)
 
 # the build-scope fixture is its own product, which the §14.3 check compiles and observes (AGENTS.md, §14.3)
 add_subdirectory(scope)

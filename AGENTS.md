@@ -100,7 +100,7 @@ The layout follows §3.2. Module directories map to runtime modules and must sta
 core/ application/ ui/ layout/ input/ focus/ commands/ model/
 text/ style/ animation/ window/
 platform/ (macos/ windows/ linux/{wayland,x11}/ headless/)
-render/ render-skia/ render-software/ widgets/ semantics/ accessibility/
+render/ render-skia/ render-software/ render-blend2d/ render-albor/ widgets/ semantics/ accessibility/
 services/ resources/ i18n/
 compiler/ manifest/ language-server/ preview/ dev-service/
 devrt/ automation/ inspector/
