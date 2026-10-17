@@ -27,9 +27,9 @@ target_compile_features(albor-tests PRIVATE cxx_std_23)
 #
 # only the modules that are not already re-exported are named here. albor-preview publishes albor-widgets,
 # albor-layout and albor-i18n, albor-application publishes albor-input, and albor-widgets publishes
-# albor-style, so naming those five again would reach the linker twice and produce a duplicate library
-# warning. Their closure already carries albor-core, albor-window, albor-runtime, albor-render, albor-animation,
-# albor-text and albor-ui (§3.2)
+# albor-style and the row model a list owns, so naming those again would reach the linker twice and produce a
+# duplicate library warning. Their closure already carries albor-core, albor-window, albor-runtime, albor-render,
+# albor-animation, albor-text and albor-ui (§3.2)
 #
 # GTest::gtest_main already publishes GTest::gtest as part of its interface, so naming gtest here as
 # well would hand the linker the same archive twice. Naming only the entry point keeps one copy (§2.2)
@@ -62,8 +62,8 @@ if(APPLE)
     # the accessibility suite walks the application kit hierarchy the macos bridge publishes into, because the
     # role mapping is only reachable once the bridge hands its tree to that hierarchy (§10.2, AD-16). the suite is
     # an objective c++ source and links the framework itself, because the bridge keeps its platform link private (§3.2)
-    target_sources(albor-tests PRIVATE "./conditional/accessibility_role.macos.mm")
-    set_source_files_properties("./conditional/accessibility_role.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_sources(albor-tests PRIVATE "./conditional/accessibility_role.test.macos.mm")
+    set_source_files_properties("./conditional/accessibility_role.test.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(albor-tests PRIVATE "-framework AppKit" "-framework Foundation")
 
     # the backend lifecycle suite destroys a second gpu context in one process, which the metal driver traps on
@@ -105,5 +105,6 @@ gtest_discover_tests(albor-tests DISCOVERY_TIMEOUT 60)
 add_subdirectory(scope)
 
 # the collection fixture generates its facade, which the test binary links so the generated code is compiled (§8.1)
+# the row model it repeats over arrives through albor-widgets, which albor-preview publishes (§18.3, AD-13)
 add_subdirectory(vectors)
-target_link_libraries(albor-tests PRIVATE albor-vector-fixture albor-model)
+target_link_libraries(albor-tests PRIVATE albor-vector-fixture)

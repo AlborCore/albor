@@ -37,6 +37,7 @@ logical unit they were designed around. A 1-pixel hairline is what `phx` is for.
 | [Grid](../components/grid.md) | in cells | `spacing`; a table layout |
 | [Padding](../components/padding.md) | one child, inset | `padding` |
 | [ScrollView](../components/scroll-view.md) | one content child, scrollable | viewport, offset, scrollbar policy |
+| [ListBox](../components/list-box.md) | a list of rows, scrollable | selection, row height, scrollbar policy |
 
 Every element also carries the three common properties:
 

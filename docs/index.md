@@ -33,7 +33,8 @@ every new feature lands here alongside its code.
 - **Components** — one section per element the language ships: containers
   ([Column](components/column.md), [Row](components/row.md),
   [Padding](components/padding.md), [Stack](components/stack.md),
-  [Grid](components/grid.md), [ScrollView](components/scroll-view.md)) and leaves
+  [Grid](components/grid.md), [ScrollView](components/scroll-view.md),
+  [ListBox](components/list-box.md)) and leaves
   ([Label](components/label.md), [Button](components/button.md),
   [TextField](components/text-field.md), [Slider](components/slider.md),
   [CheckBox](components/checkbox.md), [Canvas](components/canvas.md)).

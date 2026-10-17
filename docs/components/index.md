@@ -1,6 +1,6 @@
 # Components
 
-The `.ui` language ships twelve elements: six containers that arrange children, and six
+The `.ui` language ships thirteen elements: seven containers that arrange children, and six
 leaves that draw or edit. Every element also carries the three common properties below, and
 every element may carry an `id`.
 
@@ -14,6 +14,7 @@ every element may carry an `id`.
 | [Stack](stack.md) | container | overlays its children |
 | [Grid](grid.md) | container | equal cells in a grid |
 | [ScrollView](scroll-view.md) | container | a scrollable viewport over one content child |
+| [ListBox](list-box.md) | container | a virtualized list of rows under one selection |
 | [Label](label.md) | leaf | a run of text |
 | [Button](button.md) | leaf | a push control with a click signal |
 | [TextField](text-field.md) | leaf | an editable text field |

@@ -120,6 +120,15 @@ namespace albor::model
             rebuild();
         }
 
+        // override: hand out how many rows the window built, which a list walks to overlay its states (§8.2, AD-13)
+        [[nodiscard]] std::size_t materialized_row_count() const override { return materialized(); }
+
+        // override: hand out the first item index the window covers, which maps a position to its item (§8.2, AD-13)
+        [[nodiscard]] std::size_t first_row_index() const override { return first_index(); }
+
+        // override: hand out the built row at a position, which is the child the window adopted there (§8.2, AD-13)
+        [[nodiscard]] UiNode* row_node(std::size_t position) override { return child_at(position); }
+
         // hand out how many rows are built, which is the window rather than the item count (§8.2, AD-13)
         [[nodiscard]] std::size_t materialized() const { return child_count(); }
 

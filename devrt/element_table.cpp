@@ -21,6 +21,7 @@
 #include "widgets/canvas.h"
 #include "widgets/checkbox.h"
 #include "widgets/label.h"
+#include "widgets/list_box.h"
 #include "widgets/scroll_view.h"
 #include "widgets/slider.h"
 #include "widgets/text_field.h"
@@ -57,6 +58,22 @@ namespace albor::devrt
                 return true;
             }
             return false;
+        }
+
+        // read a whole number out of a serialized assignment, which a selected index is written as (§11.1)
+        bool read_int(std::string_view value, long long& out) {
+            // the text is trimmed, because an assignment carries the spacing of the definition it was written in (§11.1)
+            while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))
+                value.remove_prefix(1);
+            while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())))
+                value.remove_suffix(1);
+            // an empty assignment is a value the language never wrote, so the property keeps what it had (§11.1)
+            if (value.empty())
+                return false;
+            // the parse is over the trimmed view, because the library wants a contiguous range (§12.1)
+            const std::from_chars_result parsed = std::from_chars(value.data(), value.data() + value.size(), out);
+            // a trailing remainder means the text was not a number, which is reported rather than half applied (§12.1)
+            return parsed.ec == std::errc{} && parsed.ptr == value.data() + value.size();
         }
 
         // read a colour out of a serialized assignment, which the language writes as three channel floats (§11.1)
@@ -152,6 +169,8 @@ namespace albor::devrt
                 {"CheckBox", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<CheckBox>(&engine)); }},
                 {"Canvas", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<Canvas>(&engine)); }},
                 {"ScrollView", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<ScrollView>(&engine)); }},
+                // a list hosts its rows and owns one selection, so it takes the engine (§8, §18.3)
+                {"ListBox", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<ListBox>(&engine)); }},
                 // a field measures and edits text, so it takes both engines (§8, §9.1)
                 {"TextField", [](std::string_view, BindingEngine& engine, TextEngine& text) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<TextField>(&engine, &text)); }},
             };
@@ -316,6 +335,47 @@ namespace albor::devrt
                      node.set_row_height(pixels);
                      return true;
                  })},
+                // a list owns one selection and shapes its rows, which is what §8.3 navigates (§8, §18.3)
+                {"ListBox.selected", setter<ListBox>([](ListBox& node, std::string_view value) {
+                     long long index = 0;
+                     if (!read_int(value, index))
+                         return false;
+                     // a negative index is no selection at all, so it clears rather than clamps (§18.3)
+                     if (index < 0) {
+                         node.clear_selection();
+                         return true;
+                     }
+                     node.set_selected_index(static_cast<std::size_t>(index));
+                     return true;
+                 })},
+                {"ListBox.row_height", setter<ListBox>([](ListBox& node, std::string_view value) {
+                     float pixels = 0.0f;
+                     if (!read_float(value, pixels))
+                         return false;
+                     node.set_row_height(pixels);
+                     return true;
+                 })},
+                {"ListBox.overscan", setter<ListBox>([](ListBox& node, std::string_view value) {
+                     float pixels = 0.0f;
+                     if (!read_float(value, pixels))
+                         return false;
+                     node.set_overscan(pixels);
+                     return true;
+                 })},
+                {"ListBox.scrollbar", setter<ListBox>([](ListBox& node, std::string_view value) {
+                     ScrollbarVisibility visibility;
+                     if (!read_scrollbar(value, visibility))
+                         return false;
+                     node.set_scrollbar_visibility(visibility);
+                     return true;
+                 })},
+                {"ListBox.disabled", setter<ListBox>([](ListBox& node, std::string_view value) {
+                     bool disabled = false;
+                     if (!read_bool(value, disabled))
+                         return false;
+                     node.set_disabled(disabled);
+                     return true;
+                 })},
                 // a field edits text, so its properties are the value and the editing attributes of §8
                 {"TextField.value", setter<TextField>([](TextField& node, std::string_view value) {
                      node.set_value(std::string(value));
@@ -410,7 +470,7 @@ namespace albor::devrt
     std::string_view element_of(const UiNode& node) {
         // the dynamic type decides, because a node is one element of the closed set and nothing else (§8)
         const std::pair<const UiNode*, std::string_view> elements[] = {
-            {dynamic_cast<const ColumnLayout*>(&node), "Column"}, {dynamic_cast<const RowLayout*>(&node), "Row"}, {dynamic_cast<const PaddingLayout*>(&node), "Padding"}, {dynamic_cast<const StackLayout*>(&node), "Stack"}, {dynamic_cast<const GridLayout*>(&node), "Grid"}, {dynamic_cast<const Label*>(&node), "Label"}, {dynamic_cast<const Button*>(&node), "Button"}, {dynamic_cast<const Slider*>(&node), "Slider"}, {dynamic_cast<const CheckBox*>(&node), "CheckBox"}, {dynamic_cast<const Canvas*>(&node), "Canvas"}, {dynamic_cast<const ScrollView*>(&node), "ScrollView"}, {dynamic_cast<const TextField*>(&node), "TextField"},
+            {dynamic_cast<const ColumnLayout*>(&node), "Column"}, {dynamic_cast<const RowLayout*>(&node), "Row"}, {dynamic_cast<const PaddingLayout*>(&node), "Padding"}, {dynamic_cast<const StackLayout*>(&node), "Stack"}, {dynamic_cast<const GridLayout*>(&node), "Grid"}, {dynamic_cast<const Label*>(&node), "Label"}, {dynamic_cast<const Button*>(&node), "Button"}, {dynamic_cast<const Slider*>(&node), "Slider"}, {dynamic_cast<const CheckBox*>(&node), "CheckBox"}, {dynamic_cast<const Canvas*>(&node), "Canvas"}, {dynamic_cast<const ScrollView*>(&node), "ScrollView"}, {dynamic_cast<const ListBox*>(&node), "ListBox"}, {dynamic_cast<const TextField*>(&node), "TextField"},
         };
         // the first match wins, because the widget types above are disjoint classes (§8)
         for (const std::pair<const UiNode*, std::string_view>& element : elements) {

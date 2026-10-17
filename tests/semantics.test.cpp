@@ -152,6 +152,51 @@ TEST(SemanticNode, FocusAndDisabledAreIndependent) {
     EXPECT_TRUE(node.disabled());
 }
 
+TEST(SemanticNode, ANewNodeIsNotSelected) {
+    // arrange, act
+    const SemanticNode node(SemanticRole::ListItem);
+    // assert
+    EXPECT_FALSE(node.selected());
+}
+
+TEST(SemanticNode, TheSelectedStateCanBeSet) {
+    // arrange
+    SemanticNode node(SemanticRole::ListItem);
+    // act
+    node.set_selected(true);
+    // assert
+    EXPECT_TRUE(node.selected());
+}
+
+TEST(SemanticNode, TheSelectedStateCanBeCleared) {
+    // arrange
+    SemanticNode node(SemanticRole::ListItem);
+    node.set_selected(true);
+    // act
+    node.set_selected(false);
+    // assert
+    EXPECT_FALSE(node.selected());
+}
+
+TEST(SemanticNode, TheSelectedAndFocusedStatesAreIndependent) {
+    // arrange
+    SemanticNode node(SemanticRole::ListItem);
+    // act
+    node.set_focused(true);
+    node.set_selected(true);
+    // assert a row can be focused without being selected, which is what makes them separate states (§10.1)
+    EXPECT_TRUE(node.focused());
+    EXPECT_TRUE(node.selected());
+}
+
+TEST(SemanticNode, AListRoleIsDeclared) {
+    // arrange, act
+    const SemanticNode node(SemanticRole::List);
+    // assert a list role is distinct from a list item, because the rows share the selection (§10.1)
+    EXPECT_EQ(node.role(), SemanticRole::List);
+    EXPECT_NE(node.role(), SemanticRole::ListItem);
+}
+
 TEST(SemanticNode, ANewNodeIsNotCheckable) {
     // arrange, act
     const SemanticNode node(SemanticRole::Button);

@@ -168,6 +168,54 @@ TEST(AccessibilityRole, ACheckboxStillAnnouncesItsCheckStateAsItsValue) {
     EXPECT_STREQ(value.UTF8String, "1");
 }
 
+TEST(AccessibilityRole, AListAnnouncesAsAList) {
+    // arrange a tree whose root is a list, which is the role at issue (§10.1)
+    WindowFixture fixture;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::List});
+    // act
+    fixture.adapter->publish(tree);
+    // assert the list announces as the list role, which is the container assistive technology navigates rows in (§10.2)
+    NSArray* children = announced_children(fixture.window);
+    ASSERT_EQ(children.count, 1U);
+    EXPECT_EQ([(NSView*)children.firstObject accessibilityRole], NSAccessibilityListRole);
+}
+
+TEST(AccessibilityRole, ASelectedRowAnnouncesItsSelectedState) {
+    // arrange a list whose single row is the chosen one (§10.1)
+    WindowFixture fixture;
+    SemanticTree tree;
+    std::size_t list = tree.add(SemanticNode{SemanticRole::List});
+    std::size_t row = tree.add(SemanticNode{SemanticRole::ListItem}, list);
+    tree.mutable_at(row)->set_selected(true);
+    // act
+    fixture.adapter->publish(tree);
+    // assert the chosen row announces itself selected, which is the state a reader speaks (§10.2)
+    NSArray* roots = announced_children(fixture.window);
+    ASSERT_EQ(roots.count, 1U);
+    NSArray* rows = [(NSView*)roots.firstObject accessibilityChildren];
+    ASSERT_EQ(rows.count, 1U);
+    // the element answers the legacy getter, because selection is declared on the NSAccessibility protocol (§10.2)
+    EXPECT_TRUE([(id)rows.firstObject isAccessibilitySelected]);
+}
+
+TEST(AccessibilityRole, AnUnchosenRowDoesNotAnnounceSelection) {
+    // arrange a list whose single row is not the chosen one (§10.1)
+    WindowFixture fixture;
+    SemanticTree tree;
+    std::size_t list = tree.add(SemanticNode{SemanticRole::List});
+    tree.add(SemanticNode{SemanticRole::ListItem}, list);
+    // act
+    fixture.adapter->publish(tree);
+    // assert an unselected row announces no selection, because the state defaults quiet (§10.2)
+    NSArray* roots = announced_children(fixture.window);
+    ASSERT_EQ(roots.count, 1U);
+    NSArray* rows = [(NSView*)roots.firstObject accessibilityChildren];
+    ASSERT_EQ(rows.count, 1U);
+    // the element answers the legacy getter, because selection is declared on the NSAccessibility protocol (§10.2)
+    EXPECT_FALSE([(id)rows.firstObject isAccessibilitySelected]);
+}
+
 TEST(AccessibilityRole, APlainLabelAnnouncesNoValue) {
     // arrange a tree whose root carries no value of any kind (§10.1)
     WindowFixture fixture;

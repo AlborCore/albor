@@ -133,9 +133,11 @@ namespace albor
             // a press outside the viewport is not this view's, because only the bar is draggable (§8.3)
             if (!hit_test(event.position) || !scrollbar_visible())
                 return;
-            // the thumb is the only draggable part, so a press on the groove does nothing (§8.3)
+            // the thumb is the only draggable part, so a press must land on it rather than merely beside it (§8.3)
             const Rect thumb = thumb_rect();
-            if (event.position.y < thumb.y || event.position.y >= thumb.y + thumb.height)
+            // both axes are checked, because the thumb is a strip and a row beside it must not start a drag (§8.3)
+            const bool on_thumb = event.position.x >= thumb.x && event.position.x < thumb.x + thumb.width && event.position.y >= thumb.y && event.position.y < thumb.y + thumb.height;
+            if (!on_thumb)
                 return;
             // the event is claimed, so no ancestor reacts to the same press (§8.3)
             event.handled = true;
@@ -149,6 +151,9 @@ namespace albor
         }
         // a key reaches the viewport unmodified, because a modified key is the application's (§8.3)
         if (event.kind != EventKind::KeyDown || !event.modifiers.none())
+            return;
+        // a host that owns navigation removes the paging keys, which is what a list hosted view does (§8.3)
+        if (!m_key_navigation)
             return;
         // a disabled view does not claim a key, because it refuses input (§8.3)
         if (disabled())
@@ -325,7 +330,38 @@ namespace albor
         return m_disabled;
     }
 
+    void ScrollView::set_key_navigation(bool enabled) {
+        // the flag is stored, because it is read once per key rather than cached anywhere (§8.3)
+        m_key_navigation = enabled;
+    }
+
+    bool ScrollView::key_navigation() const {
+        // the flag reports whether the paging keys belong to this viewport or to its host (§8.3)
+        return m_key_navigation;
+    }
+
     Size ScrollView::content_extent() const { return m_content_extent; }
+
+    std::size_t ScrollView::materialized_row_count() const {
+        // content that does not build itself has no rows, which is the plain container path (§8.2, AD-13)
+        ScrollableContent* scrollable = scrollable_content();
+        // the content owns the count, because it is the only thing that knows which rows exist (§8.2, AD-13)
+        return scrollable == nullptr ? 0 : scrollable->materialized_row_count();
+    }
+
+    std::size_t ScrollView::first_row_index() const {
+        // content that does not build itself starts at no item, which is the plain container path (§8.2, AD-13)
+        ScrollableContent* scrollable = scrollable_content();
+        // the content owns the first index, because it is the only thing that knows which item leads (§8.2, AD-13)
+        return scrollable == nullptr ? 0 : scrollable->first_row_index();
+    }
+
+    UiNode* ScrollView::row_node(std::size_t position) const {
+        // content that does not build itself has no rows, which the plain container path reports (§8.2, AD-13)
+        ScrollableContent* scrollable = scrollable_content();
+        // the content owns the rows, because it is the only thing that materialized them (§8.2, AD-13)
+        return scrollable == nullptr ? nullptr : scrollable->row_node(position);
+    }
 
     bool ScrollView::scrollable() const { return m_content_extent.height > viewport_rect().height + 0.0f; }
 

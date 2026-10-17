@@ -63,6 +63,16 @@ namespace albor
         m_states.focused = focused;
     }
 
+    bool SemanticNode::selected() const {
+        // the selected state is what a list announces for the chosen row (§10.1)
+        return m_states.selected;
+    }
+
+    void SemanticNode::set_selected(bool selected) {
+        // the selected state is independent of focus, so a row may carry either alone (§10.1)
+        m_states.selected = selected;
+    }
+
     CheckState SemanticNode::check() const {
         // a node that was never made checkable reports not checkable (§10.1)
         return m_states.check;

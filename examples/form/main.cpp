@@ -3,6 +3,7 @@
 #include "application/application.h"
 #include "drivability.h"
 #include "style/theme.h"
+#include "todo/todo.h"
 #include "widget_form.h"
 #include "widgets/theme_controller.h"
 #include "window/system_appearance.h"
@@ -59,6 +60,27 @@ int main() {
     });
     // the drivability publishes the semantic tree and serves automation clients (§10.1, §10.3)
     albor::example::Drivable drivable(*application.root(handle), window->native_handle().object());
+    // populate sample todos for the form (demonstrates real data in a ListBox)
+    if (form) {
+        std::vector<albor::Todo> sample_todos;
+        sample_todos.push_back({{"t01"}, {"Buy groceries"}});
+        sample_todos.push_back({{"t02"}, {"Walk the dog"}});
+        sample_todos.push_back({{"t03"}, {"Write ListBox UI demo"}});
+        sample_todos.push_back({{"t04"}, {"Run tests"}});
+        sample_todos.push_back({{"t05"}, {"Commit changes"}});
+        sample_todos.push_back({{"t06"}, {"Review pull request"}});
+        sample_todos.push_back({{"t07"}, {"Reply to email"}});
+        sample_todos.push_back({{"t08"}, {"Water the plants"}});
+        sample_todos.push_back({{"t09"}, {"Book dentist"}});
+        sample_todos.push_back({{"t10"}, {"Pay the rent"}});
+        sample_todos.push_back({{"t11"}, {"Call mum"}});
+        sample_todos.push_back({{"t12"}, {"Read a book"}});
+        sample_todos.push_back({{"t13"}, {"Plan the sprint"}});
+        sample_todos.push_back({{"t14"}, {"Fix the bug"}});
+        sample_todos.push_back({{"t15"}, {"Write the report"}});
+        sample_todos.push_back({{"t16"}, {"Take a walk"}});
+        form->set_todos(std::move(sample_todos));
+    }
     // the automation channel is served on every pump, because a waiting client must not wait a second (§10.3)
     application.set_frame_handler([&] {
         // the window may already be gone when a queued tick arrives (§4.2)

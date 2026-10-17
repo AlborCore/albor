@@ -22,6 +22,7 @@
 #include "widgets/canvas.h"
 #include "widgets/checkbox.h"
 #include "widgets/label.h"
+#include "widgets/list_box.h"
 #include "widgets/scroll_view.h"
 #include "widgets/slider.h"
 #include "widgets/text_field.h"
@@ -94,6 +95,8 @@ namespace albor::preview
                 built = std::make_unique<Canvas>(&engine);
             else if (node.element_type == "ScrollView")
                 built = std::make_unique<ScrollView>(&engine);
+            else if (node.element_type == "ListBox")
+                built = std::make_unique<ListBox>(&engine);
             else if (node.element_type == "TextField")
                 built = std::make_unique<TextField>(&engine, text_engine);
             else {
