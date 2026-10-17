@@ -1,0 +1,15 @@
+component DualEngineControls {
+    Row {
+        spacing: 8px;
+        CheckBox {
+            id: toggle;
+            checked: true;
+            disabled: false;
+        }
+        Slider {
+            id: level;
+            value: 0.25;
+            disabled: false;
+        }
+    }
+}

@@ -29,6 +29,9 @@ target_compile_definitions(albor-tests PRIVATE ALBOR_TEST_FONT_PATH="${CMAKE_CUR
 # the dual-engine corpus source is compiled into a facade and serialized at test time, so the path is named here (§16)
 target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_UI="${CMAKE_CURRENT_SOURCE_DIR}/vectors/dual_engine_panel.ui")
 
+# the control corpus source widens the same comparison past the panel, so the path is named here too (§16)
+target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_CONTROLS_UI="${CMAKE_CURRENT_SOURCE_DIR}/vectors/dual_engine_controls.ui")
+
 # the tests link the framework modules and nothing platform specific, so they run without a window server (§3.2)
 #
 # only the modules that are not already re-exported are named here. albor-preview publishes albor-widgets,

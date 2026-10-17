@@ -15,13 +15,17 @@
 #include "devrt/element_table.h"
 #include "devrt/ir.h"
 #include "devrt/reload_adapter.h"
+#include "dual_engine_controls.h"
 #include "dual_engine_panel.h"
 #include "layout/column_layout.h"
+#include "layout/row_layout.h"
 #include "runtime/binding_engine.h"
 #include "text/text_engine.h"
 #include "ui/ui_node.h"
 #include "widgets/button.h"
+#include "widgets/checkbox.h"
 #include "widgets/label.h"
+#include "widgets/slider.h"
 
 using namespace albor;
 using namespace albor::devrt;
@@ -724,4 +728,41 @@ TEST(DevReloadChecks, ACompiledFormAndTheDevIrAgreeOnTheSameUi) {
     ASSERT_NE(ir_button, nullptr);
     EXPECT_EQ(compiled_button->label(), ir_button->label());
     EXPECT_EQ(compiled_button->disabled(), ir_button->disabled());
+}
+
+TEST(DevReloadChecks, ACompiledControlsFormAndTheDevIrAgreeOnTheSameUi) {
+    // arrange the same ui source compiled into a facade and serialized into the dev ir (§16, AD-25)
+    std::ifstream file(ALBOR_DUAL_ENGINE_CONTROLS_UI, std::ios::binary);
+    ASSERT_TRUE(file.good());
+    const std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    albor::compiler::DiagnosticList diagnostics;
+    const std::vector<albor::compiler::Token> tokens = albor::compiler::Lexer(source, diagnostics).tokenize();
+    const albor::compiler::SourceFile parsed = albor::compiler::Parser(tokens, diagnostics).parse();
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const std::optional<IrNode> definition = albor::compiler::serialize_component(parsed.components.front());
+    ASSERT_TRUE(definition.has_value());
+    // the compiled path builds the facade, which is the production output (§11.3)
+    BindingEngine engine;
+    TestTextEngine text;
+    DualEngineControls controls(&engine, &text);
+    // the dev path applies the serialized definition onto a matching root (§12.1)
+    RowLayout root;
+    ReloadFixture fixture;
+    const ReloadReport report = apply_reload(root, *definition, fixture.context);
+    EXPECT_EQ(report.added, 2U);
+    // assert both trees carry the same controls and the same properties, which is what AD-25 claims (§16)
+    const UiNode& compiled_row = *static_cast<UiNode&>(controls).child_at(0);
+    ASSERT_EQ(compiled_row.child_count(), root.child_count());
+    const auto* compiled_check = dynamic_cast<const CheckBox*>(compiled_row.child_at(0));
+    const auto* ir_check = dynamic_cast<const CheckBox*>(root.child_at(0));
+    ASSERT_NE(compiled_check, nullptr);
+    ASSERT_NE(ir_check, nullptr);
+    EXPECT_EQ(compiled_check->checked(), ir_check->checked());
+    EXPECT_EQ(compiled_check->disabled(), ir_check->disabled());
+    const auto* compiled_slider = dynamic_cast<const Slider*>(compiled_row.child_at(1));
+    const auto* ir_slider = dynamic_cast<const Slider*>(root.child_at(1));
+    ASSERT_NE(compiled_slider, nullptr);
+    ASSERT_NE(ir_slider, nullptr);
+    EXPECT_FLOAT_EQ(compiled_slider->value(), ir_slider->value());
+    EXPECT_EQ(compiled_slider->disabled(), ir_slider->disabled());
 }
