@@ -18,4 +18,4 @@ target_compile_features(albor-hello-blend2d PRIVATE cxx_std_23)
 
 # the framework modules arrive transitively through the backends, and the application needs a text engine and a
 # renderer even without one text draw, so the skia engine installs itself at load beside the cpu backend (§6.2)
-target_link_libraries(albor-hello-blend2d PRIVATE albor-platform-macos-auto albor-render-blend2d-auto albor-text-skia-auto)
+target_link_libraries(albor-hello-blend2d PRIVATE albor-platform-macos-auto albor-render-blend2d-auto albor-text-harfbuzz-auto)

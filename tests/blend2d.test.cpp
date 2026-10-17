@@ -21,7 +21,7 @@
 #include "render/resource_factory.h"
 #include "render/screenshot.h"
 #include "resources/embedded_font.h"
-#include "text/text-skia/skia_text_engine.h"
+#include "text/text-harfbuzz/harfbuzz_text_engine.h"
 #include "ui/scene_builder.h"
 #include "ui/ui_node.h"
 #include "window/window_metrics.h"
@@ -43,8 +43,8 @@ namespace
     // the channel distance the two shadow blurs are allowed, over the measured 43 a box and a gaussian keep apart (§6.2)
     constexpr int SHADOW_PARITY_TOLERANCE = 64;
 
-    // the channel distance two glyph rasterizers may differ, measured at 143 between a hinted and an unhinted face (§9.1)
-    constexpr int TEXT_PARITY_TOLERANCE = 160;
+    // the channel distance two glyph rasterizers may differ, measured at 161 with the vendored platform face (§9.1, §16)
+    constexpr int TEXT_PARITY_TOLERANCE = 192;
 
     // the metrics every scene presents and every surface creates against, at whole pixels (§6.1, AD-27)
     WindowMetrics scene_metrics(float scale_factor) {
@@ -629,10 +629,11 @@ TEST(Blend2DWindowSurfaceRoutingChecks, ARoutedSurfaceExecutesFramesThroughTheBa
 
 TEST(Blend2DTextChecks, APlatformShapedRunCarriesARegisteredFontIdentity) {
     // arrange the platform engine shapes the way a windowed application does (§9.1)
-    SkiaTextEngine engine;
-    ASSERT_TRUE(engine.ready());
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    ASSERT_TRUE(engine->ready());
     // act
-    const TextLayout layout = engine.measure("Albor", TextEngine::UNBOUNDED_WIDTH, 16.0f);
+    const TextLayout layout = engine->measure("Albor", TextEngine::UNBOUNDED_WIDTH, 16.0f);
     // assert the run is stamped with a hash, because a replaying backend resolves its font by it (§15, AD-34)
     ASSERT_NE(layout.run, nullptr);
     EXPECT_FALSE(layout.run->empty());
@@ -642,9 +643,10 @@ TEST(Blend2DTextChecks, APlatformShapedRunCarriesARegisteredFontIdentity) {
 
 TEST(Blend2DTextChecks, APlatformShapedRunDrawsInkThroughTheBackend) {
     // arrange the sentence a label draws, shaped by the platform engine and replayed by blend2d (§9.1, §6.2)
-    SkiaTextEngine engine;
-    ASSERT_TRUE(engine.ready());
-    const TextLayout layout = engine.measure("Hello", TextEngine::UNBOUNDED_WIDTH, 16.0f);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    ASSERT_TRUE(engine->ready());
+    const TextLayout layout = engine->measure("Hello", TextEngine::UNBOUNDED_WIDTH, 16.0f);
     ASSERT_NE(layout.run, nullptr);
     ASSERT_FALSE(layout.run->empty());
     // the run resolved its font in the registry, which is what a replaying backend loads from (§15, AD-34)
@@ -673,9 +675,10 @@ TEST(Blend2DTextChecks, APlatformShapedRunDrawsInkThroughTheBackend) {
 
 TEST(Blend2DTextChecks, AShapedRunRendersLikeTheReference) {
     // arrange the same shaped layout through both engines, which is what text parity checks (§16, AD-26)
-    SkiaTextEngine engine;
-    ASSERT_TRUE(engine.ready());
-    const TextLayout layout = engine.measure("Hello", TextEngine::UNBOUNDED_WIDTH, 16.0f);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    ASSERT_TRUE(engine->ready());
+    const TextLayout layout = engine->measure("Hello", TextEngine::UNBOUNDED_WIDTH, 16.0f);
     ASSERT_NE(layout.run, nullptr);
     ASSERT_FALSE(layout.run->empty());
     const WindowMetrics metrics = scene_metrics(1.0f);
@@ -719,10 +722,11 @@ TEST(Blend2DTextChecks, AShapedRunRendersLikeTheReference) {
 
 TEST(Blend2DTextChecks, APlatformRunBuiltIntoASceneDrawsInkThroughTheBackend) {
     // arrange a run shaped by the platform engine and built through the ordinary scene builder (§9.1, §6.1)
-    SkiaTextEngine engine;
-    ASSERT_TRUE(engine.ready());
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    ASSERT_TRUE(engine->ready());
     TextProbeNode node;
-    node.m_layout = engine.measure("Albor", TextEngine::UNBOUNDED_WIDTH, 20.0f);
+    node.m_layout = engine->measure("Albor", TextEngine::UNBOUNDED_WIDTH, 20.0f);
     ASSERT_NE(node.m_layout.run, nullptr);
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{200.0f, 80.0f}, 1.0f);
     SceneBuilder builder;

@@ -21,7 +21,7 @@
 #include "render/render-skia/skia_renderer_backend.h"
 #include "render/render-software/software_renderer_backend.h"
 #include "render/screenshot.h"
-#include "text/text-skia/skia_text_engine.h"
+#include "text/text-harfbuzz/harfbuzz_text_engine.h"
 #include "tools/alloc-probe/alloc_probe.h"
 
 using namespace albor;
@@ -115,8 +115,9 @@ namespace
 
 TEST(SkiaRenderContextTextChecks, DrawTextPutsInkOnTheCanvas) {
     // arrange the run is shaped by the real engine, which proves the handle resolves (§9.1)
-    SkiaTextEngine engine;
-    const TextLayout layout = engine.measure("Albor", 1000.0f, 20.0f);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("Albor", 1000.0f, 20.0f);
     sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
     SkiaRenderContext context(surface->getCanvas(), 1.0f);
     // act
@@ -127,8 +128,9 @@ TEST(SkiaRenderContextTextChecks, DrawTextPutsInkOnTheCanvas) {
 
 TEST(SkiaRenderContextTextChecks, DrawTextPlacesTheRunWhereTheCallerAsked) {
     // arrange
-    SkiaTextEngine engine;
-    const TextLayout layout = engine.measure("Albor", 1000.0f, 20.0f);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("Albor", 1000.0f, 20.0f);
     sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
     SkiaRenderContext context(surface->getCanvas(), 1.0f);
     // act
@@ -139,8 +141,9 @@ TEST(SkiaRenderContextTextChecks, DrawTextPlacesTheRunWhereTheCallerAsked) {
 
 TEST(SkiaRenderContextTextChecks, DrawTextMovesTheRunWithTheOriginItWasGiven) {
     // arrange
-    SkiaTextEngine engine;
-    const TextLayout layout = engine.measure("Albor", 1000.0f, 20.0f);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("Albor", 1000.0f, 20.0f);
     sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
     SkiaRenderContext context(surface->getCanvas(), 1.0f);
     // act
@@ -158,8 +161,9 @@ TEST(SkiaRenderContextTextChecks, DrawTextMovesTheRunWithTheOriginItWasGiven) {
 
 TEST(SkiaRenderContextTextChecks, DrawTextPlacesEveryLineOfAWrappedRunOnItsOwnBaseline) {
     // arrange
-    SkiaTextEngine engine;
-    const TextLayout single = engine.measure("Albor", 1000.0f, 20.0f);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout single = engine->measure("Albor", 1000.0f, 20.0f);
     sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
     SkiaRenderContext context(surface->getCanvas(), 1.0f);
     // act
@@ -168,7 +172,7 @@ TEST(SkiaRenderContextTextChecks, DrawTextPlacesEveryLineOfAWrappedRunOnItsOwnBa
     const float single_height = ink_bounds(surface).height;
     // arrange the second draw over a cleared surface, so the two runs are compared on their own (§6.3)
     surface->getCanvas()->clear(SK_ColorTRANSPARENT);
-    const TextLayout wrapped = engine.measure("the quick brown fox jumps over the lazy dog", 80.0f, 20.0f);
+    const TextLayout wrapped = engine->measure("the quick brown fox jumps over the lazy dog", 80.0f, 20.0f);
     SkiaRenderContext wrapping(surface->getCanvas(), 1.0f);
     // act
     wrapping.draw_text(wrapped, Point{10.0f, 40.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
@@ -179,8 +183,9 @@ TEST(SkiaRenderContextTextChecks, DrawTextPlacesEveryLineOfAWrappedRunOnItsOwnBa
 
 TEST(SkiaRenderContextTextChecks, DrawTextSizesAWrappedRunFromTheSizeItWasShapedAt) {
     // arrange a wrapped run is where the run height and the shaped size disagree (§9.1)
-    SkiaTextEngine engine;
-    const TextLayout wrapped = engine.measure("the quick brown fox jumps over the lazy dog", 80.0f, 20.0f);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout wrapped = engine->measure("the quick brown fox jumps over the lazy dog", 80.0f, 20.0f);
     sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
     SkiaRenderContext context(surface->getCanvas(), 1.0f);
     // act
@@ -193,7 +198,8 @@ TEST(SkiaRenderContextTextChecks, DrawTextSizesAWrappedRunFromTheSizeItWasShaped
 
 TEST(SkiaRenderContextTextChecks, DrawTextSkipsALayoutThatCarriesNoRun) {
     // arrange
-    SkiaTextEngine engine;
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
     sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
     SkiaRenderContext context(surface->getCanvas(), 1.0f);
     // act
@@ -204,7 +210,8 @@ TEST(SkiaRenderContextTextChecks, DrawTextSkipsALayoutThatCarriesNoRun) {
 
 TEST(SkiaRenderContextTextChecks, DrawTextSkipsARunThatCarriesNoGlyphs) {
     // arrange
-    SkiaTextEngine engine;
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
     sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
     SkiaRenderContext context(surface->getCanvas(), 1.0f);
     // the layout reports an extent but its run shaped nothing, which is what an unresolvable run looks like (§6.2)
@@ -217,8 +224,9 @@ TEST(SkiaRenderContextTextChecks, DrawTextSkipsARunThatCarriesNoGlyphs) {
 
 TEST(SkiaRenderContextTextChecks, DrawTextSkipsALineWhoseTypefaceItCannotInterpret) {
     // arrange
-    SkiaTextEngine engine;
-    const TextLayout layout = engine.measure("Albor", 1000.0f, 20.0f);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("Albor", 1000.0f, 20.0f);
     sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
     SkiaRenderContext context(surface->getCanvas(), 1.0f);
     // act
@@ -229,8 +237,9 @@ TEST(SkiaRenderContextTextChecks, DrawTextSkipsALineWhoseTypefaceItCannotInterpr
 
 TEST(SkiaRenderContextTextChecks, DrawTextOnAContextWithNoCanvasDrawsNothing) {
     // arrange
-    SkiaTextEngine engine;
-    const TextLayout layout = engine.measure("Albor", 1000.0f, 20.0f);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("Albor", 1000.0f, 20.0f);
     SkiaRenderContext context(nullptr, 1.0f);
     // act / assert a context with no canvas draws nothing rather than reaching through a null canvas (§6.2)
     EXPECT_NO_FATAL_FAILURE(context.draw_text(layout, Point{10.0f, 40.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)}));
@@ -238,8 +247,9 @@ TEST(SkiaRenderContextTextChecks, DrawTextOnAContextWithNoCanvasDrawsNothing) {
 
 TEST(SkiaRenderContextTextChecks, DrawingARunCostsNoAllocationOnceItHasDrawn) {
     // arrange the run is shaped once, and the context is built over a surface that needs no window server (§6.3)
-    SkiaTextEngine engine;
-    const TextLayout layout = engine.measure("Albor", 1000.0f, 20.0f);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("Albor", 1000.0f, 20.0f);
     sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
     const Paint paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)};
     // act the first draw pays for whatever the draw path allocates for the first time (§6.3)
@@ -258,8 +268,9 @@ TEST(SkiaRenderContextTextChecks, DrawingARunCostsNoAllocationOnceItHasDrawn) {
 
 TEST(SkiaRenderContextTextChecks, DrawingManyLinesOfOneRunCostsNoAllocation) {
     // arrange a wrapped run is several lines, so a per line buffer would show up here (§9.1)
-    SkiaTextEngine engine;
-    const TextLayout layout = engine.measure("the quick brown fox jumps over the lazy dog", 80.0f, 20.0f);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("the quick brown fox jumps over the lazy dog", 80.0f, 20.0f);
     ASSERT_GT(layout.run->lines().size(), 1u);
     sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
     const Paint paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)};
@@ -512,8 +523,9 @@ TEST(SkiaParityChecks, TheOffscreenGpuTargetMatchesTheSoftwareReferenceOnLevel2P
     // the bound is the measured value on this host plus margin, which is the per class budget §15 asks for (§15)
     EXPECT_LE(image_difference, 16) << "an image diverged by " << image_difference;
     // a shaped run is drawn from the shaped glyphs, so the two rasterizers are allowed the antialiased band (§9.1, §15)
-    SkiaTextEngine text_engine;
-    const TextLayout text_layout = text_engine.measure("Albor", 1000.0f, 20.0f);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> text_engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(text_engine, nullptr);
+    const TextLayout text_layout = text_engine->measure("Albor", 1000.0f, 20.0f);
     FrameScene text_scene(metrics, background);
     text_scene.add_command(DrawCommand::text(text_layout, Point{8.0f, 40.0f}, ink));
     const int text_difference = parity_difference(gpu_backend, *gpu, reference_backend, *reference, text_scene);

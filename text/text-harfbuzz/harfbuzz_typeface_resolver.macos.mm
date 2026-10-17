@@ -21,7 +21,7 @@ namespace albor::harfbuzz
                 if (m_manager == nullptr)
                     return;
                 // the family is matched at the normal weight, which is what a default label uses (§9.1)
-                m_typeface = m_manager->matchFamilyStyle(family_name.c_str(), SkFontStyle());
+                m_typeface = m_manager->matchFamilyStyle(family_name.empty() ? nullptr : family_name.c_str(), SkFontStyle());
             }
 
             // override: hand out the resolved typeface, which the renderer draws the glyphs with (§9.1, AD-28)
@@ -48,5 +48,10 @@ namespace albor::harfbuzz
             return nullptr;
         // the platform resolver is returned as the base, so no platform type escapes this module (§3.5)
         return std::unique_ptr<HarfbuzzTypefaceResolver>(new CoreTextTypefaceResolver(family_name));
+    }
+
+    std::unique_ptr<HarfbuzzTypefaceResolver> HarfbuzzTypefaceResolver::create_default() {
+        // an empty family asks core text for its default face, which a run that names none draws with (§9.1)
+        return std::unique_ptr<HarfbuzzTypefaceResolver>(new CoreTextTypefaceResolver(std::string()));
     }
 } // namespace albor::harfbuzz

@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <string>
@@ -21,6 +22,7 @@
 #include "render/shaped_run.h"
 #include "resources/embedded_font.h"
 #include "text/text-harfbuzz/embedded_glyph_provider.h"
+#include "text/text-harfbuzz/harfbuzz_platform_font.h"
 #include "text/text-harfbuzz/harfbuzz_typeface_resolver.h"
 
 namespace albor::harfbuzz
@@ -140,6 +142,74 @@ namespace albor::harfbuzz
             // the bytes are read whole, because a face is built from a complete font (§9.1)
             return std::vector<std::uint8_t>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
         }
+        // how many shaped runs the cache holds before it drops them (§9.1)
+        constexpr std::size_t MAXIMUM_CACHED_RUNS = 512;
+
+        // what a shaped run is cached under, which owns the text because the cache has to keep it alive (§9.1)
+        struct CacheKey
+        {
+            // the text the run was shaped from (§9.1)
+            std::string text;
+            // the ceiling the run was wrapped at (§8.2)
+            float max_width = 0.0f;
+            // the size every line was shaped at (§9.1)
+            float font_size = 0.0f;
+            // the content hash of the face the run was shaped with (§15, AD-34)
+            std::uint64_t font_hash = 0;
+            // the reading direction the run was shaped in (§9.2)
+            TextDirection direction = TextDirection::Inherit;
+        };
+
+        // what a lookup carries, which views the text so that finding a run allocates nothing (§9.1)
+        struct CacheLookup
+        {
+            // the text the caller measured, which the cache never copies (§9.1)
+            std::string_view text;
+            // the ceiling the run was wrapped at (§8.2)
+            float max_width = 0.0f;
+            // the size the run is shaped at (§9.1)
+            float font_size = 0.0f;
+            // the content hash of the face the run is shaped with (§15, AD-34)
+            std::uint64_t font_hash = 0;
+            // the reading direction the run is shaped in (§9.2)
+            TextDirection direction = TextDirection::Inherit;
+        };
+
+        // compare keys, in either direction, so a lookup can test against an owned key (§9.1)
+        struct CacheEqual
+        {
+            // the transparent marker is what tells the map a lookup may carry a different key type (§9.1)
+            using is_transparent = void;
+            // two owned keys are the same run when every field agrees (§9.1)
+            bool operator()(const CacheKey& lhs, const CacheKey& rhs) const { return lhs.text == rhs.text && lhs.max_width == rhs.max_width && lhs.font_size == rhs.font_size && lhs.font_hash == rhs.font_hash && lhs.direction == rhs.direction; }
+            // a lookup and an owned key are the same run when the view matches the owned text (§9.1)
+            bool operator()(const CacheKey& owned, const CacheLookup& lookup) const { return owned.max_width == lookup.max_width && owned.font_size == lookup.font_size && owned.font_hash == lookup.font_hash && owned.direction == lookup.direction && owned.text == lookup.text; }
+        };
+
+        // hash a key into a bucket, which is what the cache looks the run up by (§9.1)
+        struct CacheHasher
+        {
+            // the transparent marker is what tells the map a lookup may carry a different key type (§9.1)
+            using is_transparent = void;
+            // fold every field into one hash, because a run shaped for other inputs must not share an entry (§9.1)
+            static std::size_t fold(std::string_view text, float max_width, float font_size, std::uint64_t font_hash, TextDirection direction) {
+                // the text seeds the hash, because the text is what distinguishes one run from another (§9.1)
+                std::size_t seed = std::hash<std::string_view>{}(text);
+                // the ceiling is folded in, because the same text wrapped differently is another run (§9.1)
+                seed ^= std::hash<float>{}(max_width) + 0x9e3779b9U + (seed << 6) + (seed >> 2);
+                // the font size is folded in, because the same text shaped at another size is another run (§9.1)
+                seed ^= std::hash<float>{}(font_size) + 0x9e3779b9U + (seed << 6) + (seed >> 2);
+                // the face is folded in, because the same text in another face is another run (§15, AD-34)
+                seed ^= std::hash<std::uint64_t>{}(font_hash) + 0x9e3779b9U + (seed << 6) + (seed >> 2);
+                // the direction is folded in, because a run shaped right to left is another run (§9.2)
+                seed ^= std::hash<int>{}(static_cast<int>(direction)) + 0x9e3779b9U + (seed << 6) + (seed >> 2);
+                return seed;
+            }
+            // an owned key hashes by the text it owns (§9.1)
+            std::size_t operator()(const CacheKey& key) const { return fold(key.text, key.max_width, key.font_size, key.font_hash, key.direction); }
+            // a lookup hashes by the text it views, so both shapes agree on a bucket (§9.1)
+            std::size_t operator()(const CacheLookup& lookup) const { return fold(lookup.text, lookup.max_width, lookup.font_size, lookup.font_hash, lookup.direction); }
+        };
     } // namespace
 
     // the harfbuzz state the engine shapes and draws through, which owns one face and a cache of families (§9.1, AD-34)
@@ -159,6 +229,12 @@ namespace albor::harfbuzz
 
         // whether the engine needs a platform typeface to be usable, which an embedded run does not (§15, AD-34)
         bool require_typeface = true;
+
+        // the shaped runs measured so far, which stage one replays instead of shaping again (§9.1, §6.1)
+        mutable std::unordered_map<CacheKey, TextLayout, CacheHasher, CacheEqual> cache;
+
+        // how many shaping passes ran, which a test reads to prove the cache absorbs a repeated measure (§9.1)
+        mutable std::size_t shaped_runs = 0;
     };
 
     std::unique_ptr<HarfbuzzTextEngine> HarfbuzzTextEngine::create(const std::string& font_path, const std::string& family_name) {
@@ -191,6 +267,37 @@ namespace albor::harfbuzz
         // an engine that could not shape the carried bytes is refused rather than half built (§9.1)
         if (!engine->ready())
             return nullptr;
+        // the engine is returned only when it can actually shape (§9.1)
+        return engine;
+    }
+
+    std::unique_ptr<HarfbuzzTextEngine> HarfbuzzTextEngine::create_platform(std::string_view family) {
+        // the resolver names the platform face, which is the only source before a build embeds a font (§9.1, AD-28)
+        std::unique_ptr<HarfbuzzTypefaceResolver> resolver = family.empty() ? HarfbuzzTypefaceResolver::create_default() : HarfbuzzTypefaceResolver::create(std::string(family));
+        // a platform with no face has nothing to shape or draw, so the engine is refused (§9.1)
+        if (resolver == nullptr)
+            return nullptr;
+        // the bytes the typeface fronts are what the shaper reads, so the platform font becomes a face (§15, AD-34)
+        std::vector<std::uint8_t> bytes = platform_font_bytes(resolver->typeface());
+        // a face the platform hands no bytes for cannot be shaped, so the engine is refused (§15)
+        if (bytes.empty())
+            return nullptr;
+        // the engine is built over those bytes, which is the same path an embedded font takes (§15, AD-34)
+        std::unique_ptr<HarfbuzzTextEngine> engine(new HarfbuzzTextEngine(bytes.data(), bytes.size(), family));
+        // a face that did not load leaves an engine that cannot shape (§9.1)
+        if (!engine->ready())
+            return nullptr;
+        // the renderer draws the platform typeface, because this engine resolved one (§9.1, AD-28)
+        engine->m_state->require_typeface = true;
+        // the resolved typeface is what the run carries for the renderer (§9.1, AD-28)
+        engine->m_state->resolver = std::move(resolver);
+        // the bytes join the registry, so the software renderer and a replaying backend can draw the run (§15, AD-34)
+        if (engine->m_state->face.font_hash != 0 && resources::FontRegistry::find_hash(engine->m_state->face.font_hash) == nullptr) {
+            // the label is unique per hash, because two faces of one family must both survive (§15)
+            const std::string label = std::string(family.empty() ? "Platform" : family) + "-" + std::to_string(engine->m_state->face.font_hash);
+            // the bytes travel into the registry, which is what makes the run drawable everywhere (§11.3, AD-34)
+            resources::FontRegistry::register_font(resources::EmbeddedFont{.family = label, .content_hash = engine->m_state->face.font_hash, .bytes = engine->m_state->face.bytes});
+        }
         // the engine is returned only when it can actually shape (§9.1)
         return engine;
     }
@@ -562,6 +669,12 @@ namespace albor::harfbuzz
         // a selection no carried font answers measures nothing, which is a refusal rather than a silent default (§15)
         if (face == nullptr)
             return TextLayout{};
+        // the lookup views the caller's text, because copying it would allocate on every measure (§9.1)
+        const CacheLookup lookup{.text = text, .max_width = max_width, .font_size = font_size, .font_hash = face->font_hash, .direction = direction};
+        // a cached run is handed back as it was measured, so a steady state frame pays no shaping (§9.1)
+        const auto cached = m_state->cache.find(lookup);
+        if (cached != m_state->cache.end())
+            return cached->second;
         // the typeface is the engine's own only for its face, because a foreign face draws as outlines (§9.1, AD-34)
         const void* typeface = face == &m_state->face && m_state->resolver != nullptr ? m_state->resolver->typeface() : nullptr;
         // the rows of the run, each of which the walk below stacks under the one before it (§8.2)
@@ -650,16 +763,38 @@ namespace albor::harfbuzz
         const float first_descent = lines.front().descent;
         // the shaped run is what the render stage replays verbatim (§9.1, AD-18)
         TextLayout layout;
-        // the run is built over its rows and the face it was shaped from, whose hash keys a layout (§9.1, AD-34)
-        layout.run = ShapedRun::make(std::move(lines), font_size, face->font_hash, ShapeSource::Embedded);
+        // the run replays its rows with the face's hash, drawing through a typeface or as outlines (§9.1, AD-18, AD-34)
+        layout.run = ShapedRun::make(std::move(lines), font_size, face->font_hash, typeface != nullptr ? ShapeSource::Platform : ShapeSource::Embedded);
         // the size is the widest row by the stacked height of every row (§8.2)
         layout.size = Size{.width = widest, .height = total_height};
         // the ascent is the first row's, which a caller places content by (§9.1)
         layout.ascent = first_ascent;
         // the descent is the first row's, reported positive because it is a distance (§9.1)
         layout.descent = first_descent;
+        // the shaping pass is counted, so a test can tell a cache hit from a fresh shaping (§9.1)
+        m_state->shaped_runs++;
+        // a full cache drops its runs, because an unbounded cache is a leak an application cannot see (§9.1)
+        if (m_state->cache.size() >= MAXIMUM_CACHED_RUNS)
+            m_state->cache.clear();
+        // the run is cached under a key that owns the text, which only a miss ever builds (§9.1)
+        m_state->cache.emplace(CacheKey{.text = std::string(text), .max_width = max_width, .font_size = font_size, .font_hash = face->font_hash, .direction = direction}, layout);
         // exit
         return layout;
+    }
+
+    std::size_t HarfbuzzTextEngine::shaped_run_count() const {
+        // the count is what the engine has shaped, which excludes every run the cache served (§9.1)
+        return m_state->shaped_runs;
+    }
+
+    std::size_t HarfbuzzTextEngine::cache_size() const {
+        // the size is what a memory pressure policy reads before it decides to drop (§9.1)
+        return m_state->cache.size();
+    }
+
+    void HarfbuzzTextEngine::clear_cache() const {
+        // the cache holds only runs the ui thread can rebuild, so dropping them costs nothing but the next shaping (§9.1)
+        m_state->cache.clear();
     }
 
     bool HarfbuzzTextEngine::resolves_font_selection() const {
@@ -676,7 +811,15 @@ namespace albor::harfbuzz
     }
 
     void install_harfbuzz_text_engine() {
-        // the factory builds the embedded engine over the family the composition root named (§11.3, AD-34)
-        set_text_engine_factory([]() -> std::unique_ptr<TextEngine> { return HarfbuzzTextEngine::create_embedded(installed_font_family()); });
+        // the factory prefers the family the build carries, because only those bytes are identical everywhere (§15, AD-34)
+        set_text_engine_factory([]() -> std::unique_ptr<TextEngine> {
+            // the family the composition root named is the carried font AD-34 makes identical across platforms (§11.3)
+            const std::string family = installed_font_family();
+            // a build that carries the family shapes through its bytes, which is the target of AD-34 (§15, AD-34)
+            if (std::unique_ptr<HarfbuzzTextEngine> embedded = HarfbuzzTextEngine::create_embedded(family))
+                return std::unique_ptr<TextEngine>(std::move(embedded));
+            // a build that carries no font still shapes through the platform face until phase 4 embeds one (§9.1, AD-28)
+            return std::unique_ptr<TextEngine>(HarfbuzzTextEngine::create_platform(""));
+        });
     }
 } // namespace albor::harfbuzz

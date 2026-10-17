@@ -14,7 +14,7 @@ list(FILTER CPP_SOURCES EXCLUDE REGEX "drivability(_stub)?\\.cpp$")
 add_executable(albor-form ${CPP_SOURCES})
 
 # the backends install themselves at load, and the host owns the wiring, so the example only builds and runs its form (§5.3, §6.3, §9.1, AD-16)
-target_link_libraries(albor-form PRIVATE albor-platform-macos-auto albor-render-skia-auto albor-text-skia-auto albor-widgets albor-layout albor-accessibility albor-i18n)
+target_link_libraries(albor-form PRIVATE albor-platform-macos-auto albor-render-skia-auto albor-text-harfbuzz-auto albor-widgets albor-layout albor-accessibility albor-i18n)
 
 # compile the ui asset into a generated facade, which is what the application instantiates (§11.3, AD-03)
 include("${CMAKE_SOURCE_DIR}/build/AlborComponent.cmake")

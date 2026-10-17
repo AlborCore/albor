@@ -12,6 +12,9 @@ namespace albor::harfbuzz
         // resolve the named family to a drawable typeface, returning null when the platform has no such font (§9.1)
         [[nodiscard]] static std::unique_ptr<HarfbuzzTypefaceResolver> create(const std::string& family_name);
 
+        // resolve the platform default face, which an engine with no named family draws with (§9.1, AD-28)
+        [[nodiscard]] static std::unique_ptr<HarfbuzzTypefaceResolver> create_default();
+
         virtual ~HarfbuzzTypefaceResolver() = default;
 
         HarfbuzzTypefaceResolver(const HarfbuzzTypefaceResolver&) = delete;

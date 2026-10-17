@@ -42,6 +42,9 @@ UNREACHABLE=(
     'render/render-skia/skia_offscreen_surface.macos.mm|return nullptr;|the target is only built over a live context and valid metrics, which the parity test supplies, so the refusals cannot be forced'
     'render/render-skia/skia_offscreen_surface.macos.mm|return;|an invalid resize or an unallocated target is refused before a frame, which the parity test never triggers'
     'render/render-skia/skia_offscreen_surface.macos.mm|return {};|the read refusals guard an unallocated target or a refused pixel copy, which the parity test never triggers'
+    'text/text-harfbuzz/harfbuzz_text_engine.cpp|bool operator()(const CacheKey& lhs, const CacheKey& rhs) const { return lhs.text == rhs.text && lhs.max_width == rhs.max_width && lhs.font_size == rhs.font_size && lhs.font_hash == rhs.font_hash && lhs.direction == rhs.direction; }|two owned keys reach this comparison only when their hashes collide, which no test can force without a synthetic hasher'
+    'text/text-harfbuzz/harfbuzz_text_engine.cpp|return nullptr;|the platform constructor refuses a null resolver, empty bytes or a face that cannot shape, none of which a valid platform font produces'
+    'text/text-harfbuzz/harfbuzz_text_engine.cpp|m_state->cache.clear();|the eviction runs only past 512 distinct runs, a bound no unit test needs to cross to prove the cache works'
 )
 
 # an entry whose text no longer appears in the file, which means the hole was closed or moved (§27)

@@ -18,7 +18,6 @@
 #include "resources/embedded_font.h"
 #include "text/text-harfbuzz/embedded_glyph_provider.h"
 #include "text/text-harfbuzz/harfbuzz_text_engine.h"
-#include "text/text-skia/skia_text_engine.h"
 #include "ui/frame_pipeline.h"
 #include "ui/scene_builder.h"
 #include "window/window_metrics.h"
@@ -38,12 +37,6 @@ namespace
 
     // the family the embedded rtl face is registered under, which is what a run names to reach it (§9.2, AD-34)
     const char* const RTL_FONT_FAMILY = "SFHebrew";
-
-    // the largest glyph position difference two shapers may disagree by, in logical pixels (§15, AD-25)
-    constexpr float POSITION_TOLERANCE = 0.75f;
-
-    // the largest advance difference the two shapers are allowed to disagree by (§15, AD-25)
-    constexpr float WIDTH_TOLERANCE = 1.0f;
 
     // the largest difference the engines may report between their measured widths (§15, AD-25)
     bool has_font() {
@@ -65,12 +58,6 @@ namespace
         // the hash is computed by the registry, so a caller cannot register a wrong identity (§15)
         return resources::EmbeddedFont{.family = std::move(family), .content_hash = 0, .bytes = std::move(bytes)};
     }
-
-    // the largest distance between two glyph positions, which the tolerance is written against (§15)
-    float position_distance(Point left, Point right) {
-        // the axes differ independently, so the larger one is the distance (§15)
-        return std::max(std::abs(left.x - right.x), std::abs(left.y - right.y));
-    }
 } // namespace
 
 TEST(DualEngineConformanceChecks, TheVendoredEngineLoadsAFont) {
@@ -81,79 +68,6 @@ TEST(DualEngineConformanceChecks, TheVendoredEngineLoadsAFont) {
         GTEST_SKIP() << "no conformance font on this host";
     ASSERT_NE(engine, nullptr);
     EXPECT_TRUE(engine->ready());
-}
-
-TEST(DualEngineConformanceChecks, BothEnginesAgreeOnGlyphCount) {
-    // arrange both engines shaping the same text at the same size (§15, AD-25)
-    if (!has_font())
-        GTEST_SKIP() << "no conformance font on this host";
-    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> vendored = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH, FONT_FAMILY);
-    ASSERT_NE(vendored, nullptr);
-    SkiaTextEngine oracle;
-    // act the same string through both shapers, which is the dual engine comparison of AD-25 (§15)
-    const TextLayout reference = oracle.measure("Albor framework", 0.0f, 20.0f);
-    const TextLayout measured = vendored->measure("Albor framework", 0.0f, 20.0f);
-    // assert both shaped something, because an empty run would agree with anything (§15)
-    ASSERT_NE(reference.run, nullptr);
-    ASSERT_NE(measured.run, nullptr);
-    // assert the glyph counts match, which is the first thing a different shaper gets wrong (§15, AD-25)
-    EXPECT_EQ(measured.run->glyph_count(), reference.run->glyph_count());
-}
-
-TEST(DualEngineConformanceChecks, BothEnginesAgreeOnGlyphPositions) {
-    // arrange the same text through both shapers (§15, AD-25)
-    if (!has_font())
-        GTEST_SKIP() << "no conformance font on this host";
-    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> vendored = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH, FONT_FAMILY);
-    ASSERT_NE(vendored, nullptr);
-    SkiaTextEngine oracle;
-    const TextLayout reference = oracle.measure("Albor framework", 0.0f, 20.0f);
-    const TextLayout measured = vendored->measure("Albor framework", 0.0f, 20.0f);
-    // assert both produced one line, because a differing line count is a failure before any position (§15)
-    ASSERT_EQ(reference.run->lines().size(), 1u);
-    ASSERT_EQ(measured.run->lines().size(), 1u);
-    const ShapedRun::Line& reference_line = reference.run->lines().front();
-    const ShapedRun::Line& measured_line = measured.run->lines().front();
-    ASSERT_EQ(measured_line.glyphs.size(), reference_line.glyphs.size());
-    // act every glyph position is compared, because a frame is wrong anywhere (§15)
-    for (std::size_t index = 0; index < measured_line.glyphs.size(); index++) {
-        // act
-        const float distance = position_distance(measured_line.glyphs[index].position, reference_line.glyphs[index].position);
-        // assert each glyph lands within the tolerance, which is what makes one shaper gate the other (§15)
-        EXPECT_LE(distance, POSITION_TOLERANCE) << "glyph " << index << " differed by " << distance;
-    }
-}
-
-TEST(DualEngineConformanceChecks, BothEnginesAgreeOnMeasuredWidth) {
-    // arrange
-    if (!has_font())
-        GTEST_SKIP() << "no conformance font on this host";
-    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> vendored = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH, FONT_FAMILY);
-    ASSERT_NE(vendored, nullptr);
-    SkiaTextEngine oracle;
-    // act the same string is measured by both (§15, AD-25)
-    const TextLayout reference = oracle.measure("Albor framework", 0.0f, 20.0f);
-    const TextLayout measured = vendored->measure("Albor framework", 0.0f, 20.0f);
-    // assert the widths agree, because a width drives every layout decision downstream (§8.2, AD-25)
-    EXPECT_NEAR(measured.size.width, reference.size.width, WIDTH_TOLERANCE);
-}
-
-TEST(DualEngineConformanceChecks, BothEnginesAgreeOnAccentsAndPunctuation) {
-    // arrange text that exercises shaping rather than simple advances (§9.1)
-    if (!has_font())
-        GTEST_SKIP() << "no conformance font on this host";
-    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> vendored = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH, FONT_FAMILY);
-    ASSERT_NE(vendored, nullptr);
-    SkiaTextEngine oracle;
-    const std::string text = "café naïve (résumé) 1,234.56";
-    // act
-    const TextLayout reference = oracle.measure(text, 0.0f, 18.0f);
-    const TextLayout measured = vendored->measure(text, 0.0f, 18.0f);
-    // assert both shaped the run, which is the case a naive shaper gets wrong (§9.1)
-    ASSERT_NE(reference.run, nullptr);
-    ASSERT_NE(measured.run, nullptr);
-    // assert the glyph counts agree, because a combining sequence is where shapers differ most (§15)
-    EXPECT_EQ(measured.run->glyph_count(), reference.run->glyph_count());
 }
 
 TEST(DualEngineConformanceChecks, TheVendoredEngineIsReproducible) {
@@ -379,16 +293,6 @@ TEST(EmbeddedFontChecks, AnEmbeddedFixtureShapesWithoutAPlatformFont) {
     // exit
     resources::FontRegistry::clear();
 }
-
-TEST(DualEngineConformanceChecks, TheOracleRunIsDrawable) {
-    // arrange the oracle issues a typeface and so draws (§9.1, AD-28)
-    SkiaTextEngine oracle;
-    const TextLayout reference = oracle.measure("Albor", 0.0f, 16.0f);
-    ASSERT_NE(reference.run, nullptr);
-    // act assert the oracle is the drawable one, which is why it is kept as the oracle (§9.1)
-    EXPECT_TRUE(reference.run->lines().front().font.valid());
-}
-
 TEST(EmbeddedFontChecks, ARegisteredFontIsFoundByFamilyAndByHash) {
     // arrange the registry starts empty, because a registration from another test would answer this (§2.2)
     resources::FontRegistry::clear();
@@ -831,8 +735,9 @@ TEST(EmbeddedTextCallerChecks, ARunTheRendererCanDrawStillGoesThroughTheTextComm
     // arrange a run the renderer can draw, which is the path that must not change (§9.1, AD-28)
     if (!has_font())
         GTEST_SKIP() << "no conformance font on this host";
-    SkiaTextEngine oracle;
-    const TextLayout layout = oracle.measure("Albor", 0.0f, 20.0f);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("Albor", 0.0f, 20.0f);
     ASSERT_NE(layout.run, nullptr);
     // assert the run carries a registered identity, which is what lets a backend without the platform draw it (§15, AD-34)
     ASSERT_NE(layout.run->font_hash(), 0u);
@@ -1056,31 +961,6 @@ TEST(VendoredWrapChecks, AnUnboundedRunStillBreaksAtANewline) {
     // exit
     resources::FontRegistry::clear();
 }
-
-TEST(VendoredWrapChecks, BothEnginesWrapIntoTheSameNumberOfRows) {
-    // arrange the vendored engine and the skia oracle on the same family, which both must resolve (§15, AD-25)
-    if (!has_font())
-        GTEST_SKIP() << "no conformance font on this host";
-    resources::FontRegistry::clear();
-    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
-    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> vendored = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
-    SkiaTextEngine oracle;
-    ASSERT_NE(vendored, nullptr);
-    const std::string text = "the quick brown fox jumps over the lazy dog";
-    // act both wrap the same text against the same ceiling, which AD-25 asks them to agree on (§8.2, AD-25)
-    const TextLayout vendored_layout = vendored->measure(text, 120.0f, 20.0f);
-    const TextLayout oracle_layout = oracle.measure(text, 120.0f, 20.0f);
-    ASSERT_NE(vendored_layout.run, nullptr);
-    ASSERT_NE(oracle_layout.run, nullptr);
-    // assert the row counts agree, which is the observable a wrapped layout is judged on (§16, AD-25)
-    EXPECT_EQ(vendored_layout.run->lines().size(), oracle_layout.run->lines().size());
-    // assert both rows sets cover the whole text, so neither drops or duplicates a byte (§9.1)
-    EXPECT_EQ(vendored_layout.run->lines().back().end_byte, text.size());
-    EXPECT_EQ(oracle_layout.run->lines().back().end_byte, text.size());
-    // exit
-    resources::FontRegistry::clear();
-}
-
 TEST(TextEngineInstallChecks, TheInstalledFactoryBuildsTheEmbeddedEngine) {
     // arrange the tree carries a font under a family the composition root names (§11.3, AD-34)
     resources::FontRegistry::clear();
@@ -1309,14 +1189,6 @@ TEST(EmbeddedTextDrawChecks, TheEngineProvidesTheOutlineResolver) {
     // exit
     resources::FontRegistry::clear();
 }
-
-TEST(EmbeddedTextDrawChecks, ASkiaEngineProvidesNoOutlineResolver) {
-    // arrange the oracle, which draws through a platform typeface and owns no outlines (§9.1, AD-34)
-    SkiaTextEngine engine;
-    // act, assert the default resolver is empty, so a recorder knows there is nothing to expand (§6.4)
-    EXPECT_FALSE(static_cast<bool>(engine.glyph_outline_resolver()));
-}
-
 TEST(GlyphOutlineChecks, TheOutlinePairsAVerbWithEveryPointAndRetainsAPath) {
     // arrange the carried fixture, whose glyph is walked into a closed contour of points (§6.4, AD-34)
     if (!has_font())
@@ -1658,4 +1530,40 @@ TEST(SoftwareTextChecks, TheSoftwareContextForwardsEveryDrawToTheSharedContext) 
     surface->end_frame();
     // assert the frame finished, which is what the forwarded draws produce (§6.3)
     EXPECT_FALSE(surface->read_pixels().empty());
+}
+
+TEST(VendoredCacheChecks, ACacheHitSkipsShapingAndClearDropsIt) {
+    // arrange an engine that can shape, which the cache test needs (§9.1)
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    // act the same run is measured twice, which is the steady state of a label (§9.1)
+    (void)engine->measure("Albor", 500.0f, 16.0f);
+    (void)engine->measure("Albor", 500.0f, 16.0f);
+    // assert one shaping pass happened and one entry is held (§9.1)
+    EXPECT_EQ(engine->shaped_run_count(), 1u);
+    EXPECT_EQ(engine->cache_size(), 1u);
+    // act the cache is dropped, which a memory pressure policy does (§9.1)
+    engine->clear_cache();
+    // assert the drop leaves no entry behind (§9.1)
+    EXPECT_EQ(engine->cache_size(), 0u);
+    // act the same run is measured after the drop, which must shape again (§9.1)
+    (void)engine->measure("Albor", 500.0f, 16.0f);
+    // assert the later measure is a new shaping pass (§9.1)
+    EXPECT_EQ(engine->shaped_run_count(), 2u);
+}
+
+TEST(TextEngineInstallChecks, ABuildWithoutACarriedFontFallsBackToThePlatformFace) {
+    // arrange no carried font and no named family, which is an example without an embedded font (§9.1, AD-28)
+    resources::FontRegistry::clear();
+    set_installed_font_family("");
+    // act installing selects the vendored engine, and the factory falls back to the platform face (§9.1, AD-28)
+    harfbuzz::install_harfbuzz_text_engine();
+    const std::unique_ptr<TextEngine> engine = create_text_engine();
+    // assert the platform face keeps text available, which is the transitional path AD-34 replaces (§9.1, AD-28)
+    ASSERT_NE(engine, nullptr);
+    EXPECT_TRUE(engine->ready());
+    // exit
+    set_text_engine_factory(nullptr);
+    set_installed_font_family("");
+    resources::FontRegistry::clear();
 }

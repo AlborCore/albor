@@ -1,4 +1,4 @@
-#include "text/text-skia/skia_text_services.h"
+#include "text/text-harfbuzz/harfbuzz_platform_font.h"
 
 #include <CoreText/CoreText.h>
 
@@ -7,22 +7,11 @@
 #include <vector>
 
 #include <skia/core/SkTypeface.h>
-#include <skia/modules/skunicode/include/SkUnicode_icu.h>
-#include <skia/ports/SkFontMgr_mac_ct.h>
 #include <skia/ports/SkTypeface_mac.h>
 
-namespace albor
+namespace albor::harfbuzz
 {
-    TextServices platform_text_services() {
-        // a null collection asks core text for the system font collection, which is what every run resolves against (§9.1)
-        TextServices services;
-        services.font_manager = SkFontMgr_New_CoreText(nullptr);
-        // the icu implementation supplies line breaking and bidi, which is what skparagraph needs to run (§9.1)
-        services.unicode = SkUnicodes::ICU::Make();
-        return services;
-    }
-
-    std::vector<std::uint8_t> platform_font_face_bytes(const void* typeface_object) {
+    std::vector<std::uint8_t> platform_font_bytes(const void* typeface_object) {
         // the object is the skia typeface the shaping issued, which only this half may name (§3.5, AD-19)
         const SkTypeface* typeface = static_cast<const SkTypeface*>(typeface_object);
         // the core text face is what the platform backs the typeface with, and a stream backed one carries none (§9.1)
@@ -132,4 +121,4 @@ namespace albor
         }
         return file;
     }
-} // namespace albor
+} // namespace albor::harfbuzz

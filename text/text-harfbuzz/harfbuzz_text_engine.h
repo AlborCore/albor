@@ -24,8 +24,20 @@ namespace albor::harfbuzz
         // build over a font the build carries, which is how AD-34 removes font discovery (§15, AD-34)
         [[nodiscard]] static std::unique_ptr<HarfbuzzTextEngine> create_embedded(std::string_view family);
 
+        // build over the platform default face, which keeps text available before a build embeds a font (§9.1, AD-28)
+        [[nodiscard]] static std::unique_ptr<HarfbuzzTextEngine> create_platform(std::string_view family);
+
         // the content hash of the font this engine shapes with, which is its identity in a layout (§15, AD-34)
         [[nodiscard]] std::uint64_t font_hash() const;
+
+        // how many shaping passes the engine has run (§9.1)
+        [[nodiscard]] std::size_t shaped_run_count() const;
+
+        // how many shaped runs the cache currently holds (§9.1)
+        [[nodiscard]] std::size_t cache_size() const;
+
+        // drop every cached run, which a memory pressure policy calls (§9.1)
+        void clear_cache() const;
 
         // extract one glyph's outline as a polyline, which is how embedded text draws (§15, AD-34)
         [[nodiscard]] std::vector<Point> glyph_outline(std::uint32_t glyph_id, float font_size) const;

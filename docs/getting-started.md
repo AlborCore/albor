@@ -34,7 +34,7 @@ at load, so the libraries a target links decide what ships inside it.
 | `albor-application` | event loop, tasks, timers, window registry |
 | `albor-platform-macos-auto` | the AppKit window and input adapter |
 | `albor-render-skia-auto` | the Skia renderer backend (Metal) |
-| `albor-text-skia-auto` | Skia text shaping |
+| `albor-text-harfbuzz-auto` | HarfBuzz text shaping |
 | `albor-widgets`, `albor-layout` | the widget and container set |
 | `albor-accessibility`, `albor-i18n` | semantic/accessibility adapters, translation catalogs |
 | `albor-devrt-auto` | dev runtime: hot swap of `.ui` structure (optional, see [Tooling](tooling.md)) |
@@ -88,7 +88,7 @@ target_include_directories(my-app PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_features(my-app PRIVATE cxx_std_23)
 
 target_link_libraries(my-app PRIVATE
-    albor-platform-macos-auto albor-render-skia-auto albor-text-skia-auto
+    albor-platform-macos-auto albor-render-skia-auto albor-text-harfbuzz-auto
     albor-widgets albor-layout albor-accessibility albor-i18n)
 ```
 
