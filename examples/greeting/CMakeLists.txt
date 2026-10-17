@@ -17,7 +17,7 @@ target_include_directories(albor-greeting PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_features(albor-greeting PRIVATE cxx_std_23)
 
 # the widgets, the layout, accessibility and i18n link explicitly, and the platform carries the host and input (§3.2)
-target_link_libraries(albor-greeting PRIVATE albor-platform-macos-auto albor-render-skia-auto albor-text-skia-auto albor-widgets albor-layout albor-accessibility albor-i18n)
+target_link_libraries(albor-greeting PRIVATE albor-platform-macos-auto albor-render-skia-auto albor-text-harfbuzz-auto albor-widgets albor-layout albor-accessibility albor-i18n)
 
 # the drivability of an example is a link time choice, because the automation core only exists where it is enabled
 # and AD-04 forbids reaching it behind a flag: the example source is byte identical either way (§2.3, AD-04, AD-10)

@@ -154,7 +154,7 @@ TEST(TranslationRuntime, DirectionFollowsTheLocale) {
     EXPECT_FALSE(i18n::right_to_left("de-DE"));
     // assert the current locale decides the direction, which is what layout reads (§9.2)
     i18n::set_locale("ar");
-    EXPECT_EQ(i18n::direction(), i18n::TextDirection::RightToLeft);
+    EXPECT_EQ(i18n::direction(), i18n::ReadingDirection::RightToLeft);
     i18n::set_locale("en");
-    EXPECT_EQ(i18n::direction(), i18n::TextDirection::LeftToRight);
+    EXPECT_EQ(i18n::direction(), i18n::ReadingDirection::LeftToRight);
 }

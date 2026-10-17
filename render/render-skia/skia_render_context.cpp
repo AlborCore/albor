@@ -20,6 +20,7 @@
 #include "render/line_batch.h"
 #include "render/path_resource.h"
 #include "render/picture_resource.h"
+#include "render/render-skia/skia_platform_font.h"
 
 namespace albor::skia
 {
@@ -36,6 +37,7 @@ namespace albor::skia
             // the extent is unchanged, because an offset moves a shape rather than resizing it (§6.2)
             return Rect{.x = rect.x + offset.x, .y = rect.y + offset.y, .width = rect.width, .height = rect.height};
         }
+
     } // namespace
 
     SkiaRenderContext::SkiaRenderContext(SkCanvas* canvas, float device_scale) :
@@ -225,8 +227,11 @@ namespace albor::skia
             // a line this backend cannot resolve is skipped rather than guessed at (§3.5, §9.1)
             if (!line.font.valid())
                 continue;
-            // the typeface is retained for the draw, because the handle only borrows it (§9.1)
-            sk_sp<SkTypeface> typeface = sk_ref_sp(static_cast<const SkTypeface*>(line.font.object()));
+            // the platform font is adapted here, because only this backend may name its own typeface (§9.1, AD-28)
+            sk_sp<SkTypeface> typeface = typeface_from_platform_font(line.font.object(), run.font_hash());
+            // a run with no drawable typeface draws nothing, which is a refusal rather than a guess (§9.1)
+            if (typeface == nullptr)
+                continue;
             // the font is built from the typeface and the size the run was shaped at (§9.1)
             SkFont font(typeface, run.font_size());
             // subpixel positioning keeps a fractional origin sharp, which a snapped one would round away (§9.1)

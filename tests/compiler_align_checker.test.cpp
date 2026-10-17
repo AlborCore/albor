@@ -96,3 +96,24 @@ TEST(AlignTypeChecker, TheAxesAreIndependent) {
     // assert both axes on one child resolve separately, because neither is the parent's main axis (§8.2)
     EXPECT_TRUE(diagnose("component C { Column { Label { horizontal_align: Align.end; vertical_align: Align.stretch; } } }").diagnostics().empty());
 }
+
+TEST(FontWeightChecker, AcceptsAWeightTheSetCarries) {
+    // arrange, act
+    const DiagnosticList diagnostics = diagnose("component C { Label { font_weight: Weight.bold; } }");
+    // assert the weight resolves against the set, which is what a font selection needs (§9.1, AD-34)
+    EXPECT_TRUE(diagnostics.diagnostics().empty());
+}
+
+TEST(FontWeightChecker, RefusesAWeightTheSetDoesNotCarry) {
+    // arrange, act a member the weight set does not declare (§11.1)
+    const std::string code = first_code("component C { Label { font_weight: Weight.heavy; } }");
+    // assert the closed set refuses it, which is what keeps the weight safe (§11.1)
+    EXPECT_EQ(code, "E0416");
+}
+
+TEST(FontWeightChecker, RefusesAWeightQualifiedByAnotherSet) {
+    // arrange, act a member written against a set the property does not take (§11.1)
+    const std::string code = first_code("component C { Label { font_weight: Align.center; } }");
+    // assert the mismatch is reported, because a weight property holds only the weight set (§11.1)
+    EXPECT_FALSE(code.empty());
+}

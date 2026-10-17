@@ -1,0 +1,102 @@
+name: build
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 8 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-release
+            os: macos-15
+            enable: true
+            preset: release
+            vcpkg-root: /usr/local/share/vcpkg
+            setup: |
+              # the vcpkg binary cache root must exist before vcpkg runs
+              mkdir -p .vcpkg-cache
+              # the preset launches the compiler through ccache, which the runner image does not ship
+              HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
+              ccache --max-size 2G
+              # the preset is c++23, so take the newest xcode the image carries rather than its default
+              sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
+          - name: macos-coverage
+            os: macos-latest
+            enable: true
+            preset: coverage
+            vcpkg-root: /usr/local/share/vcpkg
+            setup: |
+              # the vcpkg binary cache root must exist before vcpkg runs
+              mkdir -p .vcpkg-cache
+              # the preset launches the compiler through ccache, which the runner image does not ship
+              HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
+              ccache --max-size 2G
+              # the preset is c++23, so take the newest xcode the image carries rather than its default
+              sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"              
+          - name: windows-release
+            os: windows-latest
+            enable: false
+            preset: release
+            vcpkg-root: C:\vcpkg
+            setup: choco install ccache
+          - name: linux-release
+            os: ubuntu-latest
+            enable: false
+            preset: release
+            vcpkg-root: /usr/local/share/vcpkg
+            setup: sudo apt-get update && sudo apt-get install -y ccache
+    env:
+      VCPKG_ROOT: ${{ matrix.vcpkg-root }}
+      VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+    steps:
+      - uses: actions/checkout@v7
+        if: matrix.enable
+        persist-credentials: false
+
+      - name: platform setup
+        if: matrix.enable
+        run: ${{ matrix.setup }}
+
+      - name: restore the vcpkg binary cache
+        if: matrix.enable
+        uses: actions/cache@v5
+        with:
+          path: ${{ github.workspace }}/.vcpkg-cache
+          key: vcpkg-${{ runner.os }}-${{ matrix.preset }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-${{ matrix.preset }}-
+
+      - name: restore the ccache directory
+        if: matrix.enable
+        uses: actions/cache@v5
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-${{ runner.os }}-${{ matrix.preset }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ matrix.preset }}-
+
+      - name: configure
+        if: matrix.enable
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: build
+        if: matrix.enable
+        run: cmake --build --preset ${{ matrix.preset }} --parallel 4

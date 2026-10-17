@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "core/geometry.h"
+#include "render/path_resource.h"
 
 namespace albor
 {
@@ -36,6 +37,12 @@ namespace albor
         // the outline's points, which the replay walks as one closed contour (§6.4)
         [[nodiscard]] const std::vector<Point>& points() const;
 
+        // the verbs paired with those points, which are built once so a frame replays without building them (§6.4)
+        [[nodiscard]] const std::vector<PathVerb>& verbs() const;
+
+        // the retained path built once over the points, which a frame draws without allocating (§6.4, AD-06)
+        [[nodiscard]] const std::shared_ptr<const PathResource>& path() const;
+
         // report whether the glyph has no outline, which is what a space is (§6.2)
         [[nodiscard]] bool empty() const;
 
@@ -54,6 +61,12 @@ namespace albor
 
         // the tessellated contour, which is empty for a glyph that draws nothing (§6.2)
         std::vector<Point> m_points;
+
+        // the verbs paired with the points, which are built once at construction (§6.4)
+        std::vector<PathVerb> m_verbs;
+
+        // the path built once over the points and verbs, so a frame replays without allocating (§6.4, AD-06)
+        std::shared_ptr<const PathResource> m_path;
     };
 
     // the identity a glyph outline is cached under, which is everything that changes the shape (§6.4)

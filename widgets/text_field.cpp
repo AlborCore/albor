@@ -30,8 +30,8 @@ namespace albor
             // the ceiling is remembered, because the edit path must wrap at the same width the paint does (§8.2)
             m_measure_width = ceiling;
             // both runs are laid out at that ceiling, because the hint wraps like the value (§8.2)
-            m_layout = m_text_engine->measure(m_value, ceiling, m_font_size);
-            m_placeholder_layout = m_text_engine->measure(m_placeholder, ceiling, m_font_size);
+            m_layout = m_text_engine->measure(m_value, ceiling, m_font_size, m_font_spec);
+            m_placeholder_layout = m_text_engine->measure(m_placeholder, ceiling, m_font_size, m_font_spec);
         }
         // the content is the widest of the value run and the hint run, because an empty field shows the hint (§8.2)
         const float run_width = std::max(m_layout.size.width, m_placeholder_layout.size.width) + m.text_field_padding * 2.0f;
@@ -503,7 +503,7 @@ namespace albor
                 // the mark sits where the replaced span stood, which is what an insertion method does (§8.3)
                 composed.insert(span_start, m_marked);
                 // the mark run shapes at the ceiling the value used, so it wraps the same way (§9.1)
-                m_marked_layout = m_text_engine->measure(composed, m_measure_width, m_font_size);
+                m_marked_layout = m_text_engine->measure(composed, m_measure_width, m_font_size, m_font_spec);
             }
             else {
                 // no engine means no display run, which is what an unmeasurable mark is (§9.1)
@@ -695,6 +695,27 @@ namespace albor
     float TextField::font_size() const {
         // the size is what the runs were last measured at (§9.1)
         return m_font_size;
+    }
+
+    void TextField::set_font_family(std::string family) {
+        // the family is stored, because the next measure resolves the face through it (§9.1, AD-34)
+        m_font_spec.family = std::move(family);
+        // a family change may resize both runs, so the layout passes must run again (§8.2, §9.1)
+        remeasure();
+    }
+
+    void TextField::set_font_weight(FontWeight weight) {
+        // the weight is stored, because the next measure resolves the face through it (§9.1, AD-34)
+        m_font_spec.weight = weight;
+        // a weight change may resize both runs, so the layout passes must run again (§8.2, §9.1)
+        remeasure();
+    }
+
+    void TextField::set_font_fallback(std::vector<std::string> fallback) {
+        // the fallback chain is stored, because the next measure resolves the face through it (§9.1, AD-34)
+        m_font_spec.fallback = std::move(fallback);
+        // a fallback change may resize both runs, so the layout passes must run again (§8.2, §9.1)
+        remeasure();
     }
 
     void TextField::set_caret(std::size_t byte) {
@@ -1333,9 +1354,9 @@ namespace albor
         }
         // the runs are measured at the width the plate last wrapped at, so the edit path matches the paint (§8.2)
         const float width = m_multiline ? m_measure_width : 0.0f;
-        m_layout = m_text_engine->measure(m_value, width, m_font_size);
+        m_layout = m_text_engine->measure(m_value, width, m_font_size, m_font_spec);
         // the hint run is measured too, because an empty field shows it (§8)
-        m_placeholder_layout = m_text_engine->measure(m_placeholder, width, m_font_size);
+        m_placeholder_layout = m_text_engine->measure(m_placeholder, width, m_font_size, m_font_spec);
         // a fresh base run invalidates the composed one, because the mark is measured against a new value (§8.3)
         m_marked_layout = TextLayout{};
         m_marked.clear();

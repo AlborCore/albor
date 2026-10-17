@@ -106,9 +106,6 @@ namespace albor::compiler
         // the type the value carries, which the property accepted (§11.1)
         ValueType type;
 
-        // whether the property scales with the surface density, which the codegen applies (§11.1, AD-27)
-        bool scaled_by_density = false;
-
         // the component properties the value reads, which the binding registers (§7.3, AD-04a)
         std::vector<std::string> dependencies;
 

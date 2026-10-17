@@ -32,6 +32,9 @@ namespace albor
         // override: wrap a metal layer into a presentable surface
         [[nodiscard]] std::unique_ptr<RenderSurface> create_surface(NativeWindowHandle handle, const WindowMetrics& metrics) override;
 
+        // build an offscreen gpu target, which a parity check draws into without a window (§6.3, AD-26)
+        [[nodiscard]] std::unique_ptr<RenderSurface> create_offscreen_surface(const WindowMetrics& metrics);
+
         // override: resize a surface, which a window resize requires from the ui thread (§5.3, D9.1)
         void resize_surface(RenderSurface& surface, const WindowMetrics& metrics) override;
 

@@ -15,8 +15,7 @@ concurrency:
 
 jobs:
   # a push to a branch that already has an open pull request would run the same
-  # build twice (once for the push, once for the pull_request event), and a
-  # cold skia build is an expensive thing to burn twice
+  # build twice (once for the push, once for the pull_request event)
   check-pr:
     if: github.event_name == 'push' && github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -40,7 +39,11 @@ jobs:
       !cancelled() &&
       (github.event_name != 'push' || github.ref == 'refs/heads/main' || needs.check-pr.outputs.has_pr != 'true')
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 180
+    permissions:
+      contents: read
+      pull-requests: read
+      code-quality: write
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
@@ -48,78 +51,104 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: macOS
-            os: macos-latest
+          - name: macos-release
+            os: macos-15
+            enable: true
+            preset: release
             vcpkg-root: /usr/local/share/vcpkg
             setup: |
               # the vcpkg binary cache root must exist before vcpkg runs
               mkdir -p .vcpkg-cache
-              # the release preset launches the compiler through ccache, which the runner image does not ship
+              # the preset launches the compiler through ccache, which the runner image does not ship
               HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
               ccache --max-size 2G
               # the preset is c++23, so take the newest xcode the image carries rather than its default
               sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
-          # windows (win32 + direct3d) is disabled until a win32 platform backend exists:
-          # platform/macos is added unconditionally by the top level CMakeLists.txt
-          # - name: Windows
-          #   os: windows-latest
-          #   vcpkg-root: C:\vcpkg
-          #   setup: choco install ccache
-          # linux (wayland/x11 + vulkan) is disabled for the same reason as windows
-          # - name: Linux
-          #   os: ubuntu-latest
-          #   vcpkg-root: /usr/local/share/vcpkg
-          #   setup: sudo apt-get update && sudo apt-get install -y ccache
+          - name: macos-coverage
+            os: macos-latest
+            enable: ${{ github.repository == 'AlborCore/albor' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+            preset: coverage
+            vcpkg-root: /usr/local/share/vcpkg
+            setup: |
+              # the vcpkg binary cache root must exist before vcpkg runs
+              mkdir -p .vcpkg-cache
+              # the preset launches the compiler through ccache, which the runner image does not ship
+              HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
+              ccache --max-size 2G
+              # the preset is c++23, so take the newest xcode the image carries rather than its default
+              sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"              
+          - name: windows-release
+            os: windows-latest
+            enable: false
+            preset: release
+            vcpkg-root: C:\vcpkg
+            setup: choco install ccache
+          - name: linux-release
+            os: ubuntu-latest
+            enable: false
+            preset: release
+            vcpkg-root: /usr/local/share/vcpkg
+            setup: sudo apt-get update && sudo apt-get install -y ccache
     env:
       VCPKG_ROOT: ${{ matrix.vcpkg-root }}
       VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
       CCACHE_DIR: ${{ github.workspace }}/.ccache
+      LLVM_PROFILE_FILE: ${{ github.workspace }}/coverage.profraw
     steps:
       - uses: actions/checkout@v7
+        if: matrix.enable
 
       - name: platform setup
+        if: matrix.enable
         run: ${{ matrix.setup }}
 
       - name: restore the vcpkg binary cache
+        if: matrix.enable
         uses: actions/cache@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}-${{ github.run_id }}
+          key: vcpkg-${{ runner.os }}-${{ matrix.preset }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}-
-            vcpkg-${{ runner.os }}-
+            vcpkg-${{ runner.os }}-${{ matrix.preset }}-
 
       - name: restore the ccache directory
+        if: matrix.enable
         uses: actions/cache@v5
         with:
-          path: .ccache
-          key: ccache-${{ runner.os }}-${{ github.sha }}
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-${{ runner.os }}-${{ matrix.preset }}-${{ github.sha }}
           restore-keys: |
-            ccache-${{ runner.os }}-
+            ccache-${{ runner.os }}-${{ matrix.preset }}-
 
-      - name: configure (release preset)
-        run: cmake --preset release
+      - name: configure
+        if: matrix.enable
+        run: cmake --preset ${{ matrix.preset }}
 
-      - name: build (release preset)
-        run: cmake --build --preset release --parallel 4
+      - name: build
+        if: matrix.enable
+        run: cmake --build --preset ${{ matrix.preset }} --parallel 4
 
-      - name: run the unit tests
-        working-directory: .build-release/tests
-        run: ./albor-tests        
+      - name: unit tests
+        if: matrix.enable
+        working-directory: .build-${{ matrix.preset }}/tests
+        run: ./albor-tests
 
-  # coverage is a pull request signal only: a push never runs it, on any
-  # branch. fork pull requests are excluded as well, because they cannot
-  # receive the write token the coverage api upload needs
-  coverage:
-    name: C++ coverage
-    needs: [check-pr]
-    if: |-
-      !cancelled() &&
-      github.repository == 'AlborCore/albor' &&
-      github.event_name == 'pull_request' &&
-      github.event.pull_request.head.repo.full_name == github.repository
-    permissions:
-      contents: read
-      pull-requests: read
-      code-quality: write
-    uses: ./.github/workflows/coverage.yml
+      - name: cobertura report
+        if: matrix.enable && matrix.preset == 'coverage'
+        run: |
+          xcrun llvm-profdata merge -sparse coverage.profraw -o coverage.profdata
+          xcrun llvm-cov export --format=lcov -instr-profile=coverage.profdata -ignore-filename-regex='(^|/)tests/' ./.build-coverage/tests/albor-tests > coverage.lcov
+          # the export carries absolute source paths, and the coverage api matches on repository relative ones
+          sed -i '' "s|^SF:$PWD/|SF:|" coverage.lcov
+          # the runner's python3 is homebrew managed (pep 668), so the converter lives in a venv
+          python3 -m venv .venv-lcov
+          .venv-lcov/bin/pip install lcov_cobertura
+          .venv-lcov/bin/lcov_cobertura coverage.lcov --output cobertura.xml
+
+      - name: upload to the github code coverage api
+        if: matrix.enable && matrix.preset == 'coverage'
+        uses: actions/upload-code-coverage@v1
+        with:
+          file: cobertura.xml
+          language: C++
+          label: code-coverage/c++

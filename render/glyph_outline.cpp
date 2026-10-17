@@ -11,7 +11,20 @@ namespace albor
     } // namespace
 
     GlyphOutline::GlyphOutline(std::uint64_t font_hash, std::uint32_t glyph_id, float font_size, std::vector<Point> points) :
-        m_font_hash(font_hash), m_glyph_id(glyph_id), m_font_size(font_size), m_points(std::move(points)) {}
+        m_font_hash(font_hash), m_glyph_id(glyph_id), m_font_size(font_size), m_points(std::move(points)) {
+        // the verbs are built once here, because a closed contour never changes shape once tessellated (§6.4)
+        m_verbs.reserve(m_points.size());
+        // a contour begins with a move, which is where the pen starts at the first point (§6.4)
+        if (!m_points.empty())
+            m_verbs.push_back(PathVerb::MoveTo);
+        // every point after the first is a straight segment, because the outline is already tessellated (§6.4, §15)
+        for (std::size_t index = 1; index < m_points.size(); index++)
+            m_verbs.push_back(PathVerb::LineTo);
+        // the path is retained once, so a frame replays it without allocating a resource per glyph (§6.4, AD-06)
+        const std::uint64_t identifier = font_hash ^ (static_cast<std::uint64_t>(glyph_id) << 1);
+        // the path copies the verbs and points here, at construction, which is the one place it may allocate (§6.4)
+        m_path = std::make_shared<const PathResource>(identifier, std::span<const PathVerb>(m_verbs), std::span<const Point>(m_points));
+    }
 
     std::uint64_t GlyphOutline::font_hash() const {
         // the hash is what the replay resolves the font by, because a name would resolve per platform (§15, AD-34)
@@ -31,6 +44,16 @@ namespace albor
     const std::vector<Point>& GlyphOutline::points() const {
         // the points are the tessellated contour, which the replay walks once (§6.4)
         return m_points;
+    }
+
+    const std::vector<PathVerb>& GlyphOutline::verbs() const {
+        // the verbs are paired with the points, and are built once rather than every frame (§6.4)
+        return m_verbs;
+    }
+
+    const std::shared_ptr<const PathResource>& GlyphOutline::path() const {
+        // the retained path is what a frame draws, so the replay allocates nothing per glyph (§6.4, AD-06)
+        return m_path;
     }
 
     bool GlyphOutline::empty() const {

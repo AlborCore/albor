@@ -62,7 +62,7 @@ namespace albor::compiler
 
     std::string ValueType::to_string() const {
         // the spellings are a table indexed by kind, so a new kind cannot leave a path unhandled (§11.1)
-        static const char* const SPELLINGS[] = {"<error>", "void", "bool", "int", "float", "string", "color", "align", "scrollbar", "length", "Snapshot<", "vector<", "", "command"};
+        static const char* const SPELLINGS[] = {"<error>", "void", "bool", "int", "float", "string", "color", "align", "scrollbar", "font_weight", "length", "Snapshot<", "vector<", "", "command"};
         // the two parameter forms append their element, so only their prefix comes from the table (§11.1)
         if (m_kind == TypeKind::Snapshot)
             return std::string(SPELLINGS[static_cast<std::size_t>(m_kind)]) + element().to_string() + ">";
@@ -207,6 +207,21 @@ namespace albor::compiler
                                       NamedValueMember{.written = "off", .code = "AlwaysOff"},
                                       NamedValueMember{.written = "on", .code = "AlwaysOn"},
                                   }},
+                // the weight set is what a font property resolves a written member against (§9.1, AD-34)
+                NamedValueSet{.name = "Weight",
+                              .kind = TypeKind::FontWeight,
+                              .cpp_name = "FontWeight",
+                              .members =
+                                  {
+                                      // the written form is lower case and the enumerator capitalised (§11.3, §9.1)
+                                      NamedValueMember{.written = "thin", .code = "Thin"},
+                                      NamedValueMember{.written = "light", .code = "Light"},
+                                      NamedValueMember{.written = "regular", .code = "Regular"},
+                                      NamedValueMember{.written = "medium", .code = "Medium"},
+                                      NamedValueMember{.written = "semibold", .code = "Semibold"},
+                                      NamedValueMember{.written = "bold", .code = "Bold"},
+                                      NamedValueMember{.written = "black", .code = "Black"},
+                                  }},
             };
             return sets;
         }
@@ -229,11 +244,11 @@ namespace albor::compiler
         // every element type arranges inside a parent, so both axes are properties on all of them (§8.2)
         return {
             // the horizontal axis is a screen axis, so it means the same thing in every container (§8.2)
-            ElementProperty{.name = "horizontal_align", .type = alignment, .assignable = true, .scaled_by_density = false},
+            ElementProperty{.name = "horizontal_align", .type = alignment, .assignable = true},
             // the vertical axis is its independent counterpart, and neither one is the parent's main axis (§8.2)
-            ElementProperty{.name = "vertical_align", .type = alignment, .assignable = true, .scaled_by_density = false},
+            ElementProperty{.name = "vertical_align", .type = alignment, .assignable = true},
             // visibility hides a node and its subtree without removing it from the tree (§8.1)
-            ElementProperty{.name = "visible", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false},
+            ElementProperty{.name = "visible", .type = scalar(TypeKind::Bool), .assignable = true},
         };
     }
 
@@ -265,8 +280,8 @@ namespace albor::compiler
         // a container groups children in a column, which is the default vertical stack (§8.2)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Column",
-                                              // the gap and the inset are what §11.1 writes on a column, and both scale with the surface (§8.2, AD-27)
-                                              .properties = {ElementProperty{.name = "spacing", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = true}, ElementProperty{.name = "padding", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = true}},
+                                              // the gap and the inset are lengths the surface scales (§8.2, AD-27)
+                                              .properties = {ElementProperty{.name = "spacing", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "padding", .type = scalar(TypeKind::Float), .assignable = true}},
                                               // a column raises no signal of its own (§8.2)
                                               .signals = {},
                                               // a column is a container, so it accepts children (§8.2)
@@ -275,7 +290,7 @@ namespace albor::compiler
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Row",
                                               // the gap between children is the only property the language exposes (§8.2)
-                                              .properties = {ElementProperty{.name = "spacing", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = true}},
+                                              .properties = {ElementProperty{.name = "spacing", .type = scalar(TypeKind::Float), .assignable = true}},
                                               // a row raises no signal of its own (§8.2)
                                               .signals = {},
                                               // a row is a container, so it accepts children (§8.2)
@@ -283,8 +298,8 @@ namespace albor::compiler
         // a container insets its children, which is what a padded area is (§8.2)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Padding",
-                                              // the inset is a length, because it scales with the surface (§8.2, AD-27)
-                                              .properties = {ElementProperty{.name = "padding", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = true}},
+                                              // the inset is a length, which the surface scales (§8.2, AD-27)
+                                              .properties = {ElementProperty{.name = "padding", .type = scalar(TypeKind::Float), .assignable = true}},
                                               // a padded area raises no signal of its own (§8.2)
                                               .signals = {},
                                               // a padded area is a container, so it accepts children (§8.2)
@@ -301,8 +316,8 @@ namespace albor::compiler
         // a container lays its children out in a grid, which is what a table is (§8.2)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Grid",
-                                              // the gap between cells is a length, because it scales with the surface (§8.2, AD-27)
-                                              .properties = {ElementProperty{.name = "spacing", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = true}},
+                                              // the gap between cells is a length, which the surface scales (§8.2, AD-27)
+                                              .properties = {ElementProperty{.name = "spacing", .type = scalar(TypeKind::Float), .assignable = true}},
                                               // a grid raises no signal of its own (§8.2)
                                               .signals = {},
                                               // a grid is a container, so it accepts children (§8.2)
@@ -311,7 +326,7 @@ namespace albor::compiler
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "ScrollView",
                                               // the extent and the policy and the overscan are what a view exposes (§8)
-                                              .properties = {ElementProperty{.name = "viewport_width", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = true}, ElementProperty{.name = "viewport_height", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = true}, ElementProperty{.name = "overscan", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "offset", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "scrollbar", .type = scalar(TypeKind::Scrollbar), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "row_height", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}},
+                                              .properties = {ElementProperty{.name = "viewport_width", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "viewport_height", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "overscan", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "offset", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "scrollbar", .type = scalar(TypeKind::Scrollbar), .assignable = true}, ElementProperty{.name = "row_height", .type = scalar(TypeKind::Float), .assignable = true}},
                                               // a scroll view raises when its offset moves (§8.3)
                                               .signals = {ElementSignal{.name = "scrolled", .parameter_types = {scalar(TypeKind::Float)}, .parameter_names = {"offset"}}},
                                               // a scroll view holds one content container, so it accepts children (§8.2)
@@ -320,7 +335,7 @@ namespace albor::compiler
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "ListBox",
                                               // the viewport, the selection and the bar are the surface (§8)
-                                              .properties = {ElementProperty{.name = "viewport_width", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = true}, ElementProperty{.name = "viewport_height", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = true}, ElementProperty{.name = "overscan", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "selected", .type = scalar(TypeKind::Int), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "row_height", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "scrollbar", .type = scalar(TypeKind::Scrollbar), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}},
+                                              .properties = {ElementProperty{.name = "viewport_width", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "viewport_height", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "overscan", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "selected", .type = scalar(TypeKind::Int), .assignable = true}, ElementProperty{.name = "row_height", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "scrollbar", .type = scalar(TypeKind::Scrollbar), .assignable = true}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true}},
                                               // a list raises on selection and on activation (§18.1, §18.3)
                                               .signals = {ElementSignal{.name = "selection_changed", .parameter_types = {}}, ElementSignal{.name = "activated", .parameter_types = {scalar(TypeKind::String)}, .parameter_names = {"key"}}},
                                               // a list hosts the row content it repeats, so it accepts children (§8.2)
@@ -328,8 +343,8 @@ namespace albor::compiler
         // a leaf draws a run of text, which is a caption or a value readout (§8)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Label",
-                                              // the text and the foreground and the size are what a label exposes (§8)
-                                              .properties = {ElementProperty{.name = "text", .type = scalar(TypeKind::String), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "foreground", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "font_size", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = true}},
+                                              // the text, the colour, the size and the font of a label (§8)
+                                              .properties = {ElementProperty{.name = "text", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "foreground", .type = scalar(TypeKind::Color), .assignable = true}, ElementProperty{.name = "font_size", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "font_family", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "font_weight", .type = scalar(TypeKind::FontWeight), .assignable = true}, ElementProperty{.name = "font_fallback", .type = ValueType::parameterized(TypeKind::Vector, scalar(TypeKind::String)), .assignable = true}},
                                               // a label raises no signal of its own (§8)
                                               .signals = {},
                                               // a label is a leaf, so it takes no children (§8)
@@ -337,8 +352,8 @@ namespace albor::compiler
         // a leaf edits a string the user types, which is what a form field or a search box is (§8)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "TextField",
-                                              // the value and the hint and the two states are what a field exposes (§8)
-                                              .properties = {ElementProperty{.name = "value", .type = scalar(TypeKind::String), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "placeholder", .type = scalar(TypeKind::String), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "read_only", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "multiline", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "font_size", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = true}},
+                                              // the value, the hint, the states and the font of a field (§8)
+                                              .properties = {ElementProperty{.name = "value", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "placeholder", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "read_only", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "multiline", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "font_size", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "font_family", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "font_weight", .type = scalar(TypeKind::FontWeight), .assignable = true}, ElementProperty{.name = "font_fallback", .type = ValueType::parameterized(TypeKind::Vector, scalar(TypeKind::String)), .assignable = true}},
                                               // a field raises per keystroke and on its commit (§8)
                                               .signals = {ElementSignal{.name = "changed", .parameter_types = {scalar(TypeKind::String)}, .parameter_names = {"value"}}, ElementSignal{.name = "committed", .parameter_types = {scalar(TypeKind::String)}, .parameter_names = {"value"}}},
                                               // a field is a leaf, so it takes no children (§8)
@@ -346,7 +361,7 @@ namespace albor::compiler
         // a leaf performs an action when it is pressed, which is a push control (§8)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Button", // the label and the plate and the disabled state are what a button exposes (§8)
-                                              .properties = {ElementProperty{.name = "text", .type = scalar(TypeKind::String), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "background", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "action", .type = scalar(TypeKind::Command), .assignable = true, .scaled_by_density = false}},
+                                              .properties = {ElementProperty{.name = "text", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "background", .type = scalar(TypeKind::Color), .assignable = true}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "action", .type = scalar(TypeKind::Command), .assignable = true}},
                                               // a button raises a click when it is pressed (§8)
                                               .signals = {ElementSignal{.name = "clicked", .parameter_types = {}}},
                                               // a button is a leaf, so it takes no children (§8)
@@ -355,7 +370,7 @@ namespace albor::compiler
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Slider",
                                               // the value and the disabled state and the two colours are what a slider exposes (§8)
-                                              .properties = {ElementProperty{.name = "value", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "min", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "max", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "track_color", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "thumb_color", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "action", .type = scalar(TypeKind::Command), .assignable = true, .scaled_by_density = false}},
+                                              .properties = {ElementProperty{.name = "value", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "min", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "max", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "track_color", .type = scalar(TypeKind::Color), .assignable = true}, ElementProperty{.name = "thumb_color", .type = scalar(TypeKind::Color), .assignable = true}, ElementProperty{.name = "action", .type = scalar(TypeKind::Command), .assignable = true}},
                                               // a slider raises a change when the user drags it, and names the value (§8)
                                               .signals = {ElementSignal{.name = "changed", .parameter_types = {scalar(TypeKind::Float)}, .parameter_names = {"value"}}},
                                               // a slider is a leaf, so it takes no children (§8)
@@ -364,7 +379,7 @@ namespace albor::compiler
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "CheckBox",
                                               // the checked and the disabled state and the two colours are what a checkbox exposes (§8)
-                                              .properties = {ElementProperty{.name = "checked", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "outline", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "check_fill", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "action", .type = scalar(TypeKind::Command), .assignable = true, .scaled_by_density = false}},
+                                              .properties = {ElementProperty{.name = "checked", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "outline", .type = scalar(TypeKind::Color), .assignable = true}, ElementProperty{.name = "check_fill", .type = scalar(TypeKind::Color), .assignable = true}, ElementProperty{.name = "action", .type = scalar(TypeKind::Command), .assignable = true}},
                                               // a checkbox raises a toggle with its new value (§8)
                                               .signals = {ElementSignal{.name = "toggled", .parameter_types = {scalar(TypeKind::Bool)}, .parameter_names = {"checked"}}},
                                               // a checkbox is a leaf, so it takes no children (§8)
@@ -373,7 +388,7 @@ namespace albor::compiler
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Canvas",
                                               // the intrinsic size is what a canvas exposes, because its content does not measure (§8, §6.4)
-                                              .properties = {ElementProperty{.name = "width", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = true}, ElementProperty{.name = "height", .type = scalar(TypeKind::Float), .assignable = true, .scaled_by_density = true}},
+                                              .properties = {ElementProperty{.name = "width", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "height", .type = scalar(TypeKind::Float), .assignable = true}},
                                               // a canvas raises no signal of its own (§8, §6.4)
                                               .signals = {},
                                               // a canvas is a leaf, so it takes no children (§8, §6.4)
@@ -471,7 +486,7 @@ namespace albor::compiler
             if (set.name == name)
                 return &set;
         }
-        // the builtin table is the fallback, because Align and Scrollbar are always available (§11.1)
+        // the builtin table is the fallback, because Align, Scrollbar and Weight are always available (§11.1)
         return albor::compiler::find_named_value_set(name);
     }
 

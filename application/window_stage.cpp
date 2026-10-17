@@ -23,6 +23,8 @@ namespace albor
         // stage one owns the tree and the record pass, and an empty root is a window that draws by hand (§6.1)
         m_pipeline = std::make_unique<FramePipeline>(m_engine, root ? std::move(root) : std::make_unique<UiNode>());
         m_pipeline->set_background(config.background);
+        // an engine that draws outlines hands the pipeline the resolver its embedded runs need (§6.1, §6.4, AD-34)
+        m_pipeline->set_outline_resolver(text.glyph_outline_resolver());
         // stage two runs off the ui thread, so the ui thread is never blocked by drawing (§6.1, AD-18b)
         m_executor = std::make_unique<RenderExecutor>(m_renderer);
         m_pipeline->set_executor(m_executor.get());

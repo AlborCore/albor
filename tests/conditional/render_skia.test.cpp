@@ -1,6 +1,10 @@
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <memory>
+#include <span>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -11,12 +15,41 @@
 #include <skia/core/SkSurface.h>
 
 #include "render/frame_scene.h"
+#include "render/glyph_outline.h"
+#include "render/image_resource.h"
+#include "render/line_batch.h"
+#include "render/path_resource.h"
+#include "render/picture_resource.h"
 #include "render/render-skia/skia_render_context.h"
 #include "render/render-skia/skia_renderer_backend.h"
-#include "text/text-skia/skia_text_engine.h"
+#include "render/render-software/software_renderer_backend.h"
+#include "render/screenshot.h"
+#include "resources/embedded_font.h"
+#include "text/text-harfbuzz/embedded_glyph_provider.h"
+#include "text/text-harfbuzz/harfbuzz_text_engine.h"
 #include "tools/alloc-probe/alloc_probe.h"
+#include "ui/scene_builder.h"
+#include "ui/ui_node.h"
 
 using namespace albor;
+
+namespace
+{
+    // render one scene on both backends and report the largest per channel difference, or -1 when either refused (§16)
+    int parity_difference(SkiaRendererBackend& gpu_backend, RenderSurface& gpu, software::SoftwareRendererBackend& reference_backend, RenderSurface& reference, const FrameScene& scene) {
+        // both backends render the same immutable scene (§6.1)
+        gpu_backend.execute_frame(gpu, scene);
+        reference_backend.execute_frame(reference, scene);
+        // each frame is read back, because a refused read is not an agreement (§16)
+        const Screenshot gpu_read = capture_surface(gpu);
+        const Screenshot reference_read = capture_surface(reference);
+        // a refused read is reported rather than compared (§16)
+        if (gpu_read.empty() || reference_read.empty())
+            return -1;
+        // the largest per channel difference is what the class tolerance is written against (§15)
+        return gpu_read.max_channel_difference(reference_read);
+    }
+} // namespace
 using namespace albor::skia;
 
 namespace
@@ -85,12 +118,32 @@ namespace
         // the run keeps the shaped size and reports what the measurement reported (§9.1)
         return TextLayout{.run = ShapedRun::make(std::move(lines), layout.run->font_size()), .size = layout.size, .ascent = layout.ascent, .descent = layout.descent};
     }
+
+    // a node that draws a measured run through the ordinary text call, which the builder expands (§6.1, §15)
+    class EmbeddedTextNode final : public UiNode
+    {
+    public:
+        // override: draw the run at the node's own origin, which is what a text widget does (§6.1, §9.1)
+        void render(RenderContext& context) override {
+            // a run that measured nothing draws nothing, because it carries no glyph (§6.2)
+            if (m_layout.run == nullptr)
+                return;
+            // the ordinary text call is what a widget makes, with no special path for embedded runs (§6.1)
+            context.draw_text(m_layout, Point{bounds().x, bounds().y}, {.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+            // the children draw over it, which is the composite contract of a node (§6.1)
+            UiNode::render(context);
+        }
+
+        // the run this node draws, which the test measures with the vendored engine (§9.1)
+        TextLayout m_layout;
+    };
 } // namespace
 
 TEST(SkiaRenderContextTextChecks, DrawTextPutsInkOnTheCanvas) {
     // arrange the run is shaped by the real engine, which proves the handle resolves (§9.1)
-    SkiaTextEngine engine;
-    const TextLayout layout = engine.measure("Albor", 1000.0f, 20.0f);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("Albor", 1000.0f, 20.0f);
     sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
     SkiaRenderContext context(surface->getCanvas(), 1.0f);
     // act
@@ -101,8 +154,9 @@ TEST(SkiaRenderContextTextChecks, DrawTextPutsInkOnTheCanvas) {
 
 TEST(SkiaRenderContextTextChecks, DrawTextPlacesTheRunWhereTheCallerAsked) {
     // arrange
-    SkiaTextEngine engine;
-    const TextLayout layout = engine.measure("Albor", 1000.0f, 20.0f);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("Albor", 1000.0f, 20.0f);
     sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
     SkiaRenderContext context(surface->getCanvas(), 1.0f);
     // act
@@ -113,8 +167,9 @@ TEST(SkiaRenderContextTextChecks, DrawTextPlacesTheRunWhereTheCallerAsked) {
 
 TEST(SkiaRenderContextTextChecks, DrawTextMovesTheRunWithTheOriginItWasGiven) {
     // arrange
-    SkiaTextEngine engine;
-    const TextLayout layout = engine.measure("Albor", 1000.0f, 20.0f);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("Albor", 1000.0f, 20.0f);
     sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
     SkiaRenderContext context(surface->getCanvas(), 1.0f);
     // act
@@ -132,8 +187,9 @@ TEST(SkiaRenderContextTextChecks, DrawTextMovesTheRunWithTheOriginItWasGiven) {
 
 TEST(SkiaRenderContextTextChecks, DrawTextPlacesEveryLineOfAWrappedRunOnItsOwnBaseline) {
     // arrange
-    SkiaTextEngine engine;
-    const TextLayout single = engine.measure("Albor", 1000.0f, 20.0f);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout single = engine->measure("Albor", 1000.0f, 20.0f);
     sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
     SkiaRenderContext context(surface->getCanvas(), 1.0f);
     // act
@@ -142,7 +198,7 @@ TEST(SkiaRenderContextTextChecks, DrawTextPlacesEveryLineOfAWrappedRunOnItsOwnBa
     const float single_height = ink_bounds(surface).height;
     // arrange the second draw over a cleared surface, so the two runs are compared on their own (§6.3)
     surface->getCanvas()->clear(SK_ColorTRANSPARENT);
-    const TextLayout wrapped = engine.measure("the quick brown fox jumps over the lazy dog", 80.0f, 20.0f);
+    const TextLayout wrapped = engine->measure("the quick brown fox jumps over the lazy dog", 80.0f, 20.0f);
     SkiaRenderContext wrapping(surface->getCanvas(), 1.0f);
     // act
     wrapping.draw_text(wrapped, Point{10.0f, 40.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
@@ -153,8 +209,9 @@ TEST(SkiaRenderContextTextChecks, DrawTextPlacesEveryLineOfAWrappedRunOnItsOwnBa
 
 TEST(SkiaRenderContextTextChecks, DrawTextSizesAWrappedRunFromTheSizeItWasShapedAt) {
     // arrange a wrapped run is where the run height and the shaped size disagree (§9.1)
-    SkiaTextEngine engine;
-    const TextLayout wrapped = engine.measure("the quick brown fox jumps over the lazy dog", 80.0f, 20.0f);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout wrapped = engine->measure("the quick brown fox jumps over the lazy dog", 80.0f, 20.0f);
     sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
     SkiaRenderContext context(surface->getCanvas(), 1.0f);
     // act
@@ -167,7 +224,8 @@ TEST(SkiaRenderContextTextChecks, DrawTextSizesAWrappedRunFromTheSizeItWasShaped
 
 TEST(SkiaRenderContextTextChecks, DrawTextSkipsALayoutThatCarriesNoRun) {
     // arrange
-    SkiaTextEngine engine;
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
     sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
     SkiaRenderContext context(surface->getCanvas(), 1.0f);
     // act
@@ -178,7 +236,8 @@ TEST(SkiaRenderContextTextChecks, DrawTextSkipsALayoutThatCarriesNoRun) {
 
 TEST(SkiaRenderContextTextChecks, DrawTextSkipsARunThatCarriesNoGlyphs) {
     // arrange
-    SkiaTextEngine engine;
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
     sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
     SkiaRenderContext context(surface->getCanvas(), 1.0f);
     // the layout reports an extent but its run shaped nothing, which is what an unresolvable run looks like (§6.2)
@@ -191,8 +250,9 @@ TEST(SkiaRenderContextTextChecks, DrawTextSkipsARunThatCarriesNoGlyphs) {
 
 TEST(SkiaRenderContextTextChecks, DrawTextSkipsALineWhoseTypefaceItCannotInterpret) {
     // arrange
-    SkiaTextEngine engine;
-    const TextLayout layout = engine.measure("Albor", 1000.0f, 20.0f);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("Albor", 1000.0f, 20.0f);
     sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
     SkiaRenderContext context(surface->getCanvas(), 1.0f);
     // act
@@ -203,8 +263,9 @@ TEST(SkiaRenderContextTextChecks, DrawTextSkipsALineWhoseTypefaceItCannotInterpr
 
 TEST(SkiaRenderContextTextChecks, DrawTextOnAContextWithNoCanvasDrawsNothing) {
     // arrange
-    SkiaTextEngine engine;
-    const TextLayout layout = engine.measure("Albor", 1000.0f, 20.0f);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("Albor", 1000.0f, 20.0f);
     SkiaRenderContext context(nullptr, 1.0f);
     // act / assert a context with no canvas draws nothing rather than reaching through a null canvas (§6.2)
     EXPECT_NO_FATAL_FAILURE(context.draw_text(layout, Point{10.0f, 40.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)}));
@@ -212,8 +273,9 @@ TEST(SkiaRenderContextTextChecks, DrawTextOnAContextWithNoCanvasDrawsNothing) {
 
 TEST(SkiaRenderContextTextChecks, DrawingARunCostsNoAllocationOnceItHasDrawn) {
     // arrange the run is shaped once, and the context is built over a surface that needs no window server (§6.3)
-    SkiaTextEngine engine;
-    const TextLayout layout = engine.measure("Albor", 1000.0f, 20.0f);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("Albor", 1000.0f, 20.0f);
     sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
     const Paint paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)};
     // act the first draw pays for whatever the draw path allocates for the first time (§6.3)
@@ -232,8 +294,9 @@ TEST(SkiaRenderContextTextChecks, DrawingARunCostsNoAllocationOnceItHasDrawn) {
 
 TEST(SkiaRenderContextTextChecks, DrawingManyLinesOfOneRunCostsNoAllocation) {
     // arrange a wrapped run is several lines, so a per line buffer would show up here (§9.1)
-    SkiaTextEngine engine;
-    const TextLayout layout = engine.measure("the quick brown fox jumps over the lazy dog", 80.0f, 20.0f);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("the quick brown fox jumps over the lazy dog", 80.0f, 20.0f);
     ASSERT_GT(layout.run->lines().size(), 1u);
     sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
     const Paint paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)};
@@ -385,4 +448,132 @@ TEST(SkiaRenderContextShadowChecks, ATranslucentCastAtNoBlurLandsAtItsOwnAlpha) 
     std::vector<std::uint8_t> pixels(64 * 64 * 4);
     ASSERT_TRUE(surface->readPixels(info, pixels.data(), info.minRowBytes(), 0, 0));
     EXPECT_NEAR(pixels[(24 * 64 + 24) * 4 + 3], 128, 3);
+}
+
+TEST(SkiaParityChecks, TheOffscreenGpuTargetMatchesTheSoftwareReference) {
+    // arrange both backends at the same metrics, which is what a parity comparison needs (§16, AD-26)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{64.0f, 48.0f}, 1.0f);
+    SkiaRendererBackend gpu_backend;
+    // a host without a gpu device cannot run the comparison, which is reported rather than passing (§6.3)
+    if (!gpu_backend.ready())
+        GTEST_SKIP() << "no gpu device on this host";
+    const std::unique_ptr<RenderSurface> gpu = gpu_backend.create_offscreen_surface(metrics);
+    ASSERT_NE(gpu, nullptr);
+    software::SoftwareRendererBackend software_backend;
+    const std::unique_ptr<RenderSurface> reference = software_backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(reference, nullptr);
+    // the scene is one flat rectangle at integer coordinates, which §15 requires to agree exactly (§15, AD-26)
+    FrameScene scene(metrics, Color::rgb(1.0f, 1.0f, 1.0f));
+    scene.add_command(DrawCommand::rectangle(Rect::from_origin_size(Point{8.0f, 8.0f}, Size{32.0f, 24.0f}), Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)}));
+    // a resize on the target is forwarded, which is what a parity check does between scenes (§6.2)
+    gpu_backend.resize_surface(*gpu, metrics);
+    // act both backends render the same immutable scene (§6.1)
+    gpu_backend.execute_frame(*gpu, scene);
+    software_backend.execute_frame(*reference, scene);
+    const std::vector<std::uint8_t> gpu_pixels = gpu->read_pixels();
+    const std::vector<std::uint8_t> reference_pixels = reference->read_pixels();
+    // assert both produced a frame before comparing, because a refused read is not an agreement (§16)
+    ASSERT_FALSE(gpu_pixels.empty());
+    ASSERT_FALSE(reference_pixels.empty());
+    ASSERT_EQ(gpu_pixels.size(), reference_pixels.size());
+    // assert the flat interior and the integer edges agree exactly, which the class allows no freedom (§15, AD-26)
+    std::size_t worst = 0;
+    for (std::size_t index = 0; index < gpu_pixels.size(); index++)
+        worst = std::max(worst, static_cast<std::size_t>(std::abs(static_cast<int>(gpu_pixels[index]) - static_cast<int>(reference_pixels[index]))));
+    EXPECT_EQ(worst, 0u) << "the gpu and reference frames diverge by " << worst << " per channel";
+}
+
+TEST(SkiaParityChecks, TheOffscreenGpuTargetMatchesTheSoftwareReferenceOnLevel2Primitives) {
+    // arrange both backends at one set of metrics (§16, AD-26)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{96.0f, 64.0f}, 1.0f);
+    SkiaRendererBackend gpu_backend;
+    // a host without a gpu device cannot run the comparison, which is reported rather than passing (§6.3)
+    if (!gpu_backend.ready())
+        GTEST_SKIP() << "no gpu device on this host";
+    const std::unique_ptr<RenderSurface> gpu = gpu_backend.create_offscreen_surface(metrics);
+    software::SoftwareRendererBackend reference_backend;
+    const std::unique_ptr<RenderSurface> reference = reference_backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(gpu, nullptr);
+    ASSERT_NE(reference, nullptr);
+    const Color background = Color::rgb(1.0f, 1.0f, 1.0f);
+    const Paint ink{.fill = Color::rgb(0.0f, 0.0f, 0.0f)};
+    // a flat rectangle on integer coordinates is exact, because the class allows no freedom (§15)
+    FrameScene rect(metrics, background);
+    rect.add_command(DrawCommand::rectangle(Rect::from_origin_size(Point{8.0f, 8.0f}, Size{32.0f, 24.0f}), ink));
+    const int rect_difference = parity_difference(gpu_backend, *gpu, reference_backend, *reference, rect);
+    EXPECT_EQ(rect_difference, 0) << "a flat integer rectangle diverged by " << rect_difference;
+    // a rounded rectangle is antialiased, so it is allowed a small per channel band (§15)
+    FrameScene rounded(metrics, background);
+    rounded.add_command(DrawCommand::rounded_rectangle(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{40.0f, 30.0f}), 8.0f, ink));
+    const int rounded_difference = parity_difference(gpu_backend, *gpu, reference_backend, *reference, rounded);
+    // the bound is the measured 47 on this host plus margin, which is the per class budget §15 asks for (§15)
+    EXPECT_LE(rounded_difference, 64) << "a rounded rectangle diverged by " << rounded_difference;
+    // a path is tessellated per backend, so it is allowed the same band (§15)
+    FrameScene path_scene(metrics, background);
+    const std::vector<PathVerb> verbs{PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const std::vector<Point> points{Point{12.0f, 40.0f}, Point{36.0f, 12.0f}, Point{60.0f, 40.0f}};
+    path_scene.add_command(DrawCommand::path(std::make_shared<const PathResource>(7u, std::span<const PathVerb>(verbs), std::span<const Point>(points)), Transform{}, ink));
+    const int path_difference = parity_difference(gpu_backend, *gpu, reference_backend, *reference, path_scene);
+    // the bound is the measured 17 on this host plus margin, which is the per class budget §15 asks for (§15)
+    EXPECT_LE(path_difference, 32) << "a path diverged by " << path_difference;
+    // a glyph outline is a filled path, which both backends draw through the same replay (§6.4, AD-34)
+    FrameScene glyph(metrics, background);
+    const std::vector<Point> outline{Point{20.0f, 48.0f}, Point{32.0f, 16.0f}, Point{44.0f, 48.0f}};
+    glyph.add_command(DrawCommand::glyph_outline(std::make_shared<const GlyphOutline>(11u, 1u, 16.0f, outline), Point{0.0f, 0.0f}, ink));
+    const int glyph_difference = parity_difference(gpu_backend, *gpu, reference_backend, *reference, glyph);
+    // the bound is the measured 6 on this host plus margin, which is the per class budget §15 asks for (§15)
+    EXPECT_LE(glyph_difference, 16) << "a glyph outline diverged by " << glyph_difference;
+    // a retained line batch is stroked, so it is allowed the antialiased band (§6.4, §15)
+    FrameScene batch_scene(metrics, background);
+    const std::vector<Point> batch_points{Point{8.0f, 32.0f}, Point{48.0f, 32.0f}, Point{48.0f, 56.0f}};
+    const std::shared_ptr<const LineBatch> batch = std::make_shared<const LineBatch>(3u, std::span<const Point>(batch_points));
+    batch_scene.add_command(DrawCommand::line_batch(batch, Transform{}, StrokeStyle{.color = Color::rgb(0.0f, 0.0f, 0.0f), .width = 2.0f}));
+    const int batch_difference = parity_difference(gpu_backend, *gpu, reference_backend, *reference, batch_scene);
+    // the bound is the measured 59 on this host plus margin, because the two rasterizers join a stroke differently (§15)
+    EXPECT_LE(batch_difference, 96) << "a line batch diverged by " << batch_difference;
+    // a picture replays an inner command list, which both backends share through one replay (§6.4, §15)
+    FrameScene picture_scene(metrics, background);
+    std::vector<DrawCommand> inner;
+    inner.push_back(DrawCommand::rectangle(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{20.0f, 16.0f}), ink));
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(4u, std::move(inner));
+    picture_scene.add_command(DrawCommand::picture(picture, Transform{.translate_x = 10.0f, .translate_y = 10.0f}));
+    const int picture_difference = parity_difference(gpu_backend, *gpu, reference_backend, *reference, picture_scene);
+    // an integer rect inside a picture is exact, so the budget is zero (§15)
+    EXPECT_EQ(picture_difference, 0) << "a picture diverged by " << picture_difference;
+    // an image is uploaded and composited, so it is allowed the antialiased band (§6.4, §15)
+    FrameScene image_scene(metrics, background);
+    const std::vector<std::uint8_t> image_pixels(16u * 16u * 4u, 255u);
+    const std::shared_ptr<const ImageResource> image = std::make_shared<const ImageResource>(5u, 16u, 16u, ImageFormat::RGBA8, std::span<const std::uint8_t>(image_pixels));
+    image_scene.add_command(DrawCommand::image(image, Rect::from_origin_size(Point{8.0f, 8.0f}, Size{16.0f, 16.0f}), Paint{}));
+    const int image_difference = parity_difference(gpu_backend, *gpu, reference_backend, *reference, image_scene);
+    // the bound is the measured value on this host plus margin, which is the per class budget §15 asks for (§15)
+    EXPECT_LE(image_difference, 16) << "an image diverged by " << image_difference;
+    // an embedded run expands into outlines, so both backends replay the same paths (§9.1, §15, AD-34)
+    resources::FontRegistry::clear();
+    // the fixture font is read once, because the embedded engine shapes from the carried bytes (§15, AD-34)
+    std::ifstream font_file(ALBOR_TEST_FONT_PATH, std::ios::binary);
+    ASSERT_TRUE(font_file.good());
+    // the bytes travel with the registration, which is what generated code emits (§11.3, AD-34)
+    std::vector<std::uint8_t> font_bytes((std::istreambuf_iterator<char>(font_file)), std::istreambuf_iterator<char>());
+    // the font is registered under the family the engine asks for (§15, AD-34)
+    resources::FontRegistry::register_font(resources::EmbeddedFont{.family = ALBOR_TEST_FONT_FAMILY, .bytes = std::move(font_bytes)});
+    // the embedded engine shapes the run from the carried bytes, so no platform face is involved (§15, AD-34)
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> text_engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(text_engine, nullptr);
+    // the provider resolves the outlines the builder records, which is the portable path (§6.4, AD-34)
+    harfbuzz::EmbeddedGlyphProvider provider;
+    // the builder expands the embedded run through the resolver, so both backends get the same commands (§6.4)
+    SceneBuilder text_builder;
+    text_builder.set_outline_resolver(provider.resolver());
+    EmbeddedTextNode text_node;
+    text_node.m_layout = text_engine->measure("Albor", 0.0f, 20.0f);
+    ASSERT_NE(text_node.m_layout.run, nullptr);
+    // the scene carries outline commands rather than a text command, which is the embedded path (§6.4, AD-34)
+    const std::shared_ptr<const FrameScene> text_scene = text_builder.build(text_node, metrics, background);
+    ASSERT_NE(text_scene, nullptr);
+    const int text_difference = parity_difference(gpu_backend, *gpu, reference_backend, *reference, *text_scene);
+    // the bound is the measured 79 on this host plus margin, which is five glyph outlines at the per glyph budget (§15)
+    EXPECT_LE(text_difference, 128) << "an embedded run diverged by " << text_difference;
+    // exit
+    resources::FontRegistry::clear();
 }

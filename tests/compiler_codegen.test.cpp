@@ -1985,3 +1985,58 @@ TEST(Codegen, UsesTheOverriddenDefaultOfARedeclaredProperty) {
     // assert the member initialises from the derived default, because the redeclaration replaced the base entry (§11.1)
     EXPECT_TRUE(contains(cpp.content, "Property<std::string> m_t{std::string(\"b\")};"));
 }
+
+TEST(Codegen, EmitsAFractionalLengthUnrounded) {
+    // arrange a length with a fraction, which an application keeps to match a neighbouring native surface (§11.3, AD-27)
+    const std::string_view source = R"(
+component Axis {
+    Label {
+        text: "x";
+        font_size: 11.56px;
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the fraction survives codegen, because rounding it would visibly change the text (§11.3, AD-27)
+    const GeneratedFile& source_file = file_named(files, "axis.cpp");
+    EXPECT_TRUE(contains(source_file.content, "set_font_size(11.56f);"));
+}
+
+TEST(Codegen, EmitsTheFontSelectionSetters) {
+    // arrange a label that names a family, a weight and a fallback chain (§11.1, AD-34)
+    const std::string_view source = R"(
+component Title {
+    Label {
+        text: "Hi";
+        font_family: "Inter";
+        font_weight: Weight.bold;
+        font_fallback: ["Fallback One", "Fallback Two"];
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the three setters carry the written values, which is what the engine reads (§11.3, §9.1)
+    const GeneratedFile& unit = file_named(files, "title.cpp");
+    EXPECT_TRUE(contains(unit.content, "set_font_family(std::string(\"Inter\"));"));
+    EXPECT_TRUE(contains(unit.content, "set_font_weight(albor::FontWeight::Bold);"));
+    EXPECT_TRUE(contains(unit.content, "set_font_fallback(std::vector<std::string>{std::string(\"Fallback One\"), std::string(\"Fallback Two\")});"));
+}
+
+TEST(Codegen, EmitsTheFontSelectionSettersForATextField) {
+    // arrange a field that names a weight, which exercises the field's own setter table entry (§11.3, §9.1)
+    const std::string_view source = R"(
+component Entry {
+    TextField {
+        value: "x";
+        font_weight: Weight.semibold;
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the field resolves the weight through its own setter, which the catalog declared (§11.3, §9.1)
+    const GeneratedFile& unit = file_named(files, "entry.cpp");
+    EXPECT_TRUE(contains(unit.content, "set_font_weight(albor::FontWeight::Semibold);"));
+}

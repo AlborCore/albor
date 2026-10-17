@@ -20,7 +20,7 @@
 #include "semantics/semantic_provider.h"
 #include "style/theme.h"
 #include "style/theme_builder.h"
-#include "text/text-skia/skia_text_engine.h"
+#include "text/text-harfbuzz/harfbuzz_text_engine.h"
 #include "ui/scene_builder.h"
 #include "ui/ui_event.h"
 #include "ui/ui_node.h"
@@ -925,14 +925,15 @@ TEST(ListBoxChecks, ARowBuiltAfterTheThemeIsInstalledInheritsIt) {
 TEST(ListBoxChecks, ASelectedThemedListPaintsReadableRowsAndASelectionBand) {
     // arrange a light themed list with three rows, whose rows are built after the theme is installed (§6.1, §8.2)
     BindingEngine engine;
-    SkiaTextEngine text;
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> text = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(text, nullptr);
     ListBox box(&engine);
     box.set_viewport_extent(Size{300.0f, 60.0f});
     box.set_row_height(20.0f);
     const Theme theme = Theme::macos(Accents{.surface = Color::rgb(0.925f, 0.925f, 0.930f), .on_surface = Color::rgb(0.18f, 0.18f, 0.20f)}, ColorScheme::Light);
     apply_theme(box, theme);
     for (int index = 0; index < 3; index++)
-        box.scroll_view().add_child(std::make_unique<Label>(&engine, &text, "row " + std::to_string(index)));
+        box.scroll_view().add_child(std::make_unique<Label>(&engine, text.get(), "row " + std::to_string(index)));
     box.set_item_count(3);
     // act the list and its rows are laid out, and a row is selected
     Size measured{};

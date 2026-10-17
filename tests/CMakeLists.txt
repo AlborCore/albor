@@ -23,6 +23,15 @@ add_executable(albor-tests ${CPP_SOURCES})
 target_include_directories(albor-tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_features(albor-tests PRIVATE cxx_std_23)
 
+# the ofl test font ships in the tree, so a suite that uses it has a carried font no host must supply (§15, AD-34, #92)
+target_compile_definitions(albor-tests PRIVATE ALBOR_TEST_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/fonts/Inter-Regular.ttf" ALBOR_TEST_FONT_FAMILY="Inter")
+
+# the dual-engine corpus source is compiled into a facade and serialized at test time, so the path is named here (§16)
+target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_UI="${CMAKE_CURRENT_SOURCE_DIR}/vectors/dual_engine_panel.ui")
+
+# the control corpus source widens the same comparison past the panel, so the path is named here too (§16)
+target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_CONTROLS_UI="${CMAKE_CURRENT_SOURCE_DIR}/vectors/dual_engine_controls.ui")
+
 # the tests link the framework modules and nothing platform specific, so they run without a window server (§3.2)
 #
 # only the modules that are not already re-exported are named here. albor-preview publishes albor-widgets,
@@ -42,7 +51,7 @@ target_compile_features(albor-tests PRIVATE cxx_std_23)
 # albor-alloc-probe is linked because the binary counts its heap traffic, which is how a steady state frame and a
 # cached measure are measured rather than assumed (§2.2). A shipping build never links it, so the probe is excluded
 # at link time instead of behind a flag, which is the rule of AD-04 (§2.3)
-target_link_libraries(albor-tests PRIVATE albor-render-software albor-platform-headless albor-text-harfbuzz albor-resources albor-text-skia albor-manifest albor-accessibility albor-language-server albor-preview albor-alloc-probe albor-render-blend2d GTest::gtest_main)
+target_link_libraries(albor-tests PRIVATE albor-render-software albor-platform-headless albor-text-harfbuzz albor-resources albor-manifest albor-accessibility albor-language-server albor-preview albor-alloc-probe albor-render-blend2d GTest::gtest_main)
 
 # the suite that draws through the skia render context reaches that backend directly, which is the one module the
 # other suites never link because it reaches a platform surface (§3.2, AD-16). the backend is apple only, so the
@@ -58,6 +67,8 @@ endif()
 if(APPLE)
     target_sources(albor-tests PRIVATE "./conditional/render_skia.test.cpp")
     target_link_libraries(albor-tests PRIVATE albor-render-skia)
+    # the skia headers self include as "include/...", so the root above include/skia reaches the suite (§3.5)
+    target_include_directories(albor-tests SYSTEM PRIVATE "${ALBOR_SKIA_INCLUDE_ROOT}" "${ALBOR_SKIA_INCLUDE_ROOT}/skia")
 
     # the accessibility suite walks the application kit hierarchy the macos bridge publishes into, because the
     # role mapping is only reachable once the bridge hands its tree to that hierarchy (§10.2, AD-16). the suite is

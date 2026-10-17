@@ -38,6 +38,9 @@ namespace albor::compiler
         // when a scrollbar is drawn, which a named member of a value set produces (§8)
         Scrollbar,
 
+        // the weight of a face a font property selects, which a named member of a value set produces (§9.1, AD-34)
+        FontWeight,
+
         // a length in logical or physical pixels, which a length literal produces (§11.1, AD-27)
         Length,
 
@@ -131,9 +134,6 @@ namespace albor::compiler
 
         // whether a handler may assign the property, which decides if an InOut direction is compatible (§11.1, §7)
         bool assignable = false;
-
-        // whether the property is a length, which the codegen scales by the density of the surface (§11.1, AD-27)
-        bool scaled_by_density = false;
     };
 
     // one signal an element type raises, which a handler attaches to (§11.1, §11.2)

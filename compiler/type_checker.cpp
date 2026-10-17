@@ -335,7 +335,7 @@ namespace albor::compiler
             type.name = component.name;
             // the declared properties come first, because one shadows a common property of the same name (§11.1)
             for (const CheckedProperty& property : component.properties)
-                type.properties.push_back(ElementProperty{.name = property.name, .type = property.type, .assignable = true, .scaled_by_density = false});
+                type.properties.push_back(ElementProperty{.name = property.name, .type = property.type, .assignable = true});
             // the common properties join, because a component arranges like any other node does (§8.2)
             for (const ElementProperty& common : common_element_properties())
                 type.properties.push_back(common);
@@ -1006,8 +1006,6 @@ namespace albor::compiler
             out.assignments.push_back(std::move(out_assignment));
             return;
         }
-        // the density flag comes from the declaration, so the codegen knows where the scale belongs (§11.1, AD-27)
-        out_assignment.scaled_by_density = property->scaled_by_density;
         // the value must match the property, because nothing widens implicitly (§11.1)
         if (!assignable(out_assignment.type, property->type)) {
             // the mismatch points at the value, because that is what the author must change (§11.1)

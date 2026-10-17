@@ -9,7 +9,7 @@
 #include <skia/core/SkImageInfo.h>
 #include <skia/core/SkSurface.h>
 
-#include "render/render-skia/skia_render_context.h"
+#include "render/render-software/software_render_context.h"
 #include "window/window_metrics.h"
 
 namespace albor::software
@@ -20,8 +20,8 @@ namespace albor::software
         // the raster frame the context draws into, which is the reference output (§6.3, AD-26)
         sk_sp<SkSurface> raster;
 
-        // the context wrapping the raster canvas, which is the same implementation the gpu backend uses (§6.3)
-        std::unique_ptr<skia::SkiaRenderContext> context;
+        // the context wrapping the raster canvas, which draws text through the atlas and shapes through skia (§6.3)
+        std::unique_ptr<SoftwareRenderContext> context;
 
         // the metrics the surface presents at, which the executor checks a scene against (§6.1, D9.1)
         WindowMetrics metrics;
@@ -36,7 +36,7 @@ namespace albor::software
         sk_sp<SkSurface> scratch;
 
         // the context over the scratch, which exists so the null case is still a drawable no op (§6.2)
-        std::unique_ptr<skia::SkiaRenderContext> scratch_context;
+        std::unique_ptr<SoftwareRenderContext> scratch_context;
     };
 
     namespace
@@ -77,11 +77,11 @@ namespace albor::software
             m_state->scratch = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(1, 1));
             // the scratch context is the fallback, which absorbs a draw into a pixel nobody reads (§6.2)
             if (m_state->scratch != nullptr)
-                m_state->scratch_context = std::make_unique<skia::SkiaRenderContext>(m_state->scratch->getCanvas(), 1.0f);
+                m_state->scratch_context = std::make_unique<SoftwareRenderContext>(m_state->scratch->getCanvas(), 1.0f);
             return;
         }
         // the context is the same one the gpu backend draws through, so the two cannot drift apart (§6.3)
-        m_state->context = std::make_unique<skia::SkiaRenderContext>(m_state->raster->getCanvas(), metrics.scale_factor);
+        m_state->context = std::make_unique<SoftwareRenderContext>(m_state->raster->getCanvas(), metrics.scale_factor);
     }
 
     SoftwareRenderSurface::~SoftwareRenderSurface() = default;
@@ -113,7 +113,7 @@ namespace albor::software
             return;
         }
         // the context is rebuilt against the new canvas, because it holds the canvas pointer (§6.3)
-        m_state->context = std::make_unique<skia::SkiaRenderContext>(m_state->raster->getCanvas(), metrics.scale_factor);
+        m_state->context = std::make_unique<SoftwareRenderContext>(m_state->raster->getCanvas(), metrics.scale_factor);
     }
 
     RenderContext& SoftwareRenderSurface::begin_frame() {

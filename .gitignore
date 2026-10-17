@@ -2,6 +2,7 @@
 .cache/
 compile_commands.json
 build/vcpkg_installed/
+vcpkg/
 .DS_Store
 .build-cost/
 worktrees

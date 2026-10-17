@@ -10,7 +10,7 @@
 namespace albor::i18n
 {
     // the reading direction a locale writes in, which is what layout rearranges for (§9.2)
-    enum class TextDirection
+    enum class ReadingDirection
     {
         // the locale reads left to right, which is most of them (§9.2)
         LeftToRight,

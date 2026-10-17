@@ -1,0 +1,15 @@
+component DualEnginePanel {
+    Column {
+        spacing: 12px;
+        Label {
+            id: greeting;
+            text: "Hello";
+            font_size: 20px;
+        }
+        Button {
+            id: action;
+            text: "Run";
+            disabled: true;
+        }
+    }
+}

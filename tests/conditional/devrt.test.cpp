@@ -1,20 +1,31 @@
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <tuple>
 
 #include <gtest/gtest.h>
 
+#include "compiler/diagnostic.h"
+#include "compiler/ir_serializer.h"
+#include "compiler/lexer.h"
+#include "compiler/parser.h"
 #include "core/dev_hook.h"
 #include "devrt/devrt.h"
 #include "devrt/element_table.h"
 #include "devrt/ir.h"
 #include "devrt/reload_adapter.h"
+#include "dual_engine_controls.h"
+#include "dual_engine_panel.h"
 #include "layout/column_layout.h"
+#include "layout/row_layout.h"
 #include "runtime/binding_engine.h"
 #include "text/text_engine.h"
 #include "ui/ui_node.h"
 #include "widgets/button.h"
+#include "widgets/checkbox.h"
 #include "widgets/label.h"
+#include "widgets/slider.h"
 
 using namespace albor;
 using namespace albor::devrt;
@@ -644,4 +655,114 @@ TEST(DevHookChecks, ABoundTreeRepaintsAfterAPatch) {
     dev::reload("node Column id=root\n  node Label id=title\n  node Button id=ok\n");
     // assert the tree is dirty, because a patched tree has to show what it now declares (§6.1)
     EXPECT_TRUE(root.render_dirty());
+}
+
+TEST(DevReloadChecks, AppliesAComponentSerializedFromUi) {
+    // arrange a ui component serialized into the dev ir, which is what the producer emits (§12.1, AD-12)
+    constexpr std::string_view PANEL_SOURCE = R"(
+component Panel {
+    Column {
+        spacing: 12px;
+        Label {
+            id: title;
+            text: "Hello";
+            font_size: 20px;
+        }
+    }
+}
+)";
+    // the panel is scanned and parsed, which is what the producer does before it serializes (§12.1)
+    albor::compiler::DiagnosticList diagnostics;
+    const std::vector<albor::compiler::Token> tokens = albor::compiler::Lexer(PANEL_SOURCE, diagnostics).tokenize();
+    const albor::compiler::SourceFile file = albor::compiler::Parser(tokens, diagnostics).parse();
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    ASSERT_EQ(file.components.size(), 1u);
+    const std::optional<IrNode> definition = albor::compiler::serialize_component(file.components.front());
+    ASSERT_TRUE(definition.has_value());
+    ReloadFixture fixture;
+    UiNode root;
+    // act the serialized definition is applied to a live tree (§12.1)
+    const ReloadReport report = apply_reload(root, *definition, fixture.context);
+    // assert the tree carries the element and the properties the ui declared (§12.1)
+    EXPECT_EQ(report.added, 1U);
+    UiNode* title = find_by_id(root, "title");
+    ASSERT_NE(title, nullptr);
+    auto* label = dynamic_cast<Label*>(title);
+    ASSERT_NE(label, nullptr);
+    EXPECT_EQ(label->text(), "Hello");
+    EXPECT_FLOAT_EQ(label->font_size(), 20.0f);
+}
+
+TEST(DevReloadChecks, ACompiledFormAndTheDevIrAgreeOnTheSameUi) {
+    // arrange the same ui source compiled into a facade and serialized into the dev ir (§16, AD-25)
+    std::ifstream file(ALBOR_DUAL_ENGINE_UI, std::ios::binary);
+    ASSERT_TRUE(file.good());
+    const std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    albor::compiler::DiagnosticList diagnostics;
+    const std::vector<albor::compiler::Token> tokens = albor::compiler::Lexer(source, diagnostics).tokenize();
+    const albor::compiler::SourceFile parsed = albor::compiler::Parser(tokens, diagnostics).parse();
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const std::optional<IrNode> definition = albor::compiler::serialize_component(parsed.components.front());
+    ASSERT_TRUE(definition.has_value());
+    // the compiled path builds the facade, which is the production output (§11.3)
+    BindingEngine engine;
+    TestTextEngine text;
+    DualEnginePanel panel(&engine, &text);
+    // the dev path applies the serialized definition onto a matching root (§12.1)
+    ColumnLayout root;
+    ReloadFixture fixture;
+    const ReloadReport report = apply_reload(root, *definition, fixture.context);
+    EXPECT_EQ(report.added, 2U);
+    // assert both trees carry the same elements and the same properties, which is what AD-25 claims (§16)
+    const UiNode& compiled_column = *static_cast<UiNode&>(panel).child_at(0);
+    ASSERT_EQ(compiled_column.child_count(), root.child_count());
+    const auto* compiled_label = dynamic_cast<const Label*>(compiled_column.child_at(0));
+    const auto* ir_label = dynamic_cast<const Label*>(root.child_at(0));
+    ASSERT_NE(compiled_label, nullptr);
+    ASSERT_NE(ir_label, nullptr);
+    EXPECT_EQ(compiled_label->text(), ir_label->text());
+    EXPECT_FLOAT_EQ(compiled_label->font_size(), ir_label->font_size());
+    const auto* compiled_button = dynamic_cast<const Button*>(compiled_column.child_at(1));
+    const auto* ir_button = dynamic_cast<const Button*>(root.child_at(1));
+    ASSERT_NE(compiled_button, nullptr);
+    ASSERT_NE(ir_button, nullptr);
+    EXPECT_EQ(compiled_button->label(), ir_button->label());
+    EXPECT_EQ(compiled_button->disabled(), ir_button->disabled());
+}
+
+TEST(DevReloadChecks, ACompiledControlsFormAndTheDevIrAgreeOnTheSameUi) {
+    // arrange the same ui source compiled into a facade and serialized into the dev ir (§16, AD-25)
+    std::ifstream file(ALBOR_DUAL_ENGINE_CONTROLS_UI, std::ios::binary);
+    ASSERT_TRUE(file.good());
+    const std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    albor::compiler::DiagnosticList diagnostics;
+    const std::vector<albor::compiler::Token> tokens = albor::compiler::Lexer(source, diagnostics).tokenize();
+    const albor::compiler::SourceFile parsed = albor::compiler::Parser(tokens, diagnostics).parse();
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const std::optional<IrNode> definition = albor::compiler::serialize_component(parsed.components.front());
+    ASSERT_TRUE(definition.has_value());
+    // the compiled path builds the facade, which is the production output (§11.3)
+    BindingEngine engine;
+    TestTextEngine text;
+    DualEngineControls controls(&engine, &text);
+    // the dev path applies the serialized definition onto a matching root (§12.1)
+    RowLayout root;
+    ReloadFixture fixture;
+    const ReloadReport report = apply_reload(root, *definition, fixture.context);
+    EXPECT_EQ(report.added, 2U);
+    // assert both trees carry the same controls and the same properties, which is what AD-25 claims (§16)
+    const UiNode& compiled_row = *static_cast<UiNode&>(controls).child_at(0);
+    ASSERT_EQ(compiled_row.child_count(), root.child_count());
+    const auto* compiled_check = dynamic_cast<const CheckBox*>(compiled_row.child_at(0));
+    const auto* ir_check = dynamic_cast<const CheckBox*>(root.child_at(0));
+    ASSERT_NE(compiled_check, nullptr);
+    ASSERT_NE(ir_check, nullptr);
+    EXPECT_EQ(compiled_check->checked(), ir_check->checked());
+    EXPECT_EQ(compiled_check->disabled(), ir_check->disabled());
+    const auto* compiled_slider = dynamic_cast<const Slider*>(compiled_row.child_at(1));
+    const auto* ir_slider = dynamic_cast<const Slider*>(root.child_at(1));
+    ASSERT_NE(compiled_slider, nullptr);
+    ASSERT_NE(ir_slider, nullptr);
+    EXPECT_FLOAT_EQ(compiled_slider->value(), ir_slider->value());
+    EXPECT_EQ(compiled_slider->disabled(), ir_slider->disabled());
 }

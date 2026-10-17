@@ -66,11 +66,10 @@ find_package(unofficial-skia CONFIG REQUIRED)
 find_package(harfbuzz CONFIG REQUIRED)
 find_package(freetype CONFIG REQUIRED)
 
-# the single carrier every module that reaches skia or the vendored shaper links, so the package enters a link line
-# exactly once (AD-05, AD-28). skparagraph already carries harfbuzz and freetype on its interface, so naming them
-# here as well would place the same archives on a link line twice, which the linker reports as a duplicate
+# the single carrier every module that reaches skia links, so the package enters a link line exactly once (AD-05)
+# skia's text module is not linked, because the vendored engine shapes text and skia only rasterizes the result (§9.1, AD-34)
 add_library(albor-skia INTERFACE)
-target_link_libraries(albor-skia INTERFACE unofficial::skia::skia unofficial::skia::modules::skparagraph)
+target_link_libraries(albor-skia INTERFACE unofficial::skia::skia)
 
 # the skia headers self include as "skia/core/...", so every consumer needs the directory above include/skia as an
 # include root. it is resolved once here rather than in each module, because three modules reach skia and a copied
