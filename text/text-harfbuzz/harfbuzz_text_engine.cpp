@@ -38,6 +38,9 @@ namespace albor::harfbuzz
         // the resolver holding the drawing typeface, which only the platform can supply (§9.1, AD-28)
         std::unique_ptr<HarfbuzzTypefaceResolver> resolver;
 
+        // whether the engine needs a platform typeface to be usable, which an embedded run does not (§15, AD-34)
+        bool require_typeface = true;
+
         // the design units per em, which converts a harfbuzz position into logical pixels (§9.1, AD-27)
         float units_per_em = 1000.0f;
 
@@ -117,12 +120,16 @@ namespace albor::harfbuzz
         m_state->face = hb_face_create(m_state->blob, 0);
         // the hash is over the bytes, so a path loaded font and an embedded one identify identically (§15, AD-34)
         m_state->font_hash = resources::hash_font_bytes(m_state->bytes.data(), m_state->bytes.size());
-        // the font and the typeface come up next, because both need the face (§9.1)
-        load(nullptr, 0, family_name);
+        // the shaper comes up over the face, and the platform typeface because this engine draws one (§9.1)
+        load_shaping();
+        // the typeface is resolved last, because it is the part only the path engine needs (§9.1, AD-28)
+        resolve_typeface(family_name);
     }
 
     HarfbuzzTextEngine::HarfbuzzTextEngine(const std::uint8_t* font_bytes, std::size_t byte_count, std::string_view family_name) :
         m_state(std::make_unique<HarfbuzzEngineState>()) {
+        // an embedded engine draws as outlines, so it needs no platform typeface to be usable (§15, AD-34)
+        m_state->require_typeface = false;
         // the bytes are copied, because the blob borrows them and the registry owns its own (§9.1, AD-34)
         m_state->bytes.assign(font_bytes, font_bytes + byte_count);
         // a build with no byte names no font, so the engine stops with no face (§9.1)
@@ -137,15 +144,11 @@ namespace albor::harfbuzz
         m_state->face = hb_face_create(m_state->blob, 0);
         // the hash identifies the bytes, and it is what a layout is keyed on (§15, AD-34)
         m_state->font_hash = resources::hash_font_bytes(m_state->bytes.data(), m_state->bytes.size());
-        // the font and the typeface come up next, because both need the face (§9.1)
-        load(nullptr, 0, family_name);
+        // only the shaper comes up, because an embedded engine draws outlines and needs no typeface (§15, AD-34)
+        load_shaping();
     }
 
-    void HarfbuzzTextEngine::load(const std::uint8_t* font_bytes, std::size_t byte_count, std::string_view family_name) {
-        // the arguments are unused here because both sources already built the face (§9.1)
-        (void)font_bytes;
-        // the byte count is unused for the same reason (§9.1)
-        (void)byte_count;
+    void HarfbuzzTextEngine::load_shaping() {
         // a face is only usable with at least one glyph, so an empty face stops here (§9.1)
         if (m_state->face == nullptr || hb_face_get_glyph_count(m_state->face) == 0)
             return;
@@ -170,6 +173,9 @@ namespace albor::harfbuzz
             // the descender is negative in every real face, which is what places the run below its baseline (§9.1)
             m_state->descender = static_cast<float>(extents.descender) / m_state->units_per_em;
         }
+    }
+
+    void HarfbuzzTextEngine::resolve_typeface(std::string_view family_name) {
         // the drawing typeface comes from the platform, because the renderer build offers no other source (§9.1, AD-28)
         m_state->resolver = HarfbuzzTypefaceResolver::create(std::string(family_name));
         // a resolver that did not build leaves runs that measure correctly and draw nothing (§9.1, AD-28)
@@ -310,11 +316,17 @@ namespace albor::harfbuzz
     }
 
     bool HarfbuzzTextEngine::ready() const {
+        // an embedded engine draws outlines and is usable whenever it can shape, with no typeface (§15, AD-34)
+        if (!m_state->require_typeface)
+            return m_state->font != nullptr;
         // the engine is usable exactly when it can shape and the renderer can draw what it shaped (§9.1, AD-28)
         return m_state->font != nullptr && m_state->resolver != nullptr && m_state->resolver->typeface() != nullptr;
     }
 
     bool HarfbuzzTextEngine::drawable() const {
+        // an embedded run draws through outlines, so it is drawable whenever it can shape (§15, AD-34)
+        if (!m_state->require_typeface)
+            return m_state->font != nullptr;
         // a run is drawable exactly when the engine resolved a typeface for the renderer (§9.1, AD-28)
         return m_state->resolver != nullptr && m_state->resolver->typeface() != nullptr;
     }
@@ -365,8 +377,8 @@ namespace albor::harfbuzz
             return TextLayout{};
         // the line is the whole run, because this engine does not wrap yet (§9.1)
         ShapedRun::Line line;
-        // the font handle carries the typeface the platform resolved, which the renderer draws with (§9.1, AD-28)
-        line.font = FontHandle::from_object(m_state->resolver->typeface());
+        // an embedded run carries no typeface, because the renderer draws its glyphs as outlines (§15, AD-34)
+        line.font = m_state->resolver != nullptr ? FontHandle::from_object(m_state->resolver->typeface()) : FontHandle{};
         // the baseline sits at the ascender, which is where every glyph of the line hangs from (§9.1)
         line.origin = Point{.x = 0.0f, .y = m_state->ascender * font_size};
         // the advance is accumulated in design units, because harfbuzz reports positions in them (§9.1)

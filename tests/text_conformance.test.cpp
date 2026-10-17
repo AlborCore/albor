@@ -281,6 +281,26 @@ TEST(EmbeddedFontChecks, TheOflFixtureIsPresentAndIdentifiedByItsBytes) {
     resources::FontRegistry::clear();
 }
 
+TEST(EmbeddedFontChecks, AnEmbeddedFixtureShapesWithoutAPlatformFont) {
+    // arrange the carried test font under its family, which the engine must shape without a platform font (§15, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    // act an engine is built over the carried bytes alone, which must not consult a platform font (§15, AD-34)
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    // assert the engine is ready and shapes the fixture, which is what removes the host dependency (#44, #92)
+    ASSERT_NE(engine, nullptr);
+    EXPECT_TRUE(engine->ready());
+    const TextLayout layout = engine->measure("Albor", 0.0f, 16.0f);
+    ASSERT_NE(layout.run, nullptr);
+    EXPECT_GT(layout.run->glyph_count(), 0u);
+    // assert the run carries no typeface and still draws, because the renderer walks its outlines (§15, AD-34)
+    EXPECT_FALSE(layout.run->lines().front().font.valid());
+    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 16.0f);
+    EXPECT_FALSE(outline.empty());
+    // exit
+    resources::FontRegistry::clear();
+}
+
 TEST(DualEngineConformanceChecks, TheOracleRunIsDrawable) {
     // arrange the oracle issues a typeface and so draws (§9.1, AD-28)
     SkiaTextEngine oracle;
@@ -362,8 +382,22 @@ TEST(EmbeddedFontChecks, AnEmbeddedFontShapesExactlyAsTheSameFileDoes) {
     EXPECT_EQ(embedded->font_hash(), from_file->font_hash());
     ASSERT_NE(embedded_layout.run, nullptr);
     ASSERT_NE(file_layout.run, nullptr);
-    // assert the layouts are identical, not merely close: this is layout identity and it has no tolerance (§15)
-    EXPECT_EQ(*embedded_layout.run, *file_layout.run);
+    // assert the lines match field for field, since layout identity carries no tolerance (§15)
+    ASSERT_EQ(embedded_layout.run->lines().size(), file_layout.run->lines().size());
+    for (std::size_t index = 0; index < embedded_layout.run->lines().size(); index++) {
+        // the run and the file shape the same glyphs at the same pen positions (§15, AD-34)
+        const ShapedRun::Line& embedded_line = embedded_layout.run->lines()[index];
+        const ShapedRun::Line& file_line = file_layout.run->lines()[index];
+        // origin, glyphs and metrics are the whole of a layout, so each must match exactly (§15)
+        EXPECT_EQ(embedded_line.origin, file_line.origin);
+        EXPECT_EQ(embedded_line.glyphs, file_line.glyphs);
+        EXPECT_EQ(embedded_line.width, file_line.width);
+        EXPECT_EQ(embedded_line.ascent, file_line.ascent);
+        EXPECT_EQ(embedded_line.descent, file_line.descent);
+        // the byte span places the line in the text, and it matches for the same reason (§15)
+        EXPECT_EQ(embedded_line.start_byte, file_line.start_byte);
+        EXPECT_EQ(embedded_line.end_byte, file_line.end_byte);
+    }
     EXPECT_FLOAT_EQ(embedded_layout.size.width, file_layout.size.width);
     EXPECT_FLOAT_EQ(embedded_layout.ascent, file_layout.ascent);
     // exit

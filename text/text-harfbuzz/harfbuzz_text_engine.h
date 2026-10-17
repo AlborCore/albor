@@ -46,7 +46,7 @@ namespace albor::harfbuzz
         // override: report whether a face was loaded, because an engine with no face shapes nothing (§9.1)
         [[nodiscard]] bool ready() const override;
 
-        // report whether a run from this engine can be drawn, which is false until a typeface can be issued (§9.1)
+        // report whether a run draws: the path engine needs a typeface, the embedded engine its outlines (§9.1, AD-34)
         [[nodiscard]] bool drawable() const;
 
     private:
@@ -56,8 +56,11 @@ namespace albor::harfbuzz
         // load the face from bytes the build carries, which is how the engine avoids a file system (§15, AD-34)
         HarfbuzzTextEngine(const std::uint8_t* font_bytes, std::size_t byte_count, std::string_view family_name);
 
-        // bring the engine up over bytes and then over a family, because both sources load the same face (§9.1)
-        void load(const std::uint8_t* font_bytes, std::size_t byte_count, std::string_view family_name);
+        // bring the shaper up over the face both constructors built, which is the half every engine needs (§9.1)
+        void load_shaping();
+
+        // resolve the platform typeface, which only the transitional path engine needs to draw (§9.1, AD-28)
+        void resolve_typeface(std::string_view family_name);
 
         // the opaque harfbuzz blob, face and font state, so no shaping type leaves this header (§3.5, AD-19)
         struct HarfbuzzEngineState;
