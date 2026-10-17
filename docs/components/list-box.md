@@ -1,7 +1,7 @@
 # ListBox
 
 A container that hosts a virtualized list of rows under one selection, navigable by
-keyboard — the list control of [Selection-scoped commands](concepts/commands.md#selection-scoped-commands).
+keyboard.
 
 ## Properties
 

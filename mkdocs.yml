@@ -58,6 +58,7 @@ nav:
       - CheckBox: components/checkbox.md
       - Canvas: components/canvas.md
       - ScrollView: components/scroll-view.md
+      - ListBox: components/list-box.md
       - Column: components/column.md
       - Row: components/row.md
       - Padding: components/padding.md
