@@ -24,6 +24,9 @@ albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/recor
 # the virtualized facade is generated with the manifest, which declares the records it repeats (§8.2, AD-13)
 albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/scroll_log.ui" --manifest "${CMAKE_CURRENT_SOURCE_DIR}/task.manifest")
 
+# the list facade is generated, which proves a repeat under a list windows into its viewport (§8.2, §18.3)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/list_panel.ui" --manifest "${CMAKE_CURRENT_SOURCE_DIR}/task.manifest")
+
 # the conditional facade is generated, which proves a guarded body and a visible property compile (§11.1)
 albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/conditional_panel.ui")
 

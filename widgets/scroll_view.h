@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <functional>
 #include <span>
 
@@ -94,8 +95,23 @@ namespace albor
         // override: report whether the viewport refuses input, which a bound command owns (§8.3, §18.7)
         [[nodiscard]] bool disabled() const override;
 
+        // set whether the viewport claims the paging keys, which a host that owns navigation turns off (§8.3)
+        void set_key_navigation(bool enabled);
+
+        // report whether the viewport claims the paging keys, which a list-hosted view answers no (§8.3)
+        [[nodiscard]] bool key_navigation() const;
+
         // hand out the extent of the content being scrolled, which the container owns (§8.2)
         [[nodiscard]] Size content_extent() const;
+
+        // hand out how many rows the content built, which a list overlays its states onto (§8.2, AD-13)
+        [[nodiscard]] std::size_t materialized_row_count() const;
+
+        // hand out the item index the first built row shows, which maps a materialized position to an item (§8.2, AD-13)
+        [[nodiscard]] std::size_t first_row_index() const;
+
+        // hand out the built row at a materialized position, or null past the end (§8.2, AD-13)
+        [[nodiscard]] UiNode* row_node(std::size_t position) const;
 
         // report whether the content extends past the viewport, which is what the as needed policy reads (§8)
         [[nodiscard]] bool scrollable() const;
@@ -178,5 +194,8 @@ namespace albor
 
         // whether the viewport refuses input, which a bound command takes over from (§8.3, §18.7)
         bool m_disabled = false;
+
+        // whether the viewport claims the paging keys, which a list-hosted view turns off (§8.3)
+        bool m_key_navigation = true;
     };
 } // namespace albor

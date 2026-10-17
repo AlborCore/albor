@@ -32,7 +32,7 @@ engine are selected by linking ([Getting started](getting-started.md#the-pieces-
 | Input normalization, coalescing, focus | `input/`, `focus/` | shipped |
 | Layout: measure & arrange, containers | `layout/` | shipped |
 | Text, measurement, shaping | `text/` | baseline — HarfBuzz through Skia |
-| Standard widgets | `widgets/` | shipped — twelve elements |
+| Standard widgets | `widgets/` | shipped — thirteen elements |
 | Animation core | `animation/` | baseline |
 | Compiler frontend, `.ui` parser, typed IR | `compiler/` | shipped |
 | Manifest parser, validator, glue generator | `manifest/` | shipped |
@@ -44,7 +44,7 @@ engine are selected by linking ([Getting started](getting-started.md#the-pieces-
 
 ## Language coverage
 
-The [`.ui` language](ui-language/index.md) is complete for the twelve shipped elements:
+The [`.ui` language](ui-language/index.md) is complete for the thirteen shipped elements:
 components, typed properties, signals and handlers, expressions and bindings, control flow
 (`if`, `Repeat`, virtualized `Repeat`), native components through manifests, and
 internationalization through `@tr`. Two forms are settled in the grammar and ship today:

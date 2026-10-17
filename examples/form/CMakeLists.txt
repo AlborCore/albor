@@ -18,7 +18,13 @@ target_link_libraries(albor-form PRIVATE albor-platform-macos-auto albor-render-
 
 # compile the ui asset into a generated facade, which is what the application instantiates (§11.3, AD-03)
 include("${CMAKE_SOURCE_DIR}/build/AlborComponent.cmake")
-albor_build_ui_component(albor-form "${CMAKE_CURRENT_SOURCE_DIR}/widget_form.ui")
+
+# the todo record type for the form
+albor_build_native_record(albor-form "${CMAKE_CURRENT_SOURCE_DIR}/todo.manifest")
+target_include_directories(albor-form PRIVATE "${CMAKE_BINARY_DIR}/generated/albor-form")
+
+# the form ui facade
+albor_build_ui_component(albor-form "${CMAKE_CURRENT_SOURCE_DIR}/widget_form.ui" --manifest "${CMAKE_CURRENT_SOURCE_DIR}/todo.manifest")
 
 # the alignment panel compiles alongside it, so the two axis properties are proved by the build rather than by a test (§8.2)
 albor_build_ui_component(albor-form "${CMAKE_CURRENT_SOURCE_DIR}/align_panel.ui")

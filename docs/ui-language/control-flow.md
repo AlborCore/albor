@@ -96,5 +96,9 @@ Rows scroll by offset; only the visible window plus the overscan band is instant
 record may declare its identity with a field named `key`, which is what a row is keyed by —
 the identity a background update correlates against ([Native components](../concepts/native-components.md#records)).
 
+A `Repeat` inside a [ListBox](../components/list-box.md) virtualizes the same way — the
+list's `row_height` is the pitch, and the list carries the selection and the keyboard
+navigation over the window it builds.
+
 Mutate the underlying collection from a handler with the closed method set
 ([Built-in methods](handlers.md#built-in-methods)); the rows follow.

@@ -1,9 +1,14 @@
 #pragma once
 
+#include <cstddef>
+
 #include "core/geometry.h"
 
 namespace albor
 {
+    // the node of the ui tree, declared ahead so this contract carries no ui header (§3.5, §8.1)
+    class UiNode;
+
     // the window a scroll container is showing, which is what content materializes against (§8.2)
     struct ScrollViewport
     {
@@ -34,5 +39,14 @@ namespace albor
 
         // take the height one row takes, which is what turns an item index into a position (§8.2, AD-13)
         virtual void set_row_extent(float row_extent) = 0;
+
+        // hand out how many rows the content has built right now, which is zero for a plain container (§8.2, AD-13)
+        [[nodiscard]] virtual std::size_t materialized_row_count() const { return 0; }
+
+        // hand out the item index the first built row shows, which maps a materialized position to an item (§8.2, AD-13)
+        [[nodiscard]] virtual std::size_t first_row_index() const { return 0; }
+
+        // hand out the built row at a position, or null past the end, which a list overlays its states onto (§8.2)
+        [[nodiscard]] virtual UiNode* row_node(std::size_t) { return nullptr; }
     };
 } // namespace albor

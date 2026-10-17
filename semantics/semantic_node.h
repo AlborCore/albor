@@ -44,6 +44,9 @@ namespace albor
         // a row of a list, which repeats the role of its owning list
         ListItem,
 
+        // a container of list items that share one selection, which assistive technology groups (§10.1)
+        List,
+
         // a container that groups other semantic nodes
         Group,
 
@@ -78,6 +81,9 @@ namespace albor
 
         // whether the node holds keyboard focus
         bool focused = false;
+
+        // whether the node is the selected row of a list, which is independent of focus (§10.1)
+        bool selected = false;
 
         // the check state of the node, which a non checkable node reports as not checkable
         CheckState check = CheckState::NotCheckable;
@@ -146,6 +152,12 @@ namespace albor
 
         // set or clear the focused state (§10.1)
         void set_focused(bool focused);
+
+        // report whether the node is the selected row of a list (§10.1)
+        [[nodiscard]] bool selected() const;
+
+        // set or clear the selected state, which is independent of focus (§10.1)
+        void set_selected(bool selected);
 
         // hand out the check state of the node (§10.1)
         [[nodiscard]] CheckState check() const;

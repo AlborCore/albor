@@ -246,6 +246,41 @@ TEST(LabelChecks, RendersTheRunIntoTheScene) {
     EXPECT_EQ(text_commands(*recorder.scene()).front().text_geometry().layout.run->glyph_count(), 5u);
 }
 
+TEST(LabelChecks, TheRunCentresVerticallyInATallerBox) {
+    // arrange a label arranged into a box taller than its sixteen point run, which is what a list row is (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Label label(&engine, &text_engine, "row");
+    Size ignored{};
+    label.measure(SizeConstraints::unconstrained(), ignored);
+    label.arrange(Rect::from_origin_size(Point{0.0f, 10.0f}, Size{100.0f, 40.0f}));
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f);
+    SceneRecorder recorder(metrics);
+    // act
+    label.render(recorder);
+    // assert the run sits on the middle of the box, which is what lines a list row's text up (§8.2, §9.1)
+    ASSERT_EQ(text_commands(*recorder.scene()).size(), 1u);
+    // the run is sixteen tall in a forty tall box, so twelve points sit above it and the box starts at ten (§9.1)
+    EXPECT_FLOAT_EQ(text_commands(*recorder.scene()).front().text_geometry().origin.y, 22.0f);
+}
+
+TEST(LabelChecks, ARunThatFillsTheBoxSitsAtTheTop) {
+    // arrange a label whose box is exactly its run height, which is the ordinary case (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Label label(&engine, &text_engine, "row");
+    Size ignored{};
+    label.measure(SizeConstraints::unconstrained(), ignored);
+    label.arrange(Rect::from_origin_size(Point{0.0f, 10.0f}, Size{100.0f, 16.0f}));
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f);
+    SceneRecorder recorder(metrics);
+    // act
+    label.render(recorder);
+    // assert there is no slack to centre, so the run stays at the box top, which keeps existing layouts (§9.1)
+    ASSERT_EQ(text_commands(*recorder.scene()).size(), 1u);
+    EXPECT_FLOAT_EQ(text_commands(*recorder.scene()).front().text_geometry().origin.y, 10.0f);
+}
+
 TEST(LabelChecks, AnEmptyRunRecordsNothing) {
     // arrange
     BindingEngine engine;
@@ -2665,6 +2700,20 @@ TEST(ThemeChecks, AWidgetHasNoThemeUntilOneIsInstalled) {
     Button button(&engine, &text_engine, "Press");
     // act, assert a widget built without a theme resolves nothing (§6.1)
     EXPECT_EQ(button.theme(), nullptr);
+}
+
+TEST(ThemeChecks, AChildBuiltAfterTheInstallInheritsTheTheme) {
+    // arrange a themed widget whose child arrives after the theme was installed (§6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    Button button(&engine, &text_engine, "Press");
+    apply_theme(button, theme);
+    auto label = std::make_unique<Label>(&engine, &text_engine, "late");
+    Label* const label_ptr = label.get();
+    button.add_child(std::move(label));
+    // assert the late child resolves the theme through its ancestor, which the walk could not reach (§6.1)
+    EXPECT_EQ(label_ptr->theme(), &theme);
 }
 
 TEST(ThemeChecks, AWidgetWithNoThemeDrawsItsOwnPlate) {

@@ -331,6 +331,15 @@ namespace albor::compiler
                                               .signals = {ElementSignal{.name = "scrolled", .parameter_types = {scalar(TypeKind::Float)}, .parameter_names = {"offset"}}},
                                               // a scroll view holds one content container, so it accepts children (§8.2)
                                               .accepts_children = true});
+        // a container hosts a keyed repeat of rows under one selection, which navigates by keyboard (§8, §18.3)
+        catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
+                                              .name = "ListBox",
+                                              // the viewport, the selection and the bar are the surface (§8)
+                                              .properties = {ElementProperty{.name = "viewport_width", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "viewport_height", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "overscan", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "selected", .type = scalar(TypeKind::Int), .assignable = true}, ElementProperty{.name = "row_height", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "scrollbar", .type = scalar(TypeKind::Scrollbar), .assignable = true}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true}},
+                                              // a list raises on selection and on activation (§18.1, §18.3)
+                                              .signals = {ElementSignal{.name = "selection_changed", .parameter_types = {}}, ElementSignal{.name = "activated", .parameter_types = {scalar(TypeKind::String)}, .parameter_names = {"key"}}},
+                                              // a list hosts the row content it repeats, so it accepts children (§8.2)
+                                              .accepts_children = true});
         // a leaf draws a run of text, which is a caption or a value readout (§8)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Label",

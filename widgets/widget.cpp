@@ -143,7 +143,18 @@ namespace albor
 
     const Theme* Widget::theme() const {
         // the installed theme is handed back as borrowed, because the widget does not own it (§6.1)
-        return m_theme;
+        if (m_theme != nullptr)
+            return m_theme;
+        // a node built after the install walk inherits the nearest themed ancestor (§6.1, §8.2)
+        for (const UiNode* ancestor = parent(); ancestor != nullptr; ancestor = ancestor->parent()) {
+            // a node that is not a widget carries no theme, so the climb passes it over (§6.1)
+            const auto* widget = dynamic_cast<const Widget*>(ancestor);
+            // the nearest ancestor that carries one answers, which is what an inherited theme means (§6.1)
+            if (widget != nullptr && widget->m_theme != nullptr)
+                return widget->m_theme;
+        }
+        // a widget with no themed ancestor stays unthemed, which is the detached case (§6.1)
+        return nullptr;
     }
 
     ControlState Widget::state() const {
@@ -226,8 +237,8 @@ namespace albor
     }
 
     Color Widget::resolve(const Color* theme_colors, Color own) const {
-        // without a theme the widget keeps its own value, so no existing test changes behaviour (§6.1)
-        if (m_theme == nullptr)
+        // without a themed table the widget keeps its own value, so no existing test changes behaviour (§6.1)
+        if (theme_colors == nullptr)
             return own;
         // with a theme the role wins, because the theme is the surface an application configures (§6.1)
         return theme_colors[state_index(state())];

@@ -10,5 +10,5 @@ add_library(albor-widgets STATIC ${CPP_SOURCES})
 target_include_directories(albor-widgets PUBLIC ${CMAKE_SOURCE_DIR})
 target_compile_features(albor-widgets PUBLIC cxx_std_23)
 
-# the widget module needs the semantic tree its actions are declared on, the text engine it measures with, the theme it resolves its paint through, and the shared command it presents enablement from (§3.2, §18.7)
-target_link_libraries(albor-widgets PUBLIC albor-ui albor-semantics albor-text albor-style albor-commands)
+# the widget module needs the semantic tree its actions are declared on, the text engine it measures with, the theme it resolves its paint through, the shared command it presents enablement from, and the row model a list owns its selection through (§3.2, §18.3, §18.7)
+target_link_libraries(albor-widgets PUBLIC albor-ui albor-semantics albor-text albor-style albor-commands albor-model)
