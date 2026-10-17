@@ -69,7 +69,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         if: matrix.enable
-        persist-credentials: false
 
       - name: platform setup
         if: matrix.enable
