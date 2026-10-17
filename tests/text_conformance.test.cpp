@@ -1051,3 +1051,117 @@ TEST(TextEngineInstallChecks, TheFactoryIsEmptyUntilTheEngineIsInstalled) {
     // assert an uninstalled factory builds nothing, so linking the engine is the whole selection (§9.1)
     EXPECT_EQ(engine, nullptr);
 }
+
+TEST(GoldenCorpusChecks, TheVendoredLayoutMatchesTheCheckedInCorpus) {
+    // arrange the carried fixture, whose layout is a total function of its inputs, so it is pinned exactly (§15)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // one expected glyph, which carries the id, pen position and source byte the shape must produce (§9.1)
+    struct GoldenGlyph
+    {
+        // the glyph index inside the font (§9.1)
+        std::uint32_t id;
+        // the pen position relative to the row baseline, in logical pixels (§9.1, AD-27)
+        float x;
+        float y;
+        // the byte offset the glyph came from, which a caret resolves against (§9.1)
+        std::uint32_t cluster;
+    };
+    // one corpus entry, whose every value was recorded from the engine at twenty pixels and carries no tolerance (§15)
+    struct GoldenEntry
+    {
+        // the string the entry shapes at twenty logical pixels (§15, AD-27)
+        const char* text;
+        // the advance, ascent and descent the run must report (§9.1)
+        float width;
+        float ascent;
+        float descent;
+        // each glyph's id, pen position and source byte, which together are the layout (§9.1)
+        std::vector<GoldenGlyph> glyphs;
+    };
+    const std::vector<GoldenEntry> corpus = {
+        {.text = "A", .width = 13.796875f, .ascent = 19.375f, .descent = 4.82421875f, .glyphs = {{2, 0.0f, 0.0f, 0}}}, {.text = "Albor", .width = 50.421875f, .ascent = 19.375f, .descent = 4.82421875f, .glyphs = {{2, 0.0f, 0.0f, 0}, {736, 13.796875f, 0.0f, 1}, {578, 18.640625f, 0.0f, 2}, {790, 30.890625f, 0.0f, 3}, {852, 42.890625f, 0.0f, 4}}}, {.text = "Hello", .width = 48.203125f, .ascent = 19.375f, .descent = 4.82421875f, .glyphs = {{161, 0.0f, 0.0f, 0}, {614, 14.859375f, 0.0f, 1}, {736, 26.515625f, 0.0f, 2}, {736, 31.359375f, 0.0f, 3}, {790, 36.203125f, 0.0f, 4}}}, {.text = "Wavy", .width = 52.09375f, .ascent = 19.375f, .descent = 4.82421875f, .glyphs = {{459, 0.0f, 0.0f, 0}, {507, 18.6875f, 0.0f, 1}, {980, 29.625f, 0.0f, 2}, {998, 40.859375f, 0.0f, 3}}}, {.text = "Ti", .width = 17.75f, .ascent = 19.375f, .descent = 4.82421875f, .glyphs = {{411, 0.0f, 0.0f, 0}, {689, 12.90625f, 0.0f, 1}}}, {.text = "caf\u00E9", .width = 41.34375f, .ascent = 19.375f, .descent = 4.82421875f, .glyphs = {{586, 0.0f, 0.0f, 0}, {507, 11.625f, 0.0f, 1}, {647, 22.859375f, 0.0f, 2}, {618, 29.6875f, 0.0f, 3}}}, {.text = "e\u0301", .width = 11.65625f, .ascent = 19.375f, .descent = 4.82421875f, .glyphs = {{618, 0.0f, 0.0f, 0}}}, {.text = "A\u0300B", .width = 26.890625f, .ascent = 19.375f, .descent = 4.82421875f, .glyphs = {{5, 0.0f, 0.0f, 0}, {65, 13.796875f, 0.0f, 3}}},
+    };
+    for (const GoldenEntry& entry : corpus) {
+        // act the entry is measured at the size the corpus was recorded at (§15)
+        const TextLayout layout = engine->measure(entry.text, 0.0f, 20.0f);
+        // assert the run carries the identity a renderer keys on, which is part of the recorded layout (§15, AD-34)
+        ASSERT_NE(layout.run, nullptr);
+        EXPECT_EQ(layout.run->font_hash(), engine->font_hash());
+        EXPECT_EQ(layout.run->shape_source(), ShapeSource::Embedded);
+        EXPECT_EQ(layout.run->font_size(), 20.0f);
+        // assert the metrics match the checked-in values exactly, because layout identity carries no tolerance (§15)
+        EXPECT_EQ(layout.size.width, entry.width);
+        EXPECT_EQ(layout.ascent, entry.ascent);
+        EXPECT_EQ(layout.descent, entry.descent);
+        const std::vector<ShapedGlyph>& shaped = layout.run->lines().front().glyphs;
+        ASSERT_EQ(shaped.size(), entry.glyphs.size());
+        for (std::size_t index = 0; index < shaped.size(); index++) {
+            // each glyph's id, pen position and source byte are the layout, so each matches exactly (§9.1, §15)
+            EXPECT_EQ(shaped[index].id, entry.glyphs[index].id);
+            EXPECT_EQ(shaped[index].position.x, entry.glyphs[index].x);
+            EXPECT_EQ(shaped[index].position.y, entry.glyphs[index].y);
+            EXPECT_EQ(shaped[index].cluster, entry.glyphs[index].cluster);
+        }
+    }
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(GoldenCorpusChecks, TheVendoredLayoutIsDeterministic) {
+    // arrange the carried fixture measured twice over the same inputs (§15, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act the same run is measured twice, which a total function of its inputs must answer identically (§15)
+    const TextLayout first = engine->measure("Albor framework", 0.0f, 20.0f);
+    const TextLayout second = engine->measure("Albor framework", 0.0f, 20.0f);
+    // assert the two runs are equal field for field, which a total function of its inputs must answer (§15)
+    ASSERT_NE(first.run, nullptr);
+    ASSERT_NE(second.run, nullptr);
+    EXPECT_EQ(*first.run, *second.run);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(GoldenCorpusChecks, TheWrappedLayoutMatchesTheCheckedInCorpus) {
+    // arrange the carried fixture wrapped against a fixed ceiling, which no exact test pinned before (§15, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act the paragraph is measured against the ceiling the corpus was recorded at (§8.2)
+    const TextLayout layout = engine->measure("the quick brown fox", 80.0f, 20.0f);
+    ASSERT_NE(layout.run, nullptr);
+    // assert the run packs the text into the recorded rows, which are the whole wrapped layout (§15)
+    EXPECT_EQ(layout.run->lines().size(), 4u);
+    EXPECT_EQ(layout.size.width, 59.28125f);
+    EXPECT_EQ(layout.size.height, 96.796875f);
+    // the rows, each with the baseline it is drawn at and the byte span it covers (§9.1)
+    const struct
+    {
+        // the baseline offset from the run origin, which stacks the rows (§8.2)
+        float baseline;
+        std::size_t start;
+        std::size_t end;
+        // the number of glyphs the row draws, which drops the break byte (§9.1)
+        std::size_t glyphs;
+    } rows[] = {
+        {.baseline = 19.375f, .start = 0, .end = 4, .glyphs = 3},
+        {.baseline = 43.57421875f, .start = 4, .end = 10, .glyphs = 5},
+        {.baseline = 67.7734375f, .start = 10, .end = 16, .glyphs = 5},
+        {.baseline = 91.97265625f, .start = 16, .end = 19, .glyphs = 3},
+    };
+    for (std::size_t index = 0; index < layout.run->lines().size(); index++) {
+        // each row's baseline, byte span and glyph count match the recorded row exactly (§15)
+        EXPECT_EQ(layout.run->lines()[index].origin.y, rows[index].baseline);
+        EXPECT_EQ(layout.run->lines()[index].start_byte, rows[index].start);
+        EXPECT_EQ(layout.run->lines()[index].end_byte, rows[index].end);
+        EXPECT_EQ(layout.run->lines()[index].glyphs.size(), rows[index].glyphs);
+    }
+    // exit
+    resources::FontRegistry::clear();
+}
