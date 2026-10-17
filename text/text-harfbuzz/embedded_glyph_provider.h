@@ -2,7 +2,6 @@
 
 #include <map>
 #include <memory>
-#include <string>
 
 #include "render/glyph_outline.h"
 #include "text/text-harfbuzz/harfbuzz_text_engine.h"

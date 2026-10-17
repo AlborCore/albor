@@ -42,7 +42,7 @@ target_compile_features(albor-tests PRIVATE cxx_std_23)
 # albor-alloc-probe is linked because the binary counts its heap traffic, which is how a steady state frame and a
 # cached measure are measured rather than assumed (§2.2). A shipping build never links it, so the probe is excluded
 # at link time instead of behind a flag, which is the rule of AD-04 (§2.3)
-target_link_libraries(albor-tests PRIVATE albor-render-software albor-platform-headless albor-text-harfbuzz albor-resources albor-text-skia albor-manifest albor-accessibility albor-language-server albor-preview albor-alloc-probe GTest::gtest_main)
+target_link_libraries(albor-tests PRIVATE albor-render-software albor-platform-headless albor-text-harfbuzz albor-resources albor-text-skia albor-manifest albor-accessibility albor-language-server albor-preview albor-alloc-probe albor-render-blend2d GTest::gtest_main)
 
 # the suite that draws through the skia render context reaches that backend directly, which is the one module the
 # other suites never link because it reaches a platform surface (§3.2, AD-16). the backend is apple only, so the
@@ -65,6 +65,14 @@ if(APPLE)
     target_sources(albor-tests PRIVATE "./conditional/accessibility_role.test.macos.mm")
     set_source_files_properties("./conditional/accessibility_role.test.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(albor-tests PRIVATE "-framework AppKit" "-framework Foundation")
+
+    # the popup suite drives the appkit window adapter directly, because the popup shape is a native appkit surface
+    # (§5.1, AD-16). the adapter is linked plain rather than through its -auto interface, because only the whole-archive
+    # form pulls both platform_install units and collides on albor_platform_marker; the plain link pulls the window
+    # unit on demand and installs nothing, which the suite does not need because it calls the create factory directly
+    target_sources(albor-tests PRIVATE "./conditional/platform_window_popup.test.macos.mm")
+    set_source_files_properties("./conditional/platform_window_popup.test.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(albor-tests PRIVATE albor-platform-macos)
 
     # the backend lifecycle suite destroys a second gpu context in one process, which the metal driver traps on
     # after ganesh has used it. the trap kills the process, so no release run could finish while the suite is in,
@@ -100,6 +108,27 @@ endif()
 # the test binary is executed directly rather than through ctest, so it never needs a display (§2.2)
 include(GoogleTest)
 gtest_discover_tests(albor-tests DISCOVERY_TIMEOUT 60)
+
+# the blend2d load time install checks need the whole archive link, which the main test binary cannot take (§6.3, AD-26)
+#
+# the main binary links albor-render-blend2d lazily, so the load time installers stay out of it and the suites
+# above control the factory hooks themselves. this second binary links the archive whole, which runs both
+# installers at load, and asserts that a plain link of the backend leaves a process that renders (§5.3)
+add_executable(albor-blend2d-auto-checks "./conditional/blend2d_auto.test.cpp")
+target_include_directories(albor-blend2d-auto-checks PRIVATE ${CMAKE_SOURCE_DIR})
+target_compile_features(albor-blend2d-auto-checks PRIVATE cxx_std_23)
+target_link_libraries(albor-blend2d-auto-checks PRIVATE GTest::gtest_main albor-render-blend2d-auto)
+gtest_discover_tests(albor-blend2d-auto-checks DISCOVERY_TIMEOUT 60)
+
+# the window half of the install only exists where the macos presenter does, so its suite joins under apple (§5.3, AD-16)
+#
+# the suite builds a real foreign object for the handle, which the presenter refuses by kind, so it is an
+# objective c++ source and carries arc like the other conditional platform suites (§5.3, AD-16)
+if(APPLE)
+    target_sources(albor-blend2d-auto-checks PRIVATE "./conditional/blend2d_window_auto.test.macos.mm")
+    set_source_files_properties("./conditional/blend2d_window_auto.test.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(albor-blend2d-auto-checks PRIVATE "-framework Foundation")
+endif()
 
 # the build-scope fixture is its own product, which the §14.3 check compiles and observes (AGENTS.md, §14.3)
 add_subdirectory(scope)

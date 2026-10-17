@@ -518,6 +518,26 @@ TEST(SkiaTextEngineChecks, AnEngineWithoutAFontManagerStillShapes) {
     EXPECT_TRUE(engine.ready());
 }
 
+TEST(SkiaTextEngineChecks, ATypefaceWithNoPlatformBackingHasNoBytes) {
+    // act a null typeface names no platform face, which a stream backed run reports the same way (§15, AD-34)
+    const std::vector<std::uint8_t> bytes = platform_font_face_bytes(nullptr);
+    // assert there are no bytes to register, which leaves the run unresolvable rather than wrongly identified (§15)
+    EXPECT_TRUE(bytes.empty());
+}
+
+TEST(SkiaTextEngineChecks, ARunOverAnEmptyCollectionCarriesNoIdentity) {
+    // arrange a collection with no font at all, which is a platform that hands the engine nothing (§9.1)
+    TextServices services = platform_text_services();
+    services.font_manager = SkFontMgr::RefEmpty();
+    SkiaTextEngine engine(services);
+    ASSERT_TRUE(engine.ready());
+    // act
+    const TextLayout layout = engine.measure("Albor", 0.0f, 16.0f);
+    // assert a run the platform cannot hand bytes for carries no identity, so no backend resolves it (§15, AD-34)
+    if (layout.run != nullptr)
+        EXPECT_EQ(layout.run->font_hash(), 0u);
+}
+
 TEST(SkiaTextEngineChecks, EveryShapedLineCarriesGlyphsRelativeToItsOwnBaseline) {
     // arrange
     SkiaTextEngine engine;

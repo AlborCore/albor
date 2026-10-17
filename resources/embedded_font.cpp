@@ -1,6 +1,7 @@
 #include "resources/embedded_font.h"
 
 #include <algorithm>
+#include <mutex>
 #include <utility>
 
 namespace albor::resources
@@ -13,6 +14,12 @@ namespace albor::resources
             static std::vector<EmbeddedFont> fonts;
             // the fonts are handed back by reference, because a caller registers into the one list (§11.3)
             return fonts;
+        }
+
+        // the lock that guards the registry, because a backend reads it off the render thread (§10.5, AD-18)
+        std::mutex& registry_mutex() {
+            static std::mutex mutex;
+            return mutex;
         }
     } // namespace
 
@@ -38,6 +45,8 @@ namespace albor::resources
     }
 
     void FontRegistry::register_font(EmbeddedFont font) {
+        // the lock is held over the mutation, because a render thread may be resolving a hash (§10.5, AD-18)
+        const std::lock_guard<std::mutex> lock(registry_mutex());
         // the hash is computed here rather than trusted, because a caller could pass a wrong one (§15)
         font.content_hash = hash_font_bytes(font.bytes.data(), font.bytes.size());
         // a font with no bytes cannot shape anything, so it is refused rather than registered (§9.1)
@@ -53,6 +62,8 @@ namespace albor::resources
     }
 
     const EmbeddedFont* FontRegistry::find_family(std::string_view family) {
+        // the lock is held over the search, because a registration may land mid walk (§10.5, AD-18)
+        const std::lock_guard<std::mutex> lock(registry_mutex());
         // the families are searched in registration order, because the newest of a family replaced the oldest (§15)
         for (const EmbeddedFont& font : registry()) {
             // an exact match is the only one that counts, because a prefix would resolve differently per platform (§15)
@@ -64,6 +75,8 @@ namespace albor::resources
     }
 
     const EmbeddedFont* FontRegistry::find_hash(std::uint64_t content_hash) {
+        // the lock is held over the search, because a registration may land mid walk (§10.5, AD-18)
+        const std::lock_guard<std::mutex> lock(registry_mutex());
         // the hashes are searched, because a layout is keyed on the bytes and not on a name (§15, AD-34)
         for (const EmbeddedFont& font : registry()) {
             // a matching hash is the same font, whatever it was called (§15)
@@ -75,11 +88,15 @@ namespace albor::resources
     }
 
     std::size_t FontRegistry::count() {
+        // the lock is held over the read, because a registration may land mid read (§10.5, AD-18)
+        const std::lock_guard<std::mutex> lock(registry_mutex());
         // the count is what a test asserts on, because registration is otherwise invisible (§11.3)
         return registry().size();
     }
 
     void FontRegistry::clear() {
+        // the lock is held over the drop, because a backend may still be reading a font (§10.5, AD-18)
+        const std::lock_guard<std::mutex> lock(registry_mutex());
         // the fonts are dropped, so one test's registration cannot answer another's (§2.2)
         registry().clear();
     }

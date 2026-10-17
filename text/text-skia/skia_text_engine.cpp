@@ -1,12 +1,15 @@
 #include "text/text-skia/skia_text_engine.h"
 
 #include <functional>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include <skia/core/SkFont.h>
+#include <skia/core/SkString.h>
+#include <skia/core/SkTypeface.h>
 #include <skia/modules/skparagraph/include/FontCollection.h>
 #include <skia/modules/skparagraph/include/Metrics.h>
 #include <skia/modules/skparagraph/include/Paragraph.h>
@@ -14,6 +17,7 @@
 #include <skia/modules/skparagraph/include/ParagraphStyle.h>
 #include <skia/modules/skparagraph/include/TextStyle.h>
 
+#include "resources/embedded_font.h"
 #include "text/text-skia/skia_text_services.h"
 
 namespace albor
@@ -91,6 +95,39 @@ namespace albor
             // a lookup hashes by the text it views, so both shapes agree on a bucket (§9.1)
             std::size_t operator()(const CacheLookup& lookup) const { return fold(lookup.text, lookup.max_width, lookup.font_size); }
         };
+
+        // the content hash of a shaped typeface, which is registered so every backend can draw the run (§15, AD-34)
+        std::uint64_t registered_font_hash(const SkTypeface* typeface) {
+            // a run that shaped through no typeface carries no identity, which is the unresolvable zero (§15)
+            if (typeface == nullptr)
+                return 0;
+            // the map and the registration share one lock, because a measure may run on more than one thread (§10.5)
+            static std::mutex guarded;
+            // the serializations are remembered per typeface, because shaping happens on every measure (§9.1)
+            static std::unordered_map<std::uint32_t, std::uint64_t> known;
+            const std::lock_guard<std::mutex> lock(guarded);
+            // a typeface seen before answers only while the registry still carries it, because a clear may drop it (§15)
+            const std::uint32_t identifier = static_cast<std::uint32_t>(typeface->uniqueID());
+            const auto found = known.find(identifier);
+            if (found != known.end() && resources::FontRegistry::find_hash(found->second) != nullptr)
+                return found->second;
+            // the bytes come from the platform half, which is the only place that may name a platform type (§3.5, AD-19)
+            std::vector<std::uint8_t> bytes = platform_font_face_bytes(typeface);
+            // the hash is over the bytes, and a face with none the platform can hand over stays unresolvable (§15)
+            const std::uint64_t hash = bytes.empty() ? std::uint64_t{0} : resources::hash_font_bytes(bytes.data(), bytes.size());
+            // a hash the registry already carries needs no second registration (§15, AD-34)
+            if (hash != 0 && resources::FontRegistry::find_hash(hash) == nullptr) {
+                // the family label is unique per hash, because two weights of one family must both survive (§15)
+                SkString family;
+                typeface->getFamilyName(&family);
+                const std::string label = std::string(family.c_str()) + "-" + std::to_string(hash);
+                // the bytes travel into the registry, which is what makes the run drawable everywhere (§11.3, AD-34)
+                resources::FontRegistry::register_font(resources::EmbeddedFont{.family = label, .content_hash = hash, .bytes = std::move(bytes)});
+            }
+            known[identifier] = hash;
+            // the run carries the hash, which is what a replaying backend resolves its font by (§15, AD-34)
+            return hash;
+        }
     } // namespace
 
     // the shaping state, which holds everything that names a skia type so the header does not (§9.1)
@@ -169,8 +206,10 @@ namespace albor
         std::vector<ShapedRun::Line> lines;
         // which visual lines already took their first run, because a fallback font splits one row into several (§9.1)
         std::vector<bool> opened;
+        // the first typeface the paragraph shaped with, which is the identity the run is stamped with (§15, AD-34)
+        const SkTypeface* primary = nullptr;
         // the visitor reports one font run at a time and names its line, so a run folds in (§9.1)
-        paragraph->visit([&lines, &opened](int line_number, const skia::textlayout::Paragraph::VisitorInfo* info) {
+        paragraph->visit([&lines, &opened, &primary](int line_number, const skia::textlayout::Paragraph::VisitorInfo* info) {
             // the line the run belongs to may not be open yet, because a row shaped no glyph before this run (§9.1)
             if (lines.size() <= static_cast<std::size_t>(line_number)) {
                 // the row exists as an empty line, which is what a blank row is (§9.1)
@@ -190,6 +229,9 @@ namespace albor
             if (!opened[static_cast<std::size_t>(line_number)]) {
                 // the typeface the row was shaped with, which the renderer draws from (§9.1)
                 line.font = FontHandle::from_object(info->font.getTypeface());
+                // the first typeface seen is the primary, whose bytes the run is identified by (§15, AD-34)
+                if (primary == nullptr)
+                    primary = info->font.getTypeface();
                 // the line origin is the baseline the glyph positions of the row hang from (§9.1)
                 line.origin = Point{.x = info->origin.x(), .y = info->origin.y()};
                 // the row begins at the first cluster its first run carries (§9.1)
@@ -230,8 +272,10 @@ namespace albor
         }
         // the layout starts as an unmeasured default, so a run that shaped no line reports nothing (§9.1)
         TextLayout layout;
+        // the hash keys the run on the primary typeface, which makes it drawable everywhere (§15, AD-34)
+        const std::uint64_t font_hash = registered_font_hash(primary);
         // the shaped run is what the render stage replays verbatim (§9.1, AD-18)
-        layout.run = ShapedRun::make(std::move(lines), font_size);
+        layout.run = ShapedRun::make(std::move(lines), font_size, font_hash, ShapeSource::Platform);
         // the reported width is the longest line rather than the layout width, because the last line may be short (§9.1)
         const float longest_line = static_cast<float>(paragraph->getLongestLine());
         // the reported height is the whole run, which is what every line of it adds up to (§9.1)
