@@ -7,6 +7,6 @@
 
 namespace albor::compiler
 {
-    // serialize one component's element tree into the dev IR, which the dev service hands the runtime (§12.1, AD-12)
+    // serialize a static tree; a repeat, a condition or a slot refuses it because the IR is a snapshot (§12.1, AD-25)
     [[nodiscard]] std::optional<devrt::IrNode> serialize_component(const ComponentDeclaration& component);
 } // namespace albor::compiler

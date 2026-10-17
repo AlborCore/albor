@@ -511,4 +511,12 @@ TEST(SkiaParityChecks, TheOffscreenGpuTargetMatchesTheSoftwareReferenceOnLevel2P
     const int image_difference = parity_difference(gpu_backend, *gpu, reference_backend, *reference, image_scene);
     // the bound is the measured value on this host plus margin, which is the per class budget §15 asks for (§15)
     EXPECT_LE(image_difference, 16) << "an image diverged by " << image_difference;
+    // a shaped run is drawn from the shaped glyphs, so the two rasterizers are allowed the antialiased band (§9.1, §15)
+    SkiaTextEngine text_engine;
+    const TextLayout text_layout = text_engine.measure("Albor", 1000.0f, 20.0f);
+    FrameScene text_scene(metrics, background);
+    text_scene.add_command(DrawCommand::text(text_layout, Point{8.0f, 40.0f}, ink));
+    const int text_difference = parity_difference(gpu_backend, *gpu, reference_backend, *reference, text_scene);
+    // the bound is the measured 127 on this host plus margin, which is the antialiased outline of five glyphs (§15)
+    EXPECT_LE(text_difference, 192) << "a shaped run diverged by " << text_difference;
 }

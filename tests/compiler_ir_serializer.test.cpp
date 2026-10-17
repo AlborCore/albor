@@ -60,6 +60,15 @@ component Panel {
     // the conditional case, which has no IR form, so the component must be refused (§12.1)
     constexpr std::string_view CONDITIONAL = "component Panel { in property<bool> show: true; Column { if show { Label {} } } }";
 
+    // the repeat case, which has no IR form, so the component must be refused (§12.1)
+    constexpr std::string_view REPEAT = "component Panel { in property<vector<int>> items; Column { Repeat(item in items) { Label { text: \"x\"; } } } }";
+
+    // the slot case, which marks a content point no snapshot carries (§12.1)
+    constexpr std::string_view SLOT = "component Panel { Column { @children } }";
+
+    // the handler case, which is compiled code rather than a value the IR can carry (§12.1)
+    constexpr std::string_view HANDLER = "component Panel { Button { text: \"Run\"; on_clicked: { } } }";
+
     // scan and parse a source, which is what a serializer test needs before it can serialize (§11.1)
     SourceFile parse(std::string_view source, DiagnosticList& diagnostics) {
         // the scanner runs first, because the parser takes units (§11.1)
@@ -161,6 +170,38 @@ TEST(IrSerializerChecks, AConditionalRefusesTheWholeComponent) {
     ASSERT_TRUE(diagnostics.diagnostics().empty());
     // act, assert the whole component is refused, because a partial definition would drop live content on apply (§12.1)
     EXPECT_FALSE(serialize_component(file.components.front()).has_value());
+}
+
+TEST(IrSerializerChecks, ARepeatRefusesTheWholeComponent) {
+    // arrange a tree with a repeat, which the IR cannot half represent (§12.1)
+    DiagnosticList diagnostics;
+    const SourceFile file = parse(REPEAT, diagnostics);
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    // act, assert the whole component is refused, because a partial definition would drop live rows (§12.1)
+    EXPECT_FALSE(serialize_component(file.components.front()).has_value());
+}
+
+TEST(IrSerializerChecks, ASlotRefusesTheWholeComponent) {
+    // arrange a tree with a content slot, which the IR cannot half represent (§12.1)
+    DiagnosticList diagnostics;
+    const SourceFile file = parse(SLOT, diagnostics);
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    // act, assert the whole component is refused, because a partial definition would drop content (§12.1)
+    EXPECT_FALSE(serialize_component(file.components.front()).has_value());
+}
+
+TEST(IrSerializerChecks, AHandlerIsDroppedBecauseTheIrCarriesNoCode) {
+    // arrange a control whose handler is compiled code beside a literal (§12.1)
+    DiagnosticList diagnostics;
+    const SourceFile file = parse(HANDLER, diagnostics);
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    // act the component is serialized, and a handler is not a value the IR carries (§12.1)
+    const std::optional<devrt::IrNode> ir = serialize_component(file.components.front());
+    // assert the literal survives while the handler is absent, because the node keeps its compiled handler (§12.1)
+    ASSERT_TRUE(ir.has_value());
+    ASSERT_EQ(ir->properties.size(), 1u);
+    EXPECT_EQ(ir->properties.front().name, "text");
+    EXPECT_EQ(ir->properties.front().value, "Run");
 }
 
 TEST(IrSerializerChecks, AComponentWithoutARootSerializesToNothing) {
