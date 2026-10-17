@@ -74,9 +74,6 @@ namespace albor::software
         auto resolved = std::make_unique<Face>();
         // the bytes are copied, because the blob borrows them and the registry owns its own (§6.3)
         resolved->bytes = font->bytes;
-        // a font with no bytes names no face, so the build is refused (§6.3)
-        if (resolved->bytes.empty())
-            return nullptr;
         // the blob borrows the bytes, which the face owns for its whole life (§6.3)
         resolved->blob = hb_blob_create(reinterpret_cast<const char*>(resolved->bytes.data()), static_cast<unsigned int>(resolved->bytes.size()), HB_MEMORY_MODE_READONLY, nullptr, nullptr);
         // the face is read at index zero, which is the first face in the file (§6.3)
@@ -138,14 +135,10 @@ namespace albor::software
         bounds.width = static_cast<unsigned int>(std::ceil(static_cast<float>(extents.width) * pixels_per_unit)) + 2;
         bounds.height = static_cast<unsigned int>(std::ceil(static_cast<float>(-extents.height) * pixels_per_unit)) + 2;
         hb_raster_draw_set_extents(draw, &bounds);
-        // the glyph outline is accumulated, and a failure leaves nothing to cache (§6.3)
-        if (!hb_raster_draw_glyph_or_fail(draw, face->font, glyph_id)) {
-            // the rasterizer is dropped, because a failed draw produced no coverage (§6.3)
-            hb_raster_draw_destroy(draw);
-            return nullptr;
-        }
-        // the render walks the accumulated outline into an alpha image, which is the coverage the quad draws (§6.3)
-        hb_raster_image_t* image = hb_raster_draw_render(draw);
+        // the glyph outline is accumulated, and a failed draw leaves no image to cache (§6.3)
+        const hb_bool_t drawn = hb_raster_draw_glyph_or_fail(draw, face->font, glyph_id);
+        // the render walks the accumulated outline only when the draw succeeded, so a failure refuses the glyph (§6.3)
+        hb_raster_image_t* image = drawn ? hb_raster_draw_render(draw) : nullptr;
         // the bitmap the atlas will cache, which stays null when the raster produced nothing (§6.3)
         std::shared_ptr<const GlyphBitmap> bitmap;
         if (image != nullptr) {

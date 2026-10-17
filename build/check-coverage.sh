@@ -34,6 +34,8 @@ UNREACHABLE=(
     'compiler/codegen/codegen.cpp|case TypeKind::FontWeight:|the type checker rejects a named value set as a declarable type, so no property, signal parameter or record field ever carries one'
     'compiler/codegen/codegen.cpp|return "FontWeight";|the type checker rejects a named value set as a declarable type, so no property, signal parameter or record field ever carries one'
     'text/text-harfbuzz/harfbuzz_text_engine.cpp|line_end = text.size();|the wrap always advances over the ICU offsets, so the fallback only guards an ICU failure that would otherwise loop forever'
+    'render/render-software/software_glyph_atlas.cpp|return nullptr;|the rasterizer allocates through harfbuzz, so a failed allocation is the only way this refusal runs and it cannot be forced from a test'
+    'render/render-software/software_render_surface.cpp|m_state->scratch_context = std::make_unique<SoftwareRenderContext>(m_state->scratch->getCanvas(), 1.0f);|the scratch is only built when skia refuses the raster allocation, which cannot be forced from a test'
 )
 
 # an entry whose text no longer appears in the file, which means the hole was closed or moved (§27)

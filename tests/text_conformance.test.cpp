@@ -1522,3 +1522,111 @@ TEST(SoftwareGlyphAtlasChecks, TheAtlasRasterizesAGlyphFromTheCarriedBytes) {
     // exit
     resources::FontRegistry::clear();
 }
+
+TEST(SoftwareTextChecks, TheSoftwareSurfaceDrawsTextThroughItsOwnAtlas) {
+    // arrange the carried fixture and an embedded run, which the atlas rasterizes by hash (§6.3, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("Albor", 0.0f, 32.0f);
+    ASSERT_NE(layout.run, nullptr);
+    // act the run is drawn on the software reference, whose context uses its own atlas (§6.3, AD-26)
+    const std::unique_ptr<software::SoftwareRenderSurface> surface = software::SoftwareRenderSurface::create(WindowMetrics::from_logical(Size{200.0f, 80.0f}, 1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    context.draw_text(layout, Point{10.0f, 10.0f}, Paint{.fill = Color::rgba(1.0f, 1.0f, 1.0f, 1.0f)});
+    surface->end_frame();
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    // assert the reference put ink down where the run was placed, which is the atlas reaching the raster (§6.3)
+    std::size_t inked = 0;
+    for (std::size_t index = 0; index + 3 < pixels.size(); index += 4)
+        inked = inked + (pixels[index + 3] > 0u ? 1u : 0u);
+    EXPECT_GT(inked, 0u);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(SoftwareTextChecks, ARunTheAtlasCannotResolveFallsBackToSkia) {
+    // arrange a run whose font hash the build does not carry, which the atlas cannot rasterize (§6.3)
+    ShapedRun::Line line;
+    line.glyphs.push_back(ShapedGlyph{.id = 1u, .position = Point{0.0f, 0.0f}, .cluster = 0u});
+    const std::shared_ptr<const ShapedRun> run = ShapedRun::make({line}, 16.0f, 999999u, ShapeSource::Embedded);
+    const TextLayout layout{.run = run, .size = Size{20.0f, 20.0f}, .ascent = 16.0f, .descent = 4.0f};
+    // act the run is drawn, and the atlas refuses it, so skia draws the fallback rather than dropping the text (§6.3)
+    const std::unique_ptr<software::SoftwareRenderSurface> surface = software::SoftwareRenderSurface::create(WindowMetrics::from_logical(Size{80.0f, 40.0f}, 1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    context.draw_text(layout, Point{4.0f, 4.0f}, Paint{.fill = Color::rgba(1.0f, 1.0f, 1.0f, 1.0f)});
+    surface->end_frame();
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    // assert the frame finished, which is what the fallback guarantees instead of dropping the run (§6.3)
+    EXPECT_FALSE(pixels.empty());
+}
+
+TEST(SoftwareGlyphAtlasChecks, TheAtlasRefusesGlyphsItCannotRasterize) {
+    // arrange the carried fixture, registered under its hash (§6.3, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const resources::EmbeddedFont* font = resources::FontRegistry::find_family(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(font, nullptr);
+    software::SoftwareGlyphAtlas atlas;
+    // act, assert an out-of-range glyph has no extents, so it is refused (§6.3)
+    EXPECT_EQ(atlas.glyph(font->content_hash, 1000000u, 20.0f), nullptr);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(SoftwareGlyphAtlasChecks, TheAtlasRefusesACorruptCarriedFont) {
+    // arrange a family whose bytes name no face, which the registry still accepts (§9.1)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(resources::EmbeddedFont{.family = "AlborCorrupt", .content_hash = 0, .bytes = {1, 2, 3, 4, 5, 6, 7, 8}});
+    const resources::EmbeddedFont* font = resources::FontRegistry::find_family("AlborCorrupt");
+    ASSERT_NE(font, nullptr);
+    software::SoftwareGlyphAtlas atlas;
+    // act, assert a corrupt face is refused rather than rasterized (§6.3)
+    EXPECT_EQ(atlas.glyph(font->content_hash, 1u, 20.0f), nullptr);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(SoftwareGlyphAtlasChecks, ClearingTheAtlasDropsItsBitmaps) {
+    // arrange a rasterized glyph, which the atlas caches (§6.3)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const resources::EmbeddedFont* font = resources::FontRegistry::find_family(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(font, nullptr);
+    software::SoftwareGlyphAtlas atlas;
+    ASSERT_NE(atlas.glyph(font->content_hash, 2u, 20.0f), nullptr);
+    EXPECT_EQ(atlas.count(), 1u);
+    // act the atlas is cleared, which a test does so one test cannot answer another (§2.2)
+    atlas.clear();
+    // assert the bitmaps are gone, so a later request rasterizes again (§6.3)
+    EXPECT_EQ(atlas.count(), 0u);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(SoftwareTextChecks, TheAtlasTextKeepsTheFillColour) {
+    // arrange the carried fixture and an embedded run, which the atlas draws (§6.3, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("A", 0.0f, 40.0f);
+    ASSERT_NE(layout.run, nullptr);
+    const std::unique_ptr<software::SoftwareRenderSurface> surface = software::SoftwareRenderSurface::create(WindowMetrics::from_logical(Size{80.0f, 60.0f}, 1.0f));
+    ASSERT_NE(surface, nullptr);
+    // act the run is drawn in red, which is a fill whose channels differ (§6.3)
+    RenderContext& context = surface->begin_frame();
+    context.draw_text(layout, Point{8.0f, 8.0f}, Paint{.fill = Color::rgba(1.0f, 0.0f, 0.0f, 1.0f)});
+    surface->end_frame();
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    // assert the ink is red rather than blue, which is what a swapped channel would produce (§6.3)
+    bool red_ink = false;
+    for (std::size_t index = 0; index + 3 < pixels.size(); index += 4)
+        red_ink = red_ink || (pixels[index] > 200u && pixels[index + 2] < 50u);
+    EXPECT_TRUE(red_ink);
+    // exit
+    resources::FontRegistry::clear();
+}
