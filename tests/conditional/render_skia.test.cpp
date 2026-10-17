@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -12,7 +13,10 @@
 
 #include "render/frame_scene.h"
 #include "render/glyph_outline.h"
+#include "render/image_resource.h"
+#include "render/line_batch.h"
 #include "render/path_resource.h"
+#include "render/picture_resource.h"
 #include "render/render-skia/skia_render_context.h"
 #include "render/render-skia/skia_renderer_backend.h"
 #include "render/render-software/software_renderer_backend.h"
@@ -482,4 +486,29 @@ TEST(SkiaParityChecks, TheOffscreenGpuTargetMatchesTheSoftwareReferenceOnLevel2P
     const int glyph_difference = parity_difference(gpu_backend, *gpu, reference_backend, *reference, glyph);
     // the bound is the measured 6 on this host plus margin, which is the per class budget §15 asks for (§15)
     EXPECT_LE(glyph_difference, 16) << "a glyph outline diverged by " << glyph_difference;
+    // a retained line batch is stroked, so it is allowed the antialiased band (§6.4, §15)
+    FrameScene batch_scene(metrics, background);
+    const std::vector<Point> batch_points{Point{8.0f, 32.0f}, Point{48.0f, 32.0f}, Point{48.0f, 56.0f}};
+    const std::shared_ptr<const LineBatch> batch = std::make_shared<const LineBatch>(3u, std::span<const Point>(batch_points));
+    batch_scene.add_command(DrawCommand::line_batch(batch, Transform{}, StrokeStyle{.color = Color::rgb(0.0f, 0.0f, 0.0f), .width = 2.0f}));
+    const int batch_difference = parity_difference(gpu_backend, *gpu, reference_backend, *reference, batch_scene);
+    // the bound is the measured 59 on this host plus margin, because the two rasterizers join a stroke differently (§15)
+    EXPECT_LE(batch_difference, 96) << "a line batch diverged by " << batch_difference;
+    // a picture replays an inner command list, which both backends share through one replay (§6.4, §15)
+    FrameScene picture_scene(metrics, background);
+    std::vector<DrawCommand> inner;
+    inner.push_back(DrawCommand::rectangle(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{20.0f, 16.0f}), ink));
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(4u, std::move(inner));
+    picture_scene.add_command(DrawCommand::picture(picture, Transform{.translate_x = 10.0f, .translate_y = 10.0f}));
+    const int picture_difference = parity_difference(gpu_backend, *gpu, reference_backend, *reference, picture_scene);
+    // an integer rect inside a picture is exact, so the budget is zero (§15)
+    EXPECT_EQ(picture_difference, 0) << "a picture diverged by " << picture_difference;
+    // an image is uploaded and composited, so it is allowed the antialiased band (§6.4, §15)
+    FrameScene image_scene(metrics, background);
+    const std::vector<std::uint8_t> image_pixels(16u * 16u * 4u, 255u);
+    const std::shared_ptr<const ImageResource> image = std::make_shared<const ImageResource>(5u, 16u, 16u, ImageFormat::RGBA8, std::span<const std::uint8_t>(image_pixels));
+    image_scene.add_command(DrawCommand::image(image, Rect::from_origin_size(Point{8.0f, 8.0f}, Size{16.0f, 16.0f}), Paint{}));
+    const int image_difference = parity_difference(gpu_backend, *gpu, reference_backend, *reference, image_scene);
+    // the bound is the measured value on this host plus margin, which is the per class budget §15 asks for (§15)
+    EXPECT_LE(image_difference, 16) << "an image diverged by " << image_difference;
 }
