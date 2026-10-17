@@ -390,29 +390,15 @@ namespace albor
     }
 
     void DrawCommand::replay_glyph_outline(RenderContext& context) const {
-        // the outline is a single closed contour, so its verbs are one move followed by one line per point (§6.4)
+        // the outline is one closed contour, whose path was built once when the outline was built (§6.4, AD-06)
         const GlyphOutlineGeometry& geometry = glyph_outline_geometry();
-        const std::vector<Point>& points = geometry.outline->points();
         // a contour of fewer than three points encloses nothing, so there is nothing to draw (§6.2)
-        if (points.size() < 3)
+        if (geometry.outline->points().size() < 3)
             return;
-        // the verbs are built beside the call because they describe a closed contour rather than being stored (§6.4)
-        std::vector<PathVerb> verbs;
-        // the verb list matches the point list exactly, because the two are paired by index (§6.4)
-        verbs.reserve(points.size());
-        // the first point starts the contour, and every point after it is a straight segment (§6.4)
-        verbs.push_back(PathVerb::MoveTo);
-        // the remaining points are lines, because a glyph outline is tessellated into straight segments (§6.4, §15)
-        for (std::size_t index = 1; index < points.size(); index++)
-            verbs.push_back(PathVerb::LineTo);
-        // the identifier is the outline's own hash, because the shape is what the path is keyed on (§6.4, AD-06)
-        const std::uint64_t identifier = geometry.outline->font_hash() ^ (static_cast<std::uint64_t>(geometry.outline->glyph_id()) << 1);
-        // the path is retained for the duration of the draw, because a backend reads it synchronously (§6.4)
-        const std::shared_ptr<const PathResource> path = std::make_shared<const PathResource>(identifier, std::span<const PathVerb>(verbs), std::span<const Point>(points));
         // the outline draws as a filled path at the pen position, which is the same fill a glyph rasterizes with (§6.4)
         const Transform placed{.translate_x = geometry.position.x, .translate_y = geometry.position.y};
-        // the contour draws under that placement, so the outline lands where the glyph sat (§9.1)
-        context.draw_path(path, placed, m_paint);
+        // the retained path draws as it is, so a frame allocates no resource per glyph (§6.4, AD-06)
+        context.draw_path(geometry.outline->path(), placed, m_paint);
     }
 
     void DrawCommand::replay(RenderContext& context) const {

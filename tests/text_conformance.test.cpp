@@ -1307,3 +1307,52 @@ TEST(EmbeddedTextDrawChecks, ASkiaEngineProvidesNoOutlineResolver) {
     // act, assert the default resolver is empty, so a recorder knows there is nothing to expand (§6.4)
     EXPECT_FALSE(static_cast<bool>(engine.glyph_outline_resolver()));
 }
+
+TEST(GlyphOutlineChecks, TheOutlinePairsAVerbWithEveryPointAndRetainsAPath) {
+    // arrange the carried fixture, whose glyph is walked into a closed contour of points (§6.4, AD-34)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("A", 0.0f, 20.0f);
+    ASSERT_NE(layout.run, nullptr);
+    const std::uint32_t glyph = layout.run->lines().front().glyphs.front().id;
+    const std::vector<Point> points = engine->glyph_outline(glyph, 20.0f);
+    ASSERT_FALSE(points.empty());
+    // act the outline is built once over the points, which pairs a verb with every point and retains a path (§6.4)
+    const GlyphOutline outline(engine->font_hash(), glyph, 20.0f, points);
+    // assert one verb per point, led by a move, because the contour is one closed polyline (§6.4)
+    ASSERT_EQ(outline.verbs().size(), points.size());
+    EXPECT_EQ(outline.verbs().front(), PathVerb::MoveTo);
+    for (std::size_t index = 1; index < outline.verbs().size(); index++)
+        EXPECT_EQ(outline.verbs()[index], PathVerb::LineTo);
+    // assert the retained path carries the same contour, which is what a frame draws without allocating (§6.4)
+    ASSERT_NE(outline.path(), nullptr);
+    EXPECT_EQ(outline.path()->points().size(), points.size());
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(GlyphOutlineChecks, AnOutlinePairsItsVerbsWithItsPointsAtEverySize) {
+    // arrange contours of zero to three points, which the constructor encodes without any font (§6.4)
+    const std::vector<Point> empty;
+    const std::vector<Point> one{Point{0.0f, 0.0f}};
+    const std::vector<Point> two{Point{0.0f, 0.0f}, Point{1.0f, 0.0f}};
+    const std::vector<Point> three{Point{0.0f, 0.0f}, Point{1.0f, 0.0f}, Point{0.0f, 1.0f}};
+    // act, assert the verbs pair one to one with the points at every size, led by a move (§6.4)
+    const GlyphOutline zero_outline(7u, 1u, 10.0f, empty);
+    EXPECT_TRUE(zero_outline.verbs().empty());
+    const GlyphOutline one_outline(7u, 1u, 10.0f, one);
+    ASSERT_EQ(one_outline.verbs().size(), 1u);
+    EXPECT_EQ(one_outline.verbs().front(), PathVerb::MoveTo);
+    const GlyphOutline two_outline(7u, 1u, 10.0f, two);
+    ASSERT_EQ(two_outline.verbs().size(), 2u);
+    EXPECT_EQ(two_outline.verbs()[1], PathVerb::LineTo);
+    const GlyphOutline three_outline(7u, 1u, 10.0f, three);
+    ASSERT_EQ(three_outline.verbs().size(), 3u);
+    // assert the retained path is built for a real contour, which the replay draws directly (§6.4)
+    ASSERT_NE(three_outline.path(), nullptr);
+    EXPECT_EQ(three_outline.path()->points().size(), 3u);
+}
