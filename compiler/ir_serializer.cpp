@@ -28,9 +28,6 @@ namespace albor::compiler
 
         // turn an opaque colour literal into the comma separated channels the dev runtime reads (§12.1)
         std::optional<std::string> color_value(std::string_view literal) {
-            // the hash is dropped, because the channels are what the reader parses (§11.1)
-            if (!literal.empty() && literal.front() == '#')
-                literal.remove_prefix(1);
             // the reader takes three channels and no alpha, so a translucent literal is refused (§12.1)
             if (literal.size() != 6)
                 return std::nullopt;

@@ -11,13 +11,34 @@
 #include <skia/core/SkSurface.h>
 
 #include "render/frame_scene.h"
+#include "render/glyph_outline.h"
+#include "render/path_resource.h"
 #include "render/render-skia/skia_render_context.h"
 #include "render/render-skia/skia_renderer_backend.h"
 #include "render/render-software/software_renderer_backend.h"
+#include "render/screenshot.h"
 #include "text/text-skia/skia_text_engine.h"
 #include "tools/alloc-probe/alloc_probe.h"
 
 using namespace albor;
+
+namespace
+{
+    // render one scene on both backends and report the largest per channel difference, or -1 when either refused (§16)
+    int parity_difference(SkiaRendererBackend& gpu_backend, RenderSurface& gpu, software::SoftwareRendererBackend& reference_backend, RenderSurface& reference, const FrameScene& scene) {
+        // both backends render the same immutable scene (§6.1)
+        gpu_backend.execute_frame(gpu, scene);
+        reference_backend.execute_frame(reference, scene);
+        // each frame is read back, because a refused read is not an agreement (§16)
+        const Screenshot gpu_read = capture_surface(gpu);
+        const Screenshot reference_read = capture_surface(reference);
+        // a refused read is reported rather than compared (§16)
+        if (gpu_read.empty() || reference_read.empty())
+            return -1;
+        // the largest per channel difference is what the class tolerance is written against (§15)
+        return gpu_read.max_channel_difference(reference_read);
+    }
+} // namespace
 using namespace albor::skia;
 
 namespace
@@ -419,4 +440,46 @@ TEST(SkiaParityChecks, TheOffscreenGpuTargetMatchesTheSoftwareReference) {
     for (std::size_t index = 0; index < gpu_pixels.size(); index++)
         worst = std::max(worst, static_cast<std::size_t>(std::abs(static_cast<int>(gpu_pixels[index]) - static_cast<int>(reference_pixels[index]))));
     EXPECT_EQ(worst, 0u) << "the gpu and reference frames diverge by " << worst << " per channel";
+}
+
+TEST(SkiaParityChecks, TheOffscreenGpuTargetMatchesTheSoftwareReferenceOnLevel2Primitives) {
+    // arrange both backends at one set of metrics (§16, AD-26)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{96.0f, 64.0f}, 1.0f);
+    SkiaRendererBackend gpu_backend;
+    // a host without a gpu device cannot run the comparison, which is reported rather than passing (§6.3)
+    if (!gpu_backend.ready())
+        GTEST_SKIP() << "no gpu device on this host";
+    const std::unique_ptr<RenderSurface> gpu = gpu_backend.create_offscreen_surface(metrics);
+    software::SoftwareRendererBackend reference_backend;
+    const std::unique_ptr<RenderSurface> reference = reference_backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(gpu, nullptr);
+    ASSERT_NE(reference, nullptr);
+    const Color background = Color::rgb(1.0f, 1.0f, 1.0f);
+    const Paint ink{.fill = Color::rgb(0.0f, 0.0f, 0.0f)};
+    // a flat rectangle on integer coordinates is exact, because the class allows no freedom (§15)
+    FrameScene rect(metrics, background);
+    rect.add_command(DrawCommand::rectangle(Rect::from_origin_size(Point{8.0f, 8.0f}, Size{32.0f, 24.0f}), ink));
+    const int rect_difference = parity_difference(gpu_backend, *gpu, reference_backend, *reference, rect);
+    EXPECT_EQ(rect_difference, 0) << "a flat integer rectangle diverged by " << rect_difference;
+    // a rounded rectangle is antialiased, so it is allowed a small per channel band (§15)
+    FrameScene rounded(metrics, background);
+    rounded.add_command(DrawCommand::rounded_rectangle(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{40.0f, 30.0f}), 8.0f, ink));
+    const int rounded_difference = parity_difference(gpu_backend, *gpu, reference_backend, *reference, rounded);
+    // the bound is the measured 47 on this host plus margin, which is the per class budget §15 asks for (§15)
+    EXPECT_LE(rounded_difference, 64) << "a rounded rectangle diverged by " << rounded_difference;
+    // a path is tessellated per backend, so it is allowed the same band (§15)
+    FrameScene path_scene(metrics, background);
+    const std::vector<PathVerb> verbs{PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const std::vector<Point> points{Point{12.0f, 40.0f}, Point{36.0f, 12.0f}, Point{60.0f, 40.0f}};
+    path_scene.add_command(DrawCommand::path(std::make_shared<const PathResource>(7u, std::span<const PathVerb>(verbs), std::span<const Point>(points)), Transform{}, ink));
+    const int path_difference = parity_difference(gpu_backend, *gpu, reference_backend, *reference, path_scene);
+    // the bound is the measured 17 on this host plus margin, which is the per class budget §15 asks for (§15)
+    EXPECT_LE(path_difference, 32) << "a path diverged by " << path_difference;
+    // a glyph outline is a filled path, which both backends draw through the same replay (§6.4, AD-34)
+    FrameScene glyph(metrics, background);
+    const std::vector<Point> outline{Point{20.0f, 48.0f}, Point{32.0f, 16.0f}, Point{44.0f, 48.0f}};
+    glyph.add_command(DrawCommand::glyph_outline(std::make_shared<const GlyphOutline>(11u, 1u, 16.0f, outline), Point{0.0f, 0.0f}, ink));
+    const int glyph_difference = parity_difference(gpu_backend, *gpu, reference_backend, *reference, glyph);
+    // the bound is the measured 6 on this host plus margin, which is the per class budget §15 asks for (§15)
+    EXPECT_LE(glyph_difference, 16) << "a glyph outline diverged by " << glyph_difference;
 }

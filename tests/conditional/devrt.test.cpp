@@ -1,3 +1,5 @@
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <tuple>
@@ -13,6 +15,8 @@
 #include "devrt/element_table.h"
 #include "devrt/ir.h"
 #include "devrt/reload_adapter.h"
+#include "dual_engine_panel.h"
+#include "layout/column_layout.h"
 #include "runtime/binding_engine.h"
 #include "text/text_engine.h"
 #include "ui/ui_node.h"
@@ -683,4 +687,41 @@ component Panel {
     ASSERT_NE(label, nullptr);
     EXPECT_EQ(label->text(), "Hello");
     EXPECT_FLOAT_EQ(label->font_size(), 20.0f);
+}
+
+TEST(DevReloadChecks, ACompiledFormAndTheDevIrAgreeOnTheSameUi) {
+    // arrange the same ui source compiled into a facade and serialized into the dev ir (§16, AD-25)
+    std::ifstream file(ALBOR_DUAL_ENGINE_UI, std::ios::binary);
+    ASSERT_TRUE(file.good());
+    const std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    albor::compiler::DiagnosticList diagnostics;
+    const std::vector<albor::compiler::Token> tokens = albor::compiler::Lexer(source, diagnostics).tokenize();
+    const albor::compiler::SourceFile parsed = albor::compiler::Parser(tokens, diagnostics).parse();
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const std::optional<IrNode> definition = albor::compiler::serialize_component(parsed.components.front());
+    ASSERT_TRUE(definition.has_value());
+    // the compiled path builds the facade, which is the production output (§11.3)
+    BindingEngine engine;
+    TestTextEngine text;
+    DualEnginePanel panel(&engine, &text);
+    // the dev path applies the serialized definition onto a matching root (§12.1)
+    ColumnLayout root;
+    ReloadFixture fixture;
+    const ReloadReport report = apply_reload(root, *definition, fixture.context);
+    EXPECT_EQ(report.added, 2U);
+    // assert both trees carry the same elements and the same properties, which is what AD-25 claims (§16)
+    const UiNode& compiled_column = *static_cast<UiNode&>(panel).child_at(0);
+    ASSERT_EQ(compiled_column.child_count(), root.child_count());
+    const auto* compiled_label = dynamic_cast<const Label*>(compiled_column.child_at(0));
+    const auto* ir_label = dynamic_cast<const Label*>(root.child_at(0));
+    ASSERT_NE(compiled_label, nullptr);
+    ASSERT_NE(ir_label, nullptr);
+    EXPECT_EQ(compiled_label->text(), ir_label->text());
+    EXPECT_FLOAT_EQ(compiled_label->font_size(), ir_label->font_size());
+    const auto* compiled_button = dynamic_cast<const Button*>(compiled_column.child_at(1));
+    const auto* ir_button = dynamic_cast<const Button*>(root.child_at(1));
+    ASSERT_NE(compiled_button, nullptr);
+    ASSERT_NE(ir_button, nullptr);
+    EXPECT_EQ(compiled_button->label(), ir_button->label());
+    EXPECT_EQ(compiled_button->disabled(), ir_button->disabled());
 }

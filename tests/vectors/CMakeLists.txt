@@ -62,5 +62,8 @@ albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/fn_pa
 
 # the command facade is generated, which proves a command property binds to a widget action (§18.1, AD-15)
 albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/command_panel.ui")
+
+# the dual-engine facade is generated, which is the compiled half of the AD-25 corpus (§16, AD-25)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/dual_engine_panel.ui")
 # the generated header reaches the test binary, because the suite includes the facade it exercises (§11.3)
 target_include_directories(albor-tests PRIVATE "${CMAKE_BINARY_DIR}/generated/albor-vector-fixture")

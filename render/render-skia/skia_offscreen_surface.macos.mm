@@ -95,13 +95,10 @@ namespace albor::skia
     }
 
     RenderContext& SkiaOffscreenSurface::begin_frame() {
-        // a target that did not allocate leaves no canvas, so the context draws into nothing (§6.3)
-        if (m_state->surface == nullptr) {
-            m_state->draw_context = std::make_unique<SkiaRenderContext>(nullptr, m_state->metrics.scale_factor);
-            return *m_state->draw_context;
-        }
+        // a target that did not allocate hands a null canvas, which the context absorbs as a no op (§6.3)
+        SkCanvas* canvas = m_state->surface != nullptr ? m_state->surface->getCanvas() : nullptr;
         // the context draws the logical scene scaled onto the physical target (§6.3, AD-27)
-        m_state->draw_context = std::make_unique<SkiaRenderContext>(m_state->surface->getCanvas(), m_state->metrics.scale_factor);
+        m_state->draw_context = std::make_unique<SkiaRenderContext>(canvas, m_state->metrics.scale_factor);
         return *m_state->draw_context;
     }
 

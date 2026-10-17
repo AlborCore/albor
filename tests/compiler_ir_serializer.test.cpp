@@ -48,6 +48,15 @@ component Panel {
     // the translucent colour case, whose alpha the reader does not take (§12.1)
     constexpr std::string_view TRANSLUCENT = "component Panel { Label { foreground: #FF000080; } }";
 
+    // the numeric case, whose integer and float literals are read as written (§12.1)
+    constexpr std::string_view NUMERIC = "component Panel { Column { Slider { value: 2; } Slider { value: 1.5; } } }";
+
+    // the grouping case, which is transparent to the value (§11.1)
+    constexpr std::string_view GROUPED = "component Panel { Column { spacing: (12px); } }";
+
+    // the newline case, which a line oriented format cannot carry (§12.1)
+    constexpr std::string_view NEWLINE = "component Panel { Label { text: \"a\\nb\"; } }";
+
     // the conditional case, which has no IR form, so the component must be refused (§12.1)
     constexpr std::string_view CONDITIONAL = "component Panel { in property<bool> show: true; Column { if show { Label {} } } }";
 
@@ -161,4 +170,42 @@ TEST(IrSerializerChecks, AComponentWithoutARootSerializesToNothing) {
     ASSERT_TRUE(diagnostics.diagnostics().empty());
     // act, assert a component with no tree has nothing to serialize (§12.1)
     EXPECT_FALSE(serialize_component(file.components.front()).has_value());
+}
+
+TEST(IrSerializerChecks, ANumericLiteralKeepsItsWrittenForm) {
+    // arrange integer and float literals, which the reader parses as written (§12.1)
+    DiagnosticList diagnostics;
+    const SourceFile file = parse(NUMERIC, diagnostics);
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    // act
+    const std::optional<devrt::IrNode> ir = serialize_component(file.components.front());
+    // assert both numeric kinds survive, because the reader parses a bare number (§12.1)
+    ASSERT_TRUE(ir.has_value());
+    ASSERT_EQ(ir->children.size(), 2u);
+    EXPECT_EQ(ir->children[0].properties.front().value, "2");
+    EXPECT_EQ(ir->children[1].properties.front().value, "1.5");
+}
+
+TEST(IrSerializerChecks, AGroupedLiteralIsTransparent) {
+    // arrange a length wrapped in parentheses, which does not change the value (§11.1)
+    DiagnosticList diagnostics;
+    const SourceFile file = parse(GROUPED, diagnostics);
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    // act
+    const std::optional<devrt::IrNode> ir = serialize_component(file.components.front());
+    // assert the grouped literal is unwrapped, because the parentheses are not a value (§11.1)
+    ASSERT_TRUE(ir.has_value());
+    ASSERT_EQ(ir->properties.size(), 1u);
+    EXPECT_EQ(ir->properties.front().value, "12");
+}
+
+TEST(IrSerializerChecks, AStringWithANewlineIsRefused) {
+    // arrange a string whose decoded value carries a newline, which the line oriented format cannot hold (§12.1)
+    DiagnosticList diagnostics;
+    const SourceFile file = parse(NEWLINE, diagnostics);
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    // act, assert the property is dropped rather than emitting a malformed line (§12.1)
+    const std::optional<devrt::IrNode> ir = serialize_component(file.components.front());
+    ASSERT_TRUE(ir.has_value());
+    EXPECT_TRUE(ir->properties.empty());
 }

@@ -38,6 +38,10 @@ UNREACHABLE=(
     'render/render-software/software_render_surface.cpp|m_state->scratch_context = std::make_unique<SoftwareRenderContext>(m_state->scratch->getCanvas(), 1.0f);|the scratch is only built when skia refuses the raster allocation, which cannot be forced from a test'
     'render/render-skia/skia_renderer_backend.macos.mm|return nullptr;|the offscreen target is only asked for when the backend is ready, which the parity test checks first, so the refusal cannot be forced'
     'render/render-software/software_render_context.cpp|continue;|a mask install and an image lift fail only on an allocation failure, which cannot be forced from a test'
+    'compiler/ir_serializer.cpp|return std::nullopt;|the refusals guard values the lexer never produces (a malformed hex pair, a missing unit, a negated colour), so no valid source reaches them'
+    'render/render-skia/skia_offscreen_surface.macos.mm|return nullptr;|the target is only built over a live context and valid metrics, which the parity test supplies, so the refusals cannot be forced'
+    'render/render-skia/skia_offscreen_surface.macos.mm|return;|an invalid resize or an unallocated target is refused before a frame, which the parity test never triggers'
+    'render/render-skia/skia_offscreen_surface.macos.mm|return {};|the read refusals guard an unallocated target or a refused pixel copy, which the parity test never triggers'
 )
 
 # an entry whose text no longer appears in the file, which means the hole was closed or moved (§27)
