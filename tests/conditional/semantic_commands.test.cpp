@@ -481,3 +481,109 @@ TEST(SemanticCommands, ANameCarryingALineBreakDoesNotSplitTheDumpIntoMoreLines) 
     EXPECT_EQ(std::count(result.payload.begin(), result.payload.end(), '\n'), 1u);
     EXPECT_NE(result.payload.find("two\\nlines"), std::string::npos);
 }
+
+TEST(SemanticCommands, AListAppearsInTheDumpWithItsOwnRole) {
+    // arrange a tree whose root is a list, which is not a generic group (§10.1)
+    AutomationRegistry registry;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::List});
+    tree.mutable_at(0)->set_explicit_id("inbox");
+    tree.mutable_at(0)->set_name("Inbox");
+    register_semantic_commands(registry, [&tree] { return &tree; });
+    // every command is permitted, because these tests are about the answering, not the allow list (§10.3, AD-10)
+    for (const std::string& name : semantic_command_names())
+        registry.allow(name);
+    AutomationSession session(registry);
+    (void)session.handle(encode_handshake(session.token()));
+    // act
+    const AutomationResult result = session.handle("semantic.tree");
+    // assert the dump names the list with the role a reader navigates rows in, not a generic group (§10.1, §10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_NE(result.payload.find("list inbox Inbox"), std::string::npos);
+}
+
+TEST(SemanticCommands, FindingAListAnswersTheListRole) {
+    // arrange a tree whose root is an addressed list (§10.1)
+    AutomationRegistry registry;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::List});
+    tree.mutable_at(0)->set_explicit_id("inbox");
+    tree.mutable_at(0)->set_name("Inbox");
+    register_semantic_commands(registry, [&tree] { return &tree; });
+    // every command is permitted, because these tests are about the answering, not the allow list (§10.3, AD-10)
+    for (const std::string& name : semantic_command_names())
+        registry.allow(name);
+    AutomationSession session(registry);
+    (void)session.handle(encode_handshake(session.token()));
+    // act
+    const AutomationResult result = session.handle("semantic.find inbox");
+    // assert the answer names the list role, so a client targets the container it expects (§10.1, §10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_EQ(result.payload, "list Inbox");
+}
+
+TEST(SemanticCommands, AFocusedNodeSaysSoInTheDump) {
+    // arrange a tree whose list node holds the focus (§10.1)
+    AutomationRegistry registry;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::List});
+    tree.mutable_at(0)->set_explicit_id("inbox");
+    tree.mutable_at(0)->set_name("Inbox");
+    tree.mutable_at(0)->set_focused(true);
+    register_semantic_commands(registry, [&tree] { return &tree; });
+    // every command is permitted, because these tests are about the answering, not the allow list (§10.3, AD-10)
+    for (const std::string& name : semantic_command_names())
+        registry.allow(name);
+    AutomationSession session(registry);
+    (void)session.handle(encode_handshake(session.token()));
+    // act
+    const AutomationResult result = session.handle("semantic.tree");
+    // assert the focused state reaches the client, because a client reads the focus back (§10.1, §10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_NE(result.payload.find(" focused"), std::string::npos);
+}
+
+TEST(SemanticCommands, ADisabledSelectedNodeSaysSoInTheDump) {
+    // arrange a tree whose row is disabled and selected, which is what a list client reads back (§10.1)
+    AutomationRegistry registry;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::ListItem});
+    tree.mutable_at(0)->set_explicit_id("row");
+    tree.mutable_at(0)->set_name("Row");
+    tree.mutable_at(0)->set_disabled(true);
+    tree.mutable_at(0)->set_selected(true);
+    register_semantic_commands(registry, [&tree] { return &tree; });
+    // every command is permitted, because these tests are about the answering, not the allow list (§10.3, AD-10)
+    for (const std::string& name : semantic_command_names())
+        registry.allow(name);
+    AutomationSession session(registry);
+    (void)session.handle(encode_handshake(session.token()));
+    // act
+    const AutomationResult result = session.handle("semantic.tree");
+    // assert both states reach the client, because a client must read what it may drive (§10.1)
+    ASSERT_TRUE(result.ok);
+    EXPECT_NE(result.payload.find(" disabled"), std::string::npos);
+    EXPECT_NE(result.payload.find(" selected"), std::string::npos);
+}
+
+TEST(SemanticCommands, TheSelectionStatesCarryNoTokenWhenTheyDoNotHold) {
+    // arrange a tree whose node is neither disabled, selected nor focused (§10.1)
+    AutomationRegistry registry;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::ListItem});
+    tree.mutable_at(0)->set_explicit_id("row");
+    tree.mutable_at(0)->set_name("Row");
+    register_semantic_commands(registry, [&tree] { return &tree; });
+    // every command is permitted, because these tests are about the answering, not the allow list (§10.3, AD-10)
+    for (const std::string& name : semantic_command_names())
+        registry.allow(name);
+    AutomationSession session(registry);
+    (void)session.handle(encode_handshake(session.token()));
+    // act
+    const AutomationResult result = session.handle("semantic.tree");
+    // assert the default states are silent, so a dump without them stays parseable as before (§10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_EQ(result.payload.find(" disabled"), std::string::npos);
+    EXPECT_EQ(result.payload.find(" selected"), std::string::npos);
+    EXPECT_EQ(result.payload.find(" focused"), std::string::npos);
+}

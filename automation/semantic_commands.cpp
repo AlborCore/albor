@@ -34,6 +34,8 @@ namespace albor::automation
                 return "image";
             case SemanticRole::ListItem:
                 return "listitem";
+            case SemanticRole::List:
+                return "list";
             case SemanticRole::Group:
                 return "group";
             case SemanticRole::ScrollView:
@@ -141,6 +143,15 @@ namespace albor::automation
                 // a multi line node marks itself, because the state is what a reader announces with (§10.1)
                 if (node->multiline())
                     out << " multiline";
+                // a disabled node marks itself, because a client must not drive one (§10.1)
+                if (node->disabled())
+                    out << " disabled";
+                // a selected node marks itself, because the selection is what a list client reads back (§10.1)
+                if (node->selected())
+                    out << " selected";
+                // a focused node marks itself, because the focus is where the keyboard lands (§10.1)
+                if (node->focused())
+                    out << " focused";
                 // the line ends, which is what separates one node from the next (§10.3)
                 out << '\n';
             }

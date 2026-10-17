@@ -1,4 +1,5 @@
 // the widget form, which exercises every widget the framework ships and is compiled into a facade (§8, §11.3)
+import todo;
 
 // the form is the test bed and the showcase, so it is declarative and nothing here is hand written (§14)
 component WidgetForm {
@@ -6,6 +7,7 @@ component WidgetForm {
     inout property<float> level: 0.5;
     inout property<bool> armed: false;
     inout property<string> name: "";
+    inout property<vector<Todo>> todos: [];
 
     Column {
         spacing: 12px;
@@ -16,7 +18,7 @@ component WidgetForm {
             text: "Widget Form";
             font_size: 24px;
         }
-
+    
         Label {
             id: form_presses;
             text: "presses " + string(presses);
@@ -91,6 +93,26 @@ component WidgetForm {
         Label {
             id: form_name_value;
             text: "typed " + string(name);
+        }
+
+        ListBox {
+            id: form_list;
+            viewport_width: 320px;
+            viewport_height: 160px;
+            row_height: 24px;
+            overscan: 48px;
+            scrollbar: Scrollbar.as_needed;
+            selected: 0;
+
+            on_selection_changed: {
+            }
+
+            on_activated: {
+            }
+
+            Repeat(todo in todos) {
+                Label { text: todo.title; }
+            }
         }
     }
 }

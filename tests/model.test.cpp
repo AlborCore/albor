@@ -66,6 +66,17 @@ namespace
         // the count rises once per row the view rewrote (§18.1, AD-13)
         writes++;
     }
+
+    // the content double that takes a window but builds no rows, which is what the default contract is for (§8.2, AD-13)
+    class BareContent final : public UiNode, public ScrollableContent
+    {
+    public:
+        [[nodiscard]] Size content_extent() const override { return Size{}; }
+
+        void set_scroll_viewport(const ScrollViewport&) override {}
+
+        void set_row_extent(float) override {}
+    };
 } // namespace
 
 TEST(KeyedView, AViewBuildsOneRowPerItem) {
@@ -350,6 +361,36 @@ TEST(ScrollableRowsChecks, EveryBuiltRowIsMeasuredAsItIsAdopted) {
     ASSERT_EQ(rows.materialized(), 10u);
     EXPECT_EQ(rows.child_at(0)->measured_size().height, 20.0f);
     EXPECT_FLOAT_EQ(rows.child_at(0)->measured_size().width, 200.0f);
+}
+
+TEST(ScrollableContentChecks, TheDefaultContractReportsNoRows) {
+    // arrange a content that builds no rows, which is what the base contract is for (§8.2, AD-13)
+    BareContent content;
+    ScrollableContent& contract = content;
+    // act, assert a plain content reports no window, because none of its rows are materialized (§8.2, AD-13)
+    EXPECT_EQ(contract.materialized_row_count(), 0U);
+    EXPECT_EQ(contract.first_row_index(), 0U);
+    EXPECT_EQ(contract.row_node(0), nullptr);
+}
+
+TEST(ScrollableRowsChecks, TheContractReportsTheMaterializedWindow) {
+    // arrange a window over a list far larger than it shows (§8.2, AD-13)
+    std::vector<Recorded> items;
+    items.reserve(100);
+    for (std::size_t index = 0; index < 100; index++)
+        items.push_back(Recorded{.key = "row" + std::to_string(index), .text = "line " + std::to_string(index)});
+    ScrollableRows<Recorded> rows{20.0f, 64};
+    rows.set_items(items);
+    rows.set_view(&counting_row, &counting_update, &key_of, nullptr);
+    rows.set_scroll_viewport(ScrollViewport{.viewport = Size{200.0f, 200.0f}, .content = Size{200.0f, 2000.0f}, .offset = 200.0f, .overscan = 0.0f});
+    // act the contract a scroll view reads is used, which is what overlays list state onto rows (§8.2, AD-13)
+    ScrollableContent& contract = rows;
+    // assert the built window and its first item are reported, because a list is announced by position (§8.2, AD-13)
+    EXPECT_EQ(contract.materialized_row_count(), rows.materialized());
+    EXPECT_EQ(contract.first_row_index(), rows.first_index());
+    EXPECT_EQ(contract.row_node(0), rows.child_at(0));
+    // assert a position past the built rows names no row, which is what a lazy walk expects (§10.1)
+    EXPECT_EQ(contract.row_node(contract.materialized_row_count()), nullptr);
 }
 
 TEST(ScrollableRowsChecks, ARowThatEntersOnALaterScrollIsMeasuredToo) {

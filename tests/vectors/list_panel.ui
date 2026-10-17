@@ -1,0 +1,28 @@
+// the list fixture, which proves a repeat under a list windows into its viewport and selects (§8.2, §18.3)
+import task;
+
+component ListPanel {
+    inout property<vector<Task>> items;
+
+    signal row_opened(string key);
+
+    ListBox {
+        viewport_width: 320px;
+        viewport_height: 240px;
+        row_height: 28px;
+        overscan: 40px;
+        scrollbar: Scrollbar.on;
+        selected: 1;
+
+        on_selection_changed: {
+        }
+
+        on_activated: {
+            row_opened(key);
+        }
+
+        Repeat(task in items) {
+            Label { text: task.title; }
+        }
+    }
+}

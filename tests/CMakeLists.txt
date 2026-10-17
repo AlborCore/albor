@@ -27,9 +27,9 @@ target_compile_features(albor-tests PRIVATE cxx_std_23)
 #
 # only the modules that are not already re-exported are named here. albor-preview publishes albor-widgets,
 # albor-layout and albor-i18n, albor-application publishes albor-input, and albor-widgets publishes
-# albor-style, so naming those five again would reach the linker twice and produce a duplicate library
-# warning. Their closure already carries albor-core, albor-window, albor-runtime, albor-render, albor-animation,
-# albor-text and albor-ui (§3.2)
+# albor-style and the row model a list owns, so naming those again would reach the linker twice and produce a
+# duplicate library warning. Their closure already carries albor-core, albor-window, albor-runtime, albor-render,
+# albor-animation, albor-text and albor-ui (§3.2)
 #
 # GTest::gtest_main already publishes GTest::gtest as part of its interface, so naming gtest here as
 # well would hand the linker the same archive twice. Naming only the entry point keeps one copy (§2.2)
@@ -134,5 +134,6 @@ endif()
 add_subdirectory(scope)
 
 # the collection fixture generates its facade, which the test binary links so the generated code is compiled (§8.1)
+# the row model it repeats over arrives through albor-widgets, which albor-preview publishes (§18.3, AD-13)
 add_subdirectory(vectors)
-target_link_libraries(albor-tests PRIVATE albor-vector-fixture albor-model)
+target_link_libraries(albor-tests PRIVATE albor-vector-fixture)

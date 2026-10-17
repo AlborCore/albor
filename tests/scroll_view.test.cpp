@@ -173,6 +173,43 @@ namespace
             pushes++;
         }
     };
+
+    // the content double that reports the rows it built, which is what a list overlays its states onto (§8.2, AD-13)
+    class RowReportingContent final : public UiNode, public ScrollableContent
+    {
+    public:
+        // the extent the whole content would take if every row were built (§8.2)
+        Size total{200.0f, 800.0f};
+
+        // the rows the content has built right now, which a viewport reads by position (§8.2, AD-13)
+        std::vector<std::unique_ptr<UiNode>> rows;
+
+        // the item index the first built row shows, which the window can start past (§8.2, AD-13)
+        std::size_t first = 0;
+
+        void measure(const SizeConstraints& constraints, Size& out_size) override {
+            // the reported extent wins, because only the content knows the rows it did not build (§8.2)
+            out_size = constraints.constrain(total);
+            m_measured_size = out_size;
+        }
+
+        void arrange(const Rect& bounds) override {
+            m_bounds = bounds;
+            m_measured_size = Size{.width = bounds.width, .height = bounds.height};
+        }
+
+        [[nodiscard]] Size content_extent() const override { return total; }
+
+        void set_row_extent(float) override {}
+
+        void set_scroll_viewport(const ScrollViewport&) override {}
+
+        [[nodiscard]] std::size_t materialized_row_count() const override { return rows.size(); }
+
+        [[nodiscard]] std::size_t first_row_index() const override { return first; }
+
+        [[nodiscard]] UiNode* row_node(std::size_t position) override { return position < rows.size() ? rows.at(position).get() : nullptr; }
+    };
 } // namespace
 
 TEST(ScrollViewChecks, TheContentIsMeasuredWithoutAHeightCeiling) {
@@ -802,6 +839,28 @@ TEST(ScrollViewChecks, APressOnTheGrooveOrOutsideTheBarIsNotAClaim) {
     EXPECT_FALSE(outside.handled);
 }
 
+TEST(ScrollViewChecks, APressInARowBesideTheThumbIsNotAScrollbarDrag) {
+    // arrange a viewport whose thumb spans the top of the trailing strip (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    view.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    // act a press lands at the thumb's height but well inside the viewport, where a row sits (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{50.0f, 50.0f}};
+    view.dispatch_event(press);
+    // assert the press is not claimed, because only the trailing strip drags the bar (§8.3)
+    EXPECT_FALSE(press.handled);
+    // act a move after the press must not scroll, because no drag began (§8.3)
+    Event move{.kind = EventKind::PointerMove, .position = Point{50.0f, 250.0f}};
+    view.dispatch_event(move);
+    EXPECT_FLOAT_EQ(view.offset(), 0.0f);
+}
+
 TEST(ScrollViewChecks, ADragOnAViewportThatCannotScrollMovesNothing) {
     // arrange a viewport whose content fits, so there is no thumb to drag (§8.2)
     BindingEngine engine;
@@ -1106,4 +1165,50 @@ TEST(ScrollViewChecks, AThumbAsTallAsItsViewportDoesNotDrag) {
     view.dispatch_event(move);
     // assert the drag moves nothing, because the thumb already fills the track (§8.2)
     EXPECT_FLOAT_EQ(view.offset(), 0.0f);
+}
+
+TEST(ScrollViewChecks, TheViewportReportsTheRowsItsContentBuilt) {
+    // arrange a content that built two rows into a window starting past the first item (§8.2, AD-13)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<RowReportingContent>();
+    RowReportingContent* content_ptr = content.get();
+    content_ptr->rows.push_back(std::make_unique<UiNode>());
+    content_ptr->rows.push_back(std::make_unique<UiNode>());
+    content_ptr->first = 5;
+    view.add_child(std::move(content));
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    // assert the built window and its first item are reported, because a keyed child is addressed by index (§18.1, AD-13)
+    EXPECT_EQ(view.materialized_row_count(), 2U);
+    EXPECT_EQ(view.first_row_index(), 5U);
+    EXPECT_EQ(view.row_node(0), content_ptr->rows.at(0).get());
+    EXPECT_EQ(view.row_node(1), content_ptr->rows.at(1).get());
+    // assert a position past the built rows names nothing, which ends a lazy walk (§10.1)
+    EXPECT_EQ(view.row_node(2), nullptr);
+}
+
+TEST(ScrollViewChecks, AViewWithPlainContentReportsNoRows) {
+    // arrange a content that is not scrollable, so it declares no row window at all (§8.2, AD-13)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    Size measured{};
+    view.measure(SizeConstraints::unconstrained(), measured);
+    // act, assert a plain content reports no rows, because only a scrollable content enumerates them (§8.2, AD-13)
+    EXPECT_EQ(view.materialized_row_count(), 0U);
+    EXPECT_EQ(view.first_row_index(), 0U);
+    EXPECT_EQ(view.row_node(0), nullptr);
+}
+
+TEST(ScrollViewChecks, AViewWithNoContentReportsNoRows) {
+    // arrange a view that was never given a child, so there is no content to ask (§8.2, AD-13)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    // act, assert every passthrough is quiet, because the null content is guarded rather than assumed (§8.2, AD-13)
+    EXPECT_EQ(view.materialized_row_count(), 0U);
+    EXPECT_EQ(view.first_row_index(), 0U);
+    EXPECT_EQ(view.row_node(0), nullptr);
 }

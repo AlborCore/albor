@@ -273,6 +273,8 @@ TEST(ElementCatalog, HoldsEveryBuiltinWidget) {
     EXPECT_TRUE(catalog.find("Slider") != nullptr);
     EXPECT_TRUE(catalog.find("CheckBox") != nullptr);
     EXPECT_TRUE(catalog.find("Canvas") != nullptr);
+    EXPECT_TRUE(catalog.find("ScrollView") != nullptr);
+    EXPECT_TRUE(catalog.find("ListBox") != nullptr);
 }
 
 TEST(ElementCatalog, ReportsAnAbsentElementType) {
@@ -291,6 +293,7 @@ TEST(ElementCatalog, HoldsTheContainersAndTheLeavesApart) {
     EXPECT_TRUE(catalog.find("Padding")->accepts_children);
     EXPECT_TRUE(catalog.find("Stack")->accepts_children);
     EXPECT_TRUE(catalog.find("Grid")->accepts_children);
+    EXPECT_TRUE(catalog.find("ListBox")->accepts_children);
     EXPECT_FALSE(catalog.find("Label")->accepts_children);
     EXPECT_FALSE(catalog.find("Button")->accepts_children);
     EXPECT_FALSE(catalog.find("Slider")->accepts_children);
@@ -317,8 +320,36 @@ TEST(ElementCatalog, ExposesTheHandledSignals) {
     EXPECT_TRUE(catalog.find("Button")->find_signal("clicked") != nullptr);
     EXPECT_TRUE(catalog.find("Slider")->find_signal("changed") != nullptr);
     EXPECT_TRUE(catalog.find("CheckBox")->find_signal("toggled") != nullptr);
+    EXPECT_TRUE(catalog.find("ListBox")->find_signal("selection_changed") != nullptr);
     EXPECT_TRUE(catalog.find("Label")->find_signal("clicked") == nullptr);
     EXPECT_TRUE(catalog.find("Column")->find_signal("clicked") == nullptr);
+}
+
+TEST(ElementCatalog, ExposesTheListBoxProperties) {
+    // arrange, act
+    const ElementCatalog catalog = ElementCatalog::with_builtins();
+    // assert
+    ASSERT_TRUE(catalog.find("ListBox") != nullptr);
+    EXPECT_TRUE(catalog.find("ListBox")->find_property("selected") != nullptr);
+    EXPECT_TRUE(catalog.find("ListBox")->find_property("row_height") != nullptr);
+    EXPECT_TRUE(catalog.find("ListBox")->find_property("scrollbar") != nullptr);
+    EXPECT_TRUE(catalog.find("ListBox")->find_property("disabled") != nullptr);
+    EXPECT_TRUE(catalog.find("ListBox")->find_property("viewport_width") != nullptr);
+    EXPECT_TRUE(catalog.find("ListBox")->find_property("viewport_height") != nullptr);
+    EXPECT_TRUE(catalog.find("ListBox")->find_property("overscan") != nullptr);
+    EXPECT_TRUE(catalog.find("ListBox")->find_property("selected")->type.is(TypeKind::Int));
+    EXPECT_TRUE(catalog.find("ListBox")->find_property("viewport_height")->scaled_by_density);
+}
+
+TEST(ElementCatalog, ExposesTheListBoxActivatedSignal) {
+    // arrange, act
+    const ElementCatalog catalog = ElementCatalog::with_builtins();
+    // assert
+    const ElementSignal* activated = catalog.find("ListBox")->find_signal("activated");
+    ASSERT_TRUE(activated != nullptr);
+    ASSERT_EQ(activated->parameter_types.size(), 1U);
+    EXPECT_TRUE(activated->parameter_types.at(0).is(TypeKind::String));
+    EXPECT_EQ(activated->parameter_names.at(0), "key");
 }
 
 TEST(ElementCatalog, AddsANativeTypeFromAManifest) {
@@ -331,14 +362,14 @@ TEST(ElementCatalog, AddsANativeTypeFromAManifest) {
     ASSERT_TRUE(catalog.find("WaveformView") != nullptr);
     EXPECT_TRUE(catalog.find("WaveformView")->find_property("line_color") != nullptr);
     EXPECT_TRUE(catalog.find("WaveformView")->find_signal("selection_changed") != nullptr);
-    EXPECT_EQ(catalog.types().size(), 13U);
+    EXPECT_EQ(catalog.types().size(), 14U);
 }
 
 TEST(ElementCatalog, StartsWithNothingBeyondTheBuiltins) {
     // arrange, act
     const ElementCatalog catalog = ElementCatalog::with_builtins();
     // assert
-    EXPECT_EQ(catalog.types().size(), 12U);
+    EXPECT_EQ(catalog.types().size(), 13U);
 }
 
 TEST(ElementCatalog, RefusesToShadowABuiltinWithAManifest) {
@@ -348,7 +379,7 @@ TEST(ElementCatalog, RefusesToShadowABuiltinWithAManifest) {
     catalog.add_native(ElementType{.name = "Label", .properties = {}, .signals = {}, .accepts_children = true});
     // assert
     EXPECT_FALSE(catalog.find("Label")->accepts_children);
-    EXPECT_EQ(catalog.types().size(), 12U);
+    EXPECT_EQ(catalog.types().size(), 13U);
 }
 
 TEST(ElementCatalog, RefusesToRedefineANativeDataType) {

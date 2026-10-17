@@ -28,6 +28,8 @@ namespace
             return NSAccessibilitySliderRole;
         case albor::SemanticRole::ScrollView:
             return NSAccessibilityScrollAreaRole;
+        case albor::SemanticRole::List:
+            return NSAccessibilityListRole;
         case albor::SemanticRole::Canvas:
         case albor::SemanticRole::Group:
         case albor::SemanticRole::ListItem:
@@ -136,6 +138,14 @@ typedef NSArray* (^AlborAccessibilityChildren)(std::size_t);
     const Published* published = static_cast<const Published*>(self.publication);
     // a node with no state is not focused, which is the quiet default (§10.2)
     return published == nullptr ? NO : published->node.focused();
+}
+
+// override: the selected flag is the state a list announces for its chosen row (§10.1)
+- (BOOL)isAccessibilitySelected {
+    // the publication this element names is the one the bridge assigned (§10.2)
+    const Published* published = static_cast<const Published*>(self.publication);
+    // a node with no state is not selected, which is the quiet default (§10.2)
+    return published == nullptr ? NO : published->node.selected();
 }
 
 // override: the value of a checkable or editable node, which the application kit reads as a string (§10.1)

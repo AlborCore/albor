@@ -1322,6 +1322,89 @@ component LogPanel {
     EXPECT_TRUE(contains(file_named(files, "log_panel.cpp").content, "#include \"widgets/scroll_view.h\""));
 }
 
+TEST(Codegen, AListBoxIsConstructedAndItsPropertiesAreApplied) {
+    // arrange a list whose selection and row metrics and bar policy and state the author declared (§11.1)
+    const std::string source = R"(component C {
+    ListBox {
+        selected: 3;
+        row_height: 24px;
+        scrollbar: Scrollbar.off;
+        overscan: 40px;
+        disabled: true;
+    }
+})";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert the list is one of the engine widgets and owns its header (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<ListBox>(engine)"));
+    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/list_box.h\""));
+    // assert each run reaches the widget through the setter the catalog names (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "set_selected_index("));
+    EXPECT_TRUE(contains(cpp.content, "set_row_height("));
+    EXPECT_TRUE(contains(cpp.content, "set_scrollbar_visibility(albor::ScrollbarVisibility::AlwaysOff)"));
+    EXPECT_TRUE(contains(cpp.content, "set_overscan("));
+    EXPECT_TRUE(contains(cpp.content, "set_disabled(true)"));
+}
+
+TEST(Codegen, AListBoxAppliesItsViewportPairAsOneExtent) {
+    // arrange the extent written as two halves, which is what a responsive list writes (§8.2)
+    const std::string_view source = R"(
+component Inbox {
+    inout property<float> wide;
+    inout property<float> tall;
+    ListBox {
+        viewport_width: wide;
+        viewport_height: tall;
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const std::string unit = file_named(files, "inbox.cpp").content;
+    // assert each half binds over its source, so the viewport follows the form (§13.3, §8.2)
+    EXPECT_TRUE(contains(unit, "m_sink_0_viewport_width.bind_static("));
+    EXPECT_TRUE(contains(unit, "m_sink_0_viewport_height.bind_static("));
+    // assert the evaluator updates the track and re-applies the pair onto the list (§11.3)
+    EXPECT_TRUE(contains(unit, "self->m_viewport_w_0 = value;"));
+    EXPECT_TRUE(contains(unit, "set_viewport_extent(Size{self->m_viewport_w_0, self->m_viewport_h_0})"));
+}
+
+TEST(Codegen, AListBoxWiresItsActivationSignal) {
+    // arrange a list whose activation a component observes (§11.1, §18.1)
+    const std::string source = R"(component C {
+    inout property<bool> opened;
+    ListBox {
+        on_activated: {
+            opened = true;
+        }
+    }
+})";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert the handler installs with the activated key, which is what the body reads (§11.3, §18.1)
+    EXPECT_TRUE(contains(cpp.content, "set_on_activate([this](std::string key) { handle_"));
+    EXPECT_TRUE(contains(cpp.content, "handle_0_activated(void* raw, [[maybe_unused]] std::string key)"));
+}
+
+TEST(Codegen, AListBoxWiresItsSelectionSignal) {
+    // arrange a list whose selection a component observes (§11.1, §18.3)
+    const std::string source = R"(component C {
+    inout property<bool> picked: false;
+    ListBox {
+        on_selection_changed: {
+            picked = true;
+        }
+    }
+})";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert the handler installs on the widget, which is what a selection change calls (§11.3, §18.3)
+    EXPECT_TRUE(contains(cpp.content, "set_on_selection_changed([this]() { handle_"));
+}
+
 TEST(Codegen, AVirtualizedRepeatBorrowsStorageThatOutlivesTheEvaluator) {
     // arrange a repeat under a viewport, whose items come from a component property (§8.2, AD-13)
     const std::string source = R"(import task;
@@ -1361,6 +1444,39 @@ component LogPanel {
     EXPECT_TRUE(contains(unit, "self->m_repeat_0->set_items(self->m_repeat_items_0);"));
     // assert the rows are never pointed at the evaluator's local, which dies with the call (§8.2, AD-13)
     EXPECT_FALSE(contains(unit, "set_items(value)"));
+}
+
+TEST(Codegen, AListBoxWindowsItsRepeatIntoItsInternalViewport) {
+    // arrange a list whose rows the author repeats, which is what a declarative list is (§11.1, §18.3)
+    const std::string source = R"(import task;
+component Inbox {
+    inout property<vector<Task>> items;
+    ListBox {
+        row_height: 24px;
+        Repeat(task in items) {
+            Label { text: task.title; }
+        }
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // the record carries the key a row is matched on, which the manifest declares (§18.1, AD-13)
+    catalog.add_record(RecordType{.name = "Task", .fields = {RecordFieldType{.name = "id", .type = scalar(TypeKind::String), .is_key = true}, RecordFieldType{.name = "title", .type = scalar(TypeKind::String), .is_key = false}}});
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    ASSERT_EQ(diagnostics.count(), 0U);
+    const std::string unit = file_named(files, "inbox.cpp").content;
+    // assert the repeat is windowed, which is what virtualization requires of the list (§8.2, AD-13)
+    EXPECT_TRUE(contains(unit, "rows_0->set_row_extent(m_node_0->row_height())"));
+    // assert the rows are adopted into the internal viewport, not hung beside it (§8.2, §18.3)
+    EXPECT_TRUE(contains(unit, "m_node_0->scroll_view().add_child(std::move(rows_0));"));
+    EXPECT_TRUE(contains(unit, "static_cast<albor::model::ScrollableRows<Task>*>(m_node_0->scroll_view().child_at(0));"));
+    // assert the list is told its row identity and count, which is what its selection navigates (§18.1, §18.3)
+    EXPECT_TRUE(contains(unit, "m_node_0->set_key_reader(&Impl::key_at_0, this);"));
+    EXPECT_TRUE(contains(unit, "m_node_0->set_item_count(m_repeat_items_0.size());"));
+    // assert the index reader exists and answers with the key of the item at that index (§18.1, AD-13)
+    EXPECT_TRUE(contains(unit, "Impl::key_at_0(void* raw, std::size_t index)"));
+    EXPECT_TRUE(contains(unit, "return Impl::key_of_0(raw, self->m_repeat_items_0[index]);"));
 }
 
 TEST(Codegen, ABoundViewportExtentBindsAndReappliesThePair) {

@@ -1,0 +1,6 @@
+// a simple todo record for the widget form demo (§11.2, AD-17, AD-13)
+
+record Todo {
+    key: string;
+    title: string;
+}
