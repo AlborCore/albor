@@ -62,6 +62,9 @@ namespace albor::harfbuzz
         // resolve the platform typeface, which only the transitional path engine needs to draw (§9.1, AD-28)
         void resolve_typeface(std::string_view family_name);
 
+        // shape the byte range [start, end) into one line, which a wrap builds from ranges (§9.1)
+        [[nodiscard]] ShapedRun::Line shape_line(std::string_view text, std::size_t start, std::size_t end, float font_size) const;
+
         // the opaque harfbuzz blob, face and font state, so no shaping type leaves this header (§3.5, AD-19)
         struct HarfbuzzEngineState;
 

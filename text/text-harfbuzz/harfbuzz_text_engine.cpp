@@ -1,5 +1,7 @@
 #include "text/text-harfbuzz/harfbuzz_text_engine.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <fstream>
 #include <iterator>
@@ -9,6 +11,8 @@
 
 #include <hb-ot.h>
 #include <hb.h>
+#include <unicode/ubrk.h>
+#include <unicode/utext.h>
 
 #include "render/font_handle.h"
 #include "render/shaped_run.h"
@@ -331,36 +335,94 @@ namespace albor::harfbuzz
         return m_state->resolver != nullptr && m_state->resolver->typeface() != nullptr;
     }
 
-    TextLayout HarfbuzzTextEngine::measure(std::string_view text, float max_width) const {
-        // an engine with no face measures nothing, because there is nothing to shape with (§9.1)
-        if (!ready())
-            return TextLayout{};
-        // the default size is what a call site that does not name one gets (§9.1)
-        return measure(text, max_width, DEFAULT_FONT_SIZE);
-    }
+    namespace
+    {
+        // the fixed locale the line breaker uses, because a per platform locale would break identity (§15, AD-34)
+        constexpr char LINE_BREAK_LOCALE[] = "en";
 
-    TextLayout HarfbuzzTextEngine::measure(std::string_view text, float max_width, float font_size) const {
-        // this engine does not wrap yet, so the ceiling is read and reported rather than ignored silently (§9.1)
-        const float ceiling = max_width > 0.0f ? max_width : UNBOUNDED_WIDTH;
-        // a ceiling of no pixels cannot bound anything, so the run is measured unbounded (§9.1)
-        if (ceiling <= 0.0f)
-            return TextLayout{};
-        // an engine with no face measures nothing, because there is nothing to shape with (§9.1)
-        if (!ready())
-            return TextLayout{};
-        // an empty string shapes no line, which is what an empty layout means (§6.2)
-        if (text.empty())
-            return TextLayout{};
-        // a size of no pixels cannot be shaped at, so the run measures nothing (§9.1)
-        if (font_size <= 0.0f)
-            return TextLayout{};
-        // the buffer carries the run and its properties, and is destroyed by the unique pointer (§9.1)
+        // the byte offsets a line may break at and whether each is mandatory, which ICU answers over the utf8 text (§9.1)
+        std::vector<std::pair<std::size_t, bool>> line_break_offsets(std::string_view text) {
+            // the offsets gathered so far, which always include the end of the text (§9.1)
+            std::vector<std::pair<std::size_t, bool>> offsets;
+            // the status every ICU call writes and the next call reads (§9.1)
+            UErrorCode status = U_ZERO_ERROR;
+            // the line breaker opens over no text yet, because the view is attached next (§9.1)
+            UBreakIterator* breaker = ubrk_open(UBRK_LINE, LINE_BREAK_LOCALE, nullptr, 0, &status);
+            // a breaker that did not open yields no offset, which the caller reads as one line (§9.1)
+            if (U_FAILURE(status) || breaker == nullptr)
+                return offsets;
+            // the view exposes the utf8 bytes with utf8 native indices, so a break is already a byte offset (§9.1)
+            UText* view = utext_openUTF8(nullptr, text.data(), static_cast<int64_t>(text.size()), &status);
+            // a view that did not open leaves the breaker unused, so both are released (§9.1)
+            if (U_FAILURE(status) || view == nullptr) {
+                // the breaker is closed because no view will walk it (§9.1)
+                ubrk_close(breaker);
+                return offsets;
+            }
+            // the breaker walks the view's native indices, which is what makes every break a byte offset (§9.1)
+            ubrk_setUText(breaker, view, &status);
+            // the walk collects every offset only when the view attached cleanly (§9.1)
+            if (U_SUCCESS(status)) {
+                for (int32_t position = ubrk_first(breaker); position != UBRK_DONE; position = ubrk_next(breaker)) {
+                    // a hard break is mandatory, which ends a row even when no ceiling forces one (§9.1)
+                    const bool hard = ubrk_getRuleStatus(breaker) == UBRK_LINE_HARD;
+                    // the offset and its mandatory flag join the walk (§9.1)
+                    offsets.emplace_back(static_cast<std::size_t>(position), hard);
+                }
+            }
+            // the view is dropped first, because the breaker holds a pointer to it (§9.1)
+            utext_close(view);
+            // the breaker is dropped once its walk is done (§9.1)
+            ubrk_close(breaker);
+            return offsets;
+        }
+
+        // the byte a row's glyphs stop at, which drops the break character so it is never shaped as a glyph (§9.1)
+        std::size_t trim_row_end(std::string_view text, std::size_t start, std::size_t end, bool strip_spaces) {
+            // the trimmed bound walks back from the break the row was ended at (§9.1)
+            std::size_t trimmed = end;
+            while (trimmed > start) {
+                // the byte under the bound decides whether it is shaved off (§9.1)
+                const char character = text[trimmed - 1];
+                // a newline is always dropped, because it is a break and not a glyph (§9.1)
+                const bool is_break = character == '\n' || character == '\r';
+                // a space is dropped only when the caller asked, because a soft wrap ends on one (§9.1)
+                const bool is_space = strip_spaces && (character == ' ' || character == '\t');
+                // a byte that is neither keeps the row as it is (§9.1)
+                if (!is_break && !is_space)
+                    break;
+                // the break or space byte is dropped from the glyph range (§9.1)
+                trimmed--;
+            }
+            return trimmed;
+        }
+    } // namespace
+
+    ShapedRun::Line HarfbuzzTextEngine::shape_line(std::string_view text, std::size_t start, std::size_t end, float font_size) const {
+        // the row carries the metrics of its line even when it holds no glyph, which a blank row needs (§9.1)
+        ShapedRun::Line line;
+        // an embedded run carries no typeface, because the renderer draws its glyphs as outlines (§15, AD-34)
+        line.font = m_state->resolver != nullptr ? FontHandle::from_object(m_state->resolver->typeface()) : FontHandle{};
+        // the baseline sits at the ascender, which is where every glyph of the line hangs from (§9.1)
+        line.origin = Point{.x = 0.0f, .y = m_state->ascender * font_size};
+        // the ascent of the line is the scaled ascender, which places the row's top (§9.1)
+        line.ascent = m_state->ascender * font_size;
+        // the descent is the scaled descender, reported positive because it is a distance (§9.1)
+        line.descent = -m_state->descender * font_size;
+        // the start byte places the row in the text, which a caret resolves against (§9.1)
+        line.start_byte = start;
+        // the end byte is where the row's glyphs stop, which is the next row's start (§9.1)
+        line.end_byte = end;
+        // a range that holds no byte shapes no glyph, so the empty row is returned with its metrics (§9.1)
+        if (end <= start)
+            return line;
+        // the buffer carries the row and its properties, and is destroyed by the unique pointer (§9.1)
         std::unique_ptr<hb_buffer_t, decltype(&hb_buffer_destroy)> buffer(hb_buffer_create(), &hb_buffer_destroy);
-        // a buffer that did not allocate shapes nothing, which an absent layout reports (§9.1)
+        // a buffer that did not allocate shapes nothing, so the row carries its metrics alone (§9.1)
         if (buffer == nullptr)
-            return TextLayout{};
-        // the text is added as utf8 and the script and direction are guessed from it, which is the shaping default (§9.1)
-        hb_buffer_add_utf8(buffer.get(), text.data(), static_cast<int>(text.size()), 0, -1);
+            return line;
+        // the row's bytes are added as utf8, and the script and direction are guessed from them (§9.1)
+        hb_buffer_add_utf8(buffer.get(), text.data() + start, static_cast<int>(end - start), 0, -1);
         // the guess fills in script, language and direction from the buffer's contents (§9.1)
         hb_buffer_guess_segment_properties(buffer.get());
         // the size is set in points because the font scales its own positions to it (§9.1, AD-27)
@@ -372,15 +434,9 @@ namespace albor::harfbuzz
         hb_glyph_info_t* glyphs = hb_buffer_get_glyph_infos(buffer.get(), &glyph_count);
         // the positions are read beside the glyphs, because one position describes one glyph (§9.1)
         hb_glyph_position_t* positions = hb_buffer_get_glyph_positions(buffer.get(), &glyph_count);
-        // a run with no glyphs measures nothing, which is what an empty layout means (§6.2)
+        // a row with no glyph keeps its metrics, which is what a blank row is (§9.1)
         if (glyph_count == 0 || glyphs == nullptr || positions == nullptr)
-            return TextLayout{};
-        // the line is the whole run, because this engine does not wrap yet (§9.1)
-        ShapedRun::Line line;
-        // an embedded run carries no typeface, because the renderer draws its glyphs as outlines (§15, AD-34)
-        line.font = m_state->resolver != nullptr ? FontHandle::from_object(m_state->resolver->typeface()) : FontHandle{};
-        // the baseline sits at the ascender, which is where every glyph of the line hangs from (§9.1)
-        line.origin = Point{.x = 0.0f, .y = m_state->ascender * font_size};
+            return line;
         // the advance is accumulated in design units, because harfbuzz reports positions in them (§9.1)
         float advance = 0.0f;
         // the glyphs are reserved, because the shaped output reports how many there are (§9.1)
@@ -392,35 +448,130 @@ namespace albor::harfbuzz
             const float offset_x = static_cast<float>(position.x_offset) / 64.0f;
             // the vertical offset is the same scale, and is rare but a diacritic needs it (§9.1)
             const float offset_y = static_cast<float>(position.y_offset) / 64.0f;
+            // the glyph carries the absolute byte it came from, which the row's start restores (§9.1)
+            const std::uint32_t cluster = glyphs[index].cluster + static_cast<std::uint32_t>(start);
             // the glyph is recorded where the pen currently sits, carrying the byte it came from (§9.1)
-            line.glyphs.push_back(ShapedGlyph{.id = glyphs[index].codepoint, .position = Point{.x = advance + offset_x, .y = -offset_y}, .cluster = glyphs[index].cluster});
+            line.glyphs.push_back(ShapedGlyph{.id = glyphs[index].codepoint, .position = Point{.x = advance + offset_x, .y = -offset_y}, .cluster = cluster});
             // the pen advances by this glyph's advance, which is what lays the next one out (§9.1)
             advance += static_cast<float>(position.x_advance) / 64.0f;
         }
         // the line's advance is where a caret stands past its last glyph (§9.1)
         line.width = advance;
-        // the ascent of the line is the scaled ascender, because one line carries the whole run (§9.1)
-        line.ascent = m_state->ascender * font_size;
-        // the descent is the scaled descender, reported positive because it is a distance (§9.1)
-        line.descent = -m_state->descender * font_size;
-        // the line begins at the first byte, because nothing precedes the only line of the run (§9.1)
-        line.start_byte = 0;
-        // the line ends at the end of the text, because one line holds all of it (§9.1)
-        line.end_byte = text.size();
-        // the lines join the run in reading order, which for one line is the one line (§9.1)
+        return line;
+    }
+
+    TextLayout HarfbuzzTextEngine::measure(std::string_view text, float max_width) const {
+        // an engine with no face measures nothing, because there is nothing to shape with (§9.1)
+        if (!ready())
+            return TextLayout{};
+        // the default size is what a call site that does not name one gets (§9.1)
+        return measure(text, max_width, DEFAULT_FONT_SIZE);
+    }
+
+    TextLayout HarfbuzzTextEngine::measure(std::string_view text, float max_width, float font_size) const {
+        // an engine with no face measures nothing, because there is nothing to shape with (§9.1)
+        if (!ready())
+            return TextLayout{};
+        // an empty string shapes no line, which is what an empty layout means (§6.2)
+        if (text.empty())
+            return TextLayout{};
+        // a size of no pixels cannot be shaped at, so the run measures nothing (§9.1)
+        if (font_size <= 0.0f)
+            return TextLayout{};
+        // the rows of the run, each of which the walk below stacks under the one before it (§8.2)
         std::vector<ShapedRun::Line> lines;
-        // the line joins the run by move, because it is already built (§9.1)
-        lines.push_back(std::move(line));
+        // the ceiling bounds the run only when the caller asked for one below the unbounded sentinel (§8.2)
+        const bool bounded = max_width > 0.0f && max_width < UNBOUNDED_WIDTH;
+        // the byte offsets a line may break at and whether each is mandatory, which ICU answers over the text (§9.1)
+        const std::vector<std::pair<std::size_t, bool>> offsets = line_break_offsets(text);
+        // the offset from the run origin the next row's baseline sits at, which stacks the rows (§8.2)
+        float pen_y = 0.0f;
+        // the greedy walk starts at the first byte and lays one row at a time until the text ends (§8.2)
+        std::size_t line_start = 0;
+        while (line_start < text.size()) {
+            // the furthest break that ends this row, which the walk below settles (§8.2)
+            std::size_t line_end = line_start;
+            if (!bounded) {
+                // an unbounded run ends only at a mandatory break, because no ceiling forces a soft one (§9.1)
+                for (const std::pair<std::size_t, bool>& offset : offsets) {
+                    // a break at or before the row's start cannot end it, so it is skipped (§8.2)
+                    if (offset.first <= line_start)
+                        continue;
+                    // the row ends at the break, and a mandatory one ends the search for this row (§9.1)
+                    line_end = offset.first;
+                    // a mandatory break ends the row even though nothing bounded it (§9.1)
+                    if (offset.second)
+                        break;
+                }
+            }
+            else {
+                // a bounded run ends at the furthest break whose glyphs still fit the ceiling (§8.2)
+                for (const std::pair<std::size_t, bool>& offset : offsets) {
+                    // a break at or before the row's start cannot end it, so it is skipped (§8.2)
+                    if (offset.first <= line_start)
+                        continue;
+                    // the candidate is measured over the glyphs it would draw, which drop its break byte (§8.2)
+                    const std::size_t probe_end = trim_row_end(text, line_start, offset.first, true);
+                    // the probe is the row the candidate would produce (§8.2)
+                    const ShapedRun::Line probe = shape_line(text, line_start, probe_end, font_size);
+                    // a probe that fits is kept, and the first is always kept so the walk always advances (§8.2)
+                    if (probe.width <= max_width || line_end == line_start) {
+                        line_end = offset.first;
+                        // a mandatory break ends the row here, even though the glyphs would fit further (§9.1)
+                        if (offset.second || probe.width > max_width)
+                            break;
+                    }
+                    else {
+                        // the first probe that overflows ends the row at the last break that fit (§8.2)
+                        break;
+                    }
+                }
+            }
+            // a row that still ends where it started falls back to the end, which cannot loop forever (§8.2)
+            if (line_end == line_start)
+                line_end = text.size();
+            // the row draws the glyphs before its break, which keeps a newline out of the run (§9.1)
+            const std::size_t content_end = trim_row_end(text, line_start, line_end, bounded);
+            // the settled row is shaped over its glyph range, because the break byte is not a glyph (§9.1)
+            ShapedRun::Line row = shape_line(text, line_start, content_end, font_size);
+            // the span ends at the break, so the next row starts where this one broke (§9.1)
+            row.end_byte = line_end;
+            // the row's baseline sits under every row before it, which stacks the rows down the run (§8.2)
+            row.origin.y += pen_y;
+            // the next row starts below this one, which is the sum of the heights so far (§8.2)
+            pen_y += row.ascent + row.descent;
+            // the row joins the run in reading order (§9.1)
+            lines.push_back(std::move(row));
+            // the walk resumes at the byte after this row's break (§8.2)
+            line_start = line_end;
+        }
+        // a run that produced no row measures nothing, which an absent layout reports (§6.2)
+        if (lines.empty())
+            return TextLayout{};
+        // the widest row decides the run's width, which a caller reserves room for (§8.2)
+        float widest = 0.0f;
+        // the rows stack, so their heights sum into the run's height (§8.2)
+        float total_height = 0.0f;
+        for (const ShapedRun::Line& line : lines) {
+            // the widest row is the one the run must reserve room for (§8.2)
+            widest = std::max(widest, line.width);
+            // each row adds its own ascent and descent to the run's height (§8.2)
+            total_height += line.ascent + line.descent;
+        }
+        // the first row's ascent places the run's origin, which a caller positions against (§9.1)
+        const float first_ascent = lines.front().ascent;
+        // the first row's descent is reported for the same reason (§9.1)
+        const float first_descent = lines.front().descent;
         // the shaped run is what the render stage replays verbatim (§9.1, AD-18)
         TextLayout layout;
-        // the run is built over its lines and the size it was shaped at (§9.1)
+        // the run is built over its rows and the size it was shaped at (§9.1)
         layout.run = ShapedRun::make(std::move(lines), font_size, m_state->font_hash, ShapeSource::Embedded);
-        // the width is the accumulated advance, which is the whole line because nothing wraps (§8.2)
-        layout.size = Size{.width = advance, .height = (m_state->ascender - m_state->descender) * font_size};
-        // the ascent is the scaled ascender, which a caller places content by (§9.1)
-        layout.ascent = m_state->ascender * font_size;
-        // the descent is the scaled descender, reported positive because it is a distance (§9.1)
-        layout.descent = -m_state->descender * font_size;
+        // the size is the widest row by the stacked height of every row (§8.2)
+        layout.size = Size{.width = widest, .height = total_height};
+        // the ascent is the first row's, which a caller places content by (§9.1)
+        layout.ascent = first_ascent;
+        // the descent is the first row's, reported positive because it is a distance (§9.1)
+        layout.descent = first_descent;
         // exit
         return layout;
     }

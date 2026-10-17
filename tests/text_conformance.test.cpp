@@ -813,3 +813,192 @@ TEST(EmbeddedTextCallerChecks, ThePipelineInstallsTheResolverAnApplicationGivesI
     // exit
     resources::FontRegistry::clear();
 }
+
+TEST(VendoredWrapChecks, AWrappedRunHasMoreThanOneRow) {
+    // arrange the carried fixture, which needs no host font, shaped at a narrow ceiling (§9.1, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act a long sentence is measured against a ceiling far below its unbounded width (§8.2)
+    const TextLayout layout = engine->measure("the quick brown fox jumps over the lazy dog", 80.0f, 20.0f);
+    // assert the text wrapped into rows rather than one line (§8.2)
+    ASSERT_NE(layout.run, nullptr);
+    EXPECT_GT(layout.run->lines().size(), 1u);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(VendoredWrapChecks, TheByteSpansOfAWrappedRunRiseWithoutOverlapping) {
+    // arrange the carried fixture, which the wrap walks the same way the skia oracle does (§9.1, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const std::string text = "the quick brown fox jumps over the lazy dog";
+    // act
+    const TextLayout layout = engine->measure(text, 80.0f, 20.0f);
+    ASSERT_NE(layout.run, nullptr);
+    // assert the rows tile the text without overlapping and end at its end (§9.1)
+    std::size_t previous_end = 0;
+    for (const ShapedRun::Line& line : layout.run->lines()) {
+        // each row starts exactly where the previous row ended, so the rows tile the text (§9.1)
+        EXPECT_EQ(line.start_byte, previous_end);
+        // a row always spans at least its break, so it is never empty of bytes (§9.1)
+        EXPECT_GT(line.end_byte, line.start_byte);
+        // the next row compares against this row's end (§9.1)
+        previous_end = line.end_byte;
+    }
+    // the last row ends where the text ends, so nothing is dropped (§9.1)
+    EXPECT_EQ(previous_end, text.size());
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(VendoredWrapChecks, EveryWrappedRowCarriesItsOwnBaseline) {
+    // arrange the carried fixture, whose rows each place their own baseline (§9.1, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act
+    const TextLayout layout = engine->measure("the quick brown fox jumps over the lazy dog", 80.0f, 20.0f);
+    ASSERT_NE(layout.run, nullptr);
+    // assert each row's baseline sits below the previous one, which is what stops rows overprinting (§8.2)
+    float previous_baseline = -1.0f;
+    for (const ShapedRun::Line& line : layout.run->lines()) {
+        // a row's baseline is strictly below the previous row's, so the rows stack down the run (§8.2)
+        EXPECT_GT(line.origin.y, previous_baseline);
+        // the next row compares against this row's baseline (§8.2)
+        previous_baseline = line.origin.y;
+    }
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(VendoredWrapChecks, AnUnboundedVendoredRunStaysOnOneLine) {
+    // arrange the carried fixture, measured with no ceiling so nothing forces a break (§9.1, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act
+    const TextLayout layout = engine->measure("the quick brown fox jumps over the lazy dog", 0.0f, 20.0f);
+    // assert an unbounded run is one line, which is what a call site that passes no width expects (§8.2)
+    ASSERT_NE(layout.run, nullptr);
+    EXPECT_EQ(layout.run->lines().size(), 1u);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(VendoredWrapChecks, AnExplicitNewlineStartsANewRow) {
+    // arrange the carried fixture, measured against a ceiling that also bounds the rows (§9.1, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act a mandatory break splits the run even though the text is short (§8.2)
+    const TextLayout layout = engine->measure("first\nsecond", 80.0f, 20.0f);
+    // assert the two lines became two rows, because a newline is a mandatory break (§8.2)
+    ASSERT_NE(layout.run, nullptr);
+    ASSERT_EQ(layout.run->lines().size(), 2u);
+    // assert the first row ends at the break and the second starts there (§9.1)
+    EXPECT_EQ(layout.run->lines()[0].start_byte, 0u);
+    EXPECT_EQ(layout.run->lines()[0].end_byte, 6u);
+    EXPECT_EQ(layout.run->lines()[1].start_byte, 6u);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(VendoredWrapChecks, AHardBreakIsNotShapedAsAGlyph) {
+    // arrange the carried fixture, whose hard break must never become a tofu box in the run (§9.1, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act a run ending in a newline is measured, where the newline is a break and not content (§8.2)
+    const TextLayout layout = engine->measure("first\n", 80.0f, 20.0f);
+    ASSERT_NE(layout.run, nullptr);
+    ASSERT_FALSE(layout.run->lines().empty());
+    // assert the row's glyphs cover only the five letters, because the newline is not shaped (§9.1)
+    const ShapedRun::Line& first = layout.run->lines().front();
+    EXPECT_EQ(first.start_byte, 0u);
+    EXPECT_EQ(first.end_byte, 6u);
+    // the word "first" carries exactly five glyphs, so no glyph stands for the break (§9.1)
+    EXPECT_EQ(first.glyphs.size(), 5u);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(VendoredWrapChecks, AConsecutiveBreakLeavesABlankRow) {
+    // arrange the carried fixture, whose two adjacent newlines must leave an empty row between (§9.1, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act a run with a blank line between two letters is measured (§8.2)
+    const TextLayout layout = engine->measure("a\n\nb", 80.0f, 20.0f);
+    ASSERT_NE(layout.run, nullptr);
+    // assert three rows, where the middle one is blank because the two breaks meet (§9.1)
+    ASSERT_EQ(layout.run->lines().size(), 3u);
+    EXPECT_TRUE(layout.run->lines()[1].glyphs.empty());
+    // the blank row still carries a baseline below the first, which gives it a height (§9.1)
+    EXPECT_GT(layout.run->lines()[1].origin.y, layout.run->lines()[0].origin.y);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(VendoredWrapChecks, EveryWrappedRowHonoursTheCeiling) {
+    // arrange the carried fixture measured against a ceiling the words must fit under (§9.1, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act a sentence of short words is wrapped, so every row can fit the ceiling (§8.2)
+    const TextLayout layout = engine->measure("the quick brown fox jumps over the lazy dog", 80.0f, 20.0f);
+    ASSERT_NE(layout.run, nullptr);
+    // assert no row exceeds the ceiling, because a wrap that ignored it would still split the text (§8.2)
+    for (const ShapedRun::Line& line : layout.run->lines())
+        EXPECT_LE(line.width, 80.0f);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(VendoredWrapChecks, AnUnboundedRunStillBreaksAtANewline) {
+    // arrange the carried fixture measured with no ceiling, where only a mandatory break can end a row (§9.1, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act a run with one newline is measured unbounded (§8.2)
+    const TextLayout layout = engine->measure("first\nsecond", 0.0f, 20.0f);
+    ASSERT_NE(layout.run, nullptr);
+    // assert the newline still splits the run, because a hard break does not need a ceiling (§9.1)
+    EXPECT_EQ(layout.run->lines().size(), 2u);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(VendoredWrapChecks, BothEnginesWrapIntoTheSameNumberOfRows) {
+    // arrange the vendored engine and the skia oracle on the same family, which both must resolve (§15, AD-25)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> vendored = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    SkiaTextEngine oracle;
+    ASSERT_NE(vendored, nullptr);
+    const std::string text = "the quick brown fox jumps over the lazy dog";
+    // act both wrap the same text against the same ceiling, which AD-25 asks them to agree on (§8.2, AD-25)
+    const TextLayout vendored_layout = vendored->measure(text, 120.0f, 20.0f);
+    const TextLayout oracle_layout = oracle.measure(text, 120.0f, 20.0f);
+    ASSERT_NE(vendored_layout.run, nullptr);
+    ASSERT_NE(oracle_layout.run, nullptr);
+    // assert the row counts agree, which is the observable a wrapped layout is judged on (§16, AD-25)
+    EXPECT_EQ(vendored_layout.run->lines().size(), oracle_layout.run->lines().size());
+    // assert both rows sets cover the whole text, so neither drops or duplicates a byte (§9.1)
+    EXPECT_EQ(vendored_layout.run->lines().back().end_byte, text.size());
+    EXPECT_EQ(oracle_layout.run->lines().back().end_byte, text.size());
+    // exit
+    resources::FontRegistry::clear();
+}

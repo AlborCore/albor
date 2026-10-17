@@ -6,6 +6,9 @@
 # freetype stays installed because this baseline's harfbuzz config find_dependency's it, though no source here links it
 find_package(harfbuzz CONFIG REQUIRED)
 
+# the line breaker is ICU's, which is the shaper's own unicode dependency and the fixed one for identity (AD-34)
+find_package(ICU REQUIRED COMPONENTS uc i18n)
+
 # the engine issues the typeface the renderer draws with, which this skia version builds through its font manager (§9.1, AD-28)
 
 # the skia headers self include as "skia/core/...", so the port needs the directory above include/skia as a root
@@ -37,7 +40,7 @@ target_include_directories(albor-text-harfbuzz SYSTEM PRIVATE ${ALBOR_SKIA_INCLU
 #
 # the engine resolves and reports fonts through the registry, because a run is keyed on the content
 # hash of its bytes and a backend with no platform font access loads from the registry (§15, AD-34)
-target_link_libraries(albor-text-harfbuzz PUBLIC albor-text PRIVATE harfbuzz::harfbuzz albor-skia albor-resources)
+target_link_libraries(albor-text-harfbuzz PUBLIC albor-text PRIVATE harfbuzz::harfbuzz ICU::uc ICU::i18n albor-skia albor-resources)
 
 # the resolver reaches core text, which is the platform typeface source this engine draws from (§9.1, AD-28)
 if(APPLE)
