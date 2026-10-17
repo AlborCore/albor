@@ -36,14 +36,15 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          key: vcpkg-coverage-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}-${{ github.run_id }}
           restore-keys: |
-            vcpkg-${{ runner.os }}-
+            vcpkg-coverage-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}-
+            vcpkg-coverage-${{ runner.os }}-
 
       - name: restore the ccache directory
         uses: actions/cache@v5
         with:
-          path: .ccache
+          path: ${{ github.workspace }}/.ccache
           key: ccache-coverage-${{ runner.os }}-${{ github.sha }}
           restore-keys: |
             ccache-coverage-${{ runner.os }}-
@@ -52,11 +53,7 @@ jobs:
         run: cmake --preset coverage
 
       - name: build the instrumented tree
-        run: |
-          # a full build rather than --target albor-tests: albor-preview carries its units through
-          # $<TARGET_OBJECTS:>, which puts the objects on the test link line without a rule to build
-          # them, so the target alone fails on a clean tree where an incremental local tree passes
-          cmake --build --preset coverage --parallel 4
+        run: cmake --build --preset coverage --parallel 4
 
       - name: run the unit tests
         working-directory: .build-coverage/tests
