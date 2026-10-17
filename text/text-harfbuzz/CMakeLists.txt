@@ -1,9 +1,10 @@
 # the vendored text engine that shapes with harfbuzz instead of a renderer bundled shaper (§9.1, §3.2)
 
-# the shaper and the font reader are discovered here so their include roots are known, but they enter a link line
-# through the shared carrier alone, because skparagraph already carries both archives (AD-28)
+# the shaper is discovered here so its include root and archive are named explicitly, because the engine
+# shapes and draws through harfbuzz alone and no longer relies on a renderer carrying the archive (AD-28, AD-34)
+#
+# freetype stays installed because this baseline's harfbuzz config find_dependency's it, though no source here links it
 find_package(harfbuzz CONFIG REQUIRED)
-find_package(freetype CONFIG REQUIRED)
 
 # the engine issues the typeface the renderer draws with, which this skia version builds through its font manager (§9.1, AD-28)
 
@@ -16,7 +17,7 @@ else()
     string(REGEX REPLACE "/skia$" "" ALBOR_SKIA_INCLUDE_ROOT "${ALBOR_SKIA_INCLUDE_ROOT}")
 endif()
 
-# gather cpp sources, which reach harfbuzz and freetype only and therefore build everywhere (§3.5, AD-05)
+# gather cpp sources, which reach harfbuzz only and therefore build everywhere (§3.5, AD-05)
 file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 
 # the typeface resolver reaches the platform font manager, so the .macos infix marks the one file that is not portable
@@ -32,11 +33,11 @@ target_compile_features(albor-text-harfbuzz PUBLIC cxx_std_23)
 # the third party headers are consumed as system headers, because their warnings are not the framework's (§3.5)
 target_include_directories(albor-text-harfbuzz SYSTEM PRIVATE ${ALBOR_SKIA_INCLUDE_ROOT} ${HARFBUZZ_INCLUDE_DIRS})
 
-# the engine shapes with harfbuzz over a freetype face, and issues the typeface the renderer draws with (§9.1, AD-28)
+# the engine shapes and draws through harfbuzz over the bytes it carries, and reaches the registry for them (§9.1, AD-34)
 #
 # the engine resolves and reports fonts through the registry, because a run is keyed on the content
 # hash of its bytes and a backend with no platform font access loads from the registry (§15, AD-34)
-target_link_libraries(albor-text-harfbuzz PUBLIC albor-text PRIVATE albor-skia albor-resources)
+target_link_libraries(albor-text-harfbuzz PUBLIC albor-text PRIVATE harfbuzz::harfbuzz albor-skia albor-resources)
 
 # the resolver reaches core text, which is the platform typeface source this engine draws from (§9.1, AD-28)
 if(APPLE)

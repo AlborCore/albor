@@ -28,6 +28,9 @@ namespace albor
         SkiaTextEngine(SkiaTextEngine&&) = delete;
         SkiaTextEngine& operator=(SkiaTextEngine&&) = delete;
 
+        // a derived measure declaration would hide the base overloads, so the base set is brought in here (§9.1)
+        using TextEngine::measure;
+
         // override: measure a run at the default font size (§9.1)
         [[nodiscard]] TextLayout measure(std::string_view text, float max_width) const override;
 

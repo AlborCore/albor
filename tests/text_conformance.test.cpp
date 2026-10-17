@@ -202,6 +202,85 @@ TEST(DualEngineConformanceChecks, AnUnknownFamilyLeavesTheEngineUnusable) {
     EXPECT_EQ(engine, nullptr);
 }
 
+TEST(DualEngineConformanceChecks, ANonFontIsRefusedRatherThanHalfBuilt) {
+    // arrange the registry carries bytes that name no face, which is the shape of a corrupt build (§9.1)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(resources::EmbeddedFont{.family = "AlborGarbage", .content_hash = 0, .bytes = {1, 2, 3, 4, 5, 6, 7, 8}});
+    // act an engine is built over bytes no face can read (§9.1)
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded("AlborGarbage");
+    // assert the engine is refused, because a face with no glyph shapes nothing and must not be half built (§9.1)
+    EXPECT_EQ(engine, nullptr);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(DualEngineConformanceChecks, ADefaultSpecMeasuresAsTheSizeOnlyOverload) {
+    // arrange an engine that shapes real text, which the two overloads must measure identically (§9.1)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH, FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act the same run is measured with a size only and with a default font selection (§9.1, AD-34)
+    const TextLayout plain = engine->measure("Albor", 0.0f, 16.0f);
+    const TextLayout with_spec = engine->measure("Albor", 0.0f, 16.0f, FontSpec{});
+    // assert the default selection forwards exactly, so the overload changed no measurement (§9.1)
+    ASSERT_NE(plain.run, nullptr);
+    ASSERT_NE(with_spec.run, nullptr);
+    EXPECT_EQ(*plain.run, *with_spec.run);
+    EXPECT_EQ(plain.size, with_spec.size);
+}
+
+TEST(DualEngineConformanceChecks, ABackendPublishesWhetherItResolvesAFontSelection) {
+    // arrange an engine over the carried font, which does not resolve a family beyond its own face yet (§9.1)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH, FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act
+    const bool resolves = engine->resolves_font_selection();
+    // assert the limitation is published, so no caller passes a family and silently gets the default face (§15)
+    EXPECT_FALSE(resolves);
+}
+
+TEST(DualEngineConformanceChecks, ANonDefaultSpecCurrentlyMeasuresAsTheDefaultFace) {
+    // arrange an engine that has not learned to resolve a family, which the current contract must state plainly (§9.1)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH, FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act a run is measured once with no selection and once with a family and weight the backend cannot resolve (§9.1)
+    const TextLayout plain = engine->measure("Albor", 0.0f, 16.0f);
+    const TextLayout asked = engine->measure("Albor", 0.0f, 16.0f, FontSpec{.family = "Inter", .weight = FontWeight::Bold});
+    // assert the current limitation is pinned, so a backend that resolves a family updates this test (§9.1)
+    ASSERT_NE(plain.run, nullptr);
+    ASSERT_NE(asked.run, nullptr);
+    EXPECT_EQ(*plain.run, *asked.run);
+}
+
+TEST(EmbeddedFontChecks, TheOflFixtureIsPresentAndIdentifiedByItsBytes) {
+    // arrange the test font the tree carries, which gives the suites a font no host has to supply (§15, AD-34, #92)
+    const resources::EmbeddedFont fixture = make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH);
+    // assert the fixture carries a real sfnt, which a text file renamed to ttf would not (§9.1)
+    ASSERT_GE(fixture.bytes.size(), 4u);
+    EXPECT_EQ(fixture.bytes[0], 0x00u);
+    EXPECT_EQ(fixture.bytes[1], 0x01u);
+    EXPECT_EQ(fixture.bytes[2], 0x00u);
+    EXPECT_EQ(fixture.bytes[3], 0x00u);
+    // act the same bytes are registered under two names, which is what identifies a font by content (§15, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(fixture);
+    resources::FontRegistry::register_font(make_embedded_font("AlborFixtureAlias", ALBOR_TEST_FONT_PATH));
+    // assert the two names resolve and share one identity, because identity is the bytes (§15, AD-34)
+    const resources::EmbeddedFont* named = resources::FontRegistry::find_family(ALBOR_TEST_FONT_FAMILY);
+    const resources::EmbeddedFont* alias = resources::FontRegistry::find_family("AlborFixtureAlias");
+    ASSERT_NE(named, nullptr);
+    ASSERT_NE(alias, nullptr);
+    EXPECT_EQ(named->content_hash, alias->content_hash);
+    EXPECT_NE(named->content_hash, 0u);
+    // exit
+    resources::FontRegistry::clear();
+}
+
 TEST(DualEngineConformanceChecks, TheOracleRunIsDrawable) {
     // arrange the oracle issues a typeface and so draws (§9.1, AD-28)
     SkiaTextEngine oracle;
@@ -450,6 +529,27 @@ TEST(GlyphOutlineChecks, ACurveGlyphIsTessellatedRatherThanSampled) {
     EXPECT_LT(widest_gap, glyph_width * 0.2f);
     // exit
     resources::FontRegistry::clear();
+}
+
+TEST(GlyphOutlineChecks, ACubicOutlineIsTessellated) {
+    // arrange a cff flavored face, whose curves are cubics rather than the conics a truetype face reports (§6.4)
+    std::ifstream probe("/System/Library/Fonts/Supplemental/STIXGeneral.otf", std::ios::binary);
+    // a host without the face cannot exercise the cubic walk, which is reported rather than silently passing (§15)
+    if (!probe.good())
+        GTEST_SKIP() << "no cff conformance font on this host";
+    // the engine is built over the face and the family the platform resolves for drawing (§9.1, AD-28)
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create("/System/Library/Fonts/Supplemental/STIXGeneral.otf", "STIXGeneral");
+    // a family the platform cannot resolve leaves no engine, which is reported rather than passing (§9.1)
+    if (engine == nullptr)
+        GTEST_SKIP() << "the cff conformance family did not resolve";
+    const TextLayout layout = engine->measure("o", 0.0f, 100.0f);
+    ASSERT_NE(layout.run, nullptr);
+    ASSERT_GT(layout.run->glyph_count(), 0u);
+    // act the round letter is walked, which is where a cubic is reported and flattened by the fixed segment count (§6.4)
+    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 100.0f);
+    // assert the cubic path produced a tessellated shape rather than nothing, which pins the cubic callback (§6.4, §15)
+    ASSERT_FALSE(outline.empty());
+    EXPECT_GT(outline.size(), 32u);
 }
 
 TEST(EmbeddedTextDrawChecks, AnEmbeddedRunRecordsOneOutlinePerGlyph) {

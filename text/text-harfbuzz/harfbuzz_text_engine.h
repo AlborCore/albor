@@ -34,6 +34,9 @@ namespace albor::harfbuzz
         HarfbuzzTextEngine(HarfbuzzTextEngine&&) = delete;
         HarfbuzzTextEngine& operator=(HarfbuzzTextEngine&&) = delete;
 
+        // a derived measure declaration would hide the base overloads, so the base set is brought in here (§9.1)
+        using TextEngine::measure;
+
         // override: measure at the default font size (§9.1)
         [[nodiscard]] TextLayout measure(std::string_view text, float max_width) const override;
 
@@ -56,7 +59,7 @@ namespace albor::harfbuzz
         // bring the engine up over bytes and then over a family, because both sources load the same face (§9.1)
         void load(const std::uint8_t* font_bytes, std::size_t byte_count, std::string_view family_name);
 
-        // the opaque freetype, harfbuzz and resolver state, so that no shaping type leaves this header (§3.5, AD-19)
+        // the opaque harfbuzz blob, face and font state, so no shaping type leaves this header (§3.5, AD-19)
         struct HarfbuzzEngineState;
 
         // the loaded state, which the engine owns for its whole life (§9.1)

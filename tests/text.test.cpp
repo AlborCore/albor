@@ -1060,3 +1060,16 @@ TEST(SkiaTextEngineChecks, AWrappedRowIsStillOneRowAfterTheRewrite) {
     }
     EXPECT_EQ(previous_end, text.size());
 }
+
+TEST(SkiaTextEngineChecks, ADefaultFontSelectionMeasuresAsTheSizeOnlyOverload) {
+    // arrange an engine that shapes a run at one size, where both overloads must measure identically (§9.1)
+    SkiaTextEngine engine;
+    // act the same run is measured with a size only and with a default font selection (§9.1, AD-34)
+    const TextLayout plain = engine.measure("Albor", 0.0f, 16.0f);
+    const TextLayout with_spec = engine.measure("Albor", 0.0f, 16.0f, FontSpec{});
+    // assert the default selection forwards exactly, glyphs and extents alike, so nothing changed (§9.1)
+    ASSERT_NE(plain.run, nullptr);
+    ASSERT_NE(with_spec.run, nullptr);
+    EXPECT_EQ(*plain.run, *with_spec.run);
+    EXPECT_EQ(plain, with_spec);
+}

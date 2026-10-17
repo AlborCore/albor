@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include "render/text_layout.h"
+#include "text/font_spec.h"
 
 namespace albor
 {
@@ -19,6 +20,16 @@ namespace albor
 
         // measure a run at an explicit font size, which the standard widgets use for their label (§9.1)
         [[nodiscard]] virtual TextLayout measure(std::string_view text, float max_width, float font_size) const = 0;
+
+        // measure a run with an explicit font selection, which a backend that resolves families overrides (§9.1, AD-34)
+        [[nodiscard]] virtual TextLayout measure(std::string_view text, float max_width, float font_size, const FontSpec& spec) const {
+            // a backend that does not resolve a family yet measures exactly as before, so no behavior changes (§9.1)
+            (void)spec;
+            return measure(text, max_width, font_size);
+        }
+
+        // report whether the engine resolves a family or weight beyond its default face (§9.1)
+        [[nodiscard]] virtual bool resolves_font_selection() const { return false; }
 
         // report whether the engine can measure at all, which a caller checks before it sizes a scene (§9.1)
         [[nodiscard]] virtual bool ready() const = 0;

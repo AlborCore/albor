@@ -4,15 +4,11 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <utility>
 #include <vector>
 
-#include <ft2build.h>
-#include FT_FREETYPE_H
-
-#include <hb-ft.h>
+#include <hb-ot.h>
 #include <hb.h>
-
-#include FT_OUTLINE_H
 
 #include "render/font_handle.h"
 #include "render/shaped_run.h"
@@ -21,19 +17,19 @@
 
 namespace albor::harfbuzz
 {
-    // the freetype library, the face, the harfbuzz font and the typeface the renderer draws with (§9.1)
+    // the harfbuzz blob, face and font the engine shapes and draws through, all built over the font bytes (§9.1, AD-34)
     struct HarfbuzzTextEngine::HarfbuzzEngineState
     {
-        // the freetype library, which must outlive the face it loaded (§9.1)
-        FT_Library library = nullptr;
+        // the blob wrapping the font bytes, which the face reads without a file system (§15, AD-34)
+        hb_blob_t* blob = nullptr;
 
-        // the face the harfbuzz font was built from, which the library owns (§9.1)
-        FT_Face face = nullptr;
+        // the face the font was built from, which the blob owns the bytes for (§9.1)
+        hb_face_t* face = nullptr;
 
-        // the harfbuzz font that shapes, which is built from the face (§9.1)
+        // the harfbuzz font that shapes and draws, which is built from the face (§9.1)
         hb_font_t* font = nullptr;
 
-        // the bytes the face was built from, which freetype reads without a file (§9.1, AD-34)
+        // the bytes the face was built from, which harfbuzz reads without a file (§9.1, AD-34)
         std::vector<std::uint8_t> bytes;
 
         // the content hash of those bytes, which is the font's identity in a layout (§15, AD-34)
@@ -107,41 +103,41 @@ namespace albor::harfbuzz
 
     HarfbuzzTextEngine::HarfbuzzTextEngine(const std::string& font_path, const std::string& family_name) :
         m_state(std::make_unique<HarfbuzzEngineState>()) {
-        // freetype comes up once per engine, and it fails only on a broken install (§9.1)
-        if (FT_Init_FreeType(&m_state->library) != 0) {
-            m_state->library = nullptr;
-            return;
-        }
-        // the face is loaded at index zero, which is the first face in the file (§9.1)
-        if (FT_New_Face(m_state->library, font_path.c_str(), 0, &m_state->face) != 0) {
-            m_state->face = nullptr;
-            return;
-        }
-        // the bytes are read so the engine can report the same identity an embedded one would (§15, AD-34)
+        // the bytes are read first, because harfbuzz builds a face from them and from nothing else (§15, AD-34)
         m_state->bytes = read_font_bytes(font_path);
-        // the hash is over those bytes, so a path loaded font and an embedded one identify identically (§15, AD-34)
+        // a path that read no byte names no font, so the engine stops with no face (§9.1)
+        if (m_state->bytes.empty())
+            return;
+        // the blob borrows the bytes, which the state owns for the whole life of the engine (§9.1)
+        m_state->blob = hb_blob_create_or_fail(reinterpret_cast<const char*>(m_state->bytes.data()), static_cast<unsigned int>(m_state->bytes.size()), HB_MEMORY_MODE_READONLY, nullptr, nullptr);
+        // a blob that did not build leaves no face to read (§9.1)
+        if (m_state->blob == nullptr)
+            return;
+        // the face is created at index zero, which is the first face in the file (§9.1)
+        m_state->face = hb_face_create(m_state->blob, 0);
+        // the hash is over the bytes, so a path loaded font and an embedded one identify identically (§15, AD-34)
         m_state->font_hash = resources::hash_font_bytes(m_state->bytes.data(), m_state->bytes.size());
-        // the shaper and the typeface come up next, because both need the face (§9.1)
+        // the font and the typeface come up next, because both need the face (§9.1)
         load(nullptr, 0, family_name);
     }
 
     HarfbuzzTextEngine::HarfbuzzTextEngine(const std::uint8_t* font_bytes, std::size_t byte_count, std::string_view family_name) :
         m_state(std::make_unique<HarfbuzzEngineState>()) {
-        // freetype comes up once per engine, and it fails only on a broken install (§9.1)
-        if (FT_Init_FreeType(&m_state->library) != 0) {
-            m_state->library = nullptr;
-            return;
-        }
-        // the bytes are copied, because freetype borrows them and the registry owns its own (§9.1, AD-34)
+        // the bytes are copied, because the blob borrows them and the registry owns its own (§9.1, AD-34)
         m_state->bytes.assign(font_bytes, font_bytes + byte_count);
-        // the face is read from memory, which is the whole point: no file system is touched (§15, AD-34)
-        if (FT_New_Memory_Face(m_state->library, m_state->bytes.data(), static_cast<FT_Long>(byte_count), 0, &m_state->face) != 0) {
-            m_state->face = nullptr;
+        // a build with no byte names no font, so the engine stops with no face (§9.1)
+        if (m_state->bytes.empty())
             return;
-        }
+        // the blob borrows the copied bytes, which the state owns for the whole life of the engine (§9.1)
+        m_state->blob = hb_blob_create_or_fail(reinterpret_cast<const char*>(m_state->bytes.data()), static_cast<unsigned int>(m_state->bytes.size()), HB_MEMORY_MODE_READONLY, nullptr, nullptr);
+        // a blob that did not build leaves no face to read (§9.1)
+        if (m_state->blob == nullptr)
+            return;
+        // the face is read from memory, which is the whole point: no file system is touched (§15, AD-34)
+        m_state->face = hb_face_create(m_state->blob, 0);
         // the hash identifies the bytes, and it is what a layout is keyed on (§15, AD-34)
         m_state->font_hash = resources::hash_font_bytes(m_state->bytes.data(), m_state->bytes.size());
-        // the shaper and the typeface come up next, because both need the face (§9.1)
+        // the font and the typeface come up next, because both need the face (§9.1)
         load(nullptr, 0, family_name);
     }
 
@@ -150,21 +146,30 @@ namespace albor::harfbuzz
         (void)font_bytes;
         // the byte count is unused for the same reason (§9.1)
         (void)byte_count;
-        // an engine with no face has nothing to read metrics from, so it stops here (§9.1)
-        if (m_state->face == nullptr)
+        // a face is only usable with at least one glyph, so an empty face stops here (§9.1)
+        if (m_state->face == nullptr || hb_face_get_glyph_count(m_state->face) == 0)
             return;
         // the units per em convert design units into logical pixels, and a zero would divide by nothing (§9.1, AD-27)
-        if (m_state->face->units_per_EM > 0)
-            m_state->units_per_em = static_cast<float>(m_state->face->units_per_EM);
-        // the vertical metrics are read from the face, because the baseline sits on the ascender (§9.1)
-        m_state->ascender = static_cast<float>(m_state->face->ascender) / static_cast<float>(m_state->face->units_per_EM);
-        // the descender is negative in every real face, which is what places the run below its baseline (§9.1)
-        m_state->descender = static_cast<float>(m_state->face->descender) / static_cast<float>(m_state->face->units_per_EM);
-        // the harfbuzz font is built over the face and referenced, so the engine owns one reference (§9.1)
-        m_state->font = hb_ft_font_create_referenced(m_state->face);
+        if (hb_face_get_upem(m_state->face) > 0)
+            m_state->units_per_em = static_cast<float>(hb_face_get_upem(m_state->face));
+        // the harfbuzz font is built over the face, which owns no shaping of its own until the funcs are set (§9.1)
+        m_state->font = hb_font_create(m_state->face);
         // a font that did not build leaves an engine that cannot shape (§9.1)
         if (m_state->font == nullptr)
             return;
+        // the opentype funcs give the font its advances and its outlines, which is what hb-draw walks (§9.1)
+        hb_ot_font_set_funcs(m_state->font);
+        // the scale is set to the design units, so the extents below read in em units rather than in pixels (§9.1, AD-27)
+        hb_font_set_scale(m_state->font, static_cast<int>(m_state->units_per_em), static_cast<int>(m_state->units_per_em));
+        // the extents carry the ascender and the descender, which place the baseline and the bottom of the run (§9.1)
+        hb_font_extents_t extents{};
+        // the extents are read only when the font answers them, because a broken face reports nothing (§9.1)
+        if (hb_font_get_h_extents(m_state->font, &extents)) {
+            // the ascender is the height above the baseline, which is where the run hangs from (§9.1)
+            m_state->ascender = static_cast<float>(extents.ascender) / m_state->units_per_em;
+            // the descender is negative in every real face, which is what places the run below its baseline (§9.1)
+            m_state->descender = static_cast<float>(extents.descender) / m_state->units_per_em;
+        }
         // the drawing typeface comes from the platform, because the renderer build offers no other source (§9.1, AD-28)
         m_state->resolver = HarfbuzzTypefaceResolver::create(std::string(family_name));
         // a resolver that did not build leaves runs that measure correctly and draw nothing (§9.1, AD-28)
@@ -176,54 +181,46 @@ namespace albor::harfbuzz
         // the harfbuzz font is destroyed before the face it was built from (§9.1)
         if (m_state->font != nullptr)
             hb_font_destroy(m_state->font);
-        // the face is destroyed before the library that loaded it (§9.1)
+        // the face is destroyed before the blob that owns the bytes (§9.1)
         if (m_state->face != nullptr)
-            FT_Done_Face(m_state->face);
-        // the library goes last, because it owns nothing else at this point (§9.1)
-        if (m_state->library != nullptr)
-            FT_Done_FreeType(m_state->library);
+            hb_face_destroy(m_state->face);
+        // the blob goes last, because it borrowed bytes the state still held until now (§9.1, AD-34)
+        if (m_state->blob != nullptr)
+            hb_blob_destroy(m_state->blob);
     }
 
     namespace
     {
-        // the outline the decomposer writes into, which is a flat point list because a ui path is (§6.4, AD-06)
+        // the outline the draw callbacks write into, which is a flat point list because a ui path is (§6.4, AD-06)
         struct OutlineSink
         {
-            // the points walked so far, in the font's own units (§6.4)
+            // the points walked so far, already in the logical pixels the caller asked for (§6.4, AD-27)
             std::vector<Point> points;
-
-            // the scale that converts those units into the logical pixels the caller asked for (§9.1, AD-27)
-            float scale = 1.0f;
-
-            // whether the walk is sampling in font units, which the curve flattener needs and a line does not (§9.1)
-            bool in_font_units = false;
-
-            // the move callback, which starts a contour at the pen position (§6.4)
-            static int move_to(const FT_Vector* to, void* user) {
-                // the sink is what freetype hands back, because the callbacks carry no context of their own (§6.4)
-                auto* sink = static_cast<OutlineSink*>(user);
-                // the point joins the walk, scaled unless the flattener is sampling (§6.4, §9.1)
-                sink->points.push_back(sink->in_font_units ? Point{.x = static_cast<float>(to->x), .y = static_cast<float>(to->y)} : Point{.x = static_cast<float>(to->x) * sink->scale, .y = static_cast<float>(to->y) * sink->scale});
-                return 0;
-            }
-
-            // the line callback, which continues the current contour (§6.4)
-            static int line_to(const FT_Vector* to, void* user) {
-                // the sink is what freetype hands back (§6.4)
-                auto* sink = static_cast<OutlineSink*>(user);
-                // the point joins the walk, scaled unless the flattener is sampling (§6.4, §9.1)
-                sink->points.push_back(sink->in_font_units ? Point{.x = static_cast<float>(to->x), .y = static_cast<float>(to->y)} : Point{.x = static_cast<float>(to->x) * sink->scale, .y = static_cast<float>(to->y) * sink->scale});
-                return 0;
-            }
 
             // how many segments one curve is flattened into, fixed rather than adaptive so it cannot vary (§15)
             static constexpr int CURVE_SEGMENTS = 8;
 
+            // the move callback, which starts a contour at the pen position (§6.4)
+            static void move_to(hb_draw_funcs_t*, void* draw_data, hb_draw_state_t*, float to_x, float to_y, void*) {
+                // the sink is what hb-draw hands back, because the callbacks carry no context of their own (§6.4)
+                auto* sink = static_cast<OutlineSink*>(draw_data);
+                // the point joins the walk at the pen position hb-draw reports (§6.4)
+                sink->points.push_back(Point{.x = to_x, .y = to_y});
+            }
+
+            // the line callback, which continues the current contour (§6.4)
+            static void line_to(hb_draw_funcs_t*, void* draw_data, hb_draw_state_t*, float to_x, float to_y, void*) {
+                // the sink is what hb-draw hands back (§6.4)
+                auto* sink = static_cast<OutlineSink*>(draw_data);
+                // the point joins the walk, extending the contour one segment (§6.4)
+                sink->points.push_back(Point{.x = to_x, .y = to_y});
+            }
+
             // the conic callback, flattened because a ui path is polygonal and a control point is off curve (§6.4)
-            static int conic_to(const FT_Vector* control, const FT_Vector* to, void* user) {
-                // the sink is what freetype hands back (§6.4)
-                auto* sink = static_cast<OutlineSink*>(user);
-                // the previous point is the contour's start of this curve, because freetype reports a segment (§6.4)
+            static void quadratic_to(hb_draw_funcs_t*, void* draw_data, hb_draw_state_t*, float control_x, float control_y, float to_x, float to_y, void*) {
+                // the sink is what hb-draw hands back (§6.4)
+                auto* sink = static_cast<OutlineSink*>(draw_data);
+                // the previous point is the contour's start of this curve, because hb-draw reports a segment (§6.4)
                 const Point start = sink->points.empty() ? Point{0.0f, 0.0f} : sink->points.back();
                 // every segment is sampled, so the polyline follows the curve rather than cutting across it (§6.4)
                 for (int step = 1; step <= CURVE_SEGMENTS; step++) {
@@ -231,21 +228,20 @@ namespace albor::harfbuzz
                     const float t = static_cast<float>(step) / static_cast<float>(CURVE_SEGMENTS);
                     // the inverse parameter is what the quadratic basis needs (§6.4)
                     const float inverse = 1.0f - t;
-                    // the curve is evaluated in font units, because that is what freetype reported (§9.1)
-                    const float x = inverse * inverse * start.x + 2.0f * inverse * t * static_cast<float>(control->x) + t * t * static_cast<float>(to->x);
+                    // the curve is evaluated in the scaled units hb-draw reported (§9.1)
+                    const float x = inverse * inverse * start.x + 2.0f * inverse * t * control_x + t * t * to_x;
                     // the vertical coordinate follows the same basis (§9.1)
-                    const float y = inverse * inverse * start.y + 2.0f * inverse * t * static_cast<float>(control->y) + t * t * static_cast<float>(to->y);
-                    // the sampled point joins the walk, converted into the logical pixels the sink carries (§6.4, AD-27)
-                    sink->points.push_back(Point{.x = x * sink->scale, .y = y * sink->scale});
+                    const float y = inverse * inverse * start.y + 2.0f * inverse * t * control_y + t * t * to_y;
+                    // the sampled point joins the walk as a drawable shape (§6.4, AD-27)
+                    sink->points.push_back(Point{.x = x, .y = y});
                 }
-                return 0;
             }
 
             // the cubic callback, which is flattened by the same fixed count and for the same reason (§6.4, §15)
-            static int cubic_to(const FT_Vector* control_one, const FT_Vector* control_two, const FT_Vector* to, void* user) {
-                // the sink is what freetype hands back (§6.4)
-                auto* sink = static_cast<OutlineSink*>(user);
-                // the previous point is the curve's start, because freetype reports a segment (§6.4)
+            static void cubic_to(hb_draw_funcs_t*, void* draw_data, hb_draw_state_t*, float control_one_x, float control_one_y, float control_two_x, float control_two_y, float to_x, float to_y, void*) {
+                // the sink is what hb-draw hands back (§6.4)
+                auto* sink = static_cast<OutlineSink*>(draw_data);
+                // the previous point is the curve's start, because hb-draw reports a segment (§6.4)
                 const Point start = sink->points.empty() ? Point{0.0f, 0.0f} : sink->points.back();
                 // every segment is sampled, so the polyline follows the curve (§6.4)
                 for (int step = 1; step <= CURVE_SEGMENTS; step++) {
@@ -261,67 +257,56 @@ namespace albor::harfbuzz
                     const float w2 = 3.0f * inverse * t * t;
                     // the last weight multiplies the curve's end (§6.4)
                     const float w3 = t * t * t;
-                    // the curve is evaluated in font units, because that is what freetype reported (§9.1)
-                    const float x = w0 * start.x + w1 * static_cast<float>(control_one->x) + w2 * static_cast<float>(control_two->x) + w3 * static_cast<float>(to->x);
+                    // the curve is evaluated in the scaled units hb-draw reported (§9.1)
+                    const float x = w0 * start.x + w1 * control_one_x + w2 * control_two_x + w3 * to_x;
                     // the vertical coordinate follows the same basis (§9.1)
-                    const float y = w0 * start.y + w1 * static_cast<float>(control_one->y) + w2 * static_cast<float>(control_two->y) + w3 * static_cast<float>(to->y);
-                    // the sampled point joins the walk, converted into the logical pixels the sink carries (§6.4, AD-27)
-                    sink->points.push_back(Point{.x = x * sink->scale, .y = y * sink->scale});
+                    const float y = w0 * start.y + w1 * control_one_y + w2 * control_two_y + w3 * to_y;
+                    // the sampled point joins the walk as a drawable shape (§6.4, AD-27)
+                    sink->points.push_back(Point{.x = x, .y = y});
                 }
-                return 0;
             }
         };
     } // namespace
 
     std::vector<Point> HarfbuzzTextEngine::glyph_outline(std::uint32_t glyph_id, float font_size) const {
-        // an engine with no face has no outlines, which is a refusal rather than an empty glyph (§9.1)
-        if (m_state->face == nullptr)
+        // an engine with no font has no outlines, which is a refusal rather than an empty glyph (§9.1)
+        if (m_state->font == nullptr)
             return {};
         // a size of no pixels cannot scale an outline to, so there is nothing to return (§9.1, AD-27)
         if (font_size <= 0.0f)
             return {};
-        // the glyph is loaded unhinted, because hinting depends on the rasterizer and AD-34 forbids that (§15, AD-34)
-        if (FT_Load_Glyph(m_state->face, static_cast<FT_UInt>(glyph_id), FT_LOAD_NO_SCALE | FT_LOAD_NO_HINTING) != 0)
-            return {};
-        // a glyph with no outline draws nothing, which is what a space is (§6.2)
-        if (m_state->face->glyph->format != FT_GLYPH_FORMAT_OUTLINE)
-            return {};
-        // the sink carries the points and the scale, because the callbacks carry neither (§6.4)
+        // the scale is set in sixty fourths, so a fractional size keeps its subpixel position (§15, AD-34)
+        const int scale = static_cast<int>(font_size * 64.0f);
+        // the draw callbacks report at that scale, which the sink then reduces to logical pixels (§9.1, AD-27)
+        hb_font_set_scale(m_state->font, scale, scale);
+        // the sink carries the points, because the callbacks carry no context of their own (§6.4)
         OutlineSink sink;
-        // the scale converts font units into the logical pixels the caller asked for (§9.1, AD-27)
-        sink.scale = font_size / static_cast<float>(m_state->face->units_per_EM);
-        // the flattener samples in font units, because the curves are evaluated before the scale is applied (§9.1)
-        sink.in_font_units = true;
-        // the scale is left off until the walk is finished, because a sampled point must not be scaled twice (§9.1, AD-27)
-        sink.scale = 1.0f;
-        // the callbacks are the standard freetype decompose set, which walks an outline into points (§6.4)
-        FT_Outline_Funcs callbacks{};
-        // the contour, line, conic and cubic callbacks are the four freetype reports (§6.4)
-        callbacks.move_to = &OutlineSink::move_to;
-        // the line callback continues a contour (§6.4)
-        callbacks.line_to = &OutlineSink::line_to;
-        // the conic callback flattens a quadratic (§6.4)
-        callbacks.conic_to = &OutlineSink::conic_to;
-        // the cubic callback flattens a cubic (§6.4)
-        callbacks.cubic_to = &OutlineSink::cubic_to;
-        // the shift and delta are zero because the glyph was loaded unscaled (§9.1)
-        callbacks.shift = 0;
-        // the delta is zero because the coordinates are used as they are (§9.1)
-        callbacks.delta = 0;
-        // the walk fills the sink, and a failure leaves it empty rather than half drawn (§6.4)
-        if (FT_Outline_Decompose(&m_state->face->glyph->outline, &callbacks, &sink) != 0)
+        // the draw funcs are built fresh per call, because the callbacks are stateless and cheap to attach (§6.4)
+        hb_draw_funcs_t* funcs = hb_draw_funcs_create();
+        // funcs that did not build walk no outline, so the glyph draws nothing (§6.4)
+        if (funcs == nullptr)
             return {};
-        // the walk is scaled once at the end, so a curve is sampled in units and scaled as a whole (§9.1, AD-27)
-        std::vector<Point> scaled;
-        // the final scale is the one the caller asked for, applied to every sampled point (§6.4, AD-27)
-        const float final_scale = font_size / static_cast<float>(m_state->face->units_per_EM);
-        // the reserve is the walk's length, because the conversion makes exactly that many points (§6.4)
-        scaled.reserve(sink.points.size());
-        // every point is converted, which is what makes the outline a drawable shape (§6.4)
-        for (const Point& point : sink.points)
-            scaled.push_back(Point{.x = point.x * final_scale, .y = point.y * final_scale});
-        // the scaled points are the outline the renderer draws (§6.4, AD-06)
-        return scaled;
+        // the contour, line, conic and cubic callbacks are the four hb-draw reports (§6.4)
+        hb_draw_funcs_set_move_to_func(funcs, &OutlineSink::move_to, nullptr, nullptr);
+        // the line callback continues a contour (§6.4)
+        hb_draw_funcs_set_line_to_func(funcs, &OutlineSink::line_to, nullptr, nullptr);
+        // the conic callback flattens a quadratic (§6.4)
+        hb_draw_funcs_set_quadratic_to_func(funcs, &OutlineSink::quadratic_to, nullptr, nullptr);
+        // the cubic callback flattens a cubic (§6.4)
+        hb_draw_funcs_set_cubic_to_func(funcs, &OutlineSink::cubic_to, nullptr, nullptr);
+        // the walk fills the sink over the font bytes, unhinted because hinting depends on a rasterizer (§15, AD-34)
+        hb_font_draw_glyph(m_state->font, glyph_id, funcs, &sink);
+        // the funcs are dropped once the walk is done, because the sink owns the points (§6.4)
+        hb_draw_funcs_destroy(funcs);
+        // every point is reported in sixty fourths, so each drops to logical pixels (§9.1, AD-27)
+        for (Point& point : sink.points) {
+            // the horizontal coordinate drops the sixty fourth scale to land in logical pixels (§6.4, AD-27)
+            point.x /= 64.0f;
+            // the vertical coordinate drops the same scale for the same reason (§6.4, AD-27)
+            point.y /= 64.0f;
+        }
+        // the points are the outline the renderer draws (§6.4, AD-06)
+        return sink.points;
     }
 
     bool HarfbuzzTextEngine::ready() const {

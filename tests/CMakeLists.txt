@@ -23,6 +23,9 @@ add_executable(albor-tests ${CPP_SOURCES})
 target_include_directories(albor-tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_compile_features(albor-tests PRIVATE cxx_std_23)
 
+# the ofl test font ships in the tree, so a suite that uses it has a carried font no host must supply (§15, AD-34, #92)
+target_compile_definitions(albor-tests PRIVATE ALBOR_TEST_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/fonts/Inter-Regular.ttf" ALBOR_TEST_FONT_FAMILY="Inter")
+
 # the tests link the framework modules and nothing platform specific, so they run without a window server (§3.2)
 #
 # only the modules that are not already re-exported are named here. albor-preview publishes albor-widgets,
