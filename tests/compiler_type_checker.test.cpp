@@ -131,7 +131,7 @@ namespace
         // the native type is what the manifest declares, so the checker resolves against it (§11.2, AD-17)
         catalog.add_native_data("WaveformData");
         // the component is the element the ui file instantiates (§11.2, AD-17)
-        catalog.add_native(ElementType{.name = "WaveformView", .properties = {ElementProperty{.name = "line_color", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}, ElementProperty{.name = "data", .type = ValueType::parameterized(TypeKind::Snapshot, ValueType::native("WaveformData")), .assignable = false, .scaled_by_density = false}}, .signals = {ElementSignal{.name = "selection_changed", .parameter_types = {scalar(TypeKind::Float)}}}, .accepts_children = false});
+        catalog.add_native(ElementType{.name = "WaveformView", .properties = {ElementProperty{.name = "line_color", .type = scalar(TypeKind::Color), .assignable = true}, ElementProperty{.name = "data", .type = ValueType::parameterized(TypeKind::Snapshot, ValueType::native("WaveformData")), .assignable = false}}, .signals = {ElementSignal{.name = "selection_changed", .parameter_types = {scalar(TypeKind::Float)}}}, .accepts_children = false});
         return catalog;
     }
 } // namespace
@@ -281,13 +281,12 @@ TEST(TypeChecker, ReportsAValueThatDoesNotMatchTheProperty) {
     EXPECT_EQ(first(diagnostics).code, "E0410");
 }
 
-TEST(TypeChecker, AcceptsALengthIntoADensityScaledProperty) {
+TEST(TypeChecker, AcceptsALengthIntoAFloatProperty) {
     // arrange, act
     const CheckedFile file = check("component C { Column { spacing: 12px; } }");
-    // assert
+    // assert the length resolves against the float property and keeps its length type (§11.1, AD-27)
     const CheckedAssignment& assignment = only(file).root->assignments.at(0);
     EXPECT_TRUE(assignment.type.is(TypeKind::Length));
-    EXPECT_TRUE(assignment.scaled_by_density);
 }
 
 TEST(TypeChecker, RecordsTheDependenciesOfABinding) {

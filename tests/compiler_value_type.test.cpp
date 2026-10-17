@@ -231,7 +231,7 @@ TEST(Assignability, TheErrorTypeAssignsAnywhereWithoutComplaint) {
 
 TEST(ElementType, FindsAPropertyByName) {
     // arrange
-    const ElementType type{.name = "Label", .properties = {ElementProperty{.name = "text", .type = scalar(TypeKind::String), .assignable = true, .scaled_by_density = false}}, .signals = {}, .accepts_children = false};
+    const ElementType type{.name = "Label", .properties = {ElementProperty{.name = "text", .type = scalar(TypeKind::String), .assignable = true}}, .signals = {}, .accepts_children = false};
     // act
     const ElementProperty* found = type.find_property("text");
     // assert
@@ -298,16 +298,16 @@ TEST(ElementCatalog, HoldsTheContainersAndTheLeavesApart) {
     EXPECT_FALSE(catalog.find("Canvas")->accepts_children);
 }
 
-TEST(ElementCatalog, ScalesTheLengthPropertiesAndNothingElse) {
+TEST(ElementCatalog, DeclaresTheLengthPropertiesAsAssignableFloats) {
     // arrange, act
     const ElementCatalog catalog = ElementCatalog::with_builtins();
-    // assert
-    EXPECT_TRUE(catalog.find("Column")->find_property("spacing")->scaled_by_density);
-    EXPECT_TRUE(catalog.find("Padding")->find_property("padding")->scaled_by_density);
-    EXPECT_TRUE(catalog.find("Label")->find_property("font_size")->scaled_by_density);
-    EXPECT_FALSE(catalog.find("Label")->find_property("text")->scaled_by_density);
-    EXPECT_FALSE(catalog.find("Label")->find_property("foreground")->scaled_by_density);
-    EXPECT_FALSE(catalog.find("Button")->find_property("disabled")->scaled_by_density);
+    // assert the lengths stay assignable floats, which a `px` value resolves against (§11.1, AD-27)
+    EXPECT_TRUE(catalog.find("Column")->find_property("spacing")->type.is(TypeKind::Float));
+    EXPECT_TRUE(catalog.find("Padding")->find_property("padding")->type.is(TypeKind::Float));
+    EXPECT_TRUE(catalog.find("Label")->find_property("font_size")->type.is(TypeKind::Float));
+    // assert the lengths accept an assignment, because a length lands on them through the checker (§11.1)
+    EXPECT_TRUE(catalog.find("Column")->find_property("spacing")->assignable);
+    EXPECT_TRUE(catalog.find("Label")->find_property("font_size")->assignable);
 }
 
 TEST(ElementCatalog, ExposesTheHandledSignals) {
@@ -324,7 +324,7 @@ TEST(ElementCatalog, ExposesTheHandledSignals) {
 TEST(ElementCatalog, AddsANativeTypeFromAManifest) {
     // arrange
     ElementCatalog catalog = ElementCatalog::with_builtins();
-    const ElementType native{.name = "WaveformView", .properties = {ElementProperty{.name = "line_color", .type = scalar(TypeKind::Color), .assignable = true, .scaled_by_density = false}}, .signals = {ElementSignal{.name = "selection_changed", .parameter_types = {scalar(TypeKind::Float)}}}, .accepts_children = false};
+    const ElementType native{.name = "WaveformView", .properties = {ElementProperty{.name = "line_color", .type = scalar(TypeKind::Color), .assignable = true}}, .signals = {ElementSignal{.name = "selection_changed", .parameter_types = {scalar(TypeKind::Float)}}}, .accepts_children = false};
     // act
     catalog.add_native(native);
     // assert

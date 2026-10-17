@@ -131,9 +131,6 @@ namespace albor::compiler
 
         // whether a handler may assign the property, which decides if an InOut direction is compatible (§11.1, §7)
         bool assignable = false;
-
-        // whether the property is a length, which the codegen scales by the density of the surface (§11.1, AD-27)
-        bool scaled_by_density = false;
     };
 
     // one signal an element type raises, which a handler attaches to (§11.1, §11.2)

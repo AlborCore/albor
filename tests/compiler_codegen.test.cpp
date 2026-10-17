@@ -1869,3 +1869,20 @@ TEST(Codegen, UsesTheOverriddenDefaultOfARedeclaredProperty) {
     // assert the member initialises from the derived default, because the redeclaration replaced the base entry (§11.1)
     EXPECT_TRUE(contains(cpp.content, "Property<std::string> m_t{std::string(\"b\")};"));
 }
+
+TEST(Codegen, EmitsAFractionalLengthUnrounded) {
+    // arrange a length with a fraction, which an application keeps to match a neighbouring native surface (§11.3, AD-27)
+    const std::string_view source = R"(
+component Axis {
+    Label {
+        text: "x";
+        font_size: 11.56px;
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the fraction survives codegen, because rounding it would visibly change the text (§11.3, AD-27)
+    const GeneratedFile& source_file = file_named(files, "axis.cpp");
+    EXPECT_TRUE(contains(source_file.content, "set_font_size(11.56f);"));
+}

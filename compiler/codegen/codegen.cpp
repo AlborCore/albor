@@ -3298,11 +3298,11 @@ namespace albor::compiler
             // a colour is emitted as its constructor, which scales the channels (§11.3)
             if (literal.kind == LiteralExpression::Kind::Color)
                 return emit_color_literal(literal.text);
-            // a length is emitted as its number, which drops the unit that the density owns (§11.3)
+            // a length is emitted as its number, because layout is logical and the surface owns the density (§11.3, AD-27)
             if (literal.kind == LiteralExpression::Kind::Length) {
-                // the trailing unit is removed, because only the number reaches the C++ (§11.3, AD-27)
+                // the trailing unit is removed, because only the logical number reaches the C++ (§11.3, AD-27)
                 std::string_view text = literal.text;
-                // the two logical unit spell the tail, which the number precedes (§11.3, AD-27)
+                // the two logical units spell the tail, which the number precedes (§11.3, AD-27)
                 if (ends_with(text, "px"))
                     text.remove_suffix(2);
                 return shortest_float(parse_number(text));
