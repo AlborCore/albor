@@ -13,6 +13,7 @@
 #include "render/frame_scene.h"
 #include "render/render-skia/skia_render_context.h"
 #include "render/render-skia/skia_renderer_backend.h"
+#include "render/render-software/software_renderer_backend.h"
 #include "text/text-skia/skia_text_engine.h"
 #include "tools/alloc-probe/alloc_probe.h"
 
@@ -385,4 +386,37 @@ TEST(SkiaRenderContextShadowChecks, ATranslucentCastAtNoBlurLandsAtItsOwnAlpha) 
     std::vector<std::uint8_t> pixels(64 * 64 * 4);
     ASSERT_TRUE(surface->readPixels(info, pixels.data(), info.minRowBytes(), 0, 0));
     EXPECT_NEAR(pixels[(24 * 64 + 24) * 4 + 3], 128, 3);
+}
+
+TEST(SkiaParityChecks, TheOffscreenGpuTargetMatchesTheSoftwareReference) {
+    // arrange both backends at the same metrics, which is what a parity comparison needs (§16, AD-26)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{64.0f, 48.0f}, 1.0f);
+    SkiaRendererBackend gpu_backend;
+    // a host without a gpu device cannot run the comparison, which is reported rather than passing (§6.3)
+    if (!gpu_backend.ready())
+        GTEST_SKIP() << "no gpu device on this host";
+    const std::unique_ptr<RenderSurface> gpu = gpu_backend.create_offscreen_surface(metrics);
+    ASSERT_NE(gpu, nullptr);
+    software::SoftwareRendererBackend software_backend;
+    const std::unique_ptr<RenderSurface> reference = software_backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(reference, nullptr);
+    // the scene is one flat rectangle at integer coordinates, which §15 requires to agree exactly (§15, AD-26)
+    FrameScene scene(metrics, Color::rgb(1.0f, 1.0f, 1.0f));
+    scene.add_command(DrawCommand::rectangle(Rect::from_origin_size(Point{8.0f, 8.0f}, Size{32.0f, 24.0f}), Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)}));
+    // a resize on the target is forwarded, which is what a parity check does between scenes (§6.2)
+    gpu_backend.resize_surface(*gpu, metrics);
+    // act both backends render the same immutable scene (§6.1)
+    gpu_backend.execute_frame(*gpu, scene);
+    software_backend.execute_frame(*reference, scene);
+    const std::vector<std::uint8_t> gpu_pixels = gpu->read_pixels();
+    const std::vector<std::uint8_t> reference_pixels = reference->read_pixels();
+    // assert both produced a frame before comparing, because a refused read is not an agreement (§16)
+    ASSERT_FALSE(gpu_pixels.empty());
+    ASSERT_FALSE(reference_pixels.empty());
+    ASSERT_EQ(gpu_pixels.size(), reference_pixels.size());
+    // assert the flat interior and the integer edges agree exactly, which the class allows no freedom (§15, AD-26)
+    std::size_t worst = 0;
+    for (std::size_t index = 0; index < gpu_pixels.size(); index++)
+        worst = std::max(worst, static_cast<std::size_t>(std::abs(static_cast<int>(gpu_pixels[index]) - static_cast<int>(reference_pixels[index]))));
+    EXPECT_EQ(worst, 0u) << "the gpu and reference frames diverge by " << worst << " per channel";
 }

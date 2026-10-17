@@ -8,6 +8,8 @@
 #include <gtest/gtest.h>
 
 #include "render/draw_command.h"
+#include "render/line_batch.h"
+#include "render/picture_resource.h"
 #include "render/render-software/software_glyph_atlas.h"
 #include "render/render-software/software_render_surface.h"
 #include "render/render-software/software_renderer_backend.h"
@@ -1629,4 +1631,31 @@ TEST(SoftwareTextChecks, TheAtlasTextKeepsTheFillColour) {
     EXPECT_TRUE(red_ink);
     // exit
     resources::FontRegistry::clear();
+}
+
+TEST(SoftwareTextChecks, TheSoftwareContextForwardsEveryDrawToTheSharedContext) {
+    // arrange a software surface, which the reference draws through (§6.3)
+    const std::unique_ptr<software::SoftwareRenderSurface> surface = software::SoftwareRenderSurface::create(WindowMetrics::from_logical(Size{64.0f, 48.0f}, 1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    // act every non text draw is forwarded, which keeps the two backends one interpretation (§6.3)
+    context.save();
+    context.set_transform(Transform{.translate_x = 1.0f, .translate_y = 2.0f});
+    EXPECT_FLOAT_EQ(context.transform().translate_x, 1.0f);
+    context.clip_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{32.0f, 32.0f}));
+    context.clip_rounded_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{16.0f, 16.0f}), 4.0f);
+    EXPECT_FALSE(context.clip().empty());
+    const std::vector<Point> points{Point{0.0f, 0.0f}, Point{10.0f, 10.0f}};
+    const std::shared_ptr<const LineBatch> batch = std::make_shared<const LineBatch>(1u, std::span<const Point>(points));
+    context.draw_line_batch(batch, Transform{}, StrokeStyle{});
+    std::vector<DrawCommand> commands;
+    commands.push_back(DrawCommand::rectangle(Rect::from_origin_size(Point{2.0f, 2.0f}, Size{4.0f, 4.0f}), Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)}));
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(2u, std::move(commands));
+    context.draw_picture(picture, Transform{});
+    context.restore();
+    // an empty run is drawn as nothing, which is the context's quiet default (§6.3)
+    context.draw_text(TextLayout{}, Point{0.0f, 0.0f}, Paint{});
+    surface->end_frame();
+    // assert the frame finished, which is what the forwarded draws produce (§6.3)
+    EXPECT_FALSE(surface->read_pixels().empty());
 }

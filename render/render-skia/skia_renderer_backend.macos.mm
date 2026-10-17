@@ -8,6 +8,7 @@
 #include <skia/gpu/ganesh/mtl/GrMtlBackendContext.h>
 #include <skia/gpu/ganesh/mtl/GrMtlDirectContext.h>
 
+#include "render/render-skia/skia_offscreen_surface.h"
 #include "render/render-skia/skia_render_surface.h"
 
 namespace albor
@@ -92,6 +93,14 @@ namespace albor
         layer.framebufferOnly = YES;
         // the surface wraps the skia context and the metal layer together, because one drawable spans both (§6.3)
         return skia::SkiaRenderSurface::create(m_state->context.get(), handle, metrics);
+    }
+
+    std::unique_ptr<RenderSurface> SkiaRendererBackend::create_offscreen_surface(const WindowMetrics& metrics) {
+        // without a context there is no way to record gpu work (§6.3)
+        if (!ready())
+            return nullptr;
+        // the target records into the same context a windowed surface does, so the two paths agree (§6.3)
+        return skia::SkiaOffscreenSurface::create(m_state->context.get(), metrics);
     }
 
     void SkiaRendererBackend::resize_surface(RenderSurface& surface, const WindowMetrics& metrics) {

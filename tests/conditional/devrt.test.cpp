@@ -4,12 +4,15 @@
 
 #include <gtest/gtest.h>
 
+#include "compiler/diagnostic.h"
+#include "compiler/ir_serializer.h"
+#include "compiler/lexer.h"
+#include "compiler/parser.h"
 #include "core/dev_hook.h"
 #include "devrt/devrt.h"
 #include "devrt/element_table.h"
 #include "devrt/ir.h"
 #include "devrt/reload_adapter.h"
-#include "layout/column_layout.h"
 #include "runtime/binding_engine.h"
 #include "text/text_engine.h"
 #include "ui/ui_node.h"
@@ -644,4 +647,40 @@ TEST(DevHookChecks, ABoundTreeRepaintsAfterAPatch) {
     dev::reload("node Column id=root\n  node Label id=title\n  node Button id=ok\n");
     // assert the tree is dirty, because a patched tree has to show what it now declares (§6.1)
     EXPECT_TRUE(root.render_dirty());
+}
+
+TEST(DevReloadChecks, AppliesAComponentSerializedFromUi) {
+    // arrange a ui component serialized into the dev ir, which is what the producer emits (§12.1, AD-12)
+    constexpr std::string_view PANEL_SOURCE = R"(
+component Panel {
+    Column {
+        spacing: 12px;
+        Label {
+            id: title;
+            text: "Hello";
+            font_size: 20px;
+        }
+    }
+}
+)";
+    // the panel is scanned and parsed, which is what the producer does before it serializes (§12.1)
+    albor::compiler::DiagnosticList diagnostics;
+    const std::vector<albor::compiler::Token> tokens = albor::compiler::Lexer(PANEL_SOURCE, diagnostics).tokenize();
+    const albor::compiler::SourceFile file = albor::compiler::Parser(tokens, diagnostics).parse();
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    ASSERT_EQ(file.components.size(), 1u);
+    const std::optional<IrNode> definition = albor::compiler::serialize_component(file.components.front());
+    ASSERT_TRUE(definition.has_value());
+    ReloadFixture fixture;
+    UiNode root;
+    // act the serialized definition is applied to a live tree (§12.1)
+    const ReloadReport report = apply_reload(root, *definition, fixture.context);
+    // assert the tree carries the element and the properties the ui declared (§12.1)
+    EXPECT_EQ(report.added, 1U);
+    UiNode* title = find_by_id(root, "title");
+    ASSERT_NE(title, nullptr);
+    auto* label = dynamic_cast<Label*>(title);
+    ASSERT_NE(label, nullptr);
+    EXPECT_EQ(label->text(), "Hello");
+    EXPECT_FLOAT_EQ(label->font_size(), 20.0f);
 }
