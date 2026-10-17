@@ -43,11 +43,17 @@ namespace albor::harfbuzz
         // override: measure at an explicit font size (§9.1)
         [[nodiscard]] TextLayout measure(std::string_view text, float max_width, float font_size) const override;
 
+        // override: measure with an explicit font selection, which resolves the family through the registry (§9.1, AD-34)
+        [[nodiscard]] TextLayout measure(std::string_view text, float max_width, float font_size, const FontSpec& spec) const override;
+
         // override: report whether a face was loaded, because an engine with no face shapes nothing (§9.1)
         [[nodiscard]] bool ready() const override;
 
         // report whether a run draws: the path engine needs a typeface, the embedded engine its outlines (§9.1, AD-34)
         [[nodiscard]] bool drawable() const;
+
+        // override: the engine resolves a family, though a weight is still pending (#96) (§9.1)
+        [[nodiscard]] bool resolves_font_selection() const override;
 
     private:
         // load the face, the shaper and the drawing typeface, which is the whole of construction (§9.1)
@@ -56,14 +62,8 @@ namespace albor::harfbuzz
         // load the face from bytes the build carries, which is how the engine avoids a file system (§15, AD-34)
         HarfbuzzTextEngine(const std::uint8_t* font_bytes, std::size_t byte_count, std::string_view family_name);
 
-        // bring the shaper up over the face both constructors built, which is the half every engine needs (§9.1)
-        void load_shaping();
-
         // resolve the platform typeface, which only the transitional path engine needs to draw (§9.1, AD-28)
         void resolve_typeface(std::string_view family_name);
-
-        // shape the byte range [start, end) into one line, which a wrap builds from ranges (§9.1)
-        [[nodiscard]] ShapedRun::Line shape_line(std::string_view text, std::size_t start, std::size_t end, float font_size) const;
 
         // the opaque harfbuzz blob, face and font state, so no shaping type leaves this header (§3.5, AD-19)
         struct HarfbuzzEngineState;

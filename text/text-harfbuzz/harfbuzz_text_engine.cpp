@@ -6,6 +6,9 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <string>
+#include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -21,42 +24,117 @@
 
 namespace albor::harfbuzz
 {
-    // the harfbuzz blob, face and font the engine shapes and draws through, all built over the font bytes (§9.1, AD-34)
-    struct HarfbuzzTextEngine::HarfbuzzEngineState
-    {
-        // the blob wrapping the font bytes, which the face reads without a file system (§15, AD-34)
-        hb_blob_t* blob = nullptr;
-
-        // the face the font was built from, which the blob owns the bytes for (§9.1)
-        hb_face_t* face = nullptr;
-
-        // the harfbuzz font that shapes and draws, which is built from the face (§9.1)
-        hb_font_t* font = nullptr;
-
-        // the bytes the face was built from, which harfbuzz reads without a file (§9.1, AD-34)
-        std::vector<std::uint8_t> bytes;
-
-        // the content hash of those bytes, which is the font's identity in a layout (§15, AD-34)
-        std::uint64_t font_hash = 0;
-
-        // the resolver holding the drawing typeface, which only the platform can supply (§9.1, AD-28)
-        std::unique_ptr<HarfbuzzTypefaceResolver> resolver;
-
-        // whether the engine needs a platform typeface to be usable, which an embedded run does not (§15, AD-34)
-        bool require_typeface = true;
-
-        // the design units per em, which converts a harfbuzz position into logical pixels (§9.1, AD-27)
-        float units_per_em = 1000.0f;
-
-        // the ascender of the face in design units, which places the first baseline (§9.1)
-        float ascender = 800.0f;
-
-        // the descender of the face in design units, which places the bottom of the run (§9.1)
-        float descender = -200.0f;
-    };
-
     namespace
     {
+        // one resolved face, which is the blob, face, font and metrics every family resolves to (§9.1, AD-34)
+        struct ResolvedFace
+        {
+            // the bytes the blob borrows, which the face reads without a file (§15, AD-34)
+            std::vector<std::uint8_t> bytes;
+
+            // the blob wrapping those bytes (§9.1)
+            hb_blob_t* blob = nullptr;
+
+            // the face built over the blob (§9.1)
+            hb_face_t* face = nullptr;
+
+            // the font that shapes and draws, built from the face (§9.1)
+            hb_font_t* font = nullptr;
+
+            // the content hash of the bytes, which is the face's identity in a layout (§15, AD-34)
+            std::uint64_t font_hash = 0;
+
+            // the design units per em, which converts a harfbuzz position into logical pixels (§9.1, AD-27)
+            float units_per_em = 1000.0f;
+
+            // the ascender of the face in design units, which places the first baseline (§9.1)
+            float ascender = 800.0f;
+
+            // the descender of the face in design units, which places the bottom of the run (§9.1)
+            float descender = -200.0f;
+
+            // a face owns its hb objects and its bytes, so it is only ever moved, never copied (§9.1, AD-34)
+            ResolvedFace() = default;
+            // a copy would share a borrowed blob, so copying is refused outright (§9.1, AD-34)
+            ResolvedFace(const ResolvedFace&) = delete;
+            // a copy assignment would share the same borrowed blob, so it is refused too (§9.1, AD-34)
+            ResolvedFace& operator=(const ResolvedFace&) = delete;
+            // a move transfers the owned hb objects and bytes, which is how a face enters the cache (§9.1)
+            ResolvedFace(ResolvedFace&&) = default;
+            // a move assignment transfers the same, which the default face assignment uses (§9.1)
+            ResolvedFace& operator=(ResolvedFace&&) = default;
+        };
+
+        // build a face over font bytes, which every family the engine resolves goes through (§9.1, AD-34)
+        ResolvedFace build_face(std::vector<std::uint8_t> bytes) {
+            // the result fills as much as the bytes allow, so a bad font leaves a face with no font (§9.1)
+            ResolvedFace resolved;
+            // the bytes are owned first, because the blob borrows them (§9.1)
+            resolved.bytes = std::move(bytes);
+            // a font with no byte cannot be read, so the face is left empty (§9.1)
+            if (resolved.bytes.empty())
+                return resolved;
+            // the content hash is over the bytes, which is the identity a layout keys on (§15, AD-34)
+            resolved.font_hash = resources::hash_font_bytes(resolved.bytes.data(), resolved.bytes.size());
+            // the blob borrows the bytes, which the face owns for its whole life (§9.1)
+            resolved.blob = hb_blob_create_or_fail(reinterpret_cast<const char*>(resolved.bytes.data()), static_cast<unsigned int>(resolved.bytes.size()), HB_MEMORY_MODE_READONLY, nullptr, nullptr);
+            // a blob that did not build leaves no face to read (§9.1)
+            if (resolved.blob == nullptr)
+                return resolved;
+            // the face is read at index zero, which is the first face in the file (§9.1)
+            resolved.face = hb_face_create(resolved.blob, 0);
+            // a face with no glyph is unusable, so the font is never built over it (§9.1)
+            if (resolved.face == nullptr || hb_face_get_glyph_count(resolved.face) == 0)
+                return resolved;
+            // the units per em convert design units into logical pixels, and a zero would divide by nothing (§9.1, AD-27)
+            if (hb_face_get_upem(resolved.face) > 0)
+                resolved.units_per_em = static_cast<float>(hb_face_get_upem(resolved.face));
+            // the harfbuzz font is built over the face, which owns no shaping until the funcs are set (§9.1)
+            resolved.font = hb_font_create(resolved.face);
+            // a font that did not build leaves an engine that cannot shape (§9.1)
+            if (resolved.font == nullptr)
+                return resolved;
+            // the opentype funcs give the font its advances and its outlines, which is what hb-draw walks (§9.1)
+            hb_ot_font_set_funcs(resolved.font);
+            // the scale is set to the design units, so the extents below read in em units rather than pixels (§9.1, AD-27)
+            hb_font_set_scale(resolved.font, static_cast<int>(resolved.units_per_em), static_cast<int>(resolved.units_per_em));
+            // the extents carry the ascender and the descender, which place the baseline and the run bottom (§9.1)
+            hb_font_extents_t extents{};
+            // the extents are read only when the font answers them, because a broken face reports nothing (§9.1)
+            if (hb_font_get_h_extents(resolved.font, &extents)) {
+                // the ascender is the height above the baseline, which is where the run hangs from (§9.1)
+                resolved.ascender = static_cast<float>(extents.ascender) / resolved.units_per_em;
+                // the descender is negative in every real face, which places the run below its baseline (§9.1)
+                resolved.descender = static_cast<float>(extents.descender) / resolved.units_per_em;
+            }
+            return resolved;
+        }
+
+        // release the hb objects a resolved face owns, in the order harfbuzz requires (§9.1)
+        void destroy_face(ResolvedFace& resolved) {
+            // the font is destroyed before the face it was built from (§9.1)
+            if (resolved.font != nullptr) {
+                // the font is released, so a second teardown cannot free it twice (§9.1)
+                hb_font_destroy(resolved.font);
+                // the pointer is cleared, because the font no longer exists (§9.1)
+                resolved.font = nullptr;
+            }
+            // the face is destroyed before the blob that owns the bytes (§9.1)
+            if (resolved.face != nullptr) {
+                // the face is released before the blob that backs it (§9.1)
+                hb_face_destroy(resolved.face);
+                // the pointer is cleared for the same reason as the font (§9.1)
+                resolved.face = nullptr;
+            }
+            // the blob goes last, because it borrowed bytes the face still held until now (§9.1, AD-34)
+            if (resolved.blob != nullptr) {
+                // the blob is released once nothing reads its bytes (§9.1)
+                hb_blob_destroy(resolved.blob);
+                // the pointer is cleared, so the teardown is idempotent (§9.1)
+                resolved.blob = nullptr;
+            }
+        }
+
         // read a font file into memory, because the engine identifies a font by its bytes and not by a path (§15, AD-34)
         std::vector<std::uint8_t> read_font_bytes(const std::string& path) {
             // the file is opened in binary, because a font read as text would be corrupted (§9.1)
@@ -68,6 +146,25 @@ namespace albor::harfbuzz
             return std::vector<std::uint8_t>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
         }
     } // namespace
+
+    // the harfbuzz state the engine shapes and draws through, which owns one face and a cache of families (§9.1, AD-34)
+    struct HarfbuzzTextEngine::HarfbuzzEngineState
+    {
+        // the face the engine was built over, which is the one a run that names no family uses (§9.1)
+        ResolvedFace face;
+
+        // the additional families resolved on demand, keyed by the family a run names (§15, AD-34)
+        std::unordered_map<std::string, ResolvedFace> families;
+
+        // the family the default face carries, which decides whether a named family needs resolving (§9.1)
+        std::string family;
+
+        // the resolver holding the drawing typeface, which only the platform can supply (§9.1, AD-28)
+        std::unique_ptr<HarfbuzzTypefaceResolver> resolver;
+
+        // whether the engine needs a platform typeface to be usable, which an embedded run does not (§15, AD-34)
+        bool require_typeface = true;
+    };
 
     std::unique_ptr<HarfbuzzTextEngine> HarfbuzzTextEngine::create(const std::string& font_path, const std::string& family_name) {
         // an empty path names no font, so the engine is refused rather than built empty (§9.1)
@@ -104,29 +201,17 @@ namespace albor::harfbuzz
     }
 
     std::uint64_t HarfbuzzTextEngine::font_hash() const {
-        // the hash identifies the bytes this engine shaped with, and a layout is keyed on it (§15, AD-34)
-        return m_state->font_hash;
+        // the hash identifies the bytes the default face shaped with, which a layout is keyed on (§15, AD-34)
+        return m_state->face.font_hash;
     }
 
     HarfbuzzTextEngine::HarfbuzzTextEngine(const std::string& font_path, const std::string& family_name) :
         m_state(std::make_unique<HarfbuzzEngineState>()) {
-        // the bytes are read first, because harfbuzz builds a face from them and from nothing else (§15, AD-34)
-        m_state->bytes = read_font_bytes(font_path);
-        // a path that read no byte names no font, so the engine stops with no face (§9.1)
-        if (m_state->bytes.empty())
-            return;
-        // the blob borrows the bytes, which the state owns for the whole life of the engine (§9.1)
-        m_state->blob = hb_blob_create_or_fail(reinterpret_cast<const char*>(m_state->bytes.data()), static_cast<unsigned int>(m_state->bytes.size()), HB_MEMORY_MODE_READONLY, nullptr, nullptr);
-        // a blob that did not build leaves no face to read (§9.1)
-        if (m_state->blob == nullptr)
-            return;
-        // the face is created at index zero, which is the first face in the file (§9.1)
-        m_state->face = hb_face_create(m_state->blob, 0);
-        // the hash is over the bytes, so a path loaded font and an embedded one identify identically (§15, AD-34)
-        m_state->font_hash = resources::hash_font_bytes(m_state->bytes.data(), m_state->bytes.size());
-        // the shaper comes up over the face, and the platform typeface because this engine draws one (§9.1)
-        load_shaping();
-        // the typeface is resolved last, because it is the part only the path engine needs (§9.1, AD-28)
+        // the family is stored, because a named run compares against it to skip resolving (§9.1)
+        m_state->family = family_name;
+        // the face is built over the file's bytes, which is the whole of the shaper's input (§15, AD-34)
+        m_state->face = build_face(read_font_bytes(font_path));
+        // the typeface is resolved because this engine draws one, and only the platform can supply it (§9.1, AD-28)
         resolve_typeface(family_name);
     }
 
@@ -134,49 +219,10 @@ namespace albor::harfbuzz
         m_state(std::make_unique<HarfbuzzEngineState>()) {
         // an embedded engine draws as outlines, so it needs no platform typeface to be usable (§15, AD-34)
         m_state->require_typeface = false;
-        // the bytes are copied, because the blob borrows them and the registry owns its own (§9.1, AD-34)
-        m_state->bytes.assign(font_bytes, font_bytes + byte_count);
-        // a build with no byte names no font, so the engine stops with no face (§9.1)
-        if (m_state->bytes.empty())
-            return;
-        // the blob borrows the copied bytes, which the state owns for the whole life of the engine (§9.1)
-        m_state->blob = hb_blob_create_or_fail(reinterpret_cast<const char*>(m_state->bytes.data()), static_cast<unsigned int>(m_state->bytes.size()), HB_MEMORY_MODE_READONLY, nullptr, nullptr);
-        // a blob that did not build leaves no face to read (§9.1)
-        if (m_state->blob == nullptr)
-            return;
-        // the face is read from memory, which is the whole point: no file system is touched (§15, AD-34)
-        m_state->face = hb_face_create(m_state->blob, 0);
-        // the hash identifies the bytes, and it is what a layout is keyed on (§15, AD-34)
-        m_state->font_hash = resources::hash_font_bytes(m_state->bytes.data(), m_state->bytes.size());
-        // only the shaper comes up, because an embedded engine draws outlines and needs no typeface (§15, AD-34)
-        load_shaping();
-    }
-
-    void HarfbuzzTextEngine::load_shaping() {
-        // a face is only usable with at least one glyph, so an empty face stops here (§9.1)
-        if (m_state->face == nullptr || hb_face_get_glyph_count(m_state->face) == 0)
-            return;
-        // the units per em convert design units into logical pixels, and a zero would divide by nothing (§9.1, AD-27)
-        if (hb_face_get_upem(m_state->face) > 0)
-            m_state->units_per_em = static_cast<float>(hb_face_get_upem(m_state->face));
-        // the harfbuzz font is built over the face, which owns no shaping of its own until the funcs are set (§9.1)
-        m_state->font = hb_font_create(m_state->face);
-        // a font that did not build leaves an engine that cannot shape (§9.1)
-        if (m_state->font == nullptr)
-            return;
-        // the opentype funcs give the font its advances and its outlines, which is what hb-draw walks (§9.1)
-        hb_ot_font_set_funcs(m_state->font);
-        // the scale is set to the design units, so the extents below read in em units rather than in pixels (§9.1, AD-27)
-        hb_font_set_scale(m_state->font, static_cast<int>(m_state->units_per_em), static_cast<int>(m_state->units_per_em));
-        // the extents carry the ascender and the descender, which place the baseline and the bottom of the run (§9.1)
-        hb_font_extents_t extents{};
-        // the extents are read only when the font answers them, because a broken face reports nothing (§9.1)
-        if (hb_font_get_h_extents(m_state->font, &extents)) {
-            // the ascender is the height above the baseline, which is where the run hangs from (§9.1)
-            m_state->ascender = static_cast<float>(extents.ascender) / m_state->units_per_em;
-            // the descender is negative in every real face, which is what places the run below its baseline (§9.1)
-            m_state->descender = static_cast<float>(extents.descender) / m_state->units_per_em;
-        }
+        // the family is stored, because a named run compares against it to skip resolving (§9.1)
+        m_state->family = std::string(family_name);
+        // the face is built over the carried bytes, so no file system is consulted (§15, AD-34)
+        m_state->face = build_face(std::vector<std::uint8_t>(font_bytes, font_bytes + byte_count));
     }
 
     void HarfbuzzTextEngine::resolve_typeface(std::string_view family_name) {
@@ -188,15 +234,11 @@ namespace albor::harfbuzz
     }
 
     HarfbuzzTextEngine::~HarfbuzzTextEngine() {
-        // the harfbuzz font is destroyed before the face it was built from (§9.1)
-        if (m_state->font != nullptr)
-            hb_font_destroy(m_state->font);
-        // the face is destroyed before the blob that owns the bytes (§9.1)
-        if (m_state->face != nullptr)
-            hb_face_destroy(m_state->face);
-        // the blob goes last, because it borrowed bytes the state still held until now (§9.1, AD-34)
-        if (m_state->blob != nullptr)
-            hb_blob_destroy(m_state->blob);
+        // the default face is destroyed through the shared routine, so no hb object outlives the engine (§9.1)
+        destroy_face(m_state->face);
+        // every resolved family is destroyed the same way, because each owns its own hb objects (§9.1)
+        for (auto& entry : m_state->families)
+            destroy_face(entry.second);
     }
 
     namespace
@@ -280,7 +322,7 @@ namespace albor::harfbuzz
 
     std::vector<Point> HarfbuzzTextEngine::glyph_outline(std::uint32_t glyph_id, float font_size) const {
         // an engine with no font has no outlines, which is a refusal rather than an empty glyph (§9.1)
-        if (m_state->font == nullptr)
+        if (m_state->face.font == nullptr)
             return {};
         // a size of no pixels cannot scale an outline to, so there is nothing to return (§9.1, AD-27)
         if (font_size <= 0.0f)
@@ -288,7 +330,7 @@ namespace albor::harfbuzz
         // the scale is set in sixty fourths, so a fractional size keeps its subpixel position (§15, AD-34)
         const int scale = static_cast<int>(font_size * 64.0f);
         // the draw callbacks report at that scale, which the sink then reduces to logical pixels (§9.1, AD-27)
-        hb_font_set_scale(m_state->font, scale, scale);
+        hb_font_set_scale(m_state->face.font, scale, scale);
         // the sink carries the points, because the callbacks carry no context of their own (§6.4)
         OutlineSink sink;
         // the draw funcs are built fresh per call, because the callbacks are stateless and cheap to attach (§6.4)
@@ -305,7 +347,7 @@ namespace albor::harfbuzz
         // the cubic callback flattens a cubic (§6.4)
         hb_draw_funcs_set_cubic_to_func(funcs, &OutlineSink::cubic_to, nullptr, nullptr);
         // the walk fills the sink over the font bytes, unhinted because hinting depends on a rasterizer (§15, AD-34)
-        hb_font_draw_glyph(m_state->font, glyph_id, funcs, &sink);
+        hb_font_draw_glyph(m_state->face.font, glyph_id, funcs, &sink);
         // the funcs are dropped once the walk is done, because the sink owns the points (§6.4)
         hb_draw_funcs_destroy(funcs);
         // every point is reported in sixty fourths, so each drops to logical pixels (§9.1, AD-27)
@@ -322,15 +364,15 @@ namespace albor::harfbuzz
     bool HarfbuzzTextEngine::ready() const {
         // an embedded engine draws outlines and is usable whenever it can shape, with no typeface (§15, AD-34)
         if (!m_state->require_typeface)
-            return m_state->font != nullptr;
+            return m_state->face.font != nullptr;
         // the engine is usable exactly when it can shape and the renderer can draw what it shaped (§9.1, AD-28)
-        return m_state->font != nullptr && m_state->resolver != nullptr && m_state->resolver->typeface() != nullptr;
+        return m_state->face.font != nullptr && m_state->resolver != nullptr && m_state->resolver->typeface() != nullptr;
     }
 
     bool HarfbuzzTextEngine::drawable() const {
         // an embedded run draws through outlines, so it is drawable whenever it can shape (§15, AD-34)
         if (!m_state->require_typeface)
-            return m_state->font != nullptr;
+            return m_state->face.font != nullptr;
         // a run is drawable exactly when the engine resolved a typeface for the renderer (§9.1, AD-28)
         return m_state->resolver != nullptr && m_state->resolver->typeface() != nullptr;
     }
@@ -398,67 +440,70 @@ namespace albor::harfbuzz
         }
     } // namespace
 
-    ShapedRun::Line HarfbuzzTextEngine::shape_line(std::string_view text, std::size_t start, std::size_t end, float font_size) const {
-        // the row carries the metrics of its line even when it holds no glyph, which a blank row needs (§9.1)
-        ShapedRun::Line line;
-        // an embedded run carries no typeface, because the renderer draws its glyphs as outlines (§15, AD-34)
-        line.font = m_state->resolver != nullptr ? FontHandle::from_object(m_state->resolver->typeface()) : FontHandle{};
-        // the baseline sits at the ascender, which is where every glyph of the line hangs from (§9.1)
-        line.origin = Point{.x = 0.0f, .y = m_state->ascender * font_size};
-        // the ascent of the line is the scaled ascender, which places the row's top (§9.1)
-        line.ascent = m_state->ascender * font_size;
-        // the descent is the scaled descender, reported positive because it is a distance (§9.1)
-        line.descent = -m_state->descender * font_size;
-        // the start byte places the row in the text, which a caret resolves against (§9.1)
-        line.start_byte = start;
-        // the end byte is where the row's glyphs stop, which is the next row's start (§9.1)
-        line.end_byte = end;
-        // a range that holds no byte shapes no glyph, so the empty row is returned with its metrics (§9.1)
-        if (end <= start)
+    namespace
+    {
+        ShapedRun::Line shape_range(const ResolvedFace& face, const void* typeface, std::string_view text, std::size_t start, std::size_t end, float font_size) {
+            // the row carries the metrics of its line even when it holds no glyph, which a blank row needs (§9.1)
+            ShapedRun::Line line;
+            // an embedded run carries no typeface, because the renderer draws its glyphs as outlines (§15, AD-34)
+            line.font = typeface != nullptr ? FontHandle::from_object(typeface) : FontHandle{};
+            // the baseline sits at the ascender, which is where every glyph of the line hangs from (§9.1)
+            line.origin = Point{.x = 0.0f, .y = face.ascender * font_size};
+            // the ascent of the line is the scaled ascender, which places the row's top (§9.1)
+            line.ascent = face.ascender * font_size;
+            // the descent is the scaled descender, reported positive because it is a distance (§9.1)
+            line.descent = -face.descender * font_size;
+            // the start byte places the row in the text, which a caret resolves against (§9.1)
+            line.start_byte = start;
+            // the end byte is where the row's glyphs stop, which is the next row's start (§9.1)
+            line.end_byte = end;
+            // a range that holds no byte shapes no glyph, so the empty row is returned with its metrics (§9.1)
+            if (end <= start)
+                return line;
+            // the buffer carries the row and its properties, and is destroyed by the unique pointer (§9.1)
+            std::unique_ptr<hb_buffer_t, decltype(&hb_buffer_destroy)> buffer(hb_buffer_create(), &hb_buffer_destroy);
+            // a buffer that did not allocate shapes nothing, so the row carries its metrics alone (§9.1)
+            if (buffer == nullptr)
+                return line;
+            // the row's bytes are added as utf8, and the script and direction are guessed from them (§9.1)
+            hb_buffer_add_utf8(buffer.get(), text.data() + start, static_cast<int>(end - start), 0, -1);
+            // the guess fills in script, language and direction from the buffer's contents (§9.1)
+            hb_buffer_guess_segment_properties(buffer.get());
+            // the size is set in points because the font scales its own positions to it (§9.1, AD-27)
+            hb_font_set_scale(face.font, static_cast<int>(font_size * 64.0f), static_cast<int>(font_size * 64.0f));
+            // the shaping pass itself, which produces the glyph ids and their positions (§9.1)
+            hb_shape(face.font, buffer.get(), nullptr, 0);
+            // the shaped output, which carries one entry per glyph (§9.1)
+            unsigned glyph_count = 0;
+            hb_glyph_info_t* glyphs = hb_buffer_get_glyph_infos(buffer.get(), &glyph_count);
+            // the positions are read beside the glyphs, because one position describes one glyph (§9.1)
+            hb_glyph_position_t* positions = hb_buffer_get_glyph_positions(buffer.get(), &glyph_count);
+            // a row with no glyph keeps its metrics, which is what a blank row is (§9.1)
+            if (glyph_count == 0 || glyphs == nullptr || positions == nullptr)
+                return line;
+            // the advance is accumulated in design units, because harfbuzz reports positions in them (§9.1)
+            float advance = 0.0f;
+            // the glyphs are reserved, because the shaped output reports how many there are (§9.1)
+            line.glyphs.reserve(static_cast<std::size_t>(glyph_count));
+            for (unsigned index = 0; index < glyph_count; index++) {
+                // each glyph contributes its index and its offset from the accumulated pen (§9.1)
+                const hb_glyph_position_t& position = positions[index];
+                // the offset is scaled into logical pixels, because the run is measured in them (§9.1, AD-27)
+                const float offset_x = static_cast<float>(position.x_offset) / 64.0f;
+                // the vertical offset is the same scale, and is rare but a diacritic needs it (§9.1)
+                const float offset_y = static_cast<float>(position.y_offset) / 64.0f;
+                // the glyph carries the absolute byte it came from, which the row's start restores (§9.1)
+                const std::uint32_t cluster = glyphs[index].cluster + static_cast<std::uint32_t>(start);
+                // the glyph is recorded where the pen currently sits, carrying the byte it came from (§9.1)
+                line.glyphs.push_back(ShapedGlyph{.id = glyphs[index].codepoint, .position = Point{.x = advance + offset_x, .y = -offset_y}, .cluster = cluster});
+                // the pen advances by this glyph's advance, which is what lays the next one out (§9.1)
+                advance += static_cast<float>(position.x_advance) / 64.0f;
+            }
+            // the line's advance is where a caret stands past its last glyph (§9.1)
+            line.width = advance;
             return line;
-        // the buffer carries the row and its properties, and is destroyed by the unique pointer (§9.1)
-        std::unique_ptr<hb_buffer_t, decltype(&hb_buffer_destroy)> buffer(hb_buffer_create(), &hb_buffer_destroy);
-        // a buffer that did not allocate shapes nothing, so the row carries its metrics alone (§9.1)
-        if (buffer == nullptr)
-            return line;
-        // the row's bytes are added as utf8, and the script and direction are guessed from them (§9.1)
-        hb_buffer_add_utf8(buffer.get(), text.data() + start, static_cast<int>(end - start), 0, -1);
-        // the guess fills in script, language and direction from the buffer's contents (§9.1)
-        hb_buffer_guess_segment_properties(buffer.get());
-        // the size is set in points because the font scales its own positions to it (§9.1, AD-27)
-        hb_font_set_scale(m_state->font, static_cast<int>(font_size * 64.0f), static_cast<int>(font_size * 64.0f));
-        // the shaping pass itself, which produces the glyph ids and their positions (§9.1)
-        hb_shape(m_state->font, buffer.get(), nullptr, 0);
-        // the shaped output, which carries one entry per glyph (§9.1)
-        unsigned glyph_count = 0;
-        hb_glyph_info_t* glyphs = hb_buffer_get_glyph_infos(buffer.get(), &glyph_count);
-        // the positions are read beside the glyphs, because one position describes one glyph (§9.1)
-        hb_glyph_position_t* positions = hb_buffer_get_glyph_positions(buffer.get(), &glyph_count);
-        // a row with no glyph keeps its metrics, which is what a blank row is (§9.1)
-        if (glyph_count == 0 || glyphs == nullptr || positions == nullptr)
-            return line;
-        // the advance is accumulated in design units, because harfbuzz reports positions in them (§9.1)
-        float advance = 0.0f;
-        // the glyphs are reserved, because the shaped output reports how many there are (§9.1)
-        line.glyphs.reserve(static_cast<std::size_t>(glyph_count));
-        for (unsigned index = 0; index < glyph_count; index++) {
-            // each glyph contributes its index and its offset from the accumulated pen (§9.1)
-            const hb_glyph_position_t& position = positions[index];
-            // the offset is scaled into logical pixels, because the run is measured in them (§9.1, AD-27)
-            const float offset_x = static_cast<float>(position.x_offset) / 64.0f;
-            // the vertical offset is the same scale, and is rare but a diacritic needs it (§9.1)
-            const float offset_y = static_cast<float>(position.y_offset) / 64.0f;
-            // the glyph carries the absolute byte it came from, which the row's start restores (§9.1)
-            const std::uint32_t cluster = glyphs[index].cluster + static_cast<std::uint32_t>(start);
-            // the glyph is recorded where the pen currently sits, carrying the byte it came from (§9.1)
-            line.glyphs.push_back(ShapedGlyph{.id = glyphs[index].codepoint, .position = Point{.x = advance + offset_x, .y = -offset_y}, .cluster = cluster});
-            // the pen advances by this glyph's advance, which is what lays the next one out (§9.1)
-            advance += static_cast<float>(position.x_advance) / 64.0f;
         }
-        // the line's advance is where a caret stands past its last glyph (§9.1)
-        line.width = advance;
-        return line;
-    }
+    } // namespace
 
     TextLayout HarfbuzzTextEngine::measure(std::string_view text, float max_width) const {
         // an engine with no face measures nothing, because there is nothing to shape with (§9.1)
@@ -469,6 +514,11 @@ namespace albor::harfbuzz
     }
 
     TextLayout HarfbuzzTextEngine::measure(std::string_view text, float max_width, float font_size) const {
+        // the size only overload measures with the engine's default face, which is the family it was built over (§9.1)
+        return measure(text, max_width, font_size, FontSpec{});
+    }
+
+    TextLayout HarfbuzzTextEngine::measure(std::string_view text, float max_width, float font_size, const FontSpec& spec) const {
         // an engine with no face measures nothing, because there is nothing to shape with (§9.1)
         if (!ready())
             return TextLayout{};
@@ -478,6 +528,50 @@ namespace albor::harfbuzz
         // a size of no pixels cannot be shaped at, so the run measures nothing (§9.1)
         if (font_size <= 0.0f)
             return TextLayout{};
+        // the face a selection resolves to, which is the engine's own when no family is named (§9.1, AD-34)
+        auto resolve_face = [this](const FontSpec& selection) -> const ResolvedFace* {
+            // a run that names no family, or the engine's own family, uses the default face (§9.1)
+            if (selection.family.empty() || selection.family == m_state->family)
+                return &m_state->face;
+            // the families to try in order are the named family and then the fallback chain (§9.1, AD-34)
+            std::vector<std::string_view> candidates;
+            // the named family is tried first, because it is what the author asked for (§9.1)
+            candidates.push_back(selection.family);
+            // each fallback follows, because a named family may be absent on a platform (§15, AD-34)
+            for (const std::string& fallback : selection.fallback)
+                candidates.push_back(fallback);
+            for (std::string_view candidate : candidates) {
+                // a family already resolved answers from the cache, so the bytes are parsed once (§9.1)
+                const auto found = m_state->families.find(std::string(candidate));
+                if (found != m_state->families.end()) {
+                    // a cached face that shapes answers, and one that failed falls through to the next family (§9.1)
+                    if (found->second.font != nullptr)
+                        return &found->second;
+                    // the failed family is skipped, because a later family may still shape (§15, AD-34)
+                    continue;
+                }
+                // the registry is consulted, because a carried font is what a family resolves to (§15, AD-34)
+                const resources::EmbeddedFont* font = resources::FontRegistry::find_family(candidate);
+                if (font == nullptr)
+                    continue;
+                // the face is built over the carried bytes and cached under the family it resolved (§11.3, AD-34)
+                const auto inserted = m_state->families.emplace(std::string(candidate), build_face(font->bytes));
+                // a face that shapes answers, and one a corrupt font left empty falls through (§9.1)
+                if (inserted.first->second.font != nullptr)
+                    return &inserted.first->second;
+                // the family is skipped, because the next one may carry a usable face (§15, AD-34)
+                continue;
+            }
+            // no family in the chain is carried, so the run is refused rather than drawn with the wrong face (§15, AD-34)
+            return nullptr;
+        };
+        // the resolved face is what the run shapes and is measured with, and its absence refuses the run (§15, AD-34)
+        const ResolvedFace* face = resolve_face(spec);
+        // a selection no carried font answers measures nothing, which is a refusal rather than a silent default (§15)
+        if (face == nullptr)
+            return TextLayout{};
+        // the typeface is the engine's own only for its face, because a foreign face draws as outlines (§9.1, AD-34)
+        const void* typeface = face == &m_state->face && m_state->resolver != nullptr ? m_state->resolver->typeface() : nullptr;
         // the rows of the run, each of which the walk below stacks under the one before it (§8.2)
         std::vector<ShapedRun::Line> lines;
         // the ceiling bounds the run only when the caller asked for one below the unbounded sentinel (§8.2)
@@ -513,7 +607,7 @@ namespace albor::harfbuzz
                     // the candidate is measured over the glyphs it would draw, which drop its break byte (§8.2)
                     const std::size_t probe_end = trim_row_end(text, line_start, offset.first, true);
                     // the probe is the row the candidate would produce (§8.2)
-                    const ShapedRun::Line probe = shape_line(text, line_start, probe_end, font_size);
+                    const ShapedRun::Line probe = shape_range(*face, typeface, text, line_start, probe_end, font_size);
                     // a probe that fits is kept, and the first is always kept so the walk always advances (§8.2)
                     if (probe.width <= max_width || line_end == line_start) {
                         line_end = offset.first;
@@ -533,7 +627,7 @@ namespace albor::harfbuzz
             // the row draws the glyphs before its break, which keeps a newline out of the run (§9.1)
             const std::size_t content_end = trim_row_end(text, line_start, line_end, bounded);
             // the settled row is shaped over its glyph range, because the break byte is not a glyph (§9.1)
-            ShapedRun::Line row = shape_line(text, line_start, content_end, font_size);
+            ShapedRun::Line row = shape_range(*face, typeface, text, line_start, content_end, font_size);
             // the span ends at the break, so the next row starts where this one broke (§9.1)
             row.end_byte = line_end;
             // the row's baseline sits under every row before it, which stacks the rows down the run (§8.2)
@@ -564,8 +658,8 @@ namespace albor::harfbuzz
         const float first_descent = lines.front().descent;
         // the shaped run is what the render stage replays verbatim (§9.1, AD-18)
         TextLayout layout;
-        // the run is built over its rows and the size it was shaped at (§9.1)
-        layout.run = ShapedRun::make(std::move(lines), font_size, m_state->font_hash, ShapeSource::Embedded);
+        // the run is built over its rows and the face it was shaped from, whose hash keys a layout (§9.1, AD-34)
+        layout.run = ShapedRun::make(std::move(lines), font_size, face->font_hash, ShapeSource::Embedded);
         // the size is the widest row by the stacked height of every row (§8.2)
         layout.size = Size{.width = widest, .height = total_height};
         // the ascent is the first row's, which a caller places content by (§9.1)
@@ -574,6 +668,11 @@ namespace albor::harfbuzz
         layout.descent = first_descent;
         // exit
         return layout;
+    }
+
+    bool HarfbuzzTextEngine::resolves_font_selection() const {
+        // the engine resolves a family through the registry, so a selection beyond its default face is honored (§9.1)
+        return true;
     }
 
     void install_harfbuzz_text_engine() {

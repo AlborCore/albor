@@ -231,30 +231,100 @@ TEST(DualEngineConformanceChecks, ADefaultSpecMeasuresAsTheSizeOnlyOverload) {
 }
 
 TEST(DualEngineConformanceChecks, ABackendPublishesWhetherItResolvesAFontSelection) {
-    // arrange an engine over the carried font, which does not resolve a family beyond its own face yet (§9.1)
+    // arrange an engine over the carried font, which resolves a family through the registry (§9.1, AD-34)
     if (!has_font())
         GTEST_SKIP() << "no conformance font on this host";
     const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH, FONT_FAMILY);
     ASSERT_NE(engine, nullptr);
     // act
     const bool resolves = engine->resolves_font_selection();
-    // assert the limitation is published, so no caller passes a family and silently gets the default face (§15)
-    EXPECT_FALSE(resolves);
+    // assert the engine publishes that it resolves a family, so a caller may pass a selection (§9.1, AD-34)
+    EXPECT_TRUE(resolves);
 }
 
-TEST(DualEngineConformanceChecks, ANonDefaultSpecCurrentlyMeasuresAsTheDefaultFace) {
-    // arrange an engine that has not learned to resolve a family, which the current contract must state plainly (§9.1)
-    if (!has_font())
-        GTEST_SKIP() << "no conformance font on this host";
-    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH, FONT_FAMILY);
+TEST(DualEngineConformanceChecks, ASelectionNamingNoCarriedFamilyIsRefused) {
+    // arrange the carried fixture under one family, with no other family in the registry (§15, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
     ASSERT_NE(engine, nullptr);
-    // act a run is measured once with no selection and once with a family and weight the backend cannot resolve (§9.1)
+    // act a selection names a family the build does not carry (§15, AD-34)
+    const TextLayout layout = engine->measure("Albor", 0.0f, 16.0f, FontSpec{.family = "AlborAbsentFamily"});
+    // assert the run is refused rather than measured with the wrong face, which is what identity requires (§15, AD-34)
+    EXPECT_EQ(layout.run, nullptr);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(DualEngineConformanceChecks, ASelectionNamingACarriedFamilyResolvesToIt) {
+    // arrange the fixture carried under two names, which is how a family resolves through the registry (§15, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    resources::FontRegistry::register_font(make_embedded_font("AlborAlias", ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act a run asks for the alias family, which is not the engine's own but resolves to the same bytes (§9.1, AD-34)
     const TextLayout plain = engine->measure("Albor", 0.0f, 16.0f);
-    const TextLayout asked = engine->measure("Albor", 0.0f, 16.0f, FontSpec{.family = "Inter", .weight = FontWeight::Bold});
-    // assert the current limitation is pinned, so a backend that resolves a family updates this test (§9.1)
+    const TextLayout aliased = engine->measure("Albor", 0.0f, 16.0f, FontSpec{.family = "AlborAlias"});
+    // assert the alias resolved to the same carried bytes, so the layout is identical (§15, AD-34)
     ASSERT_NE(plain.run, nullptr);
-    ASSERT_NE(asked.run, nullptr);
-    EXPECT_EQ(*plain.run, *asked.run);
+    ASSERT_NE(aliased.run, nullptr);
+    EXPECT_EQ(*plain.run, *aliased.run);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(DualEngineConformanceChecks, ASelectionChangesTheFaceTheRunShapesWith) {
+    // arrange two different faces under two families, which a family selection must distinguish (§15, AD-34)
+    if (!has_font())
+        GTEST_SKIP() << "no second conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    resources::FontRegistry::register_font(make_embedded_font("AlborSecond", FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act the same text is shaped once with the default face and once with the second family (§9.1, AD-34)
+    const TextLayout first = engine->measure("Albor", 0.0f, 20.0f);
+    const TextLayout second = engine->measure("Albor", 0.0f, 20.0f, FontSpec{.family = "AlborSecond"});
+    // assert the two faces produce different runs, so the family truly selected a face (§15, AD-34)
+    ASSERT_NE(first.run, nullptr);
+    ASSERT_NE(second.run, nullptr);
+    EXPECT_NE(*first.run, *second.run);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(DualEngineConformanceChecks, ASelectionFallsBackToACarriedFamily) {
+    // arrange the engine's own family plus one other, with the named family absent (§15, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    resources::FontRegistry::register_font(make_embedded_font("AlborFallback", ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act the named family is absent, so the fallback chain is what resolves the run (§9.1, AD-34)
+    const TextLayout layout = engine->measure("Albor", 0.0f, 16.0f, FontSpec{.family = "AlborAbsent", .fallback = {"AlborFallback"}});
+    // assert the fallback family resolved, so the run is measured rather than refused (§15, AD-34)
+    ASSERT_NE(layout.run, nullptr);
+    EXPECT_GT(layout.run->glyph_count(), 0u);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(DualEngineConformanceChecks, ASelectionNamingTheEnginesOwnFamilyMeasuresPlainly) {
+    // arrange the carried fixture, whose family the engine was built over (§15, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act the selection names the engine's own family, which uses the default face and skips the registry (§9.1)
+    const TextLayout plain = engine->measure("Albor", 0.0f, 16.0f);
+    const TextLayout named = engine->measure("Albor", 0.0f, 16.0f, FontSpec{.family = std::string(ALBOR_TEST_FONT_FAMILY)});
+    // assert the own family measures identically to no selection, which is the default face (§15, AD-34)
+    ASSERT_NE(plain.run, nullptr);
+    ASSERT_NE(named.run, nullptr);
+    EXPECT_EQ(*plain.run, *named.run);
+    // exit
+    resources::FontRegistry::clear();
 }
 
 TEST(EmbeddedFontChecks, TheOflFixtureIsPresentAndIdentifiedByItsBytes) {
