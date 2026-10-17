@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <memory>
+#include <string>
 #include <string_view>
 
 #include "render/text_layout.h"
@@ -39,6 +40,9 @@ namespace albor
 
         // the width an unbounded run is measured against, because a call site may ask for no ceiling (§8.2)
         static constexpr float UNBOUNDED_WIDTH = 1000000.0f;
+
+        // the family the framework measures with when the composition root names none (§11.3, AD-34)
+        static constexpr std::string_view DEFAULT_FONT_FAMILY = "Albor Sans";
     };
 
     // the signature a text engine implements to build itself (§9.1)
@@ -49,6 +53,9 @@ namespace albor
     {
         // the installed factory, which is empty until a backend installs one (§9.1)
         TextEngineFactory factory;
+
+        // the family the installed engine measures with, which the composition root names before the first window (§4.1)
+        std::string font_family;
     };
 
     // install the text engine the framework measures with, which a backend calls once at startup (§9.1)
@@ -59,4 +66,10 @@ namespace albor
 
     // build the installed engine, returning null when no backend is installed (§9.1)
     [[nodiscard]] std::unique_ptr<TextEngine> create_text_engine();
+
+    // name the family the installed engine measures with, which the composition root sets before the first window (§4.1)
+    void set_installed_font_family(std::string family);
+
+    // hand out the family the installed engine measures with, which a factory reads (§11.3, AD-34)
+    [[nodiscard]] std::string installed_font_family();
 } // namespace albor

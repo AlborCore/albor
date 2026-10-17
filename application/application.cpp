@@ -429,7 +429,8 @@ namespace albor
         // the text engine comes from the installed selection, which an absent one reports through null (§9.1)
         std::unique_ptr<TextEngine> text = create_text_engine();
         if (!text || !text->ready()) {
-            std::fprintf(stderr, "application: the text engine did not come up\n");
+            // the family is named in the failure, because it is the fact an application must act on (§9.1, AD-34)
+            std::fprintf(stderr, "application: the text engine did not come up for family '%s'\n", installed_font_family().c_str());
             return false;
         }
         // both are moved in together, because a half selection would betray the next window (§6.3)

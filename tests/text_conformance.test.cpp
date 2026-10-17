@@ -1002,3 +1002,52 @@ TEST(VendoredWrapChecks, BothEnginesWrapIntoTheSameNumberOfRows) {
     // exit
     resources::FontRegistry::clear();
 }
+
+TEST(TextEngineInstallChecks, TheInstalledFactoryBuildsTheEmbeddedEngine) {
+    // arrange the tree carries a font under a family the composition root names (§11.3, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    set_installed_font_family(std::string(ALBOR_TEST_FONT_FAMILY));
+    // act installing the vendored engine is what linking it selects, and the factory then builds it (§9.1)
+    harfbuzz::install_harfbuzz_text_engine();
+    const std::unique_ptr<TextEngine> engine = create_text_engine();
+    // assert the factory built an engine over the carried font, with no platform font needed (§15, AD-34)
+    ASSERT_NE(engine, nullptr);
+    EXPECT_TRUE(engine->ready());
+    const TextLayout layout = engine->measure("Albor", 0.0f, 16.0f);
+    ASSERT_NE(layout.run, nullptr);
+    EXPECT_GT(layout.run->glyph_count(), 0u);
+    // exit clear the factory, the family and the registry, so one test's install cannot answer another (§2.2)
+    set_text_engine_factory(nullptr);
+    // the family is cleared beside the factory, because both are global state a later test would read (§2.2)
+    set_installed_font_family("");
+    // the registry is emptied for the same reason (§2.2)
+    resources::FontRegistry::clear();
+}
+
+TEST(TextEngineInstallChecks, TheDefaultFamilyIsUsedWhenNoneIsNamed) {
+    // arrange the registry carries the carried font under the default family the framework names (§11.3, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(std::string(TextEngine::DEFAULT_FONT_FAMILY), ALBOR_TEST_FONT_PATH));
+    set_installed_font_family("");
+    // act installing builds the engine over the family the composition root left unnamed (§9.1)
+    harfbuzz::install_harfbuzz_text_engine();
+    const std::unique_ptr<TextEngine> engine = create_text_engine();
+    // assert the unnamed family fell back to the default, which the registry carried (§11.3, AD-34)
+    ASSERT_NE(engine, nullptr);
+    EXPECT_TRUE(engine->ready());
+    // exit
+    set_text_engine_factory(nullptr);
+    // the family is cleared beside the factory and the registry, so no global leaks into a later test (§2.2)
+    set_installed_font_family("");
+    resources::FontRegistry::clear();
+}
+
+TEST(TextEngineInstallChecks, TheFactoryIsEmptyUntilTheEngineIsInstalled) {
+    // arrange no backend is installed, which is the state a process starts in (§9.1)
+    set_text_engine_factory(nullptr);
+    // act
+    const std::unique_ptr<TextEngine> engine = create_text_engine();
+    // assert an uninstalled factory builds nothing, so linking the engine is the whole selection (§9.1)
+    EXPECT_EQ(engine, nullptr);
+}

@@ -577,7 +577,7 @@ namespace albor::harfbuzz
     }
 
     void install_harfbuzz_text_engine() {
-        // the factory needs a font path the composition root owns, so this installs nothing until discovery lands (§9.1)
-        (void)0;
+        // the factory builds the embedded engine over the family the composition root named (§11.3, AD-34)
+        set_text_engine_factory([]() -> std::unique_ptr<TextEngine> { return HarfbuzzTextEngine::create_embedded(installed_font_family()); });
     }
 } // namespace albor::harfbuzz
