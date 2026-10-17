@@ -23,7 +23,7 @@ if(NOT APPLE)
     target_include_directories(albor-render-skia SYSTEM PRIVATE ${ALBOR_SKIA_INCLUDE_ROOT})
 
     # the portable half reaches the cpu rasterizer only, so it needs skia and no platform framework (§6.3, AD-26)
-    target_link_libraries(albor-render-skia PUBLIC albor-render PRIVATE albor-skia)
+    target_link_libraries(albor-render-skia PUBLIC albor-render PRIVATE albor-skia albor-resources)
     return()
 endif()
 
@@ -44,7 +44,7 @@ target_compile_options(albor-render-skia PRIVATE -fobjc-arc)
 target_include_directories(albor-render-skia SYSTEM PRIVATE ${ALBOR_SKIA_INCLUDE_ROOT})
 
 # the backend implements the rendering hal and reaches the metal device and the core animation layer (§6.3, AD-16)
-target_link_libraries(albor-render-skia PUBLIC albor-render PRIVATE albor-skia "-framework Metal" "-framework QuartzCore" "-framework Foundation")
+target_link_libraries(albor-render-skia PUBLIC albor-render PRIVATE albor-skia albor-resources "-framework Metal" "-framework QuartzCore" "-framework Foundation")
 
 # the auto target links the archive whole, so the metal backend installs itself at load without a call (§6.3, AD-26)
 add_library(albor-render-skia-auto INTERFACE)

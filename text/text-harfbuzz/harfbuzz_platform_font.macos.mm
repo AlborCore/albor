@@ -6,18 +6,13 @@
 #include <cstring>
 #include <vector>
 
-#include <skia/core/SkTypeface.h>
-#include <skia/ports/SkTypeface_mac.h>
-
 namespace albor::harfbuzz
 {
-    std::vector<std::uint8_t> platform_font_bytes(const void* typeface_object) {
-        // the object is the skia typeface the shaping issued, which only this half may name (§3.5, AD-19)
-        const SkTypeface* typeface = static_cast<const SkTypeface*>(typeface_object);
-        // the core text face is what the platform backs the typeface with, and a stream backed one carries none (§9.1)
-        CTFontRef ct_font = SkTypeface_GetCTFontRef(typeface);
+    std::vector<std::uint8_t> platform_font_bytes(const void* font_object) {
+        // the handle is the core text font the resolver issued, which only this half may name (§3.5, AD-19)
+        const CTFontRef font = static_cast<CTFontRef>(font_object);
         // the graphics font is the sfnt the core text face fronts, which a face with no backing does not carry (§15)
-        CGFontRef cg_font = ct_font != nullptr ? CTFontCopyGraphicsFont(ct_font, nullptr) : nullptr;
+        CGFontRef cg_font = font != nullptr ? CTFontCopyGraphicsFont(font, nullptr) : nullptr;
         // the tags name the tables the face carries, which rebuild into one face file (§15, AD-34)
         CFArrayRef tags = cg_font != nullptr ? CGFontCopyTableTags(cg_font) : nullptr;
         // the reported count bounds the walk, and a face with an absurd or empty tag list carries none (§15)

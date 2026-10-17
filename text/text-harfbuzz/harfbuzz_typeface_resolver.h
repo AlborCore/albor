@@ -5,7 +5,7 @@
 
 namespace albor::harfbuzz
 {
-    // resolve a typeface a renderer can draw with, which every platform supplies by family name (§9.1, AD-28)
+    // resolve the platform font a run draws with, which every platform supplies by family name (§9.1, AD-28)
     class HarfbuzzTypefaceResolver
     {
     public:
@@ -22,7 +22,7 @@ namespace albor::harfbuzz
         HarfbuzzTypefaceResolver(HarfbuzzTypefaceResolver&&) = delete;
         HarfbuzzTypefaceResolver& operator=(HarfbuzzTypefaceResolver&&) = delete;
 
-        // hand out the resolved typeface, which the renderer draws the glyphs with (§9.1, AD-28)
+        // hand out the resolved platform font, which the renderer adapts to its own typeface (§9.1, AD-28)
         [[nodiscard]] virtual const void* typeface() const = 0;
 
     protected:

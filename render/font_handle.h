@@ -8,7 +8,7 @@ namespace albor
     public:
         FontHandle() = default;
 
-        // wrap a resolved typeface a renderer needs, such as an skia typeface the text engine shaped with (§9.1)
+        // wrap a resolved platform font a renderer needs, such as the core text face the text engine shaped with (§9.1)
         [[nodiscard]] static FontHandle from_object(const void* object);
 
         // report whether the handle refers to a typeface at all (§9.1)

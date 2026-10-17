@@ -1,7 +1,10 @@
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <span>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -21,8 +24,12 @@
 #include "render/render-skia/skia_renderer_backend.h"
 #include "render/render-software/software_renderer_backend.h"
 #include "render/screenshot.h"
+#include "resources/embedded_font.h"
+#include "text/text-harfbuzz/embedded_glyph_provider.h"
 #include "text/text-harfbuzz/harfbuzz_text_engine.h"
 #include "tools/alloc-probe/alloc_probe.h"
+#include "ui/scene_builder.h"
+#include "ui/ui_node.h"
 
 using namespace albor;
 
@@ -111,6 +118,25 @@ namespace
         // the run keeps the shaped size and reports what the measurement reported (§9.1)
         return TextLayout{.run = ShapedRun::make(std::move(lines), layout.run->font_size()), .size = layout.size, .ascent = layout.ascent, .descent = layout.descent};
     }
+
+    // a node that draws a measured run through the ordinary text call, which the builder expands (§6.1, §15)
+    class EmbeddedTextNode final : public UiNode
+    {
+    public:
+        // override: draw the run at the node's own origin, which is what a text widget does (§6.1, §9.1)
+        void render(RenderContext& context) override {
+            // a run that measured nothing draws nothing, because it carries no glyph (§6.2)
+            if (m_layout.run == nullptr)
+                return;
+            // the ordinary text call is what a widget makes, with no special path for embedded runs (§6.1)
+            context.draw_text(m_layout, Point{bounds().x, bounds().y}, {.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+            // the children draw over it, which is the composite contract of a node (§6.1)
+            UiNode::render(context);
+        }
+
+        // the run this node draws, which the test measures with the vendored engine (§9.1)
+        TextLayout m_layout;
+    };
 } // namespace
 
 TEST(SkiaRenderContextTextChecks, DrawTextPutsInkOnTheCanvas) {
@@ -522,13 +548,32 @@ TEST(SkiaParityChecks, TheOffscreenGpuTargetMatchesTheSoftwareReferenceOnLevel2P
     const int image_difference = parity_difference(gpu_backend, *gpu, reference_backend, *reference, image_scene);
     // the bound is the measured value on this host plus margin, which is the per class budget §15 asks for (§15)
     EXPECT_LE(image_difference, 16) << "an image diverged by " << image_difference;
-    // a shaped run is drawn from the shaped glyphs, so the two rasterizers are allowed the antialiased band (§9.1, §15)
-    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> text_engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
+    // an embedded run expands into outlines, so both backends replay the same paths (§9.1, §15, AD-34)
+    resources::FontRegistry::clear();
+    // the fixture font is read once, because the embedded engine shapes from the carried bytes (§15, AD-34)
+    std::ifstream font_file(ALBOR_TEST_FONT_PATH, std::ios::binary);
+    ASSERT_TRUE(font_file.good());
+    // the bytes travel with the registration, which is what generated code emits (§11.3, AD-34)
+    std::vector<std::uint8_t> font_bytes((std::istreambuf_iterator<char>(font_file)), std::istreambuf_iterator<char>());
+    // the font is registered under the family the engine asks for (§15, AD-34)
+    resources::FontRegistry::register_font(resources::EmbeddedFont{.family = ALBOR_TEST_FONT_FAMILY, .bytes = std::move(font_bytes)});
+    // the embedded engine shapes the run from the carried bytes, so no platform face is involved (§15, AD-34)
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> text_engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
     ASSERT_NE(text_engine, nullptr);
-    const TextLayout text_layout = text_engine->measure("Albor", 1000.0f, 20.0f);
-    FrameScene text_scene(metrics, background);
-    text_scene.add_command(DrawCommand::text(text_layout, Point{8.0f, 40.0f}, ink));
-    const int text_difference = parity_difference(gpu_backend, *gpu, reference_backend, *reference, text_scene);
-    // the bound is the measured 127 on this host plus margin, which is the antialiased outline of five glyphs (§15)
-    EXPECT_LE(text_difference, 192) << "a shaped run diverged by " << text_difference;
+    // the provider resolves the outlines the builder records, which is the portable path (§6.4, AD-34)
+    harfbuzz::EmbeddedGlyphProvider provider;
+    // the builder expands the embedded run through the resolver, so both backends get the same commands (§6.4)
+    SceneBuilder text_builder;
+    text_builder.set_outline_resolver(provider.resolver());
+    EmbeddedTextNode text_node;
+    text_node.m_layout = text_engine->measure("Albor", 0.0f, 20.0f);
+    ASSERT_NE(text_node.m_layout.run, nullptr);
+    // the scene carries outline commands rather than a text command, which is the embedded path (§6.4, AD-34)
+    const std::shared_ptr<const FrameScene> text_scene = text_builder.build(text_node, metrics, background);
+    ASSERT_NE(text_scene, nullptr);
+    const int text_difference = parity_difference(gpu_backend, *gpu, reference_backend, *reference, *text_scene);
+    // the bound is the measured 79 on this host plus margin, which is five glyph outlines at the per glyph budget (§15)
+    EXPECT_LE(text_difference, 128) << "an embedded run diverged by " << text_difference;
+    // exit
+    resources::FontRegistry::clear();
 }

@@ -45,6 +45,8 @@ UNREACHABLE=(
     'text/text-harfbuzz/harfbuzz_text_engine.cpp|bool operator()(const CacheKey& lhs, const CacheKey& rhs) const { return lhs.text == rhs.text && lhs.max_width == rhs.max_width && lhs.font_size == rhs.font_size && lhs.font_hash == rhs.font_hash && lhs.direction == rhs.direction; }|two owned keys reach this comparison only when their hashes collide, which no test can force without a synthetic hasher'
     'text/text-harfbuzz/harfbuzz_text_engine.cpp|return nullptr;|the platform constructor refuses a null resolver, empty bytes or a face that cannot shape, none of which a valid platform font produces'
     'text/text-harfbuzz/harfbuzz_text_engine.cpp|m_state->cache.clear();|the eviction runs only past 512 distinct runs, a bound no unit test needs to cross to prove the cache works'
+    'render/render-skia/skia_render_context.cpp|continue;|a valid platform handle always resolves a typeface, so the refusal guards a font the platform could not parse'
+    'text/text-harfbuzz/harfbuzz_platform_font.macos.mm|return {};|a valid core text face always carries tables, so the refusal guards a face with no sfnt backing'
 )
 
 # an entry whose text no longer appears in the file, which means the hole was closed or moved (§27)
