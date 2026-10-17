@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include "render/draw_command.h"
+#include "render/render-software/software_glyph_atlas.h"
 #include "render/render-software/software_render_surface.h"
 #include "render/render-software/software_renderer_backend.h"
 #include "render/screenshot.h"
@@ -1458,6 +1459,66 @@ TEST(RtlChecks, AWrappedRtlRunKeepsItsDirectionOnEveryRow) {
         // the row is in visual order, which its descending clusters prove (§9.2)
         EXPECT_GT(line.glyphs.front().cluster, line.glyphs.back().cluster);
     }
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(SoftwareGlyphAtlasChecks, TheAtlasRasterizesAGlyphFromTheCarriedBytes) {
+    // arrange the carried fixture registered under its hash, which is what the atlas resolves (§6.3, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const resources::EmbeddedFont* font = resources::FontRegistry::find_family(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(font, nullptr);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("A", 0.0f, 20.0f);
+    ASSERT_NE(layout.run, nullptr);
+    ASSERT_FALSE(layout.run->lines().empty());
+    const std::uint32_t glyph = layout.run->lines().front().glyphs.front().id;
+    // act the atlas rasterizes the glyph from the carried bytes, which is the reference's own rasterizer (§6.3, AD-26)
+    software::SoftwareGlyphAtlas atlas;
+    const std::shared_ptr<const software::GlyphBitmap> bitmap = atlas.glyph(font->content_hash, glyph, 20.0f);
+    // assert the atlas produced a real coverage, so the reference rasterizes rather than asking skia (§6.3)
+    ASSERT_NE(bitmap, nullptr);
+    EXPECT_GT(bitmap->width, 0u);
+    EXPECT_GT(bitmap->height, 0u);
+    EXPECT_EQ(bitmap->coverage.size(), static_cast<std::size_t>(bitmap->width) * static_cast<std::size_t>(bitmap->height));
+    // assert the top pad row is transparent, which is what keeps the rounding from clipping the glyph (§6.3)
+    bool top_empty = true;
+    for (unsigned int col = 0; col < bitmap->width; col++)
+        top_empty = top_empty && bitmap->coverage[col] == 0;
+    EXPECT_TRUE(top_empty);
+    // the lowest inked row is found, because an A stands on two feet and a sheared raster does not (§6.3)
+    unsigned int lowest = bitmap->height;
+    for (unsigned int row = 0; row < bitmap->height; row++) {
+        for (unsigned int col = 0; col < bitmap->width; col++) {
+            const bool inked = bitmap->coverage[static_cast<std::size_t>(row) * bitmap->width + col] > 0;
+            if (inked)
+                lowest = row;
+        }
+    }
+    ASSERT_LT(lowest, bitmap->height);
+    // both feet carry ink, which a wrongly scaled or strided raster would not (§6.3, §15)
+    bool left_foot = false;
+    bool right_foot = false;
+    for (unsigned int col = 0; col < bitmap->width; col++) {
+        const bool inked = bitmap->coverage[static_cast<std::size_t>(lowest) * bitmap->width + col] > 0;
+        left_foot = left_foot || (inked && col < bitmap->width / 3u);
+        right_foot = right_foot || (inked && col >= (bitmap->width * 2u) / 3u);
+    }
+    EXPECT_TRUE(left_foot);
+    EXPECT_TRUE(right_foot);
+    // assert a second request answers from the cache, which is what makes the atlas cheap (§6.3)
+    const std::shared_ptr<const software::GlyphBitmap> again = atlas.glyph(font->content_hash, glyph, 20.0f);
+    EXPECT_EQ(again, bitmap);
+    EXPECT_EQ(atlas.count(), 1u);
+    // assert a smaller size also rasterizes ink, which the pad on the bounds makes safe from rounding (§6.3)
+    const std::shared_ptr<const software::GlyphBitmap> small = atlas.glyph(font->content_hash, glyph, 16.0f);
+    ASSERT_NE(small, nullptr);
+    EXPECT_EQ(atlas.count(), 2u);
+    // assert a size of no pixels and a hash the build does not carry are each refused (§6.3)
+    EXPECT_EQ(atlas.glyph(font->content_hash, glyph, 0.0f), nullptr);
+    EXPECT_EQ(atlas.glyph(1u, glyph, 20.0f), nullptr);
     // exit
     resources::FontRegistry::clear();
 }
