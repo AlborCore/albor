@@ -77,10 +77,7 @@ namespace albor::harfbuzz
             // the content hash is over the bytes, which is the identity a layout keys on (§15, AD-34)
             resolved.font_hash = resources::hash_font_bytes(resolved.bytes.data(), resolved.bytes.size());
             // the blob borrows the bytes, which the face owns for its whole life (§9.1)
-            resolved.blob = hb_blob_create_or_fail(reinterpret_cast<const char*>(resolved.bytes.data()), static_cast<unsigned int>(resolved.bytes.size()), HB_MEMORY_MODE_READONLY, nullptr, nullptr);
-            // a blob that did not build leaves no face to read (§9.1)
-            if (resolved.blob == nullptr)
-                return resolved;
+            resolved.blob = hb_blob_create(reinterpret_cast<const char*>(resolved.bytes.data()), static_cast<unsigned int>(resolved.bytes.size()), HB_MEMORY_MODE_READONLY, nullptr, nullptr);
             // the face is read at index zero, which is the first face in the file (§9.1)
             resolved.face = hb_face_create(resolved.blob, 0);
             // a face with no glyph is unusable, so the font is never built over it (§9.1)
@@ -91,9 +88,6 @@ namespace albor::harfbuzz
                 resolved.units_per_em = static_cast<float>(hb_face_get_upem(resolved.face));
             // the harfbuzz font is built over the face, which owns no shaping until the funcs are set (§9.1)
             resolved.font = hb_font_create(resolved.face);
-            // a font that did not build leaves an engine that cannot shape (§9.1)
-            if (resolved.font == nullptr)
-                return resolved;
             // the opentype funcs give the font its advances and its outlines, which is what hb-draw walks (§9.1)
             hb_ot_font_set_funcs(resolved.font);
             // the scale is set to the design units, so the extents below read in em units rather than pixels (§9.1, AD-27)
@@ -335,9 +329,6 @@ namespace albor::harfbuzz
         OutlineSink sink;
         // the draw funcs are built fresh per call, because the callbacks are stateless and cheap to attach (§6.4)
         hb_draw_funcs_t* funcs = hb_draw_funcs_create();
-        // funcs that did not build walk no outline, so the glyph draws nothing (§6.4)
-        if (funcs == nullptr)
-            return {};
         // the contour, line, conic and cubic callbacks are the four hb-draw reports (§6.4)
         hb_draw_funcs_set_move_to_func(funcs, &OutlineSink::move_to, nullptr, nullptr);
         // the line callback continues a contour (§6.4)
@@ -390,32 +381,28 @@ namespace albor::harfbuzz
             UErrorCode status = U_ZERO_ERROR;
             // the line breaker opens over no text yet, because the view is attached next (§9.1)
             UBreakIterator* breaker = ubrk_open(UBRK_LINE, LINE_BREAK_LOCALE, nullptr, 0, &status);
-            // a breaker that did not open yields no offset, which the caller reads as one line (§9.1)
-            if (U_FAILURE(status) || breaker == nullptr)
-                return offsets;
-            // the view exposes the utf8 bytes with utf8 native indices, so a break is already a byte offset (§9.1)
-            UText* view = utext_openUTF8(nullptr, text.data(), static_cast<int64_t>(text.size()), &status);
-            // a view that did not open leaves the breaker unused, so both are released (§9.1)
-            if (U_FAILURE(status) || view == nullptr) {
-                // the breaker is closed because no view will walk it (§9.1)
-                ubrk_close(breaker);
-                return offsets;
-            }
-            // the breaker walks the view's native indices, which is what makes every break a byte offset (§9.1)
-            ubrk_setUText(breaker, view, &status);
-            // the walk collects every offset only when the view attached cleanly (§9.1)
-            if (U_SUCCESS(status)) {
-                for (int32_t position = ubrk_first(breaker); position != UBRK_DONE; position = ubrk_next(breaker)) {
-                    // a hard break is mandatory, which ends a row even when no ceiling forces one (§9.1)
-                    const bool hard = ubrk_getRuleStatus(breaker) == UBRK_LINE_HARD;
-                    // the offset and its mandatory flag join the walk (§9.1)
-                    offsets.emplace_back(static_cast<std::size_t>(position), hard);
+            // the view reads the utf8 bytes once the breaker is up, and stays null when the breaker failed (§9.1)
+            UText* view = (U_SUCCESS(status) && breaker != nullptr) ? utext_openUTF8(nullptr, text.data(), static_cast<int64_t>(text.size()), &status) : nullptr;
+            // the walk runs only when both came up, because a failure leaves nothing to walk (§9.1)
+            if (U_SUCCESS(status) && view != nullptr) {
+                // the breaker walks the view's native indices, which is what makes every break a byte offset (§9.1)
+                ubrk_setUText(breaker, view, &status);
+                // the walk collects every offset only when the view attached cleanly (§9.1)
+                if (U_SUCCESS(status)) {
+                    for (int32_t position = ubrk_first(breaker); position != UBRK_DONE; position = ubrk_next(breaker)) {
+                        // a hard break is mandatory, which ends a row even when no ceiling forces one (§9.1)
+                        const bool hard = ubrk_getRuleStatus(breaker) == UBRK_LINE_HARD;
+                        // the offset and its mandatory flag join the walk (§9.1)
+                        offsets.emplace_back(static_cast<std::size_t>(position), hard);
+                    }
                 }
             }
-            // the view is dropped first, because the breaker holds a pointer to it (§9.1)
-            utext_close(view);
-            // the breaker is dropped once its walk is done (§9.1)
-            ubrk_close(breaker);
+            // the view is closed when it opened, so a failed open leaks nothing (§9.1)
+            if (view != nullptr)
+                utext_close(view);
+            // the breaker is closed when it opened, which the ordinary path always reaches (§9.1)
+            if (breaker != nullptr)
+                ubrk_close(breaker);
             return offsets;
         }
 
@@ -462,9 +449,6 @@ namespace albor::harfbuzz
                 return line;
             // the buffer carries the row and its properties, and is destroyed by the unique pointer (§9.1)
             std::unique_ptr<hb_buffer_t, decltype(&hb_buffer_destroy)> buffer(hb_buffer_create(), &hb_buffer_destroy);
-            // a buffer that did not allocate shapes nothing, so the row carries its metrics alone (§9.1)
-            if (buffer == nullptr)
-                return line;
             // the row's bytes are added as utf8, and the script and direction are guessed from them (§9.1)
             hb_buffer_add_utf8(buffer.get(), text.data() + start, static_cast<int>(end - start), 0, -1);
             // the guess fills in script, language and direction from the buffer's contents (§9.1)
@@ -478,9 +462,6 @@ namespace albor::harfbuzz
             hb_glyph_info_t* glyphs = hb_buffer_get_glyph_infos(buffer.get(), &glyph_count);
             // the positions are read beside the glyphs, because one position describes one glyph (§9.1)
             hb_glyph_position_t* positions = hb_buffer_get_glyph_positions(buffer.get(), &glyph_count);
-            // a row with no glyph keeps its metrics, which is what a blank row is (§9.1)
-            if (glyph_count == 0 || glyphs == nullptr || positions == nullptr)
-                return line;
             // the advance is accumulated in design units, because harfbuzz reports positions in them (§9.1)
             float advance = 0.0f;
             // the glyphs are reserved, because the shaped output reports how many there are (§9.1)

@@ -1235,3 +1235,50 @@ TEST(GoldenCorpusChecks, TheWrappedLayoutMatchesTheCheckedInCorpus) {
     // exit
     resources::FontRegistry::clear();
 }
+
+TEST(DualEngineConformanceChecks, AnEmbeddedEngineIsDrawableWithoutATypeface) {
+    // arrange the carried fixture, whose engine draws outlines and owns no platform typeface (§15, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act, assert an embedded engine is drawable through its outlines without a typeface (§15, AD-34)
+    EXPECT_TRUE(engine->drawable());
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(DualEngineConformanceChecks, ASecondSelectionOfOneFamilyAnswersFromTheCache) {
+    // arrange the fixture carried under a second family, which is resolved on its first use (§15, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    resources::FontRegistry::register_font(make_embedded_font("AlborCached", ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act the same foreign family is measured twice, so the second answers from the cache (§9.1)
+    const TextLayout first = engine->measure("Albor", 0.0f, 16.0f, FontSpec{.family = "AlborCached"});
+    const TextLayout second = engine->measure("Albor", 0.0f, 16.0f, FontSpec{.family = "AlborCached"});
+    // assert both resolved to the same carried bytes, which the cache preserves (§15, AD-34)
+    ASSERT_NE(first.run, nullptr);
+    ASSERT_NE(second.run, nullptr);
+    EXPECT_EQ(*first.run, *second.run);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(DualEngineConformanceChecks, ACorruptCarriedFamilyIsSkippedRatherThanCrashing) {
+    // arrange a family whose carried bytes name no face, which the registry still accepts (§9.1)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(resources::EmbeddedFont{.family = "AlborCorrupt", .content_hash = 0, .bytes = {1, 2, 3, 4, 5, 6, 7, 8}});
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act the corrupt family is named once with a fallback and once alone, which reads the cached empty face (§9.1)
+    const TextLayout with_fallback = engine->measure("Albor", 0.0f, 16.0f, FontSpec{.family = "AlborCorrupt", .fallback = {std::string(ALBOR_TEST_FONT_FAMILY)}});
+    const TextLayout alone = engine->measure("Albor", 0.0f, 16.0f, FontSpec{.family = "AlborCorrupt"});
+    // assert the corrupt family is skipped so the fallback shapes, and a lone corrupt family is refused (§15, AD-34)
+    ASSERT_NE(with_fallback.run, nullptr);
+    EXPECT_EQ(alone.run, nullptr);
+    // exit
+    resources::FontRegistry::clear();
+}

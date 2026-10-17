@@ -33,6 +33,7 @@ UNREACHABLE=(
     'compiler/codegen/codegen.cpp|return "ScrollbarVisibility";|the type checker rejects a named value set as a declarable type, so no property, signal parameter or record field ever carries one'
     'compiler/codegen/codegen.cpp|case TypeKind::FontWeight:|the type checker rejects a named value set as a declarable type, so no property, signal parameter or record field ever carries one'
     'compiler/codegen/codegen.cpp|return "FontWeight";|the type checker rejects a named value set as a declarable type, so no property, signal parameter or record field ever carries one'
+    'text/text-harfbuzz/harfbuzz_text_engine.cpp|line_end = text.size();|the wrap always advances over the ICU offsets, so the fallback only guards an ICU failure that would otherwise loop forever'
 )
 
 # an entry whose text no longer appears in the file, which means the hole was closed or moved (§27)
