@@ -20,6 +20,7 @@
 #include "widgets/checkbox.h"
 #include "widgets/label.h"
 #include "widgets/slider.h"
+#include "widgets/text_field.h"
 #include "widgets/theme_controller.h"
 #include "window/window_metrics.h"
 
@@ -145,6 +146,16 @@ namespace
         [[nodiscard]] bool ready() const override {
             // the double reports the flag a test sets, so an unusable engine can be exercised (§9.1)
             return usable;
+        }
+
+        // the last font selection a widget asked to measure with, which a test asserts on (§9.1, AD-34)
+        mutable FontSpec last_font_spec;
+
+        [[nodiscard]] TextLayout measure(std::string_view text, float max_width, float font_size, const FontSpec& spec) const override {
+            // the selection is captured, so a test proves the declarative surface reached the engine (§9.1)
+            last_font_spec = spec;
+            // the double shapes no face, so it measures exactly as the size only overload does (§9.1)
+            return measure(text, max_width, font_size);
         }
     };
 } // namespace
@@ -4240,4 +4251,50 @@ TEST(NativeThemeChecks, AnExplicitSizeLeavesTheRoleEvenUnchanged) {
     label.set_font_size(20.0f);
     // assert the role cleared, because the explicit size is the resolution owner (§8.4)
     EXPECT_EQ(label.role(), TextRole::None);
+}
+
+TEST(LabelChecks, AFontSelectionRemeasuresAndInvalidates) {
+    // arrange a label measured once, whose engine counts the measurements it is asked for (§9.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Label label(&engine, &text_engine, "Albor");
+    Size measured{};
+    label.measure(SizeConstraints::unconstrained(), measured);
+    label.clear_dirty();
+    const std::size_t before = text_engine.measurements;
+    // act a family, a weight and a fallback are each set, which remeasures through the engine (§9.1, AD-34)
+    label.set_font_family("Inter");
+    label.set_font_weight(FontWeight::Bold);
+    label.set_font_fallback({"Fallback One", "Fallback Two"});
+    // assert each setter asked the engine again, because the face may change with the selection (§9.1)
+    EXPECT_GT(text_engine.measurements, before);
+    // assert the label must be laid out again, because the metrics may have moved with the face (§8.2)
+    EXPECT_TRUE(label.layout_dirty());
+    // assert the selection reached the engine, which is what makes the declarative surface real (§9.1, AD-34)
+    EXPECT_EQ(text_engine.last_font_spec.family, "Inter");
+    EXPECT_EQ(text_engine.last_font_spec.weight, FontWeight::Bold);
+    ASSERT_EQ(text_engine.last_font_spec.fallback.size(), 2u);
+    // the first fallback family reached the engine in the order it was written (§9.1, AD-34)
+    EXPECT_EQ(text_engine.last_font_spec.fallback.front(), "Fallback One");
+}
+
+TEST(TextFieldFontChecks, AFontSelectionRemeasuresAndInvalidates) {
+    // arrange a field measured once, whose engine captures the selection it is asked for (§9.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TextField field(&engine, &text_engine, "Albor");
+    Size measured{};
+    field.measure(SizeConstraints::unconstrained(), measured);
+    field.clear_dirty();
+    const std::size_t before = text_engine.measurements;
+    // act a family, a weight and a fallback are each set, which remeasures through the engine (§9.1, AD-34)
+    field.set_font_family("Inter");
+    field.set_font_weight(FontWeight::Semibold);
+    field.set_font_fallback({"Fallback One"});
+    // assert each setter asked the engine again, because the face may change with the selection (§9.1)
+    EXPECT_GT(text_engine.measurements, before);
+    // assert the field must be laid out again and the selection reached the engine (§8.2, §9.1)
+    EXPECT_TRUE(field.layout_dirty());
+    EXPECT_EQ(text_engine.last_font_spec.family, "Inter");
+    EXPECT_EQ(text_engine.last_font_spec.weight, FontWeight::Semibold);
 }

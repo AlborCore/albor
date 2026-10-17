@@ -31,6 +31,8 @@ GENERATED='^'"$(printf '%s' "${ALBOR_COVERAGE_GENERATED:-.build-coverage/generat
 UNREACHABLE=(
     'compiler/codegen/codegen.cpp|case TypeKind::Scrollbar:|the type checker rejects a named value set as a declarable type, so no property, signal parameter or record field ever carries one'
     'compiler/codegen/codegen.cpp|return "ScrollbarVisibility";|the type checker rejects a named value set as a declarable type, so no property, signal parameter or record field ever carries one'
+    'compiler/codegen/codegen.cpp|case TypeKind::FontWeight:|the type checker rejects a named value set as a declarable type, so no property, signal parameter or record field ever carries one'
+    'compiler/codegen/codegen.cpp|return "FontWeight";|the type checker rejects a named value set as a declarable type, so no property, signal parameter or record field ever carries one'
 )
 
 # an entry whose text no longer appears in the file, which means the hole was closed or moved (§27)

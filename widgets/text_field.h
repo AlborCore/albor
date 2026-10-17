@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "animation/animation_engine.h"
 #include "commands/undo_stack.h"
@@ -87,6 +88,15 @@ namespace albor
 
         // hand out the font size the value is measured at (§9.1)
         [[nodiscard]] float font_size() const;
+
+        // replace the family the value is measured with, which remeasures because the face may change (§9.1, AD-34)
+        void set_font_family(std::string family);
+
+        // replace the weight the value is measured with, which remeasures because the face may change (§9.1, AD-34)
+        void set_font_weight(FontWeight weight);
+
+        // replace the fallback families the value resolves when the named one is absent (§9.1, AD-34)
+        void set_font_fallback(std::vector<std::string> fallback);
 
         // place the caret at a byte offset, clamped into the value, which is where it draws (§8.3)
         void set_caret(std::size_t byte);
@@ -334,6 +344,9 @@ namespace albor
 
         // the size the runs are measured at (§9.1)
         float m_font_size = TextEngine::DEFAULT_FONT_SIZE;
+
+        // the font selection the runs are measured with, which the declarative properties fill (§9.1, AD-34)
+        FontSpec m_font_spec;
 
         // whether the field refuses edits but still takes focus (§8.3)
         bool m_read_only = false;

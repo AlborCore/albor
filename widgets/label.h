@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "text/text_engine.h"
 #include "widgets/widget.h"
@@ -53,6 +54,15 @@ namespace albor
         // hand out the font size the run is measured at (§9.1)
         [[nodiscard]] float font_size() const;
 
+        // replace the family the run is measured with, which remeasures because the face may change (§9.1, AD-34)
+        void set_font_family(std::string family);
+
+        // replace the weight the run is measured with, which remeasures because the face may change (§9.1, AD-34)
+        void set_font_weight(FontWeight weight);
+
+        // replace the fallback families the run resolves when the named one is absent (§9.1, AD-34)
+        void set_font_fallback(std::vector<std::string> fallback);
+
         // hand out the measured run, which the render pass draws and the tests read (§9.1)
         [[nodiscard]] const TextLayout& layout() const;
 
@@ -83,5 +93,8 @@ namespace albor
 
         // the role the run resolves, which is none until an author sets one (§8.4)
         TextRole m_role = TextRole::None;
+
+        // the font selection the run is measured with, which the declarative properties fill (§9.1, AD-34)
+        FontSpec m_font_spec;
     };
 } // namespace albor

@@ -11,7 +11,7 @@ namespace albor
         if (m_text_engine == nullptr)
             return;
         // the run is measured once up front, so a label is sized before the first layout pass reaches it (§9.1)
-        m_layout = m_text_engine->measure(m_text, 0.0f, m_font_size);
+        m_layout = m_text_engine->measure(m_text, 0.0f, m_font_size, m_font_spec);
     }
 
     void Label::measure(const SizeConstraints& constraints, Size& out_size) {
@@ -20,7 +20,7 @@ namespace albor
             // the offered width bounds the run, because a label wraps inside the space its parent gives it (§8.2, §9.1)
             const float offered_width = constraints.maximum.width > 0.0f ? constraints.maximum.width : 0.0f;
             // the run is measured at the hierarchy size the role resolved, because the metrics follow it (§9.1, §8.4)
-            m_layout = m_text_engine->measure(m_text, offered_width, font_size_used());
+            m_layout = m_text_engine->measure(m_text, offered_width, font_size_used(), m_font_spec);
         }
         // the content is at least the run the label carries, and at least its children (§8.2)
         Size content = m_layout.size;
@@ -84,7 +84,7 @@ namespace albor
         m_text = std::move(text);
         // a label with no engine has nothing to remeasure, so its run stays as it was (§9.1)
         if (m_text_engine != nullptr)
-            m_layout = m_text_engine->measure(m_text, 0.0f, m_font_size);
+            m_layout = m_text_engine->measure(m_text, 0.0f, m_font_size, m_font_spec);
         // a new run changes the measured extent, so the layout passes must run again (§8.2)
         invalidate_layout();
     }
@@ -127,8 +127,38 @@ namespace albor
         m_font_size = font_size;
         // a label with no engine has nothing to remeasure, so its run stays as it was (§9.1)
         if (m_text_engine != nullptr)
-            m_layout = m_text_engine->measure(m_text, 0.0f, m_font_size);
+            m_layout = m_text_engine->measure(m_text, 0.0f, m_font_size, m_font_spec);
         // a font size change resizes the label, so the layout passes must run again (§8.2)
+        invalidate_layout();
+    }
+
+    void Label::set_font_family(std::string family) {
+        // the family is stored, because the next measure resolves the face through it (§9.1, AD-34)
+        m_font_spec.family = std::move(family);
+        // a label with no engine has nothing to remeasure, so its run stays as it was (§9.1)
+        if (m_text_engine != nullptr)
+            m_layout = m_text_engine->measure(m_text, 0.0f, m_font_size, m_font_spec);
+        // a family change may resize the label, so the layout passes must run again (§8.2)
+        invalidate_layout();
+    }
+
+    void Label::set_font_weight(FontWeight weight) {
+        // the weight is stored, because the next measure resolves the face through it (§9.1, AD-34)
+        m_font_spec.weight = weight;
+        // a label with no engine has nothing to remeasure, so its run stays as it was (§9.1)
+        if (m_text_engine != nullptr)
+            m_layout = m_text_engine->measure(m_text, 0.0f, m_font_size, m_font_spec);
+        // a weight change may resize the label, so the layout passes must run again (§8.2)
+        invalidate_layout();
+    }
+
+    void Label::set_font_fallback(std::vector<std::string> fallback) {
+        // the fallback chain is stored, because the next measure resolves the face through it (§9.1, AD-34)
+        m_font_spec.fallback = std::move(fallback);
+        // a label with no engine has nothing to remeasure, so its run stays as it was (§9.1)
+        if (m_text_engine != nullptr)
+            m_layout = m_text_engine->measure(m_text, 0.0f, m_font_size, m_font_spec);
+        // a fallback change may resize the label, so the layout passes must run again (§8.2)
         invalidate_layout();
     }
 

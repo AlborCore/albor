@@ -38,6 +38,9 @@ namespace albor::compiler
         // when a scrollbar is drawn, which a named member of a value set produces (§8)
         Scrollbar,
 
+        // the weight of a face a font property selects, which a named member of a value set produces (§9.1, AD-34)
+        FontWeight,
+
         // a length in logical or physical pixels, which a length literal produces (§11.1, AD-27)
         Length,
 

@@ -62,7 +62,7 @@ namespace albor::compiler
 
     std::string ValueType::to_string() const {
         // the spellings are a table indexed by kind, so a new kind cannot leave a path unhandled (§11.1)
-        static const char* const SPELLINGS[] = {"<error>", "void", "bool", "int", "float", "string", "color", "align", "scrollbar", "length", "Snapshot<", "vector<", "", "command"};
+        static const char* const SPELLINGS[] = {"<error>", "void", "bool", "int", "float", "string", "color", "align", "scrollbar", "font_weight", "length", "Snapshot<", "vector<", "", "command"};
         // the two parameter forms append their element, so only their prefix comes from the table (§11.1)
         if (m_kind == TypeKind::Snapshot)
             return std::string(SPELLINGS[static_cast<std::size_t>(m_kind)]) + element().to_string() + ">";
@@ -207,6 +207,21 @@ namespace albor::compiler
                                       NamedValueMember{.written = "off", .code = "AlwaysOff"},
                                       NamedValueMember{.written = "on", .code = "AlwaysOn"},
                                   }},
+                // the weight set is what a font property resolves a written member against (§9.1, AD-34)
+                NamedValueSet{.name = "Weight",
+                              .kind = TypeKind::FontWeight,
+                              .cpp_name = "FontWeight",
+                              .members =
+                                  {
+                                      // the written form is lower case and the enumerator capitalised (§11.3, §9.1)
+                                      NamedValueMember{.written = "thin", .code = "Thin"},
+                                      NamedValueMember{.written = "light", .code = "Light"},
+                                      NamedValueMember{.written = "regular", .code = "Regular"},
+                                      NamedValueMember{.written = "medium", .code = "Medium"},
+                                      NamedValueMember{.written = "semibold", .code = "Semibold"},
+                                      NamedValueMember{.written = "bold", .code = "Bold"},
+                                      NamedValueMember{.written = "black", .code = "Black"},
+                                  }},
             };
             return sets;
         }
@@ -319,8 +334,8 @@ namespace albor::compiler
         // a leaf draws a run of text, which is a caption or a value readout (§8)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Label",
-                                              // the text and the foreground and the size are what a label exposes (§8)
-                                              .properties = {ElementProperty{.name = "text", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "foreground", .type = scalar(TypeKind::Color), .assignable = true}, ElementProperty{.name = "font_size", .type = scalar(TypeKind::Float), .assignable = true}},
+                                              // the text, the colour, the size and the font of a label (§8)
+                                              .properties = {ElementProperty{.name = "text", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "foreground", .type = scalar(TypeKind::Color), .assignable = true}, ElementProperty{.name = "font_size", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "font_family", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "font_weight", .type = scalar(TypeKind::FontWeight), .assignable = true}, ElementProperty{.name = "font_fallback", .type = ValueType::parameterized(TypeKind::Vector, scalar(TypeKind::String)), .assignable = true}},
                                               // a label raises no signal of its own (§8)
                                               .signals = {},
                                               // a label is a leaf, so it takes no children (§8)
@@ -328,8 +343,8 @@ namespace albor::compiler
         // a leaf edits a string the user types, which is what a form field or a search box is (§8)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "TextField",
-                                              // the value and the hint and the two states are what a field exposes (§8)
-                                              .properties = {ElementProperty{.name = "value", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "placeholder", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "read_only", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "multiline", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "font_size", .type = scalar(TypeKind::Float), .assignable = true}},
+                                              // the value, the hint, the states and the font of a field (§8)
+                                              .properties = {ElementProperty{.name = "value", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "placeholder", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "read_only", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "multiline", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "font_size", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "font_family", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "font_weight", .type = scalar(TypeKind::FontWeight), .assignable = true}, ElementProperty{.name = "font_fallback", .type = ValueType::parameterized(TypeKind::Vector, scalar(TypeKind::String)), .assignable = true}},
                                               // a field raises per keystroke and on its commit (§8)
                                               .signals = {ElementSignal{.name = "changed", .parameter_types = {scalar(TypeKind::String)}, .parameter_names = {"value"}}, ElementSignal{.name = "committed", .parameter_types = {scalar(TypeKind::String)}, .parameter_names = {"value"}}},
                                               // a field is a leaf, so it takes no children (§8)
@@ -462,7 +477,7 @@ namespace albor::compiler
             if (set.name == name)
                 return &set;
         }
-        // the builtin table is the fallback, because Align and Scrollbar are always available (§11.1)
+        // the builtin table is the fallback, because Align, Scrollbar and Weight are always available (§11.1)
         return albor::compiler::find_named_value_set(name);
     }
 
