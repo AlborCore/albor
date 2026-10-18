@@ -9,16 +9,19 @@
 #include "render/frame_scene.h"
 #include "render/image_resource.h"
 #include "render/line_batch.h"
-#include "render/screenshot.h"
 #include "render/path_resource.h"
 #include "render/picture_resource.h"
 #include "render/render-albor/albor_batch.h"
 #include "render/render-albor/albor_contour.h"
+#include "render/render-albor/albor_fill.h"
 #include "render/render-albor/albor_geometry.h"
 #include "render/render-albor/albor_render_context.h"
 #include "render/render-albor/albor_renderer_backend.h"
 #include "render/render_context.h"
 #include "render/renderer_backend.h"
+#include "render/screenshot.h"
+#include "render/shaped_run.h"
+#include "render/text_layout.h"
 #include "window/window_metrics.h"
 
 using namespace albor;
@@ -1481,14 +1484,14 @@ TEST(AlborRenderContextChecks, FillsEveryContourBeforeItStrokesAny) {
     // act
     context.draw_path(std::make_shared<const PathResource>(19u, verbs, points), Transform{}, Paint{.fill = Color::rgba(1.0f, 0.0f, 0.0f, 0.5f), .stroke = Color::rgba(0.0f, 0.0f, 1.0f, 0.5f), .stroke_width = 1.0f});
     // assert
-    ASSERT_EQ(batch.draws.size(), 4u);
-    // both fills come first, so a translucent stroke never lands under a later fill
+    ASSERT_EQ(batch.draws.size(), 3u);
+    // the two contours fill as one group, so a translucent stroke never lands under a later fill (§6.4)
     EXPECT_EQ(batch.draws[0].coverage, CoverageKind::Plain);
-    EXPECT_EQ(batch.draws[1].coverage, CoverageKind::Plain);
+    EXPECT_EQ(batch.draws[1].coverage, CoverageKind::Folded);
     EXPECT_EQ(batch.draws[2].coverage, CoverageKind::Folded);
-    EXPECT_EQ(batch.draws[3].coverage, CoverageKind::Folded);
     // the ranges abut, which a backend replaying them in order depends on
     EXPECT_EQ(batch.draws[1].index_begin, batch.draws[0].index_begin + batch.draws[0].index_count);
+    EXPECT_EQ(batch.draws[2].index_begin, batch.draws[1].index_begin + batch.draws[1].index_count);
 }
 
 TEST(AlborRenderContextChecks, PacksTheImageTintFromThePaintAlphaAlone) {
@@ -1803,4 +1806,356 @@ TEST(ExpandFillChecks, TriangulatesAConcaveRingAcrossItsWholeArea) {
     // the L spans three hundred square points, less the half unit inset on the boundary
     EXPECT_GT(area, 250.0f);
     EXPECT_LT(area, 300.0f);
+}
+
+TEST(SweepFillChecks, CoversASquareBetweenItsTwoRows) {
+    // arrange a square ring, whose horizontal edges span no slab
+    FillRing square;
+    square.points = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 0.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 0.0f}};
+    const std::vector<FillRing> rings = {square};
+    // act
+    const std::vector<FillTrapezoid> trapezoids = sweep_fill(rings);
+    // assert
+    ASSERT_EQ(trapezoids.size(), 1u);
+    EXPECT_FLOAT_EQ(trapezoids[0].top, 0.0f);
+    EXPECT_FLOAT_EQ(trapezoids[0].bottom, 10.0f);
+    EXPECT_FLOAT_EQ(trapezoids[0].left_top, 0.0f);
+    EXPECT_FLOAT_EQ(trapezoids[0].left_bottom, 0.0f);
+    EXPECT_FLOAT_EQ(trapezoids[0].right_top, 10.0f);
+    EXPECT_FLOAT_EQ(trapezoids[0].right_bottom, 10.0f);
+}
+
+TEST(SweepFillChecks, CutsTheHoleOfARing) {
+    // arrange a square ring with a square hole, which the opposite winding must leave unpainted
+    FillRing outer;
+    outer.points = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 0.0f, .y = 20.0f}, Point{.x = 20.0f, .y = 20.0f}, Point{.x = 20.0f, .y = 0.0f}};
+    FillRing hole;
+    hole.points = {Point{.x = 8.0f, .y = 8.0f}, Point{.x = 8.0f, .y = 12.0f}, Point{.x = 12.0f, .y = 12.0f}, Point{.x = 12.0f, .y = 8.0f}};
+    hole.reversed = true;
+    const std::vector<FillRing> rings = {outer, hole};
+    // act
+    const std::vector<FillTrapezoid> trapezoids = sweep_fill(rings);
+    // assert
+    ASSERT_EQ(trapezoids.size(), 4u);
+    // the middle slab carries two trapezoids, which the hole splits that row with
+    EXPECT_FLOAT_EQ(trapezoids[1].top, 8.0f);
+    EXPECT_FLOAT_EQ(trapezoids[1].bottom, 12.0f);
+    EXPECT_FLOAT_EQ(trapezoids[1].left_top, 0.0f);
+    EXPECT_FLOAT_EQ(trapezoids[1].right_top, 8.0f);
+    EXPECT_FLOAT_EQ(trapezoids[2].left_top, 12.0f);
+    EXPECT_FLOAT_EQ(trapezoids[2].right_top, 20.0f);
+}
+
+TEST(SweepFillChecks, KeepsTheOverlapOfTwoSameWoundRings) {
+    // arrange two overlapping rings of one winding, whose overlap the non zero rule fills
+    FillRing left;
+    left.points = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 0.0f, .y = 20.0f}, Point{.x = 14.0f, .y = 20.0f}, Point{.x = 14.0f, .y = 0.0f}};
+    FillRing right;
+    right.points = {Point{.x = 6.0f, .y = 0.0f}, Point{.x = 6.0f, .y = 20.0f}, Point{.x = 20.0f, .y = 20.0f}, Point{.x = 20.0f, .y = 0.0f}};
+    const std::vector<FillRing> rings = {left, right};
+    // act
+    const std::vector<FillTrapezoid> trapezoids = sweep_fill(rings);
+    // assert the two rings cover one union, which a hole in the middle would leave open
+    ASSERT_EQ(trapezoids.size(), 3u);
+    // the spans abut, which is what makes the overlap painted once
+    EXPECT_FLOAT_EQ(trapezoids[0].left_top, 0.0f);
+    EXPECT_FLOAT_EQ(trapezoids[0].right_top, 6.0f);
+    EXPECT_FLOAT_EQ(trapezoids[1].left_top, 6.0f);
+    EXPECT_FLOAT_EQ(trapezoids[1].right_top, 14.0f);
+    EXPECT_FLOAT_EQ(trapezoids[2].left_top, 14.0f);
+    EXPECT_FLOAT_EQ(trapezoids[2].right_top, 20.0f);
+}
+
+TEST(SweepFillChecks, FillsASelfIntersectingRingOnBothSidesOfTheMeeting) {
+    // arrange a bow tie, whose edges meet in the middle of the only slab
+    FillRing bowtie;
+    bowtie.points = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 10.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 0.0f}, Point{.x = 0.0f, .y = 10.0f}};
+    const std::vector<FillRing> rings = {bowtie};
+    // act
+    const std::vector<FillTrapezoid> trapezoids = sweep_fill(rings);
+    // assert the two triangles cover fifty square points, which a slab left unsplit would double
+    float area = 0.0f;
+    for (const FillTrapezoid& trapezoid : trapezoids) {
+        const float height = trapezoid.bottom - trapezoid.top;
+        const float upper = (trapezoid.right_top - trapezoid.left_top + trapezoid.right_bottom - trapezoid.left_bottom) * 0.5f;
+        area += upper * height;
+    }
+    EXPECT_NEAR(area, 50.0f, 0.5f);
+}
+
+TEST(SweepFillChecks, InterpolatesASlopedEdgeAcrossTheSlab) {
+    // arrange a triangle, whose two sloped edges leave one row narrower than the other
+    FillRing triangle;
+    triangle.points = {Point{.x = 8.0f, .y = 30.0f}, Point{.x = 20.0f, .y = 8.0f}, Point{.x = 32.0f, .y = 30.0f}};
+    const std::vector<FillRing> rings = {triangle};
+    // act
+    const std::vector<FillTrapezoid> trapezoids = sweep_fill(rings);
+    // assert
+    ASSERT_EQ(trapezoids.size(), 1u);
+    EXPECT_FLOAT_EQ(trapezoids[0].top, 8.0f);
+    EXPECT_FLOAT_EQ(trapezoids[0].bottom, 30.0f);
+    // the apex collapses the top edge of the trapezoid onto one point
+    EXPECT_FLOAT_EQ(trapezoids[0].left_top, 20.0f);
+    EXPECT_FLOAT_EQ(trapezoids[0].right_top, 20.0f);
+    EXPECT_FLOAT_EQ(trapezoids[0].left_bottom, 8.0f);
+    EXPECT_FLOAT_EQ(trapezoids[0].right_bottom, 32.0f);
+}
+
+TEST(SweepFillChecks, SkipsAnEdgeThatLeavesTheSlab) {
+    // arrange an arrow, whose sloped edges each span one slab only
+    FillRing arrow;
+    arrow.points = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 10.0f, .y = 0.0f}, Point{.x = 5.0f, .y = 5.0f}, Point{.x = 10.0f, .y = 10.0f}, Point{.x = 0.0f, .y = 10.0f}};
+    const std::vector<FillRing> rings = {arrow};
+    // act
+    const std::vector<FillTrapezoid> trapezoids = sweep_fill(rings);
+    // assert
+    ASSERT_EQ(trapezoids.size(), 2u);
+    EXPECT_FLOAT_EQ(trapezoids[0].right_top, 10.0f);
+    EXPECT_FLOAT_EQ(trapezoids[0].right_bottom, 5.0f);
+    // the upper slab meets the other sloped edge, which the lower half of the first one does not reach
+    EXPECT_FLOAT_EQ(trapezoids[1].right_top, 5.0f);
+    EXPECT_FLOAT_EQ(trapezoids[1].right_bottom, 10.0f);
+}
+
+TEST(SweepFillChecks, DropsAZeroWidthPair) {
+    // arrange two rings that share the left edge, whose first pair covers no width
+    FillRing outer;
+    outer.points = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 0.0f, .y = 20.0f}, Point{.x = 20.0f, .y = 20.0f}, Point{.x = 20.0f, .y = 0.0f}};
+    FillRing touching;
+    touching.points = {Point{.x = 0.0f, .y = 8.0f}, Point{.x = 0.0f, .y = 12.0f}, Point{.x = 12.0f, .y = 12.0f}, Point{.x = 12.0f, .y = 8.0f}};
+    touching.reversed = true;
+    const std::vector<FillRing> rings = {outer, touching};
+    // act
+    const std::vector<FillTrapezoid> trapezoids = sweep_fill(rings);
+    // assert
+    ASSERT_EQ(trapezoids.size(), 3u);
+    // the shared edge cancels, which leaves the span beside it alone on that row
+    EXPECT_FLOAT_EQ(trapezoids[1].left_top, 12.0f);
+    EXPECT_FLOAT_EQ(trapezoids[1].right_top, 20.0f);
+}
+
+TEST(SweepFillChecks, SweepsNoRowWithoutARing) {
+    // arrange no ring at all, which spans no row
+    const std::vector<FillRing> rings;
+    // act
+    const std::vector<FillTrapezoid> trapezoids = sweep_fill(rings);
+    // assert
+    EXPECT_TRUE(trapezoids.empty());
+}
+
+TEST(ExpandFillGroupChecks, RefusesAGroupWithoutAContour) {
+    // arrange a group of no contour
+    FrameBatch batch;
+    std::vector<Contour> contours;
+    // act
+    const EmittedRange range = expand_fill_group(batch, contours);
+    // assert
+    EXPECT_EQ(range.index_count, 0u);
+    EXPECT_TRUE(batch.vertices.empty());
+}
+
+TEST(ExpandFillGroupChecks, FillsASingleContourThroughTheRingFan) {
+    // arrange one square contour, which the group hands to the single contour expansion
+    const PathVerb verbs[5] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const Point points[4] = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 0.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 0.0f}};
+    std::vector<Contour> contours = build_contours(verbs, points);
+    std::vector<Contour> reference = build_contours(verbs, points);
+    FrameBatch batch;
+    FrameBatch expected;
+    // act
+    const EmittedRange range = expand_fill_group(batch, contours);
+    const EmittedRange expected_range = expand_fill(expected, reference[0]);
+    // assert
+    ASSERT_GT(range.index_count, 0u);
+    EXPECT_EQ(range.index_count, expected_range.index_count);
+    EXPECT_EQ(batch.vertices.size(), expected.vertices.size());
+}
+
+TEST(ExpandFillGroupChecks, CutsTheHoleOfANestedContour) {
+    // arrange a square path with a square hole, which one group fill must cut
+    const PathVerb verbs[10] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close, PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const Point points[8] = {Point{.x = 8.0f, .y = 8.0f}, Point{.x = 8.0f, .y = 32.0f}, Point{.x = 32.0f, .y = 32.0f}, Point{.x = 32.0f, .y = 8.0f}, Point{.x = 16.0f, .y = 16.0f}, Point{.x = 24.0f, .y = 16.0f}, Point{.x = 24.0f, .y = 24.0f}, Point{.x = 16.0f, .y = 24.0f}};
+    std::vector<Contour> contours = build_contours(verbs, points);
+    ASSERT_EQ(contours.size(), 2u);
+    FrameBatch batch;
+    // act
+    const EmittedRange range = expand_fill_group(batch, contours);
+    // assert
+    ASSERT_GT(range.index_count, 0u);
+    // the hole centre lies outside every fill triangle, which a per contour fill would paint
+    const Point hole{.x = 20.0f, .y = 20.0f};
+    for (std::size_t index = 0; index + 2 < batch.indices.size(); index += 3) {
+        // the three corners of the triangle, which the batch indices name
+        const BatchVertex& a = batch.vertices[batch.indices[index]];
+        const BatchVertex& b = batch.vertices[batch.indices[index + 1]];
+        const BatchVertex& c = batch.vertices[batch.indices[index + 2]];
+        // the three edge crosses decide whether the hole centre sits inside
+        const float ab = (b.x - a.x) * (hole.y - a.y) - (b.y - a.y) * (hole.x - a.x);
+        const float bc = (c.x - b.x) * (hole.y - b.y) - (c.y - b.y) * (hole.x - b.x);
+        const float ca = (a.x - c.x) * (hole.y - c.y) - (a.y - c.y) * (hole.x - c.x);
+        // a triangle that encloses the centre is the defect this test exists for
+        EXPECT_FALSE((ab <= 0.0f && bc <= 0.0f && ca <= 0.0f) || (ab >= 0.0f && bc >= 0.0f && ca >= 0.0f));
+    }
+    // a point between the two rings fills, which the sweep still covers
+    const Point band{.x = 12.0f, .y = 20.0f};
+    bool covered = false;
+    for (std::size_t index = 0; index + 2 < batch.indices.size(); index += 3) {
+        // the three corners of the triangle, which the band point is tested against
+        const BatchVertex& a = batch.vertices[batch.indices[index]];
+        const BatchVertex& b = batch.vertices[batch.indices[index + 1]];
+        const BatchVertex& c = batch.vertices[batch.indices[index + 2]];
+        // the three edge crosses decide whether the band point sits inside
+        const float ab = (b.x - a.x) * (band.y - a.y) - (b.y - a.y) * (band.x - a.x);
+        const float bc = (c.x - b.x) * (band.y - b.y) - (c.y - b.y) * (band.x - b.x);
+        const float ca = (a.x - c.x) * (band.y - c.y) - (a.y - c.y) * (band.x - c.x);
+        if ((ab <= 0.0f && bc <= 0.0f && ca <= 0.0f) || (ab >= 0.0f && bc >= 0.0f && ca >= 0.0f))
+            covered = true;
+    }
+    EXPECT_TRUE(covered);
+}
+
+TEST(ExpandFillGroupChecks, RampsTheFringeOfAHoleTowardsTheCut) {
+    // arrange the same ring, whose hole fringe must fade into the hole rather than out of it
+    const PathVerb verbs[10] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close, PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const Point points[8] = {Point{.x = 8.0f, .y = 8.0f}, Point{.x = 8.0f, .y = 32.0f}, Point{.x = 32.0f, .y = 32.0f}, Point{.x = 32.0f, .y = 8.0f}, Point{.x = 16.0f, .y = 16.0f}, Point{.x = 24.0f, .y = 16.0f}, Point{.x = 24.0f, .y = 24.0f}, Point{.x = 16.0f, .y = 24.0f}};
+    std::vector<Contour> contours = build_contours(verbs, points);
+    FrameBatch batch;
+    // act
+    const EmittedRange range = expand_fill_group(batch, contours);
+    // assert
+    ASSERT_GT(range.index_count, 0u);
+    bool ring_filled = false;
+    bool mirror_bare = false;
+    for (const BatchVertex& vertex : batch.vertices) {
+        // a vertex a half pixel outside the hole corner is the ring side of the hole fringe
+        if (vertex.lateral == 1.0f && vertex.x > 15.0f && vertex.x < 16.0f && vertex.y > 15.0f && vertex.y < 16.0f)
+            ring_filled = true;
+        // a vertex a half pixel inside the hole corner is the bare side of it
+        if (vertex.lateral == 0.0f && vertex.x > 16.0f && vertex.x < 17.0f && vertex.y > 16.0f && vertex.y < 17.0f)
+            mirror_bare = true;
+    }
+    EXPECT_TRUE(ring_filled);
+    EXPECT_TRUE(mirror_bare);
+}
+
+TEST(ExpandFillGroupChecks, FillsAnIslandInsideAHole) {
+    // arrange a ring inside a hole, whose even nesting depth fills it again
+    const PathVerb verbs[15] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close, PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close, PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const Point points[12] = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 0.0f, .y = 30.0f}, Point{.x = 30.0f, .y = 30.0f}, Point{.x = 30.0f, .y = 0.0f}, Point{.x = 5.0f, .y = 5.0f}, Point{.x = 25.0f, .y = 5.0f}, Point{.x = 25.0f, .y = 25.0f}, Point{.x = 5.0f, .y = 25.0f}, Point{.x = 10.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 20.0f}, Point{.x = 20.0f, .y = 20.0f}, Point{.x = 20.0f, .y = 10.0f}};
+    std::vector<Contour> contours = build_contours(verbs, points);
+    ASSERT_EQ(contours.size(), 3u);
+    FrameBatch batch;
+    // act
+    const EmittedRange range = expand_fill_group(batch, contours);
+    // assert
+    ASSERT_GT(range.index_count, 0u);
+    // the points of the three depths, which the nesting parity decides
+    const Point outer_band{.x = 2.0f, .y = 15.0f};
+    const Point hole_band{.x = 7.0f, .y = 15.0f};
+    const Point island{.x = 15.0f, .y = 15.0f};
+    bool covers_outer = false;
+    bool covers_hole = false;
+    bool covers_island = false;
+    for (std::size_t index = 0; index + 2 < batch.indices.size(); index += 3) {
+        // the three corners of the triangle, which the three probes are tested against
+        const BatchVertex& a = batch.vertices[batch.indices[index]];
+        const BatchVertex& b = batch.vertices[batch.indices[index + 1]];
+        const BatchVertex& c = batch.vertices[batch.indices[index + 2]];
+        // the edge crosses are read once per probe, which shares the triangle
+        for (int probe = 0; probe < 3; probe++) {
+            // the probe this pass tests, which the depth decides the coverage of
+            const Point& point = probe == 0 ? outer_band : (probe == 1 ? hole_band : island);
+            // the three edge crosses decide whether the probe sits inside
+            const float ab = (b.x - a.x) * (point.y - a.y) - (b.y - a.y) * (point.x - a.x);
+            const float bc = (c.x - b.x) * (point.y - b.y) - (c.y - b.y) * (point.x - b.x);
+            const float ca = (a.x - c.x) * (point.y - c.y) - (a.y - c.y) * (point.x - c.x);
+            // a triangle that encloses the probe is the coverage it reports
+            if (!((ab <= 0.0f && bc <= 0.0f && ca <= 0.0f) || (ab >= 0.0f && bc >= 0.0f && ca >= 0.0f)))
+                continue;
+            if (probe == 0)
+                covers_outer = true;
+            if (probe == 1)
+                covers_hole = true;
+            if (probe == 2)
+                covers_island = true;
+        }
+    }
+    EXPECT_TRUE(covers_outer);
+    EXPECT_FALSE(covers_hole);
+    EXPECT_TRUE(covers_island);
+}
+
+TEST(ExpandFillGroupChecks, SkipsAContourWithoutARing) {
+    // arrange a square beside an open two point contour, which spans no area
+    const PathVerb verbs[7] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close, PathVerb::MoveTo, PathVerb::LineTo};
+    const Point points[6] = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 0.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 0.0f}, Point{.x = 50.0f, .y = 50.0f}, Point{.x = 60.0f, .y = 60.0f}};
+    std::vector<Contour> contours = build_contours(verbs, points);
+    ASSERT_EQ(contours.size(), 2u);
+    FrameBatch batch;
+    // act
+    const EmittedRange range = expand_fill_group(batch, contours);
+    // assert
+    ASSERT_GT(range.index_count, 0u);
+    // the open contour contributes no geometry, which a swept two point ring would emit
+    for (const BatchVertex& vertex : batch.vertices)
+        EXPECT_LT(vertex.x, 40.0f);
+}
+
+TEST(DrawTextChecks, SkipsALineWithoutATypeface) {
+    // arrange a run whose one line carries no typeface, which no platform can hand an outline for
+    ShapedRun::Line line;
+    line.glyphs.push_back(ShapedGlyph{.id = 1u, .position = Point{.x = 0.0f, .y = 0.0f}, .cluster = 0u});
+    TextLayout layout;
+    layout.run = ShapedRun::make({line}, 16.0f);
+    ASSERT_FALSE(layout.empty());
+    FrameBatch batch;
+    AlborRenderContext context(batch, Rect::from_origin_size(Point{0.0f, 0.0f}, Size{40.0f, 40.0f}), 1.0f);
+    // act
+    context.draw_text(layout, Point{.x = 0.0f, .y = 0.0f}, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    // assert
+    EXPECT_TRUE(batch.draws.empty());
+}
+
+TEST(ExpandFillGroupChecks, PaintsTheOverlapOfTwoSameWoundContours) {
+    // arrange a path of two overlapping squares of one winding, whose overlap the reference fills
+    const PathVerb verbs[10] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close, PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const Point points[8] = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 0.0f, .y = 20.0f}, Point{.x = 14.0f, .y = 20.0f}, Point{.x = 14.0f, .y = 0.0f}, Point{.x = 6.0f, .y = 0.0f}, Point{.x = 6.0f, .y = 20.0f}, Point{.x = 20.0f, .y = 20.0f}, Point{.x = 20.0f, .y = 0.0f}};
+    std::vector<Contour> contours = build_contours(verbs, points);
+    ASSERT_EQ(contours.size(), 2u);
+    FrameBatch batch;
+    // act
+    const EmittedRange range = expand_fill_group(batch, contours);
+    // assert the overlap fills, which a fill rule that cuts every second ring would leave open
+    ASSERT_GT(range.index_count, 0u);
+    const Point overlap{.x = 10.0f, .y = 10.0f};
+    bool covered = false;
+    for (std::size_t index = 0; index + 2 < batch.indices.size(); index += 3) {
+        // the three corners of the triangle, which the overlap point is tested against
+        const BatchVertex& a = batch.vertices[batch.indices[index]];
+        const BatchVertex& b = batch.vertices[batch.indices[index + 1]];
+        const BatchVertex& c = batch.vertices[batch.indices[index + 2]];
+        // the three edge crosses decide whether the overlap sits inside
+        const float ab = (b.x - a.x) * (overlap.y - a.y) - (b.y - a.y) * (overlap.x - a.x);
+        const float bc = (c.x - b.x) * (overlap.y - b.y) - (c.y - b.y) * (overlap.x - b.x);
+        const float ca = (a.x - c.x) * (overlap.y - c.y) - (a.y - c.y) * (overlap.x - c.x);
+        if ((ab <= 0.0f && bc <= 0.0f && ca <= 0.0f) || (ab >= 0.0f && bc >= 0.0f && ca >= 0.0f))
+            covered = true;
+    }
+    EXPECT_TRUE(covered);
+}
+
+TEST(ExpandFillGroupChecks, ClampsTheRingOfANeedleCorner) {
+    // arrange a square beside a needle sliver, whose tip would spike the ring past the miter limit
+    const PathVerb verbs[9] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close, PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const Point points[7] = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 0.0f, .y = 20.0f}, Point{.x = 20.0f, .y = 20.0f}, Point{.x = 20.0f, .y = 0.0f}, Point{.x = 30.0f, .y = 10.0f}, Point{.x = 70.0f, .y = 11.0f}, Point{.x = 30.0f, .y = 12.0f}};
+    std::vector<Contour> contours = build_contours(verbs, points);
+    ASSERT_EQ(contours.size(), 2u);
+    FrameBatch batch;
+    // act
+    expand_fill_group(batch, contours);
+    // assert the ring of the needle tip stays inside the miter limit, which an unclamped normal exceeds
+    float nearest = 1000.0f;
+    for (const BatchVertex& vertex : batch.vertices)
+        nearest = std::min(nearest, std::hypot(vertex.x - 70.0f, vertex.y - 11.0f));
+    EXPECT_LT(nearest, FILL_MITER_LIMIT * FRINGE + 0.01f);
 }

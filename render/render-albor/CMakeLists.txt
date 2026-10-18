@@ -3,9 +3,10 @@
 # gather cpp sources, which reach no platform api and therefore build on every platform (§5.3, AD-05)
 file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 
-# the portable seam stands in for the platform device, which a platform with its own device replaces (§5.3, AD-16)
+# the portable seams stand in for the platform device and the platform glyph source, which a platform with its own replaces (§5.3, AD-16)
 if(APPLE)
     list(FILTER CPP_SOURCES EXCLUDE REGEX "/albor_backend_support\\.cpp$")
+    list(FILTER CPP_SOURCES EXCLUDE REGEX "/albor_glyph_path\\.cpp$")
 endif()
 
 # create the static library from the gathered sources
@@ -26,7 +27,7 @@ if(APPLE)
     # the metal sources join the library under arc, which manages their object lifetime (§6.3)
     set_source_files_properties(${MACOS_SOURCES} PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_sources(albor-render-albor PRIVATE ${MACOS_SOURCES})
-    target_link_libraries(albor-render-albor PRIVATE "-framework Metal" "-framework QuartzCore" "-framework Foundation")
+    target_link_libraries(albor-render-albor PRIVATE "-framework Metal" "-framework QuartzCore" "-framework CoreText" "-framework CoreGraphics" "-framework Foundation")
 endif()
 
 # the auto target links the archive whole, so the backend installs itself at load without a call (§6.3, AD-26)

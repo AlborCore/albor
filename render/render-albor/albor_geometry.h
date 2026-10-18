@@ -9,6 +9,9 @@ namespace albor::render
     // the device pixel fringe the antialiasing ramps across, which every emission measures in (nanovg technique)
     inline constexpr float FRINGE = 1.0f;
 
+    // the miter limit the fill fringe joins with, which the nanovg technique fixes (§6.2)
+    inline constexpr float FILL_MITER_LIMIT = 2.4f;
+
     // invert a transform, which the scissor needs to map a raster position back into scene space
     [[nodiscard]] Transform invert_transform(const Transform& transform);
 

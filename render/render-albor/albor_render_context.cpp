@@ -8,7 +8,9 @@
 #include "render/image_resource.h"
 #include "render/line_batch.h"
 #include "render/picture_resource.h"
+#include "render/render-albor/albor_fill.h"
 #include "render/render-albor/albor_geometry.h"
+#include "render/render-albor/albor_glyph_path.h"
 
 namespace albor::render
 {
@@ -334,10 +336,44 @@ namespace albor::render
     }
 
     void AlborRenderContext::draw_text(const TextLayout& layout, Point origin, const Paint& paint) {
-        // the glyph hand off lands with the text phase, so a general run is refused for now (§9.1, #107)
-        (void)layout;
-        (void)origin;
-        (void)paint;
+        // a run with no glyph or a context the frame does not draw through records nothing (§6.2)
+        if (!drawable() || layout.empty())
+            return;
+        // the text takes the fill colour when the paint fills, and the stroke colour otherwise (§6.2)
+        const Color color = paint.fills() ? paint.fill : paint.stroke;
+        // the glyphs are replayed as shaped, which is what stage one measured (§9.1, AD-18)
+        const ShapedRun& run = *layout.run;
+        // every line carries its own typeface and its own baseline (§9.1)
+        for (const ShapedRun::Line& line : run.lines()) {
+            // a line this backend cannot resolve draws nothing, which is a refusal rather than a blank (§9.1)
+            if (!line.font.valid())
+                continue;
+            // the baseline is the run origin under the line's own origin (§9.1)
+            const Point baseline{.x = origin.x + line.origin.x, .y = origin.y + line.origin.y};
+            // every glyph is its own outline, whose counters the group fill cuts (§6.2, §6.4)
+            for (const ShapedGlyph& glyph : line.glyphs) {
+                // the outline is walked from the platform typeface in logical pixels (§9.1, AD-28)
+                const GlyphPath path = platform_glyph_path(line.font, glyph.id, run.font_size());
+                // a glyph without a visible shape draws nothing, which a space is (§6.2)
+                if (path.points.empty())
+                    continue;
+                // the glyph sits at its own offset from the baseline, which the shaped run placed (§9.1)
+                const float glyph_x = baseline.x + glyph.position.x;
+                const float glyph_y = baseline.y + glyph.position.y;
+                // the outline shifts onto the glyph position before the device transform maps it (§6.3, AD-27)
+                std::vector<Point> points;
+                points.reserve(path.points.size());
+                for (const Point& point : path.points)
+                    points.push_back(Point{.x = point.x + glyph_x, .y = point.y + glyph_y});
+                // the subpaths become contours, which one group fill sweeps so the counters stay open (§6.4)
+                std::vector<Contour> contours = build_contours(path.verbs, points);
+                for (Contour& contour : contours)
+                    to_device(contour);
+                const EmittedRange range = expand_fill_group(m_batch, contours);
+                // the fill draws with the lateral coverage as its alpha, dimmed by the node opacity (§6.2)
+                record(range, CoverageKind::Plain, 1.0f, color.with_alpha(m_opacity), 0, false);
+            }
+        }
     }
 
     void AlborRenderContext::draw_line_batch(const std::shared_ptr<const LineBatch>& batch, const Transform& transform, const StrokeStyle& stroke) {
@@ -381,16 +417,24 @@ namespace albor::render
         // the retained transform lands under the current one, which places the contour where the scene put it (§6.4)
         const Transform outer = m_transform;
         m_transform = outer.then(transform);
-        // every contour of the stream fills first, so a translucent stroke never lands under a later fill (§6.4)
+        // every contour of the stream fills first, as one group, so an inner contour cuts a hole (§6.4)
         std::vector<Contour> contours = build_contours(path->verbs(), path->points());
+        // the contours land in device space once, which the fill and the stroke both measure in (§6.3, AD-27)
+        for (Contour& contour : contours)
+            to_device(contour);
         if (paint.fills()) {
-            for (Contour& contour : contours)
-                emit_fill(contour, paint.fill, 0);
+            // the group sweeps into one draw, which its even odd pairing cuts the holes by (§6.2)
+            const EmittedRange range = expand_fill_group(m_batch, contours);
+            record(range, CoverageKind::Plain, 1.0f, paint.fill.with_alpha(m_opacity), 0, false);
         }
-        // the strokes follow over the same contours, which the recorded style asks for (§6.4)
+        // the strokes follow over the contours, which the recorded style asks for (§6.4)
         if (paint.strokes()) {
-            for (Contour& contour : contours)
-                emit_stroke(std::move(contour), paint.stroke, paint.stroke_width, Cap::Butt, Join::Miter);
+            for (Contour& contour : contours) {
+                // the strip folds its lateral coverage around the centre and ramps its ends (nanovg technique)
+                const StrokeEmission emission = stroke_geometry(contour, paint.stroke_width, Cap::Butt, Join::Miter);
+                // the stroke draw carries the folded ramp, dimmed by the opacity and the hairline alpha
+                record(emission.range, CoverageKind::Folded, emission.ramp, paint.stroke.with_alpha(m_opacity).with_alpha(emission.alpha), 0, false);
+            }
         }
         // the transform the draw was recorded under is restored (§6.4)
         m_transform = outer;

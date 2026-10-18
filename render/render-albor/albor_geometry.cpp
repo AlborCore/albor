@@ -8,9 +8,6 @@ namespace albor::render
 {
     namespace
     {
-        // the miter limit the fill fringe joins with, which the nanovg technique fixes (§6.2)
-        constexpr float FILL_MITER_LIMIT = 2.4f;
-
         // the half circle constant the caps and the joins sweep with
         constexpr float PI = 3.14159265358979f;
 
@@ -521,7 +518,7 @@ namespace albor::render
     StrokeEmission expand_stroke(FrameBatch& sink, Contour& contour, float half_width, Cap cap, Join join, float miter_limit, float tess_tolerance) {
         // a contour with no width and no segment carries no stroke at all
         if (contour.points.size() < 2 || half_width <= 0.0f)
-            return StrokeEmission{.alpha = 0.0f};
+            return StrokeEmission{.range = {}, .alpha = 0.0f};
         // the range the expansion appends starts at the current index count
         const std::uint32_t index_begin = static_cast<std::uint32_t>(sink.indices.size());
         // a stroke thinner than the fringe emulates its coverage with the linear ratio, which preserves its area

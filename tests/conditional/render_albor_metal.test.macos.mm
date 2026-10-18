@@ -5,20 +5,28 @@
 
 #include <gtest/gtest.h>
 
+#include <CoreGraphics/CoreGraphics.h>
 #import <QuartzCore/CAMetalLayer.h>
 
 #include "core/paint.h"
 #include "render/draw_command.h"
 #include "render/frame_scene.h"
 #include "render/picture_resource.h"
+#include "render/render-albor/albor_glyph_path.h"
+#include "render/render-albor/albor_glyph_path.macos.h"
+#include "render/render-albor/albor_render_context.h"
 #include "render/render-albor/albor_renderer_backend.h"
 #include "render/render-software/software_renderer_backend.h"
 #include "render/render_context.h"
 #include "render/renderer_backend.h"
 #include "render/screenshot.h"
+#include "render/text_layout.h"
+#include "text/text-harfbuzz/harfbuzz_text_engine.h"
+#include "text/text_engine.h"
 #include "window/window_metrics.h"
 
 using namespace albor;
+using namespace albor::render;
 
 // quartzcore brings the carbon rect and point into scope, so the albor shapes are named through aliases
 using AlborRect = albor::Rect;
@@ -822,6 +830,45 @@ TEST(AlborParityChecks, AFilledPathMatchesTheReference) {
     EXPECT_LT(expected_shot.pixels[interior], 250u);
 }
 
+TEST(AlborParityChecks, AHoledPathMatchesTheReference) {
+    // arrange a square path with an opposite wound inner square, which the reference cuts as a hole
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{40.0f, 40.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const PathVerb verbs[10] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close, PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const AlborPoint points[8] = {AlborPoint{8.0f, 8.0f}, AlborPoint{8.0f, 32.0f}, AlborPoint{32.0f, 32.0f}, AlborPoint{32.0f, 8.0f}, AlborPoint{16.0f, 16.0f}, AlborPoint{24.0f, 16.0f}, AlborPoint{24.0f, 24.0f}, AlborPoint{16.0f, 24.0f}};
+    const std::shared_ptr<const PathResource> path = std::make_shared<const PathResource>(53u, verbs, points);
+    // act
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    expected.draw_path(path, Transform{}, Paint{.fill = Color::rgb(0.9f, 0.2f, 0.1f)});
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    actual.draw_path(path, Transform{}, Paint{.fill = Color::rgb(0.9f, 0.2f, 0.1f)});
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    // the bound is the 1 measured on this host plus margin, which the shared fringe leaves on the boundary
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 8);
+    // the hole stays background in both, which a per contour fill would paint
+    const std::size_t hole = (20u * 40u + 20u) * 4u;
+    EXPECT_EQ(actual_shot.pixels[hole], 255u);
+    EXPECT_EQ(expected_shot.pixels[hole], 255u);
+    // the ring between the two contours fills in both
+    const std::size_t ring = (20u * 40u + 12u) * 4u;
+    EXPECT_LT(actual_shot.pixels[ring], 250u);
+    EXPECT_LT(expected_shot.pixels[ring], 250u);
+}
+
 TEST(AlborParityChecks, ALineBatchMatchesTheReference) {
     // arrange a retained batch of two segments, which the backend coalesces into one draw
     const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{40.0f, 40.0f}, 1.0f);
@@ -1092,4 +1139,189 @@ TEST(AlborParityChecks, AFilledConcavePathMatchesTheReference) {
     EXPECT_NEAR(actual_shot.pixels[right_arm], expected_shot.pixels[right_arm], 2);
     // the two agree over the whole shape within the feathered edge band
     EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 32);
+}
+
+TEST(GlyphPathChecks, WalksEveryElementOfACoreGraphicsPath) {
+    // arrange a path carrying every element kind a glyph outline is made of
+    const std::unique_ptr<CGPath, void (*)(CGPathRef)> path(CGPathCreateMutable(), CGPathRelease);
+    CGPathMoveToPoint(path.get(), nullptr, 1.0, 2.0);
+    CGPathAddLineToPoint(path.get(), nullptr, 3.0, 4.0);
+    CGPathAddQuadCurveToPoint(path.get(), nullptr, 5.0, 6.0, 7.0, 8.0);
+    CGPathAddCurveToPoint(path.get(), nullptr, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0);
+    CGPathCloseSubpath(path.get());
+    // act
+    const GlyphPath glyph = albor::render::glyph_path_from_cgpath(path.get());
+    // assert the walk emits one verb per point plus the close, which flattens both curves
+    ASSERT_EQ(glyph.verbs.size(), glyph.points.size() + 1u);
+    ASSERT_GE(glyph.points.size(), 10u);
+    EXPECT_EQ(glyph.verbs.front(), PathVerb::MoveTo);
+    EXPECT_EQ(glyph.verbs.back(), PathVerb::Close);
+    // the y axis flips, because the font grows upwards and the device downwards (§6.3, AD-27)
+    EXPECT_FLOAT_EQ(glyph.points[0].x, 1.0f);
+    EXPECT_FLOAT_EQ(glyph.points[0].y, -2.0f);
+    // the line reaches its point directly, which costs one vertex
+    EXPECT_NEAR(glyph.points[1].x, 3.0f, 0.0001f);
+    EXPECT_NEAR(glyph.points[1].y, -4.0f, 0.0001f);
+    // the quadratic ends on the point its element names, which the walk reports as a sample
+    bool reaches_quad = false;
+    for (const albor::Point& point : glyph.points) {
+        if (std::hypot(point.x - 7.0f, point.y + 8.0f) < 0.0001f)
+            reaches_quad = true;
+    }
+    EXPECT_TRUE(reaches_quad);
+    // the cubic ends on the last point, which the close verb follows
+    EXPECT_NEAR(glyph.points.back().x, 13.0f, 0.0001f);
+    EXPECT_NEAR(glyph.points.back().y, -14.0f, 0.0001f);
+    // the samples follow the curve rather than its chord, which the half way point of the quadratic shows
+    float bend = 1000.0f;
+    for (const albor::Point& point : glyph.points)
+        bend = std::min(bend, std::hypot(point.x - 5.0f, point.y + 6.0f));
+    EXPECT_LT(bend, 0.25f);
+}
+
+TEST(GlyphPathChecks, RefusesATypefaceWithoutAHandle) {
+    // arrange a handle that wraps no typeface at all
+    const FontHandle font;
+    // act
+    const GlyphPath glyph = albor::render::platform_glyph_path(font, 3u, 16.0f);
+    // assert
+    EXPECT_TRUE(glyph.points.empty());
+    EXPECT_TRUE(glyph.verbs.empty());
+}
+
+TEST(GlyphPathChecks, OutlinesAGlyphOfThePlatformFace) {
+    // arrange the system face the platform engine resolves, shaped at a size a ui label uses
+    const std::unique_ptr<albor::harfbuzz::HarfbuzzTextEngine> engine = albor::harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("A", 0.0f, 24.0f);
+    ASSERT_FALSE(layout.empty());
+    ASSERT_FALSE(layout.run->lines().empty());
+    const ShapedRun::Line& line = layout.run->lines().front();
+    ASSERT_FALSE(line.glyphs.empty());
+    // act
+    const GlyphPath glyph = albor::render::platform_glyph_path(line.font, line.glyphs.front().id, 24.0f);
+    // assert the outline is closed subpaths, which the fill sweeps as one shape
+    ASSERT_FALSE(glyph.points.empty());
+    std::size_t closes = 0;
+    for (const PathVerb verb : glyph.verbs) {
+        if (verb == PathVerb::Close)
+            closes++;
+    }
+    // a close consumes no point, so the verbs carry one more than the points plus the extra subpaths
+    EXPECT_EQ(glyph.verbs.size(), glyph.points.size() + closes);
+    EXPECT_EQ(glyph.verbs.front(), PathVerb::MoveTo);
+    // every subpath closes, which is what makes the counters of the glyph cut (§6.2)
+    EXPECT_GE(closes, 1u);
+    EXPECT_EQ(glyph.verbs.back(), PathVerb::Close);
+    // a size of no pixels has no outline to scale to, which the walk refuses
+    EXPECT_TRUE(albor::render::platform_glyph_path(line.font, line.glyphs.front().id, 0.0f).points.empty());
+    // a space carries no visible outline, which the face reports as no path
+    const TextLayout spaced = engine->measure(" ", 0.0f, 24.0f);
+    ASSERT_FALSE(spaced.empty());
+    ASSERT_FALSE(spaced.run->lines().front().glyphs.empty());
+    EXPECT_TRUE(albor::render::platform_glyph_path(spaced.run->lines().front().font, spaced.run->lines().front().glyphs.front().id, 24.0f).points.empty());
+}
+
+TEST(AlborTextChecks, DrawsEachGlyphThroughItsOwnOutline) {
+    // arrange a run of one glyph, which the context fills as a path
+    const std::unique_ptr<albor::harfbuzz::HarfbuzzTextEngine> engine = albor::harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("A", 0.0f, 24.0f);
+    ASSERT_FALSE(layout.empty());
+    FrameBatch batch;
+    AlborRenderContext context(batch, AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, AlborSize{40.0f, 40.0f}), 1.0f);
+    // act
+    context.draw_text(layout, AlborPoint{.x = 4.0f, .y = 30.0f}, Paint{.fill = Color::rgb(0.1f, 0.2f, 0.3f)});
+    // assert the glyph records one fill, whose geometry the sweep built
+    ASSERT_EQ(batch.draws.size(), 1u);
+    EXPECT_EQ(batch.draws[0].coverage, CoverageKind::Plain);
+    EXPECT_EQ(batch.draws[0].color, pack_color(Color::rgb(0.1f, 0.2f, 0.3f)));
+    EXPECT_GT(batch.indices.size(), 0u);
+    EXPECT_GT(batch.vertices.size(), 0u);
+}
+
+TEST(AlborTextChecks, SkipsTheSpaceWhichCarriesNoOutline) {
+    // arrange a run whose middle glyph is a space
+    const std::unique_ptr<albor::harfbuzz::HarfbuzzTextEngine> engine = albor::harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("A A", 0.0f, 24.0f);
+    ASSERT_FALSE(layout.empty());
+    ASSERT_EQ(layout.run->lines().front().glyphs.size(), 3u);
+    FrameBatch batch;
+    AlborRenderContext context(batch, AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, AlborSize{80.0f, 40.0f}), 1.0f);
+    // act
+    context.draw_text(layout, AlborPoint{.x = 4.0f, .y = 30.0f}, Paint{.fill = Color::rgb(0.1f, 0.2f, 0.3f)});
+    // assert the two visible glyphs record, and the space records nothing
+    EXPECT_EQ(batch.draws.size(), 2u);
+}
+
+TEST(AlborTextChecks, RecordsNothingForAnEmptyRun) {
+    // arrange a layout the engine could not shape
+    const TextLayout layout;
+    FrameBatch batch;
+    AlborRenderContext context(batch, AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, AlborSize{40.0f, 40.0f}), 1.0f);
+    // act
+    context.draw_text(layout, AlborPoint{.x = 0.0f, .y = 0.0f}, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    // assert
+    EXPECT_TRUE(batch.draws.empty());
+}
+
+TEST(AlborTextChecks, TakesTheStrokeColourWhenThePaintDoesNotFill) {
+    // arrange a paint that only strokes, which the text takes its colour from
+    const std::unique_ptr<albor::harfbuzz::HarfbuzzTextEngine> engine = albor::harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("A", 0.0f, 24.0f);
+    ASSERT_FALSE(layout.empty());
+    FrameBatch batch;
+    AlborRenderContext context(batch, AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, AlborSize{40.0f, 40.0f}), 1.0f);
+    const Paint paint{.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), .stroke = Color::rgb(0.8f, 0.1f, 0.1f)};
+    // act
+    context.draw_text(layout, AlborPoint{.x = 4.0f, .y = 30.0f}, paint);
+    // assert
+    ASSERT_EQ(batch.draws.size(), 1u);
+    EXPECT_EQ(batch.draws[0].color, pack_color(Color::rgb(0.8f, 0.1f, 0.1f)));
+}
+
+TEST(AlborParityChecks, AShapedRunMatchesTheReference) {
+    // arrange a platform run, which the reference rasterizes from the face and the backend fills from its outline
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{40.0f, 40.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const std::unique_ptr<albor::harfbuzz::HarfbuzzTextEngine> engine = albor::harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("Al", 0.0f, 28.0f);
+    ASSERT_FALSE(layout.empty());
+    // act
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    expected.draw_text(layout, AlborPoint{2.0f, 32.0f}, Paint{.fill = Color::rgb(0.1f, 0.1f, 0.1f)});
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    actual.draw_text(layout, AlborPoint{2.0f, 32.0f}, Paint{.fill = Color::rgb(0.1f, 0.1f, 0.1f)});
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert both surfaces put ink down at the same place
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    // the bound is the 70 measured on this host, which a hinted stem drawn unhinted leaves on its edges
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 80);
+    // the strokes cover the same area, which a displaced baseline would break
+    std::size_t expected_ink = 0;
+    std::size_t actual_ink = 0;
+    for (std::size_t index = 0; index < expected_shot.pixels.size(); index += 4) {
+        if (expected_shot.pixels[index] < 128u)
+            expected_ink++;
+        if (actual_shot.pixels[index] < 128u)
+            actual_ink++;
+    }
+    ASSERT_GT(expected_ink, 0u);
+    EXPECT_LE(actual_ink, (expected_ink * 5u) / 4u);
+    EXPECT_GE(actual_ink, (expected_ink * 3u) / 4u);
 }

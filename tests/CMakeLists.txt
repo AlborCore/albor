@@ -51,7 +51,10 @@ target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_CONTROLS_UI="${
 # albor-alloc-probe is linked because the binary counts its heap traffic, which is how a steady state frame and a
 # cached measure are measured rather than assumed (§2.2). A shipping build never links it, so the probe is excluded
 # at link time instead of behind a flag, which is the rule of AD-04 (§2.3)
-target_link_libraries(albor-tests PRIVATE albor-render-software albor-platform-headless albor-text-harfbuzz albor-resources albor-manifest albor-accessibility albor-language-server albor-preview albor-alloc-probe albor-render-blend2d albor-render-albor GTest::gtest_main)
+#
+# albor-resources is not named here, because every render and text module that builds on it hands it to the final
+# link already. Naming it again would put the same archive on the link line twice, which the linker ignores (§3.2)
+target_link_libraries(albor-tests PRIVATE albor-render-software albor-platform-headless albor-text-harfbuzz albor-manifest albor-accessibility albor-language-server albor-preview albor-alloc-probe albor-render-blend2d albor-render-albor GTest::gtest_main)
 
 # the suite that draws through the skia render context reaches that backend directly, which is the one module the
 # other suites never link because it reaches a platform surface (§3.2, AD-16). the backend is apple only, so the
@@ -157,7 +160,8 @@ if(APPLE)
     # the backend suite drives the metal device directly, which is the one module the portable suites never reach
     target_sources(albor-tests PRIVATE "./conditional/render_albor_metal.test.macos.mm")
     set_source_files_properties("./conditional/render_albor_metal.test.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
-    target_link_libraries(albor-tests PRIVATE albor-render-albor "-framework Foundation" "-framework Metal" "-framework QuartzCore")
+    # the frameworks are what this suite's own sources reach, so naming the backend again would link it twice (§3.2)
+    target_link_libraries(albor-tests PRIVATE "-framework Foundation" "-framework Metal" "-framework QuartzCore")
 endif()
 
 # the build-scope fixture is its own product, which the §14.3 check compiles and observes (AGENTS.md, §14.3)

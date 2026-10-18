@@ -126,8 +126,11 @@ namespace albor::render
                     contour.closed = true;
                 }
                 // the winding is normalized to a positive area, which is the side the left normals point inward on
-                if (contour.points.size() >= 3 && polygon_area(contour.points) < 0.0f)
+                if (contour.points.size() >= 3 && polygon_area(contour.points) < 0.0f) {
                     std::reverse(contour.points.begin(), contour.points.end());
+                    // the reversal is remembered, because the fill rule reads the original winding back (§6.2)
+                    contour.reversed = true;
+                }
             }
             // every contour with a segment carries the directions the join math reads
             stamp_directions(contour);

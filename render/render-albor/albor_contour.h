@@ -81,6 +81,9 @@ namespace albor::render
         // whether the last point joins the first, which a Close verb or a repeated start stamps
         bool closed = false;
 
+        // whether the normalization reversed the winding, which the fill rule reads back (§6.2)
+        bool reversed = false;
+
         // whether every turn leans the same way, which decides a fan fill against a stencilled one
         bool convex = false;
     };
