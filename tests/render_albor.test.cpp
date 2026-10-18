@@ -7,10 +7,14 @@
 
 #include "core/paint.h"
 #include "render/frame_scene.h"
+#include "render/image_resource.h"
+#include "render/line_batch.h"
 #include "render/path_resource.h"
+#include "render/picture_resource.h"
 #include "render/render-albor/albor_batch.h"
 #include "render/render-albor/albor_contour.h"
 #include "render/render-albor/albor_geometry.h"
+#include "render/render-albor/albor_render_context.h"
 #include "render/render-albor/albor_renderer_backend.h"
 #include "render/render_context.h"
 #include "render/renderer_backend.h"
@@ -1036,4 +1040,666 @@ TEST(PackColorChecks, PacksANonFiniteChannelAsTheEmptyEndpoint) {
     const std::uint32_t packed = pack_color(Color{.red = nan, .green = 1.0f, .blue = 0.0f, .alpha = 1.0f});
     // assert
     EXPECT_EQ(packed, 0xFF00FF00u);
+}
+
+TEST(AlborRenderContextChecks, StartsUnclippedAtTheFullExtent) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 80.0f});
+    // act
+    const AlborRenderContext context(batch, extent, 2.0f);
+    // assert
+    EXPECT_EQ(context.clip(), extent);
+    EXPECT_EQ(context.transform(), Transform{});
+    EXPECT_NEAR(context.opacity(), 1.0f, 0.0001f);
+    EXPECT_EQ(context.depth(), 0u);
+    // an unclipped draw carries no scissor, which the shader skips
+    EXPECT_FALSE(context.scissor().enabled);
+}
+
+TEST(AlborRenderContextChecks, TreatsANonPositiveDeviceScaleAsUnit) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f});
+    // act
+    const AlborRenderContext context(batch, extent, 0.0f);
+    // assert
+    EXPECT_EQ(context.device_transform(), Transform{});
+}
+
+TEST(AlborRenderContextChecks, SavePushesAndRestorePopsTheWholeState) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 80.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.save();
+    context.set_transform(Transform::translation(5.0f, 7.0f));
+    context.clip_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    context.set_opacity(0.25f);
+    context.restore();
+    // assert
+    EXPECT_EQ(context.depth(), 0u);
+    EXPECT_EQ(context.transform(), Transform{});
+    EXPECT_EQ(context.clip(), extent);
+    EXPECT_NEAR(context.opacity(), 1.0f, 0.0001f);
+}
+
+TEST(AlborRenderContextChecks, RestoreWithNothingPushedIsANoOperation) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.restore();
+    // assert
+    EXPECT_EQ(context.depth(), 0u);
+    EXPECT_EQ(context.clip(), extent);
+}
+
+TEST(AlborRenderContextChecks, IntersectsTheClipWithWhatWasAsked) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.clip_rect(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{30.0f, 40.0f}));
+    context.clip_rect(Rect::from_origin_size(Point{20.0f, 10.0f}, Size{30.0f, 40.0f}));
+    // assert
+    EXPECT_EQ(context.clip(), Rect::from_origin_size(Point{20.0f, 20.0f}, Size{20.0f, 30.0f}));
+}
+
+TEST(AlborRenderContextChecks, ReducesARoundedClipToItsRectangle) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.clip_rounded_rect(Rect::from_origin_size(Point{5.0f, 5.0f}, Size{20.0f, 20.0f}), 6.0f);
+    // assert
+    EXPECT_EQ(context.clip(), Rect::from_origin_size(Point{5.0f, 5.0f}, Size{20.0f, 20.0f}));
+}
+
+TEST(AlborRenderContextChecks, ClampsTheOpacityIntoTheUnitRange) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.set_opacity(4.0f);
+    const float high = context.opacity();
+    context.set_opacity(-2.0f);
+    const float low = context.opacity();
+    // assert
+    EXPECT_NEAR(high, 1.0f, 0.0001f);
+    EXPECT_NEAR(low, 0.0f, 0.0001f);
+}
+
+TEST(AlborRenderContextChecks, ComposesTheDeviceScaleOverTheSceneTransform) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f});
+    AlborRenderContext context(batch, extent, 2.0f);
+    // act
+    context.set_transform(Transform::translation(3.0f, 4.0f));
+    // assert
+    const Point mapped = context.device_transform().apply(Point{.x = 1.0f, .y = 1.0f});
+    EXPECT_NEAR(mapped.x, 8.0f, 0.0001f);
+    EXPECT_NEAR(mapped.y, 10.0f, 0.0001f);
+}
+
+TEST(AlborRenderContextChecks, RefusesADrawUnderAnEmptyClip) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.clip_rect(Rect::from_origin_size(Point{200.0f, 200.0f}, Size{10.0f, 10.0f}));
+    context.draw_rect(extent, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    // assert
+    EXPECT_TRUE(context.clip().empty());
+    EXPECT_TRUE(batch.draws.empty());
+    EXPECT_TRUE(batch.vertices.empty());
+}
+
+TEST(AlborRenderContextChecks, RefusesADrawAtZeroOpacity) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.set_opacity(0.0f);
+    context.draw_rect(extent, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    // assert
+    EXPECT_TRUE(batch.draws.empty());
+}
+
+TEST(AlborRenderContextChecks, RefusesADrawUnderACollapsedTransform) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.set_transform(Transform::scaling(0.0f, 0.0f));
+    context.draw_rect(extent, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    // assert
+    EXPECT_TRUE(batch.draws.empty());
+}
+
+TEST(AlborRenderContextChecks, FillsAndStrokesARectangleAsTwoDraws) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const Rect rect = Rect::from_origin_size(Point{10.0f, 20.0f}, Size{30.0f, 40.0f});
+    // act
+    context.draw_rect(rect, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f), .stroke = Color::rgb(0.0f, 0.0f, 1.0f), .stroke_width = 2.0f});
+    // assert
+    ASSERT_EQ(batch.draws.size(), 2u);
+    EXPECT_EQ(batch.draws[0].coverage, CoverageKind::Plain);
+    EXPECT_EQ(batch.draws[0].color, 0xFF0000FFu);
+    EXPECT_EQ(batch.draws[1].coverage, CoverageKind::Folded);
+    EXPECT_NEAR(batch.draws[1].ramp, 1.5f, 0.0001f);
+    EXPECT_EQ(batch.draws[1].color, 0xFFFF0000u);
+    // the two draws partition the frame mesh, which the ranges must abut
+    EXPECT_EQ(batch.draws[0].index_begin, 0u);
+    EXPECT_EQ(batch.draws[0].index_count + batch.draws[1].index_count, batch.indices.size());
+}
+
+TEST(AlborRenderContextChecks, FoldsTheOpacityIntoThePackedFill) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.set_opacity(0.5f);
+    context.draw_rect(extent, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    // assert
+    ASSERT_EQ(batch.draws.size(), 1u);
+    EXPECT_EQ(batch.draws[0].color, 0x80000080u);
+}
+
+TEST(AlborRenderContextChecks, ScalesTheStrokeWidthByTheDeviceScale) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 2.0f);
+    // act
+    context.draw_rect(extent, Paint{.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), .stroke = Color::rgb(1.0f, 1.0f, 1.0f), .stroke_width = 2.0f});
+    // assert
+    ASSERT_EQ(batch.draws.size(), 1u);
+    // a two point stroke at double scale folds by two and a half, which the doubled half width decides
+    EXPECT_NEAR(batch.draws[0].ramp, 2.5f, 0.0001f);
+}
+
+TEST(AlborRenderContextChecks, RefusesAnEmptyRectangle) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.draw_rect(Rect{}, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    // assert
+    EXPECT_TRUE(batch.draws.empty());
+}
+
+TEST(AlborRenderContextChecks, FillsARoundedRectangle) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.draw_rounded_rect(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{40.0f, 40.0f}), 8.0f, Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f)});
+    // assert
+    ASSERT_EQ(batch.draws.size(), 1u);
+    EXPECT_EQ(batch.draws[0].color, 0xFF00FF00u);
+    // the arc points sit outside the inset square, which the fan covers
+    EXPECT_GT(batch.vertices.size(), 8u);
+}
+
+TEST(AlborRenderContextChecks, StrokesAPolylineRoundly) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const Point points[3] = {Point{.x = 10.0f, .y = 10.0f}, Point{.x = 50.0f, .y = 10.0f}, Point{.x = 50.0f, .y = 50.0f}};
+    // act
+    context.draw_polyline(points, StrokeStyle{.color = Color::rgb(1.0f, 0.0f, 0.0f), .width = 4.0f});
+    // assert
+    ASSERT_EQ(batch.draws.size(), 1u);
+    EXPECT_EQ(batch.draws[0].coverage, CoverageKind::Folded);
+}
+
+TEST(AlborRenderContextChecks, RefusesAPolylineOfOneVertex) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const Point points[1] = {Point{.x = 10.0f, .y = 10.0f}};
+    // act
+    context.draw_polyline(points, StrokeStyle{.color = Color::rgb(1.0f, 0.0f, 0.0f), .width = 4.0f});
+    // assert
+    EXPECT_TRUE(batch.draws.empty());
+}
+
+TEST(AlborRenderContextChecks, RefusesAZeroWidthPolyline) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const Point points[2] = {Point{.x = 10.0f, .y = 10.0f}, Point{.x = 50.0f, .y = 10.0f}};
+    // act
+    context.draw_polyline(points, StrokeStyle{.color = Color::rgb(1.0f, 0.0f, 0.0f), .width = 0.0f});
+    // assert
+    EXPECT_TRUE(batch.draws.empty());
+}
+
+TEST(AlborRenderContextChecks, DefersTheShadowAndTheText) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.draw_shadow(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}), 4.0f, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 0.5f), .offset = Point{0.0f, 2.0f}, .blur = 4.0f});
+    context.draw_text(TextLayout{}, Point{0.0f, 0.0f}, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    // assert
+    EXPECT_TRUE(batch.draws.empty());
+}
+
+TEST(AlborRenderContextChecks, StrokesEverySegmentOfALineBatch) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const Point points[4] = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 10.0f, .y = 0.0f}, Point{.x = 0.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 10.0f}};
+    const LineBatch line_batch(7u, points);
+    // act
+    context.draw_line_batch(std::make_shared<const LineBatch>(9u, points), Transform::translation(5.0f, 5.0f), StrokeStyle{.color = Color::rgb(1.0f, 1.0f, 1.0f), .width = 2.0f});
+    // assert
+    ASSERT_EQ(batch.draws.size(), 1u);
+    EXPECT_EQ(line_batch.segment_count(), 2u);
+    EXPECT_EQ(batch.draws[0].index_begin, 0u);
+    EXPECT_EQ(batch.draws[0].index_count, batch.indices.size());
+    // the retained transform placed the segments, which the lowest vertex proves
+    float min_x = batch.vertices[0].x;
+    for (const BatchVertex& vertex : batch.vertices)
+        min_x = std::min(min_x, vertex.x);
+    EXPECT_NEAR(min_x, 4.5f, 0.3f);
+    EXPECT_EQ(context.transform(), Transform{});
+}
+
+TEST(AlborRenderContextChecks, RefusesAMissingOrEmptyLineBatch) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const Point empty[1] = {Point{.x = 0.0f, .y = 0.0f}};
+    // act
+    context.draw_line_batch(nullptr, Transform{}, StrokeStyle{.color = Color::rgb(1.0f, 1.0f, 1.0f), .width = 2.0f});
+    context.draw_line_batch(std::make_shared<const LineBatch>(11u, empty), Transform{}, StrokeStyle{.color = Color::rgb(1.0f, 1.0f, 1.0f), .width = 2.0f});
+    // assert
+    EXPECT_TRUE(batch.draws.empty());
+}
+
+TEST(AlborRenderContextChecks, FillsAndStrokesARetainedPath) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const PathVerb verbs[4] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const Point points[3] = {Point{.x = 10.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 50.0f}, Point{.x = 50.0f, .y = 50.0f}};
+    const PathResource path(3u, verbs, points);
+    // act
+    context.draw_path(std::make_shared<const PathResource>(4u, verbs, points), Transform::translation(2.0f, 3.0f), Paint{.fill = Color::rgb(1.0f, 0.0f, 1.0f), .stroke = Color::rgb(0.0f, 1.0f, 1.0f), .stroke_width = 1.0f});
+    // assert
+    ASSERT_EQ(batch.draws.size(), 2u);
+    EXPECT_EQ(batch.draws[0].coverage, CoverageKind::Plain);
+    EXPECT_EQ(batch.draws[1].coverage, CoverageKind::Folded);
+    EXPECT_EQ(context.transform(), Transform{});
+}
+
+TEST(AlborRenderContextChecks, RefusesAMissingOrEmptyPath) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.draw_path(nullptr, Transform{}, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    // assert
+    EXPECT_TRUE(batch.draws.empty());
+}
+
+TEST(AlborRenderContextChecks, FillsNothingForAStrokelessPathOfTwoPoints) {
+    // arrange a path that closes into no area, which the fill refuses and the stroke never asks for
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const PathVerb verbs[2] = {PathVerb::MoveTo, PathVerb::LineTo};
+    const Point points[2] = {Point{.x = 10.0f, .y = 10.0f}, Point{.x = 50.0f, .y = 10.0f}};
+    // act
+    context.draw_path(std::make_shared<const PathResource>(5u, verbs, points), Transform{}, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    // assert
+    EXPECT_TRUE(batch.draws.empty());
+}
+
+TEST(AlborRenderContextChecks, ReplaysAPictureNestedUnderItsTransform) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    std::vector<DrawCommand> commands;
+    commands.push_back(DrawCommand::rectangle(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)}));
+    const PictureResource picture(6u, commands);
+    // act
+    context.draw_picture(std::make_shared<const PictureResource>(8u, commands), Transform::translation(10.0f, 10.0f));
+    // assert
+    ASSERT_EQ(batch.draws.size(), 1u);
+    // the nested transform moved the rectangle, so the lowest vertex sits past the translation
+    float min_x = batch.vertices[0].x;
+    for (const BatchVertex& vertex : batch.vertices)
+        min_x = std::min(min_x, vertex.x);
+    EXPECT_GE(min_x, 9.4f);
+    EXPECT_EQ(context.transform(), Transform{});
+}
+
+TEST(AlborRenderContextChecks, RefusesAMissingOrEmptyPicture) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const PictureResource empty(10u, {});
+    // act
+    context.draw_picture(nullptr, Transform{});
+    context.draw_picture(std::make_shared<const PictureResource>(12u, std::vector<DrawCommand>{}), Transform{});
+    // assert
+    EXPECT_TRUE(batch.draws.empty());
+    EXPECT_TRUE(empty.empty());
+}
+
+TEST(AlborRenderContextChecks, BlitsAnImageAcrossItsDestination) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const std::uint8_t pixels[16] = {255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255};
+    const ImageResource image(13u, 2u, 2u, ImageFormat::RGBA8, pixels);
+    // act
+    context.draw_image(std::make_shared<const ImageResource>(14u, 2u, 2u, ImageFormat::RGBA8, pixels), Rect::from_origin_size(Point{10.0f, 20.0f}, Size{30.0f, 40.0f}), Paint{.fill = Color::rgba(1.0f, 1.0f, 1.0f, 0.5f)});
+    // assert
+    ASSERT_EQ(batch.draws.size(), 1u);
+    // the texture the backend caches is keyed on the resource identifier
+    EXPECT_EQ(batch.draws[0].texture, 14u);
+    // the paint alpha alone modulates the sampled texel
+    EXPECT_EQ(batch.draws[0].color, 0x80808080u);
+    // the quad carries four vertices and two triangles, which the uv corners map
+    ASSERT_EQ(batch.vertices.size(), 4u);
+    EXPECT_EQ(batch.draws[0].index_count, 6u);
+    EXPECT_NEAR(batch.vertices[0].u, 0.0f, 0.0001f);
+    EXPECT_NEAR(batch.vertices[0].v, 0.0f, 0.0001f);
+    EXPECT_NEAR(batch.vertices[2].u, 1.0f, 0.0001f);
+    EXPECT_NEAR(batch.vertices[2].v, 1.0f, 0.0001f);
+    EXPECT_EQ(image.width(), 2u);
+}
+
+TEST(AlborRenderContextChecks, RefusesAMissingOrEmptyImage) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const ImageFormat format = ImageFormat::RGBA8;
+    const ImageResource blank(15u, 0u, 0u, format, std::span<const std::uint8_t>{});
+    // act
+    context.draw_image(nullptr, Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{});
+    context.draw_image(std::make_shared<const ImageResource>(16u, 0u, 0u, format, std::span<const std::uint8_t>{}), Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{});
+    // assert
+    EXPECT_TRUE(batch.draws.empty());
+    EXPECT_TRUE(blank.pixels().empty());
+}
+
+TEST(AlborRenderContextChecks, RefusesAnImageWithoutADestination) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const std::uint8_t pixels[4] = {255, 0, 0, 255};
+    // act
+    context.draw_image(std::make_shared<const ImageResource>(17u, 1u, 1u, ImageFormat::RGBA8, pixels), Rect{}, Paint{});
+    // assert
+    EXPECT_TRUE(batch.draws.empty());
+}
+
+TEST(AlborRenderContextChecks, CarriesTheScissorOfAClippedDraw) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 80.0f});
+    AlborRenderContext context(batch, extent, 2.0f);
+    // act
+    context.clip_rect(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{40.0f, 20.0f}));
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 80.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    // assert
+    ASSERT_EQ(batch.draws.size(), 1u);
+    const BatchScissor& scissor = batch.draws[0].scissor;
+    EXPECT_TRUE(scissor.enabled);
+    // the half extents are half the clip, which the shader compares a mapped fragment against
+    EXPECT_NEAR(scissor.extent_x, 20.0f, 0.0001f);
+    EXPECT_NEAR(scissor.extent_y, 10.0f, 0.0001f);
+    // the scales turn the extent into a one device pixel ramp, which doubles with the device scale
+    EXPECT_NEAR(scissor.scale_x, 2.0f, 0.0001f);
+    EXPECT_NEAR(scissor.scale_y, 2.0f, 0.0001f);
+    // the inverse maps a raster position onto the clip centre, which the extent then compares against
+    const Point mapped = scissor.inverse.apply(Point{.x = 60.0f, .y = 60.0f});
+    EXPECT_NEAR(mapped.x, 0.0f, 0.0001f);
+    EXPECT_NEAR(mapped.y, 0.0f, 0.0001f);
+}
+
+TEST(AlborRenderContextChecks, CutsEverythingAwayForAClipPushedUnderACollapsedTransform) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.set_transform(Transform::scaling(0.0f, 0.0f));
+    context.clip_rect(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    context.set_transform(Transform{});
+    context.draw_rect(extent, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    // assert
+    EXPECT_TRUE(context.clip().empty());
+    EXPECT_TRUE(batch.draws.empty());
+    EXPECT_FALSE(context.scissor().enabled);
+}
+
+TEST(AlborRenderContextChecks, KeepsTheClipFrozenWhenTheTransformMovesOn) {
+    // arrange a clip pushed at identity, which a later transform must not move
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.clip_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    context.set_transform(Transform::translation(100.0f, 100.0f));
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    // assert
+    ASSERT_EQ(batch.draws.size(), 1u);
+    // the scissor still maps onto the clip centre, which the moved draw sits far outside
+    const BatchScissor& scissor = batch.draws[0].scissor;
+    EXPECT_TRUE(scissor.enabled);
+    const Point mapped = scissor.inverse.apply(Point{.x = 105.0f, .y = 105.0f});
+    EXPECT_GT(std::abs(mapped.x), scissor.extent_x);
+    EXPECT_GT(std::abs(mapped.y), scissor.extent_y);
+}
+
+TEST(AlborRenderContextChecks, RefusesAnImageWithoutAnIdentifier) {
+    // arrange an image the factory never stamped, which carries no texture to cache
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const std::uint8_t pixels[4] = {255, 0, 0, 255};
+    // act
+    context.draw_image(std::make_shared<const ImageResource>(0u, 1u, 1u, ImageFormat::RGBA8, pixels), Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{});
+    // assert
+    EXPECT_TRUE(batch.draws.empty());
+}
+
+TEST(AlborRenderContextChecks, RefusesAnEmptyRoundedRectangle) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.draw_rounded_rect(Rect{}, 4.0f, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    // assert
+    EXPECT_TRUE(batch.draws.empty());
+}
+
+TEST(AlborRenderContextChecks, KeepsTheStrokeWidthUnderAQuarterTurn) {
+    // arrange a quarter turn, whose determinant must not collapse the stroke width
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const Transform quarter{.scale_x = 0.0f, .skew_x = -1.0f, .translate_x = 0.0f, .skew_y = 1.0f, .scale_y = 0.0f, .translate_y = 0.0f};
+    // act
+    context.set_transform(quarter);
+    context.draw_rect(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}), Paint{.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), .stroke = Color::rgb(1.0f, 1.0f, 1.0f), .stroke_width = 1.0f});
+    // assert
+    ASSERT_EQ(batch.draws.size(), 1u);
+    // a one point stroke keeps its half width, which folds by one over the fringe
+    EXPECT_NEAR(batch.draws[0].ramp, 1.0f, 0.0001f);
+    // the stroke draws at full coverage, which a determinant that collapsed would have emptied
+    EXPECT_EQ(batch.draws[0].color, 0xFFFFFFFFu);
+}
+
+TEST(AlborRenderContextChecks, KeepsTheStrokeWidthUnderASkewedTurn) {
+    // arrange a sixty degree turn, whose determinant the skew product must carry
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const float cosine = 0.5f;
+    const float sine = 0.8660254f;
+    const Transform turn{.scale_x = cosine, .skew_x = -sine, .translate_x = 0.0f, .skew_y = sine, .scale_y = cosine, .translate_y = 0.0f};
+    // act
+    context.set_transform(turn);
+    context.draw_rect(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}), Paint{.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), .stroke = Color::rgb(1.0f, 1.0f, 1.0f), .stroke_width = 1.0f});
+    // assert
+    ASSERT_EQ(batch.draws.size(), 1u);
+    // a rotation carries the unit determinant, so the width and the coverage match the unrotated stroke
+    EXPECT_NEAR(batch.draws[0].ramp, 1.0f, 0.0001f);
+    EXPECT_EQ(batch.draws[0].color, 0xFFFFFFFFu);
+}
+
+TEST(AlborRenderContextChecks, FoldsTheOpacityOnceOnTopOfThePaintAlpha) {
+    // arrange a half transparent fill under a half opacity
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.set_opacity(0.5f);
+    context.draw_rect(extent, Paint{.fill = Color::rgba(1.0f, 0.0f, 0.0f, 0.5f)});
+    // assert
+    ASSERT_EQ(batch.draws.size(), 1u);
+    // the paint alpha and the opacity multiply to a quarter, which premultiplies the red to a quarter too
+    EXPECT_EQ(batch.draws[0].color, 0x40000040u);
+}
+
+TEST(AlborRenderContextChecks, RecordsTheConvexityOfTheFilledShape) {
+    // arrange a rectangle and an L, which differ only in their convexity
+    FrameBatch rectangle_batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext rectangle_context(rectangle_batch, extent, 1.0f);
+    const PathVerb verbs[7] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const Point points[6] = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 0.0f, .y = 10.0f}, Point{.x = 4.0f, .y = 10.0f}, Point{.x = 4.0f, .y = 4.0f}, Point{.x = 10.0f, .y = 4.0f}, Point{.x = 10.0f, .y = 0.0f}};
+    FrameBatch path_batch;
+    AlborRenderContext path_context(path_batch, extent, 1.0f);
+    // act
+    rectangle_context.draw_rect(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    path_context.draw_path(std::make_shared<const PathResource>(18u, verbs, points), Transform{}, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    // assert
+    ASSERT_EQ(rectangle_batch.draws.size(), 1u);
+    ASSERT_EQ(path_batch.draws.size(), 1u);
+    EXPECT_TRUE(rectangle_batch.draws[0].convex);
+    EXPECT_FALSE(path_batch.draws[0].convex);
+}
+
+TEST(AlborRenderContextChecks, FillsEveryContourBeforeItStrokesAny) {
+    // arrange a path of two overlapping squares with a translucent fill and stroke
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const PathVerb verbs[9] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close, PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const Point points[7] = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 0.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 10.0f}, Point{.x = 5.0f, .y = 5.0f}, Point{.x = 5.0f, .y = 15.0f}, Point{.x = 15.0f, .y = 15.0f}, Point{.x = 15.0f, .y = 5.0f}};
+    // act
+    context.draw_path(std::make_shared<const PathResource>(19u, verbs, points), Transform{}, Paint{.fill = Color::rgba(1.0f, 0.0f, 0.0f, 0.5f), .stroke = Color::rgba(0.0f, 0.0f, 1.0f, 0.5f), .stroke_width = 1.0f});
+    // assert
+    ASSERT_EQ(batch.draws.size(), 4u);
+    // both fills come first, so a translucent stroke never lands under a later fill
+    EXPECT_EQ(batch.draws[0].coverage, CoverageKind::Plain);
+    EXPECT_EQ(batch.draws[1].coverage, CoverageKind::Plain);
+    EXPECT_EQ(batch.draws[2].coverage, CoverageKind::Folded);
+    EXPECT_EQ(batch.draws[3].coverage, CoverageKind::Folded);
+    // the ranges abut, which a backend replaying them in order depends on
+    EXPECT_EQ(batch.draws[1].index_begin, batch.draws[0].index_begin + batch.draws[0].index_count);
+}
+
+TEST(AlborRenderContextChecks, PacksTheImageTintFromThePaintAlphaAlone) {
+    // arrange an image drawn with a default paint, whose fill is opaque black
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const std::uint8_t pixels[4] = {255, 0, 0, 255};
+    // act
+    context.draw_image(std::make_shared<const ImageResource>(20u, 1u, 1u, ImageFormat::RGBA8, pixels), Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{});
+    // assert
+    ASSERT_EQ(batch.draws.size(), 1u);
+    // the sampled texel passes through untinted, which the reference does with a default paint
+    EXPECT_EQ(batch.draws[0].color, 0xFFFFFFFFu);
+}
+
+TEST(AlborRenderContextChecks, PassesAnImageThroughAPaintThatDrawsNothing) {
+    // arrange an image whose paint neither fills nor strokes
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const std::uint8_t pixels[4] = {255, 0, 0, 255};
+    // act
+    context.draw_image(std::make_shared<const ImageResource>(21u, 1u, 1u, ImageFormat::RGBA8, pixels), Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f)});
+    // assert
+    ASSERT_EQ(batch.draws.size(), 1u);
+    EXPECT_EQ(batch.draws[0].color, 0xFFFFFFFFu);
+}
+
+TEST(AlborRenderContextChecks, NestTwoLevelsOfState) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.save();
+    context.set_opacity(0.5f);
+    context.save();
+    context.set_opacity(0.25f);
+    context.restore();
+    const float inner = context.opacity();
+    context.restore();
+    const float outer = context.opacity();
+    // assert
+    EXPECT_NEAR(inner, 0.5f, 0.0001f);
+    EXPECT_NEAR(outer, 1.0f, 0.0001f);
+    EXPECT_EQ(context.depth(), 0u);
+}
+
+TEST(AlborRenderContextChecks, RestoresTheClipTransformWithTheState) {
+    // arrange a clip pushed at half scale, which a restore must recover
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.save();
+    context.set_transform(Transform::scaling(2.0f, 2.0f));
+    context.clip_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    context.restore();
+    context.clip_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{5.0f, 5.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    // assert
+    ASSERT_EQ(batch.draws.size(), 1u);
+    // the restored clip maps under the identity transform, which halves the scales
+    EXPECT_NEAR(batch.draws[0].scissor.scale_x, 1.0f, 0.0001f);
+    EXPECT_NEAR(batch.draws[0].scissor.extent_x, 10.0f, 0.0001f);
 }

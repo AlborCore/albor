@@ -1,0 +1,381 @@
+#include "render/render-albor/albor_render_context.h"
+
+#include <algorithm>
+#include <cmath>
+#include <utility>
+
+#include "render/draw_command.h"
+#include "render/image_resource.h"
+#include "render/line_batch.h"
+#include "render/picture_resource.h"
+#include "render/render-albor/albor_geometry.h"
+
+namespace albor::render
+{
+    namespace
+    {
+        // the miter limit a plain stroke joins with, which the default stroke style carries (§6.2)
+        constexpr float STROKE_MITER_LIMIT = 4.0f;
+
+        // the tessellation tolerance a flattened arc divides at, which a device pixel fourth resolves
+        constexpr float TESS_TOLERANCE = 0.25f;
+
+        // the determinant below which a transform collapses, which draws nothing (§6.2)
+        constexpr float SINGULAR_LIMIT = 0.000001f;
+    } // namespace
+
+    AlborRenderContext::AlborRenderContext(FrameBatch& batch, const Rect& logical_extent, float device_scale) :
+        m_batch(batch), m_extent(logical_extent), m_device_scale(device_scale > 0.0f ? device_scale : 1.0f), m_clip(logical_extent), m_clip_device(device_transform()) {}
+
+    void AlborRenderContext::save() {
+        // the current transform, clip, clip transform and opacity are pushed, which a restore pops (§6.2)
+        m_states.push_back(State{.transform = m_transform, .clip = m_clip, .clip_device = m_clip_device, .opacity = m_opacity});
+    }
+
+    void AlborRenderContext::restore() {
+        // a restore with nothing pushed is a no operation rather than an error (§6.2)
+        if (m_states.empty())
+            return;
+        // the saved state becomes the current one again (§6.2)
+        const State state = m_states.back();
+        m_states.pop_back();
+        m_transform = state.transform;
+        m_clip = state.clip;
+        m_clip_device = state.clip_device;
+        m_opacity = state.opacity;
+    }
+
+    void AlborRenderContext::set_transform(const Transform& transform) {
+        // the scene transform is replaced outright, which every later draw lands under (§6.2)
+        m_transform = transform;
+    }
+
+    const Transform& AlborRenderContext::transform() const {
+        // the recorded transform is what a test asserts against (§6.2)
+        return m_transform;
+    }
+
+    void AlborRenderContext::clip_rect(const Rect& rect) {
+        // the clip freezes the transform it is pushed under, which a later transform must not move (§6.2)
+        m_clip_device = device_transform();
+        // a clip pushed under a collapsed transform spans no device area, so it cuts everything away (§6.2)
+        const float determinant = m_clip_device.scale_x * m_clip_device.scale_y - m_clip_device.skew_x * m_clip_device.skew_y;
+        if (std::abs(determinant) < SINGULAR_LIMIT) {
+            m_clip = Rect{};
+            return;
+        }
+        // the recorded clip is the overlap of what was there and what was asked for (§6.2)
+        m_clip = m_clip.intersect(rect);
+    }
+
+    void AlborRenderContext::clip_rounded_rect(const Rect& rect, float radius) {
+        // a rounded clip is not expressible in this context yet, so it reduces to its rectangle (§6.2)
+        (void)radius;
+        // the rectangle the rounded clip contains is what the recorded clip narrows to (§6.2)
+        clip_rect(rect);
+    }
+
+    const Rect& AlborRenderContext::clip() const {
+        // the recorded clip is what a test asserts against (§6.2)
+        return m_clip;
+    }
+
+    void AlborRenderContext::set_opacity(float opacity) {
+        // the opacity is clamped into the unit range, because content computes it from data (§6.1)
+        m_opacity = std::clamp(opacity, 0.0f, 1.0f);
+    }
+
+    float AlborRenderContext::opacity() const {
+        // the recorded opacity is what a test asserts against (§6.1)
+        return m_opacity;
+    }
+
+    std::size_t AlborRenderContext::depth() const {
+        // the depth is how many states are stacked, which a test asserts against (§6.2)
+        return m_states.size();
+    }
+
+    Transform AlborRenderContext::device_transform() const {
+        // the scene transform lands first and the device scale second, which maps logical onto physical (§6.3, AD-27)
+        return m_transform.then(Transform::scaling(m_device_scale, m_device_scale));
+    }
+
+    float AlborRenderContext::to_device_length(float length) const {
+        // the average scale of the device transform maps a logical length onto the physical raster (§6.3, AD-27)
+        const Transform device = device_transform();
+        // every caller is already past the drawable gate, so the transform cannot have collapsed here (§6.2)
+        return length * std::sqrt(std::abs(device.scale_x * device.scale_y - device.skew_x * device.skew_y));
+    }
+
+    bool AlborRenderContext::drawable() const {
+        // a clip without area cuts every draw away (§6.2)
+        if (m_clip.empty())
+            return false;
+        // a colour that puts no ink down draws nothing, which a zero opacity makes (§6.1)
+        if (m_opacity <= 0.0f)
+            return false;
+        // a transform that collapses to a line or a point draws nothing (§6.2)
+        const Transform device = device_transform();
+        const float determinant = std::abs(device.scale_x * device.scale_y - device.skew_x * device.skew_y);
+        return determinant >= SINGULAR_LIMIT;
+    }
+
+    BatchScissor AlborRenderContext::scissor() const {
+        // an unclipped draw carries no scissor, which the shader skips (§6.2)
+        BatchScissor result;
+        // a clip that covers the whole extent leaves every draw uncut (§6.2)
+        if (m_clip == m_extent)
+            return result;
+        // a clip without area cuts every draw away, so no scissor is carried at all (§6.2)
+        if (m_clip.empty())
+            return result;
+        // the frozen clip transform maps the fragment back into the scene space the clip lives in (§6.2)
+        const Transform device = m_clip_device;
+        // the clip centre anchors the space the shader compares against (§6.2)
+        const float center_x = m_clip.x + m_clip.width * 0.5f;
+        const float center_y = m_clip.y + m_clip.height * 0.5f;
+        result.enabled = true;
+        // the inverse maps a raster position onto the clip centre, which the extent compares against
+        result.inverse = invert_transform(device).then(Transform::translation(-center_x, -center_y));
+        // the extents are the half size of the clip, which a fragment outside crosses
+        result.extent_x = m_clip.width * 0.5f;
+        result.extent_y = m_clip.height * 0.5f;
+        // the scales turn the extent into a one device pixel ramp per axis (nanovg technique)
+        result.scale_x = std::sqrt(device.scale_x * device.scale_x + device.skew_x * device.skew_x) / FRINGE;
+        result.scale_y = std::sqrt(device.skew_y * device.skew_y + device.scale_y * device.scale_y) / FRINGE;
+        return result;
+    }
+
+    void AlborRenderContext::to_device(Contour& contour) const {
+        // the device transform maps every contour point onto the physical raster (§6.3, AD-27)
+        const Transform device = device_transform();
+        for (ContourPoint& point : contour.points) {
+            // the point lands where the transform places it
+            point.position = device.apply(point.position);
+        }
+        // the directions and the lengths follow the mapped points, which the expansion reads
+        stamp_directions(contour);
+    }
+
+    void AlborRenderContext::record(EmittedRange range, CoverageKind coverage, float ramp, const Color& color, std::uint64_t texture, bool convex) {
+        // an expansion that appended no index records no draw (§6.2)
+        if (range.index_count == 0)
+            return;
+        // the draw carries the range, the paint and the scissor of the moment it was recorded (§6.3)
+        BatchDraw draw;
+        draw.index_begin = range.index_begin;
+        draw.index_count = range.index_count;
+        draw.coverage = coverage;
+        draw.ramp = ramp;
+        draw.color = pack_color(color);
+        draw.scissor = scissor();
+        draw.texture = texture;
+        draw.convex = convex;
+        m_batch.draws.push_back(draw);
+    }
+
+    void AlborRenderContext::emit_fill(Contour contour, const Color& color, std::uint64_t texture) {
+        // the fill measures against the device fringe, which a sub fringe width never reaches (§6.3)
+        to_device(contour);
+        // the fill fans the inset ring and straddles the boundary with its fringe (nanovg technique)
+        const EmittedRange range = expand_fill(m_batch, contour);
+        // the expansion resolved the convexity, which the draw record carries for the stencil decision
+        const bool convex = contour.convex;
+        // the fill draws with the lateral coverage as its alpha, dimmed by the node opacity (nanovg technique)
+        record(range, CoverageKind::Plain, 1.0f, color.with_alpha(m_opacity), texture, convex);
+    }
+
+    void AlborRenderContext::emit_stroke(Contour contour, const Color& color, float width, Cap cap, Join join) {
+        // the stroke expands in device space, where the fringe is one pixel (§6.3, AD-27)
+        to_device(contour);
+        // the strip folds its lateral coverage around the centre and ramps its ends (nanovg technique)
+        const StrokeEmission emission = stroke_geometry(contour, width, cap, join);
+        // the stroke draw carries the ramp the folded coverage folds by, dimmed by the opacity and the hairline alpha
+        const Color dimmed = color.with_alpha(m_opacity).with_alpha(emission.alpha);
+        record(emission.range, CoverageKind::Folded, emission.ramp, dimmed, 0, false);
+    }
+
+    StrokeEmission AlborRenderContext::stroke_geometry(Contour& contour, float width, Cap cap, Join join) {
+        // a stroke with no width puts no ink down (§6.2)
+        const float half_width = to_device_length(width) * 0.5f;
+        if (half_width <= 0.0f)
+            return StrokeEmission{.alpha = 0.0f};
+        // the strip folds its lateral coverage around the centre and ramps its ends (nanovg technique)
+        return expand_stroke(m_batch, contour, half_width, cap, join, STROKE_MITER_LIMIT, TESS_TOLERANCE);
+    }
+
+    void AlborRenderContext::emit_shape(Contour contour, const Paint& paint, Cap cap, Join join) {
+        // the fill comes first, because the stroke overlaps it (§6.2)
+        if (paint.fills())
+            emit_fill(contour, paint.fill, 0);
+        // the stroke follows over the same contour (§6.2)
+        if (paint.strokes())
+            emit_stroke(std::move(contour), paint.stroke, paint.stroke_width, cap, join);
+    }
+
+    void AlborRenderContext::emit_image(const Rect& destination, const Color& color, std::uint64_t texture) {
+        // an image with no destination area draws nothing (§6.4)
+        if (destination.empty() || texture == 0)
+            return;
+        // the device transform maps the destination corners onto the raster (§6.3, AD-27)
+        const Transform device = device_transform();
+        const Point corners[4] = {
+            Point{.x = destination.x, .y = destination.y},
+            Point{.x = destination.x + destination.width, .y = destination.y},
+            Point{.x = destination.x + destination.width, .y = destination.y + destination.height},
+            Point{.x = destination.x, .y = destination.y + destination.height},
+        };
+        // the range the quad appends starts at the current index count
+        const std::uint32_t index_begin = static_cast<std::uint32_t>(m_batch.indices.size());
+        // the two triangles span the destination, which the uv corners map onto the texture (§6.4)
+        const std::uint32_t first = static_cast<std::uint32_t>(m_batch.vertices.size());
+        for (std::size_t index = 0; index < 4; index++) {
+            // the corner lands where the device transform places it
+            const Point placed = device.apply(corners[index]);
+            // the uv walks the same order, which maps the texture across the quad
+            BatchVertex vertex;
+            vertex.x = placed.x;
+            vertex.y = placed.y;
+            vertex.u = index == 1 || index == 2 ? 1.0f : 0.0f;
+            vertex.v = index >= 2 ? 1.0f : 0.0f;
+            m_batch.vertices.push_back(vertex);
+        }
+        // the two triangles cover the quad
+        m_batch.indices.push_back(first);
+        m_batch.indices.push_back(first + 1);
+        m_batch.indices.push_back(first + 2);
+        m_batch.indices.push_back(first);
+        m_batch.indices.push_back(first + 2);
+        m_batch.indices.push_back(first + 3);
+        // the image draw samples its texture across the range it appended, dimmed by the node opacity (§6.4)
+        record(EmittedRange{.index_begin = index_begin, .index_count = 6}, CoverageKind::Plain, 1.0f, color.with_alpha(m_opacity), texture, true);
+    }
+
+    void AlborRenderContext::draw_rect(const Rect& rect, const Paint& paint) {
+        // a draw that cannot put ink down is refused before any geometry is built (§6.2)
+        if (!drawable() || rect.empty())
+            return;
+        // a plain rectangle is the four cornered contour both halves share (§6.2)
+        emit_shape(rect_contour(rect), paint, Cap::Butt, Join::Miter);
+    }
+
+    void AlborRenderContext::draw_rounded_rect(const Rect& rect, float radius, const Paint& paint) {
+        // a draw that cannot put ink down is refused before any geometry is built (§6.2)
+        if (!drawable() || rect.empty())
+            return;
+        // the cornered contour carries the radii the caller asked for, flattened to a device pixel (§6.2)
+        const float scale = std::sqrt(std::abs(device_transform().scale_x * device_transform().scale_y - device_transform().skew_x * device_transform().skew_y));
+        emit_shape(rounded_rect_contour(rect, radius, TESS_TOLERANCE / std::max(scale, 0.0001f)), paint, Cap::Butt, Join::Miter);
+    }
+
+    void AlborRenderContext::draw_polyline(const std::span<const Point>& points, const StrokeStyle& stroke) {
+        // a polyline with fewer than two vertices has no segment to stroke (§6.2)
+        if (!drawable() || points.size() < 2)
+            return;
+        // the vertices join into one open contour, which the polyline stroke walks (§6.2)
+        Contour contour;
+        for (const Point& point : points) {
+            // every vertex corners at, which the round join reads
+            ContourPoint vertex;
+            vertex.position = point;
+            vertex.flags = Corner;
+            contour.points.push_back(vertex);
+        }
+        // the ends and the elbows both close roundly, which is how a control glyph reads (§6.2)
+        emit_stroke(contour, stroke.color, stroke.width, Cap::Round, Join::Round);
+    }
+
+    void AlborRenderContext::draw_shadow(const Rect& rect, float radius, const Shadow& shadow) {
+        // the offscreen blur pass lands with the shadow phase, so the cast is refused for now (§6.2, #106)
+        (void)rect;
+        (void)radius;
+        (void)shadow;
+    }
+
+    void AlborRenderContext::draw_text(const TextLayout& layout, Point origin, const Paint& paint) {
+        // the glyph hand off lands with the text phase, so a general run is refused for now (§9.1, #107)
+        (void)layout;
+        (void)origin;
+        (void)paint;
+    }
+
+    void AlborRenderContext::draw_line_batch(const std::shared_ptr<const LineBatch>& batch, const Transform& transform, const StrokeStyle& stroke) {
+        // a batch with no segment draws nothing (§6.4, AD-06)
+        if (!drawable() || !batch || batch->segment_count() == 0)
+            return;
+        // the retained transform lands under the current one, which places the segments where the scene put them (§6.4)
+        const Transform outer = m_transform;
+        m_transform = outer.then(transform);
+        // the batch coalesces into one draw, which is what makes its replay constant time (§6.4, AD-06)
+        const std::uint32_t index_begin = static_cast<std::uint32_t>(m_batch.indices.size());
+        // every consecutive point pair is one open two point contour, which the stroke caps at both ends (§6.4)
+        const std::span<const Point> points = batch->points();
+        StrokeEmission last;
+        for (std::size_t index = 0; index + 1 < points.size(); index += 2) {
+            // the two endpoints carry the corner flag the join calculation reads
+            Contour contour;
+            ContourPoint start;
+            start.position = points[index];
+            start.flags = Corner;
+            contour.points.push_back(start);
+            ContourPoint end;
+            end.position = points[index + 1];
+            end.flags = Corner;
+            contour.points.push_back(end);
+            // the segments draw with the butt ends and the miter corners the retained style asks for (§6.4)
+            to_device(contour);
+            last = stroke_geometry(contour, stroke.width, Cap::Butt, Join::Miter);
+        }
+        // the one draw spans every segment the batch expanded, dimmed once by the opacity and the hairline alpha (§6.4)
+        const Color dimmed = stroke.color.with_alpha(m_opacity).with_alpha(last.alpha);
+        record(EmittedRange{.index_begin = index_begin, .index_count = static_cast<std::uint32_t>(m_batch.indices.size()) - index_begin}, CoverageKind::Folded, last.ramp, dimmed, 0, false);
+        // the transform the draw was recorded under is restored (§6.4)
+        m_transform = outer;
+    }
+
+    void AlborRenderContext::draw_path(const std::shared_ptr<const PathResource>& path, const Transform& transform, const Paint& paint) {
+        // a path with no command draws nothing (§6.4, AD-06)
+        if (!drawable() || !path || path->verbs().empty())
+            return;
+        // the retained transform lands under the current one, which places the contour where the scene put it (§6.4)
+        const Transform outer = m_transform;
+        m_transform = outer.then(transform);
+        // every contour of the stream fills first, so a translucent stroke never lands under a later fill (§6.4)
+        std::vector<Contour> contours = build_contours(path->verbs(), path->points());
+        if (paint.fills()) {
+            for (Contour& contour : contours)
+                emit_fill(contour, paint.fill, 0);
+        }
+        // the strokes follow over the same contours, which the recorded style asks for (§6.4)
+        if (paint.strokes()) {
+            for (Contour& contour : contours)
+                emit_stroke(std::move(contour), paint.stroke, paint.stroke_width, Cap::Butt, Join::Miter);
+        }
+        // the transform the draw was recorded under is restored (§6.4)
+        m_transform = outer;
+    }
+
+    void AlborRenderContext::draw_picture(const std::shared_ptr<const PictureResource>& picture, const Transform& transform) {
+        // a picture with no command draws nothing (§6.4, AD-06)
+        if (!drawable() || !picture || picture->empty())
+            return;
+        // the picture nests under the transform the scene gave it, like any other retained draw (§6.4)
+        const Transform outer = m_transform;
+        m_transform = outer.then(transform);
+        // the command list replays through this context, which is the one replay a frame and a picture share (§6.1, §6.4)
+        replay_commands(picture->commands(), *this, m_extent);
+        // the transform the draw was recorded under is restored (§6.4)
+        m_transform = outer;
+    }
+
+    void AlborRenderContext::draw_image(const std::shared_ptr<const ImageResource>& image, const Rect& destination, const Paint& paint) {
+        // an image with no pixels draws nothing (§6.4, AD-06)
+        if (!drawable() || !image || image->pixels().empty() || destination.empty())
+            return;
+        // the paint dims the sampled texel through its alpha alone, which the reference does too (§6.4, AD-26)
+        const float alpha = paint.fills() ? paint.fill.alpha : (paint.strokes() ? paint.stroke.alpha : 1.0f);
+        const Color tint = Color::rgba(1.0f, 1.0f, 1.0f, alpha);
+        // the texture the backend caches is keyed on the resource identifier, which never repeats (AD-06)
+        emit_image(destination, tint, image->id());
+    }
+} // namespace albor::render

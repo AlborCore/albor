@@ -39,12 +39,19 @@ namespace albor::render
     // the scissor one draw is cut by, carried as the inverse transform of the clip box (nanovg technique)
     struct BatchScissor
     {
-        // the inverse of the device transform the clip was pushed under, which maps a raster position back into scene space
+        // whether the draw is cut at all, which an unclipped draw leaves false
+        bool enabled = false;
+
+        // the inverse of the device transform, which maps a raster position onto the clip centre
         Transform inverse;
 
-        // the half extent of the clip box in scene space
+        // the half extent of the clip box in the space the inverse maps onto
         float extent_x = 0.0f;
         float extent_y = 0.0f;
+
+        // the device space feather factors per axis, which turn the extent into a one pixel ramp
+        float scale_x = 0.0f;
+        float scale_y = 0.0f;
 
         // the corner radius of the clip box, which stays zero until the rounded scissor lands
         float radius = 0.0f;
