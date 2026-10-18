@@ -7,6 +7,7 @@
 
 #include "core/geometry.h"
 #include "core/paint.h"
+#include "render/clip_state.h"
 #include "render/path_resource.h"
 #include "render/render-albor/albor_batch.h"
 #include "render/render-albor/albor_contour.h"
@@ -66,17 +67,14 @@ namespace albor::render
             // the scene space transform the draw lands under
             Transform transform;
 
-            // the scene space clip the draw is cut by
-            Rect clip;
+            // the scene space clip the draw is cut by, radius included
+            ClipState clip;
 
             // the device transform the clip was pushed under, which the scissor freezes (§6.2)
             Transform clip_device;
 
             // the opacity the draw is dimmed by
             float opacity = 1.0f;
-
-            // the corner radius of the clip, which a rounded clip narrows (§6.2)
-            float clip_radius = 0.0f;
         };
 
         // report whether a draw under the current transform can put any ink down at all (§6.2)
@@ -118,14 +116,11 @@ namespace albor::render
         // the scene space transform the later draws land under (§6.2)
         Transform m_transform;
 
-        // the scene space clip the later draws are cut by (§6.2)
-        Rect m_clip;
+        // the scene space clip the later draws are cut by, radius included (§6.2)
+        ClipState m_clip;
 
         // the device transform the clip was pushed under, which the scissor freezes (§6.2)
         Transform m_clip_device;
-
-        // the corner radius of the clip, which zero leaves the clip rectangular (§6.2)
-        float m_clip_radius = 0.0f;
 
         // the opacity the later draws are dimmed by, which starts fully opaque (§6.1)
         float m_opacity = 1.0f;

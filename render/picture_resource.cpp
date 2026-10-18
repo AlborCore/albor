@@ -29,7 +29,7 @@ namespace albor
     }
 
     PictureRecorder::PictureRecorder() :
-        m_clip(DrawCommand::unclipped()) {}
+        m_clip{.rect = DrawCommand::unclipped()} {}
 
     void PictureRecorder::save() {
         // the current state is pushed before it can be replaced, so a restore has something to return to (§6.2)
@@ -60,17 +60,17 @@ namespace albor
 
     void PictureRecorder::clip_rect(const Rect& rect) {
         // the clip narrows rather than replaces, because a nested clip may only ever cut more away (§6.2)
-        m_clip = m_clip.intersect(rect);
+        clip_to_rect(m_clip, rect);
     }
 
-    void PictureRecorder::clip_rounded_rect(const Rect& rect, float) {
-        // a rounded clip reduces to its rectangle, which is what the replay scissors to (§6.2)
-        m_clip = m_clip.intersect(rect);
+    void PictureRecorder::clip_rounded_rect(const Rect& rect, float radius) {
+        // a rounded clip keeps its radius, which the replay scissors by (§6.2)
+        clip_to_rounded_rect(m_clip, rect, radius);
     }
 
     const Rect& PictureRecorder::clip() const {
         // the clip is read back by content that tests visibility against it (§6.2)
-        return m_clip;
+        return m_clip.rect;
     }
 
     void PictureRecorder::set_opacity(float opacity) {
@@ -140,7 +140,9 @@ namespace albor
             // the transforms compose, so a nested command lands where both parents put it (§6.4)
             stored.set_transform(command.transform().then(outer));
             // the outer clip wins, because it is the one the surrounding content asked for (§6.2)
-            stored.set_clip(m_clip);
+            stored.set_clip(m_clip.rect);
+            // the radius rides with the clip, which a rounded clip scissors by (§6.2)
+            stored.set_clip_radius(m_clip.radius);
             // the stored command joins the list in recording order (§6.4)
             record(std::move(stored));
         }
@@ -167,12 +169,14 @@ namespace albor
         m_commands.clear();
         m_transform = Transform{};
         // the clip returns to the whole area, because a picture that was clipped records nothing under the old one (§6.2)
-        m_clip = DrawCommand::unclipped();
+        m_clip = ClipState{.rect = DrawCommand::unclipped()};
     }
 
     void PictureRecorder::record(DrawCommand command) {
         // every command carries the clip the recorder stood at, because the replay scissors to it (§6.2)
-        command.set_clip(m_clip);
+        command.set_clip(m_clip.rect);
+        // the radius rides with the clip, which a rounded clip scissors by (§6.2)
+        command.set_clip_radius(m_clip.radius);
         // the cull is decided on the authored paint, because a draw the author made is a draw even at no opacity (§6.1)
         if (command.draws_nothing())
             return;

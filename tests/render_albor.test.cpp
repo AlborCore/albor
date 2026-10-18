@@ -1299,9 +1299,9 @@ TEST(AlborRenderContextChecks, CarriesTheScissorOfAClippedDraw) {
     ASSERT_EQ(batch.draws.size(), 1u);
     const BatchScissor& scissor = batch.draws[0].scissor;
     EXPECT_TRUE(scissor.enabled);
-    // the half extents are half the clip, which the shader compares a mapped fragment against
-    EXPECT_NEAR(scissor.extent_x, 20.0f, 0.0001f);
-    EXPECT_NEAR(scissor.extent_y, 10.0f, 0.0001f);
+    // the half extents are half the clip in device pixels, which the shader compares a fragment against
+    EXPECT_NEAR(scissor.extent_x, 40.0f, 0.0001f);
+    EXPECT_NEAR(scissor.extent_y, 20.0f, 0.0001f);
     // the scales turn the extent into a one device pixel ramp, which doubles with the device scale
     EXPECT_NEAR(scissor.scale_x, 2.0f, 0.0001f);
     EXPECT_NEAR(scissor.scale_y, 2.0f, 0.0001f);
@@ -1621,4 +1621,60 @@ TEST(AlborRendererBackendFactoryChecks, InstallsTheInRepoBackend) {
     ASSERT_NE(backend, nullptr);
     // the shared factory returns to empty, so no later suite inherits this backend (§6.2)
     set_renderer_backend_factory(nullptr);
+}
+
+TEST(AlborRenderContextChecks, KeepsTheInnerRadiusWhenAnOuterRoundedClipContainsIt) {
+    // arrange a small rounded clip, which a larger rounded clip then contains
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.clip_rounded_rect(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}), 4.0f);
+    context.clip_rounded_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}), 30.0f);
+    // assert
+    EXPECT_NEAR(context.scissor().radius, 4.0f, 0.0001f);
+    EXPECT_EQ(context.clip(), Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+}
+
+TEST(AlborRenderContextChecks, FallsBackToTheRectangleForOverlappingRoundedClips) {
+    // arrange two rounded clips that cross without containing each other
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.clip_rounded_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 60.0f}), 10.0f);
+    context.clip_rounded_rect(Rect::from_origin_size(Point{30.0f, 30.0f}, Size{60.0f, 60.0f}), 10.0f);
+    // assert
+    EXPECT_NEAR(context.scissor().radius, 0.0f, 0.0001f);
+    EXPECT_EQ(context.clip(), Rect::from_origin_size(Point{30.0f, 30.0f}, Size{30.0f, 30.0f}));
+}
+
+TEST(AlborRenderContextChecks, ClampsTheRoundedClipRadiusToTheShorterSide) {
+    // arrange a rounded clip whose radius exceeds half the shorter side
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.clip_rounded_rect(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 8.0f}), 40.0f);
+    // assert
+    EXPECT_NEAR(context.scissor().radius, 4.0f, 0.0001f);
+}
+
+TEST(AlborRenderContextChecks, ReplaysARoundedClipTheRecorderStamped) {
+    // arrange a scene whose command carries a rounded clip, which the replay must round
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    std::vector<DrawCommand> commands;
+    DrawCommand command = DrawCommand::rectangle(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    command.set_clip(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{40.0f, 40.0f}));
+    command.set_clip_radius(12.0f);
+    commands.push_back(command);
+    // act
+    replay_commands(commands, context, extent);
+    // assert
+    ASSERT_EQ(batch.draws.size(), 1u);
+    // the scissor carries the radius the recorder stamped, which the shader rounds the corners by
+    EXPECT_NEAR(batch.draws[0].scissor.radius, 12.0f, 0.0001f);
+    EXPECT_TRUE(batch.draws[0].scissor.enabled);
 }

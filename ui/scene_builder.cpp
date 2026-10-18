@@ -43,17 +43,17 @@ namespace albor
 
     void SceneRecorder::clip_rect(const Rect& rect) {
         // the clip narrows rather than replaces, because a nested clip may only ever cut more away (§6.2)
-        m_clip = m_clip.intersect(rect);
+        clip_to_rect(m_clip, rect);
     }
 
-    void SceneRecorder::clip_rounded_rect(const Rect& rect, float) {
-        // a rounded clip reduces to its rectangle, which is what the replay scissors to (§6.2)
-        m_clip = m_clip.intersect(rect);
+    void SceneRecorder::clip_rounded_rect(const Rect& rect, float radius) {
+        // a rounded clip keeps its radius, which the replay scissors by (§6.2)
+        clip_to_rounded_rect(m_clip, rect, radius);
     }
 
     const Rect& SceneRecorder::clip() const {
         // the clip is read back by a node that tests visibility against it (§6.2)
-        return m_clip;
+        return m_clip.rect;
     }
 
     void SceneRecorder::set_opacity(float opacity) {
@@ -195,7 +195,9 @@ namespace albor
 
     void SceneRecorder::record(DrawCommand command) {
         // the clip is stamped first, because a command carries the clip it was recorded under (§6.2)
-        command.set_clip(m_clip);
+        command.set_clip(m_clip.rect);
+        // the radius rides with the clip, which a rounded clip scissors by (§6.2)
+        command.set_clip_radius(m_clip.radius);
         // the cull is decided on the authored paint, because a draw the author made is a draw even at no opacity (§6.1)
         if (command.draws_nothing())
             return;

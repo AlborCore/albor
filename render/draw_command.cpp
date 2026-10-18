@@ -181,6 +181,16 @@ namespace albor
         return std::get<ShadowGeometry>(m_geometry);
     }
 
+    void DrawCommand::set_clip_radius(float radius) {
+        // the radius rides with the clip, which the replay rounds the scissor by (§6.2)
+        m_clip_radius = radius;
+    }
+
+    float DrawCommand::clip_radius() const {
+        // the recorded radius is what a replay reads (§6.2)
+        return m_clip_radius;
+    }
+
     void DrawCommand::set_clip(Rect clip) {
         // the clip is stamped before the command joins the list, so it is fixed for good (§6.2)
         m_clip = clip;
@@ -449,22 +459,28 @@ namespace albor
     void replay_commands(const std::vector<DrawCommand>& commands, RenderContext& context, const Rect& unclipped) {
         // the applied clip starts as the whole area, which is what the commands of an unclipped tree record (§6.2)
         Rect applied = unclipped;
+        // the applied radius starts at zero, because the whole area carries no corners (§6.2)
+        float applied_radius = 0.0f;
         // the switch is closed until a command asks for a narrower clip (§6.2)
         bool switched = false;
 
         // every command replays in paint order, which is the order the ui thread recorded (§6.1)
         for (const DrawCommand& command : commands) {
             // a narrower clip opens a switch, which is balanced again when the next command differs (§6.2)
-            if (command.clip() != applied) {
+            if (command.clip() != applied || command.clip_radius() != applied_radius) {
                 // the previous switch is closed first, because a clip intersects rather than replaces (§6.2)
                 if (switched)
                     context.restore();
                 // the new clip is pushed, so it intersects whatever was already applied (§6.2)
                 context.save();
                 // the command's own clip is applied, which is what stage one recorded (§6.2)
-                context.clip_rect(command.clip());
+                if (command.clip_radius() > 0.0f)
+                    context.clip_rounded_rect(command.clip(), command.clip_radius());
+                else
+                    context.clip_rect(command.clip());
                 // the applied clip is remembered, so a run of commands under it costs nothing more (§6.2)
                 applied = command.clip();
+                applied_radius = command.clip_radius();
                 // the switch is open, which the closing branch above balances (§6.2)
                 switched = true;
             }

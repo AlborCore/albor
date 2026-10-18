@@ -7,6 +7,7 @@
 
 #include "core/geometry.h"
 #include "core/paint.h"
+#include "render/clip_state.h"
 #include "render/draw_command.h"
 #include "render/render_context.h"
 
@@ -128,8 +129,8 @@ namespace albor
             // the transform at the time of the save
             Transform transform;
 
-            // the clip at the time of the save
-            Rect clip;
+            // the clip at the time of the save, radius included
+            ClipState clip;
 
             // the opacity at the time of the save
             float opacity = 1.0f;
@@ -142,7 +143,7 @@ namespace albor
         Transform m_transform;
 
         // the current clip the recorder reads back, which starts as the whole area because a picture has no surface (§6.2)
-        Rect m_clip;
+        ClipState m_clip;
 
         // the opacity the recorded commands are dimmed by, which starts fully opaque (§6.1)
         float m_opacity = 1.0f;

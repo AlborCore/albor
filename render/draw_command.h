@@ -257,6 +257,12 @@ namespace albor
         // stamp the clip the recorder stood at, which is what the replay scissors to (§6.2)
         void set_clip(Rect clip);
 
+        // stamp the corner radius of the clip, which zero leaves it rectangular (§6.2)
+        void set_clip_radius(float radius);
+
+        // hand out the corner radius of the clip, which the replay rounds the scissor by (§6.2)
+        [[nodiscard]] float clip_radius() const;
+
         // stamp the transform the recorder stood at, which retained geometry draws under (§6.4)
         void set_transform(Transform transform);
 
@@ -287,6 +293,9 @@ namespace albor
 
         // the clip the command draws under, which is the unclipped one until a recorder stamps it (§6.2)
         Rect m_clip;
+
+        // the corner radius of the clip, which zero leaves it rectangular (§6.2)
+        float m_clip_radius = 0.0f;
 
         // the transform the retained geometry draws under (§6.4)
         Transform m_transform;

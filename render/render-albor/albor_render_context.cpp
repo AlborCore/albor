@@ -25,11 +25,11 @@ namespace albor::render
     } // namespace
 
     AlborRenderContext::AlborRenderContext(FrameBatch& batch, const Rect& logical_extent, float device_scale) :
-        m_batch(batch), m_extent(logical_extent), m_device_scale(device_scale > 0.0f ? device_scale : 1.0f), m_clip(logical_extent), m_clip_device(device_transform()) {}
+        m_batch(batch), m_extent(logical_extent), m_device_scale(device_scale > 0.0f ? device_scale : 1.0f), m_clip{.rect = logical_extent}, m_clip_device(device_transform()) {}
 
     void AlborRenderContext::save() {
         // the current transform, clip, clip transform and opacity are pushed, which a restore pops (§6.2)
-        m_states.push_back(State{.transform = m_transform, .clip = m_clip, .clip_device = m_clip_device, .opacity = m_opacity, .clip_radius = m_clip_radius});
+        m_states.push_back(State{.transform = m_transform, .clip = m_clip, .clip_device = m_clip_device, .opacity = m_opacity});
     }
 
     void AlborRenderContext::restore() {
@@ -43,7 +43,6 @@ namespace albor::render
         m_clip = state.clip;
         m_clip_device = state.clip_device;
         m_opacity = state.opacity;
-        m_clip_radius = state.clip_radius;
     }
 
     void AlborRenderContext::set_transform(const Transform& transform) {
@@ -62,23 +61,23 @@ namespace albor::render
         // a clip pushed under a collapsed transform spans no device area, so it cuts everything away (§6.2)
         const float determinant = m_clip_device.scale_x * m_clip_device.scale_y - m_clip_device.skew_x * m_clip_device.skew_y;
         if (std::abs(determinant) < SINGULAR_LIMIT) {
-            m_clip = Rect{};
+            m_clip = ClipState{};
             return;
         }
-        // the recorded clip is the overlap of what was there and what was asked for (§6.2)
-        m_clip = m_clip.intersect(rect);
+        // the recorded clip is the overlap of what was there and what was asked for, radius included (§6.2)
+        clip_to_rect(m_clip, rect);
     }
 
     void AlborRenderContext::clip_rounded_rect(const Rect& rect, float radius) {
-        // the rectangle the rounded clip contains is what the recorded clip narrows to (§6.2)
-        clip_rect(rect);
-        // the radius rides with the clip, which the scissor mask rounds the corners by (§6.2)
-        m_clip_radius = std::max(m_clip_radius, radius);
+        // the clip freezes the transform it is pushed under, which a later transform must not move (§6.2)
+        m_clip_device = device_transform();
+        // a rounded clip narrows the area and keeps the radius only where it governs (§6.2)
+        clip_to_rounded_rect(m_clip, rect, radius);
     }
 
     const Rect& AlborRenderContext::clip() const {
         // the recorded clip is what a test asserts against (§6.2)
-        return m_clip;
+        return m_clip.rect;
     }
 
     void AlborRenderContext::set_opacity(float opacity) {
@@ -110,7 +109,7 @@ namespace albor::render
 
     bool AlborRenderContext::drawable() const {
         // a clip without area cuts every draw away (§6.2)
-        if (m_clip.empty())
+        if (m_clip.rect.empty())
             return false;
         // a colour that puts no ink down draws nothing, which a zero opacity makes (§6.1)
         if (m_opacity <= 0.0f)
@@ -125,29 +124,49 @@ namespace albor::render
         // an unclipped draw carries no scissor, which the shader skips (§6.2)
         BatchScissor result;
         // a rectangular clip that covers the whole extent leaves every draw uncut (§6.2)
-        if (m_clip == m_extent && m_clip_radius <= 0.0f)
+        if (m_clip.rect == m_extent && m_clip.radius <= 0.0f)
             return result;
         // a clip without area cuts every draw away, so no scissor is carried at all (§6.2)
-        if (m_clip.empty())
+        if (m_clip.rect.empty())
             return result;
-        // the frozen clip transform maps the fragment back into the scene space the clip lives in (§6.2)
+        // the frozen clip transform maps the clip onto the raster it was pushed for (§6.2)
         const Transform device = m_clip_device;
-        // the clip centre anchors the space the shader compares against (§6.2)
-        const float center_x = m_clip.x + m_clip.width * 0.5f;
-        const float center_y = m_clip.y + m_clip.height * 0.5f;
         result.enabled = true;
-        // the inverse maps a raster position onto the clip centre, which the extent compares against
-        result.inverse = invert_transform(device).then(Transform::translation(-center_x, -center_y));
-        // the extents are the half size of the clip, which a fragment outside crosses
-        result.extent_x = m_clip.width * 0.5f;
-        result.extent_y = m_clip.height * 0.5f;
         // the scales turn the extent into a one device pixel ramp per axis (nanovg technique)
         result.scale_x = std::sqrt(device.scale_x * device.scale_x + device.skew_x * device.skew_x) / FRINGE;
         result.scale_y = std::sqrt(device.skew_y * device.skew_y + device.scale_y * device.scale_y) / FRINGE;
         // the corner radius rounds the mask, which zero leaves the clip rectangular (§6.2)
-        result.radius = m_clip_radius;
-        // a rounded clip feathers its own edge, which the mask needs to stay smooth (§6.2)
-        result.feather = m_clip_radius > 0.0f ? FRINGE : 0.0f;
+        result.radius = m_clip.radius;
+        // the corner radius feathers the mask, which the shader ramps over (§6.2)
+        result.feather = m_clip.radius > 0.0f ? FRINGE : 0.0f;
+        // a square clip lands on whole device pixels, which is where the reference puts an axis aligned clip (§6.2, AD-26)
+        const bool axis_aligned = std::abs(device.skew_x) < 0.0001f && std::abs(device.skew_y) < 0.0001f;
+        if (m_clip.radius <= 0.0f && axis_aligned) {
+            // the two corners map onto the raster, which the rounding snaps to the pixel grid (§6.2, AD-26)
+            const Point origin = device.apply(Point{.x = m_clip.rect.x, .y = m_clip.rect.y});
+            const Point corner = device.apply(Point{.x = m_clip.rect.x + m_clip.rect.width, .y = m_clip.rect.y + m_clip.rect.height});
+            // the snapped box is the area the mask keeps, which the fragment compares against directly
+            const float left = std::round(std::min(origin.x, corner.x));
+            const float top = std::round(std::min(origin.y, corner.y));
+            const float right = std::round(std::max(origin.x, corner.x));
+            const float bottom = std::round(std::max(origin.y, corner.y));
+            // an identity inverse compares the raster position against the box centre (§6.2)
+            result.inverse = Transform{};
+            result.extent_x = (right - left) * 0.5f;
+            result.extent_y = (bottom - top) * 0.5f;
+            // the box centre shifts the comparison, which the shader adds in (§6.2)
+            result.inverse.translate_x = -(left + right) * 0.5f;
+            result.inverse.translate_y = -(top + bottom) * 0.5f;
+            return result;
+        }
+        // the clip centre anchors the space the shader compares against (§6.2)
+        const float center_x = m_clip.rect.x + m_clip.rect.width * 0.5f;
+        const float center_y = m_clip.rect.y + m_clip.rect.height * 0.5f;
+        // the inverse maps a raster position onto the clip centre, which the extent compares against
+        result.inverse = invert_transform(device).then(Transform::translation(-center_x, -center_y));
+        // the extents are the half size of the clip, which a fragment outside crosses
+        result.extent_x = m_clip.rect.width * 0.5f;
+        result.extent_y = m_clip.rect.height * 0.5f;
         return result;
     }
 

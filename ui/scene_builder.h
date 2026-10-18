@@ -5,6 +5,7 @@
 
 #include "core/geometry.h"
 #include "core/paint.h"
+#include "render/clip_state.h"
 #include "render/draw_command.h"
 #include "render/frame_scene.h"
 #include "render/glyph_outline.h"
@@ -111,8 +112,8 @@ namespace albor
             // the transform at the time of the save
             Transform transform;
 
-            // the clip at the time of the save
-            Rect clip;
+            // the clip at the time of the save, radius included
+            ClipState clip;
 
             // the opacity at the time of the save
             float opacity = 1.0f;
@@ -137,7 +138,7 @@ namespace albor
         Transform m_transform;
 
         // the current clip
-        Rect m_clip;
+        ClipState m_clip;
 
         // the opacity the recorded commands are dimmed by, which starts fully opaque (§6.1)
         float m_opacity = 1.0f;
