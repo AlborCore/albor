@@ -107,7 +107,6 @@ struct ShadowUniforms
     float4 color;
     float4 shape;
     float4 params;
-    float2 targetSize;
 };
 
 // map a full target quad into clip space, which the offscreen passes cover
@@ -126,7 +125,7 @@ vertex Varyings shadow_vertex(uint vertexId [[vertex_id]]) {
 fragment float4 shadow_shape(Varyings in [[stage_in]], constant ShadowUniforms& uniforms [[buffer(1)]]) {
     float2 point = in.position.xy - uniforms.shape.xy;
     float2 halfExtent = uniforms.shape.zw;
-    float radius = uniforms.params.x;
+    float radius = min(uniforms.params.x, min(halfExtent.x, halfExtent.y));
     float2 corner = abs(point) - (halfExtent - float2(radius));
     float distance = length(max(corner, float2(0.0))) + min(max(corner.x, corner.y), 0.0) - radius;
     return uniforms.color * clamp(0.5 - distance, 0.0, 1.0);

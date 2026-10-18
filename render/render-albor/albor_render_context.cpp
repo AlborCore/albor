@@ -310,11 +310,15 @@ namespace albor::render
         // the radius and the blur scale with the device, which keeps the cast the same logical size (AD-27)
         const float scale = std::sqrt(std::abs(device.scale_x * device.scale_y - device.skew_x * device.skew_y));
         BatchShadow cast;
-        cast.rect = Rect::from_origin_size(Point{.x = origin.x, .y = origin.y}, Size{.width = corner.x - origin.x, .height = corner.y - origin.y});
-        cast.radius = radius * scale;
+        // the two mapped corners normalise, so a mirrored transform cannot produce a negative extent (§6.2)
+        const float left = std::min(origin.x, corner.x);
+        const float top = std::min(origin.y, corner.y);
+        cast.rect = Rect::from_origin_size(Point{.x = left, .y = top}, Size{.width = std::abs(corner.x - origin.x), .height = std::abs(corner.y - origin.y)});
+        // the radius clamps to half the shorter side, which the silhouette it feeds also assumes (§6.2)
+        cast.radius = std::min(radius * scale, std::min(cast.rect.width, cast.rect.height) * 0.5f);
         // the reference treats the blur radius as twice the sigma, which the kernel matches (§6.2, AD-26)
         cast.sigma = shadow.blur * 0.5f * scale;
-        // the reach is three sigmas, which the reference also sizes its offscreen layer by (§6.2, AD-26)
+        // the reach is the reference's three blur radii, which is six sigmas and bounds the offscreen layer (§6.2, AD-26)
         cast.reach = shadow.blur * 3.0f * scale;
         cast.color = pack_color(shadow.color.with_alpha(m_opacity));
         cast.scissor = scissor();

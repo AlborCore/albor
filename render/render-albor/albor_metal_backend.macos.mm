@@ -74,15 +74,12 @@ namespace albor::render
             // the caster centre and half extent in device pixels
             float shape[4];
 
-            // the corner radius, the blur direction and the tap step
+            // the corner radius, the blur direction and the uv tap step
             float params[4];
-
-            // the offscreen target extent, which the projection needs
-            float target_size[2];
         };
 
         // the shadow struct pads to a sixteen byte boundary, which the msl side mirrors
-        static_assert(sizeof(ShadowUniforms) == 64, "the shadow uniforms must match the msl layout");
+        static_assert(sizeof(ShadowUniforms) == 48, "the shadow uniforms must match the msl layout");
 
         // the device wide state every surface draws through, which outlives them (§6.3)
         struct DeviceState
@@ -188,7 +185,7 @@ namespace albor::render
             state.pipeline = build_pipeline(state.device, state.library, MTLBlendFactorOne, MTLBlendFactorOneMinusSourceAlpha);
             // the silhouette pass writes the cast alone, which no blend mixes with the clear (§6.2)
             state.shadow_shape = build_shadow_pipeline(state.device, state.library, @"shadow_vertex", @"shadow_shape", MTLBlendFactorOne, MTLBlendFactorZero);
-            // the blur passes accumulate over their own clear, which the additive blend keeps (§6.2)
+            // the blur pass replaces its cleared target, which the one over zero blend and the ping pong give (§6.2)
             state.shadow_blur = build_shadow_pipeline(state.device, state.library, @"shadow_vertex", @"shadow_blur", MTLBlendFactorOne, MTLBlendFactorZero);
             // a solid draw samples one white texel, which keeps a single shader path for every draw (§6.3)
             MTLTextureDescriptor* white_descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:TARGET_FORMAT width:1 height:1 mipmapped:NO];
@@ -352,6 +349,8 @@ namespace albor::render
             m_batch.shadows.clear();
             // the context records logical points onto the physical target, so the device scale is handed to it (AD-27)
             m_context = std::make_unique<AlborRenderContext>(m_batch, Rect::from_origin_size(Point{0.0f, 0.0f}, m_metrics.logical_size), m_metrics.scale_factor);
+            // the frame counter advances once per frame, which the texture eviction ages the cache by (AD-06)
+            m_frame_counter++;
             // the frame is now in flight, which the matching end presents (§6.1)
             m_begun = true;
             return *m_context;
@@ -384,8 +383,6 @@ namespace albor::render
             uniforms.shape[2] = shadow.rect.width * 0.5f;
             uniforms.shape[3] = shadow.rect.height * 0.5f;
             uniforms.params[0] = shadow.radius;
-            uniforms.target_size[0] = width;
-            uniforms.target_size[1] = height;
             // the silhouette pass fills the cast alone, which no blend mixes with the clear (§6.2)
             MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
             pass.colorAttachments[0].texture = silhouette;
@@ -400,7 +397,7 @@ namespace albor::render
             // a sigma of zero needs no blur, which a hard cast carries (§6.2)
             const float sigma = shadow.sigma;
             if (sigma > 0.0f) {
-                // the kernel walks five taps either side, which the sigma turns into a texel step (§6.2)
+                // the kernel carries a spread of 1.69 taps, which the sigma turns into a texel step (§6.2)
                 const float step = sigma / 2.5f;
                 // the horizontal pass spreads the silhouette across the scratch target (§6.2)
                 blur_pass(command, silhouette, scratch, uniforms, 1.0f, 0.0f, step, width, height);
@@ -467,7 +464,7 @@ namespace albor::render
             // the direction and the step ride in the params lane, which the shader reads (§6.2)
             uniforms.params[1] = dx;
             uniforms.params[2] = dy;
-            uniforms.params[3] = step / std::max(width, height);
+            uniforms.params[3] = step / (dx != 0.0f ? width : height);
             id<MTLRenderCommandEncoder> encoder = [command renderCommandEncoderWithDescriptor:pass];
             [encoder setRenderPipelineState:device_state().shadow_blur];
             [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:1];
@@ -505,9 +502,15 @@ namespace albor::render
             id<MTLRenderCommandEncoder> encoder = [command renderCommandEncoderWithDescriptor:pass];
             [encoder setRenderPipelineState:device_state().pipeline];
             [encoder setFragmentSamplerState:device_state().sampler atIndex:0];
-            // a frame with no geometry closes the encoder it opened, which the end then presents (§6.3)
+            // a frame with no geometry still composites its shadows, which a cast only layer carries (§6.2)
             if (m_batch.vertices.empty() || m_batch.indices.empty()) {
                 [encoder endEncoding];
+                // the casts composite on their own, which no vertex range would have reached (§6.2)
+                for (const BatchDraw& draw : m_batch.draws) {
+                    // a draw that carries a cast composites it, which the frame has no geometry for (§6.2)
+                    if (draw.shadow >= 0)
+                        composite_shadow(command, m_batch.shadows[static_cast<std::size_t>(draw.shadow)]);
+                }
                 return;
             }
             id<MTLBuffer> vertices = [device_state().device newBufferWithBytes:m_batch.vertices.data() length:m_batch.vertices.size() * sizeof(BatchVertex) options:MTLResourceStorageModeShared];
