@@ -100,6 +100,49 @@ fragment float4 albor_fragment(Varyings in [[stage_in]], constant DrawUniforms& 
     }
     return base * (coverage(in, uniforms) * scissor_mask(in.position.xy, uniforms));
 }
+
+// the per shadow state, which the silhouette, the blur and the composite read
+struct ShadowUniforms
+{
+    float4 color;
+    float4 shape;
+    float4 params;
+    float2 targetSize;
+};
+
+// map a full target quad into clip space, which the offscreen passes cover
+vertex Varyings shadow_vertex(uint vertexId [[vertex_id]]) {
+    float2 corners[4] = {float2(0.0, 0.0), float2(1.0, 0.0), float2(0.0, 1.0), float2(1.0, 1.0)};
+    float2 corner = corners[vertexId];
+    Varyings out;
+    out.position = float4(corner.x * 2.0 - 1.0, 1.0 - corner.y * 2.0, 0.0, 1.0);
+    out.lateral = 1.0;
+    out.longitudinal = 1.0;
+    out.uv = corner;
+    return out;
+}
+
+// rasterize the rounded silhouette a cast is blurred from, which carries the shadow colour already
+fragment float4 shadow_shape(Varyings in [[stage_in]], constant ShadowUniforms& uniforms [[buffer(1)]]) {
+    float2 point = in.position.xy - uniforms.shape.xy;
+    float2 halfExtent = uniforms.shape.zw;
+    float radius = uniforms.params.x;
+    float2 corner = abs(point) - (halfExtent - float2(radius));
+    float distance = length(max(corner, float2(0.0))) + min(max(corner.x, corner.y), 0.0) - radius;
+    return uniforms.color * clamp(0.5 - distance, 0.0, 1.0);
+}
+
+// run one separable gaussian pass over the silhouette, which the two directions share
+fragment float4 shadow_blur(Varyings in [[stage_in]], constant ShadowUniforms& uniforms [[buffer(1)]], texture2d<float> source [[texture(0)]], sampler paintSampler [[sampler(0)]]) {
+    float2 step = uniforms.params.yz * uniforms.params.w;
+    float weights[5] = {0.227027, 0.1945946, 0.1216216, 0.054054, 0.016216};
+    float4 sum = source.sample(paintSampler, in.uv) * weights[0];
+    for (int tap = 1; tap < 5; tap++) {
+        sum += source.sample(paintSampler, in.uv + step * float(tap)) * weights[tap];
+        sum += source.sample(paintSampler, in.uv - step * float(tap)) * weights[tap];
+    }
+    return sum;
+}
 )MSL";
     } // namespace
 

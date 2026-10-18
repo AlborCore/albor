@@ -10,6 +10,7 @@
 #include "core/paint.h"
 #include "render/draw_command.h"
 #include "render/frame_scene.h"
+#include "render/picture_resource.h"
 #include "render/render-albor/albor_renderer_backend.h"
 #include "render/render-software/software_renderer_backend.h"
 #include "render/render_context.h"
@@ -654,4 +655,271 @@ TEST(AlborParityChecks, AFrameRenderedAtAnotherScaleDoesNotMatch) {
     ASSERT_FALSE(second.empty());
     EXPECT_NE(first.pixels.size(), second.pixels.size());
     EXPECT_FALSE(first.pixels.empty());
+}
+
+TEST(AlborParityChecks, ASoftShadowMatchesTheReference) {
+    // arrange a rounded card casting a soft shadow over a white background
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{48.0f, 48.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    // act
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    expected.draw_shadow(AlborRect::from_origin_size(AlborPoint{12.0f, 12.0f}, AlborSize{24.0f, 24.0f}), 6.0f, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 0.6f), .offset = AlborPoint{0.0f, 4.0f}, .blur = 8.0f});
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    actual.draw_shadow(AlborRect::from_origin_size(AlborPoint{12.0f, 12.0f}, AlborSize{24.0f, 24.0f}), 6.0f, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 0.6f), .offset = AlborPoint{0.0f, 4.0f}, .blur = 8.0f});
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    // the cast darkens the surface under the card in both backends, which a missing shadow would leave white
+    const std::size_t under = (30u * 48u + 24u) * 4u;
+    EXPECT_LT(actual_shot.pixels[under], 250u);
+    EXPECT_LT(expected_shot.pixels[under], 250u);
+    // the bound is the 26 measured on this host plus margin, which two gaussian implementations reach
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 40);
+}
+
+TEST(AlborParityChecks, AHardShadowMatchesTheReferenceExactly) {
+    // arrange a zero blur shadow, which is a hard offset copy of the caster
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{32.0f, 32.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    // act
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    expected.draw_shadow(AlborRect::from_origin_size(AlborPoint{8.0f, 8.0f}, AlborSize{12.0f, 12.0f}), 0.0f, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 1.0f), .offset = AlborPoint{4.0f, 4.0f}, .blur = 0.0f});
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    actual.draw_shadow(AlborRect::from_origin_size(AlborPoint{8.0f, 8.0f}, AlborSize{12.0f, 12.0f}), 0.0f, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 1.0f), .offset = AlborPoint{4.0f, 4.0f}, .blur = 0.0f});
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    // the offset copy lands on the same pixels, which the two agree on within the feathered edge band
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 32);
+    // the cast is black where it falls, which a missing shadow would leave white
+    const std::size_t cast = (18u * 32u + 18u) * 4u;
+    EXPECT_EQ(actual_shot.pixels[cast], 0u);
+    EXPECT_EQ(expected_shot.pixels[cast], 0u);
+}
+
+TEST(AlborParityChecks, AStrokedPolylineMatchesTheReference) {
+    // arrange a round joined polyline, which exercises the folded coverage ramp
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{40.0f, 40.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const AlborPoint points[3] = {AlborPoint{6.0f, 8.0f}, AlborPoint{20.0f, 8.0f}, AlborPoint{20.0f, 30.0f}};
+    const StrokeStyle stroke{.color = Color::rgb(0.1f, 0.1f, 0.9f), .width = 3.0f};
+    // act
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    expected.draw_polyline(points, stroke);
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    actual.draw_polyline(points, stroke);
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    // the bound is the 73 measured on this host plus margin, a band of 0.4 percent of the pixels along the edges
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 80);
+    // the elbow is painted in both, which a missing stroke would leave white
+    const std::size_t elbow = (8u * 40u + 20u) * 4u;
+    EXPECT_LT(actual_shot.pixels[elbow + 2], 250u);
+    EXPECT_LT(expected_shot.pixels[elbow + 2], 250u);
+}
+
+TEST(AlborParityChecks, ARoundedRectangleMatchesTheReference) {
+    // arrange a filled and stroked rounded rectangle, which exercises the arc tessellation
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{40.0f, 40.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const Paint paint{.fill = Color::rgb(0.2f, 0.7f, 0.4f), .stroke = Color::rgb(0.0f, 0.0f, 0.0f), .stroke_width = 1.0f};
+    // act
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    expected.draw_rounded_rect(AlborRect::from_origin_size(AlborPoint{8.0f, 8.0f}, AlborSize{24.0f, 24.0f}), 8.0f, paint);
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    actual.draw_rounded_rect(AlborRect::from_origin_size(AlborPoint{8.0f, 8.0f}, AlborSize{24.0f, 24.0f}), 8.0f, paint);
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    // the bound is the 55 measured on this host plus margin, a band of 0.5 percent of the pixels on the arcs
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 64);
+    // the corner outside the arc stays background in both, which a square fill would paint
+    const std::size_t corner = (8u * 40u + 8u) * 4u;
+    EXPECT_EQ(actual_shot.pixels[corner], 255u);
+    EXPECT_EQ(expected_shot.pixels[corner], 255u);
+}
+
+TEST(AlborParityChecks, AFilledPathMatchesTheReference) {
+    // arrange a triangle path, which exercises the contour walk and the fan fill
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{40.0f, 40.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const PathVerb verbs[4] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const AlborPoint points[3] = {AlborPoint{8.0f, 30.0f}, AlborPoint{20.0f, 8.0f}, AlborPoint{32.0f, 30.0f}};
+    const std::shared_ptr<const PathResource> path = std::make_shared<const PathResource>(51u, verbs, points);
+    // act
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    expected.draw_path(path, Transform{}, Paint{.fill = Color::rgb(0.9f, 0.2f, 0.1f)});
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    actual.draw_path(path, Transform{}, Paint{.fill = Color::rgb(0.9f, 0.2f, 0.1f)});
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    // the interior fills identically, which a wrong winding would leave empty
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 32);
+    const std::size_t interior = (24u * 40u + 20u) * 4u;
+    EXPECT_LT(actual_shot.pixels[interior], 250u);
+    EXPECT_LT(expected_shot.pixels[interior], 250u);
+}
+
+TEST(AlborParityChecks, ALineBatchMatchesTheReference) {
+    // arrange a retained batch of two segments, which the backend coalesces into one draw
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{40.0f, 40.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const AlborPoint points[4] = {AlborPoint{6.0f, 10.0f}, AlborPoint{34.0f, 10.0f}, AlborPoint{6.0f, 26.0f}, AlborPoint{34.0f, 26.0f}};
+    const std::shared_ptr<const LineBatch> batch = std::make_shared<const LineBatch>(52u, points);
+    const StrokeStyle stroke{.color = Color::rgb(0.2f, 0.2f, 0.2f), .width = 2.0f};
+    // act
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    expected.draw_line_batch(batch, Transform{}, stroke);
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    actual.draw_line_batch(batch, Transform{}, stroke);
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    // both segments paint the same rows, which a dropped second segment would halve
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 32);
+    const std::size_t second = (26u * 40u + 20u) * 4u;
+    EXPECT_LT(actual_shot.pixels[second], 250u);
+    EXPECT_LT(expected_shot.pixels[second], 250u);
+}
+
+TEST(AlborParityChecks, APictureMatchesTheReference) {
+    // arrange a retained picture replayed under a translation
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{40.0f, 40.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    std::vector<DrawCommand> commands;
+    commands.push_back(DrawCommand::rectangle(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, AlborSize{10.0f, 10.0f}), Paint{.fill = Color::rgb(0.3f, 0.6f, 0.9f)}));
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(53u, commands);
+    // act
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    expected.draw_picture(picture, Transform::translation(12.0f, 14.0f));
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    actual.draw_picture(picture, Transform::translation(12.0f, 14.0f));
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    // the nested transform places the rectangle identically, which a dropped transform would move
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 32);
+    const std::size_t placed = (18u * 40u + 16u) * 4u;
+    EXPECT_LT(actual_shot.pixels[placed + 2], 250u);
+    EXPECT_LT(expected_shot.pixels[placed + 2], 250u);
+}
+
+TEST(AlborParityChecks, ATranslucentOverlapMatchesTheReference) {
+    // arrange two translucent fills that overlap, which the blend order decides
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{32.0f, 32.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    // act
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{4.0f, 4.0f}, AlborSize{16.0f, 16.0f}), Paint{.fill = Color::rgba(1.0f, 0.0f, 0.0f, 0.5f)});
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{12.0f, 12.0f}, AlborSize{16.0f, 16.0f}), Paint{.fill = Color::rgba(0.0f, 0.0f, 1.0f, 0.5f)});
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{4.0f, 4.0f}, AlborSize{16.0f, 16.0f}), Paint{.fill = Color::rgba(1.0f, 0.0f, 0.0f, 0.5f)});
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{12.0f, 12.0f}, AlborSize{16.0f, 16.0f}), Paint{.fill = Color::rgba(0.0f, 0.0f, 1.0f, 0.5f)});
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    // premultiplied source over composites identically, which a wrong blend factor would shift
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 16);
+    // the overlap carries both fills, which a replaced rather than blended draw would lose
+    const std::size_t overlap = (16u * 32u + 16u) * 4u;
+    EXPECT_LT(actual_shot.pixels[overlap], 220u);
+    EXPECT_LT(expected_shot.pixels[overlap], 220u);
 }

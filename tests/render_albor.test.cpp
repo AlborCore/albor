@@ -1113,13 +1113,44 @@ TEST(AlborRenderContextChecks, RefusesAZeroWidthPolyline) {
     EXPECT_TRUE(batch.draws.empty());
 }
 
-TEST(AlborRenderContextChecks, DefersTheShadowAndTheText) {
+TEST(AlborRenderContextChecks, RecordsAShadowAsACastTheDrawComposites) {
     // arrange
     FrameBatch batch;
     const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
     AlborRenderContext context(batch, extent, 1.0f);
     // act
     context.draw_shadow(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}), 4.0f, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 0.5f), .offset = Point{0.0f, 2.0f}, .blur = 4.0f});
+    // assert
+    ASSERT_EQ(batch.shadows.size(), 1u);
+    ASSERT_EQ(batch.draws.size(), 1u);
+    // the draw carries the cast, which a backend composites before the shape it belongs to
+    EXPECT_EQ(batch.draws[0].shadow, 0);
+    EXPECT_EQ(batch.draws[0].index_count, 0u);
+    // the caster moved by the offset, and the blur splits into the sigma and the reach the reference uses
+    EXPECT_NEAR(batch.shadows[0].rect.y, 12.0f, 0.0001f);
+    EXPECT_NEAR(batch.shadows[0].sigma, 2.0f, 0.0001f);
+    EXPECT_NEAR(batch.shadows[0].reach, 12.0f, 0.0001f);
+    EXPECT_NEAR(batch.shadows[0].radius, 4.0f, 0.0001f);
+}
+
+TEST(AlborRenderContextChecks, RefusesAShadowThatCastsNothing) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.draw_shadow(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}), 4.0f, Shadow{});
+    // assert
+    EXPECT_TRUE(batch.shadows.empty());
+    EXPECT_TRUE(batch.draws.empty());
+}
+
+TEST(AlborRenderContextChecks, DefersTheTextToItsOwnPhase) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
     context.draw_text(TextLayout{}, Point{0.0f, 0.0f}, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
     // assert
     EXPECT_TRUE(batch.draws.empty());
@@ -1250,13 +1281,15 @@ TEST(AlborRenderContextChecks, BlitsAnImageAcrossItsDestination) {
     EXPECT_EQ(batch.draws[0].texture, 14u);
     // the paint alpha alone modulates the sampled texel
     EXPECT_EQ(batch.draws[0].color, 0x80808080u);
-    // the quad carries four vertices and two triangles, which the uv corners map
-    ASSERT_EQ(batch.vertices.size(), 4u);
-    EXPECT_EQ(batch.draws[0].index_count, 6u);
-    EXPECT_NEAR(batch.vertices[0].u, 0.0f, 0.0001f);
-    EXPECT_NEAR(batch.vertices[0].v, 0.0f, 0.0001f);
-    EXPECT_NEAR(batch.vertices[2].u, 1.0f, 0.0001f);
-    EXPECT_NEAR(batch.vertices[2].v, 1.0f, 0.0001f);
+    // the quad goes through the fringe: four ring vertices, then the strip pairs, then the wrap
+    ASSERT_EQ(batch.vertices.size(), 14u);
+    EXPECT_EQ(batch.draws[0].index_count, 30u);
+    // the fringe vertex outside the top left corner clamps to the first texel
+    EXPECT_NEAR(batch.vertices[5].u, 0.0f, 0.0001f);
+    EXPECT_NEAR(batch.vertices[5].v, 0.0f, 0.0001f);
+    // the fringe vertex outside the bottom right corner clamps to the last texel
+    EXPECT_NEAR(batch.vertices[9].u, 1.0f, 0.0001f);
+    EXPECT_NEAR(batch.vertices[9].v, 1.0f, 0.0001f);
     EXPECT_EQ(image.width(), 2u);
 }
 

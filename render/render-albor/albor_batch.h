@@ -91,6 +91,9 @@ namespace albor::render
 
         // whether the fill region is convex, which decides a fan fill against a stencilled one
         bool convex = false;
+
+        // the shadow the draw composites first, or a negative index when it casts none (§6.2)
+        int shadow = -1;
     };
 
     // the index range one expansion appended, which a draw record carries (§6.3)
@@ -114,6 +117,28 @@ namespace albor::render
 
         // the ramp the folded coverage folds by, which the post clamp width decides
         float ramp = 1.0f;
+    };
+
+    // one shadow a frame casts, which a backend blurs offscreen and composites under the shape (§6.2)
+    struct BatchShadow
+    {
+        // the caster in device space, which already carries the shadow offset
+        Rect rect;
+
+        // the corner radius of the caster in device space
+        float radius = 0.0f;
+
+        // the gaussian standard deviation in device pixels, which the blur kernel divides
+        float sigma = 0.0f;
+
+        // how far the blur reaches past the caster, which sizes the offscreen target
+        float reach = 0.0f;
+
+        // the premultiplied colour of the cast
+        std::uint32_t color = 0;
+
+        // the scissor the cast is cut by
+        BatchScissor scissor;
     };
 
     // one image a frame uploads, which the backend caches by the identifier it carries (§6.4, AD-06)
@@ -140,6 +165,9 @@ namespace albor::render
 
         // the images the frame uploads, which the backend caches across frames (§6.4, AD-06)
         std::vector<BatchUpload> uploads;
+
+        // the shadows the frame casts, which the draws reference by index (§6.2)
+        std::vector<BatchShadow> shadows;
     };
 
     // pack a colour into premultiplied rgba8888 with red in the low byte, which a device raster reads (§6.3)

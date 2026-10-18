@@ -241,38 +241,26 @@ namespace albor::render
         // an image with no destination area draws nothing (§6.4)
         if (destination.empty() || texture == 0)
             return;
-        // the device transform maps the destination corners onto the raster (§6.3, AD-27)
+        // the destination corners map onto the raster under the device transform (§6.3, AD-27)
         const Transform device = device_transform();
-        const Point corners[4] = {
-            Point{.x = destination.x, .y = destination.y},
-            Point{.x = destination.x + destination.width, .y = destination.y},
-            Point{.x = destination.x + destination.width, .y = destination.y + destination.height},
-            Point{.x = destination.x, .y = destination.y + destination.height},
-        };
-        // the range the quad appends starts at the current index count
+        // the quad goes through the fringe, so a fractional destination antialiases like every other shape (§6.2)
+        Contour contour = rect_contour(destination);
+        to_device(contour);
+        // the range the quad appends starts at the current counts
         const std::uint32_t index_begin = static_cast<std::uint32_t>(m_batch.indices.size());
-        // the two triangles span the destination, which the uv corners map onto the texture (§6.4)
-        const std::uint32_t first = static_cast<std::uint32_t>(m_batch.vertices.size());
-        for (std::size_t index = 0; index < 4; index++) {
-            // the corner lands where the device transform places it
-            const Point placed = device.apply(corners[index]);
-            // the uv walks the same order, which maps the texture across the quad
-            BatchVertex vertex;
-            vertex.x = placed.x;
-            vertex.y = placed.y;
-            vertex.u = index == 1 || index == 2 ? 1.0f : 0.0f;
-            vertex.v = index >= 2 ? 1.0f : 0.0f;
-            m_batch.vertices.push_back(vertex);
+        const std::size_t vertex_begin = m_batch.vertices.size();
+        const EmittedRange range = expand_fill(m_batch, contour);
+        // the inverse maps each vertex back to its logical position, which the uv corners read (§6.4)
+        const Transform inverse = invert_transform(device);
+        for (std::size_t index = vertex_begin; index < m_batch.vertices.size(); index++) {
+            // the logical position places the vertex inside the destination it samples (§6.4)
+            const Point logical = inverse.apply(Point{.x = m_batch.vertices[index].x, .y = m_batch.vertices[index].y});
+            // the uv clamps at the edge, which a fringe vertex just outside the quad keeps sampling (§6.4)
+            m_batch.vertices[index].u = std::clamp((logical.x - destination.x) / destination.width, 0.0f, 1.0f);
+            m_batch.vertices[index].v = std::clamp((logical.y - destination.y) / destination.height, 0.0f, 1.0f);
         }
-        // the two triangles cover the quad
-        m_batch.indices.push_back(first);
-        m_batch.indices.push_back(first + 1);
-        m_batch.indices.push_back(first + 2);
-        m_batch.indices.push_back(first);
-        m_batch.indices.push_back(first + 2);
-        m_batch.indices.push_back(first + 3);
         // the image draw samples its texture across the range it appended, dimmed by the node opacity (§6.4)
-        record(EmittedRange{.index_begin = index_begin, .index_count = 6}, CoverageKind::Plain, 1.0f, color.with_alpha(m_opacity), texture, true);
+        record(EmittedRange{.index_begin = index_begin, .index_count = range.index_count}, CoverageKind::Plain, 1.0f, color.with_alpha(m_opacity), texture, contour.convex);
     }
 
     void AlborRenderContext::draw_rect(const Rect& rect, const Paint& paint) {
@@ -310,10 +298,35 @@ namespace albor::render
     }
 
     void AlborRenderContext::draw_shadow(const Rect& rect, float radius, const Shadow& shadow) {
-        // the offscreen blur pass lands with the shadow phase, so the cast is refused for now (§6.2, #106)
-        (void)rect;
-        (void)radius;
-        (void)shadow;
+        // a cast needs both a colour and a shape, because one without the other puts no ink down (§6.2)
+        if (!drawable() || !shadow.casts() || rect.empty())
+            return;
+        // the caster moves by the shadow offset, which is where the cast falls (§6.2)
+        const Rect caster = Rect::from_origin_size(Point{.x = rect.x + shadow.offset.x, .y = rect.y + shadow.offset.y}, Size{.width = rect.width, .height = rect.height});
+        // the cast is described in device space, where the blur kernel measures its sigma (§6.3, AD-27)
+        const Transform device = device_transform();
+        const Point origin = device.apply(Point{.x = caster.x, .y = caster.y});
+        const Point corner = device.apply(Point{.x = caster.x + caster.width, .y = caster.y + caster.height});
+        // the radius and the blur scale with the device, which keeps the cast the same logical size (AD-27)
+        const float scale = std::sqrt(std::abs(device.scale_x * device.scale_y - device.skew_x * device.skew_y));
+        BatchShadow cast;
+        cast.rect = Rect::from_origin_size(Point{.x = origin.x, .y = origin.y}, Size{.width = corner.x - origin.x, .height = corner.y - origin.y});
+        cast.radius = radius * scale;
+        // the reference treats the blur radius as twice the sigma, which the kernel matches (§6.2, AD-26)
+        cast.sigma = shadow.blur * 0.5f * scale;
+        // the reach is three sigmas, which the reference also sizes its offscreen layer by (§6.2, AD-26)
+        cast.reach = shadow.blur * 3.0f * scale;
+        cast.color = pack_color(shadow.color.with_alpha(m_opacity));
+        cast.scissor = scissor();
+        // the shadow joins the frame in paint order, which the draw that casts it composites first (§6.2)
+        const int index = static_cast<int>(m_batch.shadows.size());
+        m_batch.shadows.push_back(cast);
+        // the draw carries the cast, so a backend composites it under the shape it belongs to (§6.2)
+        BatchDraw draw;
+        draw.shadow = index;
+        draw.scissor = cast.scissor;
+        draw.color = cast.color;
+        m_batch.draws.push_back(draw);
     }
 
     void AlborRenderContext::draw_text(const TextLayout& layout, Point origin, const Paint& paint) {
