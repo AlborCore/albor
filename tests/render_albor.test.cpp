@@ -1744,3 +1744,63 @@ TEST(ScreenshotBandChecks, CountsEveryPixelWhenTheExtentsDiffer) {
     // assert
     EXPECT_EQ(count, 2u);
 }
+
+TEST(ExpandFillChecks, KeepsAConcaveNotchOutOfTheRingTriangles) {
+    // arrange a U shaped contour, whose gap a fan would cover
+    const PathVerb verbs[9] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const Point points[8] = {Point{.x = 8.0f, .y = 8.0f}, Point{.x = 34.0f, .y = 8.0f}, Point{.x = 34.0f, .y = 34.0f}, Point{.x = 26.0f, .y = 34.0f}, Point{.x = 26.0f, .y = 16.0f}, Point{.x = 16.0f, .y = 16.0f}, Point{.x = 16.0f, .y = 34.0f}, Point{.x = 8.0f, .y = 34.0f}};
+    std::vector<Contour> contours = build_contours(verbs, points);
+    ASSERT_EQ(contours.size(), 1u);
+    FrameBatch batch;
+    // act
+    const EmittedRange range = expand_fill(batch, contours[0]);
+    // assert
+    ASSERT_GT(range.index_count, 0u);
+    EXPECT_FALSE(contours[0].convex);
+    // the ring carries n minus two triangles, which the fragment sees before the fringe
+    const std::size_t ring_triangles = contours[0].points.size() - 2u;
+    ASSERT_GE(batch.indices.size(), ring_triangles * 3u);
+    // no ring triangle covers the gap between the arms, which a fan from the first corner would
+    const Point gap{.x = 21.0f, .y = 26.0f};
+    for (std::size_t triangle = 0; triangle < ring_triangles; triangle++) {
+        // the three corners of the triangle, which the ring indices name
+        const BatchVertex& a = batch.vertices[batch.indices[triangle * 3u]];
+        const BatchVertex& b = batch.vertices[batch.indices[triangle * 3u + 1u]];
+        const BatchVertex& c = batch.vertices[batch.indices[triangle * 3u + 2u]];
+        // the cross products decide whether the gap sits inside the triangle
+        const float ab = (b.x - a.x) * (gap.y - a.y) - (b.y - a.y) * (gap.x - a.x);
+        const float bc = (c.x - b.x) * (gap.y - b.y) - (c.y - b.y) * (gap.x - b.x);
+        const float ca = (a.x - c.x) * (gap.y - c.y) - (a.y - c.y) * (gap.x - c.x);
+        // a triangle that encloses the gap is the defect this test exists for
+        const bool encloses = (ab <= 0.0f && bc <= 0.0f && ca <= 0.0f) || (ab >= 0.0f && bc >= 0.0f && ca >= 0.0f);
+        EXPECT_FALSE(encloses);
+    }
+}
+
+TEST(ExpandFillChecks, TriangulatesAConcaveRingAcrossItsWholeArea) {
+    // arrange an L shaped contour, whose area the triangulation must cover exactly
+    const PathVerb verbs[7] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const Point points[6] = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 0.0f, .y = 20.0f}, Point{.x = 10.0f, .y = 20.0f}, Point{.x = 10.0f, .y = 10.0f}, Point{.x = 20.0f, .y = 10.0f}, Point{.x = 20.0f, .y = 0.0f}};
+    std::vector<Contour> contours = build_contours(verbs, points);
+    ASSERT_EQ(contours.size(), 1u);
+    FrameBatch batch;
+    // act
+    const EmittedRange range = expand_fill(batch, contours[0]);
+    // assert
+    ASSERT_GT(range.index_count, 0u);
+    EXPECT_FALSE(contours[0].convex);
+    // the ring triangles sum to the inset area, which a fan of a concave ring would over count
+    const std::size_t ring_triangles = contours[0].points.size() - 2u;
+    float area = 0.0f;
+    for (std::size_t triangle = 0; triangle < ring_triangles; triangle++) {
+        // the three corners of the triangle, which the signed area reads
+        const BatchVertex& a = batch.vertices[batch.indices[triangle * 3u]];
+        const BatchVertex& b = batch.vertices[batch.indices[triangle * 3u + 1u]];
+        const BatchVertex& c = batch.vertices[batch.indices[triangle * 3u + 2u]];
+        // the cross of the two edges is twice the triangle area
+        area += std::abs((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)) * 0.5f;
+    }
+    // the L spans three hundred square points, less the half unit inset on the boundary
+    EXPECT_GT(area, 250.0f);
+    EXPECT_LT(area, 300.0f);
+}

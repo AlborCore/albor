@@ -1055,3 +1055,41 @@ TEST(AlborParityChecks, ADownscaledImageMatchesTheReference) {
     // the bound is the 57 measured on this host plus margin, which two mip filters reach at a hard edge
     EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 72);
 }
+
+TEST(AlborParityChecks, AFilledConcavePathMatchesTheReference) {
+    // arrange an L-shaped closed path, whose notch a fan cannot cover
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{40.0f, 40.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const PathVerb verbs[9] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const AlborPoint points[8] = {AlborPoint{8.0f, 8.0f}, AlborPoint{34.0f, 8.0f}, AlborPoint{34.0f, 34.0f}, AlborPoint{26.0f, 34.0f}, AlborPoint{26.0f, 16.0f}, AlborPoint{16.0f, 16.0f}, AlborPoint{16.0f, 34.0f}, AlborPoint{8.0f, 34.0f}};
+    const std::shared_ptr<const PathResource> path = std::make_shared<const PathResource>(81u, verbs, points);
+    FrameScene scene(metrics, Color::rgb(1.0f, 1.0f, 1.0f));
+    DrawCommand command = DrawCommand::path(path, Transform{}, Paint{.fill = Color::rgb(0.1f, 0.2f, 0.8f)});
+    command.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size));
+    scene.add_command(std::move(command));
+    // act
+    reference.execute_frame(*expected_surface, scene);
+    backend.execute_frame(*actual_surface, scene);
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    // the gap between the arms stays background in both, which a fan from the first corner paints
+    const std::size_t gap = (26u * 40u + 21u) * 4u;
+    EXPECT_EQ(actual_shot.pixels[gap], 255u);
+    EXPECT_EQ(expected_shot.pixels[gap], 255u);
+    // both arms of the U are filled in both
+    const std::size_t left_arm = (30u * 40u + 11u) * 4u;
+    const std::size_t right_arm = (30u * 40u + 30u) * 4u;
+    EXPECT_NEAR(actual_shot.pixels[left_arm], expected_shot.pixels[left_arm], 2);
+    EXPECT_NEAR(actual_shot.pixels[right_arm], expected_shot.pixels[right_arm], 2);
+    // the two agree over the whole shape within the feathered edge band
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 32);
+}

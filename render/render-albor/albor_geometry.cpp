@@ -1,6 +1,7 @@
 #include "render/render-albor/albor_geometry.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace albor::render
@@ -58,6 +59,72 @@ namespace albor::render
             // the vertices join the mesh in the order the sequence carries
             for (const StripVertex& vertex : sequence)
                 emit_vertex(sink, vertex.x, vertex.y, vertex.lateral, vertex.longitudinal);
+        }
+
+        // report whether the corner is convex, which the positive area winding in the y down space makes a negative cross
+        bool turns_left(Point previous, Point point, Point next) {
+            // the cross of the two edges decides the turn, which the winding already fixed
+            return (point.x - previous.x) * (next.y - point.y) - (point.y - previous.y) * (next.x - point.x) < 0.0f;
+        }
+
+        // report whether a point sits inside a triangle, which the ear test refuses
+        bool inside_triangle(Point point, Point a, Point b, Point c) {
+            // the three edge signs decide the containment, which a point on an edge still counts for
+            const float ab = (b.x - a.x) * (point.y - a.y) - (b.y - a.y) * (point.x - a.x);
+            const float bc = (c.x - b.x) * (point.y - b.y) - (c.y - b.y) * (point.x - b.x);
+            const float ca = (a.x - c.x) * (point.y - c.y) - (a.y - c.y) * (point.x - c.x);
+            return ab <= 0.0f && bc <= 0.0f && ca <= 0.0f;
+        }
+
+        // triangulate a simple ring, which a concave contour cannot fan (ear clipping technique)
+        std::vector<std::array<std::size_t, 3>> ear_clip(const std::vector<Point>& polygon) {
+            // the triangles the clip produces, in the order it removes the ears
+            std::vector<std::array<std::size_t, 3>> triangles;
+            // the ring vertices still to clip, which the walk removes one at a time
+            std::vector<std::size_t> remaining;
+            for (std::size_t index = 0; index < polygon.size(); index++)
+                remaining.push_back(index);
+            // a ring of n points carries n minus two triangles, which the loop emits
+            while (remaining.size() > 3) {
+                // the ear the pass found, which no later iteration needs to revisit
+                bool clipped = false;
+                for (std::size_t at = 0; at < remaining.size(); at++) {
+                    // the three points of the candidate ear, which wraps around the ring
+                    const std::size_t previous = remaining[(at + remaining.size() - 1) % remaining.size()];
+                    const std::size_t point = remaining[at];
+                    const std::size_t next = remaining[(at + 1) % remaining.size()];
+                    // a reflex corner is no ear, which the left turn test refuses
+                    if (!turns_left(polygon[previous], polygon[point], polygon[next]))
+                        continue;
+                    // a corner that another vertex sits inside is no ear either, which the containment refuses
+                    bool blocked = false;
+                    for (const std::size_t other : remaining) {
+                        // the three corner points are the ear itself, which no containment test applies to
+                        if (other == previous || other == point || other == next)
+                            continue;
+                        // a vertex inside the candidate ear blocks it, which the scan records
+                        if (inside_triangle(polygon[other], polygon[previous], polygon[point], polygon[next]))
+                            blocked = true;
+                    }
+                    // a blocked corner is the next candidate, which the walk skips
+                    if (blocked)
+                        continue;
+                    // the ear joins the triangle list, and its corner leaves the ring
+                    triangles.push_back({previous, point, next});
+                    remaining.erase(remaining.begin() + static_cast<std::ptrdiff_t>(at));
+                    clipped = true;
+                    break;
+                }
+                // a ring with no ear falls back to a fan, which a self intersecting contour can produce
+                if (!clipped) {
+                    for (std::size_t index = 1; index + 1 < remaining.size(); index++)
+                        triangles.push_back({remaining[0], remaining[index], remaining[index + 1]});
+                    return triangles;
+                }
+            }
+            // the last three points are the closing triangle, which the loop leaves
+            triangles.push_back({remaining[0], remaining[1], remaining[2]});
+            return triangles;
         }
 
         // the inward normal of a unit direction, which the winding normalization fixes to the left side
@@ -393,8 +460,10 @@ namespace albor::render
         const std::uint32_t index_begin = static_cast<std::uint32_t>(sink.indices.size());
         // the inset offsets the ring half a fringe inward, which the fringe strip straddles the boundary with
         const float offset = FRINGE * 0.5f;
-        // the ring the fan covers, which a right turned bevel splits into the two edge insets
+        // the ring the fill covers, which a right turned bevel splits into the two edge insets
         std::vector<std::uint32_t> ring;
+        // the ring positions, which a concave contour triangulates instead of fanning
+        std::vector<Point> ring_points;
         const ContourPoint* previous = &contour.points.back();
         for (const ContourPoint& point : contour.points) {
             // a bevelled right corner splits the ring, which every other corner collapses onto the averaged normal
@@ -403,18 +472,28 @@ namespace albor::render
                 const Point normal0 = inward_normal(previous->dx, previous->dy);
                 const Point normal1 = inward_normal(point.dx, point.dy);
                 ring.push_back(emit_vertex(sink, point.position.x + normal0.x * offset, point.position.y + normal0.y * offset, 1.0f, 1.0f));
+                ring_points.push_back(Point{.x = point.position.x + normal0.x * offset, .y = point.position.y + normal0.y * offset});
                 ring.push_back(emit_vertex(sink, point.position.x + normal1.x * offset, point.position.y + normal1.y * offset, 1.0f, 1.0f));
+                ring_points.push_back(Point{.x = point.position.x + normal1.x * offset, .y = point.position.y + normal1.y * offset});
             }
             else {
                 // the single inset point the averaged normal carries
                 ring.push_back(emit_vertex(sink, point.position.x + point.miter_x * offset, point.position.y + point.miter_y * offset, 1.0f, 1.0f));
+                ring_points.push_back(Point{.x = point.position.x + point.miter_x * offset, .y = point.position.y + point.miter_y * offset});
             }
             // the previous point advances with the walk
             previous = &point;
         }
-        // the fan covers the ring, which a convex contour covers exactly
-        for (std::size_t index = 1; index + 1 < ring.size(); index++)
-            emit_triangle(sink, ring[0], ring[index], ring[index + 1]);
+        // a convex ring fans, which covers it exactly
+        if (contour.convex) {
+            for (std::size_t index = 1; index + 1 < ring.size(); index++)
+                emit_triangle(sink, ring[0], ring[index], ring[index + 1]);
+        }
+        else {
+            // a concave ring triangulates, because a fan would paint the notches it spans
+            for (const std::array<std::size_t, 3>& triangle : ear_clip(ring_points))
+                emit_triangle(sink, ring[triangle[0]], ring[triangle[1]], ring[triangle[2]]);
+        }
         // the fringe strip runs beside the ring, which the join sequences split on either side
         const std::uint32_t strip_first = static_cast<std::uint32_t>(sink.vertices.size());
         previous = &contour.points.back();
