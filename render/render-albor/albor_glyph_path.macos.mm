@@ -136,7 +136,7 @@ namespace albor::render
     GlyphPath glyph_path_from_cgpath(CGPathRef path) {
         // the walk turns every element into the verbs a contour is built from (§6.4)
         GlyphPath result;
-        PathWalk walk{.path = &result};
+        PathWalk walk{.path = &result, .current = {}};
         CGPathApply(path, &walk, apply_element);
         return result;
     }
