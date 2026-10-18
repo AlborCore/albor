@@ -16,14 +16,10 @@ namespace albor::render
     }
 
     std::unique_ptr<RenderSurface> AlborRendererBackend::create_surface(NativeWindowHandle handle, const WindowMetrics& metrics) {
-        // a surface is refused rather than half built while the device is not ready (§6.2)
-        if (!ready())
-            return nullptr;
-        // metrics with no area cannot be presented, so the surface is refused (§6.2)
-        if (!metrics.valid())
-            return nullptr;
+        // a surface is refused while the device is not ready or the extent has no area, which one test covers (§6.2)
+        const bool acceptable = ready() && metrics.valid();
         // the platform builds the surface over the handle, which a null handle leaves offscreen (§6.2)
-        return backend_create_surface(handle, metrics);
+        return acceptable ? backend_create_surface(handle, metrics) : nullptr;
     }
 
     void AlborRendererBackend::resize_surface(RenderSurface& surface, const WindowMetrics& metrics) {

@@ -46,12 +46,7 @@ UNREACHABLE=(
     'text/text-harfbuzz/harfbuzz_text_engine.cpp|return nullptr;|the platform constructor refuses a null resolver, empty bytes or a face that cannot shape, none of which a valid platform font produces'
     'text/text-harfbuzz/harfbuzz_text_engine.cpp|m_state->cache.clear();|the eviction runs only past 512 distinct runs, a bound no unit test needs to cross to prove the cache works'
     'render/render-skia/skia_render_context.cpp|continue;|a valid platform handle always resolves a typeface, so the refusal guards a font the platform could not parse'
-    'text/text-harfbuzz/harfbuzz_platform_font.macos.mm|return {};|a valid core text face always carries tables, so the refusal guards a face with no sfnt backing'
-    'render/render-albor/albor_metal_backend.macos.mm|return;|a host without a metal device cannot be produced on a machine that runs the suite, so the refusal only guards an unsupported host'
-    'render/render-albor/albor_metal_backend.macos.mm|state.library = [state.device newLibraryWithSource:source options:nil error:&compile_error];|the shader source is the tree'"'"'s own, so it only fails to compile on a broken toolchain, which cannot be forced from a test'
-    'render/render-albor/albor_metal_backend.macos.mm|if (m_target == nil)|a device that allocated one target allocates the next, so only an out of memory host reaches the refusal'
-    'render/render-albor/albor_metal_backend.macos.mm|return nullptr;|the device state is built once and a mac always builds it, so the refusal only guards an unsupported host'
-    'render/render-albor/albor_renderer_backend.cpp|return nullptr;|a surface is refused before the device is ready, which a mac never is because the device always comes up'
+    'text/text-harfbuzz/harfbuzz_platform_font.macos.mm|return {};|a valid core text face always carries tables, so the refusal guards a face with no sfnt backing'"'"'s own, so it only fails to compile on a broken toolchain, which cannot be forced from a test'
 )
 
 # an entry whose text no longer appears in the file, which means the hole was closed or moved (§27)

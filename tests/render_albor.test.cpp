@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include "core/paint.h"
+#include "render/frame_scene.h"
 #include "render/image_resource.h"
 #include "render/line_batch.h"
 #include "render/path_resource.h"
@@ -14,7 +15,9 @@
 #include "render/render-albor/albor_contour.h"
 #include "render/render-albor/albor_geometry.h"
 #include "render/render-albor/albor_render_context.h"
+#include "render/render-albor/albor_renderer_backend.h"
 #include "render/render_context.h"
+#include "render/renderer_backend.h"
 #include "window/window_metrics.h"
 
 using namespace albor;
@@ -1518,4 +1521,104 @@ TEST(AlborRenderContextChecks, RestoresTheClipTransformWithTheState) {
     // the restored clip maps under the identity transform, which halves the scales
     EXPECT_NEAR(batch.draws[0].scissor.scale_x, 1.0f, 0.0001f);
     EXPECT_NEAR(batch.draws[0].scissor.extent_x, 10.0f, 0.0001f);
+}
+
+namespace
+{
+    // the smallest context a surface can hand out, which the backend never draws through here
+    class InertRenderContext final : public RenderContext
+    {
+    public:
+        void save() override {}
+        void restore() override {}
+        void set_transform(const Transform& transform) override { m_transform = transform; }
+        [[nodiscard]] const Transform& transform() const override { return m_transform; }
+        void clip_rect(const Rect& rect) override { m_clip = rect; }
+        void clip_rounded_rect(const Rect& rect, float) override { m_clip = rect; }
+        [[nodiscard]] const Rect& clip() const override { return m_clip; }
+        void set_opacity(float opacity) override { m_opacity = opacity; }
+        [[nodiscard]] float opacity() const override { return m_opacity; }
+        void draw_rect(const Rect&, const Paint&) override {}
+        void draw_rounded_rect(const Rect&, float, const Paint&) override {}
+        void draw_polyline(const std::span<const Point>&, const StrokeStyle&) override {}
+        void draw_shadow(const Rect&, float, const Shadow&) override {}
+        void draw_text(const TextLayout&, Point, const Paint&) override {}
+        void draw_line_batch(const std::shared_ptr<const LineBatch>&, const Transform&, const StrokeStyle&) override {}
+        void draw_path(const std::shared_ptr<const PathResource>&, const Transform&, const Paint&) override {}
+        void draw_picture(const std::shared_ptr<const PictureResource>&, const Transform&) override {}
+        void draw_image(const std::shared_ptr<const ImageResource>&, const Rect&, const Paint&) override {}
+
+    private:
+        // the transform the context last adopted
+        Transform m_transform;
+
+        // the clip the context last adopted
+        Rect m_clip;
+
+        // the opacity the context last adopted
+        float m_opacity = 1.0f;
+    };
+
+    // the smallest surface a backend can be handed, which reports itself unusable
+    class UnusableRenderSurface final : public RenderSurface
+    {
+    public:
+        // how many frames the backend began, which stays zero because it refuses stage two
+        std::size_t begun = 0;
+
+        [[nodiscard]] bool valid() const override { return false; }
+
+        [[nodiscard]] const WindowMetrics& metrics() const override { return m_metrics; }
+
+        void resize(const WindowMetrics& metrics) override { m_metrics = metrics; }
+
+        RenderContext& begin_frame() override {
+            // count the frame, which proves the backend never replays onto an unusable surface
+            begun++;
+            return m_context;
+        }
+
+        void end_frame() override {}
+
+    private:
+        // the metrics the surface reports
+        WindowMetrics m_metrics = WindowMetrics::from_logical(Size{8.0f, 8.0f}, 1.0f);
+
+        // the context the surface hands out
+        InertRenderContext m_context;
+    };
+} // namespace
+
+TEST(AlborRendererBackendChecks, RefusesToResizeAnUnusableSurface) {
+    // arrange
+    albor::render::AlborRendererBackend backend;
+    UnusableRenderSurface surface;
+    const WindowMetrics resized = WindowMetrics::from_logical(Size{16.0f, 16.0f}, 1.0f);
+    // act
+    backend.resize_surface(surface, resized);
+    // assert
+    EXPECT_NE(surface.metrics(), resized);
+}
+
+TEST(AlborRendererBackendChecks, RefusesToExecuteOntoAnUnusableSurface) {
+    // arrange
+    albor::render::AlborRendererBackend backend;
+    UnusableRenderSurface surface;
+    const FrameScene scene(surface.metrics(), Color::rgb(1.0f, 0.0f, 0.0f));
+    // act
+    backend.execute_frame(surface, scene);
+    // assert
+    EXPECT_EQ(surface.begun, 0u);
+}
+
+TEST(AlborRendererBackendFactoryChecks, InstallsTheInRepoBackend) {
+    // arrange
+    set_renderer_backend_factory(nullptr);
+    albor::render::install_albor_renderer_backend();
+    // act
+    const std::unique_ptr<RendererBackend> backend = create_renderer_backend();
+    // assert
+    ASSERT_NE(backend, nullptr);
+    // the shared factory returns to empty, so no later suite inherits this backend (§6.2)
+    set_renderer_backend_factory(nullptr);
 }

@@ -3,6 +3,11 @@
 # gather cpp sources, which reach no platform api and therefore build on every platform (§5.3, AD-05)
 file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 
+# the portable seam stands in for the platform device, which a platform with its own device replaces (§5.3, AD-16)
+if(APPLE)
+    list(FILTER CPP_SOURCES EXCLUDE REGEX "/albor_backend_support\\.cpp$")
+endif()
+
 # create the static library from the gathered sources
 add_library(albor-render-albor STATIC ${CPP_SOURCES})
 

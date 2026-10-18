@@ -90,8 +90,10 @@ TEST(AlborRendererBackendChecks, RasterizesAnOpaqueRectangleOverTheBackground) {
     const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{16.0f, 16.0f}, 1.0f);
     const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
     ASSERT_NE(surface, nullptr);
-    const std::vector<AlborRect> rects = {AlborRect::from_origin_size(AlborPoint{4.0f, 4.0f}, AlborSize{8.0f, 8.0f})};
-    const FrameScene scene = FrameScene::from_primitives(metrics, Color::rgb(0.0f, 0.0f, 0.0f), rects);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand command = DrawCommand::rectangle(AlborRect::from_origin_size(AlborPoint{4.0f, 4.0f}, AlborSize{8.0f, 8.0f}), Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f)});
+    command.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size));
+    scene.add_command(std::move(command));
     // act
     backend.execute_frame(*surface, scene);
     const std::vector<std::uint8_t> pixels = surface->read_pixels();
@@ -100,25 +102,12 @@ TEST(AlborRendererBackendChecks, RasterizesAnOpaqueRectangleOverTheBackground) {
     // the corner stays the background, which the rectangle never reached
     EXPECT_EQ(pixels[0], 0u);
     EXPECT_EQ(pixels[3], 255u);
-    // the rectangle centre carries the accent fill the primitive records, at full coverage
+    // the rectangle centre carries the green fill at full coverage
     const std::size_t centre = (8u * 16u + 8u) * 4u;
-    EXPECT_EQ(pixels[centre], 51u);
-    EXPECT_EQ(pixels[centre + 1], 140u);
-    EXPECT_EQ(pixels[centre + 2], 230u);
+    EXPECT_EQ(pixels[centre], 0u);
+    EXPECT_EQ(pixels[centre + 1], 255u);
+    EXPECT_EQ(pixels[centre + 2], 0u);
     EXPECT_EQ(pixels[centre + 3], 255u);
-}
-
-TEST(AlborRendererBackendFactoryChecks, InstallsTheInRepoBackend) {
-    // arrange
-    set_renderer_backend_factory(nullptr);
-    albor::render::install_albor_renderer_backend();
-    // act
-    const std::unique_ptr<RendererBackend> backend = create_renderer_backend();
-    // assert
-    ASSERT_NE(backend, nullptr);
-    EXPECT_TRUE(backend->ready());
-    // the shared factory returns to empty, so no later suite inherits this backend (§6.2)
-    set_renderer_backend_factory(nullptr);
 }
 
 TEST(AlborRendererBackendChecks, AntialiasesAFractionalEdge) {
@@ -127,20 +116,22 @@ TEST(AlborRendererBackendChecks, AntialiasesAFractionalEdge) {
     const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{16.0f, 4.0f}, 1.0f);
     const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
     ASSERT_NE(surface, nullptr);
-    const std::vector<AlborRect> rects = {AlborRect::from_origin_size(AlborPoint{0.5f, 0.0f}, AlborSize{14.5f, 4.0f})};
-    const FrameScene scene = FrameScene::from_primitives(metrics, Color::rgb(0.0f, 0.0f, 0.0f), rects);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand command = DrawCommand::rectangle(AlborRect::from_origin_size(AlborPoint{0.5f, 0.0f}, AlborSize{14.5f, 4.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    command.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size));
+    scene.add_command(std::move(command));
     // act
     backend.execute_frame(*surface, scene);
     const std::vector<std::uint8_t> pixels = surface->read_pixels();
     // assert
     ASSERT_EQ(pixels.size(), 16u * 4u * 4u);
-    // the first column is half covered by the feathered edge, which halves the accent red over black
+    // the first column is half covered by the feathered edge, which halves the red over black
     const std::size_t first = 0;
-    EXPECT_GT(pixels[first], 18u);
-    EXPECT_LT(pixels[first], 34u);
+    EXPECT_GT(pixels[first], 118u);
+    EXPECT_LT(pixels[first], 138u);
     // the second column is fully covered, because the fringe ended inside it
     const std::size_t second = 4u;
-    EXPECT_EQ(pixels[second], 51u);
+    EXPECT_EQ(pixels[second], 255u);
     // the far column the rectangle never reaches stays the background
     const std::size_t last = (3u * 16u + 15u) * 4u;
     EXPECT_EQ(pixels[last], 0u);
@@ -311,28 +302,6 @@ namespace
     };
 } // namespace
 
-TEST(AlborRendererBackendChecks, RefusesToResizeAnUnusableSurface) {
-    // arrange
-    albor::render::AlborRendererBackend backend;
-    UnusableRenderSurface surface;
-    const WindowMetrics resized = WindowMetrics::from_logical(AlborSize{16.0f, 16.0f}, 1.0f);
-    // act
-    backend.resize_surface(surface, resized);
-    // assert
-    EXPECT_NE(surface.metrics(), resized);
-}
-
-TEST(AlborRendererBackendChecks, RefusesToExecuteOntoAnUnusableSurface) {
-    // arrange
-    albor::render::AlborRendererBackend backend;
-    UnusableRenderSurface surface;
-    const FrameScene scene(surface.metrics(), Color::rgb(1.0f, 0.0f, 0.0f));
-    // act
-    backend.execute_frame(surface, scene);
-    // assert
-    EXPECT_EQ(surface.begun, 0u);
-}
-
 TEST(AlborRendererBackendChecks, KeepsTheTargetWhenResizedToAnEmptyExtent) {
     // arrange
     albor::render::AlborRendererBackend backend;
@@ -371,4 +340,49 @@ TEST(AlborRendererBackendChecks, IgnoresAnEndWithoutABegin) {
     surface->end_frame();
     // assert
     EXPECT_TRUE(surface->read_pixels().empty());
+}
+
+TEST(AlborRendererBackendChecks, DrawsTwoRangesOverOneVertexBuffer) {
+    // arrange two overlapping rectangles, whose index ranges and uniforms differ per draw
+    albor::render::AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{16.0f, 16.0f}, 1.0f);
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(surface, nullptr);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand first = DrawCommand::rectangle(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, AlborSize{16.0f, 16.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    first.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size));
+    scene.add_command(std::move(first));
+    DrawCommand second = DrawCommand::rectangle(AlborRect::from_origin_size(AlborPoint{4.0f, 4.0f}, AlborSize{8.0f, 8.0f}), Paint{.fill = Color::rgb(0.0f, 0.0f, 1.0f)});
+    second.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size));
+    scene.add_command(std::move(second));
+    // act
+    backend.execute_frame(*surface, scene);
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    // assert
+    ASSERT_EQ(pixels.size(), 16u * 16u * 4u);
+    // the corner carries only the first rectangle, which the second never reached
+    EXPECT_EQ(pixels[0], 255u);
+    EXPECT_EQ(pixels[2], 0u);
+    // the centre carries the second, which paints over the first in order
+    const std::size_t centre = (8u * 16u + 8u) * 4u;
+    EXPECT_EQ(pixels[centre], 0u);
+    EXPECT_EQ(pixels[centre + 2], 255u);
+}
+
+TEST(AlborRendererBackendChecks, DefersAResizeThatArrivesMidFrame) {
+    // arrange
+    albor::render::AlborRendererBackend backend;
+    const WindowMetrics small = WindowMetrics::from_logical(AlborSize{4.0f, 4.0f}, 1.0f);
+    const WindowMetrics large = WindowMetrics::from_logical(AlborSize{8.0f, 6.0f}, 1.0f);
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, small);
+    ASSERT_NE(surface, nullptr);
+    // act
+    RenderContext& context = surface->begin_frame();
+    context.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, small.logical_size), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    surface->resize(large);
+    const WindowMetrics during = surface->metrics();
+    surface->end_frame();
+    // assert
+    EXPECT_EQ(during, small);
+    EXPECT_EQ(surface->metrics(), large);
 }

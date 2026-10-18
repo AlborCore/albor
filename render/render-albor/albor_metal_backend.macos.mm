@@ -24,8 +24,8 @@ namespace albor::render
         // the pixel format every target uses, which reads back as canonical rgba8 bytes (§6.3, AD-26)
         constexpr MTLPixelFormat TARGET_FORMAT = MTLPixelFormatRGBA8Unorm;
 
-        // one draw state, which the fragment shader reads as a packed buffer (§6.3)
-        struct DrawUniforms
+        // one draw state, which both shader stages read as a packed buffer, aligned as msl pads it (§6.3)
+        struct alignas(16) DrawUniforms
         {
             // the premultiplied colour of the draw
             float color[4];
@@ -55,12 +55,8 @@ namespace albor::render
             int has_texture;
         };
 
-        // one immutable pipeline of the backend, which a coverage kind and a texture decide (§6.3)
-        struct Pipeline
-        {
-            // the state the encoder binds
-            id<MTLRenderPipelineState> state = nil;
-        };
+        // the msl struct pads to a sixteen byte boundary, so the host side must carry the same size
+        static_assert(sizeof(DrawUniforms) == 96, "the draw uniforms must match the msl layout");
 
         // the device wide state every surface draws through, which outlives them (§6.3)
         struct DeviceState
@@ -74,11 +70,8 @@ namespace albor::render
             // the shader library the two pipelines build from
             id<MTLLibrary> library = nil;
 
-            // the pipeline that passes the lateral coverage seed through, which a fill and an image use
-            Pipeline plain;
-
-            // the pipeline that folds the lateral coverage around the stroke centre
-            Pipeline folded;
+            // the one pipeline every draw binds, which the kind uniform selects the coverage of (§6.3)
+            id<MTLRenderPipelineState> pipeline = nil;
 
             // the one pixel white texture a solid draw samples, which keeps one shader path for every draw
             id<MTLTexture> white = nil;
@@ -86,15 +79,18 @@ namespace albor::render
             // the sampler every draw reads its texture through
             id<MTLSamplerState> sampler = nil;
 
-            // the depth of the unfinished frames, which the shared pipelines are built once for
+            // whether the shared state finished building, which every later call reads (§6.3)
             bool built = false;
+
+            // whether the build was already tried, so a failed host never recompiles the shader (§6.3)
+            bool attempted = false;
         };
 
         // the process wide device state, which the first surface builds and every later one reuses (§6.3)
         DeviceState& device_state() {
-            // the state is a function local, so it outlives every surface and is built on first use
-            static DeviceState state;
-            return state;
+            // the state is never destroyed, because the driver traps in the dealloc of a live queue (defect record)
+            static DeviceState* state = new DeviceState();
+            return *state;
         }
 
         // the lock that guards the first build of the shared state across threads (§10.5)
@@ -130,23 +126,17 @@ namespace albor::render
         void build_device_state(DeviceState& state) {
             // the default device is the one the process presents with, which a headless host still has (AD-16)
             state.device = MTLCreateSystemDefaultDevice();
-            // a host without a metal device leaves the backend unready rather than crashing (§6.2)
-            if (state.device == nil)
-                return;
-            // the queue serializes every frame the surfaces submit
+            // messaging a nil device answers nil, so every step below degrades instead of branching (§6.2)
             state.queue = [state.device newCommandQueue];
             // the source compiles once per process, which is the only shader work a run ever does (AD-16)
-            NSString* source = [NSString stringWithUTF8String:std::string(shader_source()).c_str()];
-            NSError* compile_error = nil;
-            state.library = [state.device newLibraryWithSource:source options:nil error:&compile_error];
-            // a missing library leaves the backend unready, which a broken build surfaces immediately (§6.2)
-            if (state.library == nil)
-                return;
+            NSString* source = [[NSString alloc] initWithBytes:shader_source().data() length:shader_source().size() encoding:NSUTF8StringEncoding];
+            state.library = [state.device newLibraryWithSource:source options:nil error:nil];
             // premultiplied source over the destination is the one blend the hal composites with (§6.3)
-            state.plain.state = build_pipeline(state.device, state.library, MTLBlendFactorOne, MTLBlendFactorOneMinusSourceAlpha);
-            state.folded.state = state.plain.state;
+            state.pipeline = build_pipeline(state.device, state.library, MTLBlendFactorOne, MTLBlendFactorOneMinusSourceAlpha);
             // a solid draw samples one white texel, which keeps a single shader path for every draw (§6.3)
             MTLTextureDescriptor* white_descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:TARGET_FORMAT width:1 height:1 mipmapped:NO];
+            white_descriptor.usage = MTLTextureUsageShaderRead;
+            // the storage stays at the platform default, because a mac texture refuses shared storage
             state.white = [state.device newTextureWithDescriptor:white_descriptor];
             const std::uint8_t white[4] = {255, 255, 255, 255};
             [state.white replaceRegion:MTLRegionMake2D(0, 0, 1, 1) mipmapLevel:0 withBytes:white bytesPerRow:4];
@@ -157,8 +147,8 @@ namespace albor::render
             sampler_descriptor.sAddressMode = MTLSamplerAddressModeClampToEdge;
             sampler_descriptor.tAddressMode = MTLSamplerAddressModeClampToEdge;
             state.sampler = [state.device newSamplerStateWithDescriptor:sampler_descriptor];
-            // the state is complete only when the device, the library, the pipeline and the sampler are all live
-            state.built = state.queue != nil && state.plain.state != nil && state.white != nil && state.sampler != nil;
+            // the state is complete only when every piece the draw path binds came up (§6.3)
+            state.built = state.device != nil && state.queue != nil && state.library != nil && state.pipeline != nil && state.white != nil && state.sampler != nil;
         }
 
         // the surface the backend presents into, which owns one colour target per frame (§6.2, §6.3)
@@ -186,10 +176,10 @@ namespace albor::render
             void allocate();
 
             // encode every recorded draw of the batch into the frame (§6.3)
-            void encode(id<MTLCommandBuffer> command, id<MTLRenderCommandEncoder> encoder) const;
+            void encode(id<MTLRenderCommandEncoder> encoder) const;
 
             // the layer the surface presents into, which is nil for an offscreen surface (§6.2)
-            CAMetalLayer* m_layer = nil;
+            CAMetalLayer* __strong m_layer = nil;
 
             // the metrics the surface presents at (§6.1, D9.1)
             WindowMetrics m_metrics;
@@ -203,8 +193,14 @@ namespace albor::render
             // the context that records the frame into the batch, which is rebuilt with it (§6.2)
             std::unique_ptr<AlborRenderContext> m_context;
 
-            // how many frames finished on this surface (§4.3)
-            std::size_t m_frames = 0;
+            // how many frames finished on the current target, which a resize resets (§4.3)
+            std::size_t m_finished = 0;
+
+            // the metrics a resize asked for while a frame was in flight, which the end applies (§6.2)
+            WindowMetrics m_pending_metrics;
+
+            // whether a resize is waiting for the frame in flight to finish (§6.2)
+            bool m_resize_pending = false;
 
             // whether a frame began and has not ended yet (§6.1)
             bool m_begun = false;
@@ -217,7 +213,6 @@ namespace albor::render
                 m_layer.device = device_state().device;
                 m_layer.pixelFormat = TARGET_FORMAT;
                 m_layer.framebufferOnly = NO;
-                m_layer.opaque = YES;
             }
             // the colour target is allocated at the physical extent the metrics name (§6.3, AD-27)
             allocate();
@@ -245,14 +240,25 @@ namespace albor::render
             descriptor.storageMode = MTLStorageModePrivate;
             m_target = [device_state().device newTextureWithDescriptor:descriptor];
             // a windowed surface resizes its layer alongside the target, which keeps the drawable in step (§6.2)
-            if (m_layer != nil)
+            if (m_layer != nil) {
+                // the layer carries the density it presents at, which the drawable size and the scale agree on (AD-27)
+                m_layer.contentsScale = static_cast<CGFloat>(m_metrics.scale_factor);
                 m_layer.drawableSize = CGSizeMake(static_cast<CGFloat>(width), static_cast<CGFloat>(height));
+            }
+            // the new target carries no finished frame yet, so a read back waits for one (§6.3)
+            m_finished = 0;
         }
 
         void AlborRenderSurface::resize(const WindowMetrics& metrics) {
             // metrics with no area cannot be presented, so the previous target is kept (§6.2)
             if (!metrics.valid())
                 return;
+            // a resize while a frame is in flight waits for the frame, so no frame mixes two extents (§6.2, D9.1)
+            if (m_begun) {
+                m_pending_metrics = metrics;
+                m_resize_pending = true;
+                return;
+            }
             // the extent is replaced on the thread that owns the surface (§5.3, D9.1)
             m_metrics = metrics;
             allocate();
@@ -270,9 +276,9 @@ namespace albor::render
             return *m_context;
         }
 
-        void AlborRenderSurface::encode(id<MTLCommandBuffer> command, id<MTLRenderCommandEncoder> encoder) const {
-            // the frame draws over the target without clearing, because the scene paints its own background (§6.1)
-            [encoder setRenderPipelineState:device_state().plain.state];
+        void AlborRenderSurface::encode(id<MTLRenderCommandEncoder> encoder) const {
+            // the encoder binds the pipeline and the sampler once, which every draw of the frame shares (§6.3)
+            [encoder setRenderPipelineState:device_state().pipeline];
             [encoder setFragmentSamplerState:device_state().sampler atIndex:0];
             // the vertices and indices are uploaded once per frame into two shared buffers (§6.3)
             if (m_batch.vertices.empty() || m_batch.indices.empty())
@@ -302,14 +308,13 @@ namespace albor::render
                 uniforms.extent_scale[2] = draw.scissor.scale_x;
                 uniforms.extent_scale[3] = draw.scissor.scale_y;
                 // the target extent projects a device position into clip space (§6.3)
-                uniforms.target_size[0] = m_metrics.pixel_size.width;
-                uniforms.target_size[1] = m_metrics.pixel_size.height;
+                uniforms.target_size[0] = static_cast<float>(m_target.width);
+                uniforms.target_size[1] = static_cast<float>(m_target.height);
                 uniforms.ramp = draw.ramp;
                 uniforms.kind = draw.coverage == CoverageKind::Folded ? 1 : 0;
                 uniforms.scissor_enabled = draw.scissor.enabled ? 1 : 0;
-                uniforms.has_texture = draw.texture == 0 ? 0 : 1;
-                // the pipeline is the one the coverage kind selects, which the shared state already built (§6.3)
-                [encoder setRenderPipelineState:device_state().plain.state];
+                // an image upload lands with the parity phase, so every draw samples the white texel for now (§6.4, #106)
+                uniforms.has_texture = 0;
                 [encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:1];
                 [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:1];
                 // a solid draw samples the white texel, which keeps one shader path for every draw (§6.3)
@@ -317,79 +322,83 @@ namespace albor::render
                 // the draw consumes its own index range, which the builder recorded (§6.3)
                 [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:draw.index_count indexType:MTLIndexTypeUInt32 indexBuffer:indices indexBufferOffset:draw.index_begin * sizeof(std::uint32_t)];
             }
-            (void)command;
         }
 
         void AlborRenderSurface::end_frame() {
             // an end without a begun frame is a no operation rather than an error (§6.1)
             if (!m_begun)
                 return;
-            m_begun = false;
-            // a surface without a target has nothing to present (§6.2)
-            if (m_target == nil)
-                return;
-            // the frame is one command buffer, which the queue submits once (§6.3)
-            id<MTLCommandBuffer> command = [device_state().queue commandBuffer];
-            // a windowed surface presents the drawable the layer hands out for this frame (§6.3)
-            id<CAMetalDrawable> drawable = m_layer != nil ? [m_layer nextDrawable] : nil;
-            // the pass clears the target, because the scene paints every pixel it covers (§6.1)
-            MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
-            pass.colorAttachments[0].texture = m_target;
-            pass.colorAttachments[0].loadAction = MTLLoadActionClear;
-            pass.colorAttachments[0].storeAction = MTLStoreActionStore;
-            pass.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 0.0);
-            // the encoder replays every recorded draw into the target (§6.3)
-            id<MTLRenderCommandEncoder> encoder = [command renderCommandEncoderWithDescriptor:pass];
-            encode(command, encoder);
-            [encoder endEncoding];
-            // a windowed frame blits the target onto the drawable, which keeps one pixel path for both kinds (§6.3)
-            if (drawable != nil) {
-                MTLRenderPassDescriptor* present = [MTLRenderPassDescriptor renderPassDescriptor];
-                present.colorAttachments[0].texture = drawable.texture;
-                present.colorAttachments[0].loadAction = MTLLoadActionDontCare;
-                present.colorAttachments[0].storeAction = MTLStoreActionStore;
-                id<MTLBlitCommandEncoder> blit = [command blitCommandEncoder];
-                [blit copyFromTexture:m_target sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(m_target.width, m_target.height, 1) toTexture:drawable.texture destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
-                [blit endEncoding];
-                [command presentDrawable:drawable];
+            // the frame runs inside a pool, because a render thread has none of its own (§6.3, AD-18)
+            @autoreleasepool {
+                // the frame is one command buffer, which the queue submits once (§6.3)
+                id<MTLCommandBuffer> command = [device_state().queue commandBuffer];
+                // a windowed surface presents the drawable the layer hands out for this frame (§6.3)
+                id<CAMetalDrawable> drawable = m_layer != nil ? [m_layer nextDrawable] : nil;
+                // the pass clears the target first, which an empty frame leaves transparent (§6.1)
+                MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
+                pass.colorAttachments[0].texture = m_target;
+                pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+                pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+                pass.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 0.0);
+                // the encoder replays every recorded draw into the target (§6.3)
+                id<MTLRenderCommandEncoder> encoder = [command renderCommandEncoderWithDescriptor:pass];
+                encode(encoder);
+                [encoder endEncoding];
+                // a windowed frame blits the target onto the drawable, which keeps one pixel path for both kinds (§6.3)
+                if (drawable != nil) {
+                    id<MTLBlitCommandEncoder> blit = [command blitCommandEncoder];
+                    [blit copyFromTexture:m_target sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(m_target.width, m_target.height, 1) toTexture:drawable.texture destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
+                    [blit endEncoding];
+                    [command presentDrawable:drawable];
+                }
+                // the buffer is committed, which is what makes the frame exactly once (§6.1)
+                [command commit];
+                // the frame counts once it is submitted, which a read back then waits on (§4.3)
+                m_finished++;
             }
-            // the buffer is committed and waited on, which makes the frame exactly once (§6.1)
-            [command commit];
-            [command waitUntilCompleted];
-            // the frame counts once it finished, which a read back requires (§4.3)
-            m_frames++;
+            // the frame is no longer in flight, so a read back accepts one (§6.1)
+            m_begun = false;
+            // a resize that waited for this frame applies now, so the next frame uses one extent (§6.2)
+            if (m_resize_pending) {
+                m_resize_pending = false;
+                resize(m_pending_metrics);
+            }
         }
 
         std::vector<std::uint8_t> AlborRenderSurface::read_pixels() const {
             // a read before the first finished frame reports nothing (§6.3)
-            if (m_target == nil || m_frames == 0 || m_begun)
+            if (m_target == nil || m_finished == 0 || m_begun)
                 return {};
-            // the target is copied into a shared buffer, which the host can read once the copy completes (§6.3)
-            const std::size_t width = static_cast<std::size_t>(m_target.width);
-            const std::size_t height = static_cast<std::size_t>(m_target.height);
-            const std::size_t row_bytes = width * 4;
-            id<MTLBuffer> readback = [device_state().device newBufferWithLength:row_bytes * height options:MTLResourceStorageModeShared];
-            // the copy needs a command buffer of its own, because the frame already completed (§6.3)
-            id<MTLCommandBuffer> command = [device_state().queue commandBuffer];
-            id<MTLBlitCommandEncoder> blit = [command blitCommandEncoder];
-            [blit copyFromTexture:m_target sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(width, height, 1) toBuffer:readback destinationOffset:0 destinationBytesPerRow:row_bytes destinationBytesPerImage:row_bytes * height];
-            [blit endEncoding];
-            [command commit];
-            [command waitUntilCompleted];
-            // the bytes are already canonical premultiplied rgba8, which the target format guarantees (§6.3, AD-26)
-            std::vector<std::uint8_t> pixels(row_bytes * height);
-            std::memcpy(pixels.data(), readback.contents, pixels.size());
-            return pixels;
+            // the copy runs inside a pool, because a render thread has none of its own (§6.3, AD-18)
+            @autoreleasepool {
+                // the target is copied into a shared buffer, which the host can read once the copy completes (§6.3)
+                const std::size_t width = static_cast<std::size_t>(m_target.width);
+                const std::size_t height = static_cast<std::size_t>(m_target.height);
+                const std::size_t row_bytes = width * 4;
+                id<MTLBuffer> readback = [device_state().device newBufferWithLength:row_bytes * height options:MTLResourceStorageModeShared];
+                // the copy needs a command buffer of its own, because the frame already completed (§6.3)
+                id<MTLCommandBuffer> command = [device_state().queue commandBuffer];
+                id<MTLBlitCommandEncoder> blit = [command blitCommandEncoder];
+                [blit copyFromTexture:m_target sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(width, height, 1) toBuffer:readback destinationOffset:0 destinationBytesPerRow:row_bytes destinationBytesPerImage:row_bytes * height];
+                [blit endEncoding];
+                [command commit];
+                [command waitUntilCompleted];
+                // the bytes are already canonical premultiplied rgba8, which the target format guarantees (§6.3, AD-26)
+                std::vector<std::uint8_t> pixels(row_bytes * height);
+                std::memcpy(pixels.data(), readback.contents, pixels.size());
+                return pixels;
+            }
         }
 
         // the one device the process draws through, which the lazy build fills on first use
         bool ensure_device_state() {
             // the lock serializes the first build, because two surfaces may race for it (§10.5)
             const std::lock_guard<std::mutex> guard(device_mutex());
-            // a state that already built is handed out as it is (§6.3)
-            if (device_state().built)
-                return true;
+            // a state that already ran is handed out as it is, which a failed host never retries (§6.3)
+            if (device_state().attempted)
+                return device_state().built;
             // the build runs once, and its result is what readiness reports (§6.2)
+            device_state().attempted = true;
             build_device_state(device_state());
             return device_state().built;
         }
@@ -401,10 +410,7 @@ namespace albor::render
     }
 
     std::unique_ptr<RenderSurface> backend_create_surface(NativeWindowHandle handle, const WindowMetrics& metrics) {
-        // a surface without the shared state cannot draw, so none is built (§6.2)
-        if (!ensure_device_state())
-            return nullptr;
-        // the surface is built over the layer the handle names, which a null handle leaves offscreen (§6.2)
-        return std::make_unique<AlborRenderSurface>(handle, metrics);
+        // a surface without the shared state cannot draw, so none is built, and a null handle stays offscreen (§6.2)
+        return ensure_device_state() ? std::make_unique<AlborRenderSurface>(handle, metrics) : nullptr;
     }
 } // namespace albor::render
