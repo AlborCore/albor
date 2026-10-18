@@ -74,6 +74,9 @@ namespace albor::render
 
             // the opacity the draw is dimmed by
             float opacity = 1.0f;
+
+            // the corner radius of the clip, which a rounded clip narrows (§6.2)
+            float clip_radius = 0.0f;
         };
 
         // report whether a draw under the current transform can put any ink down at all (§6.2)
@@ -120,6 +123,9 @@ namespace albor::render
 
         // the device transform the clip was pushed under, which the scissor freezes (§6.2)
         Transform m_clip_device;
+
+        // the corner radius of the clip, which zero leaves the clip rectangular (§6.2)
+        float m_clip_radius = 0.0f;
 
         // the opacity the later draws are dimmed by, which starts fully opaque (§6.1)
         float m_opacity = 1.0f;

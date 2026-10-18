@@ -26,6 +26,7 @@ struct DrawUniforms
     float4 inverse0;
     float4 inverse1;
     float4 extentScale;
+    float4 extra;
     float2 targetSize;
     float ramp;
     int kind;
@@ -77,15 +78,26 @@ static float scissor_mask(float2 position, constant DrawUniforms& uniforms) {
     }
     float x = uniforms.inverse0.x * position.x + uniforms.inverse0.y * position.y + uniforms.inverse0.z;
     float y = uniforms.inverse1.x * position.x + uniforms.inverse1.y * position.y + uniforms.inverse1.z;
-    float2 distance = abs(float2(x, y)) - uniforms.extentScale.xy;
+    float2 point = float2(x, y);
+    float radius = uniforms.extra.x;
+    float scale = min(uniforms.extentScale.z, uniforms.extentScale.w);
+    if (radius > 0.0) {
+        float2 halfExtent = uniforms.extentScale.xy;
+        float2 corner = abs(point) - (halfExtent - float2(radius));
+        float distance = length(max(corner, float2(0.0))) + min(max(corner.x, corner.y), 0.0) - radius;
+        return clamp(0.5 - distance * scale, 0.0, 1.0);
+    }
+    float2 distance = abs(point) - uniforms.extentScale.xy;
     float2 ramp = float2(0.5) - distance * uniforms.extentScale.zw;
     return clamp(ramp.x, 0.0, 1.0) * clamp(ramp.y, 0.0, 1.0);
 }
 
 // shade one fragment, which every pipeline shares and the kind selects between
 fragment float4 albor_fragment(Varyings in [[stage_in]], constant DrawUniforms& uniforms [[buffer(1)]], texture2d<float> paint [[texture(0)]], sampler paintSampler [[sampler(0)]]) {
-    float4 texel = paint.sample(paintSampler, in.uv);
-    float4 base = uniforms.hasTexture != 0 ? texel * uniforms.color : uniforms.color;
+    float4 base = uniforms.color;
+    if (uniforms.hasTexture != 0) {
+        base = paint.sample(paintSampler, in.uv) * uniforms.color;
+    }
     return base * (coverage(in, uniforms) * scissor_mask(in.position.xy, uniforms));
 }
 )MSL";

@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -10,8 +11,10 @@
 #include "render/draw_command.h"
 #include "render/frame_scene.h"
 #include "render/render-albor/albor_renderer_backend.h"
+#include "render/render-software/software_renderer_backend.h"
 #include "render/render_context.h"
 #include "render/renderer_backend.h"
+#include "render/screenshot.h"
 #include "window/window_metrics.h"
 
 using namespace albor;
@@ -385,4 +388,188 @@ TEST(AlborRendererBackendChecks, DefersAResizeThatArrivesMidFrame) {
     // assert
     EXPECT_EQ(during, small);
     EXPECT_EQ(surface->metrics(), large);
+}
+
+namespace
+{
+    // read a surface back into a screenshot, which the parity comparison consumes (§6.3, AD-26)
+    Screenshot capture(const RenderSurface& surface) {
+        // the surface hands out the canonical bytes a screenshot wraps (§6.3)
+        const std::vector<std::uint8_t> pixels = surface.read_pixels();
+        // the extent comes from the metrics, which is the physical pixel size (§6.3, AD-27)
+        Screenshot shot;
+        shot.width = static_cast<int>(surface.metrics().pixel_size.width);
+        shot.height = static_cast<int>(surface.metrics().pixel_size.height);
+        shot.pixels = pixels;
+        return shot;
+    }
+
+    // count the pixels whose worst channel differs by more than the tolerance (§6.3, AD-26)
+    std::size_t differing_pixels(const Screenshot& lhs, const Screenshot& rhs, int tolerance) {
+        // a size mismatch compares every pixel it can, which a failing test reports separately
+        const std::size_t count = std::min(lhs.pixels.size(), rhs.pixels.size()) / 4u;
+        std::size_t differing = 0;
+        for (std::size_t index = 0; index < count; index++) {
+            // the worst channel of the pixel decides whether it is outside the tolerance
+            int worst = 0;
+            for (std::size_t channel = 0; channel < 4; channel++)
+                worst = std::max(worst, std::abs(static_cast<int>(lhs.pixels[index * 4 + channel]) - static_cast<int>(rhs.pixels[index * 4 + channel])));
+            if (worst > tolerance)
+                differing++;
+        }
+        return differing;
+    }
+} // namespace
+
+TEST(AlborParityChecks, AnAlignedRectangleMatchesTheReference) {
+    // arrange the same scene through the software reference and through this backend
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{32.0f, 32.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand command = DrawCommand::rectangle(AlborRect::from_origin_size(AlborPoint{8.0f, 8.0f}, AlborSize{16.0f, 16.0f}), Paint{.fill = Color::rgb(0.0f, 0.8f, 0.2f)});
+    command.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size));
+    scene.add_command(std::move(command));
+    // act
+    reference.execute_frame(*expected_surface, scene);
+    backend.execute_frame(*actual_surface, scene);
+    const Screenshot expected = capture(*expected_surface);
+    const Screenshot actual = capture(*actual_surface);
+    // assert
+    ASSERT_EQ(expected.pixels.size(), actual.pixels.size());
+    // an aligned rectangle has no feathered edge to disagree on, so the two agree exactly
+    EXPECT_EQ(differing_pixels(expected, actual, 0), 0u);
+}
+
+TEST(AlborParityChecks, AFeatheredEdgeMatchesTheReferenceWithinTolerance) {
+    // arrange a rectangle whose edges land on fractional pixels
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{32.0f, 32.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    FrameScene scene(metrics, Color::rgb(1.0f, 1.0f, 1.0f));
+    DrawCommand command = DrawCommand::rectangle(AlborRect::from_origin_size(AlborPoint{6.3f, 6.7f}, AlborSize{19.4f, 18.6f}), Paint{.fill = Color::rgb(0.1f, 0.2f, 0.3f)});
+    command.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size));
+    scene.add_command(std::move(command));
+    // act
+    reference.execute_frame(*expected_surface, scene);
+    backend.execute_frame(*actual_surface, scene);
+    const Screenshot expected = capture(*expected_surface);
+    const Screenshot actual = capture(*actual_surface);
+    // assert
+    const std::size_t differing = differing_pixels(expected, actual, 24);
+    EXPECT_EQ(differing, 0u);
+}
+
+TEST(AlborParityChecks, ATwoScaleSceneMatchesTheReference) {
+    // arrange a scene at double density, which the device scale must carry (AD-27)
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{16.0f, 16.0f}, 2.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand command = DrawCommand::rectangle(AlborRect::from_origin_size(AlborPoint{4.0f, 4.0f}, AlborSize{8.0f, 8.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    command.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size));
+    scene.add_command(std::move(command));
+    // act
+    reference.execute_frame(*expected_surface, scene);
+    backend.execute_frame(*actual_surface, scene);
+    const Screenshot expected = capture(*expected_surface);
+    const Screenshot actual = capture(*actual_surface);
+    // assert
+    ASSERT_EQ(expected.pixels.size(), 32u * 32u * 4u);
+    EXPECT_EQ(differing_pixels(expected, actual, 0), 0u);
+}
+
+TEST(AlborParityChecks, ATranslucentImageMatchesTheReference) {
+    // arrange a half transparent image, whose alpha the paint modulates
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{16.0f, 16.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    // the image is two opaque premultiplied colours, which the paint dims to half
+    const std::uint8_t pixels[16] = {255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255};
+    const std::shared_ptr<const ImageResource> image = std::make_shared<const ImageResource>(31u, 2u, 2u, ImageFormat::RGBA8, pixels);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand command = DrawCommand::image(image, AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, AlborSize{16.0f, 16.0f}), Paint{.fill = Color::rgba(1.0f, 1.0f, 1.0f, 0.5f)});
+    command.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size));
+    scene.add_command(std::move(command));
+    // act
+    reference.execute_frame(*expected_surface, scene);
+    backend.execute_frame(*actual_surface, scene);
+    const Screenshot expected = capture(*expected_surface);
+    const Screenshot actual = capture(*actual_surface);
+    // assert
+    EXPECT_EQ(differing_pixels(expected, actual, 24), 0u);
+}
+
+TEST(AlborParityChecks, ARoundedClipMatchesTheReferenceAtItsCorners) {
+    // arrange a rounded clip driven through the contexts, because the recorder reduces a rounded clip to its rectangle
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{32.0f, 32.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    // act
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    expected.clip_rounded_rect(AlborRect::from_origin_size(AlborPoint{4.0f, 4.0f}, AlborSize{24.0f, 24.0f}), 12.0f);
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    actual.clip_rounded_rect(AlborRect::from_origin_size(AlborPoint{4.0f, 4.0f}, AlborSize{24.0f, 24.0f}), 12.0f);
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture(*expected_surface);
+    const Screenshot actual_shot = capture(*actual_surface);
+    // assert
+    const std::size_t corner = (5u * 32u + 5u) * 4u;
+    EXPECT_GT(actual_shot.pixels[corner], 200u);
+    EXPECT_GT(expected_shot.pixels[corner], 200u);
+    // the centre of the clip is covered by the black rectangle in both
+    const std::size_t centre = (16u * 32u + 16u) * 4u;
+    EXPECT_EQ(actual_shot.pixels[centre], 0u);
+    EXPECT_EQ(expected_shot.pixels[centre], 0u);
+}
+
+TEST(AlborParityChecks, ReusesAnUploadedTextureAcrossFrames) {
+    // arrange the same retained image drawn on two consecutive frames
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{8.0f, 8.0f}, 1.0f);
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(surface, nullptr);
+    const std::uint8_t pixels[4] = {0, 0, 255, 255};
+    const std::shared_ptr<const ImageResource> image = std::make_shared<const ImageResource>(41u, 1u, 1u, ImageFormat::RGBA8, pixels);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand command = DrawCommand::image(image, AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, AlborSize{8.0f, 8.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    command.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size));
+    scene.add_command(std::move(command));
+    // act
+    backend.execute_frame(*surface, scene);
+    const Screenshot first = capture(*surface);
+    backend.execute_frame(*surface, scene);
+    const Screenshot second = capture(*surface);
+    // assert
+    // the second frame reuses the texture the first uploaded, so both reads agree
+    ASSERT_EQ(first.pixels.size(), second.pixels.size());
+    EXPECT_EQ(differing_pixels(first, second, 0), 0u);
+    // the image paints blue over the black background, which the upload preserved
+    EXPECT_EQ(second.pixels[0], 0u);
+    EXPECT_EQ(second.pixels[2], 255u);
 }

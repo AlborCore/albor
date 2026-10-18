@@ -29,7 +29,7 @@ namespace albor::render
 
     void AlborRenderContext::save() {
         // the current transform, clip, clip transform and opacity are pushed, which a restore pops (§6.2)
-        m_states.push_back(State{.transform = m_transform, .clip = m_clip, .clip_device = m_clip_device, .opacity = m_opacity});
+        m_states.push_back(State{.transform = m_transform, .clip = m_clip, .clip_device = m_clip_device, .opacity = m_opacity, .clip_radius = m_clip_radius});
     }
 
     void AlborRenderContext::restore() {
@@ -43,6 +43,7 @@ namespace albor::render
         m_clip = state.clip;
         m_clip_device = state.clip_device;
         m_opacity = state.opacity;
+        m_clip_radius = state.clip_radius;
     }
 
     void AlborRenderContext::set_transform(const Transform& transform) {
@@ -69,10 +70,10 @@ namespace albor::render
     }
 
     void AlborRenderContext::clip_rounded_rect(const Rect& rect, float radius) {
-        // a rounded clip is not expressible in this context yet, so it reduces to its rectangle (§6.2)
-        (void)radius;
         // the rectangle the rounded clip contains is what the recorded clip narrows to (§6.2)
         clip_rect(rect);
+        // the radius rides with the clip, which the scissor mask rounds the corners by (§6.2)
+        m_clip_radius = std::max(m_clip_radius, radius);
     }
 
     const Rect& AlborRenderContext::clip() const {
@@ -123,8 +124,8 @@ namespace albor::render
     BatchScissor AlborRenderContext::scissor() const {
         // an unclipped draw carries no scissor, which the shader skips (§6.2)
         BatchScissor result;
-        // a clip that covers the whole extent leaves every draw uncut (§6.2)
-        if (m_clip == m_extent)
+        // a rectangular clip that covers the whole extent leaves every draw uncut (§6.2)
+        if (m_clip == m_extent && m_clip_radius <= 0.0f)
             return result;
         // a clip without area cuts every draw away, so no scissor is carried at all (§6.2)
         if (m_clip.empty())
@@ -143,6 +144,10 @@ namespace albor::render
         // the scales turn the extent into a one device pixel ramp per axis (nanovg technique)
         result.scale_x = std::sqrt(device.scale_x * device.scale_x + device.skew_x * device.skew_x) / FRINGE;
         result.scale_y = std::sqrt(device.skew_y * device.skew_y + device.scale_y * device.scale_y) / FRINGE;
+        // the corner radius rounds the mask, which zero leaves the clip rectangular (§6.2)
+        result.radius = m_clip_radius;
+        // a rounded clip feathers its own edge, which the mask needs to stay smooth (§6.2)
+        result.feather = m_clip_radius > 0.0f ? FRINGE : 0.0f;
         return result;
     }
 
@@ -375,6 +380,11 @@ namespace albor::render
         // the paint dims the sampled texel through its alpha alone, which the reference does too (§6.4, AD-26)
         const float alpha = paint.fills() ? paint.fill.alpha : (paint.strokes() ? paint.stroke.alpha : 1.0f);
         const Color tint = Color::rgba(1.0f, 1.0f, 1.0f, alpha);
+        // the pixels upload once per frame, which the backend then caches by the identifier it stamped (AD-06)
+        const bool uploaded = std::any_of(m_batch.uploads.begin(), m_batch.uploads.end(), [&image](const BatchUpload& upload) { return upload.id == image->id(); });
+        // an image the frame has not uploaded yet joins the upload list, which the backend copies before the draw
+        if (!uploaded)
+            m_batch.uploads.push_back(BatchUpload{.id = image->id(), .image = image});
         // the texture the backend caches is keyed on the resource identifier, which never repeats (AD-06)
         emit_image(destination, tint, image->id());
     }

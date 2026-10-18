@@ -1,10 +1,17 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include "core/geometry.h"
 #include "core/paint.h"
+
+namespace albor
+{
+    // the immutable pixels a frame uploads, which the factory stamps (§6.4, AD-06)
+    class ImageResource;
+} // namespace albor
 
 namespace albor::render
 {
@@ -109,6 +116,16 @@ namespace albor::render
         float ramp = 1.0f;
     };
 
+    // one image a frame uploads, which the backend caches by the identifier it carries (§6.4, AD-06)
+    struct BatchUpload
+    {
+        // the identifier the backend keys its texture on, which never repeats (AD-06)
+        std::uint64_t id = 0;
+
+        // the immutable pixels the upload copies, which outlive the frame (§6.4)
+        std::shared_ptr<const ImageResource> image;
+    };
+
     // the batch one frame builds, which the builder owns until it seals and uploads it (§6.3)
     struct FrameBatch
     {
@@ -120,6 +137,9 @@ namespace albor::render
 
         // the draws in paint order
         std::vector<BatchDraw> draws;
+
+        // the images the frame uploads, which the backend caches across frames (§6.4, AD-06)
+        std::vector<BatchUpload> uploads;
     };
 
     // pack a colour into premultiplied rgba8888 with red in the low byte, which a device raster reads (§6.3)

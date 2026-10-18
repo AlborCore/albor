@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <mutex>
+#include <unordered_map>
 #include <vector>
 
 #import <Metal/Metal.h>
@@ -39,6 +40,9 @@ namespace albor::render
             // the clip half extents, followed by the per axis feather scales
             float extent_scale[4];
 
+            // the clip corner radius, which zero leaves the clip rectangular
+            float extra[4];
+
             // the target extent in device pixels, which projects a position into clip space
             float target_size[2];
 
@@ -56,7 +60,7 @@ namespace albor::render
         };
 
         // the msl struct pads to a sixteen byte boundary, so the host side must carry the same size
-        static_assert(sizeof(DrawUniforms) == 96, "the draw uniforms must match the msl layout");
+        static_assert(sizeof(DrawUniforms) == 112, "the draw uniforms must match the msl layout");
 
         // the device wide state every surface draws through, which outlives them (§6.3)
         struct DeviceState
@@ -175,6 +179,9 @@ namespace albor::render
             // allocate the colour target the frame draws into, which a resize replaces (§6.2)
             void allocate();
 
+            // copy every image the frame carries into the texture cache, which a later frame reuses (AD-06)
+            void upload_textures();
+
             // encode every recorded draw of the batch into the frame (§6.3)
             void encode(id<MTLRenderCommandEncoder> encoder) const;
 
@@ -189,6 +196,9 @@ namespace albor::render
 
             // the immutable batch the frame builds, which the encoder consumes once (§6.3)
             FrameBatch m_batch;
+
+            // the textures the uploaded images became, keyed on the identifier the factory stamped (AD-06)
+            std::unordered_map<std::uint64_t, id<MTLTexture>> m_textures;
 
             // the context that records the frame into the batch, which is rebuilt with it (§6.2)
             std::unique_ptr<AlborRenderContext> m_context;
@@ -269,11 +279,28 @@ namespace albor::render
             m_batch.vertices.clear();
             m_batch.indices.clear();
             m_batch.draws.clear();
+            m_batch.uploads.clear();
             // the context records logical points onto the physical target, so the device scale is handed to it (AD-27)
             m_context = std::make_unique<AlborRenderContext>(m_batch, Rect::from_origin_size(Point{0.0f, 0.0f}, m_metrics.logical_size), m_metrics.scale_factor);
             // the frame is now in flight, which the matching end presents (§6.1)
             m_begun = true;
             return *m_context;
+        }
+
+        void AlborRenderSurface::upload_textures() {
+            // every image the frame carries becomes a texture the cache holds by its identifier (AD-06)
+            for (const BatchUpload& upload : m_batch.uploads) {
+                // a texture the cache already holds is reused, which makes a retained image constant time (AD-06)
+                if (m_textures.find(upload.id) != m_textures.end())
+                    continue;
+                // the pixels are premultiplied rgba8, which the target format already matches (§6.3, AD-26)
+                MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:TARGET_FORMAT width:upload.image->width() height:upload.image->height() mipmapped:NO];
+                descriptor.usage = MTLTextureUsageShaderRead;
+                id<MTLTexture> texture = [device_state().device newTextureWithDescriptor:descriptor];
+                // the upload copies the row packed bytes the resource carries (§6.4)
+                [texture replaceRegion:MTLRegionMake2D(0, 0, upload.image->width(), upload.image->height()) mipmapLevel:0 withBytes:upload.image->pixels().data() bytesPerRow:upload.image->row_bytes()];
+                m_textures[upload.id] = texture;
+            }
         }
 
         void AlborRenderSurface::encode(id<MTLRenderCommandEncoder> encoder) const {
@@ -307,18 +334,27 @@ namespace albor::render
                 uniforms.extent_scale[1] = draw.scissor.extent_y;
                 uniforms.extent_scale[2] = draw.scissor.scale_x;
                 uniforms.extent_scale[3] = draw.scissor.scale_y;
+                // the corner radius rounds the mask, which zero leaves the clip rectangular (§6.2)
+                uniforms.extra[0] = draw.scissor.radius;
                 // the target extent projects a device position into clip space (§6.3)
                 uniforms.target_size[0] = static_cast<float>(m_target.width);
                 uniforms.target_size[1] = static_cast<float>(m_target.height);
                 uniforms.ramp = draw.ramp;
                 uniforms.kind = draw.coverage == CoverageKind::Folded ? 1 : 0;
                 uniforms.scissor_enabled = draw.scissor.enabled ? 1 : 0;
-                // an image upload lands with the parity phase, so every draw samples the white texel for now (§6.4, #106)
-                uniforms.has_texture = 0;
+                // a draw with a texture samples it, and a solid one samples the white texel (§6.3, §6.4)
+                uniforms.has_texture = draw.texture == 0 ? 0 : 1;
                 [encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:1];
                 [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:1];
-                // a solid draw samples the white texel, which keeps one shader path for every draw (§6.3)
-                [encoder setFragmentTexture:device_state().white atIndex:0];
+                // the draw binds its own texture, or the white texel a solid draw samples (§6.3, §6.4)
+                id<MTLTexture> texture = device_state().white;
+                if (draw.texture != 0) {
+                    // the upload the frame carried became the texture the cache holds (AD-06)
+                    const auto found = m_textures.find(draw.texture);
+                    if (found != m_textures.end())
+                        texture = found->second;
+                }
+                [encoder setFragmentTexture:texture atIndex:0];
                 // the draw consumes its own index range, which the builder recorded (§6.3)
                 [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:draw.index_count indexType:MTLIndexTypeUInt32 indexBuffer:indices indexBufferOffset:draw.index_begin * sizeof(std::uint32_t)];
             }
@@ -340,6 +376,8 @@ namespace albor::render
                 pass.colorAttachments[0].loadAction = MTLLoadActionClear;
                 pass.colorAttachments[0].storeAction = MTLStoreActionStore;
                 pass.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 0.0);
+                // the images the frame carries become textures once, which a later frame reuses (AD-06)
+                upload_textures();
                 // the encoder replays every recorded draw into the target (§6.3)
                 id<MTLRenderCommandEncoder> encoder = [command renderCommandEncoderWithDescriptor:pass];
                 encode(encoder);
