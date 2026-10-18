@@ -9,6 +9,7 @@
 #include "render/frame_scene.h"
 #include "render/image_resource.h"
 #include "render/line_batch.h"
+#include "render/screenshot.h"
 #include "render/path_resource.h"
 #include "render/picture_resource.h"
 #include "render/render-albor/albor_batch.h"
@@ -1710,4 +1711,36 @@ TEST(AlborRenderContextChecks, ReplaysARoundedClipTheRecorderStamped) {
     // the scissor carries the radius the recorder stamped, which the shader rounds the corners by
     EXPECT_NEAR(batch.draws[0].scissor.radius, 12.0f, 0.0001f);
     EXPECT_TRUE(batch.draws[0].scissor.enabled);
+}
+
+TEST(ScreenshotBandChecks, CountsEveryPixelPastTheTolerance) {
+    // arrange two reads that differ in one channel of two pixels
+    Screenshot expected;
+    expected.width = 2;
+    expected.height = 2;
+    expected.pixels = {10, 10, 10, 10, 20, 20, 20, 20, 30, 30, 30, 30, 40, 40, 40, 40};
+    Screenshot actual = expected;
+    actual.pixels[4] = 60;
+    actual.pixels[12] = 62;
+    // act
+    const std::size_t count = expected.band_count(actual, 8);
+    // assert
+    EXPECT_EQ(count, 2u);
+    EXPECT_EQ(expected.band_count(actual, 40), 0u);
+}
+
+TEST(ScreenshotBandChecks, CountsEveryPixelWhenTheExtentsDiffer) {
+    // arrange two reads of different sizes, which share no pixel to compare
+    Screenshot expected;
+    expected.width = 2;
+    expected.height = 1;
+    expected.pixels = {0, 0, 0, 255, 0, 0, 0, 255};
+    Screenshot actual;
+    actual.width = 1;
+    actual.height = 1;
+    actual.pixels = {0, 0, 0, 255};
+    // act
+    const std::size_t count = expected.band_count(actual, 0);
+    // assert
+    EXPECT_EQ(count, 2u);
 }

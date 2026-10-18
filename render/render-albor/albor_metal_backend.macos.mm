@@ -198,6 +198,7 @@ namespace albor::render
             MTLSamplerDescriptor* sampler_descriptor = [[MTLSamplerDescriptor alloc] init];
             sampler_descriptor.minFilter = MTLSamplerMinMagFilterLinear;
             sampler_descriptor.magFilter = MTLSamplerMinMagFilterLinear;
+            sampler_descriptor.mipFilter = MTLSamplerMipFilterLinear;
             sampler_descriptor.sAddressMode = MTLSamplerAddressModeClampToEdge;
             sampler_descriptor.tAddressMode = MTLSamplerAddressModeClampToEdge;
             state.sampler = [state.device newSamplerStateWithDescriptor:sampler_descriptor];
@@ -488,11 +489,21 @@ namespace albor::render
                 if (m_textures.find(upload.id) != m_textures.end())
                     continue;
                 // the pixels are premultiplied rgba8, which the target format already matches (§6.3, AD-26)
-                MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:TARGET_FORMAT width:upload.image->width() height:upload.image->height() mipmapped:NO];
+                MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:TARGET_FORMAT width:upload.image->width() height:upload.image->height() mipmapped:YES];
                 descriptor.usage = MTLTextureUsageShaderRead;
                 id<MTLTexture> texture = [device_state().device newTextureWithDescriptor:descriptor];
                 // the upload copies the row packed bytes the resource carries (§6.4)
                 [texture replaceRegion:MTLRegionMake2D(0, 0, upload.image->width(), upload.image->height()) mipmapLevel:0 withBytes:upload.image->pixels().data() bytesPerRow:upload.image->row_bytes()];
+                // a mip chain keeps a minified image from aliasing, which the reference also avoids (§6.4, AD-26)
+                if (texture.mipmapLevelCount > 1) {
+                    // the chain is generated on the queue, which the same frame then samples (§6.4)
+                    id<MTLCommandBuffer> mips = [device_state().queue commandBuffer];
+                    id<MTLBlitCommandEncoder> blit = [mips blitCommandEncoder];
+                    [blit generateMipmapsForTexture:texture];
+                    [blit endEncoding];
+                    [mips commit];
+                    [mips waitUntilCompleted];
+                }
                 m_textures[upload.id] = CachedTexture{.texture = texture, .last_used = m_frame_counter};
             }
         }

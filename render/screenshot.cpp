@@ -30,6 +30,24 @@ namespace albor
         return worst;
     }
 
+    std::size_t Screenshot::band_count(const Screenshot& other, int tolerance) const {
+        // two reads of different extents share no pixel to count, which the caller checks first (§6.3)
+        if (width != other.width || height != other.height || pixels.size() != other.pixels.size())
+            return pixels.size() / 4u;
+        // every pixel is judged by its worst channel, which the tolerance bounds (§15, AD-26)
+        std::size_t count = 0;
+        for (std::size_t index = 0; index + 3 < pixels.size(); index += 4) {
+            // the worst channel of the pixel decides whether it sits outside the band (§15)
+            int worst = 0;
+            for (std::size_t channel = 0; channel < 4; channel++)
+                worst = std::max(worst, std::abs(static_cast<int>(pixels[index + channel]) - static_cast<int>(other.pixels[index + channel])));
+            // a pixel past the tolerance is one the band counts (§15)
+            if (worst > tolerance)
+                count++;
+        }
+        return count;
+    }
+
     Screenshot capture_surface(const RenderSurface& surface) {
         // the read is asked of the surface, which refuses when it cannot (§6.3)
         const std::vector<std::uint8_t> pixels = surface.read_pixels();

@@ -918,6 +918,8 @@ TEST(AlborParityChecks, ATranslucentOverlapMatchesTheReference) {
     ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
     // premultiplied source over composites identically, which a wrong blend factor would shift
     EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 16);
+    // the flat interiors agree exactly, which a global tint of the budget would otherwise pass (§15)
+    EXPECT_EQ(expected_shot.band_count(actual_shot, 2), 0u);
     // the overlap carries both fills, which a replaced rather than blended draw would lose
     const std::size_t overlap = (16u * 32u + 16u) * 4u;
     EXPECT_LT(actual_shot.pixels[overlap], 220u);
@@ -1008,4 +1010,48 @@ TEST(AlborRendererBackendChecks, CompositesACastOnAFrameWithNoGeometry) {
     // the cast lands even though the frame carried no geometry at all
     const std::size_t centre = (16u * 32u + 16u) * 4u;
     EXPECT_GT(shot.pixels[centre + 3], 0u);
+}
+
+TEST(AlborParityChecks, ADownscaledImageMatchesTheReference) {
+    // arrange a checkerboard downscaled eight times, which a mip map keeps from aliasing
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{16.0f, 16.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    // the source is a 32 by 32 checkerboard of alternating opaque colours
+    std::vector<std::uint8_t> source(32u * 32u * 4u, 0);
+    for (std::size_t y = 0; y < 32; y++) {
+        for (std::size_t x = 0; x < 32; x++) {
+            // each cell alternates between the two colours, which a minified read must average
+            const bool light = (x + y) % 2 == 0;
+            const std::size_t at = (y * 32u + x) * 4u;
+            source[at] = light ? 255u : 0u;
+            source[at + 1] = light ? 255u : 0u;
+            source[at + 2] = light ? 255u : 0u;
+            source[at + 3] = 255u;
+        }
+    }
+    const std::shared_ptr<const ImageResource> image = std::make_shared<const ImageResource>(71u, 32u, 32u, ImageFormat::RGBA8, source);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand command = DrawCommand::image(image, AlborRect::from_origin_size(AlborPoint{2.0f, 2.0f}, AlborSize{12.0f, 12.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    command.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size));
+    scene.add_command(std::move(command));
+    // act
+    reference.execute_frame(*expected_surface, scene);
+    backend.execute_frame(*actual_surface, scene);
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    // the minified average is a mid grey, which a nearest tap would swing to black or white
+    const std::size_t interior = (8u * 16u + 8u) * 4u;
+    EXPECT_GT(actual_shot.pixels[interior], 60u);
+    EXPECT_LT(actual_shot.pixels[interior], 210u);
+    // the bound is the 57 measured on this host plus margin, which two mip filters reach at a hard edge
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 72);
 }
