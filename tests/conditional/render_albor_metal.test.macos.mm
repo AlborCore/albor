@@ -566,7 +566,6 @@ TEST(AlborParityChecks, ReusesAnUploadedTextureAcrossFrames) {
     backend.execute_frame(*surface, scene);
     const Screenshot second = capture(*surface);
     // assert
-    // the second frame reuses the texture the first uploaded, so both reads agree
     ASSERT_EQ(first.pixels.size(), second.pixels.size());
     EXPECT_EQ(differing_pixels(first, second, 0), 0u);
     // the image paints blue over the black background, which the upload preserved
