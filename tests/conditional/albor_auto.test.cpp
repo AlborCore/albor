@@ -16,5 +16,5 @@ TEST(AlborAutoInstallChecks, TheRendererBackendInstallsItselfAtLoad) {
     const std::unique_ptr<RendererBackend> backend = create_renderer_backend();
     // assert
     ASSERT_NE(backend, nullptr);
-    EXPECT_FALSE(backend->ready());
+    EXPECT_TRUE(backend->ready());
 }

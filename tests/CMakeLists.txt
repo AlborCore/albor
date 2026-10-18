@@ -143,14 +143,22 @@ endif()
 
 # the albor load time install checks need the whole archive link, which the main test binary cannot take (§6.3, AD-26)
 #
-# the main binary links albor-render-albor lazily, so the load time installer stays out of it and the suites
-# above control the factory hook themselves. this second binary links the archive whole, which runs the
-# installer at load, and asserts the marker the in-repo backend carries (§6.3)
-add_executable(albor-render-albor-auto-checks "./conditional/albor_auto.test.cpp")
-target_include_directories(albor-render-albor-auto-checks PRIVATE ${CMAKE_SOURCE_DIR})
-target_compile_features(albor-render-albor-auto-checks PRIVATE cxx_std_23)
-target_link_libraries(albor-render-albor-auto-checks PRIVATE GTest::gtest_main albor-render-albor-auto)
-gtest_discover_tests(albor-render-albor-auto-checks DISCOVERY_TIMEOUT 60)
+# the backend is the metal one, which only exists where metal does, so the checks join under apple (AD-16). the
+# main binary links albor-render-albor lazily, so the load time installer stays out of it and the suites above
+# control the factory hook themselves. this second binary links the archive whole, which runs the installer at
+# load, and asserts the marker the in-repo backend carries (§6.3)
+if(APPLE)
+    add_executable(albor-render-albor-auto-checks "./conditional/albor_auto.test.cpp")
+    target_include_directories(albor-render-albor-auto-checks PRIVATE ${CMAKE_SOURCE_DIR})
+    target_compile_features(albor-render-albor-auto-checks PRIVATE cxx_std_23)
+    target_link_libraries(albor-render-albor-auto-checks PRIVATE GTest::gtest_main albor-render-albor-auto)
+    gtest_discover_tests(albor-render-albor-auto-checks DISCOVERY_TIMEOUT 60)
+
+    # the backend suite drives the metal device directly, which is the one module the portable suites never reach
+    target_sources(albor-tests PRIVATE "./conditional/render_albor_metal.test.macos.mm")
+    set_source_files_properties("./conditional/render_albor_metal.test.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(albor-tests PRIVATE albor-render-albor "-framework Foundation" "-framework Metal" "-framework QuartzCore")
+endif()
 
 # the build-scope fixture is its own product, which the §14.3 check compiles and observes (AGENTS.md, §14.3)
 add_subdirectory(scope)

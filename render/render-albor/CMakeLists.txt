@@ -10,8 +10,19 @@ add_library(albor-render-albor STATIC ${CPP_SOURCES})
 target_include_directories(albor-render-albor PUBLIC ${CMAKE_SOURCE_DIR})
 target_compile_features(albor-render-albor PUBLIC cxx_std_23)
 
-# the backend draws through the shared hal and carries no engine dependency of its own (§6.3)
+# the backend draws through the shared hal and carries no third party engine dependency of its own (§6.3)
 target_link_libraries(albor-render-albor PUBLIC albor-render)
+
+# the metal backend only exists where metal does, and it is the only part gated on apple (AD-16)
+if(APPLE)
+    # gather macos sources, which are the ones that reach metal and the core animation layer
+    file(GLOB_RECURSE MACOS_SOURCES "./*.macos.mm")
+
+    # the metal sources join the library under arc, which manages their object lifetime (§6.3)
+    set_source_files_properties(${MACOS_SOURCES} PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_sources(albor-render-albor PRIVATE ${MACOS_SOURCES})
+    target_link_libraries(albor-render-albor PRIVATE "-framework Metal" "-framework QuartzCore" "-framework Foundation")
+endif()
 
 # the auto target links the archive whole, so the backend installs itself at load without a call (§6.3, AD-26)
 add_library(albor-render-albor-auto INTERFACE)
