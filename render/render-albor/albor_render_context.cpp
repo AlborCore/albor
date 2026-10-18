@@ -199,7 +199,7 @@ namespace albor::render
         // a stroke with no width puts no ink down (§6.2)
         const float half_width = to_device_length(width) * 0.5f;
         if (half_width <= 0.0f)
-            return StrokeEmission{.alpha = 0.0f};
+            return StrokeEmission{.range = {0, 0}, .alpha = 0.0f};
         // the strip folds its lateral coverage around the centre and ramps its ends (nanovg technique)
         return expand_stroke(m_batch, contour, half_width, cap, join, STROKE_MITER_LIMIT, TESS_TOLERANCE);
     }
