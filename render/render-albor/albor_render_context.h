@@ -11,6 +11,7 @@
 #include "render/path_resource.h"
 #include "render/render-albor/albor_batch.h"
 #include "render/render-albor/albor_contour.h"
+#include "render/render-albor/albor_glyph_cache.h"
 #include "render/render_context.h"
 
 namespace albor::render
@@ -20,7 +21,7 @@ namespace albor::render
     {
     public:
         // wrap the batch of the frame being built, which draws logical points onto the physical raster (AD-27)
-        AlborRenderContext(FrameBatch& batch, const Rect& logical_extent, float device_scale);
+        AlborRenderContext(FrameBatch& batch, const Rect& logical_extent, float device_scale, GlyphPathCache* glyph_paths = nullptr);
 
         AlborRenderContext(const AlborRenderContext&) = delete;
         AlborRenderContext& operator=(const AlborRenderContext&) = delete;
@@ -112,6 +113,9 @@ namespace albor::render
 
         // the ratio between the physical and the logical extents (AD-27)
         float m_device_scale;
+
+        // the glyph paths the surface keeps across frames, which this context borrows so a glyph walks once (§6.4, AD-06)
+        GlyphPathCache* m_glyph_paths;
 
         // the scene space transform the later draws land under (§6.2)
         Transform m_transform;

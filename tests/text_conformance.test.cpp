@@ -837,6 +837,76 @@ TEST(EmbeddedTextCallerChecks, AnEmbeddedRunDrawsThroughTheOrdinaryTextCall) {
     resources::FontRegistry::clear();
 }
 
+TEST(EmbeddedTextCallerChecks, AnEmbeddedRunWalksItsOutlinesOnceAcrossFrames) {
+    // arrange a run built twice, which is what two frames of the same text are (§6.1)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    harfbuzz::EmbeddedGlyphProvider provider;
+    const GlyphOutlineResolver build_outline = provider.resolver();
+    std::size_t resolved = 0u;
+    SceneBuilder builder;
+    // the resolver is counted, because not running it twice is the whole claim of a builder owned cache (§6.4, AD-06)
+    builder.set_outline_resolver([&resolved, build_outline](const GlyphOutlineKey& key) {
+        // every call is counted, because the cache is what has to stop a second one (§6.4, AD-06)
+        resolved++;
+        // the outline is built by the provider's own resolver, which is what the count wraps (§6.4)
+        return build_outline(key);
+    });
+    EmbeddedTextNode node;
+    node.m_layout = engine->measure("Albor", 0.0f, 40.0f);
+    ASSERT_NE(node.m_layout.run, nullptr);
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{200.0f, 80.0f}, 1.0f);
+    // act the same tree is built twice, which is the second frame of the same text (§6.1)
+    const std::shared_ptr<const FrameScene> first = builder.build(node, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    ASSERT_NE(first, nullptr);
+    const std::size_t after_first = resolved;
+    const std::shared_ptr<const FrameScene> second = builder.build(node, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    ASSERT_NE(second, nullptr);
+    // assert the first build walked every visible glyph once, which are the misses the cache records (§6.4)
+    EXPECT_EQ(after_first, node.m_layout.run->glyph_count());
+    // assert the second build walked nothing, because the builder's cache answered the same keys (§6.4, AD-06)
+    EXPECT_EQ(resolved, after_first);
+    // assert both scenes carry the same commands, because a cached outline is the very same shape (§6.4)
+    EXPECT_EQ(second->commands(), first->commands());
+    EXPECT_GT(second->commands().size(), 0u);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(EmbeddedTextCallerChecks, ARecorderWithoutACacheStillBuildsItsOutlines) {
+    // arrange a recorder built directly, which is what a caller does when no builder borrows a cache (§6.4, AD-06)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    harfbuzz::EmbeddedGlyphProvider provider;
+    const GlyphOutlineResolver build_outline = provider.resolver();
+    std::size_t resolved = 0u;
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 80.0f}, 1.0f));
+    // the resolver is counted with no cache borrowed, which is the contract the fallback branch keeps (§6.4, AD-06)
+    recorder.set_outline_resolver([&resolved, build_outline](const GlyphOutlineKey& key) {
+        // every call is counted, because a recorder with no cache builds every glyph itself (§6.4)
+        resolved++;
+        // the outline is built by the provider's own resolver, which is what the count wraps (§6.4)
+        return build_outline(key);
+    });
+    // act an embedded run is drawn through the recorder directly (§6.1)
+    const TextLayout layout = engine->measure("Albor", 0.0f, 40.0f);
+    ASSERT_NE(layout.run, nullptr);
+    recorder.draw_text(layout, Point{.x = 0.0f, .y = 0.0f}, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    // assert every glyph was resolved, because nothing was borrowed to answer one (§6.4, AD-06)
+    EXPECT_EQ(resolved, layout.run->glyph_count());
+    EXPECT_EQ(recorder.outline_command_count(), layout.run->glyph_count());
+    // exit
+    resources::FontRegistry::clear();
+}
+
 TEST(EmbeddedTextCallerChecks, AnEmbeddedRunPutsInkOnTheSurfaceThroughTheOrdinaryTextCall) {
     // arrange the same build, drawn onto the software reference (§15, AD-26)
     if (!has_font())

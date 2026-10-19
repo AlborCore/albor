@@ -11,6 +11,7 @@
 
 #include "render/custom_render_node.h"
 #include "render/frame_scene.h"
+#include "render/glyph_outline.h"
 #include "render/image_resource.h"
 #include "render/line_batch.h"
 #include "render/path_resource.h"
@@ -2103,4 +2104,74 @@ TEST(PictureRecorder, APolylineBakesTheTransformIntoItsVertices) {
     const std::vector<Point>& mapped = recorder.commands()[0].polyline_geometry().points;
     ASSERT_EQ(mapped.size(), 3u);
     EXPECT_EQ(mapped[1], (Point{15.0f, 16.0f}));
+}
+
+TEST(GlyphOutlineCacheChecks, AnswersAnOutlineItAlreadyBuilt) {
+    // arrange an empty cache and the identity of one glyph outline (§6.4)
+    GlyphOutlineCache cache;
+    const GlyphOutlineKey key{.font_hash = 7u, .glyph_id = 3u, .font_size = 16.0f};
+    std::size_t built = 0u;
+    // the resolver counts its calls, because not running twice is the claim of a cache (§6.4, AD-06)
+    const GlyphOutlineResolver counting = [&built](const GlyphOutlineKey&) {
+        // one empty outline is built per call, which is enough to pin the caching (§6.4)
+        built++;
+        // the outline carries the key it was asked for, which is what the cache stores it under (§6.4)
+        return std::make_shared<const GlyphOutline>(7u, 3u, 16.0f, GlyphOutlineData{});
+    };
+    // act the same key is looked up twice (§6.4)
+    EXPECT_NE(cache.lookup(key, counting), nullptr);
+    EXPECT_NE(cache.lookup(key, counting), nullptr);
+    // assert the resolver ran once, because the second lookup answered from the cache (§6.4, AD-06)
+    EXPECT_EQ(built, 1u);
+    EXPECT_EQ(cache.count(), 1u);
+}
+
+TEST(GlyphOutlineCacheChecks, AnswersNothingForAnotherIdentity) {
+    // arrange one built outline beside the identities it must not be confused with (§6.4)
+    GlyphOutlineCache cache;
+    const GlyphOutlineResolver building = [](const GlyphOutlineKey& key) {
+        // the outline carries the key it was asked for, which makes every entry its own shape (§6.4)
+        return std::make_shared<const GlyphOutline>(key.font_hash, key.glyph_id, key.font_size, GlyphOutlineData{});
+    };
+    // act the first key is built, and three neighbours of it are asked for (§6.4)
+    const std::shared_ptr<const GlyphOutline> first = cache.lookup(GlyphOutlineKey{.font_hash = 7u, .glyph_id = 3u, .font_size = 16.0f}, building);
+    EXPECT_NE(first, nullptr);
+    EXPECT_NE(cache.lookup(GlyphOutlineKey{.font_hash = 7u, .glyph_id = 4u, .font_size = 16.0f}, building), nullptr);
+    EXPECT_NE(cache.lookup(GlyphOutlineKey{.font_hash = 7u, .glyph_id = 3u, .font_size = 20.0f}, building), nullptr);
+    EXPECT_NE(cache.lookup(GlyphOutlineKey{.font_hash = 8u, .glyph_id = 3u, .font_size = 16.0f}, building), nullptr);
+    // assert the first key still answers its own outline, because no neighbour key aliased onto it (§6.4)
+    EXPECT_EQ(cache.lookup(GlyphOutlineKey{.font_hash = 7u, .glyph_id = 3u, .font_size = 16.0f}, building), first);
+    // assert every identity is held apart, because four keys were built and none answered another (§6.4)
+    EXPECT_EQ(cache.count(), 4u);
+}
+
+TEST(GlyphOutlineCacheChecks, DropsASliceWhenItFills) {
+    // arrange a cache filled to its limit by as many distinct glyphs as a run of scripts draws (§6.4, AD-06)
+    GlyphOutlineCache cache;
+    const GlyphOutlineResolver building = [](const GlyphOutlineKey& key) {
+        // the outline carries the key it was asked for, which makes every entry its own shape (§6.4)
+        return std::make_shared<const GlyphOutline>(key.font_hash, key.glyph_id, key.font_size, GlyphOutlineData{});
+    };
+    for (std::uint32_t index = 0u; index < GlyphOutlineCache::MAXIMUM_CACHED_OUTLINES; index++)
+        EXPECT_NE(cache.lookup(GlyphOutlineKey{.font_hash = 7u, .glyph_id = index, .font_size = 16.0f}, building), nullptr);
+    // assert the cache is holding exactly what the limit allows (§6.4)
+    EXPECT_EQ(cache.count(), GlyphOutlineCache::MAXIMUM_CACHED_OUTLINES);
+    // act one more outline arrives, which a full cache answers by dropping a slice of what it holds (§6.4)
+    EXPECT_NE(cache.lookup(GlyphOutlineKey{.font_hash = 7u, .glyph_id = 99999u, .font_size = 16.0f}, building), nullptr);
+    // assert a slice is gone rather than all of them, because a rebuilt outline is not free (§6.4, AD-06)
+    EXPECT_EQ(cache.count(), GlyphOutlineCache::MAXIMUM_CACHED_OUTLINES - GlyphOutlineCache::MAXIMUM_CACHED_OUTLINES / 8u + 1u);
+}
+
+TEST(GlyphOutlineCacheChecks, DropsEverythingItIsAskedToDrop) {
+    // arrange one cached outline, which the clear below must not answer afterwards (§2.2)
+    GlyphOutlineCache cache;
+    const GlyphOutlineResolver building = [](const GlyphOutlineKey& key) {
+        // the outline carries the key it was asked for, which makes every entry its own shape (§6.4)
+        return std::make_shared<const GlyphOutline>(key.font_hash, key.glyph_id, key.font_size, GlyphOutlineData{});
+    };
+    EXPECT_NE(cache.lookup(GlyphOutlineKey{.font_hash = 7u, .glyph_id = 3u, .font_size = 16.0f}, building), nullptr);
+    // act the cache is cleared, which one test does so its outlines cannot answer another's (§2.2)
+    cache.clear();
+    // assert nothing is held, because the clear dropped every entry (§2.2)
+    EXPECT_EQ(cache.count(), 0u);
 }

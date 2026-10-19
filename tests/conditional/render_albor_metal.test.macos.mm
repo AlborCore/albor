@@ -1222,6 +1222,35 @@ TEST(GlyphPathChecks, OutlinesAGlyphOfThePlatformFace) {
     EXPECT_TRUE(albor::render::platform_glyph_path(spaced.run->lines().front().font, spaced.run->lines().front().glyphs.front().id, 24.0f).points.empty());
 }
 
+TEST(AlborTextChecks, ReusesAWalkedGlyphAcrossTheSameContext) {
+    // arrange a platform run and a context that borrows the backend cache for the surface (§6.4, AD-06)
+    const std::unique_ptr<albor::harfbuzz::HarfbuzzTextEngine> engine = albor::harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("A", 0.0f, 24.0f);
+    ASSERT_FALSE(layout.empty());
+    FrameBatch batch;
+    GlyphPathCache cache;
+    AlborRenderContext context(batch, AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, AlborSize{40.0f, 40.0f}), 1.0f, &cache);
+    // act the glyph is drawn once, which stores it in the cache, and again, which must read it back (§6.4, AD-06)
+    context.draw_text(layout, AlborPoint{.x = 4.0f, .y = 30.0f}, Paint{.fill = Color::rgb(0.1f, 0.2f, 0.3f)});
+    // the first draw produces the batch content the second draw will produce again (§6.4)
+    const std::size_t first_draws = batch.draws.size();
+    const std::size_t first_indices = batch.indices.size();
+    const std::size_t first_vertices = batch.vertices.size();
+    // the cache must now hold the walked glyph, so a second draw can reuse it (§6.4, AD-06)
+    EXPECT_GE(cache.count(), 1u);
+    batch.draws.clear();
+    batch.indices.clear();
+    batch.vertices.clear();
+    context.draw_text(layout, AlborPoint{.x = 4.0f, .y = 30.0f}, Paint{.fill = Color::rgb(0.1f, 0.2f, 0.3f)});
+    // assert the second draw produced the same amount of geometry, because it drew the same path (§6.4)
+    EXPECT_EQ(batch.draws.size(), first_draws);
+    EXPECT_EQ(batch.indices.size(), first_indices);
+    EXPECT_EQ(batch.vertices.size(), first_vertices);
+    // assert the cache still holds at least the glyph it walked, because it was re-read (§6.4, AD-06)
+    EXPECT_GE(cache.count(), 1u);
+}
+
 TEST(AlborTextChecks, DrawsEachGlyphThroughItsOwnOutline) {
     // arrange a run of one glyph, which the context fills as a path
     const std::unique_ptr<albor::harfbuzz::HarfbuzzTextEngine> engine = albor::harfbuzz::HarfbuzzTextEngine::create_platform("");

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -95,6 +96,13 @@ namespace albor
         friend bool operator==(const GlyphOutlineKey& lhs, const GlyphOutlineKey& rhs) = default;
     };
 
+    // the hash a key carries, which mixes its three fields into the bucket the map reads (§6.4)
+    struct GlyphOutlineKeyHash
+    {
+        // hash one key, which is what the map buckets its entries by (§6.4)
+        [[nodiscard]] std::size_t operator()(const GlyphOutlineKey& key) const noexcept;
+    };
+
     // hand out the outline for a key, or null when no font of that hash is registered (§6.4, §15)
     using GlyphOutlineResolver = std::function<std::shared_ptr<const GlyphOutline>(const GlyphOutlineKey&)>;
 
@@ -102,6 +110,9 @@ namespace albor
     class GlyphOutlineCache
     {
     public:
+        // how many outlines the cache keeps, because an unbounded one is a leak an application cannot see (§6.4, AD-06)
+        static constexpr std::size_t MAXIMUM_CACHED_OUTLINES = 4096;
+
         // hand out the outline for a key, building it through the resolver on a miss (§6.4)
         [[nodiscard]] std::shared_ptr<const GlyphOutline> lookup(const GlyphOutlineKey& key, const GlyphOutlineResolver& resolver);
 
@@ -112,7 +123,10 @@ namespace albor
         [[nodiscard]] std::size_t count() const;
 
     private:
+        // drop a slice of the full cache, because an evicted outline rebuilds but not for free (§6.4, AD-06)
+        void drop_a_slice();
+
         // the outlines kept, keyed by the identity of the shape they hold (§6.4)
-        std::vector<std::pair<GlyphOutlineKey, std::shared_ptr<const GlyphOutline>>> m_outlines;
+        std::unordered_map<GlyphOutlineKey, std::shared_ptr<const GlyphOutline>, GlyphOutlineKeyHash> m_outlines;
     };
 } // namespace albor

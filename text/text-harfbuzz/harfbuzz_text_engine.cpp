@@ -336,6 +336,8 @@ namespace albor::harfbuzz
     }
 
     HarfbuzzTextEngine::~HarfbuzzTextEngine() {
+        // the era is dropped here, because every typeface this engine held dies with it (§6.4, AD-06)
+        FontHandle::drop_era();
         // the default face is destroyed through the shared routine, so no hb object outlives the engine (§9.1)
         destroy_face(m_state->face);
         // every resolved family is destroyed the same way, because each owns its own hb objects (§9.1)

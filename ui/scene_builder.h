@@ -81,6 +81,9 @@ namespace albor
         // install the resolver that turns an embedded run into outline commands, which a composition root does (§6.4)
         void set_outline_resolver(GlyphOutlineResolver resolver);
 
+        // borrow the outline cache a longer lived builder keeps, which stops a frame rebuilding a glyph (§6.4, AD-06)
+        void set_outline_cache(GlyphOutlineCache* cache);
+
         // report how many outline commands this recorder emitted, which a test asserts on (§6.4)
         [[nodiscard]] std::size_t outline_command_count() const;
 
@@ -100,8 +103,8 @@ namespace albor
         // the resolver that builds a glyph outline, which is empty until a composition root installs one (§6.4)
         GlyphOutlineResolver m_outline_resolver;
 
-        // the outlines this recorder already built, which a frame would otherwise rebuild per glyph (§6.4)
-        GlyphOutlineCache m_outline_cache;
+        // the outline cache this recorder borrows, which the builder owns so it outlives the frame (§6.4, AD-06)
+        GlyphOutlineCache* m_outline_cache = nullptr;
 
         // the outline commands this recorder emitted, which a test asserts on (§6.4)
         std::size_t m_outline_commands = 0;
@@ -181,6 +184,9 @@ namespace albor
 
         // the resolver embedded text draws through, which a builder without one has none of (§6.4, AD-34)
         GlyphOutlineResolver m_outline_resolver;
+
+        // the outlines every build shares, which a frame would otherwise rebuild per glyph (§6.4, AD-06)
+        GlyphOutlineCache m_outline_cache;
 
         // how many nodes the last build visited, which a test asserts on (§6.1)
         std::size_t m_visited = 0;

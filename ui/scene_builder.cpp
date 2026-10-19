@@ -117,8 +117,8 @@ namespace albor
             for (const ShapedGlyph& glyph : line.glyphs) {
                 // the key is everything that changes the shape, so a cache hit is provably the same outline (§6.4)
                 const GlyphOutlineKey key{.font_hash = layout.run->font_hash(), .glyph_id = glyph.id, .font_size = layout.run->font_size()};
-                // the outline comes from the cache or from the resolver, and a miss builds it once (§6.4)
-                const std::shared_ptr<const GlyphOutline> outline = m_outline_cache.lookup(key, m_outline_resolver);
+                // the outline comes from the borrowed cache, or straight from the resolver without one (§6.4, AD-06)
+                const std::shared_ptr<const GlyphOutline> outline = m_outline_cache != nullptr ? m_outline_cache->lookup(key, m_outline_resolver) : m_outline_resolver(key);
                 // a glyph the build cannot outline draws nothing, which is a refusal rather than a blank (§6.4)
                 if (outline == nullptr || outline->empty())
                     continue;
@@ -135,6 +135,11 @@ namespace albor
     void SceneRecorder::set_outline_resolver(GlyphOutlineResolver resolver) {
         // the resolver belongs to the recorder, which is what a composition root installs (§6.4, §11.3)
         m_outline_resolver = std::move(resolver);
+    }
+
+    void SceneRecorder::set_outline_cache(GlyphOutlineCache* cache) {
+        // the caller keeps the cache alive for this recorder's life, which the builder's own member does (§6.4, AD-06)
+        m_outline_cache = cache;
     }
 
     std::size_t SceneRecorder::outline_command_count() const {
@@ -254,6 +259,8 @@ namespace albor
         SceneRecorder recorder(metrics);
         // the resolver is handed on, because an embedded run expands into outlines during this recording (§6.4, AD-34)
         recorder.set_outline_resolver(m_outline_resolver);
+        // the outline cache is handed on as well, because the recorder itself is built per frame (§6.4, AD-06)
+        recorder.set_outline_cache(&m_outline_cache);
         recorder.set_background(background);
         recorder.save();
         // an invisible tree draws nothing, so the scene carries only the background (§6.1)

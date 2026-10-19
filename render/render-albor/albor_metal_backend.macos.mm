@@ -13,6 +13,7 @@
 
 #include "core/geometry.h"
 #include "render/render-albor/albor_batch.h"
+#include "render/render-albor/albor_glyph_cache.h"
 #include "render/render-albor/albor_render_context.h"
 #include "render/render-albor/albor_shaders.h"
 #include "render/render_context.h"
@@ -261,6 +262,9 @@ namespace albor::render
             // the textures the uploaded images became, keyed on the identifier the factory stamped (AD-06)
             std::unordered_map<std::uint64_t, CachedTexture> m_textures;
 
+            // the glyph paths this surface already walked, which the context borrows so a glyph walks once (§6.4, AD-06)
+            GlyphPathCache m_glyph_paths;
+
             // how many frames this surface has drawn, which the eviction ages the cache by (AD-06)
             std::uint64_t m_frame_counter = 0;
 
@@ -346,9 +350,11 @@ namespace albor::render
             m_batch.uploads.clear();
             m_batch.shadows.clear();
             // the context records logical points onto the physical target, so the device scale is handed to it (AD-27)
-            m_context = std::make_unique<AlborRenderContext>(m_batch, Rect::from_origin_size(Point{0.0f, 0.0f}, m_metrics.logical_size), m_metrics.scale_factor);
-            // the frame counter advances once per frame, which the texture eviction ages the cache by (AD-06)
+            m_context = std::make_unique<AlborRenderContext>(m_batch, Rect::from_origin_size(Point{0.0f, 0.0f}, m_metrics.logical_size), m_metrics.scale_factor, &m_glyph_paths);
+            // the frame counter advances once per frame, which the textures record and the glyph paths age against (AD-06)
             m_frame_counter++;
+            // the glyph paths age against the same counter, which drops the ones no draw reached (§6.4, AD-06)
+            m_glyph_paths.begin_frame(m_frame_counter);
             // the frame is now in flight, which the matching end presents (§6.1)
             m_begun = true;
             return *m_context;

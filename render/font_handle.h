@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 namespace albor
 {
     // an opaque typeface reference, so that no shaping or renderer type reaches a public header (§3.5, §9.1, AD-19)
@@ -10,6 +12,12 @@ namespace albor
 
         // wrap a resolved platform font a renderer needs, such as the core text face the text engine shaped with (§9.1)
         [[nodiscard]] static FontHandle from_object(const void* object);
+
+        // the era every typeface is named in, which a cache keys on so a dead engine is not served (§6.4, AD-06)
+        [[nodiscard]] static std::uint64_t era();
+
+        // drop the era forward, which an engine does when it dies with its typefaces (§6.4, AD-06)
+        static void drop_era();
 
         // report whether the handle refers to a typeface at all (§9.1)
         [[nodiscard]] bool valid() const;
