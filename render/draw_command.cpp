@@ -290,25 +290,36 @@ namespace albor
         switch (kind()) {
         case DrawCommandKind::Rect:
         case DrawCommandKind::RoundedRect:
-            // a rectangle covers exactly the rectangle it was given (§6.2)
-            return rect_geometry().rect;
+            // a rectangle covers the rectangle it was given, mapped by the transform it draws under (§6.2, §6.4)
+            return mapped_bounds(rect_geometry().rect);
         case DrawCommandKind::Polyline: {
             // a polyline is bounded by its own vertices, which is what the run carries (§6.2)
             const std::vector<Point>& points = polyline_geometry().points;
             // a run with no vertex covers nothing, which is the quiet default (§6.2)
             if (points.empty())
                 return Rect{};
-            // the edges start at the first vertex, which every run has (§6.2)
-            float left = points.front().x;
+            // the edges start at the first vertex, placed where the draw puts it (§6.2, §6.4)
+            const Point first = m_transform.apply(points.front());
+            // the left edge starts at the first vertex, which every run has (§6.2)
+            float left = first.x;
+            // the right edge starts at the same vertex (§6.2)
             float right = left;
-            float top = points.front().y;
+            // the top edge starts at the same vertex (§6.2)
+            float top = first.y;
+            // the bottom edge starts at the same vertex (§6.2)
             float bottom = top;
             // every further vertex widens the edges, which is what makes the bound conservative (§6.2)
             for (const Point& point : points) {
-                left = std::min(left, point.x);
-                right = std::max(right, point.x);
-                top = std::min(top, point.y);
-                bottom = std::max(bottom, point.y);
+                // the vertex lands where the transform places it (§6.4)
+                const Point drawn = m_transform.apply(point);
+                // the left edge follows the leftmost vertex (§6.2)
+                left = std::min(left, drawn.x);
+                // the right edge follows the rightmost (§6.2)
+                right = std::max(right, drawn.x);
+                // the top edge follows the topmost (§6.2)
+                top = std::min(top, drawn.y);
+                // the bottom edge follows the bottommost (§6.2)
+                bottom = std::max(bottom, drawn.y);
             }
             // the bound is returned whole (§6.2)
             return Rect{.x = left, .y = top, .width = right - left, .height = bottom - top};
@@ -316,8 +327,10 @@ namespace albor
         case DrawCommandKind::Text: {
             // a run covers its measured extent, which the layout already carries (§9.1)
             const TextLayout& layout = text_geometry().layout;
-            // the size is measured, so the bound is the origin at zero with that extent (§6.2, §9.1)
-            return Rect{.x = 0.0f, .y = 0.0f, .width = layout.size.width, .height = layout.size.height};
+            // the extent starts at the origin the run draws at, which the geometry carries (§6.2, §9.1)
+            const Rect extent = Rect::from_origin_size(text_geometry().origin, Size{.width = layout.size.width, .height = layout.size.height});
+            // the run covers where the transform places that extent (§6.4)
+            return mapped_bounds(extent);
         }
         case DrawCommandKind::LineBatch:
             // a batch has no single rectangle of its own, so it covers the clip it draws under (§6.2)
@@ -328,24 +341,28 @@ namespace albor
             // a missing contour covers nothing, which is the quiet default (§6.4)
             if (path == nullptr || path->points().empty())
                 return Rect{};
+            // the first point is placed under the transform the contour draws under (§6.4, §6.2)
+            const Point first = m_transform.apply(path->points().front());
             // the left edge starts at the first point, which every contour has (§6.4)
-            float left = path->points().front().x;
+            float left = first.x;
             // the right edge starts at the same point (§6.4)
             float right = left;
             // the top edge starts at the same point (§6.4)
-            float top = path->points().front().y;
+            float top = first.y;
             // the bottom edge starts at the same point (§6.4)
             float bottom = top;
             // every further point widens the edges, which is what makes the bound conservative (§6.4)
             for (const Point& point : path->points()) {
+                // the point lands where the retained transform places it (§6.4)
+                const Point drawn = m_transform.apply(point);
                 // the left edge follows the leftmost point (§6.4)
-                left = std::min(left, point.x);
+                left = std::min(left, drawn.x);
                 // the right edge follows the rightmost (§6.4)
-                right = std::max(right, point.x);
+                right = std::max(right, drawn.x);
                 // the top edge follows the topmost (§6.4)
-                top = std::min(top, point.y);
+                top = std::min(top, drawn.y);
                 // the bottom edge follows the bottommost (§6.4)
-                bottom = std::max(bottom, point.y);
+                bottom = std::max(bottom, drawn.y);
             }
             // the bound is returned whole (§6.4)
             return Rect{.x = left, .y = top, .width = right - left, .height = bottom - top};
@@ -354,8 +371,8 @@ namespace albor
             // a picture may draw anything, so it covers the clip entirely (§6.2)
             return clip();
         case DrawCommandKind::Image:
-            // an image covers exactly where it was placed (§6.2)
-            return image_geometry().destination;
+            // an image covers where it was placed, mapped by the transform it draws under (§6.2, §6.4)
+            return mapped_bounds(image_geometry().destination);
         case DrawCommandKind::GlyphOutline: {
             // an outline covers its own points placed at its pen and under its transform (§6.4, §6.2)
             const GlyphOutlineGeometry& geometry = glyph_outline_geometry();
@@ -391,7 +408,8 @@ namespace albor
             return Rect{.x = left, .y = top, .width = right - left, .height = bottom - top};
         }
         case DrawCommandKind::Shadow:
-            return shadow_bounds();
+            // a cast covers the blur reach around its shape, mapped by the transform it draws under (§6.2, §6.4)
+            return mapped_bounds(shadow_bounds());
         }
         // a kind outside the enumeration covers nothing, which is the quiet default (§6.2)
         return Rect{};
@@ -418,7 +436,70 @@ namespace albor
         context.draw_path(geometry.outline->path(), pen.then(m_transform), m_paint);
     }
 
+    bool DrawCommand::uses_the_context_transform(DrawCommandKind kind) {
+        // the retained kinds take the transform as an argument, so composing one here would apply it twice (§6.4)
+        switch (kind) {
+        case DrawCommandKind::LineBatch:
+        case DrawCommandKind::Path:
+        case DrawCommandKind::Picture:
+        case DrawCommandKind::GlyphOutline:
+            return false;
+        default:
+            return true;
+        }
+    }
+
+    bool DrawCommand::draws_under_the_context_transform() const {
+        // a command with no transform of its own composes none, which is every command a frame records (§6.4)
+        if (m_transform == Transform{})
+            return false;
+        // the kinds that take no transform argument draw under the one this command carries (§6.4)
+        return uses_the_context_transform(kind());
+    }
+
+    Rect DrawCommand::mapped_bounds(const Rect& rect) const {
+        // the four corners are mapped and their extremes taken, because a skewed rectangle is a quad (§6.2)
+        const Point corners[] = {Point{.x = rect.x, .y = rect.y}, Point{.x = rect.x + rect.width, .y = rect.y}, Point{.x = rect.x + rect.width, .y = rect.y + rect.height}, Point{.x = rect.x, .y = rect.y + rect.height}};
+        // the bound starts at the first mapped corner, which every rectangle has (§6.2)
+        const Point first = m_transform.apply(corners[0]);
+        // the left edge starts at the first corner (§6.2)
+        float left = first.x;
+        // the right edge starts at the same corner (§6.2)
+        float right = left;
+        // the top edge starts at the same corner (§6.2)
+        float top = first.y;
+        // the bottom edge starts at the same corner (§6.2)
+        float bottom = top;
+        // every further corner widens the edges, which is what makes the bound conservative (§6.2)
+        for (const Point& corner : corners) {
+            // the corner lands where the draw places it (§6.2)
+            const Point drawn = m_transform.apply(corner);
+            // the left edge follows the leftmost corner (§6.2)
+            left = std::min(left, drawn.x);
+            // the right edge follows the rightmost (§6.2)
+            right = std::max(right, drawn.x);
+            // the top edge follows the topmost (§6.2)
+            top = std::min(top, drawn.y);
+            // the bottom edge follows the bottommost (§6.2)
+            bottom = std::max(bottom, drawn.y);
+        }
+        // the bound is returned whole (§6.2)
+        return Rect{.x = left, .y = top, .width = right - left, .height = bottom - top};
+    }
+
     void DrawCommand::replay(RenderContext& context) const {
+        // a command whose primitive takes no transform draws under the one it carries, composed with the context's (§6.4)
+        if (!draws_under_the_context_transform())
+            return replay_primitive(context);
+        // the context is pushed first, because a transform must not outlive the command that asked for it (§6.2)
+        context.save();
+        // the command transform sits under the context's, which is how a picture inside a picture composes (§6.4)
+        context.set_transform(m_transform.then(context.transform()));
+        replay_primitive(context);
+        context.restore();
+    }
+
+    void DrawCommand::replay_primitive(RenderContext& context) const {
         // the switch is the one place a kind is drawn, which keeps a frame and a picture in agreement (§6.1, §6.4)
         switch (kind()) {
         // a shape draws through its own primitive, which keeps the radii a plain rectangle has no use for (§6.2)

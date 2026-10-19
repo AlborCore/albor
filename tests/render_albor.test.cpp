@@ -891,6 +891,55 @@ TEST(AlborRenderContextChecks, TreatsANonPositiveDeviceScaleAsUnit) {
     EXPECT_EQ(context.device_transform(), Transform{});
 }
 
+TEST(DrawCommandReplayChecks, ADrawingRecordedUnderATransformLandsWhereTheTransformPutsIt) {
+    // arrange a picture holding one square recorded at a translation, which is what a transformed subtree records (§6.4)
+    PictureRecorder recorder;
+    recorder.set_transform(Transform::translation(20.0f, 30.0f));
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(5u, recorder.commands());
+    // the batch the context accumulates into stands for the frame being built (§6.3)
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act the picture draws under no transform of its own, so only the recorded one can place the square (§6.4)
+    context.draw_picture(picture, Transform{});
+    // assert the frame carries geometry, because a picture that drops its content draws nothing (§6.4)
+    ASSERT_FALSE(batch.vertices.empty());
+    // every vertex lands inside the translated square, which is where the recorder transform put it (§6.2, §6.4)
+    for (const BatchVertex& vertex : batch.vertices) {
+        // the fill straddles the boundary with its fringe, so the square reaches one pixel past its edge (§6.3)
+        EXPECT_GE(vertex.x, 20.0f - 1.5f);
+        EXPECT_LE(vertex.x, 30.0f + 1.5f);
+        // the vertical edge is translated by the same transform (§6.1)
+        EXPECT_GE(vertex.y, 30.0f - 1.5f);
+        EXPECT_LE(vertex.y, 40.0f + 1.5f);
+    }
+}
+
+TEST(DrawCommandReplayChecks, ADrawingRecordedWithNoTransformStaysWhereItWasRecorded) {
+    // arrange the same square recorded under no transform, which keeps the two cases comparable (§6.4)
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(6u, recorder.commands());
+    // the batch the context accumulates into stands for the frame being built (§6.3)
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.draw_picture(picture, Transform{});
+    // assert the frame carries geometry, because the picture holds one shape (§6.4)
+    ASSERT_FALSE(batch.vertices.empty());
+    // every vertex stays around the origin, because nothing moved the square (§6.2)
+    for (const BatchVertex& vertex : batch.vertices) {
+        // the fill straddles the boundary with its fringe, so the square reaches one pixel past its edge (§6.3)
+        EXPECT_GE(vertex.x, 0.0f - 1.5f);
+        EXPECT_LE(vertex.x, 10.0f + 1.5f);
+        // the vertical edge sits around the origin as well (§6.2)
+        EXPECT_GE(vertex.y, 0.0f - 1.5f);
+        EXPECT_LE(vertex.y, 10.0f + 1.5f);
+    }
+}
+
 TEST(AlborRenderContextChecks, SavePushesAndRestorePopsTheWholeState) {
     // arrange
     FrameBatch batch;

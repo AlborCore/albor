@@ -119,9 +119,24 @@ namespace
         // the destination of every drawn image, parallel to the images
         std::vector<Rect> drawn_image_destinations;
 
-        void save() override { save_count++; }
+        void save() override {
+            save_count++;
+            // the state is pushed, because a restore is what a caller reads back afterwards (§6.2)
+            states.push_back(State{.transform = current, .clip = current_clip, .opacity = current_opacity});
+        }
 
-        void restore() override { restore_count++; }
+        void restore() override {
+            restore_count++;
+            // a restore with nothing pushed is a no operation, like every backend (§6.2)
+            if (states.empty())
+                return;
+            // the state the matching save pushed becomes current again (§6.2)
+            const State state = states.back();
+            states.pop_back();
+            current = state.transform;
+            current_clip = state.clip;
+            current_opacity = state.opacity;
+        }
 
         void set_transform(const Transform& transform) override {
             transforms.push_back(transform);
@@ -130,11 +145,15 @@ namespace
 
         [[nodiscard]] const Transform& transform() const override { return current; }
 
-        void clip_rect(const Rect& rect) override { clips.push_back(rect); }
+        void clip_rect(const Rect& rect) override {
+            clips.push_back(rect);
+            current_clip = rect;
+        }
 
         void clip_rounded_rect(const Rect& rect, float radius) override {
             clips.push_back(rect);
             rounded_radii.push_back(radius);
+            current_clip = rect;
         }
 
         [[nodiscard]] const Rect& clip() const override { return current_clip; }
@@ -199,6 +218,19 @@ namespace
         }
 
     private:
+        // the state one save pushed, which the matching restore returns to (§6.2)
+        struct State
+        {
+            // the transform at the time of the save
+            Transform transform;
+
+            // the clip at the time of the save
+            Rect clip;
+
+            // the opacity at the time of the save
+            float opacity = 1.0f;
+        };
+
         // the transform the surface reads back
         Transform current;
 
@@ -207,6 +239,9 @@ namespace
 
         // the opacity the last set wrote, which a test asserts against (§6.1)
         float current_opacity = 1.0f;
+
+        // the pushed states, which a restore pops (§6.2)
+        std::vector<State> states;
     };
 
     // the surface test double, which hands out the context above and counts its frames (§6.2)
@@ -1585,6 +1620,47 @@ TEST(PictureRecorder, RestoreWithoutASavedStateKeepsTheTransform) {
     EXPECT_EQ(recorder.transform(), (Transform::translation(5.0f, 6.0f)));
 }
 
+TEST(PictureRecorder, AClipIsRecordedInTheSpaceTheGeometryIsPlacedIn) {
+    // arrange a recorder standing at a translation, which is what a transformed subtree holds (§6.4)
+    PictureRecorder recorder;
+    recorder.set_transform(Transform::translation(100.0f, 20.0f));
+    // act the clip is declared in local coordinates, like the geometry below it (§6.2)
+    recorder.clip_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 40.0f}));
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 40.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // assert the clip is held where the content that it cuts is placed, because both travel in picture space (§6.4)
+    EXPECT_EQ(recorder.clip(), (Rect{.x = 100.0f, .y = 20.0f, .width = 50.0f, .height = 40.0f}));
+    // assert the command carries that clip, so the replay scissors the shape it actually draws (§6.2, §6.4)
+    ASSERT_EQ(recorder.commands().size(), 1u);
+    EXPECT_EQ(recorder.commands()[0].clip(), (Rect{.x = 100.0f, .y = 20.0f, .width = 50.0f, .height = 40.0f}));
+}
+
+TEST(PictureRecorder, ARoundedClipScalesItsRadiusWithTheTransform) {
+    // arrange a recorder standing at a doubling scale, which a scaled subtree holds (§6.4)
+    PictureRecorder recorder;
+    recorder.set_transform(Transform::scaling(2.0f, 2.0f));
+    // act a rounded clip is declared in local coordinates (§6.2)
+    recorder.clip_rounded_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), 3.0f);
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // assert the clip covers the scaled square, because the geometry it cuts is scaled the same way (§6.4)
+    ASSERT_EQ(recorder.commands().size(), 1u);
+    EXPECT_EQ(recorder.commands()[0].clip(), (Rect{.x = 0.0f, .y = 0.0f, .width = 20.0f, .height = 20.0f}));
+    // assert the radius doubled with the extent, because a scaled corner keeps its shape (§6.2)
+    EXPECT_FLOAT_EQ(recorder.commands()[0].clip_radius(), 6.0f);
+}
+
+TEST(PictureRecorder, AShadowCarriesTheTransformItWasRecordedUnder) {
+    // arrange a recorder standing at a translation, which a transformed subtree holds (§6.4)
+    PictureRecorder recorder;
+    recorder.set_transform(Transform::translation(4.0f, 5.0f));
+    // act a cast is drawn at local coordinates, which the transform places (§6.2)
+    recorder.draw_shadow(Rect::from_origin_size(Point{1.0f, 2.0f}, Size{10.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgb(0.0f, 0.0f, 0.0f), .offset = Point{0.0f, 0.0f}, .blur = 2.0f});
+    // assert the cast carries the transform, because a cast is placed like every other draw (§6.4)
+    ASSERT_EQ(recorder.commands().size(), 1u);
+    EXPECT_EQ(recorder.commands()[0].transform(), Transform::translation(4.0f, 5.0f));
+    // assert the bound covers the reach where the transform places it, which is six pixels each way (§6.2)
+    EXPECT_EQ(recorder.commands()[0].bounds(), (Rect{.x = -1.0f, .y = 1.0f, .width = 22.0f, .height = 22.0f}));
+}
+
 TEST(PictureRecorder, EachClipKindNarrowsToTheRectangleItWasGiven) {
     // arrange
     PictureRecorder recorder;
@@ -2092,18 +2168,122 @@ TEST(PictureRecorder, AZeroOpacityStillRecordsAShape) {
     EXPECT_FLOAT_EQ(recorder.commands()[0].paint().fill.alpha, 0.0f);
 }
 
-TEST(PictureRecorder, APolylineBakesTheTransformIntoItsVertices) {
+TEST(PictureRecorder, APolylineKeepsItsVerticesAndCarriesTheTransform) {
     // arrange a recorder standing at a translation, which is what a nested composition holds (§6.4)
     PictureRecorder recorder;
     recorder.set_transform(Transform::translation(5.0f, 6.0f));
-    // act a polyline is drawn through local vertices, which the replay cannot remap (§6.2)
+    // act a polyline is drawn through local vertices, which the replay places under the transform (§6.2)
     const Point points[] = {{0.0f, 0.0f}, {10.0f, 10.0f}, {10.0f, 0.0f}};
     recorder.draw_polyline(points, StrokeStyle{});
-    // assert the recorded run carries the mapped vertices, because the transform is baked (§6.4)
+    // assert the run keeps the vertices it was given, because the transform travels beside them (§6.4)
     ASSERT_EQ(recorder.commands().size(), 1u);
-    const std::vector<Point>& mapped = recorder.commands()[0].polyline_geometry().points;
-    ASSERT_EQ(mapped.size(), 3u);
-    EXPECT_EQ(mapped[1], (Point{15.0f, 16.0f}));
+    const std::vector<Point>& kept = recorder.commands()[0].polyline_geometry().points;
+    ASSERT_EQ(kept.size(), 3u);
+    EXPECT_EQ(kept[1], (Point{10.0f, 10.0f}));
+    // assert the command carries the transform, which is what places those vertices at replay (§6.4)
+    EXPECT_EQ(recorder.commands()[0].transform(), Transform::translation(5.0f, 6.0f));
+    // assert the bound is the mapped run, because a bound reports where the command draws (§6.2)
+    EXPECT_EQ(recorder.commands()[0].bounds(), (Rect{.x = 5.0f, .y = 6.0f, .width = 10.0f, .height = 10.0f}));
+}
+
+TEST(DrawCommandPlacementChecks, ARunBoundStartsAtTheOriginItWasRecordedAt) {
+    // arrange a run measured at a size, which a text command places at its box origin (§9.1, §6.2)
+    const TextLayout layout{.size = Size{.width = 40.0f, .height = 10.0f}};
+    // act the run is recorded at an origin, which is where its first line starts (§9.1)
+    const DrawCommand command = DrawCommand::text(layout, Point{30.0f, 50.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // assert the bound starts at that origin instead of the scene origin, which is where the run draws (§6.2)
+    EXPECT_EQ(command.bounds(), (Rect{.x = 30.0f, .y = 50.0f, .width = 40.0f, .height = 10.0f}));
+}
+
+TEST(DrawCommandPlacementChecks, ARunBoundFollowsTheTransformTheRunWasRecordedWith) {
+    // arrange the same run, recorded under a doubling scale (§6.4)
+    const TextLayout layout{.size = Size{.width = 40.0f, .height = 10.0f}};
+    DrawCommand command = DrawCommand::text(layout, Point{30.0f, 50.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // act the transform is stamped, which is what a scaled subtree does (§6.1)
+    command.set_transform(Transform::scaling(2.0f, 2.0f));
+    // assert the bound is the scaled run box, because the run draws at the size the transform gives it (§6.2)
+    EXPECT_EQ(command.bounds(), (Rect{.x = 60.0f, .y = 100.0f, .width = 80.0f, .height = 20.0f}));
+}
+
+TEST(DrawCommandPlacementChecks, AnImageBoundFollowsTheTransformItWasRecordedWith) {
+    // arrange one opaque pixel and the destination it fills (§6.4)
+    const std::vector<std::uint8_t> pixels{255u, 255u, 255u, 255u};
+    const std::shared_ptr<const ImageResource> image = std::make_shared<const ImageResource>(21u, 1u, 1u, ImageFormat::RGBA8, pixels);
+    // act the image is recorded at a destination under a translation (§6.4)
+    DrawCommand command = DrawCommand::image(image, Rect{.x = 10.0f, .y = 20.0f, .width = 8.0f, .height = 6.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    command.set_transform(Transform::translation(5.0f, 7.0f));
+    // assert the bound is the destination where the transform places it (§6.2)
+    EXPECT_EQ(command.bounds(), (Rect{.x = 15.0f, .y = 27.0f, .width = 8.0f, .height = 6.0f}));
+}
+
+TEST(DrawCommandPlacementChecks, APathBoundFollowsTheRetainedTransform) {
+    // arrange a triangle contour, which a scene records with a transform (§6.4)
+    const std::vector<PathVerb> verbs{PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const std::vector<Point> points{Point{0.0f, 0.0f}, Point{10.0f, 0.0f}, Point{0.0f, 10.0f}};
+    // act the contour is placed by the transform the retained draw carries (§6.4)
+    const DrawCommand command = DrawCommand::path(std::make_shared<const PathResource>(9u, verbs, points), Transform::translation(20.0f, 30.0f), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // assert the bound is where the replay draws the contour, not where its points were authored (§6.2)
+    EXPECT_EQ(command.bounds(), (Rect{.x = 20.0f, .y = 30.0f, .width = 10.0f, .height = 10.0f}));
+}
+
+TEST(DrawCommandPlacementChecks, ADrawingCommandReplaysUnderTheTransformItCarries) {
+    // arrange a rectangle command placed under a translation, which a flattened picture records (§6.4)
+    DrawCommand command = DrawCommand::rectangle(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    command.set_transform(Transform::translation(5.0f, 6.0f));
+    TestRenderContext context;
+    // act the command draws itself, which is what stage two does (§6.1)
+    command.replay(context);
+    // assert the context adopted the transform around the draw, because the primitive takes none (§6.4)
+    ASSERT_EQ(context.transforms.size(), 1u);
+    EXPECT_EQ(context.transforms.front(), Transform::translation(5.0f, 6.0f));
+    // assert the state is balanced, because a transform must not outlive its command (§6.2)
+    EXPECT_EQ(context.save_count, 1u);
+    EXPECT_EQ(context.restore_count, 1u);
+    // assert the context stands where it did, because a restore that did nothing would leak the transform (§6.2)
+    EXPECT_EQ(context.transform(), Transform{});
+    // assert the primitive still drew once, which is what the transform is for (§6.2)
+    ASSERT_EQ(context.drawn_rects.size(), 1u);
+}
+
+TEST(DrawCommandPlacementChecks, ADrawingCommandWithNoTransformDrawsWithoutAState) {
+    // arrange a rectangle command that carries no transform, which is every command a frame records (§6.4)
+    const DrawCommand command = DrawCommand::rectangle(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    TestRenderContext context;
+    // act the command draws itself (§6.1)
+    command.replay(context);
+    // assert no state was pushed, because an identity transform costs nothing (§6.2)
+    EXPECT_EQ(context.save_count, 0u);
+    EXPECT_EQ(context.transforms.size(), 0u);
+    EXPECT_EQ(context.drawn_rects.size(), 1u);
+}
+
+TEST(DrawCommandPlacementChecks, ARetainedCommandIsNotTransformedTwice) {
+    // arrange a path command that already takes its transform as an argument (§6.4)
+    const std::vector<PathVerb> verbs{PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const std::vector<Point> points{Point{0.0f, 0.0f}, Point{10.0f, 0.0f}, Point{0.0f, 10.0f}};
+    const DrawCommand command = DrawCommand::path(std::make_shared<const PathResource>(3u, verbs, points), Transform::translation(7.0f, 8.0f), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    TestRenderContext context;
+    // act the command draws itself (§6.1)
+    command.replay(context);
+    // assert the context was left alone, because composing the transform here would apply it twice (§6.4)
+    EXPECT_EQ(context.save_count, 0u);
+    EXPECT_EQ(context.transforms.size(), 0u);
+    // assert the path received its transform once, as the primitive argument (§6.4)
+    ASSERT_EQ(context.drawn_path_transforms.size(), 1u);
+    EXPECT_EQ(context.drawn_path_transforms.front(), Transform::translation(7.0f, 8.0f));
+}
+
+TEST(DrawCommandPlacementChecks, ADrawingCommandInANestedPictureComposesTheTransforms) {
+    // arrange a rectangle command carrying its own transform, replayed under a placed context (§6.4)
+    DrawCommand command = DrawCommand::rectangle(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    command.set_transform(Transform::translation(2.0f, 3.0f));
+    TestRenderContext context;
+    context.set_transform(Transform::translation(100.0f, 200.0f));
+    // act
+    command.replay(context);
+    // assert the command transform sits under the context's, so the inner picture lands inside the outer one (§6.4)
+    ASSERT_EQ(context.transforms.size(), 2u);
+    EXPECT_EQ(context.transforms.back(), Transform::translation(2.0f, 3.0f).then(Transform::translation(100.0f, 200.0f)));
 }
 
 TEST(GlyphOutlinePlacementChecks, BoundsFollowTheTransformTheGlyphWasRecordedWith) {

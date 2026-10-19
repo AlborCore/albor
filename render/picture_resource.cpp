@@ -1,6 +1,7 @@
 #include "render/picture_resource.h"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace albor
@@ -59,13 +60,54 @@ namespace albor
     }
 
     void PictureRecorder::clip_rect(const Rect& rect) {
+        // the clip is recorded in picture space, because the geometry it cuts is placed there (§6.4, §6.2)
+        const Rect placed = mapped_rect(rect);
         // the clip narrows rather than replaces, because a nested clip may only ever cut more away (§6.2)
-        clip_to_rect(m_clip, rect);
+        clip_to_rect(m_clip, placed);
     }
 
     void PictureRecorder::clip_rounded_rect(const Rect& rect, float radius) {
-        // a rounded clip keeps its radius, which the replay scissors by (§6.2)
-        clip_to_rounded_rect(m_clip, rect, radius);
+        // the clip is recorded in picture space, because the geometry it cuts is placed there (§6.4, §6.2)
+        const Rect placed = mapped_rect(rect);
+        // the radius scales with the transform, because a scaled picture rounds its corners by the same factor (§6.2)
+        clip_to_rounded_rect(m_clip, placed, radius * transform_scale());
+    }
+
+    Rect PictureRecorder::mapped_rect(const Rect& rect) const {
+        // the four corners are mapped and their extremes taken, because a skewed rectangle is a quad (§6.4)
+        const Point corners[] = {Point{.x = rect.x, .y = rect.y}, Point{.x = rect.x + rect.width, .y = rect.y}, Point{.x = rect.x + rect.width, .y = rect.y + rect.height}, Point{.x = rect.x, .y = rect.y + rect.height}};
+        // the bound starts at the first mapped corner, which every rectangle has (§6.2)
+        const Point first = m_transform.apply(corners[0]);
+        // the left edge starts at the first corner (§6.2)
+        float left = first.x;
+        // the right edge starts at the same corner (§6.2)
+        float right = left;
+        // the top edge starts at the same corner (§6.2)
+        float top = first.y;
+        // the bottom edge starts at the same corner (§6.2)
+        float bottom = top;
+        // every further corner widens the edges, which a skewed clip bounds conservatively (§6.2)
+        for (const Point& corner : corners) {
+            // the corner lands where the transform places it (§6.4)
+            const Point drawn = m_transform.apply(corner);
+            // the left edge follows the leftmost corner (§6.2)
+            left = std::min(left, drawn.x);
+            // the right edge follows the rightmost corner (§6.2)
+            right = std::max(right, drawn.x);
+            // the top edge follows the topmost corner (§6.2)
+            top = std::min(top, drawn.y);
+            // the bottom edge follows the bottommost corner (§6.2)
+            bottom = std::max(bottom, drawn.y);
+        }
+        // the bound is returned whole (§6.2)
+        return Rect{.x = left, .y = top, .width = right - left, .height = bottom - top};
+    }
+
+    float PictureRecorder::transform_scale() const {
+        // the area scale is the determinant, which is what a radius follows under a uniform transform (§6.4)
+        const float determinant = m_transform.scale_x * m_transform.scale_y - m_transform.skew_x * m_transform.skew_y;
+        // a collapsed transform scales the radius to nothing, because the clip covers nothing (§6.2)
+        return std::sqrt(std::abs(determinant));
     }
 
     const Rect& PictureRecorder::clip() const {
@@ -94,14 +136,8 @@ namespace albor
     }
 
     void PictureRecorder::draw_polyline(const std::span<const Point>& points, const StrokeStyle& stroke) {
-        // every vertex is mapped through the recorder transform now, because the replay cannot ask where (§6.4)
-        std::vector<Point> mapped;
-        mapped.reserve(points.size());
-        // the run keeps the shape the transform cooked, which is what stays readable in one pass (§6.4)
-        for (const Point& point : points)
-            mapped.push_back(m_transform.apply(point));
-        // the mapped polyline records as the vertex run the replay joins (§6.2)
-        record(DrawCommand::polyline(mapped, stroke));
+        // the vertices stay raw, because the transform travels beside them and the replay applies it (§6.4)
+        record(DrawCommand::polyline(points, stroke));
     }
 
     void PictureRecorder::draw_shadow(const Rect& rect, float radius, const Shadow& shadow) {
@@ -143,8 +179,8 @@ namespace albor
             stored.set_clip(m_clip.rect);
             // the radius rides with the clip, which a rounded clip scissors by (§6.2)
             stored.set_clip_radius(m_clip.radius);
-            // the stored command joins the list in recording order (§6.4)
-            record(std::move(stored));
+            // the stored command joins the list in recording order, placed by the transform it carries (§6.4)
+            record(std::move(stored), true);
         }
     }
 
@@ -173,6 +209,11 @@ namespace albor
     }
 
     void PictureRecorder::record(DrawCommand command) {
+        // a command the recorder built draws under the transform the recorder stands at (§6.4)
+        record(std::move(command), false);
+    }
+
+    void PictureRecorder::record(DrawCommand command, bool placed) {
         // every command carries the clip the recorder stood at, because the replay scissors to it (§6.2)
         command.set_clip(m_clip.rect);
         // the radius rides with the clip, which a rounded clip scissors by (§6.2)
@@ -183,8 +224,8 @@ namespace albor
         // a fully opaque context leaves every paint alone, which is the common case (§6.1)
         if (m_opacity < 1.0f)
             command.scale_alpha(m_opacity);
-        // a shape command draws under the transform the recorder stands at (§6.4)
-        if (command.kind() == DrawCommandKind::Rect || command.kind() == DrawCommandKind::RoundedRect || command.kind() == DrawCommandKind::Text || command.kind() == DrawCommandKind::Image)
+        // a placed command keeps the transform it composed, and a new one takes the recorder's (§6.4)
+        if (!placed && DrawCommand::uses_the_context_transform(command.kind()))
             command.set_transform(m_transform);
         // every accepted command is kept, because the picture replays in order (§6.4)
         m_commands.push_back(std::move(command));

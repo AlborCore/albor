@@ -139,6 +139,15 @@ namespace albor
         // record a command after skipping the ones that would draw nothing (§6.4)
         void record(DrawCommand command);
 
+        // record a command, stamping the recorder transform unless a picture already placed it (§6.4)
+        void record(DrawCommand command, bool placed);
+
+        // map a rectangle through the recorder transform, which keeps the clip in picture space (§6.2, §6.4)
+        [[nodiscard]] Rect mapped_rect(const Rect& rect) const;
+
+        // report the factor the recorder transform scales lengths by, which a clip radius follows (§6.2)
+        [[nodiscard]] float transform_scale() const;
+
         // the current transform the commands capture (§6.2)
         Transform m_transform;
 

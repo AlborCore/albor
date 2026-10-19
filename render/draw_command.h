@@ -206,6 +206,9 @@ namespace albor
         // build a retained image command (§6.4, AD-06)
         [[nodiscard]] static DrawCommand image(std::shared_ptr<const ImageResource> image, Rect destination, Paint paint);
 
+        // report whether a kind's primitive takes no transform, so its command has to compose one (§6.4)
+        [[nodiscard]] static bool uses_the_context_transform(DrawCommandKind kind);
+
         // build a glyph outline command, which is how embedded text reaches the surface (§6.4, AD-34)
         [[nodiscard]] static DrawCommand glyph_outline(std::shared_ptr<const GlyphOutline> outline, Point position, Paint paint, Transform transform = Transform{});
 
@@ -287,6 +290,15 @@ namespace albor
     private:
         // read the area a cast covers, which is the shape plus the reach of its blur (§6.2)
         [[nodiscard]] Rect shadow_bounds() const;
+
+        // report whether the primitive takes no transform of its own, so the command composes one for it (§6.4)
+        [[nodiscard]] bool draws_under_the_context_transform() const;
+
+        // map a geometry space rectangle through the command transform, which keeps a bound conservative (§6.2)
+        [[nodiscard]] Rect mapped_bounds(const Rect& rect) const;
+
+        // draw the command into the context, which every kind dispatches from here (§6.1)
+        void replay_primitive(RenderContext& context) const;
 
         // build a command over its geometry, so the clip and the transform are stamped after (§6.2)
         explicit DrawCommand(Geometry geometry, Paint paint);

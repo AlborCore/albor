@@ -408,12 +408,17 @@ namespace albor::skia
             return;
         // the list nests under the transform the scene gave it, like any other retained draw (§6.4)
         m_canvas->save();
-        // the picture transform sits under the current matrix, so its commands land where the scene put them (§6.4)
-        m_canvas->concat(to_skia_matrix(transform));
+        // the picture transform applies before the current one, so its commands land where the scene put them (§6.4)
+        const Transform outer = m_transform;
+        m_transform = transform.then(outer);
+        // the canvas matrix is rebuilt from that transform, so the bookkeeping and the canvas agree (§6.2, §6.4)
+        set_transform(m_transform);
         // the recorded clip applies to the list, and a narrower one opens a switch of its own (§6.2)
         replay_commands(picture->commands(), *this, m_clip);
         // the list is closed, because a picture draws inside the scope it was given (§6.2)
         m_canvas->restore();
+        // the transform the picture was drawn under is restored with the canvas (§6.4)
+        m_transform = outer;
     }
 
     void SkiaRenderContext::draw_image(const std::shared_ptr<const ImageResource>& image, const Rect& destination, const Paint& paint) {

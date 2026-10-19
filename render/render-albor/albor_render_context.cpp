@@ -307,15 +307,36 @@ namespace albor::render
         const Rect caster = Rect::from_origin_size(Point{.x = rect.x + shadow.offset.x, .y = rect.y + shadow.offset.y}, Size{.width = rect.width, .height = rect.height});
         // the cast is described in device space, where the blur kernel measures its sigma (§6.3, AD-27)
         const Transform device = device_transform();
-        const Point origin = device.apply(Point{.x = caster.x, .y = caster.y});
-        const Point corner = device.apply(Point{.x = caster.x + caster.width, .y = caster.y + caster.height});
+        // the four corners are mapped, because a skewed caster is a quad that two corners cannot bound (§6.2, AD-27)
+        const Point corners[] = {Point{.x = caster.x, .y = caster.y}, Point{.x = caster.x + caster.width, .y = caster.y}, Point{.x = caster.x + caster.width, .y = caster.y + caster.height}, Point{.x = caster.x, .y = caster.y + caster.height}};
+        // the first mapped corner starts every edge of the bound (§6.2)
+        const Point first = device.apply(corners[0]);
+        // the left edge starts at the first corner (§6.2)
+        float left = first.x;
+        // the right edge starts at the same corner (§6.2)
+        float right = left;
+        // the top edge starts at the same corner (§6.2)
+        float top = first.y;
+        // the bottom edge starts at the same corner (§6.2)
+        float bottom = top;
+        // every further corner widens the edges, which keeps the cast around the shape it came from (§6.2)
+        for (const Point& corner : corners) {
+            // the corner lands where the transform places it (§6.2)
+            const Point drawn = device.apply(corner);
+            // the left edge follows the leftmost corner (§6.2)
+            left = std::min(left, drawn.x);
+            // the right edge follows the rightmost corner (§6.2)
+            right = std::max(right, drawn.x);
+            // the top edge follows the topmost corner (§6.2)
+            top = std::min(top, drawn.y);
+            // the bottom edge follows the bottommost corner (§6.2)
+            bottom = std::max(bottom, drawn.y);
+        }
         // the radius and the blur scale with the device, which keeps the cast the same logical size (AD-27)
         const float scale = std::sqrt(std::abs(device.scale_x * device.scale_y - device.skew_x * device.skew_y));
         BatchShadow cast;
-        // the two mapped corners normalise, so a mirrored transform cannot produce a negative extent (§6.2)
-        const float left = std::min(origin.x, corner.x);
-        const float top = std::min(origin.y, corner.y);
-        cast.rect = Rect::from_origin_size(Point{.x = left, .y = top}, Size{.width = std::abs(corner.x - origin.x), .height = std::abs(corner.y - origin.y)});
+        // the mapped box is the silhouette the blur reads, which a skewed caster bounds conservatively (§6.2)
+        cast.rect = Rect{.x = left, .y = top, .width = right - left, .height = bottom - top};
         // the radius clamps to half the shorter side, which the silhouette it feeds also assumes (§6.2)
         cast.radius = std::min(radius * scale, std::min(cast.rect.width, cast.rect.height) * 0.5f);
         // the reference treats the blur radius as twice the sigma, which the kernel matches (§6.2, AD-26)
@@ -392,9 +413,9 @@ namespace albor::render
         // a batch with no segment draws nothing (§6.4, AD-06)
         if (!drawable() || !batch || batch->segment_count() == 0)
             return;
-        // the retained transform lands under the current one, which places the segments where the scene put them (§6.4)
+        // the retained transform applies before the current one, which is where the scene placed the segments (§6.4)
         const Transform outer = m_transform;
-        m_transform = outer.then(transform);
+        m_transform = transform.then(outer);
         // the batch coalesces into one draw, which is what makes its replay constant time (§6.4, AD-06)
         const std::uint32_t index_begin = static_cast<std::uint32_t>(m_batch.indices.size());
         // every consecutive point pair is one open two point contour, which the stroke caps at both ends (§6.4)
@@ -426,9 +447,9 @@ namespace albor::render
         // a path with no command draws nothing (§6.4, AD-06)
         if (!drawable() || !path || path->verbs().empty())
             return;
-        // the retained transform lands under the current one, which places the contour where the scene put it (§6.4)
+        // the retained transform applies before the current one, which is where the scene placed the contour (§6.4)
         const Transform outer = m_transform;
-        m_transform = outer.then(transform);
+        m_transform = transform.then(outer);
         // every contour of the stream fills first, as one group, so an inner contour cuts a hole (§6.4)
         std::vector<Contour> contours = build_contours(path->verbs(), path->points());
         // the contours land in device space once, which the fill and the stroke both measure in (§6.3, AD-27)
@@ -456,9 +477,9 @@ namespace albor::render
         // a picture with no command draws nothing (§6.4, AD-06)
         if (!drawable() || !picture || picture->empty())
             return;
-        // the picture nests under the transform the scene gave it, like any other retained draw (§6.4)
+        // the picture nests under the transform the scene gave it, which applies before the current one (§6.4)
         const Transform outer = m_transform;
-        m_transform = outer.then(transform);
+        m_transform = transform.then(outer);
         // the command list replays through this context, which is the one replay a frame and a picture share (§6.1, §6.4)
         replay_commands(picture->commands(), *this, m_extent);
         // the transform the draw was recorded under is restored (§6.4)

@@ -508,8 +508,13 @@ namespace albor::blend2d
             m_context->save();
             m_context->applyTransform(to_blend_matrix(transform));
         }
+        // the bookkeeping follows the context, so a command that reads the transform back sees the same one (§6.2)
+        const Transform outer = m_transform;
+        m_transform = transform.then(outer);
         // the recorded clip applies to the list, and a narrower one opens a switch of its own (§6.2)
         replay_commands(picture->commands(), *this, m_clip);
+        // the transform the picture was drawn under is restored with the context (§6.4)
+        m_transform = outer;
         // the list is closed, because a picture draws inside the scope it was given (§6.2)
         if (m_context != nullptr)
             m_context->restore();

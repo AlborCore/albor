@@ -314,6 +314,43 @@ TEST(SkiaRenderContextTextChecks, DrawingManyLinesOfOneRunCostsNoAllocation) {
     EXPECT_EQ(repeat_allocations, 0u);
 }
 
+TEST(SkiaRenderContextPictureChecks, DrawsAPictureUnderTheTransformTheSceneGaveIt) {
+    // arrange a picture holding one square, recorded in its own space (§6.4)
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(11u, recorder.commands());
+    sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
+    SkiaRenderContext context(surface->getCanvas(), 1.0f);
+    // act the picture draws at the placement the scene gave it (§6.4)
+    context.draw_picture(picture, Transform::translation(100.0f, 50.0f));
+    // assert the ink lands where the placement put it, which is the contract every backend shares (§6.4)
+    const Rect ink = ink_bounds(surface);
+    ASSERT_FALSE(ink.empty());
+    EXPECT_NEAR(ink.x, 100.0f, 1.0f);
+    EXPECT_NEAR(ink.y, 50.0f, 1.0f);
+    EXPECT_NEAR(ink.width, 20.0f, 1.0f);
+    EXPECT_NEAR(ink.height, 20.0f, 1.0f);
+}
+
+TEST(SkiaRenderContextPictureChecks, DrawsAPictureRecordedUnderATransformUnderBothTransforms) {
+    // arrange a picture recorded at a translation, which is what a transformed subtree hands over (§6.4)
+    PictureRecorder recorder;
+    recorder.set_transform(Transform::translation(30.0f, 20.0f));
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(12u, recorder.commands());
+    sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
+    SkiaRenderContext context(surface->getCanvas(), 1.0f);
+    // act the picture draws at a second placement, so the two transforms have to compose (§6.4)
+    context.draw_picture(picture, Transform::translation(100.0f, 50.0f));
+    // assert the ink lands at the sum of both, because the recorded transform applies first (§6.4, §6.1)
+    const Rect ink = ink_bounds(surface);
+    ASSERT_FALSE(ink.empty());
+    EXPECT_NEAR(ink.x, 130.0f, 1.0f);
+    EXPECT_NEAR(ink.y, 70.0f, 1.0f);
+    // assert the context stands where the scene left it, because the picture transform is scoped (§6.4)
+    EXPECT_EQ(context.transform(), Transform{});
+}
+
 TEST(SkiaRenderContextShadowChecks, AContextWithNoCanvasSwallowsTheDraws) {
     // arrange a context over no canvas at all, which is the refusal path a backend takes (§6.2)
     SkiaRenderContext context(nullptr, 1.0f);
