@@ -4,9 +4,8 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <unordered_map>
-#include <vector>
 
+#include "render/aged_cache.h"
 #include "render/render-albor/albor_glyph_path.h"
 
 namespace albor::render
@@ -41,11 +40,15 @@ namespace albor::render
     class GlyphPathCache
     {
     public:
-        // how many frames an unreferenced path stays cached, which bounds a long run's memory (AD-06)
+        // how many frames an unreferenced path survives, which bounds the memory a long run holds (AD-06)
         static constexpr std::uint64_t IDLE_FRAMES = 120;
 
-        // how many paths one cache holds before it drops them, because an unbounded cache is a leak (AD-06)
+        // how many paths a cache aims to hold, which one frame's own working set may briefly exceed (AD-06)
         static constexpr std::size_t MAXIMUM_CACHED_PATHS = 8192;
+
+        // build the cache every surface keeps, which ages its paths by the frame the surface advances (AD-06)
+        GlyphPathCache();
+
         // hand out the path a key was walked to, or null when no frame has walked it (§6.4)
         [[nodiscard]] std::shared_ptr<const GlyphPath> find(const GlyphPathKey& key);
 
@@ -59,23 +62,7 @@ namespace albor::render
         [[nodiscard]] std::size_t count() const;
 
     private:
-        // drop the coldest slice of the full cache, because a rebuilt path is the same shape but not free (§6.4, AD-06)
-        void drop_the_coldest_slice();
-
-        // one cached path with the frame it was last reached in, which the sweep reads (§6.4, AD-06)
-        struct Entry
-        {
-            // the walked outline, retained so a frame replays it without walking the typeface again (§6.4)
-            std::shared_ptr<const GlyphPath> path;
-
-            // the frame the path was last found or stored in, which the sweep ages against (§6.4)
-            std::uint64_t last_used = 0;
-        };
-
-        // the paths keyed by the identity they were walked for (§6.4)
-        std::unordered_map<GlyphPathKey, Entry, GlyphPathKeyHash> m_paths;
-
-        // the frame the cache is being aged at, which a find or a store stamps its entry with (§6.4, AD-06)
-        std::uint64_t m_frame = 0;
+        // the paths keyed by the identity they were walked for, aged by the frame that last drew them (§6.4, AD-06)
+        AgedCache<GlyphPathKey, std::shared_ptr<const GlyphPath>, GlyphPathKeyHash> m_paths;
     };
 } // namespace albor::render

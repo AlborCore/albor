@@ -1059,6 +1059,40 @@ TEST(AlborRendererBackendChecks, CompositesACastOnAFrameWithNoGeometry) {
     EXPECT_GT(shot.pixels[centre + 3], 0u);
 }
 
+TEST(AlborParityChecks, KeepsAFrameThatUploadsMoreImagesThanTheCacheHolds) {
+    // arrange a frame of seventy solid images, which is more than the texture cache is sized for (§6.4, AD-06)
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{96.0f, 96.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    for (std::uint64_t index = 0u; index < 70u; index++) {
+        // every image is its own identifier and its own colour, so none of them is answered by another (AD-06)
+        const std::vector<std::uint8_t> source{static_cast<std::uint8_t>(index * 3u), 60u, 120u, 255u};
+        const std::shared_ptr<const ImageResource> image = std::make_shared<const ImageResource>(300u + index, 1u, 1u, ImageFormat::RGBA8, source);
+        // the images tile a grid, which places every one of them inside the surface (§6.4)
+        const AlborPoint origin{.x = 4.0f + static_cast<float>(index % 10u) * 9.0f, .y = 4.0f + static_cast<float>(index / 10u) * 9.0f};
+        DrawCommand command = DrawCommand::image(image, AlborRect::from_origin_size(origin, AlborSize{8.0f, 8.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+        // the clip is the whole surface, which is what an unclipped frame carries (§6.2)
+        command.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size));
+        scene.add_command(std::move(command));
+    }
+    // act
+    reference.execute_frame(*expected_surface, scene);
+    backend.execute_frame(*actual_surface, scene);
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    // every image draws as its own colour, which a texture dropped before the frame encoded would not (§6.4, AD-06)
+    EXPECT_LE(actual_shot.max_channel_difference(expected_shot), 2);
+}
+
 TEST(AlborParityChecks, ADownscaledImageMatchesTheReference) {
     // arrange a checkerboard downscaled eight times, which a mip map keeps from aliasing
     const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{16.0f, 16.0f}, 1.0f);

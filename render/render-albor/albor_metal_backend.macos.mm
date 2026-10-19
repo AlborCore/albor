@@ -5,13 +5,13 @@
 #include <cstdint>
 #include <cstring>
 #include <mutex>
-#include <unordered_map>
 #include <vector>
 
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 
 #include "core/geometry.h"
+#include "render/aged_cache.h"
 #include "render/render-albor/albor_batch.h"
 #include "render/render-albor/albor_glyph_cache.h"
 #include "render/render-albor/albor_render_context.h"
@@ -249,18 +249,14 @@ namespace albor::render
             // the immutable batch the frame builds, which the encoder consumes once (§6.3)
             FrameBatch m_batch;
 
-            // one cached texture with the frame it was last drawn in, which the eviction reads (AD-06)
-            struct CachedTexture
-            {
-                // the texture the upload produced
-                id<MTLTexture> texture = nil;
+            // how many frames an unreferenced texture survives, which bounds the memory a long run holds (AD-06)
+            static constexpr std::uint64_t TEXTURE_IDLE_FRAMES = 120;
 
-                // the frame counter the texture was last drawn in
-                std::uint64_t last_used = 0;
-            };
+            // how many textures a surface aims to hold, which one frame's own uploads may briefly exceed (AD-06)
+            static constexpr std::size_t MAXIMUM_CACHED_TEXTURES = 64;
 
-            // the textures the uploaded images became, keyed on the identifier the factory stamped (AD-06)
-            std::unordered_map<std::uint64_t, CachedTexture> m_textures;
+            // the textures the uploaded images became, keyed by the identifier an image carries (AD-06)
+            AgedCache<std::uint64_t, id<MTLTexture>> m_textures{TEXTURE_IDLE_FRAMES, MAXIMUM_CACHED_TEXTURES};
 
             // the glyph paths this surface already walked, which the context borrows so a glyph walks once (§6.4, AD-06)
             GlyphPathCache m_glyph_paths;
@@ -353,6 +349,8 @@ namespace albor::render
             m_context = std::make_unique<AlborRenderContext>(m_batch, Rect::from_origin_size(Point{0.0f, 0.0f}, m_metrics.logical_size), m_metrics.scale_factor, &m_glyph_paths);
             // the frame counter advances once per frame, which the textures record and the glyph paths age against (AD-06)
             m_frame_counter++;
+            // the textures age against the same counter, which drops the images no draw reached (AD-06)
+            m_textures.begin_frame(m_frame_counter);
             // the glyph paths age against the same counter, which drops the ones no draw reached (§6.4, AD-06)
             m_glyph_paths.begin_frame(m_frame_counter);
             // the frame is now in flight, which the matching end presents (§6.1)
@@ -481,15 +479,16 @@ namespace albor::render
         void AlborRenderSurface::upload_textures() {
             // a texture a draw references stays resident, which the eviction reads as its last use (AD-06)
             for (const BatchDraw& draw : m_batch.draws) {
-                // the draw's texture, when it has one, is marked in use for this frame (AD-06)
-                const auto used = m_textures.find(draw.texture);
-                if (used != m_textures.end())
-                    used->second.last_used = m_frame_counter;
+                // a draw that samples no texture reaches nothing, which is the case of a solid fill (AD-06)
+                if (draw.texture == 0)
+                    continue;
+                // the draw's texture is reached so this frame becomes its last use (AD-06)
+                m_textures.touch(draw.texture);
             }
             // every image the frame carries becomes a texture the cache holds by its identifier (AD-06)
             for (const BatchUpload& upload : m_batch.uploads) {
                 // a texture the cache already holds is reused, which makes a retained image constant time (AD-06)
-                if (m_textures.find(upload.id) != m_textures.end())
+                if (m_textures.peek(upload.id) != nullptr)
                     continue;
                 // the pixels are premultiplied rgba8, which the target format already matches (§6.3, AD-26)
                 MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:TARGET_FORMAT width:upload.image->width() height:upload.image->height() mipmapped:YES];
@@ -507,7 +506,8 @@ namespace albor::render
                     [mips commit];
                     [mips waitUntilCompleted];
                 }
-                m_textures[upload.id] = CachedTexture{.texture = texture, .last_used = m_frame_counter};
+                // the texture joins the cache under the identifier its image carries, aged to this frame (AD-06)
+                m_textures.store(upload.id, texture);
             }
         }
 
@@ -579,9 +579,9 @@ namespace albor::render
                 id<MTLTexture> texture = device_state().white;
                 if (draw.texture != 0) {
                     // the upload the frame carried became the texture the cache holds (AD-06)
-                    const auto found = m_textures.find(draw.texture);
-                    if (found != m_textures.end())
-                        texture = found->second.texture;
+                    const auto found = m_textures.peek(draw.texture);
+                    if (found != nullptr)
+                        texture = *found;
                 }
                 [encoder setFragmentTexture:texture atIndex:0];
                 // the draw consumes its own index range, which the builder recorded (§6.3)
