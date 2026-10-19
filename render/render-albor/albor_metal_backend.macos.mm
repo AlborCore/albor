@@ -13,6 +13,7 @@
 #include "core/geometry.h"
 #include "render/aged_cache.h"
 #include "render/render-albor/albor_batch.h"
+#include "render/render-albor/albor_geometry.h"
 #include "render/render-albor/albor_glyph_cache.h"
 #include "render/render-albor/albor_render_context.h"
 #include "render/render-albor/albor_shaders.h"
@@ -69,15 +70,21 @@ namespace albor::render
             // the premultiplied colour of the cast
             float color[4];
 
-            // the caster centre and half extent in device pixels
+            // the caster's half extent in its own space, and the offscreen origin on zw
             float shape[4];
 
             // the corner radius, the blur direction and the uv tap step
             float params[4];
+
+            // the first row of the inverse that maps a device point into the caster's space
+            float inverse0[4];
+
+            // the second row of that inverse, which finishes the mapping
+            float inverse1[4];
         };
 
         // the shadow struct pads to a sixteen byte boundary, which the msl side mirrors
-        static_assert(sizeof(ShadowUniforms) == 48, "the shadow uniforms must match the msl layout");
+        static_assert(sizeof(ShadowUniforms) == 80, "the shadow uniforms must match the msl layout");
 
         // the device wide state every surface draws through, which outlives them (§6.3)
         struct DeviceState
@@ -361,7 +368,7 @@ namespace albor::render
         void blur_pass(id<MTLCommandBuffer> command, id<MTLTexture> source, id<MTLTexture> target, ShadowUniforms uniforms, float dx, float dy, float step, float width, float height);
 
         void AlborRenderSurface::composite_shadow(id<MTLCommandBuffer> command, const BatchShadow& shadow) const {
-            // the offscreen target covers the caster plus the reach on every side, which the filter reads (§6.2)
+            // the offscreen target covers the caster plus the reach, and the edge ramp spans half a device pixel (§6.2)
             const float reach = std::max(shadow.reach, 1.0f);
             const float left = shadow.rect.x - reach;
             const float top = shadow.rect.y - reach;
@@ -379,11 +386,22 @@ namespace albor::render
             uniforms.color[1] = static_cast<float>((shadow.color >> 8) & 0xFFu) / 255.0f;
             uniforms.color[2] = static_cast<float>((shadow.color >> 16) & 0xFFu) / 255.0f;
             uniforms.color[3] = static_cast<float>((shadow.color >> 24) & 0xFFu) / 255.0f;
-            // the caster sits at the middle of the offscreen target, which the reach shifted it into (§6.2)
-            uniforms.shape[0] = shadow.rect.x + shadow.rect.width * 0.5f - left;
-            uniforms.shape[1] = shadow.rect.y + shadow.rect.height * 0.5f - top;
-            uniforms.shape[2] = shadow.rect.width * 0.5f;
-            uniforms.shape[3] = shadow.rect.height * 0.5f;
+            // the silhouette is evaluated in the caster's own space, so the inverse maps a target pixel into it (§6.2)
+            const Transform inverse = invert_transform(shadow.transform);
+            uniforms.inverse0[0] = inverse.scale_x;
+            uniforms.inverse0[1] = inverse.skew_x;
+            uniforms.inverse0[2] = inverse.translate_x;
+            // the w lane is unused, because the shader turns the local gradient into a device length (§6.2)
+            uniforms.inverse0[3] = 0.0f;
+            uniforms.inverse1[0] = inverse.skew_y;
+            uniforms.inverse1[1] = inverse.scale_y;
+            uniforms.inverse1[2] = inverse.translate_y;
+            // the caster's half extent is held in its own space, where the rounded shape is measured (§6.2)
+            uniforms.shape[0] = shadow.extent.width * 0.5f;
+            uniforms.shape[1] = shadow.extent.height * 0.5f;
+            // the offscreen target starts at the reach corner, which a target pixel is offset by (§6.2)
+            uniforms.shape[2] = left;
+            uniforms.shape[3] = top;
             uniforms.params[0] = shadow.radius;
             // the silhouette pass fills the cast alone, which no blend mixes with the clear (§6.2)
             MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];

@@ -122,10 +122,16 @@ namespace albor::render
     // one shadow a frame casts, which a backend blurs offscreen and composites under the shape (§6.2)
     struct BatchShadow
     {
-        // the caster in device space, which already carries the shadow offset
+        // the caster in device space, which already carries the shadow offset and bounds the placed shape
         Rect rect;
 
-        // the corner radius of the caster in device space
+        // the transform that places the caster's own box onto the device, offset, device scale and rotation alike
+        Transform transform;
+
+        // the caster box in its own space, which the silhouette evaluates its rounded shape against
+        Size extent;
+
+        // the corner radius in the caster's own space, which a placed corner keeps its shape under
         float radius = 0.0f;
 
         // the gaussian standard deviation in device pixels, which the blur kernel divides

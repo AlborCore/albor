@@ -335,10 +335,14 @@ namespace albor::render
         // the radius and the blur scale with the device, which keeps the cast the same logical size (AD-27)
         const float scale = std::sqrt(std::abs(device.scale_x * device.scale_y - device.skew_x * device.skew_y));
         BatchShadow cast;
-        // the mapped box is the silhouette the blur reads, which a skewed caster bounds conservatively (§6.2)
+        // the caster is placed from its own space, so a rotation or a skew reaches the silhouette (§6.2, §6.1)
+        cast.transform = Transform::translation(caster.x, caster.y).then(device);
+        // the local extent is the caster's authored size, which the silhouette measures its corners against (§6.2)
+        cast.extent = Size{.width = caster.width, .height = caster.height};
+        // the mapped box bounds where the placed shape lands, which sizes the offscreen target (§6.2)
         cast.rect = Rect{.x = left, .y = top, .width = right - left, .height = bottom - top};
-        // the radius clamps to half the shorter side, which the silhouette it feeds also assumes (§6.2)
-        cast.radius = std::min(radius * scale, std::min(cast.rect.width, cast.rect.height) * 0.5f);
+        // the radius stays in the caster's own space, where the silhouette applies it (§6.2, AD-27)
+        cast.radius = radius;
         // the reference treats the blur radius as twice the sigma, which the kernel matches (§6.2, AD-26)
         cast.sigma = shadow.blur * 0.5f * scale;
         // the reach is the reference's three blur radii, which is six sigmas and bounds the offscreen layer (§6.2, AD-26)

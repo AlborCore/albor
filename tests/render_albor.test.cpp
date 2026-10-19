@@ -891,6 +891,57 @@ TEST(AlborRenderContextChecks, TreatsANonPositiveDeviceScaleAsUnit) {
     EXPECT_EQ(context.device_transform(), Transform{});
 }
 
+TEST(AlborRenderContextShadowChecks, PlacesACastFromItsOwnSpaceUnderAShear) {
+    // arrange a context standing under a shear, which slants every caster it draws (§6.2)
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 200.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    context.set_transform(Transform{.skew_y = 0.6f});
+    // act one cast is drawn at local coordinates, which the context places and offsets (§6.2)
+    context.draw_shadow(Rect::from_origin_size(Point{16.0f, 16.0f}, Size{40.0f, 16.0f}), 4.0f, Shadow{.color = Color::rgb(0.0f, 0.0f, 0.0f), .offset = Point{2.0f, 3.0f}, .blur = 0.0f});
+    // assert the placement sends the caster's own origin and its far corner where the shear puts them (§6.2, §6.1)
+    ASSERT_EQ(batch.shadows.size(), 1u);
+    const BatchShadow& cast = batch.shadows.front();
+    EXPECT_FLOAT_EQ(cast.transform.apply(Point{0.0f, 0.0f}).x, 18.0f);
+    EXPECT_FLOAT_EQ(cast.transform.apply(Point{0.0f, 0.0f}).y, 29.8f);
+    EXPECT_FLOAT_EQ(cast.transform.apply(Point{40.0f, 0.0f}).x, 58.0f);
+    EXPECT_FLOAT_EQ(cast.transform.apply(Point{40.0f, 0.0f}).y, 53.8f);
+    // assert the caster keeps its authored extent, which the silhouette measures its corners against (§6.2)
+    EXPECT_FLOAT_EQ(cast.extent.width, 40.0f);
+    EXPECT_FLOAT_EQ(cast.extent.height, 16.0f);
+    // assert the radius stays in the caster's own space, where the placed shape applies it (§6.2)
+    EXPECT_FLOAT_EQ(cast.radius, 4.0f);
+    // assert the mapped box covers the sheared quad, which is taller than the caster it came from (§6.2)
+    EXPECT_FLOAT_EQ(cast.rect.x, 18.0f);
+    EXPECT_FLOAT_EQ(cast.rect.y, 29.8f);
+    EXPECT_FLOAT_EQ(cast.rect.width, 40.0f);
+    EXPECT_FLOAT_EQ(cast.rect.height, 40.0f);
+}
+
+TEST(AlborRenderContextShadowChecks, ScalesThePlacementAndBlurButNotTheCasterExtent) {
+    // arrange a context drawing at two device pixels per logical point, which a retina surface does (§6.3, AD-27)
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 200.0f});
+    AlborRenderContext context(batch, extent, 2.0f);
+    // act one cast is drawn, which the device scale spreads (§6.2)
+    context.draw_shadow(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{30.0f, 10.0f}), 5.0f, Shadow{.color = Color::rgb(0.0f, 0.0f, 0.0f), .offset = Point{0.0f, 0.0f}, .blur = 4.0f});
+    // assert the sigma doubles with the device, because the kernel measures in device pixels (§6.2, AD-27)
+    ASSERT_EQ(batch.shadows.size(), 1u);
+    EXPECT_FLOAT_EQ(batch.shadows.front().sigma, 4.0f);
+    // assert the reach doubles as well, because it sizes the offscreen target in device pixels (§6.2)
+    EXPECT_FLOAT_EQ(batch.shadows.front().reach, 24.0f);
+    // assert the placement carries the device scale, because the silhouette reads it from there alone (§6.2, AD-27)
+    EXPECT_FLOAT_EQ(batch.shadows.front().transform.scale_x, 2.0f);
+    EXPECT_FLOAT_EQ(batch.shadows.front().transform.scale_y, 2.0f);
+    EXPECT_FLOAT_EQ(batch.shadows.front().transform.translate_x, 20.0f);
+    EXPECT_FLOAT_EQ(batch.shadows.front().transform.translate_y, 40.0f);
+    // assert the extent stays logical, because the silhouette applies the scale itself (§6.2, AD-27)
+    EXPECT_FLOAT_EQ(batch.shadows.front().extent.width, 30.0f);
+    EXPECT_FLOAT_EQ(batch.shadows.front().extent.height, 10.0f);
+    // assert the radius stays logical too, which the silhouette scales with the extent (§6.2)
+    EXPECT_FLOAT_EQ(batch.shadows.front().radius, 5.0f);
+}
+
 TEST(DrawCommandReplayChecks, ADrawingRecordedUnderATransformLandsWhereTheTransformPutsIt) {
     // arrange a picture holding one square recorded at a translation, which is what a transformed subtree records (§6.4)
     PictureRecorder recorder;

@@ -107,6 +107,8 @@ struct ShadowUniforms
     float4 color;
     float4 shape;
     float4 params;
+    float4 inverse0;
+    float4 inverse1;
 };
 
 // map a full target quad into clip space, which the offscreen passes cover
@@ -123,12 +125,21 @@ vertex Varyings shadow_vertex(uint vertexId [[vertex_id]]) {
 
 // rasterize the rounded silhouette a cast is blurred from, which carries the shadow colour already
 fragment float4 shadow_shape(Varyings in [[stage_in]], constant ShadowUniforms& uniforms [[buffer(1)]]) {
-    float2 point = in.position.xy - uniforms.shape.xy;
-    float2 halfExtent = uniforms.shape.zw;
+    float2 origin = uniforms.shape.zw;
+    float3 raster = float3(in.position.xy + origin, 1.0);
+    float2 local = float2(dot(uniforms.inverse0.xyz, raster), dot(uniforms.inverse1.xyz, raster));
+    float2 halfExtent = uniforms.shape.xy;
     float radius = min(uniforms.params.x, min(halfExtent.x, halfExtent.y));
+    float2 point = local - halfExtent;
     float2 corner = abs(point) - (halfExtent - float2(radius));
-    float distance = length(max(corner, float2(0.0))) + min(max(corner.x, corner.y), 0.0) - radius;
-    return uniforms.color * clamp(0.5 - distance, 0.0, 1.0);
+    float2 outward = max(corner, float2(0.0));
+    float2 axis = float2(point.x < 0.0 ? -1.0 : 1.0, point.y < 0.0 ? -1.0 : 1.0);
+    float2 normal = corner.x > corner.y ? float2(axis.x, 0.0) : float2(0.0, axis.y);
+    if (outward.x > 0.0 || outward.y > 0.0)
+        normal = normalize(outward * axis);
+    float distance = length(outward) + min(max(corner.x, corner.y), 0.0) - radius;
+    float2 deviceNormal = float2(uniforms.inverse0.x * normal.x + uniforms.inverse1.x * normal.y, uniforms.inverse0.y * normal.x + uniforms.inverse1.y * normal.y);
+    return uniforms.color * clamp(0.5 - distance * length(deviceNormal), 0.0, 1.0);
 }
 
 // run one separable gaussian pass over the silhouette, which the two directions share

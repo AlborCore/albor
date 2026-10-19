@@ -1005,6 +1005,52 @@ TEST(AlborParityChecks, ASoftShadowOnAWideCasterMatchesTheReference) {
     EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 40);
 }
 
+TEST(AlborParityChecks, AShearedCasterMatchesTheReference) {
+    // arrange a caster drawn under a shear, whose parallelogram the reference renders as it is
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{96.0f, 96.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    // the shear slants the whole caster, which an axis aligned silhouette cannot follow (§6.2, §6.1)
+    const Transform shear{.skew_y = 0.6f};
+    const AlborRect caster = AlborRect::from_origin_size(AlborPoint{16.0f, 16.0f}, AlborSize{40.0f, 16.0f});
+    const Shadow cast{.color = Color::rgba(0.0f, 0.0f, 0.0f, 0.7f), .offset = AlborPoint{0.0f, 0.0f}, .blur = 0.0f};
+    // act
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    expected.save();
+    expected.set_transform(shear);
+    expected.draw_shadow(caster, 0.0f, cast);
+    expected.restore();
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    actual.save();
+    actual.set_transform(shear);
+    actual.draw_shadow(caster, 0.0f, cast);
+    actual.restore();
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    // a point inside the sheared parallelogram carries the cast on both, which the slant placed there (§6.2)
+    const std::size_t inside = (54u * 96u + 50u) * 4u;
+    EXPECT_LT(actual_shot.pixels[inside], 200u);
+    EXPECT_LT(expected_shot.pixels[inside], 200u);
+    // a point inside the box but outside the parallelogram stays background, which an axis aligned cast would ink
+    const std::size_t outside = (55u * 96u + 17u) * 4u;
+    EXPECT_GT(actual_shot.pixels[outside], 230u);
+    EXPECT_GT(expected_shot.pixels[outside], 230u);
+    // the bound is the 44 measured on this host plus margin, which a sheared antialiased edge spends a pixel on (§16)
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 52);
+}
+
 TEST(AlborParityChecks, AFractionalImageDestinationFeathersItsEdge) {
     // arrange an image whose destination lands on fractional pixels
     const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{24.0f, 24.0f}, 1.0f);
