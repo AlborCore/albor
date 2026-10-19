@@ -3,7 +3,8 @@
 ## Requirements
 
 - **C++23** toolchain
-- **CMake** ≥ 3.28
+- **CMake** ≥ 3.28 and **Ninja** — the presets pin Ninja as the generator, so a build directory
+  configured with another one has to be configured fresh
 - **[vcpkg](https://vcpkg.io)** in manifest mode — dependencies are pinned in `vcpkg.json`
   and are fetched on the first configure. Export `MACOSX_DEPLOYMENT_TARGET=13.3` so the ports
   build for the same floor, which CMake reads and vcpkg forwards to them; a port built for a
