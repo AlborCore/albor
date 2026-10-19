@@ -143,6 +143,9 @@ jobs:
           key: vcpkg-${{ runner.os }}-${{ matrix.preset }}-macos13.3-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
             vcpkg-${{ runner.os }}-${{ matrix.preset }}-macos13.3-
+          # the ports are saved even when a later step fails, because a job that lost its
+          # cache is the one that rebuilds every port from scratch for an hour (§5.3)
+          save-always: true
 
       - name: restore the ccache directory
         if: matrix.enable
@@ -152,6 +155,8 @@ jobs:
           key: ccache-${{ runner.os }}-${{ matrix.preset }}-${{ github.sha }}
           restore-keys: |
             ccache-${{ runner.os }}-${{ matrix.preset }}-
+          # the objects are saved even when a later step fails, for the same reason the ports are
+          save-always: true
 
       - name: configure
         if: matrix.enable
