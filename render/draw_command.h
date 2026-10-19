@@ -207,7 +207,7 @@ namespace albor
         [[nodiscard]] static DrawCommand image(std::shared_ptr<const ImageResource> image, Rect destination, Paint paint);
 
         // build a glyph outline command, which is how embedded text reaches the surface (§6.4, AD-34)
-        [[nodiscard]] static DrawCommand glyph_outline(std::shared_ptr<const GlyphOutline> outline, Point position, Paint paint);
+        [[nodiscard]] static DrawCommand glyph_outline(std::shared_ptr<const GlyphOutline> outline, Point position, Paint paint, Transform transform = Transform{});
 
         // build a shadow command, which the replay blurs offscreen and composites under the shape (§6.2)
         [[nodiscard]] static DrawCommand shadow(Rect rect, float radius, Shadow shadow);

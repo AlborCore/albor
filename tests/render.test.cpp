@@ -2106,6 +2106,45 @@ TEST(PictureRecorder, APolylineBakesTheTransformIntoItsVertices) {
     EXPECT_EQ(mapped[1], (Point{15.0f, 16.0f}));
 }
 
+TEST(GlyphOutlinePlacementChecks, BoundsFollowTheTransformTheGlyphWasRecordedWith) {
+    // arrange a square glyph outline, which is a shape whose every corner is known (§6.4)
+    const std::vector<PathVerb> verbs{PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const std::vector<Point> points{Point{0.0f, 0.0f}, Point{10.0f, 0.0f}, Point{10.0f, 10.0f}, Point{0.0f, 10.0f}};
+    const std::shared_ptr<const GlyphOutline> outline = std::make_shared<const GlyphOutline>(7u, 3u, 16.0f, GlyphOutlineData{.verbs = verbs, .points = points});
+    // act the glyph is placed at a pen under a doubling scale, which a scaled subtree composes (§6.4, §6.1)
+    const DrawCommand command = DrawCommand::glyph_outline(outline, Point{5.0f, 5.0f}, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)}, Transform::scaling(2.0f, 2.0f));
+    // assert the bound is the scaled square rather than the pen placed one, because the transform moves it (§6.2, §6.1)
+    EXPECT_EQ(command.bounds(), (Rect{.x = 10.0f, .y = 10.0f, .width = 20.0f, .height = 20.0f}));
+}
+
+TEST(GlyphOutlinePlacementChecks, BoundsFollowASkewedTransform) {
+    // arrange the same square, whose extent a skew leaves unchanged along one axis and doubles along the other (§6.4)
+    const std::vector<PathVerb> verbs{PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const std::vector<Point> points{Point{0.0f, 0.0f}, Point{10.0f, 0.0f}, Point{10.0f, 10.0f}, Point{0.0f, 10.0f}};
+    const std::shared_ptr<const GlyphOutline> outline = std::make_shared<const GlyphOutline>(7u, 3u, 16.0f, GlyphOutlineData{.verbs = verbs, .points = points});
+    // act the glyph is placed at the origin under a shear, which turns the square into a wider parallelogram (§6.1)
+    const DrawCommand command = DrawCommand::glyph_outline(outline, Point{0.0f, 0.0f}, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)}, Transform{.skew_x = 1.0f});
+    // assert the bound follows the sheared corners rather than the unsheared square (§6.2, §6.1)
+    EXPECT_EQ(command.bounds(), (Rect{.x = 0.0f, .y = 0.0f, .width = 20.0f, .height = 10.0f}));
+}
+
+TEST(GlyphOutlinePlacementChecks, ReplaysTheOutlineUnderThePenAndTheRecordedTransform) {
+    // arrange a square glyph outline and the context the command replays into (§6.4)
+    const std::vector<PathVerb> verbs{PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const std::vector<Point> points{Point{0.0f, 0.0f}, Point{10.0f, 0.0f}, Point{10.0f, 10.0f}, Point{0.0f, 10.0f}};
+    const std::shared_ptr<const GlyphOutline> outline = std::make_shared<const GlyphOutline>(7u, 3u, 16.0f, GlyphOutlineData{.verbs = verbs, .points = points});
+    TestRenderContext context;
+    // the glyph is placed at a pen under a shear, which is the transform a skewed subtree composes (§6.4, §6.1)
+    const Transform shear{.skew_x = 1.0f};
+    // act the recorded command draws itself, which is what stage two does (§6.1)
+    DrawCommand::glyph_outline(outline, Point{5.0f, 7.0f}, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)}, shear).replay(context);
+    // assert the retained path is drawn once, because the glyph is one command (§6.4, AD-06)
+    ASSERT_EQ(context.drawn_paths.size(), 1u);
+    EXPECT_EQ(context.drawn_paths.front(), outline->path());
+    // assert the path draws under the pen and the shear, because the two orders map a point differently (§6.4, §6.1)
+    EXPECT_EQ(context.drawn_path_transforms.front(), Transform::translation(5.0f, 7.0f).then(shear));
+}
+
 TEST(GlyphOutlineCacheChecks, AnswersAnOutlineItAlreadyBuilt) {
     // arrange an empty cache and the identity of one glyph outline (§6.4)
     GlyphOutlineCache cache;

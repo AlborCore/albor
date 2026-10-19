@@ -779,6 +779,66 @@ TEST(EmbeddedTextDrawChecks, AnEmbeddedCounterDrawsAsAHole) {
     resources::FontRegistry::clear();
 }
 
+TEST(EmbeddedTextPlacementChecks, ScalesTheOutlineByTheTransformTheRecorderStandsAt) {
+    // arrange a square outline, which is a glyph whose ink covers exactly its own corners (§6.4)
+    const std::vector<PathVerb> verbs{PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const std::vector<Point> points{Point{0.0f, 0.0f}, Point{10.0f, 0.0f}, Point{10.0f, 10.0f}, Point{0.0f, 10.0f}};
+    const std::shared_ptr<const GlyphOutline> outline = std::make_shared<const GlyphOutline>(7u, 3u, 16.0f, GlyphOutlineData{.verbs = verbs, .points = points});
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{40.0f, 40.0f}, 1.0f);
+    // the pen is the same in both scenes, so only the recorder transform differs between them (§6.1)
+    const Point pen{5.0f, 5.0f};
+    SceneRecorder plain(metrics);
+    // the frame clears to white, so the ink reads as the shape it is rather than as the background (§6.1)
+    plain.set_background(Color::rgb(1.0f, 1.0f, 1.0f));
+    plain.glyph_outline(outline, pen, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    SceneRecorder scaled(metrics);
+    // the frame clears to white as well, which keeps the two frames comparable pixel for pixel (§6.1)
+    scaled.set_background(Color::rgb(1.0f, 1.0f, 1.0f));
+    scaled.save();
+    // the scale is the transform a subtree carries into its children, which the glyph must inherit (§6.1, §6.4)
+    scaled.set_transform(Transform::scaling(2.0f, 2.0f));
+    scaled.glyph_outline(outline, pen, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    scaled.restore();
+    // act both scenes draw onto their own reference surface, which is the oracle of the parity suite (§16, AD-26)
+    software::SoftwareRendererBackend backend;
+    const std::unique_ptr<RenderSurface> plain_surface = software::SoftwareRenderSurface::create(metrics);
+    const std::unique_ptr<RenderSurface> scaled_surface = software::SoftwareRenderSurface::create(metrics);
+    ASSERT_NE(plain_surface, nullptr);
+    ASSERT_NE(scaled_surface, nullptr);
+    backend.execute_frame(*plain_surface, *plain.scene());
+    backend.execute_frame(*scaled_surface, *scaled.scene());
+    const Screenshot plain_drawn = capture_surface(*plain_surface);
+    const Screenshot scaled_drawn = capture_surface(*scaled_surface);
+    ASSERT_FALSE(plain_drawn.empty());
+    ASSERT_FALSE(scaled_drawn.empty());
+    // the lit channels are counted, because a doubling scale puts down four times the area (§6.4, §6.1)
+    std::size_t plain_lit = 0u;
+    std::size_t scaled_lit = 0u;
+    for (std::size_t index = 0u; index + 2u < plain_drawn.pixels.size(); index += 4u) {
+        // a lit channel in the plain frame is one pixel the unscaled glyph covered (§6.4)
+        if (plain_drawn.pixels[index] != 255u)
+            plain_lit++;
+        // a lit channel in the scaled frame is one pixel the scaled glyph covered (§6.4)
+        if (scaled_drawn.pixels[index] != 255u)
+            scaled_lit++;
+    }
+    // assert the plain glyph put ink down at all, which is what makes the comparison meaningful (§6.4)
+    ASSERT_GT(plain_lit, 0u);
+    // assert the scaled glyph covers about four times the area, because the transform doubled both axes (§6.1)
+    EXPECT_GT(scaled_lit, plain_lit * 3u);
+    EXPECT_LT(scaled_lit, plain_lit * 5u);
+    // the corner sample sits inside the unscaled square, which the scaled one has already left behind (§6.4)
+    const std::size_t corner = (7u * static_cast<std::size_t>(plain_drawn.width) + 7u) * 4u;
+    ASSERT_LT(corner + 2u, plain_drawn.pixels.size());
+    EXPECT_LT(plain_drawn.pixels[corner], 200u);
+    EXPECT_EQ(scaled_drawn.pixels[corner], 255u);
+    // the far sample sits inside the scaled square only, which is where the transform put the ink (§6.1)
+    const std::size_t far = (20u * static_cast<std::size_t>(scaled_drawn.width) + 20u) * 4u;
+    ASSERT_LT(far + 2u, scaled_drawn.pixels.size());
+    EXPECT_LT(scaled_drawn.pixels[far], 200u);
+    EXPECT_EQ(plain_drawn.pixels[far], 255u);
+}
+
 namespace
 {
     // the node that draws one run through the ordinary text path, which is what the caller fix is about (§6.1)

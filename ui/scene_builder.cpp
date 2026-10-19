@@ -168,8 +168,8 @@ namespace albor
     }
 
     void SceneRecorder::glyph_outline(const std::shared_ptr<const GlyphOutline>& outline, Point position, const Paint& paint) {
-        // the position is mapped into scene space now, like every recorded geometry (§6.4, AD-34)
-        record(DrawCommand::glyph_outline(outline, to_scene(position), paint));
+        // the pen and the transform travel with the outline, so a scaled subtree scales its glyphs (§6.4, §6.1)
+        record(DrawCommand::glyph_outline(outline, position, paint, m_transform));
     }
 
     void SceneRecorder::set_background(Color background) {

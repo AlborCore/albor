@@ -66,12 +66,15 @@ namespace albor
         return DrawCommand(ImageGeometry{.image = std::move(image), .destination = destination}, paint);
     }
 
-    DrawCommand DrawCommand::glyph_outline(std::shared_ptr<const GlyphOutline> outline, Point position, Paint paint) {
+    DrawCommand DrawCommand::glyph_outline(std::shared_ptr<const GlyphOutline> outline, Point position, Paint paint, Transform transform) {
         // an outline with no points draws nothing, so it is refused rather than recorded (§6.2)
         if (outline == nullptr || outline->empty())
             return DrawCommand(RectGeometry{.rect = Rect::from_origin_size(position, Size{0.0f, 0.0f})}, paint);
-        // the outline and where it lands are the geometry, because the shape is the retained contour (§6.4, AD-06)
-        return DrawCommand(GlyphOutlineGeometry{.outline = std::move(outline), .position = position}, paint);
+        // the outline and its pen are the geometry, because the shape is the retained contour (§6.4, AD-06)
+        DrawCommand command(GlyphOutlineGeometry{.outline = std::move(outline), .position = position}, paint);
+        // the transform is stamped like every retained draw, so a scaled subtree scales the glyph (§6.4, §6.1)
+        command.set_transform(transform);
+        return command;
     }
 
     DrawCommand DrawCommand::shadow(Rect rect, float radius, Shadow shadow) {
@@ -354,31 +357,35 @@ namespace albor
             // an image covers exactly where it was placed (§6.2)
             return image_geometry().destination;
         case DrawCommandKind::GlyphOutline: {
-            // an outline covers its own points placed at its position (§6.4, §6.2)
-            const std::shared_ptr<const GlyphOutline>& outline = glyph_outline_geometry().outline;
+            // an outline covers its own points placed at its pen and under its transform (§6.4, §6.2)
+            const GlyphOutlineGeometry& geometry = glyph_outline_geometry();
             // a missing outline covers nothing, which is the quiet default (§6.4)
-            if (outline == nullptr || outline->points().empty())
+            if (geometry.outline == nullptr || geometry.outline->points().empty())
                 return Rect{};
-            // the position places the glyph, which the geometry carries (§6.2)
-            const Point position = glyph_outline_geometry().position;
+            // a point of the glyph is placed at the pen first, then under the command's transform (§6.4, §6.1)
+            const auto placed_point = [this, &geometry](const Point& point) { return m_transform.apply(Point{.x = geometry.position.x + point.x, .y = geometry.position.y + point.y}); };
+            // the first point starts every edge, and it is placed once because the transform is not free (§6.4)
+            const Point first = placed_point(geometry.outline->points().front());
             // the left edge starts at the first point, placed (§6.4)
-            float left = position.x + outline->points().front().x;
+            float left = first.x;
             // the right edge starts at the same point (§6.4)
             float right = left;
             // the top edge starts at the same point (§6.4)
-            float top = position.y + outline->points().front().y;
+            float top = first.y;
             // the bottom edge starts at the same point (§6.4)
             float bottom = top;
             // every further point widens the edges, which is what makes the bound conservative (§6.4)
-            for (const Point& point : outline->points()) {
+            for (const Point& point : geometry.outline->points()) {
+                // the point is placed where the replay draws it, because a skewed outline covers elsewhere (§6.1)
+                const Point drawn = placed_point(point);
                 // the left edge follows the leftmost point (§6.4)
-                left = std::min(left, position.x + point.x);
+                left = std::min(left, drawn.x);
                 // the right edge follows the rightmost (§6.4)
-                right = std::max(right, position.x + point.x);
+                right = std::max(right, drawn.x);
                 // the top edge follows the topmost (§6.4)
-                top = std::min(top, position.y + point.y);
+                top = std::min(top, drawn.y);
                 // the bottom edge follows the bottommost (§6.4)
-                bottom = std::max(bottom, position.y + point.y);
+                bottom = std::max(bottom, drawn.y);
             }
             // the bound is returned whole (§6.4)
             return Rect{.x = left, .y = top, .width = right - left, .height = bottom - top};
@@ -405,10 +412,10 @@ namespace albor
         // an outline of fewer than three points encloses no area, so there is nothing to draw (§6.2)
         if (geometry.outline->points().size() < 3)
             return;
-        // the outline draws as a filled path at the pen position, which is the same fill a glyph rasterizes with (§6.4)
-        const Transform placed{.translate_x = geometry.position.x, .translate_y = geometry.position.y};
-        // the retained path draws as it is, so a frame allocates no resource per glyph (§6.4, AD-06)
-        context.draw_path(geometry.outline->path(), placed, m_paint);
+        // the pen places the glyph, and the command's transform places the pen (§6.4, §6.1)
+        const Transform pen{.translate_x = geometry.position.x, .translate_y = geometry.position.y};
+        // the retained path draws under both, so a scaled subtree scales its glyphs (§6.4, AD-06)
+        context.draw_path(geometry.outline->path(), pen.then(m_transform), m_paint);
     }
 
     void DrawCommand::replay(RenderContext& context) const {
