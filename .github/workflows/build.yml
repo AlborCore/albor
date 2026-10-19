@@ -65,7 +65,7 @@ jobs:
       contents: read
       pull-requests: read
       code-quality: write
-    timeout-minutes: 60
+    timeout-minutes: 120
     defaults:
       run:
         shell: bash
@@ -101,10 +101,14 @@ jobs:
               sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
           - name: windows-release
             os: windows-latest
-            enable: false
+            enable: true
             preset: release
             vcpkg-root: C:\vcpkg
-            setup: choco install ccache
+            setup: |
+              # the vcpkg binary cache root must exist before vcpkg runs
+              mkdir -p .vcpkg-cache
+              # the preset launches the compiler through ccache, which the runner image does not ship
+              choco install ccache --no-progress -y
           - name: linux-release
             os: ubuntu-latest
             enable: false
@@ -125,6 +129,11 @@ jobs:
       - name: platform setup
         if: matrix.enable
         run: ${{ matrix.setup }}
+
+      # ninja drives the build, and it needs the msvc environment a developer prompt would carry
+      - name: msvc environment
+        if: matrix.enable && runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
 
       - name: restore the vcpkg binary cache
         if: matrix.enable
