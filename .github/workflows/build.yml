@@ -32,6 +32,28 @@ jobs:
           count=$(echo "$response" | grep -c '"number"' || true)
           echo "has_pr=$( [ "$count" -gt 0 ] && echo true || echo false )" >> "$GITHUB_OUTPUT"
 
+  # the shader artifact is committed, so this job is the only place the metal toolchain runs
+  shaders:
+    name: shaders (macos)
+    needs: [check-pr]
+    if: |-
+      !cancelled() &&
+      (github.event_name != 'push' || github.ref == 'refs/heads/main' || needs.check-pr.outputs.has_pr != 'true')
+    runs-on: macos-15
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - name: metal toolchain
+        run: |
+          # the image's newest xcode is selected, and xcode 26 ships the compiler as a component that may be absent
+          sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
+          xcrun -sdk macosx metal --version > /dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
+      - name: committed shader artifact
+        run: bash build/shaders.sh
+
   build:
     name: build (${{ matrix.name }})
     needs: [check-pr]
@@ -64,8 +86,6 @@ jobs:
               ccache --max-size 2G
               # the preset is c++23, so take the newest xcode the image carries rather than its default
               sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
-              # xcode 26 ships the metal compiler as a separate component, which the build needs and some images omit
-              xcrun -sdk macosx metal --version > /dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
           - name: macos-coverage
             os: macos-latest
             enable: ${{ github.repository == 'AlborCore/albor' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
@@ -79,8 +99,6 @@ jobs:
               ccache --max-size 2G
               # the preset is c++23, so take the newest xcode the image carries rather than its default
               sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
-              # xcode 26 ships the metal compiler as a separate component, which the build needs and some images omit
-              xcrun -sdk macosx metal --version > /dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
           - name: windows-release
             os: windows-latest
             enable: false
@@ -95,6 +113,8 @@ jobs:
             setup: sudo apt-get update && sudo apt-get install -y ccache
     env:
       VCPKG_ROOT: ${{ matrix.vcpkg-root }}
+      # the framework targets macOS 13.3, so the ports are built for the same floor rather than the runner's os
+      VCPKG_OSX_DEPLOYMENT_TARGET: 13.3
       VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       LLVM_PROFILE_FILE: ${{ github.workspace }}/coverage.profraw
@@ -111,9 +131,9 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-${{ runner.os }}-${{ matrix.preset }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          key: vcpkg-${{ runner.os }}-${{ matrix.preset }}-macos13.3-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-${{ runner.os }}-${{ matrix.preset }}-
+            vcpkg-${{ runner.os }}-${{ matrix.preset }}-macos13.3-
 
       - name: restore the ccache directory
         if: matrix.enable

@@ -1,6 +1,26 @@
 cmake_minimum_required(VERSION 3.28)
 
+# the oldest macOS the framework runs on, which the build states rather than inheriting from the sdk (§6.3)
+set(ALBOR_OSX_MINIMUM "13.3")
+
+# the framework's own build declares the floor in its cache, while a consumer that fetches it keeps its own
+if(APPLE AND CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "${ALBOR_OSX_MINIMUM}" CACHE STRING "the oldest macOS the framework runs on")
+endif()
+
 project(albor LANGUAGES CXX)
+
+# a consumer inherits the framework's targets rather than its cache, so the floor is applied to them after the project
+if(APPLE)
+    # a consumer that named a lower floor is told why it rises, because the shipped shader targets the minimum
+    if(CMAKE_OSX_DEPLOYMENT_TARGET AND CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS ALBOR_OSX_MINIMUM)
+        message(STATUS "albor: raising the deployment target from ${CMAKE_OSX_DEPLOYMENT_TARGET} to ${ALBOR_OSX_MINIMUM}, which the shipped shader targets")
+    endif()
+    # an empty value inherits the sdk, which may be newer, so only a lower one is raised
+    if(NOT CMAKE_OSX_DEPLOYMENT_TARGET OR CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS ALBOR_OSX_MINIMUM)
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "${ALBOR_OSX_MINIMUM}")
+    endif()
+endif()
 
 # c++23 is the language of the whole framework (§14, AD-23)
 set(CMAKE_CXX_STANDARD 23)

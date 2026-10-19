@@ -7,7 +7,7 @@ file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 if(APPLE)
     list(FILTER CPP_SOURCES EXCLUDE REGEX "/albor_backend_support\\.cpp$")
     list(FILTER CPP_SOURCES EXCLUDE REGEX "/albor_glyph_path\\.cpp$")
-    # the metal backend compiles and embeds the shader library, which the portable stand-in stands in for elsewhere (§5.3, AD-16)
+    # the metal backend embeds the committed shader library, which the portable stand-in stands in for elsewhere (§5.3, AD-16)
     list(FILTER CPP_SOURCES EXCLUDE REGEX "/albor_shaders\\.cpp$")
 endif()
 
@@ -26,45 +26,18 @@ if(APPLE)
     # gather macos sources, which are the ones that reach metal and the core animation layer
     file(GLOB_RECURSE MACOS_SOURCES "./*.macos.mm")
 
-    # the shader compiler ships as a separate xcode component, so a host without the tools is told what to install (§6.3)
-    execute_process(COMMAND xcrun -sdk macosx -find metal RESULT_VARIABLE METAL_PROBE OUTPUT_QUIET ERROR_QUIET)
-    # a host without the command line tools cannot install a component, so it is told to install xcode instead
-    if(NOT METAL_PROBE EQUAL 0)
-        message(FATAL_ERROR "albor-render-albor: xcrun cannot resolve the metal tools, install xcode with its command line tools")
-    endif()
-    # xcode ships a stub when the component is absent, so the tools are run rather than merely found (§6.3, AD-16)
-    execute_process(COMMAND xcrun -sdk macosx metal --version RESULT_VARIABLE METAL_READY OUTPUT_QUIET ERROR_QUIET)
-    execute_process(COMMAND xcrun -sdk macosx metallib --version RESULT_VARIABLE METAL_LINK_READY OUTPUT_QUIET ERROR_QUIET)
-    # a stub that will not run is answered by the component download, which is the only thing that fixes it
-    if(NOT METAL_READY EQUAL 0 OR NOT METAL_LINK_READY EQUAL 0)
-        message(FATAL_ERROR "albor-render-albor: the metal toolchain for this xcode is missing, install it with: xcodebuild -downloadComponent MetalToolchain")
-    endif()
-
-    # the library targets the deployment the binary does, which keeps it loadable on the oldest supported system (AD-16)
-    set(METAL_TARGET_FLAGS "")
-    if(CMAKE_OSX_DEPLOYMENT_TARGET)
-        list(APPEND METAL_TARGET_FLAGS "-mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
-    endif()
-
-    # the shader compiles to a binary library at build time, so a run never invokes the compiler (AD-16)
-    set(METAL_LIBRARY "${CMAKE_CURRENT_BINARY_DIR}/albor_shaders.metallib")
+    # the compiled shader is a build input, so a consumer build never needs the metal toolchain (§6.3, AD-16)
+    set(METAL_LIBRARY "${CMAKE_CURRENT_SOURCE_DIR}/albor_shaders.metallib")
     # the generated source lives beside the other generated units and carries the portable extension it needs (§14.2)
     file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
     set(METAL_EMBEDDED "${CMAKE_CURRENT_BINARY_DIR}/generated/albor_shaders.cpp")
-    add_custom_command(
-        OUTPUT "${METAL_LIBRARY}"
-        COMMAND xcrun -sdk macosx metal -c "${CMAKE_CURRENT_SOURCE_DIR}/albor_shaders.metal" ${METAL_TARGET_FLAGS} -o "${CMAKE_CURRENT_BINARY_DIR}/albor_shaders.air"
-        COMMAND xcrun -sdk macosx metallib "${CMAKE_CURRENT_BINARY_DIR}/albor_shaders.air" -o "${METAL_LIBRARY}"
-        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/albor_shaders.metal"
-        BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/albor_shaders.air"
-        COMMENT "compiling albor_shaders.metal"
-        VERBATIM)
-    # the binary is embedded in a source, because a static archive carries no resource a run could find (§6.3)
+    # every build proves the artifact came from the shader it ships with, which the stamp records (14.2)
     add_custom_command(
         OUTPUT "${METAL_EMBEDDED}"
+        COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/albor_shaders.metal -DARTIFACT=${METAL_LIBRARY} -DSTAMP=${CMAKE_CURRENT_SOURCE_DIR}/albor_shaders.metal.sha256 -P "${CMAKE_CURRENT_SOURCE_DIR}/verify-shader-stamp.cmake"
         COMMAND ${CMAKE_COMMAND} -DINPUT=${METAL_LIBRARY} -DOUTPUT=${METAL_EMBEDDED} -P "${CMAKE_CURRENT_SOURCE_DIR}/embed-metallib.cmake"
-        DEPENDS "${METAL_LIBRARY}" "${CMAKE_CURRENT_SOURCE_DIR}/embed-metallib.cmake"
-        COMMENT "embedding albor_shaders.metallib"
+        DEPENDS "${METAL_LIBRARY}" "${CMAKE_CURRENT_SOURCE_DIR}/albor_shaders.metal" "${CMAKE_CURRENT_SOURCE_DIR}/albor_shaders.metal.sha256" "${CMAKE_CURRENT_SOURCE_DIR}/embed-metallib.cmake" "${CMAKE_CURRENT_SOURCE_DIR}/verify-shader-stamp.cmake"
+        COMMENT "embedding the committed albor_shaders.metallib"
         VERBATIM)
 
     # the metal sources join the library under arc, which manages their object lifetime (§6.3)

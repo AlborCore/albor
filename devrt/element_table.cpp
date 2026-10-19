@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <charconv>
+#include <cstdlib>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -40,10 +43,18 @@ namespace albor::devrt
             // an empty assignment is a value the language never wrote, so the property keeps what it had (§11.1)
             if (value.empty())
                 return false;
-            // the parse is over the trimmed view, because the library wants a contiguous range (§12.1)
-            const std::from_chars_result parsed = std::from_chars(value.data(), value.data() + value.size(), out);
-            // a trailing remainder means the text was not a number, which is reported rather than half applied (§12.1)
-            return parsed.ec == std::errc{} && parsed.ptr == value.data() + value.size();
+            // the text is copied, because the c library reads a terminated buffer rather than a view (§12.1)
+            const std::string text(value);
+            char* end = nullptr;
+            // the parse reports a range the language never writes through the error number, which starts clean (§12.1)
+            errno = 0;
+            // the parse reads the c locale, which is the locale the serializer writes its decimal point in (§12.1)
+            const float parsed = std::strtof(text.c_str(), &end);
+            // a parse counts only when it consumed the whole text and stayed in range (§12.1)
+            const bool complete = errno != ERANGE && end == text.c_str() + text.size();
+            // the caller's value is replaced only when the whole text was read, so a failed parse changes nothing (§12.1)
+            out = complete ? parsed : out;
+            return complete;
         }
 
         // read a bool out of a serialized assignment, where the language writes the two words and nothing else (§11.1)

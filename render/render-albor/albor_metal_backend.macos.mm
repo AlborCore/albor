@@ -184,7 +184,7 @@ namespace albor::render
             state.device = MTLCreateSystemDefaultDevice();
             // messaging a nil device answers nil, so every step below degrades instead of branching (§6.2)
             state.queue = [state.device newCommandQueue];
-            // the library was compiled by the build, so a run loads the bytes rather than invoking a compiler (AD-16)
+            // the library ships with the framework, so a run loads the bytes rather than invoking a compiler (AD-16)
             const std::span<const std::byte> data = metal_library_data();
             // a buffer with no bytes came from a build that failed to embed the library, which is refused below (§6.3)
             dispatch_data_t library_data = data.empty() ? nullptr : dispatch_data_create(data.data(), data.size(), nullptr, DISPATCH_DATA_DESTRUCTOR_DEFAULT);

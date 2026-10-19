@@ -1,5 +1,5 @@
-# embed a compiled metal library into a c++ source, because a static archive cannot carry a resource
-# the source is written only when its content changes, which keeps an unchanged build from recompiling (14.2)
+# embed the committed metal library into a c++ source, because a static archive cannot carry a resource
+# the source is written only when its content changes, and touched otherwise so the build converges (14.2)
 # invoked as: cmake -DINPUT=<metallib> -DOUTPUT=<cpp> -P embed-metallib.cmake
 
 # every byte is read as two hex digits, because cmake carries no binary reader
@@ -9,9 +9,9 @@ file(READ "${INPUT}" HEX_CONTENT HEX)
 string(LENGTH "${HEX_CONTENT}" HEX_LENGTH)
 math(EXPR BYTE_COUNT "${HEX_LENGTH} / 2")
 
-# an empty library is a failed compile rather than a source, so the build stops before it embeds nothing
+# an empty library carries no shader, so the build stops rather than embedding nothing
 if(BYTE_COUNT EQUAL 0)
-    message(FATAL_ERROR "embed-metallib: '${INPUT}' is empty, so the build produced no metal library")
+    message(FATAL_ERROR "embed-metallib: '${INPUT}' is empty, so the committed library carries no bytes")
 endif()
 
 # the literals are gathered sixteen bytes to a line, because cmake's regex carries no bounded repetition
@@ -35,7 +35,7 @@ while(INDEX LESS HEX_LENGTH)
 endwhile()
 
 # the source is rendered whole, because a partial write would leave a source that cannot compile
-set(GENERATED "// generated from the metal library the build compiled, which no build edits by hand\n\n#include \"render/render-albor/albor_shaders.h\"\n\nnamespace albor::render\n{\n    std::span<const std::byte> metal_library_data() {\n        // the byte list stays as the generator wrote it, because a formatter reflows it into one line (14.2)\n        // clang-format off\n        static const unsigned char DATA[] = {\n${BYTES}        };\n        // clang-format on\n        // the span covers every byte the file carried, which is what the loader reads\n        return std::span<const std::byte>(reinterpret_cast<const std::byte*>(DATA), ${BYTE_COUNT});\n    }\n} // namespace albor::render\n")
+set(GENERATED "// generated from the committed metal library, which no build edits by hand\n\n#include \"render/render-albor/albor_shaders.h\"\n\nnamespace albor::render\n{\n    std::span<const std::byte> metal_library_data() {\n        // the byte list stays as the generator wrote it, because a formatter reflows it into one line (14.2)\n        // clang-format off\n        static const unsigned char DATA[] = {\n${BYTES}        };\n        // clang-format on\n        // the span covers every byte the file carried, which is what the loader reads\n        return std::span<const std::byte>(reinterpret_cast<const std::byte*>(DATA), ${BYTE_COUNT});\n    }\n} // namespace albor::render\n")
 
 # the existing source is compared first, so an unchanged library rewrites nothing (14.2)
 set(PREVIOUS "")
@@ -46,4 +46,7 @@ endif()
 # the source is written only when it differs from what is already there
 if(NOT PREVIOUS STREQUAL GENERATED)
     file(WRITE "${OUTPUT}" "${GENERATED}")
+else()
+    # an unchanged source is touched, because a build system that sees it older than its inputs reruns this step
+    file(TOUCH "${OUTPUT}")
 endif()

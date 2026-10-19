@@ -3,11 +3,17 @@
 ## Requirements
 
 - **C++23** toolchain
-- **CMake** ≥ 3.24
+- **CMake** ≥ 3.28
 - **[vcpkg](https://vcpkg.io)** in manifest mode — dependencies are pinned in `vcpkg.json`
-  and are fetched on the first configure
-- **macOS** to build and run the example applications (they drive the AppKit platform
-  adapter directly; see [Status and platforms](status.md))
+  and are fetched on the first configure. Export `VCPKG_OSX_DEPLOYMENT_TARGET=13.3` so the
+  ports build for the same floor; a port built for a newer one links with a warning and may
+  call an API the minimum system lacks
+- **macOS 13.3 or later** on Intel or Apple silicon to build and run the macOS targets (the
+  example applications drive the AppKit platform adapter directly; see
+  [Status and platforms](status.md))
+- **No Metal toolchain is needed to build** — the shader ships as a compiled artifact. Only a
+  change to the shader itself needs `xcodebuild -downloadComponent MetalToolchain`; see
+  [Tooling](tooling.md#the-metal-shader)
 
 ## Build the repository
 

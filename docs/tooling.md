@@ -17,6 +17,27 @@ changes**, so a body edit rebuilds just that component's `.cpp`, while a declare
 change rebuilds the header and its includers
 ([Build scope](concepts/native-components.md)).
 
+## The Metal shader
+
+The Metal shader is `render/render-albor/albor_shaders.metal`. It is **not** compiled by a
+consumer's build: the compiled library `albor_shaders.metallib` is committed beside it, and
+every macOS build embeds those bytes, so no machine needs the Metal toolchain to use the
+framework. The committed artifact targets the same floor the build declares (macOS 13.3) and
+one library serves Intel and Apple silicon alike, because a `.metallib` is GPU code rather
+than a CPU object.
+
+Changing the shader is therefore a deliberate act:
+
+```sh
+bash build/shaders.sh --write   # recompile the artifact with the Metal toolchain
+bash build/shaders.sh           # check the committed artifact without touching the tree
+```
+
+`albor_shaders.metal.sha256` records the source and the artifact that were built together. Every build
+compares the two and fails when the shader changed without the artifact being regenerated, so
+a stale library cannot be shipped by accident. The regeneration needs the Metal toolchain
+that Xcode 26 unbundled; `xcodebuild -downloadComponent MetalToolchain` installs it.
+
 ## Manifest glue
 
 `manifest-glue` is the driver behind `albor_build_native_component` and
