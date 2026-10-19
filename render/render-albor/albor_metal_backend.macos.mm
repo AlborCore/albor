@@ -25,9 +25,6 @@ namespace albor::render
         // the pixel format every target uses, which reads back as canonical rgba8 bytes (§6.3, AD-26)
         constexpr MTLPixelFormat TARGET_FORMAT = MTLPixelFormatRGBA8Unorm;
 
-        // how many frames an unused texture stays cached, which bounds a long run's memory (AD-06)
-        constexpr std::uint64_t TEXTURE_IDLE_FRAMES = 120;
-
         // one draw state, which both shader stages read as a packed buffer, aligned as msl pads it (§6.3)
         struct alignas(16) DrawUniforms
         {
@@ -421,8 +418,8 @@ namespace albor::render
             draw.color[1] = 1.0f;
             draw.color[2] = 1.0f;
             draw.color[3] = 1.0f;
-            draw.target_size[0] = m_target.width;
-            draw.target_size[1] = m_target.height;
+            draw.target_size[0] = static_cast<float>(m_target.width);
+            draw.target_size[1] = static_cast<float>(m_target.height);
             // the cast carries the scissor of the moment it was recorded, which the mask applies (§6.2)
             draw.inverse0[0] = shadow.scissor.inverse.scale_x;
             draw.inverse0[1] = shadow.scissor.inverse.skew_x;
