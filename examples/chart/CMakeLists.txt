@@ -13,7 +13,7 @@ add_executable(albor-chart main.cpp waveform_widget.cpp)
 albor_build_native_component(albor-chart "${CMAKE_CURRENT_SOURCE_DIR}/chart.ui-manifest" WaveformView)
 
 # the example includes through the project root, which is where its own headers live (§3.5, §11.2)
-target_include_directories(albor-chart PRIVATE ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-chart PRIVATE ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-chart PRIVATE cxx_std_23)
 
 # the example reaches the platform, the renderers, the layout and the widgets, so they link explicitly (§3.2)

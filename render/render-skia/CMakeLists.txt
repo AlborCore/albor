@@ -16,7 +16,7 @@ if(NOT APPLE)
     add_library(albor-render-skia STATIC ${CPP_SOURCES})
 
     # the backend implements the rendering hal and names albor types only (§3.5, AD-05)
-    target_include_directories(albor-render-skia PUBLIC ${CMAKE_SOURCE_DIR})
+    target_include_directories(albor-render-skia PUBLIC ${ALBOR_SOURCE_DIR})
     target_compile_features(albor-render-skia PUBLIC cxx_std_23)
 
     # the skia headers are consumed as system headers, because their own warnings are not the framework's (§3.5)
@@ -34,7 +34,7 @@ file(GLOB_RECURSE MACOS_SOURCES "./*.macos.mm")
 add_library(albor-render-skia STATIC ${CPP_SOURCES} ${MACOS_SOURCES})
 
 # the backend implements the rendering hal and names albor types only (§3.5, AD-05)
-target_include_directories(albor-render-skia PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-render-skia PUBLIC ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-render-skia PUBLIC cxx_std_23)
 
 # the backend holds metal objects, so arc manages their lifetime rather than hand written retain and release (§6.3)

@@ -18,7 +18,7 @@ endif()
 add_library(albor-automation-objects OBJECT ${CPP_SOURCES} ${PLATFORM_SOURCES})
 
 # the objects reach the project root, which is where the module includes point (§3.2)
-target_include_directories(albor-automation-objects PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-automation-objects PUBLIC ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-automation-objects PUBLIC cxx_std_23)
 
 # the command surface routes through the shared action object of AD-15, which is production code below this module (§10.3, §18)

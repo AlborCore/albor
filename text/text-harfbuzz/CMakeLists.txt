@@ -28,7 +28,7 @@ endif()
 add_library(albor-text-harfbuzz STATIC ${CPP_SOURCES} ${PLATFORM_SOURCES})
 
 # the engine names albor types only, and no shaping type reaches a public header (§3.5, §9.1, AD-19)
-target_include_directories(albor-text-harfbuzz PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-text-harfbuzz PUBLIC ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-text-harfbuzz PUBLIC cxx_std_23)
 
 # the third party headers are consumed as system headers, because their warnings are not the framework's (§3.5)

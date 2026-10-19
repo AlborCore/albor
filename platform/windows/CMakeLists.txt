@@ -16,7 +16,7 @@ file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 add_library(albor-platform-windows STATIC ${WIN32_SOURCES} ${CPP_SOURCES})
 
 # the adapter implements the framework's platform interfaces, which stay free of win32 types (§3.5, AD-05)
-target_include_directories(albor-platform-windows PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-platform-windows PUBLIC ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-platform-windows PUBLIC cxx_std_23)
 
 # the adapter needs the application loop it implements, and reaches the user32 window api, the input method editor

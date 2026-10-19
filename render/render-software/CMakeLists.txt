@@ -23,7 +23,7 @@ file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 add_library(albor-render-software STATIC ${CPP_SOURCES})
 
 # the backend implements the rendering hal and names albor types only (§3.5, AD-05)
-target_include_directories(albor-render-software PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-render-software PUBLIC ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-render-software PUBLIC cxx_std_23)
 
 # the skia headers are consumed as system headers, because their own warnings are not the framework's (§3.5)

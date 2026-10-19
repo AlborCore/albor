@@ -45,6 +45,31 @@ at load, so the libraries a target links decide what ships inside it.
 | `albor-accessibility`, `albor-i18n` | semantic/accessibility adapters, translation catalogs |
 | `albor-devrt-auto` | dev runtime: hot swap of `.ui` structure (optional, see [Tooling](tooling.md)) |
 
+## Use it from another project
+
+`FetchContent` — or `add_subdirectory` of a vendored copy — brings the framework in as a
+subtree. Its tests and examples stay off, because they belong to developing the framework,
+and every `albor-*` target publishes the framework's own include root, so `#include
+"application/application.h"` resolves from the consumer's sources.
+
+```cmake
+include(FetchContent)
+FetchContent_Declare(albor
+    GIT_REPOSITORY https://github.com/AlborCore/albor.git
+    GIT_TAG        main)          # a tag or a commit, never a moving branch
+FetchContent_MakeAvailable(albor)
+
+add_executable(my_app main.cpp)
+target_link_libraries(my_app PRIVATE
+    albor-application albor-platform-macos-auto
+    albor-render-albor-auto albor-text-harfbuzz-auto)
+```
+
+The dependencies come from vcpkg. A consumer in manifest mode lists the same packages in
+its own `vcpkg.json`, or points `VCPKG_MANIFEST_DIR` at the fetched sources so the pinned
+versions of the framework's manifest are the ones built. Export
+`MACOSX_DEPLOYMENT_TARGET=13.3` so the ports build for the framework's floor.
+
 ## A component from a `.ui` file
 
 Write `greeting_panel.ui` (the full language is covered in

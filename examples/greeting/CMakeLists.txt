@@ -13,7 +13,7 @@ add_executable(albor-greeting main.cpp)
 albor_build_ui_component(albor-greeting "${CMAKE_CURRENT_SOURCE_DIR}/greeting_panel.ui")
 
 # the example includes through the project root, which is where the module includes point (§3.5, §11.3)
-target_include_directories(albor-greeting PRIVATE ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-greeting PRIVATE ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-greeting PRIVATE cxx_std_23)
 
 # the widgets, the layout, accessibility and i18n link explicitly, and the platform carries the host and input (§3.2)

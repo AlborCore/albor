@@ -13,7 +13,7 @@ file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 add_executable(hello-render-albor ${CPP_SOURCES})
 
 # the example is the composition root, so it wires the platform and the renderer backend together (§6.3)
-target_include_directories(hello-render-albor PRIVATE ${CMAKE_SOURCE_DIR})
+target_include_directories(hello-render-albor PRIVATE ${ALBOR_SOURCE_DIR})
 target_compile_features(hello-render-albor PRIVATE cxx_std_23)
 
 # the framework modules arrive transitively through the backends, and the application links a text engine even

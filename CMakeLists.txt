@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.28)
 
+# the framework's own root, which every module includes through, so a consumer keeps its own root (§3.5, AD-05)
+set(ALBOR_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+
 # the oldest macOS the framework runs on, which the build states rather than inheriting from the sdk (§6.3)
 set(ALBOR_OSX_MINIMUM "13.3")
 
@@ -36,8 +39,14 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(ALBOR_DEV "Build the dev runtime extension (Dev configuration)" OFF)
 option(ALBOR_TEST "Build the test configuration extras: automation core, headless backend, software renderer" OFF)
 option(ALBOR_AUTOMATION "Build the automation core (Dev/Test configurations only, AD-10)" OFF)
-option(ALBOR_EXAMPLES "Build the example applications" ON)
-option(ALBOR_TESTS "Build the unit test binary" ON)
+# a consumer that fetches these sources builds neither the framework's suites nor its examples unless it asks (§14.2)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    set(ALBOR_DEV_BUILD ON)
+else()
+    set(ALBOR_DEV_BUILD OFF)
+endif()
+option(ALBOR_EXAMPLES "Build the example applications" ${ALBOR_DEV_BUILD})
+option(ALBOR_TESTS "Build the unit test binary" ${ALBOR_DEV_BUILD})
 option(ALBOR_COVERAGE "Instrument the unit tests so a coverage report can be generated from them" OFF)
 
 # the configuration name that the debug information and the log labels carry
@@ -46,8 +55,8 @@ set(ALBOR_CONFIGURATION "Release" CACHE STRING "The albor configuration this bui
 # the shared build rules for generated components, which the examples and the fixtures use (§14.2)
 include(build/AlborComponent.cmake)
 
-# include paths are relative to the root of the project
-include_directories(".")
+# include paths are relative to the framework root, which the targets publish to their consumers (§3.5, AD-05)
+include_directories("${ALBOR_SOURCE_DIR}")
 
 # a configuration is Release when neither the dev runtime extension nor the test extras are enabled (§2.2)
 if(NOT ALBOR_DEV AND NOT ALBOR_TEST)

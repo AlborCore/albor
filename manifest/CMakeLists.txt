@@ -7,7 +7,7 @@ file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 add_library(albor-manifest STATIC ${CPP_SOURCES})
 
 # the parser is included by its own tools and tests, because nothing inside the framework includes it (§2.1)
-target_include_directories(albor-manifest PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-manifest PUBLIC ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-manifest PUBLIC cxx_std_23)
 
 # the manifest reuses the frontend scanner and the shared diagnostics rather than scanning twice (§11.2, AD-17)

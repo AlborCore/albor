@@ -13,7 +13,7 @@ file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 add_executable(albor-reactive-counter ${CPP_SOURCES})
 
 # the example is the composition root, so it wires the platform and the renderer backend together (§6.3)
-target_include_directories(albor-reactive-counter PRIVATE ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-reactive-counter PRIVATE ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-reactive-counter PRIVATE cxx_std_23)
 
 # the platform carries the host, the input path and the ui tree, so naming the platform and the two backends is the whole link (§3.2)

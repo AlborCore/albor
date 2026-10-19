@@ -20,7 +20,7 @@ if(APPLE)
 endif()
 
 # the backend implements the rendering hal and names albor types only (§3.5, AD-05)
-target_include_directories(albor-render-blend2d PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-render-blend2d PUBLIC ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-render-blend2d PUBLIC cxx_std_23)
 
 # the blend2d headers are consumed as system headers, because their own warnings are not the framework's (§3.5)
