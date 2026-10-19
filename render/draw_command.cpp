@@ -400,9 +400,9 @@ namespace albor
     }
 
     void DrawCommand::replay_glyph_outline(RenderContext& context) const {
-        // the outline is one closed contour, whose path was built once when the outline was built (§6.4, AD-06)
+        // the outline carries every contour of the glyph, whose path was built once with it (§6.4, AD-06)
         const GlyphOutlineGeometry& geometry = glyph_outline_geometry();
-        // a contour of fewer than three points encloses nothing, so there is nothing to draw (§6.2)
+        // an outline of fewer than three points encloses no area, so there is nothing to draw (§6.2)
         if (geometry.outline->points().size() < 3)
             return;
         // the outline draws as a filled path at the pen position, which is the same fill a glyph rasterizes with (§6.4)

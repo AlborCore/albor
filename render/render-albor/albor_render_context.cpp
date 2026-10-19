@@ -423,7 +423,7 @@ namespace albor::render
         for (Contour& contour : contours)
             to_device(contour);
         if (paint.fills()) {
-            // the group sweeps into one draw, which its even odd pairing cuts the holes by (§6.2)
+            // the group sweeps into one draw, which its non zero winding cuts the holes by (§6.2)
             const EmittedRange range = expand_fill_group(m_batch, contours);
             record(range, CoverageKind::Plain, 1.0f, paint.fill.with_alpha(m_opacity), 0, false);
         }

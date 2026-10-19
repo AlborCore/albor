@@ -288,7 +288,7 @@ TEST(EmbeddedFontChecks, AnEmbeddedFixtureShapesWithoutAPlatformFont) {
     EXPECT_GT(layout.run->glyph_count(), 0u);
     // assert the run carries no typeface and still draws, because the renderer walks its outlines (§15, AD-34)
     EXPECT_FALSE(layout.run->lines().front().font.valid());
-    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 16.0f);
+    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 16.0f).points;
     EXPECT_FALSE(outline.empty());
     // exit
     resources::FontRegistry::clear();
@@ -415,7 +415,7 @@ TEST(GlyphOutlineChecks, AVisibleGlyphHasAnOutline) {
     ASSERT_NE(layout.run, nullptr);
     ASSERT_GT(layout.run->glyph_count(), 0u);
     // act the first glyph is the letter, because a one letter string shapes one glyph (§9.1)
-    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 20.0f);
+    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 20.0f).points;
     // assert the outline is a real shape, because an empty outline would draw nothing (§6.2, §15)
     ASSERT_FALSE(outline.empty());
     EXPECT_GT(outline.size(), 3u);
@@ -434,7 +434,7 @@ TEST(GlyphOutlineChecks, ASpaceHasNoOutline) {
     const TextLayout layout = engine->measure(" ", 0.0f, 20.0f);
     ASSERT_NE(layout.run, nullptr);
     // act the space glyph is drawn as nothing, so it has no points (§6.2)
-    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 20.0f);
+    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 20.0f).points;
     // assert an empty outline is returned rather than a degenerate shape (§6.2)
     EXPECT_TRUE(outline.empty());
     // exit
@@ -453,8 +453,8 @@ TEST(GlyphOutlineChecks, AnOutlineIsReproducible) {
     ASSERT_NE(layout.run, nullptr);
     const std::uint32_t glyph = layout.run->lines().front().glyphs.front().id;
     // act the same glyph is walked twice from the same bytes (§15, AD-34)
-    const std::vector<Point> first = engine->glyph_outline(glyph, 20.0f);
-    const std::vector<Point> second = engine->glyph_outline(glyph, 20.0f);
+    const std::vector<Point> first = engine->glyph_outline(glyph, 20.0f).points;
+    const std::vector<Point> second = engine->glyph_outline(glyph, 20.0f).points;
     // assert the two outlines are identical, because the shape comes from the font and not from a rasterizer (§15)
     ASSERT_EQ(first.size(), second.size());
     for (std::size_t index = 0; index < first.size(); index++) {
@@ -479,8 +479,8 @@ TEST(GlyphOutlineChecks, AnOutlineScalesWithTheFontSize) {
     ASSERT_NE(layout.run, nullptr);
     const std::uint32_t glyph = layout.run->lines().front().glyphs.front().id;
     // act
-    const std::vector<Point> small = engine->glyph_outline(glyph, 20.0f);
-    const std::vector<Point> large = engine->glyph_outline(glyph, 40.0f);
+    const std::vector<Point> small = engine->glyph_outline(glyph, 20.0f).points;
+    const std::vector<Point> large = engine->glyph_outline(glyph, 40.0f).points;
     // assert doubling the size doubles the shape, because the outline is in logical pixels (§9.1, AD-27)
     ASSERT_EQ(small.size(), large.size());
     float small_height = 0.0f;
@@ -496,6 +496,66 @@ TEST(GlyphOutlineChecks, AnOutlineScalesWithTheFontSize) {
     resources::FontRegistry::clear();
 }
 
+TEST(GlyphOutlineChecks, ACounterGlyphCarriesTwoClosedContours) {
+    // arrange a round letter, whose counter is a second contour rather than the end of the first (§6.4)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("o", 0.0f, 40.0f);
+    ASSERT_NE(layout.run, nullptr);
+    // act the verb stream is counted, because a counter survives only when its contour is sealed (§6.4)
+    const GlyphOutlineData walked = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 40.0f);
+    std::size_t opened = 0;
+    std::size_t sealed = 0;
+    for (const PathVerb verb : walked.verbs) {
+        // a move opens one contour of the glyph (§6.4)
+        if (verb == PathVerb::MoveTo)
+            opened++;
+        // a close seals the contour it opened, which keeps the counter apart from the ring (§6.4)
+        if (verb == PathVerb::Close)
+            sealed++;
+    }
+    // assert the ring and its counter both reach the stream, which one flat point run cannot carry (§6.4)
+    EXPECT_EQ(opened, 2u);
+    EXPECT_EQ(sealed, 2u);
+    // assert the stream consumes every point it carries, which a dropped verb would leave behind (§6.4)
+    EXPECT_EQ(PathResource::point_demand(std::span<const PathVerb>(walked.verbs)), walked.points.size());
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(GlyphOutlineChecks, AnOutlineIsHandedOverYDownTheBaseline) {
+    // arrange a letter whose ink sits entirely above the baseline, which makes the sign of every y unambiguous (§9.1)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("x", 0.0f, 40.0f);
+    ASSERT_NE(layout.run, nullptr);
+    // act the vertical extent is measured against the baseline, which the walk puts at the origin (§9.1, AD-27)
+    const GlyphOutlineData walked = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 40.0f);
+    ASSERT_FALSE(walked.points.empty());
+    float top = walked.points.front().y;
+    float bottom = walked.points.front().y;
+    for (const Point& point : walked.points) {
+        // the top edge follows the smallest coordinate, which is where the x height lands (§9.1)
+        top = std::min(top, point.y);
+        // the bottom edge follows the largest, which stays at the baseline for a letter without a descender (§9.1)
+        bottom = std::max(bottom, point.y);
+    }
+    // assert the x height rises above the baseline, which is negative in the y down space a surface draws in (§9.1)
+    EXPECT_LT(top, -1.0f);
+    // assert no ink falls below the baseline, which a y up walk would place there instead (§9.1)
+    EXPECT_LT(bottom, 1.0f);
+    // exit
+    resources::FontRegistry::clear();
+}
+
 TEST(GlyphOutlineChecks, AnUnknownGlyphHasNoOutline) {
     // arrange an engine whose face carries fewer glyphs than the index asks for (§6.2)
     if (!has_font())
@@ -505,7 +565,7 @@ TEST(GlyphOutlineChecks, AnUnknownGlyphHasNoOutline) {
     const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
     ASSERT_NE(engine, nullptr);
     // act an index past the end of the font cannot be loaded (§9.1)
-    const std::vector<Point> outline = engine->glyph_outline(1000000u, 20.0f);
+    const std::vector<Point> outline = engine->glyph_outline(1000000u, 20.0f).points;
     // assert nothing is returned rather than a crash or a degenerate shape (§6.2)
     EXPECT_TRUE(outline.empty());
     // exit
@@ -523,7 +583,7 @@ TEST(GlyphOutlineChecks, ACurveGlyphIsTessellatedRatherThanSampled) {
     const TextLayout layout = engine->measure("o", 0.0f, 100.0f);
     ASSERT_NE(layout.run, nullptr);
     // act the round letter is walked, which is where a conic or a cubic is reported (§6.4)
-    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 100.0f);
+    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 100.0f).points;
     ASSERT_FALSE(outline.empty());
     // assert a real tessellation happened, which a polyline through control points would not produce (§6.4, §15)
     EXPECT_GT(outline.size(), 32u);
@@ -563,7 +623,7 @@ TEST(GlyphOutlineChecks, ACubicOutlineIsTessellated) {
     ASSERT_NE(layout.run, nullptr);
     ASSERT_GT(layout.run->glyph_count(), 0u);
     // act the round letter is walked, which is where a cubic is reported and flattened by the fixed segment count (§6.4)
-    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 100.0f);
+    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 100.0f).points;
     // assert the cubic path produced a tessellated shape rather than nothing, which pins the cubic callback (§6.4, §15)
     ASSERT_FALSE(outline.empty());
     EXPECT_GT(outline.size(), 32u);
@@ -632,6 +692,89 @@ TEST(EmbeddedTextDrawChecks, AnEmbeddedRunPutsInkOnTheReferenceSurface) {
         }
     }
     EXPECT_TRUE(any_lit);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(EmbeddedTextDrawChecks, AnEmbeddedCounterDrawsAsAHole) {
+    // arrange a round letter drawn alone, so a painted counter cannot be mistaken for the ring (§6.4)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("o", 0.0f, 60.0f);
+    ASSERT_NE(layout.run, nullptr);
+    const std::uint32_t glyph = layout.run->lines().front().glyphs.front().id;
+    const GlyphOutlineData walked = engine->glyph_outline(glyph, 60.0f);
+    // act the counter's points are gathered, which is the contour after the second move (§6.4)
+    std::vector<Point> counter;
+    std::size_t cursor = 0;
+    std::size_t contour = 0;
+    for (const PathVerb verb : walked.verbs) {
+        // a move opens the next contour and consumes the point it starts at (§6.4)
+        if (verb == PathVerb::MoveTo) {
+            contour++;
+            cursor++;
+            continue;
+        }
+        // a line consumes one point, which belongs to the counter while that contour is the second one (§6.4)
+        if (verb == PathVerb::LineTo) {
+            if (contour == 2)
+                counter.push_back(walked.points[cursor]);
+            cursor++;
+        }
+    }
+    ASSERT_GT(counter.size(), 3u);
+    // the centre of the round counter is the average of its points, which lands inside it (§6.4)
+    float centre_x = 0.0f;
+    float centre_y = 0.0f;
+    for (const Point& point : counter) {
+        centre_x += point.x;
+        centre_y += point.y;
+    }
+    centre_x /= static_cast<float>(counter.size());
+    centre_y /= static_cast<float>(counter.size());
+    // the glyph is placed with its baseline below its x height, which keeps the whole letter on the surface (§9.1)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{120.0f, 120.0f}, 1.0f);
+    // the pen sits low enough that the letter clears the top edge and its counter stays on the surface (§9.1)
+    const Point placed{40.0f, 80.0f};
+    // the outline is retained once, which is what a frame replays (§6.4, AD-06)
+    const std::shared_ptr<const GlyphOutline> outline = std::make_shared<const GlyphOutline>(engine->font_hash(), glyph, 60.0f, walked);
+    // the frame clears to white, so an unfilled counter reads as background rather than as ink (§6.1)
+    FrameScene scene(metrics, Color::rgb(1.0f, 1.0f, 1.0f));
+    // the glyph is drawn as a filled outline, which is exactly what the replay records (§6.4)
+    scene.add_command(DrawCommand::glyph_outline(outline, placed, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)}));
+    software::SoftwareRendererBackend backend;
+    // the surface is the software reference, which is the screenshot oracle of the parity suite (§16, AD-26)
+    const std::unique_ptr<RenderSurface> surface = software::SoftwareRenderSurface::create(metrics);
+    ASSERT_NE(surface, nullptr);
+    // the frame is executed in one pass, which is what a composition root does (§6.1)
+    backend.execute_frame(*surface, scene);
+    const Screenshot drawn = capture_surface(*surface);
+    ASSERT_FALSE(drawn.empty());
+    // the sampled index needs the readback width, which is the physical extent and not the logical one (§6.3, AD-27)
+    const std::size_t width = static_cast<std::size_t>(drawn.width);
+    const std::size_t hole = (static_cast<std::size_t>(placed.y + centre_y) * width + static_cast<std::size_t>(placed.x + centre_x)) * 4u;
+    ASSERT_LT(hole + 2u, drawn.pixels.size());
+    // assert the counter stays background, which is the hole the second contour cuts (§6.4)
+    EXPECT_EQ(drawn.pixels[hole], 255u);
+    EXPECT_EQ(drawn.pixels[hole + 1], 255u);
+    EXPECT_EQ(drawn.pixels[hole + 2], 255u);
+    // act a point on the ring is sampled by stepping outward from the inner edge, which the stem spans (§6.4)
+    const float outward_x = counter.front().x - centre_x;
+    const float outward_y = counter.front().y - centre_y;
+    const float outward_length = std::hypot(outward_x, outward_y);
+    ASSERT_GT(outward_length, 1.0f);
+    // the sample sits three pixels into the stem, which is narrower than the gap to the outer edge (§6.4)
+    const float ring_x = counter.front().x + outward_x / outward_length * 3.0f;
+    const float ring_y = counter.front().y + outward_y / outward_length * 3.0f;
+    // the ring sample is checked for bounds before it is read, because the coordinates come from the font (§15)
+    const std::size_t ring = (static_cast<std::size_t>(placed.y + ring_y) * width + static_cast<std::size_t>(placed.x + ring_x)) * 4u;
+    ASSERT_LT(ring + 2u, drawn.pixels.size());
+    // assert the ring carries ink beside the hole, which proves the letter drew rather than vanished (§6.2)
+    EXPECT_LT(drawn.pixels[ring], 200u);
     // exit
     resources::FontRegistry::clear();
 }
@@ -1189,8 +1332,8 @@ TEST(EmbeddedTextDrawChecks, TheEngineProvidesTheOutlineResolver) {
     // exit
     resources::FontRegistry::clear();
 }
-TEST(GlyphOutlineChecks, TheOutlinePairsAVerbWithEveryPointAndRetainsAPath) {
-    // arrange the carried fixture, whose glyph is walked into a closed contour of points (§6.4, AD-34)
+TEST(GlyphOutlineChecks, TheOutlinePairsItsVerbsWithThePointsOfEveryContour) {
+    // arrange the carried fixture, whose glyph is walked into closed contours of points (§6.4, AD-34)
     if (!has_font())
         GTEST_SKIP() << "no conformance font on this host";
     resources::FontRegistry::clear();
@@ -1200,42 +1343,51 @@ TEST(GlyphOutlineChecks, TheOutlinePairsAVerbWithEveryPointAndRetainsAPath) {
     const TextLayout layout = engine->measure("A", 0.0f, 20.0f);
     ASSERT_NE(layout.run, nullptr);
     const std::uint32_t glyph = layout.run->lines().front().glyphs.front().id;
-    const std::vector<Point> points = engine->glyph_outline(glyph, 20.0f);
-    ASSERT_FALSE(points.empty());
-    // act the outline is built once over the points, which pairs a verb with every point and retains a path (§6.4)
-    const GlyphOutline outline(engine->font_hash(), glyph, 20.0f, points);
-    // assert one verb per point, led by a move, because the contour is one closed polyline (§6.4)
-    ASSERT_EQ(outline.verbs().size(), points.size());
+    const GlyphOutlineData walked = engine->glyph_outline(glyph, 20.0f);
+    ASSERT_FALSE(walked.points.empty());
+    // act the outline is built once over the walked contours, which pairs the verbs with their points (§6.4)
+    const GlyphOutline outline(engine->font_hash(), glyph, 20.0f, walked);
+    // assert the stream consumes exactly the points it carries, which a dropped verb would break (§6.4)
+    EXPECT_EQ(PathResource::point_demand(std::span<const PathVerb>(outline.verbs())), outline.points().size());
+    // assert the stream opens with a move and seals with a close, which is the ring a glyph draws (§6.4)
     EXPECT_EQ(outline.verbs().front(), PathVerb::MoveTo);
-    for (std::size_t index = 1; index < outline.verbs().size(); index++)
-        EXPECT_EQ(outline.verbs()[index], PathVerb::LineTo);
-    // assert the retained path carries the same contour, which is what a frame draws without allocating (§6.4)
+    EXPECT_EQ(outline.verbs().back(), PathVerb::Close);
+    // assert the retained path carries the same stream, which is what a frame draws without allocating (§6.4)
     ASSERT_NE(outline.path(), nullptr);
-    EXPECT_EQ(outline.path()->points().size(), points.size());
+    EXPECT_EQ(outline.path()->verbs().size(), outline.verbs().size());
+    EXPECT_EQ(outline.path()->points().size(), outline.points().size());
     // exit
     resources::FontRegistry::clear();
 }
 
-TEST(GlyphOutlineChecks, AnOutlinePairsItsVerbsWithItsPointsAtEverySize) {
-    // arrange contours of zero to three points, which the constructor encodes without any font (§6.4)
-    const std::vector<Point> empty;
-    const std::vector<Point> one{Point{0.0f, 0.0f}};
-    const std::vector<Point> two{Point{0.0f, 0.0f}, Point{1.0f, 0.0f}};
-    const std::vector<Point> three{Point{0.0f, 0.0f}, Point{1.0f, 0.0f}, Point{0.0f, 1.0f}};
-    // act, assert the verbs pair one to one with the points at every size, led by a move (§6.4)
-    const GlyphOutline zero_outline(7u, 1u, 10.0f, empty);
-    EXPECT_TRUE(zero_outline.verbs().empty());
-    const GlyphOutline one_outline(7u, 1u, 10.0f, one);
-    ASSERT_EQ(one_outline.verbs().size(), 1u);
-    EXPECT_EQ(one_outline.verbs().front(), PathVerb::MoveTo);
-    const GlyphOutline two_outline(7u, 1u, 10.0f, two);
-    ASSERT_EQ(two_outline.verbs().size(), 2u);
-    EXPECT_EQ(two_outline.verbs()[1], PathVerb::LineTo);
-    const GlyphOutline three_outline(7u, 1u, 10.0f, three);
-    ASSERT_EQ(three_outline.verbs().size(), 3u);
-    // assert the retained path is built for a real contour, which the replay draws directly (§6.4)
-    ASSERT_NE(three_outline.path(), nullptr);
-    EXPECT_EQ(three_outline.path()->points().size(), 3u);
+TEST(GlyphOutlineChecks, AnOutlineKeepsTheContoursItWasBuiltFrom) {
+    // arrange a ring with a counter, which is two contours rather than one point run (§6.4)
+    const GlyphOutlineData ring{
+        .verbs = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close, PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close},
+        .points = {Point{0.0f, 0.0f}, Point{8.0f, 0.0f}, Point{4.0f, 8.0f}, Point{2.0f, 2.0f}, Point{3.0f, 6.0f}, Point{4.0f, 2.0f}},
+    };
+    // act
+    const GlyphOutline outline(7u, 1u, 10.0f, ring);
+    // assert the verbs are handed back as built, because a close and a move are what keep the counter apart (§6.4)
+    ASSERT_EQ(outline.verbs().size(), ring.verbs.size());
+    ASSERT_EQ(outline.points().size(), ring.points.size());
+    EXPECT_EQ(outline.verbs()[3], PathVerb::Close);
+    EXPECT_EQ(outline.verbs()[4], PathVerb::MoveTo);
+    // assert the retained path carries the same stream, which the replay draws directly (§6.4)
+    ASSERT_NE(outline.path(), nullptr);
+    EXPECT_EQ(outline.path()->verbs().size(), ring.verbs.size());
+    EXPECT_EQ(outline.path()->points().size(), ring.points.size());
+    // assert an outline with no contour is empty, which is the one case the replay skips (§6.2)
+    const GlyphOutline none(7u, 2u, 10.0f, GlyphOutlineData{});
+    EXPECT_TRUE(none.empty());
+    // assert a stream that asks for more points than it carries is refused, which keeps the replay in bounds (§6.4)
+    const GlyphOutline mismatched(7u, 3u, 10.0f, GlyphOutlineData{.verbs = ring.verbs, .points = {Point{0.0f, 0.0f}}});
+    EXPECT_TRUE(mismatched.empty());
+    // assert the path identity carries the size, because one glyph at two sizes is two different shapes (§6.4, AD-27)
+    const GlyphOutline same_size(7u, 1u, 10.0f, ring);
+    const GlyphOutline larger(7u, 1u, 20.0f, ring);
+    EXPECT_EQ(same_size.path()->id(), outline.path()->id());
+    EXPECT_NE(larger.path()->id(), outline.path()->id());
 }
 
 TEST(RtlChecks, AnRtlRunShapesInTheDeclaredDirection) {

@@ -10,20 +10,19 @@ namespace albor
         constexpr std::size_t MAXIMUM_CACHED_OUTLINES = 4096;
     } // namespace
 
-    GlyphOutline::GlyphOutline(std::uint64_t font_hash, std::uint32_t glyph_id, float font_size, std::vector<Point> points) :
-        m_font_hash(font_hash), m_glyph_id(glyph_id), m_font_size(font_size), m_points(std::move(points)) {
-        // the verbs are built once here, because a closed contour never changes shape once tessellated (§6.4)
-        m_verbs.reserve(m_points.size());
-        // a contour begins with a move, which is where the pen starts at the first point (§6.4)
-        if (!m_points.empty())
-            m_verbs.push_back(PathVerb::MoveTo);
-        // every point after the first is a straight segment, because the outline is already tessellated (§6.4, §15)
-        for (std::size_t index = 1; index < m_points.size(); index++)
-            m_verbs.push_back(PathVerb::LineTo);
+    GlyphOutline::GlyphOutline(std::uint64_t font_hash, std::uint32_t glyph_id, float font_size, GlyphOutlineData outline) :
+        m_font_hash(font_hash), m_glyph_id(glyph_id), m_font_size(font_size), m_outline(std::move(outline)) {
+        // a stream whose verbs demand a different number of points cannot be replayed, so it is refused here (§6.4)
+        if (PathResource::point_demand(std::span<const PathVerb>(m_outline.verbs)) != m_outline.points.size())
+            m_outline = GlyphOutlineData{};
+        // the identifier starts at the font hash, because every glyph of one font shares that identity (§15, AD-34)
+        std::uint64_t identifier = font_hash;
+        // the glyph index is mixed in, because two glyphs of one font are different shapes (§6.4)
+        identifier = identifier * 1099511628211ull ^ static_cast<std::uint64_t>(glyph_id);
+        // the quantised size is mixed in, because one glyph at two sizes is two different shapes (§6.4, AD-27)
+        identifier = identifier * 1099511628211ull ^ static_cast<std::uint64_t>(font_size * 64.0f);
         // the path is retained once, so a frame replays it without allocating a resource per glyph (§6.4, AD-06)
-        const std::uint64_t identifier = font_hash ^ (static_cast<std::uint64_t>(glyph_id) << 1);
-        // the path copies the verbs and points here, at construction, which is the one place it may allocate (§6.4)
-        m_path = std::make_shared<const PathResource>(identifier, std::span<const PathVerb>(m_verbs), std::span<const Point>(m_points));
+        m_path = std::make_shared<const PathResource>(identifier, std::span<const PathVerb>(m_outline.verbs), std::span<const Point>(m_outline.points));
     }
 
     std::uint64_t GlyphOutline::font_hash() const {
@@ -42,13 +41,13 @@ namespace albor
     }
 
     const std::vector<Point>& GlyphOutline::points() const {
-        // the points are the tessellated contour, which the replay walks once (§6.4)
-        return m_points;
+        // the points are what every contour in the stream consumes, which the replay walks once (§6.4)
+        return m_outline.points;
     }
 
     const std::vector<PathVerb>& GlyphOutline::verbs() const {
-        // the verbs are paired with the points, and are built once rather than every frame (§6.4)
-        return m_verbs;
+        // the verbs pair against the points and keep every contour apart (§6.4)
+        return m_outline.verbs;
     }
 
     const std::shared_ptr<const PathResource>& GlyphOutline::path() const {
@@ -58,7 +57,7 @@ namespace albor
 
     bool GlyphOutline::empty() const {
         // a glyph with no points draws nothing, which is what a space is (§6.2)
-        return m_points.empty();
+        return m_outline.points.empty();
     }
 
     std::shared_ptr<const GlyphOutline> GlyphOutlineCache::lookup(const GlyphOutlineKey& key, const GlyphOutlineResolver& resolver) {

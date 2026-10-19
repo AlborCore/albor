@@ -22,7 +22,7 @@ namespace albor
         Close,
     };
 
-    // the immutable path a domain view retains off the ui thread, which replays as one contour (§6.4, AD-06)
+    // the immutable path a domain view retains off the ui thread, which replays the contours its verbs open (§6.4, AD-06)
     class PathResource
     {
     public:

@@ -39,8 +39,8 @@ namespace albor::harfbuzz
         // drop every cached run, which a memory pressure policy calls (§9.1)
         void clear_cache() const;
 
-        // extract one glyph's outline as a polyline, which is how embedded text draws (§15, AD-34)
-        [[nodiscard]] std::vector<Point> glyph_outline(std::uint32_t glyph_id, float font_size) const;
+        // extract one glyph's outline as tessellated contours, which is how embedded text draws (§15, AD-34)
+        [[nodiscard]] GlyphOutlineData glyph_outline(std::uint32_t glyph_id, float font_size) const;
 
         ~HarfbuzzTextEngine() override;
 

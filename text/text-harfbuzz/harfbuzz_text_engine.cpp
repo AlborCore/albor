@@ -345,29 +345,64 @@ namespace albor::harfbuzz
 
     namespace
     {
-        // the outline the draw callbacks write into, which is a flat point list because a ui path is (§6.4, AD-06)
+        // the outline the draw callbacks write into, which keeps every contour apart rather than one point run (§6.4)
         struct OutlineSink
         {
-            // the points walked so far, already in the logical pixels the caller asked for (§6.4, AD-27)
-            std::vector<Point> points;
+            // the verbs and points walked so far, already in the logical pixels the caller asked for (§6.4, AD-27)
+            GlyphOutlineData outline;
+
+            // whether a contour is still open, so a move after one seals it before opening the next (§6.4)
+            bool open = false;
 
             // how many segments one curve is flattened into, fixed rather than adaptive so it cannot vary (§15)
             static constexpr int CURVE_SEGMENTS = 8;
+
+            // append one verb and the point it consumes, which is the only place the stream grows (§6.4)
+            void append(PathVerb verb, float x, float y) {
+                // the verb joins the stream in drawing order, which the replay walks with a point cursor (§6.4)
+                outline.verbs.push_back(verb);
+                // the point the verb consumes follows in the same order, so the two lists stay paired (§6.4)
+                outline.points.push_back(Point{.x = x, .y = y});
+                // a move opens the contour it starts, while a line leaves it as it already was (§6.4)
+                if (verb == PathVerb::MoveTo)
+                    open = true;
+            }
+
+            // seal the contour under construction, which a second close leaves alone (§6.4)
+            void seal() {
+                // a stream with no open contour takes no close, because a close without a move names nothing (§6.4)
+                if (!open)
+                    return;
+                // the close consumes no point and ends the contour where it began (§6.4)
+                outline.verbs.push_back(PathVerb::Close);
+                // the contour is sealed, so the next move opens a fresh one (§6.4)
+                open = false;
+            }
 
             // the move callback, which starts a contour at the pen position (§6.4)
             static void move_to(hb_draw_funcs_t*, void* draw_data, hb_draw_state_t*, float to_x, float to_y, void*) {
                 // the sink is what hb-draw hands back, because the callbacks carry no context of their own (§6.4)
                 auto* sink = static_cast<OutlineSink*>(draw_data);
-                // the point joins the walk at the pen position hb-draw reports (§6.4)
-                sink->points.push_back(Point{.x = to_x, .y = to_y});
+                // a move after an unclosed contour seals it, so one ring cannot swallow the next (§6.4)
+                sink->seal();
+                // the move opens the next contour at the position hb-draw reports (§6.4)
+                sink->append(PathVerb::MoveTo, to_x, to_y);
             }
 
             // the line callback, which continues the current contour (§6.4)
             static void line_to(hb_draw_funcs_t*, void* draw_data, hb_draw_state_t*, float to_x, float to_y, void*) {
                 // the sink is what hb-draw hands back (§6.4)
                 auto* sink = static_cast<OutlineSink*>(draw_data);
-                // the point joins the walk, extending the contour one segment (§6.4)
-                sink->points.push_back(Point{.x = to_x, .y = to_y});
+                // the point extends the contour by one straight segment (§6.4)
+                sink->append(PathVerb::LineTo, to_x, to_y);
+            }
+
+            // the close callback, which ends the contour a move opened (§6.4)
+            static void close_path(hb_draw_funcs_t*, void* draw_data, hb_draw_state_t*, void*) {
+                // the sink is what hb-draw hands back (§6.4)
+                auto* sink = static_cast<OutlineSink*>(draw_data);
+                // the contour is sealed here rather than at the next move, which keeps its own ring (§6.4)
+                sink->seal();
             }
 
             // the conic callback, flattened because a ui path is polygonal and a control point is off curve (§6.4)
@@ -375,7 +410,7 @@ namespace albor::harfbuzz
                 // the sink is what hb-draw hands back (§6.4)
                 auto* sink = static_cast<OutlineSink*>(draw_data);
                 // the previous point is the contour's start of this curve, because hb-draw reports a segment (§6.4)
-                const Point start = sink->points.empty() ? Point{0.0f, 0.0f} : sink->points.back();
+                const Point start = sink->outline.points.empty() ? Point{0.0f, 0.0f} : sink->outline.points.back();
                 // every segment is sampled, so the polyline follows the curve rather than cutting across it (§6.4)
                 for (int step = 1; step <= CURVE_SEGMENTS; step++) {
                     // the parameter runs over the segment, which is why the count is fixed (§6.4, §15)
@@ -386,8 +421,8 @@ namespace albor::harfbuzz
                     const float x = inverse * inverse * start.x + 2.0f * inverse * t * control_x + t * t * to_x;
                     // the vertical coordinate follows the same basis (§9.1)
                     const float y = inverse * inverse * start.y + 2.0f * inverse * t * control_y + t * t * to_y;
-                    // the sampled point joins the walk as a drawable shape (§6.4, AD-27)
-                    sink->points.push_back(Point{.x = x, .y = y});
+                    // the sampled point joins the walk as a straight segment of the tessellation (§6.4, AD-27)
+                    sink->append(PathVerb::LineTo, x, y);
                 }
             }
 
@@ -396,7 +431,7 @@ namespace albor::harfbuzz
                 // the sink is what hb-draw hands back (§6.4)
                 auto* sink = static_cast<OutlineSink*>(draw_data);
                 // the previous point is the curve's start, because hb-draw reports a segment (§6.4)
-                const Point start = sink->points.empty() ? Point{0.0f, 0.0f} : sink->points.back();
+                const Point start = sink->outline.points.empty() ? Point{0.0f, 0.0f} : sink->outline.points.back();
                 // every segment is sampled, so the polyline follows the curve (§6.4)
                 for (int step = 1; step <= CURVE_SEGMENTS; step++) {
                     // the parameter runs over the segment, which is why the count is fixed (§6.4, §15)
@@ -415,14 +450,14 @@ namespace albor::harfbuzz
                     const float x = w0 * start.x + w1 * control_one_x + w2 * control_two_x + w3 * to_x;
                     // the vertical coordinate follows the same basis (§9.1)
                     const float y = w0 * start.y + w1 * control_one_y + w2 * control_two_y + w3 * to_y;
-                    // the sampled point joins the walk as a drawable shape (§6.4, AD-27)
-                    sink->points.push_back(Point{.x = x, .y = y});
+                    // the sampled point joins the walk as a straight segment of the tessellation (§6.4, AD-27)
+                    sink->append(PathVerb::LineTo, x, y);
                 }
             }
         };
     } // namespace
 
-    std::vector<Point> HarfbuzzTextEngine::glyph_outline(std::uint32_t glyph_id, float font_size) const {
+    GlyphOutlineData HarfbuzzTextEngine::glyph_outline(std::uint32_t glyph_id, float font_size) const {
         // an engine with no font has no outlines, which is a refusal rather than an empty glyph (§9.1)
         if (m_state->face.font == nullptr)
             return {};
@@ -433,11 +468,11 @@ namespace albor::harfbuzz
         const int scale = static_cast<int>(font_size * 64.0f);
         // the draw callbacks report at that scale, which the sink then reduces to logical pixels (§9.1, AD-27)
         hb_font_set_scale(m_state->face.font, scale, scale);
-        // the sink carries the points, because the callbacks carry no context of their own (§6.4)
+        // the sink carries the verbs and points, because the callbacks carry no context of their own (§6.4)
         OutlineSink sink;
         // the draw funcs are built fresh per call, because the callbacks are stateless and cheap to attach (§6.4)
         hb_draw_funcs_t* funcs = hb_draw_funcs_create();
-        // the contour, line, conic and cubic callbacks are the four hb-draw reports (§6.4)
+        // the move, line, close, conic and cubic callbacks are the five hb-draw reports (§6.4)
         hb_draw_funcs_set_move_to_func(funcs, &OutlineSink::move_to, nullptr, nullptr);
         // the line callback continues a contour (§6.4)
         hb_draw_funcs_set_line_to_func(funcs, &OutlineSink::line_to, nullptr, nullptr);
@@ -445,19 +480,23 @@ namespace albor::harfbuzz
         hb_draw_funcs_set_quadratic_to_func(funcs, &OutlineSink::quadratic_to, nullptr, nullptr);
         // the cubic callback flattens a cubic (§6.4)
         hb_draw_funcs_set_cubic_to_func(funcs, &OutlineSink::cubic_to, nullptr, nullptr);
+        // the close callback ends a contour, which is what keeps a counter a ring of its own (§6.4)
+        hb_draw_funcs_set_close_path_func(funcs, &OutlineSink::close_path, nullptr, nullptr);
         // the walk fills the sink over the font bytes, unhinted because hinting depends on a rasterizer (§15, AD-34)
         hb_font_draw_glyph(m_state->face.font, glyph_id, funcs, &sink);
-        // the funcs are dropped once the walk is done, because the sink owns the points (§6.4)
+        // the funcs are dropped once the walk is done, because the sink owns the outlines (§6.4)
         hb_draw_funcs_destroy(funcs);
+        // a contour the font left open is sealed here, so the stream always ends a ring it started (§6.4)
+        sink.seal();
         // every point is reported in sixty fourths, so each drops to logical pixels (§9.1, AD-27)
-        for (Point& point : sink.points) {
+        for (Point& point : sink.outline.points) {
             // the horizontal coordinate drops the sixty fourth scale to land in logical pixels (§6.4, AD-27)
             point.x /= 64.0f;
-            // the vertical coordinate drops the same scale for the same reason (§6.4, AD-27)
-            point.y /= 64.0f;
+            // the vertical coordinate flips the font's y up axis to the y down one a surface draws in (§9.1, AD-27)
+            point.y = -point.y / 64.0f;
         }
-        // the points are the outline the renderer draws (§6.4, AD-06)
-        return sink.points;
+        // the contours are the outline the renderer draws (§6.4, AD-06)
+        return sink.outline;
     }
 
     bool HarfbuzzTextEngine::ready() const {
