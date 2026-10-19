@@ -87,7 +87,7 @@ jobs:
               # the preset is c++23, so take the newest xcode the image carries rather than its default
               sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
           - name: macos-coverage
-            os: macos-latest
+            os: macos-15
             enable: ${{ github.repository == 'AlborCore/albor' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
             preset: coverage
             vcpkg-root: /usr/local/share/vcpkg
@@ -117,7 +117,6 @@ jobs:
             setup: sudo apt-get update && sudo apt-get install -y ccache
     env:
       VCPKG_ROOT: ${{ matrix.vcpkg-root }}
-      # the framework targets macOS 13.3, so the ports are built for the same floor rather than the runner's sdk
       MACOSX_DEPLOYMENT_TARGET: 13.3
       VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
       CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -130,7 +129,6 @@ jobs:
         if: matrix.enable
         run: ${{ matrix.setup }}
 
-      # ninja drives the build, and it needs the msvc environment a developer prompt would carry
       - name: msvc environment
         if: matrix.enable && runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
@@ -140,9 +138,9 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-${{ runner.os }}-${{ matrix.preset }}-macos13.3-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          key: vcpkg-${{ runner.os }}-${{ matrix.preset }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
           restore-keys: |
-            vcpkg-${{ runner.os }}-${{ matrix.preset }}-macos13.3-
+            vcpkg-${{ runner.os }}-${{ matrix.preset }}-
 
       - name: restore the ccache directory
         if: matrix.enable
