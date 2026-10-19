@@ -148,7 +148,12 @@ TEST(AllocationProbeChecks, AnOverAlignedBlockIsCountedAndFreed) {
             char bytes[64];
         };
         auto block = std::make_unique<OverAligned>();
+        // the address is written through a volatile sink, because an allocation nothing publishes is elidable (§2.2)
+        static void* volatile sink = nullptr;
+        sink = block.get();
         EXPECT_GT(probe::live(), 0u);
+        // the sink is cleared, so no later test reads an address this one freed (§2.2)
+        sink = nullptr;
     }
     // assert the aligned block went back to the allocator it came from, because a leak here is a defect (§2.2)
     EXPECT_EQ(probe::live(), 0u);
@@ -167,7 +172,12 @@ TEST(AllocationProbeChecks, AnOverAlignedArrayIsCountedAndFreed) {
         };
         auto rows = std::make_unique<OverAlignedRow[]>(4);
         rows[0].bytes[0] = 1;
+        // the address is published through a volatile sink, because a block only a local reads is elidable (§2.2)
+        static void* volatile sink = nullptr;
+        sink = rows.get();
         EXPECT_GT(probe::live(), 0u);
+        // the sink is cleared, so no later test reads an address this one freed (§2.2)
+        sink = nullptr;
     }
     // assert every aligned block came back, which is what a steady state frame relies on (§2.2)
     EXPECT_EQ(probe::live(), 0u);
