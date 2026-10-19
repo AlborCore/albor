@@ -148,9 +148,10 @@ TEST(AllocationProbeChecks, AnOverAlignedBlockIsCountedAndFreed) {
             char bytes[64];
         };
         auto block = std::make_unique<OverAligned>();
-        // the address is written through a volatile sink, because an allocation nothing publishes is elidable (§2.2)
+        // the address is published through a volatile sink and read back, because an unobserved block is elidable (§2.2)
         static void* volatile sink = nullptr;
         sink = block.get();
+        EXPECT_EQ(sink, static_cast<void*>(block.get()));
         EXPECT_GT(probe::live(), 0u);
         // the sink is cleared, so no later test reads an address this one freed (§2.2)
         sink = nullptr;
@@ -172,9 +173,10 @@ TEST(AllocationProbeChecks, AnOverAlignedArrayIsCountedAndFreed) {
         };
         auto rows = std::make_unique<OverAlignedRow[]>(4);
         rows[0].bytes[0] = 1;
-        // the address is published through a volatile sink, because a block only a local reads is elidable (§2.2)
+        // the address is published through a volatile sink and read back, because an unobserved block is elidable (§2.2)
         static void* volatile sink = nullptr;
         sink = rows.get();
+        EXPECT_EQ(sink, static_cast<void*>(rows.get()));
         EXPECT_GT(probe::live(), 0u);
         // the sink is cleared, so no later test reads an address this one freed (§2.2)
         sink = nullptr;
