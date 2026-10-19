@@ -16,6 +16,7 @@
 #include "render/render-albor/albor_glyph_path.macos.h"
 #include "render/render-albor/albor_render_context.h"
 #include "render/render-albor/albor_renderer_backend.h"
+#include "render/render-albor/albor_shaders.h"
 #include "render/render-software/software_renderer_backend.h"
 #include "render/render_context.h"
 #include "render/renderer_backend.h"
@@ -32,6 +33,20 @@ using namespace albor::render;
 using AlborRect = albor::Rect;
 using AlborPoint = albor::Point;
 using AlborSize = albor::Size;
+
+TEST(AlborShaderLibraryChecks, CarriesTheCompiledMetalLibrary) {
+    // arrange the bytes the build embedded, which are what the device loads as its library (AD-16)
+    const std::span<const std::byte> data = metal_library_data();
+    // act the first four bytes are read as the magic a compiled library carries (§6.3)
+    ASSERT_GE(data.size(), 4u);
+    // assert the header is MTLB, which marks a compiled library rather than source (§6.3)
+    EXPECT_EQ(std::to_integer<unsigned>(data[0]), 'M');
+    EXPECT_EQ(std::to_integer<unsigned>(data[1]), 'T');
+    EXPECT_EQ(std::to_integer<unsigned>(data[2]), 'L');
+    EXPECT_EQ(std::to_integer<unsigned>(data[3]), 'B');
+    // assert the library carries a body, because an empty embed would load nothing a pipeline could use (§6.3)
+    EXPECT_GT(data.size(), 1024u);
+}
 
 TEST(AlborRendererBackendChecks, BringsUpTheMetalDevice) {
     // arrange

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <vector>
@@ -116,7 +117,7 @@ namespace albor::render
             // whether the shared state finished building, which every later call reads (§6.3)
             bool built = false;
 
-            // whether the build was already tried, so a failed host never recompiles the shader (§6.3)
+            // whether the build was already tried, so a failed host never retries it (§6.3)
             bool attempted = false;
         };
 
@@ -183,15 +184,30 @@ namespace albor::render
             state.device = MTLCreateSystemDefaultDevice();
             // messaging a nil device answers nil, so every step below degrades instead of branching (§6.2)
             state.queue = [state.device newCommandQueue];
-            // the source compiles once per process, which is the only shader work a run ever does (AD-16)
-            NSString* source = [[NSString alloc] initWithBytes:shader_source().data() length:shader_source().size() encoding:NSUTF8StringEncoding];
-            state.library = [state.device newLibraryWithSource:source options:nil error:nil];
-            // premultiplied source over the destination is the one blend the hal composites with (§6.3)
-            state.pipeline = build_pipeline(state.device, state.library, MTLBlendFactorOne, MTLBlendFactorOneMinusSourceAlpha);
-            // the silhouette pass writes the cast alone, which no blend mixes with the clear (§6.2)
-            state.shadow_shape = build_shadow_pipeline(state.device, state.library, @"shadow_vertex", @"shadow_shape", MTLBlendFactorOne, MTLBlendFactorZero);
-            // the blur pass replaces its cleared target, which the one over zero blend and the ping pong give (§6.2)
-            state.shadow_blur = build_shadow_pipeline(state.device, state.library, @"shadow_vertex", @"shadow_blur", MTLBlendFactorOne, MTLBlendFactorZero);
+            // the library was compiled by the build, so a run loads the bytes rather than invoking a compiler (AD-16)
+            const std::span<const std::byte> data = metal_library_data();
+            // a buffer with no bytes came from a build that failed to embed the library, which is refused below (§6.3)
+            dispatch_data_t library_data = data.empty() ? nullptr : dispatch_data_create(data.data(), data.size(), nullptr, DISPATCH_DATA_DESTRUCTOR_DEFAULT);
+            NSError* library_error = nil;
+            state.library = library_data != nullptr ? [state.device newLibraryWithData:library_data error:&library_error] : nil;
+            // a library metal cannot use is reported, because every pipeline below could only assert inside metal (§6.2)
+            const bool usable = state.library != nil && [state.library newFunctionWithName:@"albor_vertex"] != nil && [state.library newFunctionWithName:@"albor_fragment"] != nil && [state.library newFunctionWithName:@"shadow_vertex"] != nil && [state.library newFunctionWithName:@"shadow_shape"] != nil && [state.library newFunctionWithName:@"shadow_blur"] != nil;
+            // the loader names its own failure when it has one, which is the most specific reason there is (§6.3)
+            const char* const loaded = library_error != nil ? library_error.localizedDescription.UTF8String : nullptr;
+            // an empty embed comes next, because a library it never carried cannot miss an entry point (§6.3)
+            const char* const reason = loaded != nullptr ? loaded : (data.empty() ? "the embedded metal library is empty" : "a shader entry point is missing");
+            // a library metal cannot use is reported, because no pipeline can be built from it (§6.2)
+            if (!usable)
+                std::fprintf(stderr, "albor-render-albor: the metal library could not be used: %s\n", reason);
+            // no pipeline can be built from a library metal cannot use, because the descriptor would assert (§6.2)
+            if (usable) {
+                // premultiplied source over the destination is the one blend the hal composites with (§6.3)
+                state.pipeline = build_pipeline(state.device, state.library, MTLBlendFactorOne, MTLBlendFactorOneMinusSourceAlpha);
+                // the silhouette pass writes the cast alone, which no blend mixes with the clear (§6.2)
+                state.shadow_shape = build_shadow_pipeline(state.device, state.library, @"shadow_vertex", @"shadow_shape", MTLBlendFactorOne, MTLBlendFactorZero);
+                // the blur pass replaces its cleared target, which the one over zero blend and the ping pong give (§6.2)
+                state.shadow_blur = build_shadow_pipeline(state.device, state.library, @"shadow_vertex", @"shadow_blur", MTLBlendFactorOne, MTLBlendFactorZero);
+            }
             // a solid draw samples one white texel, which keeps a single shader path for every draw (§6.3)
             MTLTextureDescriptor* white_descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:TARGET_FORMAT width:1 height:1 mipmapped:NO];
             white_descriptor.usage = MTLTextureUsageShaderRead;

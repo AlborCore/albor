@@ -64,6 +64,8 @@ jobs:
               ccache --max-size 2G
               # the preset is c++23, so take the newest xcode the image carries rather than its default
               sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
+              # xcode 26 ships the metal compiler as a separate component, which the build needs and some images omit
+              xcrun -sdk macosx metal --version > /dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
           - name: macos-coverage
             os: macos-latest
             enable: ${{ github.repository == 'AlborCore/albor' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
@@ -76,7 +78,9 @@ jobs:
               HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
               ccache --max-size 2G
               # the preset is c++23, so take the newest xcode the image carries rather than its default
-              sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"              
+              sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
+              # xcode 26 ships the metal compiler as a separate component, which the build needs and some images omit
+              xcrun -sdk macosx metal --version > /dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
           - name: windows-release
             os: windows-latest
             enable: false

@@ -28,6 +28,11 @@ Mandatory rules for a source that reaches a platform API (`AppKit`, `Metal`, `Co
 - A header that cannot be portable, because it declares platform types or imports platform headers, carries the infix as well, for example `native_surface.macos.h`
 - The infix is part of the file's identity: renaming a file is a build change, so the module `CMakeLists.txt` and every `#include` are updated in the same change
 
+A shader is `<name>.metal`, for example `render/render-albor/albor_shaders.metal`. The Metal toolchain compiles it
+at build time and the build embeds the binary in a generated source, because a static archive carries no resource a
+run could find (§6.3, AD-16). A shader is not a C++ source: clang-format does not rewrite it, and the comment sweep
+in `build/check-format.sh` checks its comment length and adjacency like any other file.
+
 Never introduce an extension outside this list. Adding a platform extension family means updating the
 pattern in `build/check-format.sh` in the same change.
 
