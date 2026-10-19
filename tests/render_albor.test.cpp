@@ -2264,10 +2264,9 @@ TEST(ExpandFillGroupChecks, ClampsTheRingOfANeedleCorner) {
 }
 
 TEST(GlyphPathCacheChecks, AnswersAPathItAlreadyWalked) {
-    // arrange an empty cache and the identity of one typeface glyph at one size (§6.4)
+    // arrange an empty cache and the identity of one font glyph at one size (§6.4)
     GlyphPathCache cache;
-    const int face = 0;
-    const GlyphPathKey key{.font = &face, .glyph_id = 3u, .font_size = 16.0f};
+    const GlyphPathKey key{.font_hash = 0x5eedu, .glyph_id = 3u, .font_size = 16.0f};
     // act nothing was ever walked under that identity (§6.4)
     EXPECT_EQ(cache.find(key), nullptr);
     // act one path is walked and stored under it (§6.4)
@@ -2280,29 +2279,26 @@ TEST(GlyphPathCacheChecks, AnswersAPathItAlreadyWalked) {
 
 TEST(GlyphPathCacheChecks, AnswersNothingForAnotherIdentity) {
     // arrange one walked path beside the identities it must not answer (§6.4)
-    const int face = 0;
-    const GlyphPathKey walked{.font = &face, .glyph_id = 3u, .font_size = 16.0f};
+    const GlyphPathKey walked{.font_hash = 0x5eedu, .glyph_id = 3u, .font_size = 16.0f};
     GlyphPathCache cache;
     cache.store(walked, std::make_shared<const GlyphPath>());
-    // act another glyph of the same typeface at the same size is asked for (§6.4)
-    const GlyphPathKey other_glyph{.font = &face, .glyph_id = 4u, .font_size = 16.0f};
+    // act another glyph of the same font at the same size is asked for (§6.4)
+    const GlyphPathKey other_glyph{.font_hash = 0x5eedu, .glyph_id = 4u, .font_size = 16.0f};
     // assert it answers nothing, because the identity carries the glyph (§6.4)
     EXPECT_EQ(cache.find(other_glyph), nullptr);
-    // act the same glyph of the same typeface at another size is asked for (§9.1, AD-27)
-    const GlyphPathKey other_size{.font = &face, .glyph_id = 3u, .font_size = 20.0f};
+    // act the same glyph of the same font at another size is asked for (§9.1, AD-27)
+    const GlyphPathKey other_size{.font_hash = 0x5eedu, .glyph_id = 3u, .font_size = 20.0f};
     // assert it answers nothing, because the identity carries the size (§9.1, AD-27)
     EXPECT_EQ(cache.find(other_size), nullptr);
-    // act the same glyph and size of another typeface is asked for (§9.1)
-    const int other_face = 0;
-    const GlyphPathKey other_typeface{.font = &other_face, .glyph_id = 3u, .font_size = 16.0f};
-    // assert it answers nothing, because the identity carries the typeface (§9.1)
+    // act the same glyph and size of another font is asked for (§15, AD-34)
+    const GlyphPathKey other_typeface{.font_hash = 0xfeedu, .glyph_id = 3u, .font_size = 16.0f};
+    // assert it answers nothing, because the identity carries the font content (§15, AD-34)
     EXPECT_EQ(cache.find(other_typeface), nullptr);
 }
 
 TEST(GlyphPathCacheChecks, DropsAPathNoDrawReached) {
     // arrange one walked path stored at a frame of its own (§6.4, AD-06)
-    const int face = 0;
-    const GlyphPathKey key{.font = &face, .glyph_id = 3u, .font_size = 16.0f};
+    const GlyphPathKey key{.font_hash = 0x5eedu, .glyph_id = 3u, .font_size = 16.0f};
     GlyphPathCache cache;
     cache.begin_frame(10u);
     cache.store(key, std::make_shared<const GlyphPath>());
@@ -2323,17 +2319,16 @@ TEST(GlyphPathCacheChecks, DropsAPathNoDrawReached) {
 
 TEST(GlyphPathCacheChecks, DropsTheColdestSliceWhenItFills) {
     // arrange a cache filled to its limit, with one entry drawn again at a later frame (§6.4, AD-06)
-    const int face = 0;
     GlyphPathCache cache;
     cache.begin_frame(0u);
     for (std::uint32_t index = 0u; index < GlyphPathCache::MAXIMUM_CACHED_PATHS; index++)
-        cache.store(GlyphPathKey{.font = &face, .glyph_id = index, .font_size = 16.0f}, std::make_shared<const GlyphPath>());
+        cache.store(GlyphPathKey{.font_hash = 0x5eedu, .glyph_id = index, .font_size = 16.0f}, std::make_shared<const GlyphPath>());
     // act one entry is drawn again at a later frame, which is what makes it the warmest of them (§6.4)
     cache.begin_frame(5u);
-    const GlyphPathKey warm{.font = &face, .glyph_id = 0u, .font_size = 16.0f};
+    const GlyphPathKey warm{.font_hash = 0x5eedu, .glyph_id = 0u, .font_size = 16.0f};
     EXPECT_NE(cache.find(warm), nullptr);
     // act one more path arrives, which the full cache answers by dropping its coldest slice (§6.4)
-    const GlyphPathKey fresh{.font = &face, .glyph_id = 99999u, .font_size = 16.0f};
+    const GlyphPathKey fresh{.font_hash = 0x5eedu, .glyph_id = 99999u, .font_size = 16.0f};
     cache.store(fresh, std::make_shared<const GlyphPath>());
     // assert a slice is gone rather than all of them, because a rebuilt path is not free (§6.4, AD-06)
     EXPECT_EQ(cache.count(), GlyphPathCache::MAXIMUM_CACHED_PATHS - GlyphPathCache::MAXIMUM_CACHED_PATHS / 8u + 1u);
@@ -2341,16 +2336,4 @@ TEST(GlyphPathCacheChecks, DropsTheColdestSliceWhenItFills) {
     EXPECT_NE(cache.find(warm), nullptr);
     // assert the new path is held, because the frame that walked it is the warmest there is (§6.4)
     EXPECT_NE(cache.find(fresh), nullptr);
-}
-
-TEST(GlyphPathCacheChecks, AnswersNoPathFromAnEarlierEra) {
-    // arrange one walked path stored in the era the typeface is currently named in (§6.4, AD-06)
-    const int face = 0;
-    const GlyphPathKey key{.font = &face, .glyph_id = 3u, .font_size = 16.0f};
-    GlyphPathCache cache;
-    cache.store(key, std::make_shared<const GlyphPath>());
-    // act the engine that issued the typeface dies, which is what drops the era (§6.4, AD-06)
-    FontHandle::drop_era();
-    // assert a key of the new era answers nothing, because the typeface behind the old one may be freed (§6.4)
-    EXPECT_EQ(cache.find(GlyphPathKey{.font = &face, .glyph_id = 3u, .font_size = 16.0f}), nullptr);
 }

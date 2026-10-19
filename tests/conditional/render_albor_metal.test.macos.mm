@@ -5,7 +5,6 @@
 
 #include <gtest/gtest.h>
 
-#include <CoreGraphics/CoreGraphics.h>
 #import <QuartzCore/CAMetalLayer.h>
 
 #include "core/paint.h"
@@ -13,7 +12,6 @@
 #include "render/frame_scene.h"
 #include "render/picture_resource.h"
 #include "render/render-albor/albor_glyph_path.h"
-#include "render/render-albor/albor_glyph_path.macos.h"
 #include "render/render-albor/albor_render_context.h"
 #include "render/render-albor/albor_renderer_backend.h"
 #include "render/render-albor/albor_shaders.h"
@@ -1236,55 +1234,17 @@ TEST(AlborParityChecks, AFilledConcavePathMatchesTheReference) {
     EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 32);
 }
 
-TEST(GlyphPathChecks, WalksEveryElementOfACoreGraphicsPath) {
-    // arrange a path carrying every element kind a glyph outline is made of
-    const std::unique_ptr<CGPath, void (*)(CGPathRef)> path(CGPathCreateMutable(), CGPathRelease);
-    CGPathMoveToPoint(path.get(), nullptr, 1.0, 2.0);
-    CGPathAddLineToPoint(path.get(), nullptr, 3.0, 4.0);
-    CGPathAddQuadCurveToPoint(path.get(), nullptr, 5.0, 6.0, 7.0, 8.0);
-    CGPathAddCurveToPoint(path.get(), nullptr, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0);
-    CGPathCloseSubpath(path.get());
-    // act
-    const GlyphPath glyph = albor::render::glyph_path_from_cgpath(path.get());
-    // assert the walk emits one verb per point plus the close, which flattens both curves
-    ASSERT_EQ(glyph.verbs.size(), glyph.points.size() + 1u);
-    ASSERT_GE(glyph.points.size(), 10u);
-    EXPECT_EQ(glyph.verbs.front(), PathVerb::MoveTo);
-    EXPECT_EQ(glyph.verbs.back(), PathVerb::Close);
-    // the y axis flips, because the font grows upwards and the device downwards (§6.3, AD-27)
-    EXPECT_FLOAT_EQ(glyph.points[0].x, 1.0f);
-    EXPECT_FLOAT_EQ(glyph.points[0].y, -2.0f);
-    // the line reaches its point directly, which costs one vertex
-    EXPECT_NEAR(glyph.points[1].x, 3.0f, 0.0001f);
-    EXPECT_NEAR(glyph.points[1].y, -4.0f, 0.0001f);
-    // the quadratic ends on the point its element names, which the walk reports as a sample
-    bool reaches_quad = false;
-    for (const albor::Point& point : glyph.points) {
-        if (std::hypot(point.x - 7.0f, point.y + 8.0f) < 0.0001f)
-            reaches_quad = true;
-    }
-    EXPECT_TRUE(reaches_quad);
-    // the cubic ends on the last point, which the close verb follows
-    EXPECT_NEAR(glyph.points.back().x, 13.0f, 0.0001f);
-    EXPECT_NEAR(glyph.points.back().y, -14.0f, 0.0001f);
-    // the samples follow the curve rather than its chord, which the half way point of the quadratic shows
-    float bend = 1000.0f;
-    for (const albor::Point& point : glyph.points)
-        bend = std::min(bend, std::hypot(point.x - 5.0f, point.y + 6.0f));
-    EXPECT_LT(bend, 0.25f);
-}
-
-TEST(GlyphPathChecks, RefusesATypefaceWithoutAHandle) {
+TEST(GlyphPathChecks, RefusesAFontWithoutAnOutlineSource) {
     // arrange a handle that wraps no typeface at all
     const FontHandle font;
     // act
-    const GlyphPath glyph = albor::render::platform_glyph_path(font, 3u, 16.0f);
+    const GlyphPath glyph = albor::render::glyph_path(font, 3u, 16.0f);
     // assert
     EXPECT_TRUE(glyph.points.empty());
     EXPECT_TRUE(glyph.verbs.empty());
 }
 
-TEST(GlyphPathChecks, OutlinesAGlyphOfThePlatformFace) {
+TEST(GlyphPathChecks, OutlinesAGlyphOfTheShapedFont) {
     // arrange the system face the platform engine resolves, shaped at a size a ui label uses
     const std::unique_ptr<albor::harfbuzz::HarfbuzzTextEngine> engine = albor::harfbuzz::HarfbuzzTextEngine::create_platform("");
     ASSERT_NE(engine, nullptr);
@@ -1294,7 +1254,10 @@ TEST(GlyphPathChecks, OutlinesAGlyphOfThePlatformFace) {
     const ShapedRun::Line& line = layout.run->lines().front();
     ASSERT_FALSE(line.glyphs.empty());
     // act
-    const GlyphPath glyph = albor::render::platform_glyph_path(line.font, line.glyphs.front().id, 24.0f);
+    const GlyphPath glyph = albor::render::glyph_path(line.font, line.glyphs.front().id, 24.0f);
+    // assert the handle answers the content identity the run carries, which is what a cache keys on (§15, AD-34)
+    ASSERT_NE(layout.run->font_hash(), 0u);
+    EXPECT_EQ(line.font.font_hash(), layout.run->font_hash());
     // assert the outline is closed subpaths, which the fill sweeps as one shape
     ASSERT_FALSE(glyph.points.empty());
     std::size_t closes = 0;
@@ -1309,12 +1272,12 @@ TEST(GlyphPathChecks, OutlinesAGlyphOfThePlatformFace) {
     EXPECT_GE(closes, 1u);
     EXPECT_EQ(glyph.verbs.back(), PathVerb::Close);
     // a size of no pixels has no outline to scale to, which the walk refuses
-    EXPECT_TRUE(albor::render::platform_glyph_path(line.font, line.glyphs.front().id, 0.0f).points.empty());
+    EXPECT_TRUE(albor::render::glyph_path(line.font, line.glyphs.front().id, 0.0f).points.empty());
     // a space carries no visible outline, which the face reports as no path
     const TextLayout spaced = engine->measure(" ", 0.0f, 24.0f);
     ASSERT_FALSE(spaced.empty());
     ASSERT_FALSE(spaced.run->lines().front().glyphs.empty());
-    EXPECT_TRUE(albor::render::platform_glyph_path(spaced.run->lines().front().font, spaced.run->lines().front().glyphs.front().id, 24.0f).points.empty());
+    EXPECT_TRUE(albor::render::glyph_path(spaced.run->lines().front().font, spaced.run->lines().front().glyphs.front().id, 24.0f).points.empty());
 }
 
 TEST(AlborTextChecks, ReusesAWalkedGlyphAcrossTheSameContext) {

@@ -416,7 +416,7 @@ namespace albor::blend2d
 
     BLFont Blend2DRenderContext::resolve_font(std::uint64_t font_hash, float font_size) {
         // the registered font is the only byte source here, because a handle borrows a foreign typeface (§9.2)
-        const resources::EmbeddedFont* embedded = resources::FontRegistry::find_hash(font_hash);
+        const std::shared_ptr<const resources::EmbeddedFont> embedded = resources::FontRegistry::find_hash(font_hash);
         // a run whose font is not registered carries no bytes this backend can load, so it is skipped (§9.2, AD-34)
         if (embedded == nullptr)
             return BLFont();

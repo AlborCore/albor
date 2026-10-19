@@ -14,7 +14,7 @@ namespace albor
     // how a shaped run reaches a surface, which decides the command a recorder emits for it (§9.1, AD-34)
     enum class ShapeSource : std::uint8_t
     {
-        // the run carries a typeface the platform renderer draws directly, which the platform engine issues (§9.1, AD-28)
+        // the run carries a font its renderer resolves by content, so the recorder leaves it whole (§9.1, AD-34)
         Platform,
 
         // the run's glyphs reach any surface as tessellated outlines, which is the portable path of AD-34 (§15, AD-34)

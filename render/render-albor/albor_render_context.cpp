@@ -377,15 +377,15 @@ namespace albor::render
             const Point baseline{.x = origin.x + line.origin.x, .y = origin.y + line.origin.y};
             // every glyph is its own outline, whose counters the group fill cuts (§6.2, §6.4)
             for (const ShapedGlyph& glyph : line.glyphs) {
-                // the path answers from the cache, keyed on the typeface, the glyph, the size and the era (§6.4, AD-06)
-                const GlyphPathKey key{.font = line.font.object(), .glyph_id = glyph.id, .font_size = run.font_size()};
-                // a hit draws a path an earlier frame walked, and a miss walks the typeface below (§9.1, AD-06)
+                // the path answers from the cache, keyed on the font content, the glyph and the size (§6.4)
+                const GlyphPathKey key{.font_hash = line.font.font_hash(), .glyph_id = glyph.id, .font_size = run.font_size()};
+                // a hit draws a path an earlier frame walked, and a miss walks the font below (§9.1, AD-06)
                 const std::shared_ptr<const GlyphPath> held = m_glyph_paths != nullptr ? m_glyph_paths->find(key) : nullptr;
                 // the walk runs into a local, so a context with no cache allocates nothing a frame (§9.1, AD-06)
                 GlyphPath walked;
-                // a miss walks the outline from the platform typeface in logical pixels (§9.1, AD-28)
+                // a miss walks the font bytes the run carries, which needs no platform typeface (§9.1, AD-34)
                 if (held == nullptr)
-                    walked = platform_glyph_path(line.font, glyph.id, run.font_size());
+                    walked = glyph_path(line.font, glyph.id, run.font_size());
                 // a walk is retained only where a surface keeps a cache, under that identity (§6.4, AD-06)
                 if (held == nullptr && m_glyph_paths != nullptr)
                     m_glyph_paths->store(key, std::make_shared<const GlyphPath>(walked));

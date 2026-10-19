@@ -3,10 +3,9 @@
 # gather cpp sources, which reach no platform api and therefore build on every platform (§5.3, AD-05)
 file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 
-# the portable seams stand in for the platform device and the platform glyph source, which a platform with its own replaces (§5.3, AD-16)
+# the portable seam stands in for the platform device, which a platform with its own replaces (§5.3, AD-16)
 if(APPLE)
     list(FILTER CPP_SOURCES EXCLUDE REGEX "/albor_backend_support\\.cpp$")
-    list(FILTER CPP_SOURCES EXCLUDE REGEX "/albor_glyph_path\\.cpp$")
     # the metal backend embeds the committed shader library, which the portable stand-in stands in for elsewhere (§5.3, AD-16)
     list(FILTER CPP_SOURCES EXCLUDE REGEX "/albor_shaders\\.cpp$")
 endif()

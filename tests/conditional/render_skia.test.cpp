@@ -14,6 +14,8 @@
 #include <skia/core/SkColor.h>
 #include <skia/core/SkSurface.h>
 
+#include "render/font_face.h"
+#include "render/font_handle.h"
 #include "render/frame_scene.h"
 #include "render/glyph_outline.h"
 #include "render/image_resource.h"
@@ -118,6 +120,20 @@ namespace
         // the run keeps the shaped size and reports what the measurement reported (§9.1)
         return TextLayout{.run = ShapedRun::make(std::move(lines), layout.run->font_size()), .size = layout.size, .ascent = layout.ascent, .descent = layout.descent};
     }
+
+    // the font a run names whose bytes no registration carries, which the draw must refuse (§15, AD-34)
+    class UnregisteredFontFace final : public FontFace
+    {
+    public:
+        // an identity no registration answers (§15)
+        [[nodiscard]] std::uint64_t hash() const override { return 0xdeadbeefu; }
+
+        // the double carries no bytes, because the draw refuses it before reading any (§15)
+        [[nodiscard]] std::span<const std::uint8_t> bytes() const override { return {}; }
+
+        // the double outlines nothing, because no backend reaches it (§9.1)
+        [[nodiscard]] GlyphOutlineData outline(std::uint32_t, float) const override { return {}; }
+    };
 
     // a node that draws a measured run through the ordinary text call, which the builder expands (§6.1, §15)
     class EmbeddedTextNode final : public UiNode
@@ -258,6 +274,20 @@ TEST(SkiaRenderContextTextChecks, DrawTextSkipsALineWhoseTypefaceItCannotInterpr
     // act
     context.draw_text(without_typefaces(layout), Point{10.0f, 40.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
     // assert a wrong font is worse than no text, so the line is skipped (§9.1)
+    EXPECT_TRUE(ink_bounds(surface).empty());
+}
+
+TEST(SkiaRenderContextTextChecks, DrawTextSkipsARunWhoseBytesNothingCarries) {
+    // arrange a run whose font identity no registration answers, which is the shape of a lost font (§15, AD-34)
+    ShapedRun::Line line;
+    line.font = FontHandle::from_face(std::make_shared<const UnregisteredFontFace>());
+    line.glyphs.push_back(ShapedGlyph{.id = 3u, .position = Point{.x = 0.0f, .y = 0.0f}});
+    const TextLayout layout{.run = ShapedRun::make({line}, 20.0f, 0xdeadbeefu), .size = Size{100.0f, 24.0f}};
+    sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
+    SkiaRenderContext context(surface->getCanvas(), 1.0f);
+    // act
+    context.draw_text(layout, Point{10.0f, 40.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // assert a font whose bytes nothing carries draws nothing rather than a guessed face (§15, AD-34)
     EXPECT_TRUE(ink_bounds(surface).empty());
 }
 

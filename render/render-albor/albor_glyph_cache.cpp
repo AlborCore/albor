@@ -7,8 +7,8 @@
 namespace albor::render
 {
     std::size_t GlyphPathKeyHash::operator()(const GlyphPathKey& key) const noexcept {
-        // the typeface is the seed, because it identifies the font the glyph was taken from (§9.1)
-        std::size_t hash = std::hash<const void*>{}(key.font);
+        // the content hash is the seed, because it identifies the font the glyph was taken from (§15, AD-34)
+        std::size_t hash = std::hash<std::uint64_t>{}(key.font_hash);
         // the glyph index is mixed in, because two glyphs of one typeface are two different shapes (§6.4)
         hash ^= std::hash<std::uint32_t>{}(key.glyph_id) + 0x9e3779b9u + (hash << 6) + (hash >> 2);
         // the quantised size is mixed in, because one glyph at two sizes is two different shapes (§9.1, AD-27)

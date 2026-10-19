@@ -638,7 +638,7 @@ TEST(Blend2DTextChecks, APlatformShapedRunCarriesARegisteredFontIdentity) {
     ASSERT_NE(layout.run, nullptr);
     EXPECT_FALSE(layout.run->empty());
     EXPECT_NE(layout.run->font_hash(), 0u);
-    EXPECT_NE(resources::FontRegistry::find_hash(layout.run->font_hash()), nullptr);
+    EXPECT_TRUE(resources::FontRegistry::find_hash(layout.run->font_hash()) != nullptr);
 }
 
 TEST(Blend2DTextChecks, APlatformShapedRunDrawsInkThroughTheBackend) {
@@ -650,7 +650,7 @@ TEST(Blend2DTextChecks, APlatformShapedRunDrawsInkThroughTheBackend) {
     ASSERT_NE(layout.run, nullptr);
     ASSERT_FALSE(layout.run->empty());
     // the run resolved its font in the registry, which is what a replaying backend loads from (§15, AD-34)
-    const resources::EmbeddedFont* embedded = resources::FontRegistry::find_hash(layout.run->font_hash());
+    const std::shared_ptr<const resources::EmbeddedFont> embedded = resources::FontRegistry::find_hash(layout.run->font_hash());
     ASSERT_NE(embedded, nullptr);
     ASSERT_FALSE(embedded->bytes.empty());
     const WindowMetrics metrics = scene_metrics(1.0f);

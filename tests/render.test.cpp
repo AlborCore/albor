@@ -10,6 +10,8 @@
 #include <gtest/gtest.h>
 
 #include "render/custom_render_node.h"
+#include "render/font_face.h"
+#include "render/font_handle.h"
 #include "render/frame_scene.h"
 #include "render/glyph_outline.h"
 #include "render/image_resource.h"
@@ -411,50 +413,68 @@ namespace
             context.draw_rect(bounds, Paint{});
         }
     };
+    // the font double a handle check wraps, which reports the identity it was given and outlines nothing (§9.1)
+    class TestFontFace final : public FontFace
+    {
+    public:
+        // a face over one content hash is all a handle check needs (§15, AD-34)
+        explicit TestFontFace(std::uint64_t hash) :
+            m_hash(hash) {}
+
+        // the identity the handle reports back (§15, AD-34)
+        [[nodiscard]] std::uint64_t hash() const override { return m_hash; }
+
+        // the double carries no bytes, because a handle check never outlines (§9.1)
+        [[nodiscard]] std::span<const std::uint8_t> bytes() const override { return {}; }
+
+        // the double outlines nothing, because a handle check never draws (§9.1)
+        [[nodiscard]] GlyphOutlineData outline(std::uint32_t, float) const override { return {}; }
+
+    private:
+        // the content hash the handle answers with (§15, AD-34)
+        std::uint64_t m_hash = 0;
+    };
 } // namespace
 
-TEST(FontHandle, ADefaultHandleNamesNoTypeface) {
+TEST(FontHandle, ADefaultHandleNamesNoFont) {
     // arrange, act
     const FontHandle handle;
-    // assert a handle with nothing in it names no typeface, so a backend skips the run rather than guessing (§9.1)
+    // assert a handle with nothing in it names no font, so a backend skips the run rather than guessing (§9.1)
     EXPECT_FALSE(handle.valid());
 }
 
-TEST(FontHandle, AWrappedTypefaceIsAValidHandle) {
-    // arrange
-    int typeface = 0;
+TEST(FontHandle, AHandleOverAFaceIsAValidHandle) {
+    // arrange the font a run shaped from, which is all a handle needs (§9.1, AD-34)
+    const std::shared_ptr<const FontFace> face = std::make_shared<const TestFontFace>(7u);
     // act
-    const FontHandle handle = FontHandle::from_object(&typeface);
-    // assert wrapping a resolved typeface is what makes the handle usable (§9.1)
+    const FontHandle handle = FontHandle::from_face(face);
+    // assert the handle is usable and answers the font identity a cache keys on (§9.1, §15)
     EXPECT_TRUE(handle.valid());
+    EXPECT_EQ(handle.face(), face);
+    EXPECT_EQ(handle.font_hash(), 7u);
 }
 
-TEST(FontHandle, TheWrappedTypefaceLeavesAsAnOpaquePointer) {
-    // arrange
-    int typeface = 0;
-    // act
-    const FontHandle handle = FontHandle::from_object(&typeface);
-    // assert the typeface leaves the handle untyped, so no shaping type reaches a public header (§3.5, §9.1)
-    EXPECT_EQ(handle.object(), static_cast<const void*>(&typeface));
-}
-
-TEST(FontHandle, AHandleOverNothingHandsBackNothing) {
+TEST(FontHandle, AnInvalidHandleCarriesNoFont) {
     // arrange, act
     const FontHandle handle;
-    // assert an invalid handle carries no object at all (§9.1)
-    EXPECT_EQ(handle.object(), nullptr);
+    // assert a handle no engine filled answers no face and no identity (§9.1, §15)
+    EXPECT_EQ(handle.face(), nullptr);
+    EXPECT_EQ(handle.font_hash(), 0u);
 }
 
-TEST(FontHandle, EqualityComparesTheWrappedTypeface) {
+TEST(FontHandle, EqualityComparesTheFont) {
     // arrange
-    int typeface = 0;
+    const std::shared_ptr<const FontFace> face = std::make_shared<const TestFontFace>(7u);
+    const std::shared_ptr<const FontFace> other = std::make_shared<const TestFontFace>(7u);
     // act
-    const FontHandle wrapped = FontHandle::from_object(&typeface);
-    const FontHandle same = FontHandle::from_object(&typeface);
-    const FontHandle other = FontHandle::from_object(nullptr);
-    // assert two handles are the same typeface or they are not (§9.1)
+    const FontHandle wrapped = FontHandle::from_face(face);
+    const FontHandle same = FontHandle::from_face(face);
+    const FontHandle different = FontHandle::from_face(other);
+    // assert two handles are the same font or they are not, because a face is one object per resolution (§9.1)
     EXPECT_EQ(wrapped, same);
-    EXPECT_NE(wrapped, other);
+    EXPECT_NE(wrapped, different);
+    // assert a default handle equals another, because neither names a font (§9.1)
+    EXPECT_EQ(FontHandle{}, FontHandle{});
 }
 
 TEST(ShapedRun, ARunOverNoLinesIsEmpty) {
@@ -523,9 +543,8 @@ TEST(ShapedRun, EveryLineCarriesItsOwnBaseline) {
 
 TEST(ShapedRun, EveryLineCarriesItsOwnTypeface) {
     // arrange
-    int typeface = 0;
     ShapedRun::Line shaped;
-    shaped.font = FontHandle::from_object(&typeface);
+    shaped.font = FontHandle::from_face(std::make_shared<const TestFontFace>(7u));
     ShapedRun::Line fallback;
     // act
     const std::shared_ptr<const ShapedRun> run = ShapedRun::make({shaped, fallback}, 16.0f);
@@ -549,21 +568,18 @@ TEST(ShapedRun, EqualityComparesTheGlyphsAndTheSize) {
 }
 
 TEST(ShapedRun, EqualityExcludesTheFontHandle) {
-    // arrange two one glyph runs whose handles name different objects entirely (§9.1, AD-34)
-    int source = 0;
-    int other = 0;
+    // arrange two one glyph runs whose handles name different faces entirely (§9.1, AD-34)
     ShapedRun::Line mine;
-    mine.font = FontHandle::from_object(&source);
+    mine.font = FontHandle::from_face(std::make_shared<const TestFontFace>(7u));
     mine.glyphs.push_back(ShapedGlyph{.id = 3, .position = Point{.x = 1.0f, .y = 0.0f}});
     ShapedRun::Line theirs;
-    theirs.font = FontHandle::from_object(&other);
+    theirs.font = FontHandle::from_face(std::make_shared<const TestFontFace>(7u));
     theirs.glyphs.push_back(ShapedGlyph{.id = 3, .position = Point{.x = 1.0f, .y = 0.0f}});
     // act
     const std::shared_ptr<const ShapedRun> first = ShapedRun::make({mine}, 16.0f, 7);
     const std::shared_ptr<const ShapedRun> second = ShapedRun::make({theirs}, 16.0f, 7);
     // assert the shape is the identity, because the handle is where the shape came from rather than it (§9.1, AD-34)
-    ASSERT_EQ(first->lines().front().font.object(), &source);
-    ASSERT_EQ(second->lines().front().font.object(), &other);
+    EXPECT_NE(first->lines().front().font, second->lines().front().font);
     EXPECT_EQ(*first, *second);
 }
 

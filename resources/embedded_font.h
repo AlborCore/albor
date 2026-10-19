@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -27,11 +28,11 @@ namespace albor::resources
         // register a font, which the generated code of a component calls once (§11.3, AD-34)
         static void register_font(EmbeddedFont font);
 
-        // find a registered font by the family an application asked for, which is null when there is none (§9.1)
-        [[nodiscard]] static const EmbeddedFont* find_family(std::string_view family);
+        // the font a family asks for, which is null when nothing carries it (§9.1)
+        [[nodiscard]] static std::shared_ptr<const EmbeddedFont> find_family(std::string_view family);
 
-        // find a registered font by its content hash, which is the identity a layout is keyed on (§15, AD-34)
-        [[nodiscard]] static const EmbeddedFont* find_hash(std::uint64_t content_hash);
+        // the font a content hash names, which no reader can outlive because the registry shares it (§15, AD-18)
+        [[nodiscard]] static std::shared_ptr<const EmbeddedFont> find_hash(std::uint64_t content_hash);
 
         // report how many fonts are registered, which a test asserts on after registering (§11.3)
         [[nodiscard]] static std::size_t count();

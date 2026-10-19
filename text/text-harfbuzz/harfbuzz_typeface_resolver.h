@@ -5,11 +5,11 @@
 
 namespace albor::harfbuzz
 {
-    // resolve the platform font a run draws with, which every platform supplies by family name (§9.1, AD-28)
+    // resolve the platform font whose bytes a run shapes and draws from, which each platform supplies (§9.1, AD-34)
     class HarfbuzzTypefaceResolver
     {
     public:
-        // resolve the named family to a drawable typeface, returning null when the platform has no such font (§9.1)
+        // resolve the named family to a resolver whose typeface is null when the platform has no such font (§9.1)
         [[nodiscard]] static std::unique_ptr<HarfbuzzTypefaceResolver> create(const std::string& family_name);
 
         // resolve the platform default face, which an engine with no named family draws with (§9.1, AD-28)
@@ -22,7 +22,7 @@ namespace albor::harfbuzz
         HarfbuzzTypefaceResolver(HarfbuzzTypefaceResolver&&) = delete;
         HarfbuzzTypefaceResolver& operator=(HarfbuzzTypefaceResolver&&) = delete;
 
-        // hand out the resolved platform font, which the renderer adapts to its own typeface (§9.1, AD-28)
+        // hand out the resolved platform font, whose bytes the engine reads into the run (§9.1, AD-34)
         [[nodiscard]] virtual const void* typeface() const = 0;
 
     protected:

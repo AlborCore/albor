@@ -227,8 +227,8 @@ namespace albor::skia
             // a line this backend cannot resolve is skipped rather than guessed at (§3.5, §9.1)
             if (!line.font.valid())
                 continue;
-            // the platform font is adapted here, because only this backend may name its own typeface (§9.1, AD-28)
-            sk_sp<SkTypeface> typeface = typeface_from_platform_font(line.font.object(), run.font_hash());
+            // the typeface is parsed from the font bytes the run names, which is the face it shaped with (§15, AD-34)
+            sk_sp<SkTypeface> typeface = typeface_from_font_hash(run.font_hash());
             // a run with no drawable typeface draws nothing, which is a refusal rather than a guess (§9.1)
             if (typeface == nullptr)
                 continue;

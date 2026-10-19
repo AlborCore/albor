@@ -10,20 +10,17 @@
 
 namespace albor::render
 {
-    // the identity one walked glyph path answers to, which is the typeface, the glyph, the size and the era (§6.4, AD-06)
+    // the identity one walked glyph path answers to, which is the font content, the glyph and the size (§6.4)
     struct GlyphPathKey
     {
-        // the wrapped typeface, which the engine that issued the handle keeps alive for as long as it lives (§9.1)
-        const void* font = nullptr;
+        // the content hash of the font, which two engines over the same bytes answer alike (§15, AD-34)
+        std::uint64_t font_hash = 0;
 
         // the glyph index inside that typeface, which is what a shaped run carries (§9.1)
         std::uint32_t glyph_id = 0;
 
         // the size the outline was walked at, because a path does not scale (§9.1, AD-27)
         float font_size = 0.0f;
-
-        // the era the typeface was named in, which drops every key when an engine dies with its typefaces (§6.4, AD-06)
-        std::uint64_t era = FontHandle::era();
 
         // compare two keys component wise, which an exact match needs (§6.4)
         friend bool operator==(const GlyphPathKey& lhs, const GlyphPathKey& rhs) = default;
