@@ -2,11 +2,11 @@
 
 add_subdirectory(hello-window)
 
-# the blend2d window example, which is hello-window linked against the cpu backend instead (§6.3, AD-26)
-add_subdirectory(hello-blend2d)
-
 # the render-albor window example, which is hello-window linked against the in-repo gpu backend instead (§6.3, AD-26)
-add_subdirectory(hello-albor-render)
+add_subdirectory(hello-render-albor)
+
+# the render-blend2d window example, which is hello-window linked against the in-repo cpu backend instead (§6.3, AD-26)
+add_subdirectory(hello-render-blend2d)
 
 # the reactive counter, which shows the reactive engine driving the frame pipeline (§14, phase 2)
 add_subdirectory(reactive-counter)

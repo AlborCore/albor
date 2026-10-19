@@ -12,6 +12,40 @@
             "environment": [],
             "externalConsole": false,
             "MIMode": "lldb"
+        },
+        {
+            "name": "Example - render-albor",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/.build-debug/examples/hello-render-albor/hello-render-albor",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${fileDirname}",
+            "environment": [
+                {
+                    "name": "MTL_HUD_ENABLED",
+                    "value": "1"
+                }
+            ],
+            "externalConsole": false,
+            "MIMode": "lldb"
+        },
+        {
+            "name": "Example - render-blend2d",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/.build-debug/examples/hello-render-blend2d/hello-render-blend2d",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${fileDirname}",
+            "environment": [
+                {
+                    "name": "MTL_HUD_ENABLED",
+                    "value": "1"
+                }
+            ],
+            "externalConsole": false,
+            "MIMode": "lldb"
         }
     ]
 }
