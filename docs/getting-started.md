@@ -5,9 +5,9 @@
 - **C++23** toolchain
 - **CMake** ≥ 3.28
 - **[vcpkg](https://vcpkg.io)** in manifest mode — dependencies are pinned in `vcpkg.json`
-  and are fetched on the first configure. Export `VCPKG_OSX_DEPLOYMENT_TARGET=13.3` so the
-  ports build for the same floor; a port built for a newer one links with a warning and may
-  call an API the minimum system lacks
+  and are fetched on the first configure. Export `MACOSX_DEPLOYMENT_TARGET=13.3` so the ports
+  build for the same floor, which CMake reads and vcpkg forwards to them; a port built for a
+  newer floor links with a warning and may call an API the minimum system lacks
 - **macOS 13.3 or later** on Intel or Apple silicon to build and run the macOS targets (the
   example applications drive the AppKit platform adapter directly; see
   [Status and platforms](status.md))

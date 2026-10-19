@@ -113,8 +113,8 @@ jobs:
             setup: sudo apt-get update && sudo apt-get install -y ccache
     env:
       VCPKG_ROOT: ${{ matrix.vcpkg-root }}
-      # the framework targets macOS 13.3, so the ports are built for the same floor rather than the runner's os
-      VCPKG_OSX_DEPLOYMENT_TARGET: 13.3
+      # the framework targets macOS 13.3, so the ports are built for the same floor rather than the runner's sdk
+      MACOSX_DEPLOYMENT_TARGET: 13.3
       VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       LLVM_PROFILE_FILE: ${{ github.workspace }}/coverage.profraw
