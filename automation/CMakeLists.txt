@@ -9,6 +9,8 @@ if(APPLE)
     file(GLOB_RECURSE PLATFORM_SOURCES "./*.macos.mm")
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     file(GLOB_RECURSE PLATFORM_SOURCES "./*.linux.c++")
+elseif(WIN32)
+    file(GLOB_RECURSE PLATFORM_SOURCES "./*.win32.c++")
 endif()
 
 # the units are objects rather than an archive, because the transport calls the session and the session is in the

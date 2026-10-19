@@ -184,6 +184,8 @@ namespace albor::harfbuzz
             bool operator()(const CacheKey& lhs, const CacheKey& rhs) const { return lhs.text == rhs.text && lhs.max_width == rhs.max_width && lhs.font_size == rhs.font_size && lhs.font_hash == rhs.font_hash && lhs.direction == rhs.direction; }
             // a lookup and an owned key are the same run when the view matches the owned text (§9.1)
             bool operator()(const CacheKey& owned, const CacheLookup& lookup) const { return owned.max_width == lookup.max_width && owned.font_size == lookup.font_size && owned.font_hash == lookup.font_hash && owned.direction == lookup.direction && owned.text == lookup.text; }
+            // the map calls the comparison lookup first, so the reverse order forwards to the one above (§9.1)
+            bool operator()(const CacheLookup& lookup, const CacheKey& owned) const { return (*this)(owned, lookup); }
         };
 
         // hash a key into a bucket, which is what the cache looks the run up by (§9.1)
@@ -649,8 +651,10 @@ namespace albor::harfbuzz
     }
 
     TextLayout HarfbuzzTextEngine::measure(std::string_view text, float max_width, float font_size) const {
+        // the empty spec is built once, because a temporary would pay a proxy per call on the debug runtimes (§9.1)
+        static const FontSpec default_selection;
         // the size only overload measures with the engine's default face, which is the family it was built over (§9.1)
-        return measure(text, max_width, font_size, FontSpec{});
+        return measure(text, max_width, font_size, default_selection);
     }
 
     TextLayout HarfbuzzTextEngine::measure(std::string_view text, float max_width, float font_size, const FontSpec& spec) const {

@@ -136,3 +136,40 @@ TEST(AllocationProbeChecks, AMissShapesTheRunExactlyOnce) {
     // assert the second measure was served by the cache, which is what makes a frame cheap (§9.1)
     EXPECT_EQ(engine->shaped_run_count(), 1u);
 }
+
+TEST(AllocationProbeChecks, AnOverAlignedBlockIsCountedAndFreed) {
+    // arrange, because an over aligned type takes the aligned operator new rather than the plain one (§2.2)
+    probe::set_counting(true);
+    probe::reset();
+    // act, assert the block is live inside the braces, because the aligned form has to reach the counter (§2.2)
+    {
+        struct alignas(64) OverAligned
+        {
+            char bytes[64];
+        };
+        auto block = std::make_unique<OverAligned>();
+        EXPECT_GT(probe::live(), 0u);
+    }
+    // assert the aligned block went back to the allocator it came from, because a leak here is a defect (§2.2)
+    EXPECT_EQ(probe::live(), 0u);
+    probe::set_counting(false);
+}
+
+TEST(AllocationProbeChecks, AnOverAlignedArrayIsCountedAndFreed) {
+    // arrange, because the array form takes a separate aligned operator new (§2.2)
+    probe::set_counting(true);
+    probe::reset();
+    // act, assert an over aligned array round trips through the aligned forms without leaking (§2.2)
+    {
+        struct alignas(64) OverAlignedRow
+        {
+            char bytes[64];
+        };
+        auto rows = std::make_unique<OverAlignedRow[]>(4);
+        rows[0].bytes[0] = 1;
+        EXPECT_GT(probe::live(), 0u);
+    }
+    // assert every aligned block came back, which is what a steady state frame relies on (§2.2)
+    EXPECT_EQ(probe::live(), 0u);
+    probe::set_counting(false);
+}

@@ -131,6 +131,7 @@ TEST(AccessibilityRole, ADetachedBridgeTakesItsTreeOutOfTheWindow) {
     // assert the window announces nothing, because a reader must not see a dead tree (§10.2)
     EXPECT_EQ(announced_children(fixture.window).count, 0U);
 }
+
 TEST(AccessibilityRole, ATextFieldAnnouncesItsValue) {
     // arrange a tree whose root is an editable field carrying text (§10.1)
     WindowFixture fixture;

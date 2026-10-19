@@ -98,6 +98,17 @@ if(APPLE)
     endif()
 endif()
 
+# the popup suite drives the win32 window adapter directly, because the popup shape is a native win32 surface
+# (§5.1, AD-16). the adapter is linked plain rather than through its -auto interface, because only the whole-archive
+# form pulls both platform_install units and collides on albor_platform_marker; the plain link pulls the window
+# unit on demand and installs nothing, which the suite does not need because it calls the create factory directly
+if(WIN32)
+    target_sources(albor-tests PRIVATE "./conditional/platform_window_popup.test.win32.c++")
+    target_link_libraries(albor-tests PRIVATE albor-platform-windows)
+    # the platform font suite drives the vendored engine's directwrite halves, which are native win32 surfaces (§9.1, AD-28)
+    target_sources(albor-tests PRIVATE "./conditional/text_platform_font.test.win32.c++")
+endif()
+
 
 # the automation suite reaches the automation core, which exists only when it is enabled, so the suite is gathered
 # under the same condition. a release configure has no such target, and referencing it would fail the link (AD-10)

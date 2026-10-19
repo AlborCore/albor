@@ -14,11 +14,18 @@ find_package(ICU REQUIRED COMPONENTS uc i18n)
 # gather cpp sources, which reach harfbuzz only and therefore build everywhere (§3.5, AD-05)
 file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 
-# the typeface resolver reaches the platform font manager, so the .macos infix marks the one file that is not portable
-file(GLOB_RECURSE MACOS_SOURCES "./*.macos.mm")
+# the typeface resolver reaches the platform font manager, so the platform infix marks the one file that is not
+# portable. each glob sits inside its own platform guard, because cmake hands a source to the cxx compiler on
+# every other platform and neither the core text nor the directwrite manager it includes exists there (§5.3, AD-16)
+set(PLATFORM_SOURCES "")
+if(APPLE)
+    file(GLOB_RECURSE PLATFORM_SOURCES "./*.macos.mm")
+elseif(WIN32)
+    file(GLOB_RECURSE PLATFORM_SOURCES "./*.win32.c++")
+endif()
 
 # create the static library from the gathered sources
-add_library(albor-text-harfbuzz STATIC ${CPP_SOURCES} ${MACOS_SOURCES})
+add_library(albor-text-harfbuzz STATIC ${CPP_SOURCES} ${PLATFORM_SOURCES})
 
 # the engine names albor types only, and no shaping type reaches a public header (§3.5, §9.1, AD-19)
 target_include_directories(albor-text-harfbuzz PUBLIC ${CMAKE_SOURCE_DIR})
@@ -37,6 +44,15 @@ target_link_libraries(albor-text-harfbuzz PUBLIC albor-text PRIVATE harfbuzz::ha
 if(APPLE)
     set_source_files_properties("./harfbuzz_typeface_resolver.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(albor-text-harfbuzz PRIVATE "-framework CoreText" "-framework CoreFoundation")
+elseif(WIN32)
+    # the resolver walks the system collection directly, which dwrite fronts, so no skia archive reaches this target (AD-16)
+    target_link_libraries(albor-text-harfbuzz PRIVATE dwrite)
+endif()
+
+# the windows skia build carries neither freetype nor harfbuzz on its link interface, where the apple one does, so
+# the font reader this engine walks an embedded face with is named here rather than assumed to arrive (AD-28)
+if(WIN32)
+    target_link_libraries(albor-text-harfbuzz PRIVATE freetype)
 endif()
 
 # the auto target links the archive whole, so the vendored path installs itself at load without a call (§9.1)

@@ -9,8 +9,15 @@ if(APPLE)
     file(GLOB_RECURSE MACOS_SOURCES "./*.macos.mm")
 endif()
 
+# the windows side reports that it has no bridge until the ui automation adapter lands, and the source
+# carries the win32 infix so that adapter replaces this one rather than joining it (§10.2, #42, AD-16)
+set(WIN32_SOURCES "")
+if(WIN32)
+    file(GLOB_RECURSE WIN32_SOURCES "./*.win32.c++")
+endif()
+
 # create the static library from the gathered sources, which is declared once whichever platform is built (§3.2)
-add_library(albor-accessibility STATIC ${CPP_SOURCES} ${MACOS_SOURCES})
+add_library(albor-accessibility STATIC ${CPP_SOURCES} ${MACOS_SOURCES} ${WIN32_SOURCES})
 
 # the bridge implements the rendering hal and names albor types only (§3.5, AD-05)
 target_include_directories(albor-accessibility PUBLIC ${CMAKE_SOURCE_DIR})

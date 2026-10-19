@@ -4,6 +4,11 @@
 #include <cstdlib>
 #include <new>
 
+// the aligned allocator is spelled differently on each platform, and msvc has no std::aligned_alloc at all (§5.3, AD-16)
+#if defined(_MSC_VER)
+#include <malloc.h>
+#endif
+
 namespace albor::probe
 {
     namespace
@@ -69,6 +74,30 @@ namespace albor::probe
     } // namespace
 } // namespace albor::probe
 
+namespace
+{
+    // the aligned block the throwing form hands back, which each platform names differently (§5.3, AD-16)
+    void* allocate_aligned(std::size_t size, std::size_t alignment) {
+#if defined(_MSC_VER)
+        // the uvcrt aligned allocator is the only aligned block msvc offers, because it has no std::aligned_alloc (§2.2)
+        return _aligned_malloc(size, alignment);
+#else
+        // the standard form needs a size that is a whole number of alignments, so it is rounded up here (§2.2)
+        return std::aligned_alloc(alignment, ((size + alignment - 1) / alignment) * alignment);
+#endif
+    }
+
+    // the matching release, which has to be the platform's own aligned free rather than the plain one (§5.3, AD-16)
+    void release_aligned(void* block) {
+#if defined(_MSC_VER)
+        // the uvcrt aligned allocator frees through its own call, because the two are a pair (§2.2)
+        _aligned_free(block);
+#else
+        std::free(block);
+#endif
+    }
+} // namespace
+
 // the operators below are linked only by the test binary, so a shipping build keeps the compiler ones (AD-04, §2.3)
 void* operator new(std::size_t size) {
     // the block is asked for first, because the probe only counts what the allocator actually handed out (§2.2)
@@ -98,7 +127,7 @@ void* operator new[](std::size_t size, const std::nothrow_t&) noexcept {
 
 void* operator new(std::size_t size, std::align_val_t alignment) {
     // the aligned form asks for an aligned block, because an over aligned type needs one (§2.2)
-    void* block = std::aligned_alloc(static_cast<std::size_t>(alignment), ((size + static_cast<std::size_t>(alignment) - 1) / static_cast<std::size_t>(alignment)) * static_cast<std::size_t>(alignment));
+    void* block = allocate_aligned(size, static_cast<std::size_t>(alignment));
     // an allocation that failed throws, as the throwing aligned form requires (§2.2)
     if (block == nullptr)
         throw std::bad_alloc();
@@ -148,13 +177,13 @@ void operator delete[](void* block, const std::nothrow_t&) noexcept {
 }
 
 void operator delete(void* block, std::align_val_t) noexcept {
-    // the aligned form returns a block that aligned_alloc handed out, so plain free is correct (§2.2)
+    // the aligned form returns a block the aligned allocator handed out, so that release is the correct one (§2.2)
     if (block == nullptr)
         return;
     // the block stops being live before it goes back, because the probe counted it (§2.2)
     albor::probe::note_deallocation();
     // the block returns to the allocator it came from, which is the same one either way (§2.2)
-    std::free(block);
+    release_aligned(block);
 }
 
 void operator delete[](void* block, std::align_val_t) noexcept {

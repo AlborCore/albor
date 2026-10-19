@@ -62,7 +62,18 @@ if(ALBOR_AUTOMATION AND ALBOR_RELEASE)
 endif()
 
 # the phase 1 modules are warning free, so the checks the prototype tree already ran stay in force
-add_compile_options(-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion)
+if(MSVC)
+    # msvc reads -Wall as /Wall and -Wextra as /Wextra, and /W demands a numeric level, so the gcc and clang
+    # spelling is a hard error there rather than a weaker warning level. /W4 is the closest equivalent strictness,
+    # because it covers the conversion and shadowing diagnostics that -Wconversion and -Wshadow ask for (§5.3, AD-19)
+    add_compile_options(/W4 /permissive- /Zc:__cplusplus /EHsc)
+    # the tree is utf8 on every platform: the universal character names a literal carries and the corpus the text
+    # suites pin are utf8, so the source and the execution charset have to be named, or msvc narrows them into the
+    # ansi code page the host picked and the text the shaper sees is not the text the file wrote (§9.1, §15, AD-25)
+    add_compile_options(/utf-8)
+else()
+    add_compile_options(-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion)
+endif()
 
 # the coverage build instruments every module, because a profile that only covers the test sources
 # cannot report on the module code the suites exercise (§2.2)
@@ -184,6 +195,9 @@ add_subdirectory(render/render-albor)
 # the macos appkit adapter with its display link pacing (§3.2, AD-16)
 add_subdirectory(platform/macos)
 add_subdirectory(platform/headless)
+
+# the win32 adapter with its waitable timer pacing, which self registers when linked (§3.2, AD-16)
+add_subdirectory(platform/windows)
 
 # the compiler frontend that turns .ui source into native c++ (§11.1)
 add_subdirectory(compiler)

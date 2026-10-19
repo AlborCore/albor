@@ -1,13 +1,4 @@
-#include "automation/automation_transport.h"
-
-namespace albor::automation::platform
-{
-    // report whether this build compiled a local transport, which the portable side asks before building one (§10.3)
-    [[nodiscard]] bool available();
-
-    // build the local transport over a registry, which is where the socket type is finally named (§10.3, AD-19)
-    [[nodiscard]] std::unique_ptr<AutomationTransport> build(AutomationRegistry& registry);
-} // namespace albor::automation::platform
+#include "automation/automation_platform.h"
 
 namespace albor::automation
 {

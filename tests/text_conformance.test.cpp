@@ -297,8 +297,8 @@ TEST(EmbeddedFontChecks, ARegisteredFontIsFoundByFamilyAndByHash) {
     // arrange the registry starts empty, because a registration from another test would answer this (§2.2)
     resources::FontRegistry::clear();
     EXPECT_EQ(resources::FontRegistry::count(), 0u);
-    // act a font is registered the way generated code registers one (§11.3, AD-34)
-    resources::FontRegistry::register_font(make_embedded_font("AlborTest", FONT_PATH));
+    // act a font is registered the way generated code registers one, over the carried bytes (§11.3, §15, AD-34)
+    resources::FontRegistry::register_font(make_embedded_font("AlborTest", ALBOR_TEST_FONT_PATH));
     // assert both lookups answer, since a family is asked for and a hash is what a layout keys on (§15)
     ASSERT_NE(resources::FontRegistry::find_family("AlborTest"), nullptr);
     const resources::EmbeddedFont* found = resources::FontRegistry::find_family("AlborTest");
@@ -311,8 +311,9 @@ TEST(EmbeddedFontChecks, ARegisteredFontIsFoundByFamilyAndByHash) {
 TEST(EmbeddedFontChecks, TheHashIsOverTheBytesAndNotTheName) {
     // arrange the same bytes registered under two names (§15, AD-34)
     resources::FontRegistry::clear();
-    resources::FontRegistry::register_font(make_embedded_font("AlborOne", FONT_PATH));
-    resources::FontRegistry::register_font(make_embedded_font("AlborTwo", FONT_PATH));
+    // the carried font is the fixture here, because the hash is over the bytes the build ships (§15, AD-34)
+    resources::FontRegistry::register_font(make_embedded_font("AlborOne", ALBOR_TEST_FONT_PATH));
+    resources::FontRegistry::register_font(make_embedded_font("AlborTwo", ALBOR_TEST_FONT_PATH));
     const resources::EmbeddedFont* one = resources::FontRegistry::find_family("AlborOne");
     const resources::EmbeddedFont* two = resources::FontRegistry::find_family("AlborTwo");
     ASSERT_NE(one, nullptr);
