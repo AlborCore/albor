@@ -18,7 +18,7 @@ namespace albor::resources
         std::uint64_t content_hash = 0;
 
         // the font file itself, which the engine reads the face from without touching a file system (§9.1)
-        std::vector<std::uint8_t> bytes;
+        std::vector<std::uint8_t> bytes{};
     };
 
     // the registry generated code fills at startup, so the runtime never searches for a font (§11.3, AD-34)
