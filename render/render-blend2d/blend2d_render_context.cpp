@@ -610,7 +610,7 @@ namespace albor::blend2d
         const int height = std::max(1, static_cast<int>(std::ceil(scaled_height)));
         // the blur radius is bounded before rounding, because a wider window cannot be summed in an int (§6.2)
         const double scaled_blur = static_cast<double>(shadow.blur) * static_cast<double>(m_device_scale);
-        if (!std::isfinite(scaled_blur) || scaled_blur > static_cast<double>(std::numeric_limits<int>::max() / 2))
+        if (!std::isfinite(scaled_blur) || scaled_blur > static_cast<double>(std::numeric_limits<int>::max()) / 2.0)
             return;
         // the offscreen is premultiplied, matching the raster the frame draws into (§6.3, AD-26)
         BLImage offscreen;
