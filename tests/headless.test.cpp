@@ -135,6 +135,57 @@ TEST(HeadlessPipelineChecks, ARealBackendRasterizesARealScene) {
     EXPECT_LT(blue, 60u);
 }
 
+TEST(HeadlessPipelineChecks, ALayerDimsItsOverlappingChildrenOnce) {
+    // arrange a white scene and a half opaque group whose two red children overlap by design (§6.2)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{SURFACE_WIDTH, SURFACE_HEIGHT}, 1.0f);
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    scene.add_command(DrawCommand::rectangle(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)}));
+    scene.add_command(DrawCommand::layer_push(0.5f));
+    scene.add_command(DrawCommand::rectangle(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{24.0f, 24.0f}), Paint{.fill = Color::rgb(0.8f, 0.2f, 0.2f)}));
+    scene.add_command(DrawCommand::rectangle(Rect::from_origin_size(Point{12.0f, 12.0f}, Size{24.0f, 24.0f}), Paint{.fill = Color::rgb(0.8f, 0.2f, 0.2f)}));
+    scene.add_command(DrawCommand::layer_pop());
+    software::SoftwareRendererBackend backend;
+    const std::unique_ptr<software::SoftwareRenderSurface> surface = software::SoftwareRenderSurface::create(metrics);
+    ASSERT_NE(surface, nullptr);
+    // act
+    backend.execute_frame(*surface, scene);
+    const Screenshot captured = capture_surface(*surface);
+    ASSERT_FALSE(captured.empty());
+    // assert the overlap matches the single region, because the reference composites the group once (§6.2, AD-26)
+    const std::size_t single = (8u * static_cast<std::size_t>(captured.width) + 8u) * 4u;
+    const std::size_t overlap = (16u * static_cast<std::size_t>(captured.width) + 16u) * 4u;
+    ASSERT_LT(overlap + 3u, captured.pixels.size());
+    for (std::size_t channel = 0; channel < 4; channel++)
+        EXPECT_NEAR(captured.pixels[overlap + channel], captured.pixels[single + channel], 2) << "channel " << channel;
+    EXPECT_NEAR(captured.pixels[single], 230u, 2);
+}
+
+TEST(HeadlessPipelineChecks, ALayerInsideAClipCompositesItsVisiblePart) {
+    // arrange a clipped half opaque group whose red child crosses the clip edge (§6.2)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{SURFACE_WIDTH, SURFACE_HEIGHT}, 1.0f);
+    SceneRecorder recorder(metrics);
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    recorder.save();
+    recorder.clip_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{32.0f, SURFACE_HEIGHT}));
+    recorder.push_layer(0.5f);
+    recorder.draw_rect(Rect::from_origin_size(Point{20.0f, 4.0f}, Size{24.0f, 24.0f}), Paint{.fill = Color::rgb(0.8f, 0.2f, 0.2f)});
+    recorder.pop_layer();
+    recorder.restore();
+    software::SoftwareRendererBackend backend;
+    const std::unique_ptr<software::SoftwareRenderSurface> surface = software::SoftwareRenderSurface::create(metrics);
+    ASSERT_NE(surface, nullptr);
+    // act
+    backend.execute_frame(*surface, *recorder.scene());
+    const Screenshot captured = capture_surface(*surface);
+    ASSERT_FALSE(captured.empty());
+    // assert the visible part is dimmed and the cut part keeps the plate, which the replay must not smear (§6.2)
+    const std::size_t width = static_cast<std::size_t>(captured.width);
+    const std::size_t inside = (8u * width + 24u) * 4u;
+    const std::size_t outside = (8u * width + 36u) * 4u;
+    EXPECT_NEAR(captured.pixels[inside], 230u, 2);
+    EXPECT_EQ(captured.pixels[outside], 255u);
+}
+
 TEST(HeadlessPipelineChecks, TheReferenceIsReproducible) {
     // arrange the same scene twice, which is what a conformance check depends on (§6.3, AD-26)
     BindingEngine engine;

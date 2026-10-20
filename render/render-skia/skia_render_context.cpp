@@ -4,6 +4,7 @@
 #include <vector>
 
 #include <skia/core/SkBitmap.h>
+#include <skia/core/SkBlendMode.h>
 #include <skia/core/SkCanvas.h>
 #include <skia/core/SkFont.h>
 #include <skia/core/SkImage.h>
@@ -38,6 +39,34 @@ namespace albor::skia
             return Rect{.x = rect.x + offset.x, .y = rect.y + offset.y, .width = rect.width, .height = rect.height};
         }
 
+        // map a composition mode onto the skia blend it corresponds to, which leaves premultiplied colour alone (§6.2)
+        SkBlendMode to_skia_blend(CompositionMode mode) {
+            switch (mode) {
+            case CompositionMode::SourceIn:
+                return SkBlendMode::kSrcIn;
+            case CompositionMode::SourceOut:
+                return SkBlendMode::kSrcOut;
+            case CompositionMode::Atop:
+                return SkBlendMode::kSrcATop;
+            case CompositionMode::DestinationOver:
+                return SkBlendMode::kDstOver;
+            case CompositionMode::DestinationIn:
+                return SkBlendMode::kDstIn;
+            case CompositionMode::DestinationOut:
+                return SkBlendMode::kDstOut;
+            case CompositionMode::DestinationAtop:
+                return SkBlendMode::kDstATop;
+            case CompositionMode::Lighter:
+                return SkBlendMode::kPlus;
+            case CompositionMode::Copy:
+                return SkBlendMode::kSrc;
+            case CompositionMode::Xor:
+                return SkBlendMode::kXor;
+            case CompositionMode::SourceOver:
+                break;
+            }
+            return SkBlendMode::kSrcOver;
+        }
     } // namespace
 
     SkiaRenderContext::SkiaRenderContext(SkCanvas* canvas, float device_scale) :
@@ -107,6 +136,28 @@ namespace albor::skia
         return m_opacity;
     }
 
+    void SkiaRenderContext::push_layer(float opacity) {
+        // the layer saves the state it begins under, which its pop returns to (§6.2)
+        m_states.push_back(State{m_transform, m_clip, m_opacity});
+        // the open count tells a later pop that a layer is waiting for it (§6.2)
+        m_layers++;
+        // a context with no canvas keeps its own stack only (§6.2)
+        if (m_canvas == nullptr)
+            return;
+        // the canvas composites the group into one layer, which dims it once at the given opacity (§6.2)
+        m_canvas->saveLayerAlphaf(nullptr, std::clamp(opacity, 0.0f, 1.0f));
+    }
+
+    void SkiaRenderContext::pop_layer() {
+        // a pop with no layer open is a no operation, because the pair is the caller's contract (§6.2)
+        if (m_layers == 0)
+            return;
+        // the layer is no longer open, which the next pop reads (§6.2)
+        m_layers--;
+        // the layer composited as a whole, so the state the push saved becomes current again (§6.2)
+        restore();
+    }
+
     const Transform& SkiaRenderContext::transform() const {
         // the recorded transform is what a test asserts against (§6.2)
         return m_transform;
@@ -169,6 +220,7 @@ namespace albor::skia
         stroke_paint.setStyle(SkPaint::kStroke_Style);
         stroke_paint.setColor(SkColor(to_skia_color(stroke.color)));
         stroke_paint.setStrokeWidth(stroke.width);
+        stroke_paint.setBlendMode(to_skia_blend(stroke.composition));
         // the ends and the elbows both close roundly, which is how a control glyph reads (§6.2)
         stroke_paint.setStrokeCap(SkPaint::kRound_Cap);
         stroke_paint.setStrokeJoin(SkPaint::kRound_Join);
@@ -219,6 +271,7 @@ namespace albor::skia
         // the text takes the fill colour when the paint fills, and the stroke colour otherwise (§6.2)
         SkPaint text_paint;
         text_paint.setColor(SkColor(to_skia_color(paint.fills() ? paint.fill : paint.stroke)));
+        text_paint.setBlendMode(to_skia_blend(paint.composition));
         text_paint.setAntiAlias(true);
         // the run is the shaped output stage one measured, so the glyphs are replayed (§9.1, AD-18)
         const ShapedRun& run = *layout.run;
@@ -227,8 +280,8 @@ namespace albor::skia
             // a line this backend cannot resolve is skipped rather than guessed at (§3.5, §9.1)
             if (!line.font.valid())
                 continue;
-            // the platform font is adapted here, because only this backend may name its own typeface (§9.1, AD-28)
-            sk_sp<SkTypeface> typeface = typeface_from_platform_font(line.font.object(), run.font_hash());
+            // the typeface is parsed from the font bytes the run names, which is the face it shaped with (§15, AD-34)
+            sk_sp<SkTypeface> typeface = typeface_from_font_hash(run.font_hash());
             // a run with no drawable typeface draws nothing, which is a refusal rather than a guess (§9.1)
             if (typeface == nullptr)
                 continue;
@@ -286,6 +339,7 @@ namespace albor::skia
         if (paint.fills()) {
             SkPaint fill_paint;
             fill_paint.setColor(SkColor(to_skia_color(paint.fill)));
+            fill_paint.setBlendMode(to_skia_blend(paint.composition));
             fill_paint.setAntiAlias(true);
             // the fill of a plain and of a rounded rectangle differ only in the shape itself (§6.2)
             if (rounded)
@@ -300,6 +354,7 @@ namespace albor::skia
             stroke_paint.setColor(SkColor(to_skia_color(paint.stroke)));
             stroke_paint.setStyle(SkPaint::kStroke_Style);
             stroke_paint.setStrokeWidth(paint.stroke_width);
+            stroke_paint.setBlendMode(to_skia_blend(paint.composition));
             stroke_paint.setAntiAlias(true);
             // the stroke of a plain and of a rounded rectangle differ only in the shape itself (§6.2)
             if (rounded)
@@ -366,6 +421,7 @@ namespace albor::skia
         stroke_paint.setStyle(SkPaint::kStroke_Style);
         stroke_paint.setColor(SkColor(to_skia_color(stroke.color)));
         stroke_paint.setStrokeWidth(stroke.width);
+        stroke_paint.setBlendMode(to_skia_blend(stroke.composition));
         stroke_paint.setAntiAlias(true);
         m_canvas->drawPath(path, stroke_paint);
         m_canvas->restore();
@@ -379,7 +435,10 @@ namespace albor::skia
         if (!path || path->verbs().empty())
             return;
         // the contour is rebuilt in one pass, because the resource validates the command stream on creation (§6.4, AD-06)
-        const SkPath contour = build_path(path->verbs(), path->points());
+        SkPath contour = build_path(path->verbs(), path->points());
+        // the fill rule lives on the path in skia, which an even odd contour turns to parity coverage (§6.2)
+        if (paint.fill_rule == FillRule::EvenOdd)
+            contour.setFillType(SkPathFillType::kEvenOdd);
         // the retained transform concats under the current matrix, so the contour lands where the scene placed it (§6.4)
         m_canvas->save();
         m_canvas->concat(to_skia_matrix(transform));
@@ -387,6 +446,7 @@ namespace albor::skia
         if (paint.fills()) {
             SkPaint fill_paint;
             fill_paint.setColor(SkColor(to_skia_color(paint.fill)));
+            fill_paint.setBlendMode(to_skia_blend(paint.composition));
             fill_paint.setAntiAlias(true);
             m_canvas->drawPath(contour, fill_paint);
         }
@@ -396,6 +456,7 @@ namespace albor::skia
             stroke_paint.setColor(SkColor(to_skia_color(paint.stroke)));
             stroke_paint.setStyle(SkPaint::kStroke_Style);
             stroke_paint.setStrokeWidth(paint.stroke_width);
+            stroke_paint.setBlendMode(to_skia_blend(paint.composition));
             stroke_paint.setAntiAlias(true);
             m_canvas->drawPath(contour, stroke_paint);
         }
@@ -449,6 +510,7 @@ namespace albor::skia
             image_paint.setColor(SkColor(to_skia_color(paint.fill)));
         else if (paint.strokes())
             image_paint.setColor(SkColor(to_skia_color(paint.stroke)));
+        image_paint.setBlendMode(to_skia_blend(paint.composition));
         image_paint.setAntiAlias(true);
         m_canvas->drawImageRect(sk_image, dest, SkSamplingOptions(SkFilterMode::kLinear), &image_paint);
     }

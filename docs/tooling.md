@@ -104,3 +104,54 @@ Beyond per-file unit tests, the architecture defines cross-cutting suites
   the manifest.
 - **Build-scope** — a scripted check that a `.ui` body edit rebuilds only the expected
   translation units.
+
+## Parity tolerance baseline
+
+`AlborParityChecks` (`tests/conditional/render_albor_metal.test.macos.mm`) compares
+`render-albor` against the software reference. Each case asserts a whole-frame
+`max_channel_difference` bound, and a case whose interiors are flat also asserts
+`band_count(..., 2) == 0`, so a uniform tint cannot pass a max-only check. The bound is
+the value measured on this host plus margin; values are 8-bit channel levels.
+
+| case class | bound | measured |
+| --- | --- | --- |
+| aligned geometry, 2x density, snapped scissor, texture reuse | 0 | 0 |
+| feathered edges, opacity, retained transforms, rounded clip | 8–40 | 1–31 |
+| rounded fills and polylines | 64–80 | 55–73 |
+| gaussian shadows, square and sheared casters | 32–52 | 26–44 |
+| mipmapped downscale | 72 | 57 |
+| text, system and embedded | 80 / 64 | 70 / 57 |
+
+A bound is not a budget for drift: a new case records its measured value next to the
+assertion, and a case that samples a corner or a centre also compares the whole frame, so
+an empty or uniformly wrong read cannot pass.
+
+## Composited layers and blend semantics
+
+`RenderContext::push_layer(opacity)` opens a group the later draws paint into, and
+`pop_layer()` composites that group once at the given opacity. A pair is scoped: the push
+saves the transform, clip and opacity and the pop restores them, so a layer is not a `save()`
+and must not be closed by `restore()`. A mismatched `pop_layer()` is a no-op in every
+backend. Layers nest, and an empty layer composites nothing rather than clearing what is
+under it.
+
+The portable backends carry layers as `DrawCommand::layer_push` / `layer_pop` markers between
+draws, and `render-albor` resolves them into `FrameBatch::layers`, each naming a half-open
+draw range. `SceneRecorder` and `PictureRecorder` record markers even under an empty clip,
+because dropping one half of a pair would unbalance the replay. The replay applies layer
+markers at the base clip and lets each draw open its own clip switch, so a group never
+inherits the clip of the draw that preceded it.
+
+`Paint::composition` and `StrokeStyle::composition` name how a draw combines with the target,
+and `Paint::fill_rule` selects `NonZero` or `EvenOdd` for a fill. Both follow the femtovg
+names the renderer was modelled on. Composition is per draw, not context state. A layer
+composites source-over at its opacity; composition modes apply inside the group.
+
+A translucent source under `SourceIn` differs from the reference in the alpha channel,
+because Porter-Duff source-in keeps the destination alpha while a fixed function blender
+must also use the fragment alpha as the destination factor. A translucent source under
+`DestinationAtop` differs in alpha for the same reason: destination-atop keeps the
+destination alpha. `Copy` differs in alpha the same way, while its colour follows the
+reference on both sides of an antialiased edge. Every other mode matches an opaque
+destination in colour and alpha, which `ATranslucentSourceFollowsEveryMode` holds.
+

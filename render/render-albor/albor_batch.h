@@ -60,10 +60,10 @@ namespace albor::render
         float scale_x = 0.0f;
         float scale_y = 0.0f;
 
-        // the corner radius of the clip box, which stays zero until the rounded scissor lands
+        // the corner radius of the clip box, which zero leaves the clip rectangular
         float radius = 0.0f;
 
-        // the edge feather of the clip box, which stays zero until the rounded scissor lands
+        // the edge feather of the clip box, which a rounded clip ramps its boundary over
         float feather = 0.0f;
     };
 
@@ -82,6 +82,9 @@ namespace albor::render
 
         // the premultiplied colour the draw paints with, packed red first in the low byte (§6.3)
         std::uint32_t color = 0;
+
+        // how the draw combines with the target, which the backend maps to its blend state (§6.2)
+        CompositionMode composition = CompositionMode::SourceOver;
 
         // the scissor the draw is cut by
         BatchScissor scissor;
@@ -157,6 +160,19 @@ namespace albor::render
         std::shared_ptr<const ImageResource> image;
     };
 
+    // one composited layer a frame opens, whose draws paint offscreen and composite once at its opacity (§6.2)
+    struct BatchLayer
+    {
+        // the opacity the whole group composites at, which is applied once rather than per draw (§6.2)
+        float opacity = 1.0f;
+
+        // the first draw the layer carries, which its offscreen pass begins before (§6.2)
+        std::size_t draw_begin = 0;
+
+        // the first draw after the layer, which its offscreen pass ends at (§6.2)
+        std::size_t draw_end = 0;
+    };
+
     // the batch one frame builds, which the builder owns until it seals and uploads it (§6.3)
     struct FrameBatch
     {
@@ -168,6 +184,9 @@ namespace albor::render
 
         // the draws in paint order
         std::vector<BatchDraw> draws;
+
+        // the composited layers the frame opens, in push order (§6.2)
+        std::vector<BatchLayer> layers;
 
         // the images the frame uploads, which the backend caches across frames (§6.4, AD-06)
         std::vector<BatchUpload> uploads;

@@ -92,6 +92,27 @@ namespace albor::render
         return m_opacity;
     }
 
+    void AlborRenderContext::push_layer(float opacity) {
+        // the layer begins at the state the context stands at, which its pop returns to (§6.2)
+        m_states.push_back(State{.transform = m_transform, .clip = m_clip, .clip_device = m_clip_device, .opacity = m_opacity});
+        // the marker names the draw the layer begins at, which the backend opens its offscreen pass on (§6.2)
+        m_batch.layers.push_back(BatchLayer{.opacity = std::clamp(opacity, 0.0f, 1.0f), .draw_begin = m_batch.draws.size(), .draw_end = m_batch.draws.size()});
+        // the open index tells the matching pop which marker to close (§6.2)
+        m_layers.push_back(m_batch.layers.size() - 1u);
+    }
+
+    void AlborRenderContext::pop_layer() {
+        // a pop with no layer open is a no operation, because the pair is the caller's contract (§6.2)
+        if (m_layers.empty())
+            return;
+        // the marker closes at the current draw, which is the range its offscreen pass covers (§6.2)
+        m_batch.layers[m_layers.back()].draw_end = m_batch.draws.size();
+        // the layer is no longer open, which the next pop reads (§6.2)
+        m_layers.pop_back();
+        // the state the push saved becomes current again, which balances it (§6.2)
+        restore();
+    }
+
     std::size_t AlborRenderContext::depth() const {
         // the depth is how many states are stacked, which a test asserts against (§6.2)
         return m_states.size();
@@ -183,24 +204,25 @@ namespace albor::render
         stamp_directions(contour);
     }
 
-    void AlborRenderContext::record(EmittedRange range, CoverageKind coverage, float ramp, const Color& color, std::uint64_t texture, bool convex) {
+    void AlborRenderContext::record(EmittedRange range, CoverageKind coverage, float ramp, const Color& color, std::uint64_t texture, bool convex, CompositionMode composition) {
         // an expansion that appended no index records no draw (§6.2)
         if (range.index_count == 0)
             return;
-        // the draw carries the range, the paint and the scissor of the moment it was recorded (§6.3)
+        // the draw carries the range, the paint, the blend and the scissor of the moment it was recorded (§6.3)
         BatchDraw draw;
         draw.index_begin = range.index_begin;
         draw.index_count = range.index_count;
         draw.coverage = coverage;
         draw.ramp = ramp;
         draw.color = pack_color(color);
+        draw.composition = composition;
         draw.scissor = scissor();
         draw.texture = texture;
         draw.convex = convex;
         m_batch.draws.push_back(draw);
     }
 
-    void AlborRenderContext::emit_fill(Contour contour, const Color& color, std::uint64_t texture) {
+    void AlborRenderContext::emit_fill(Contour contour, const Color& color, std::uint64_t texture, CompositionMode composition) {
         // the fill measures against the device fringe, which a sub fringe width never reaches (§6.3)
         to_device(contour);
         // the fill fans the inset ring and straddles the boundary with its fringe (nanovg technique)
@@ -208,17 +230,17 @@ namespace albor::render
         // the expansion resolved the convexity, which the draw record carries for the stencil decision
         const bool convex = contour.convex;
         // the fill draws with the lateral coverage as its alpha, dimmed by the node opacity (nanovg technique)
-        record(range, CoverageKind::Plain, 1.0f, color.with_alpha(m_opacity), texture, convex);
+        record(range, CoverageKind::Plain, 1.0f, color.with_alpha(m_opacity), texture, convex, composition);
     }
 
-    void AlborRenderContext::emit_stroke(Contour contour, const Color& color, float width, Cap cap, Join join) {
+    void AlborRenderContext::emit_stroke(Contour contour, const Color& color, float width, Cap cap, Join join, CompositionMode composition) {
         // the stroke expands in device space, where the fringe is one pixel (§6.3, AD-27)
         to_device(contour);
         // the strip folds its lateral coverage around the centre and ramps its ends (nanovg technique)
         const StrokeEmission emission = stroke_geometry(contour, width, cap, join);
         // the stroke draw carries the ramp the folded coverage folds by, dimmed by the opacity and the hairline alpha
         const Color dimmed = color.with_alpha(m_opacity).with_alpha(emission.alpha);
-        record(emission.range, CoverageKind::Folded, emission.ramp, dimmed, 0, false);
+        record(emission.range, CoverageKind::Folded, emission.ramp, dimmed, 0, false, composition);
     }
 
     StrokeEmission AlborRenderContext::stroke_geometry(Contour& contour, float width, Cap cap, Join join) {
@@ -233,13 +255,13 @@ namespace albor::render
     void AlborRenderContext::emit_shape(Contour contour, const Paint& paint, Cap cap, Join join) {
         // the fill comes first, because the stroke overlaps it (§6.2)
         if (paint.fills())
-            emit_fill(contour, paint.fill, 0);
+            emit_fill(contour, paint.fill, 0, paint.composition);
         // the stroke follows over the same contour (§6.2)
         if (paint.strokes())
-            emit_stroke(std::move(contour), paint.stroke, paint.stroke_width, cap, join);
+            emit_stroke(std::move(contour), paint.stroke, paint.stroke_width, cap, join, paint.composition);
     }
 
-    void AlborRenderContext::emit_image(const Rect& destination, const Color& color, std::uint64_t texture) {
+    void AlborRenderContext::emit_image(const Rect& destination, const Color& color, std::uint64_t texture, CompositionMode composition) {
         // an image with no destination area draws nothing (§6.4)
         if (destination.empty() || texture == 0)
             return;
@@ -262,7 +284,7 @@ namespace albor::render
             m_batch.vertices[index].v = std::clamp((logical.y - destination.y) / destination.height, 0.0f, 1.0f);
         }
         // the image draw samples its texture across the range it appended, dimmed by the node opacity (§6.4)
-        record(EmittedRange{.index_begin = index_begin, .index_count = range.index_count}, CoverageKind::Plain, 1.0f, color.with_alpha(m_opacity), texture, contour.convex);
+        record(EmittedRange{.index_begin = index_begin, .index_count = range.index_count}, CoverageKind::Plain, 1.0f, color.with_alpha(m_opacity), texture, contour.convex, composition);
     }
 
     void AlborRenderContext::draw_rect(const Rect& rect, const Paint& paint) {
@@ -296,7 +318,7 @@ namespace albor::render
             contour.points.push_back(vertex);
         }
         // the ends and the elbows both close roundly, which is how a control glyph reads (§6.2)
-        emit_stroke(contour, stroke.color, stroke.width, Cap::Round, Join::Round);
+        emit_stroke(contour, stroke.color, stroke.width, Cap::Round, Join::Round, stroke.composition);
     }
 
     void AlborRenderContext::draw_shadow(const Rect& rect, float radius, const Shadow& shadow) {
@@ -377,15 +399,15 @@ namespace albor::render
             const Point baseline{.x = origin.x + line.origin.x, .y = origin.y + line.origin.y};
             // every glyph is its own outline, whose counters the group fill cuts (§6.2, §6.4)
             for (const ShapedGlyph& glyph : line.glyphs) {
-                // the path answers from the cache, keyed on the typeface, the glyph, the size and the era (§6.4, AD-06)
-                const GlyphPathKey key{.font = line.font.object(), .glyph_id = glyph.id, .font_size = run.font_size()};
-                // a hit draws a path an earlier frame walked, and a miss walks the typeface below (§9.1, AD-06)
+                // the path answers from the cache, keyed on the font content, the glyph and the size (§6.4)
+                const GlyphPathKey key{.font_hash = line.font.font_hash(), .glyph_id = glyph.id, .font_size = run.font_size()};
+                // a hit draws a path an earlier frame walked, and a miss walks the font below (§9.1, AD-06)
                 const std::shared_ptr<const GlyphPath> held = m_glyph_paths != nullptr ? m_glyph_paths->find(key) : nullptr;
                 // the walk runs into a local, so a context with no cache allocates nothing a frame (§9.1, AD-06)
                 GlyphPath walked;
-                // a miss walks the outline from the platform typeface in logical pixels (§9.1, AD-28)
+                // a miss walks the font bytes the run carries, which needs no platform typeface (§9.1, AD-34)
                 if (held == nullptr)
-                    walked = platform_glyph_path(line.font, glyph.id, run.font_size());
+                    walked = glyph_path(line.font, glyph.id, run.font_size());
                 // a walk is retained only where a surface keeps a cache, under that identity (§6.4, AD-06)
                 if (held == nullptr && m_glyph_paths != nullptr)
                     m_glyph_paths->store(key, std::make_shared<const GlyphPath>(walked));
@@ -406,9 +428,9 @@ namespace albor::render
                 std::vector<Contour> contours = build_contours(path.verbs, points);
                 for (Contour& contour : contours)
                     to_device(contour);
-                const EmittedRange range = expand_fill_group(m_batch, contours);
+                const EmittedRange range = expand_fill_group(m_batch, contours, FillRule::NonZero);
                 // the fill draws with the lateral coverage as its alpha, dimmed by the node opacity (§6.2)
-                record(range, CoverageKind::Plain, 1.0f, color.with_alpha(m_opacity), 0, false);
+                record(range, CoverageKind::Plain, 1.0f, color.with_alpha(m_opacity), 0, false, paint.composition);
             }
         }
     }
@@ -442,7 +464,7 @@ namespace albor::render
         }
         // the one draw spans every segment the batch expanded, dimmed once by the opacity and the hairline alpha (§6.4)
         const Color dimmed = stroke.color.with_alpha(m_opacity).with_alpha(last.alpha);
-        record(EmittedRange{.index_begin = index_begin, .index_count = static_cast<std::uint32_t>(m_batch.indices.size()) - index_begin}, CoverageKind::Folded, last.ramp, dimmed, 0, false);
+        record(EmittedRange{.index_begin = index_begin, .index_count = static_cast<std::uint32_t>(m_batch.indices.size()) - index_begin}, CoverageKind::Folded, last.ramp, dimmed, 0, false, stroke.composition);
         // the transform the draw was recorded under is restored (§6.4)
         m_transform = outer;
     }
@@ -460,9 +482,9 @@ namespace albor::render
         for (Contour& contour : contours)
             to_device(contour);
         if (paint.fills()) {
-            // the group sweeps into one draw, which its non zero winding cuts the holes by (§6.2)
-            const EmittedRange range = expand_fill_group(m_batch, contours);
-            record(range, CoverageKind::Plain, 1.0f, paint.fill.with_alpha(m_opacity), 0, false);
+            // the group sweeps into one draw, which the fill rule cuts the holes by (§6.2)
+            const EmittedRange range = expand_fill_group(m_batch, contours, paint.fill_rule);
+            record(range, CoverageKind::Plain, 1.0f, paint.fill.with_alpha(m_opacity), 0, false, paint.composition);
         }
         // the strokes follow over the contours, which the recorded style asks for (§6.4)
         if (paint.strokes()) {
@@ -470,7 +492,7 @@ namespace albor::render
                 // the strip folds its lateral coverage around the centre and ramps its ends (nanovg technique)
                 const StrokeEmission emission = stroke_geometry(contour, paint.stroke_width, Cap::Butt, Join::Miter);
                 // the stroke draw carries the folded ramp, dimmed by the opacity and the hairline alpha
-                record(emission.range, CoverageKind::Folded, emission.ramp, paint.stroke.with_alpha(m_opacity).with_alpha(emission.alpha), 0, false);
+                record(emission.range, CoverageKind::Folded, emission.ramp, paint.stroke.with_alpha(m_opacity).with_alpha(emission.alpha), 0, false, paint.composition);
             }
         }
         // the transform the draw was recorded under is restored (§6.4)
@@ -503,6 +525,6 @@ namespace albor::render
         if (!uploaded)
             m_batch.uploads.push_back(BatchUpload{.id = image->id(), .image = image});
         // the texture the backend caches is keyed on the resource identifier, which never repeats (AD-06)
-        emit_image(destination, tint, image->id());
+        emit_image(destination, tint, image->id(), paint.composition);
     }
 } // namespace albor::render

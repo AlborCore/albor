@@ -119,6 +119,16 @@ namespace albor::software
         return m_inner.opacity();
     }
 
+    void SoftwareRenderContext::push_layer(float opacity) {
+        // the layer is the skia context's, so its offscreen composite is the reference every backend matches (§6.2, AD-26)
+        m_inner.push_layer(opacity);
+    }
+
+    void SoftwareRenderContext::pop_layer() {
+        // the layer closes in the skia context, which composites the group once (§6.2)
+        m_inner.pop_layer();
+    }
+
     void SoftwareRenderContext::draw_rect(const Rect& rect, const Paint& paint) {
         // a rectangle is the skia context's, so the two backends fill it identically (§6.3)
         m_inner.draw_rect(rect, paint);

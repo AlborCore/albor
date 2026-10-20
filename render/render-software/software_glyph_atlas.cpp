@@ -66,7 +66,7 @@ namespace albor::software
         if (found != m_faces.end())
             return found->second.get();
         // the registry is where a hash resolves to the bytes the build carries (§6.3, AD-34)
-        const resources::EmbeddedFont* font = resources::FontRegistry::find_hash(font_hash);
+        const std::shared_ptr<const resources::EmbeddedFont> font = resources::FontRegistry::find_hash(font_hash);
         // a hash the build does not carry has no face, which is a refusal rather than a blank (§6.3)
         if (font == nullptr)
             return nullptr;

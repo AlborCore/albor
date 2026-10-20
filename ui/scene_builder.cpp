@@ -66,6 +66,27 @@ namespace albor
         return m_opacity;
     }
 
+    void SceneRecorder::push_layer(float opacity) {
+        // the layer begins at the state the recorder stands at, which its pop returns to (§6.2)
+        save();
+        // the marker carries the clamped group opacity, which the replay composites once (§6.2)
+        record(DrawCommand::layer_push(opacity));
+        // the open count tells a later pop that a layer is waiting for it (§6.2)
+        m_layers++;
+    }
+
+    void SceneRecorder::pop_layer() {
+        // a pop with no layer open is a no operation, because the pair is the caller's contract (§6.2)
+        if (m_layers == 0)
+            return;
+        // the layer is no longer open, which the next pop reads (§6.2)
+        m_layers--;
+        // the state the push saved becomes current again, which balances its save (§6.2)
+        restore();
+        // the marker closes the group under the clip the push recorded, so the pair carries one clip (§6.2)
+        record(DrawCommand::layer_pop());
+    }
+
     void SceneRecorder::draw_rect(const Rect& rect, const Paint& paint) {
         // the rectangle is mapped into scene coordinates now, because the render thread cannot ask where (§6.1, AD-18)
         record(DrawCommand::rectangle(to_scene(rect), paint));

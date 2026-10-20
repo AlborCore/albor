@@ -1,11 +1,12 @@
 #include <algorithm>
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <vector>
 
 #include <gtest/gtest.h>
 
-#include <CoreGraphics/CoreGraphics.h>
 #import <QuartzCore/CAMetalLayer.h>
 
 #include "core/paint.h"
@@ -13,7 +14,6 @@
 #include "render/frame_scene.h"
 #include "render/picture_resource.h"
 #include "render/render-albor/albor_glyph_path.h"
-#include "render/render-albor/albor_glyph_path.macos.h"
 #include "render/render-albor/albor_render_context.h"
 #include "render/render-albor/albor_renderer_backend.h"
 #include "render/render-albor/albor_shaders.h"
@@ -22,8 +22,10 @@
 #include "render/renderer_backend.h"
 #include "render/screenshot.h"
 #include "render/text_layout.h"
+#include "resources/embedded_font.h"
 #include "text/text-harfbuzz/harfbuzz_text_engine.h"
 #include "text/text_engine.h"
+#include "ui/scene_builder.h"
 #include "window/window_metrics.h"
 
 using namespace albor;
@@ -278,6 +280,8 @@ namespace
         [[nodiscard]] const AlborRect& clip() const override { return m_clip; }
         void set_opacity(float opacity) override { m_opacity = opacity; }
         [[nodiscard]] float opacity() const override { return m_opacity; }
+        void push_layer(float) override {}
+        void pop_layer() override {}
         void draw_rect(const AlborRect&, const albor::Paint&) override {}
         void draw_rounded_rect(const AlborRect&, float, const albor::Paint&) override {}
         void draw_polyline(const std::span<const AlborPoint>&, const albor::StrokeStyle&) override {}
@@ -554,6 +558,8 @@ TEST(AlborParityChecks, ARoundedClipMatchesTheReferenceAtItsCorners) {
     const std::size_t centre = (16u * 32u + 16u) * 4u;
     EXPECT_EQ(actual_shot.pixels[centre], 0u);
     EXPECT_EQ(expected_shot.pixels[centre], 0u);
+    // the whole rounded mask follows the reference, at the 31 measured on this host along its arcs
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 40);
 }
 
 TEST(AlborParityChecks, ReusesAnUploadedTextureAcrossFrames) {
@@ -655,6 +661,8 @@ TEST(AlborParityChecks, AScissorUnderATranslatedTransformMatchesTheReference) {
     const std::size_t inside = (8u * 32u + 8u) * 4u;
     EXPECT_EQ(actual_shot.pixels[inside], 0u);
     EXPECT_EQ(expected_shot.pixels[inside], 0u);
+    // the snapped axis aligned mask agrees with the reference exactly, which sampling alone could not prove
+    EXPECT_EQ(expected_shot.max_channel_difference(actual_shot), 0);
 }
 
 TEST(AlborParityChecks, AFrameRenderedAtAnotherScaleDoesNotMatch) {
@@ -1236,55 +1244,17 @@ TEST(AlborParityChecks, AFilledConcavePathMatchesTheReference) {
     EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 32);
 }
 
-TEST(GlyphPathChecks, WalksEveryElementOfACoreGraphicsPath) {
-    // arrange a path carrying every element kind a glyph outline is made of
-    const std::unique_ptr<CGPath, void (*)(CGPathRef)> path(CGPathCreateMutable(), CGPathRelease);
-    CGPathMoveToPoint(path.get(), nullptr, 1.0, 2.0);
-    CGPathAddLineToPoint(path.get(), nullptr, 3.0, 4.0);
-    CGPathAddQuadCurveToPoint(path.get(), nullptr, 5.0, 6.0, 7.0, 8.0);
-    CGPathAddCurveToPoint(path.get(), nullptr, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0);
-    CGPathCloseSubpath(path.get());
-    // act
-    const GlyphPath glyph = albor::render::glyph_path_from_cgpath(path.get());
-    // assert the walk emits one verb per point plus the close, which flattens both curves
-    ASSERT_EQ(glyph.verbs.size(), glyph.points.size() + 1u);
-    ASSERT_GE(glyph.points.size(), 10u);
-    EXPECT_EQ(glyph.verbs.front(), PathVerb::MoveTo);
-    EXPECT_EQ(glyph.verbs.back(), PathVerb::Close);
-    // the y axis flips, because the font grows upwards and the device downwards (§6.3, AD-27)
-    EXPECT_FLOAT_EQ(glyph.points[0].x, 1.0f);
-    EXPECT_FLOAT_EQ(glyph.points[0].y, -2.0f);
-    // the line reaches its point directly, which costs one vertex
-    EXPECT_NEAR(glyph.points[1].x, 3.0f, 0.0001f);
-    EXPECT_NEAR(glyph.points[1].y, -4.0f, 0.0001f);
-    // the quadratic ends on the point its element names, which the walk reports as a sample
-    bool reaches_quad = false;
-    for (const albor::Point& point : glyph.points) {
-        if (std::hypot(point.x - 7.0f, point.y + 8.0f) < 0.0001f)
-            reaches_quad = true;
-    }
-    EXPECT_TRUE(reaches_quad);
-    // the cubic ends on the last point, which the close verb follows
-    EXPECT_NEAR(glyph.points.back().x, 13.0f, 0.0001f);
-    EXPECT_NEAR(glyph.points.back().y, -14.0f, 0.0001f);
-    // the samples follow the curve rather than its chord, which the half way point of the quadratic shows
-    float bend = 1000.0f;
-    for (const albor::Point& point : glyph.points)
-        bend = std::min(bend, std::hypot(point.x - 5.0f, point.y + 6.0f));
-    EXPECT_LT(bend, 0.25f);
-}
-
-TEST(GlyphPathChecks, RefusesATypefaceWithoutAHandle) {
+TEST(GlyphPathChecks, RefusesAFontWithoutAnOutlineSource) {
     // arrange a handle that wraps no typeface at all
     const FontHandle font;
     // act
-    const GlyphPath glyph = albor::render::platform_glyph_path(font, 3u, 16.0f);
+    const GlyphPath glyph = albor::render::glyph_path(font, 3u, 16.0f);
     // assert
     EXPECT_TRUE(glyph.points.empty());
     EXPECT_TRUE(glyph.verbs.empty());
 }
 
-TEST(GlyphPathChecks, OutlinesAGlyphOfThePlatformFace) {
+TEST(GlyphPathChecks, OutlinesAGlyphOfTheShapedFont) {
     // arrange the system face the platform engine resolves, shaped at a size a ui label uses
     const std::unique_ptr<albor::harfbuzz::HarfbuzzTextEngine> engine = albor::harfbuzz::HarfbuzzTextEngine::create_platform("");
     ASSERT_NE(engine, nullptr);
@@ -1294,7 +1264,10 @@ TEST(GlyphPathChecks, OutlinesAGlyphOfThePlatformFace) {
     const ShapedRun::Line& line = layout.run->lines().front();
     ASSERT_FALSE(line.glyphs.empty());
     // act
-    const GlyphPath glyph = albor::render::platform_glyph_path(line.font, line.glyphs.front().id, 24.0f);
+    const GlyphPath glyph = albor::render::glyph_path(line.font, line.glyphs.front().id, 24.0f);
+    // assert the handle answers the content identity the run carries, which is what a cache keys on (§15, AD-34)
+    ASSERT_NE(layout.run->font_hash(), 0u);
+    EXPECT_EQ(line.font.font_hash(), layout.run->font_hash());
     // assert the outline is closed subpaths, which the fill sweeps as one shape
     ASSERT_FALSE(glyph.points.empty());
     std::size_t closes = 0;
@@ -1309,12 +1282,12 @@ TEST(GlyphPathChecks, OutlinesAGlyphOfThePlatformFace) {
     EXPECT_GE(closes, 1u);
     EXPECT_EQ(glyph.verbs.back(), PathVerb::Close);
     // a size of no pixels has no outline to scale to, which the walk refuses
-    EXPECT_TRUE(albor::render::platform_glyph_path(line.font, line.glyphs.front().id, 0.0f).points.empty());
+    EXPECT_TRUE(albor::render::glyph_path(line.font, line.glyphs.front().id, 0.0f).points.empty());
     // a space carries no visible outline, which the face reports as no path
     const TextLayout spaced = engine->measure(" ", 0.0f, 24.0f);
     ASSERT_FALSE(spaced.empty());
     ASSERT_FALSE(spaced.run->lines().front().glyphs.empty());
-    EXPECT_TRUE(albor::render::platform_glyph_path(spaced.run->lines().front().font, spaced.run->lines().front().glyphs.front().id, 24.0f).points.empty());
+    EXPECT_TRUE(albor::render::glyph_path(spaced.run->lines().front().font, spaced.run->lines().front().glyphs.front().id, 24.0f).points.empty());
 }
 
 TEST(AlborTextChecks, ReusesAWalkedGlyphAcrossTheSameContext) {
@@ -1448,4 +1421,491 @@ TEST(AlborParityChecks, AShapedRunMatchesTheReference) {
     ASSERT_GT(expected_ink, 0u);
     EXPECT_LE(actual_ink, (expected_ink * 5u) / 4u);
     EXPECT_GE(actual_ink, (expected_ink * 3u) / 4u);
+}
+
+TEST(AlborParityChecks, AnEmbeddedShapedRunMatchesTheReference) {
+    // arrange the carried font, whose run expands to outlines before either backend replays (§15, AD-34)
+    std::ifstream file(ALBOR_TEST_FONT_PATH, std::ios::binary);
+    ASSERT_TRUE(file.good());
+    std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(resources::EmbeddedFont{.family = ALBOR_TEST_FONT_FAMILY, .content_hash = 0, .bytes = std::move(bytes)});
+    const std::unique_ptr<albor::harfbuzz::HarfbuzzTextEngine> engine = albor::harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("Albor", 0.0f, 28.0f);
+    ASSERT_FALSE(layout.empty());
+    ASSERT_EQ(layout.run->shape_source(), ShapeSource::Embedded);
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{96.0f, 40.0f}, 1.0f);
+    // the recorder expands the run through the engine resolver, which is what a composition root installs (§6.4, AD-34)
+    SceneRecorder recorder(metrics);
+    recorder.set_outline_resolver(engine->glyph_outline_resolver());
+    recorder.set_background(Color::rgb(1.0f, 1.0f, 1.0f));
+    recorder.draw_text(layout, AlborPoint{4.0f, 6.0f}, Paint{.fill = Color::rgb(0.1f, 0.1f, 0.1f)});
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_NE(scene, nullptr);
+    ASSERT_GT(recorder.outline_command_count(), 0u);
+    // act the one scene replays on both backends
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    reference.execute_frame(*expected_surface, *scene);
+    backend.execute_frame(*actual_surface, *scene);
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert both surfaces put ink in the run box, which an empty expansion would leave blank (§15)
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    std::size_t expected_ink = 0;
+    std::size_t actual_ink = 0;
+    for (std::size_t index = 0; index < expected_shot.pixels.size(); index += 4) {
+        if (expected_shot.pixels[index] < 128u)
+            expected_ink++;
+        if (actual_shot.pixels[index] < 128u)
+            actual_ink++;
+    }
+    ASSERT_GT(expected_ink, 0u);
+    EXPECT_LE(actual_ink, (expected_ink * 5u) / 4u);
+    EXPECT_GE(actual_ink, (expected_ink * 3u) / 4u);
+    // the same outlines fill on both, and the bound is the 57 measured on this host, which one feathered edge pixel reaches
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 64);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(AlborParityChecks, AShearedRetainedPathMatchesTheReference) {
+    // arrange a retained contour under a shear, which the reference maps into the parallelogram it names (§6.4, §6.2)
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{64.0f, 64.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const PathVerb verbs[4] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const AlborPoint points[3] = {AlborPoint{12.0f, 8.0f}, AlborPoint{36.0f, 14.0f}, AlborPoint{18.0f, 26.0f}};
+    const std::shared_ptr<const PathResource> path = std::make_shared<const PathResource>(91u, verbs, points);
+    const Transform shear{.skew_y = 0.9f};
+    // act
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    expected.draw_path(path, shear, Paint{.fill = Color::rgb(0.1f, 0.2f, 0.8f)});
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    actual.draw_path(path, shear, Paint{.fill = Color::rgb(0.1f, 0.2f, 0.8f)});
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert both surfaces ink the centroid where the shear places it
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    const std::size_t inside = (35u * 64u + 22u) * 4u;
+    EXPECT_LT(actual_shot.pixels[inside], 200u);
+    EXPECT_LT(expected_shot.pixels[inside], 200u);
+    // the un-sheared centroid stays background, which a dropped transform would ink
+    const std::size_t before = (16u * 64u + 22u) * 4u;
+    EXPECT_GT(actual_shot.pixels[before], 230u);
+    EXPECT_GT(expected_shot.pixels[before], 230u);
+    // the slanted edges follow the reference within its one pixel feather band, at the 26 measured on this host
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 32);
+}
+
+TEST(AlborParityChecks, ARotatedLineBatchMatchesTheReference) {
+    // arrange a retained batch turned 0.6 radians about the surface centre, which a translation cannot do (§6.4)
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{64.0f, 48.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const AlborPoint points[2] = {AlborPoint{10.0f, 24.0f}, AlborPoint{30.0f, 24.0f}};
+    const std::shared_ptr<const LineBatch> batch = std::make_shared<const LineBatch>(92u, points);
+    const StrokeStyle stroke{.color = Color::rgb(0.2f, 0.2f, 0.2f), .width = 3.0f};
+    const Transform turn = Transform::translation(-32.0f, -24.0f).then(Transform{.scale_x = 0.8253356f, .skew_x = -0.5646425f, .skew_y = 0.5646425f, .scale_y = 0.8253356f}).then(Transform::translation(32.0f, 24.0f));
+    // act
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    expected.draw_line_batch(batch, turn, stroke);
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    actual.draw_line_batch(batch, turn, stroke);
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert the segment lands where the turn maps its midpoint
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    const AlborPoint mapped = turn.apply(AlborPoint{.x = 20.0f, .y = 24.0f});
+    const std::size_t turned = (static_cast<std::size_t>(mapped.y) * 64u + static_cast<std::size_t>(mapped.x)) * 4u;
+    EXPECT_LT(actual_shot.pixels[turned], 220u);
+    EXPECT_LT(expected_shot.pixels[turned], 220u);
+    // the unrotated midpoint stays background, which an ignored retained transform would ink
+    const std::size_t before = (24u * 64u + 20u) * 4u;
+    EXPECT_GT(actual_shot.pixels[before], 230u);
+    EXPECT_GT(expected_shot.pixels[before], 230u);
+    // the rotated strip follows the reference within its feather band, at the 27 measured on this host
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 32);
+}
+
+TEST(AlborParityChecks, ARotatedPictureMatchesTheReference) {
+    // arrange a retained picture replayed a quarter turn about the surface centre (§6.4)
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{48.0f, 48.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    std::vector<DrawCommand> commands;
+    commands.push_back(DrawCommand::rectangle(AlborRect::from_origin_size(AlborPoint{4.0f, 18.0f}, AlborSize{10.0f, 10.0f}), Paint{.fill = Color::rgb(0.3f, 0.6f, 0.9f)}));
+    const std::shared_ptr<const PictureResource> picture = std::make_shared<const PictureResource>(93u, commands);
+    const Transform turn = Transform::translation(-24.0f, -24.0f).then(Transform{.scale_x = 0.8253356f, .skew_x = -0.5646425f, .skew_y = 0.5646425f, .scale_y = 0.8253356f}).then(Transform::translation(24.0f, 24.0f));
+    // act
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    expected.draw_picture(picture, turn);
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    actual.draw_picture(picture, turn);
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert the picture centre lands where the turn maps it
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    const AlborPoint mapped = turn.apply(AlborPoint{.x = 9.0f, .y = 23.0f});
+    const std::size_t turned = (static_cast<std::size_t>(mapped.y) * 48u + static_cast<std::size_t>(mapped.x)) * 4u;
+    EXPECT_LT(actual_shot.pixels[turned], 200u);
+    EXPECT_LT(expected_shot.pixels[turned], 200u);
+    // the original centre stays background, which a dropped picture transform would ink
+    const std::size_t before = (23u * 48u + 9u) * 4u;
+    EXPECT_GT(actual_shot.pixels[before], 230u);
+    EXPECT_GT(expected_shot.pixels[before], 230u);
+    // the replayed command follows the reference within its feather band, at the 23 measured on this host
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 32);
+}
+
+TEST(AlborParityChecks, AContextOpacityDimsThePixels) {
+    // arrange a context opacity around one draw, which the reference dims while it composites (§6.1)
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{32.0f, 16.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    // act the first rectangle draws at half opacity, and the second at full once the state is popped
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    expected.save();
+    expected.set_opacity(0.5f);
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{2.0f, 2.0f}, AlborSize{8.0f, 8.0f}), Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    expected.restore();
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{18.0f, 2.0f}, AlborSize{8.0f, 8.0f}), Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    actual.save();
+    actual.set_opacity(0.5f);
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{2.0f, 2.0f}, AlborSize{8.0f, 8.0f}), Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    actual.restore();
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{18.0f, 2.0f}, AlborSize{8.0f, 8.0f}), Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert the dimmed rectangle reaches the half coverage the opacity asks for
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    const std::size_t dimmed = (6u * 32u + 6u) * 4u;
+    EXPECT_GT(actual_shot.pixels[dimmed], 100u);
+    EXPECT_LT(actual_shot.pixels[dimmed], 160u);
+    // the rectangle outside the saved state draws fully black, which an unpopped opacity would dim
+    const std::size_t full = (6u * 32u + 22u) * 4u;
+    EXPECT_LT(actual_shot.pixels[full], 6u);
+    // the reference paints the same two levels, which the whole image comparison confirms
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 8);
+}
+
+TEST(AlborParityChecks, AnEvenOddPathMatchesTheReference) {
+    // arrange two nested squares of one winding, whose hole only the even odd rule cuts (§6.2)
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{48.0f, 48.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const PathVerb verbs[10] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close, PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const AlborPoint points[8] = {AlborPoint{6.0f, 6.0f}, AlborPoint{6.0f, 42.0f}, AlborPoint{42.0f, 42.0f}, AlborPoint{42.0f, 6.0f}, AlborPoint{16.0f, 16.0f}, AlborPoint{16.0f, 32.0f}, AlborPoint{32.0f, 32.0f}, AlborPoint{32.0f, 16.0f}};
+    const std::shared_ptr<const PathResource> path = std::make_shared<const PathResource>(94u, verbs, points);
+    const Paint paint{.fill = Color::rgb(0.1f, 0.2f, 0.8f), .fill_rule = FillRule::EvenOdd};
+    // act
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    expected.draw_path(path, Transform{}, paint);
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    actual.draw_path(path, Transform{}, paint);
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert the nested square stays background in both, which the even odd rule leaves open
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    const std::size_t hole = (24u * 48u + 24u) * 4u;
+    EXPECT_GT(actual_shot.pixels[hole], 230u);
+    EXPECT_GT(expected_shot.pixels[hole], 230u);
+    // the band between the two squares fills in both
+    const std::size_t band = (24u * 48u + 11u) * 4u;
+    EXPECT_LT(actual_shot.pixels[band], 200u);
+    EXPECT_LT(expected_shot.pixels[band], 200u);
+    // the whole path follows the reference within its feathered edge band
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 32);
+}
+
+TEST(AlborParityChecks, ATranslucentSourceFollowsEveryMode) {
+    // arrange one half transparent overlay per composition mode over an opaque plate (§6.2)
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{32.0f, 32.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const CompositionMode modes[] = {CompositionMode::SourceOver, CompositionMode::SourceIn, CompositionMode::SourceOut, CompositionMode::Atop, CompositionMode::DestinationOver, CompositionMode::DestinationIn, CompositionMode::DestinationOut, CompositionMode::DestinationAtop, CompositionMode::Lighter, CompositionMode::Copy, CompositionMode::Xor};
+    const Paint paint{.fill = Color{.red = 0.2f, .green = 0.2f, .blue = 0.8f, .alpha = 0.5f}};
+    for (const CompositionMode mode : modes) {
+        // the trace names the mode a mismatch belongs to, which a loop otherwise hides
+        SCOPED_TRACE(static_cast<int>(mode));
+        // act
+        RenderContext& expected = expected_surface->begin_frame();
+        expected.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+        expected.draw_rect(AlborRect::from_origin_size(AlborPoint{4.0f, 4.0f}, AlborSize{16.0f, 16.0f}), Paint{.fill = Color::rgb(0.8f, 0.2f, 0.2f)});
+        expected.draw_rect(AlborRect::from_origin_size(AlborPoint{12.0f, 12.0f}, AlborSize{16.0f, 16.0f}), Paint{.fill = paint.fill, .composition = mode});
+        expected_surface->end_frame();
+        RenderContext& actual = actual_surface->begin_frame();
+        actual.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+        actual.draw_rect(AlborRect::from_origin_size(AlborPoint{4.0f, 4.0f}, AlborSize{16.0f, 16.0f}), Paint{.fill = Color::rgb(0.8f, 0.2f, 0.2f)});
+        actual.draw_rect(AlborRect::from_origin_size(AlborPoint{12.0f, 12.0f}, AlborSize{16.0f, 16.0f}), Paint{.fill = paint.fill, .composition = mode});
+        actual_surface->end_frame();
+        const Screenshot expected_shot = capture_surface(*expected_surface);
+        const Screenshot actual_shot = capture_surface(*actual_surface);
+        ASSERT_FALSE(expected_shot.empty());
+        ASSERT_FALSE(actual_shot.empty());
+        ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+        // assert every channel agrees within the feathered band, except the alphas a fixed blender cannot hold
+        const std::size_t pixel = (16u * 32u + 16u) * 4u;
+        if (mode == CompositionMode::DestinationAtop || mode == CompositionMode::SourceIn || mode == CompositionMode::Copy) {
+            std::size_t worst = 0;
+            for (std::size_t channel = 0; channel < 3; channel++)
+                for (std::size_t index = channel; index < actual_shot.pixels.size(); index += 4) {
+                    // the channel distance is read as a magnitude, because only its size decides the bound
+                    const int difference = static_cast<int>(actual_shot.pixels[index]) - static_cast<int>(expected_shot.pixels[index]);
+                    // the widest distance over the frame is what the assertion holds
+                    worst = std::max(worst, static_cast<std::size_t>(difference < 0 ? -difference : difference));
+                }
+            EXPECT_LE(worst, 8u);
+            for (std::size_t channel = 0; channel < 3; channel++)
+                EXPECT_NEAR(actual_shot.pixels[pixel + channel], expected_shot.pixels[pixel + channel], 8) << "channel " << channel;
+            continue;
+        }
+        EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 8);
+    }
+}
+
+TEST(AlborParityChecks, ANestedLayerMatchesTheReference) {
+    // arrange two halves over a white plate, which a quarter of the red reaches through (§6.2)
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{32.0f, 32.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const AlborRect whole = AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size);
+    const AlborRect red = AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, AlborSize{16.0f, 16.0f});
+    // act
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.draw_rect(whole, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    expected.push_layer(0.5f);
+    expected.push_layer(0.5f);
+    expected.draw_rect(red, Paint{.fill = Color::rgb(0.8f, 0.2f, 0.2f)});
+    expected.pop_layer();
+    expected.pop_layer();
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.draw_rect(whole, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    actual.push_layer(0.5f);
+    actual.push_layer(0.5f);
+    actual.draw_rect(red, Paint{.fill = Color::rgb(0.8f, 0.2f, 0.2f)});
+    actual.pop_layer();
+    actual.pop_layer();
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert the inner group composited into the outer one before it landed (§6.2, AD-26)
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 8);
+}
+
+TEST(AlborParityChecks, ALayerAroundACastOnlyFrameMatchesTheReference) {
+    // arrange a half opaque group whose only content is a hard cast, so the frame carries no geometry (§6.2)
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{32.0f, 32.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const AlborRect whole = AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size);
+    const AlborRect plate = AlborRect::from_origin_size(AlborPoint{4.0f, 4.0f}, AlborSize{16.0f, 16.0f});
+    const Shadow cast{.color = Color::rgb(0.0f, 0.0f, 0.0f), .offset = AlborPoint{2.0f, 2.0f}, .blur = 0.0f};
+    // act
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.draw_rect(whole, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    expected.push_layer(0.5f);
+    expected.draw_shadow(plate, 0.0f, cast);
+    expected.pop_layer();
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.draw_rect(whole, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    actual.push_layer(0.5f);
+    actual.draw_shadow(plate, 0.0f, cast);
+    actual.pop_layer();
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert the cast composited at the group opacity rather than at full strength (§6.2, AD-26)
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 32);
+}
+
+TEST(AlborParityChecks, ALayerDimsItsGroupOnce) {
+    // arrange a half opaque layer over a white plate, whose two red children overlap by design (§6.2)
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{48.0f, 48.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const AlborRect whole = AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size);
+    const AlborRect first = AlborRect::from_origin_size(AlborPoint{4.0f, 4.0f}, AlborSize{24.0f, 24.0f});
+    const AlborRect second = AlborRect::from_origin_size(AlborPoint{12.0f, 12.0f}, AlborSize{24.0f, 24.0f});
+    const Paint plate{.fill = Color::rgb(1.0f, 1.0f, 1.0f)};
+    const Paint red{.fill = Color::rgb(0.8f, 0.2f, 0.2f)};
+    // act the empty group composites nothing, the half opaque group paints both children and composites once
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.push_layer(0.5f);
+    expected.pop_layer();
+    expected.draw_rect(whole, plate);
+    expected.push_layer(0.5f);
+    expected.draw_rect(first, red);
+    expected.draw_rect(second, red);
+    expected.pop_layer();
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.push_layer(0.5f);
+    actual.pop_layer();
+    actual.draw_rect(whole, plate);
+    actual.push_layer(0.5f);
+    actual.draw_rect(first, red);
+    actual.draw_rect(second, red);
+    actual.pop_layer();
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert the whole group follows the reference, which dims the overlap once rather than per child (§6.2, AD-26)
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 8);
+    const std::size_t single = (8u * 48u + 8u) * 4u;
+    const std::size_t overlap = (24u * 48u + 24u) * 4u;
+    EXPECT_NEAR(actual_shot.pixels[overlap], actual_shot.pixels[single], 2);
+}
+
+TEST(AlborParityChecks, EveryCompositionModeMatchesTheReference) {
+    // arrange one overlay per composition mode, which the backend maps to its blender (§6.2)
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{32.0f, 32.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const CompositionMode modes[] = {CompositionMode::SourceOver, CompositionMode::SourceIn, CompositionMode::SourceOut, CompositionMode::Atop, CompositionMode::DestinationOver, CompositionMode::DestinationIn, CompositionMode::DestinationOut, CompositionMode::DestinationAtop, CompositionMode::Lighter, CompositionMode::Copy, CompositionMode::Xor};
+    for (const CompositionMode mode : modes) {
+        // the trace names the mode a mismatch belongs to, which a loop otherwise hides
+        SCOPED_TRACE(static_cast<int>(mode));
+        // act the same base rectangle and overlay replay under the mode the frame names
+        RenderContext& expected = expected_surface->begin_frame();
+        expected.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+        expected.draw_rect(AlborRect::from_origin_size(AlborPoint{4.0f, 4.0f}, AlborSize{16.0f, 16.0f}), Paint{.fill = Color::rgb(0.8f, 0.2f, 0.2f)});
+        expected.draw_rect(AlborRect::from_origin_size(AlborPoint{12.0f, 12.0f}, AlborSize{16.0f, 16.0f}), Paint{.fill = Color::rgb(0.2f, 0.2f, 0.8f), .composition = mode});
+        expected_surface->end_frame();
+        RenderContext& actual = actual_surface->begin_frame();
+        actual.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+        actual.draw_rect(AlborRect::from_origin_size(AlborPoint{4.0f, 4.0f}, AlborSize{16.0f, 16.0f}), Paint{.fill = Color::rgb(0.8f, 0.2f, 0.2f)});
+        actual.draw_rect(AlborRect::from_origin_size(AlborPoint{12.0f, 12.0f}, AlborSize{16.0f, 16.0f}), Paint{.fill = Color::rgb(0.2f, 0.2f, 0.8f), .composition = mode});
+        actual_surface->end_frame();
+        const Screenshot expected_shot = capture_surface(*expected_surface);
+        const Screenshot actual_shot = capture_surface(*actual_surface);
+        // assert the blender agrees with the reference, which uses its own operator for the same mode
+        ASSERT_FALSE(expected_shot.empty());
+        ASSERT_FALSE(actual_shot.empty());
+        ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+        EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 8);
+    }
+}
+
+TEST(AlborParityChecks, ATranslucentDestinationInMatchesTheReference) {
+    // arrange a half transparent overlay that keeps the destination it covers, which reshapes the residual (§6.2)
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{48.0f, 48.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const Paint paint{.fill = Color{.red = 0.2f, .green = 0.2f, .blue = 0.8f, .alpha = 0.5f}, .composition = CompositionMode::DestinationIn};
+    // act
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{4.0f, 4.0f}, AlborSize{40.0f, 40.0f}), Paint{.fill = Color::rgb(0.8f, 0.2f, 0.2f)});
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{12.0f, 12.0f}, AlborSize{24.0f, 24.0f}), paint);
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{4.0f, 4.0f}, AlborSize{40.0f, 40.0f}), Paint{.fill = Color::rgb(0.8f, 0.2f, 0.2f)});
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{12.0f, 12.0f}, AlborSize{24.0f, 24.0f}), paint);
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert the covered destination is dimmed by the source alpha, which the reference fades the same way
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    const std::size_t covered = (24u * 48u + 24u) * 4u;
+    EXPECT_LT(actual_shot.pixels[covered], 150u);
+    EXPECT_LT(expected_shot.pixels[covered], 150u);
+    // the whole overlay follows the reference, its feathered boundary included
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 8);
 }

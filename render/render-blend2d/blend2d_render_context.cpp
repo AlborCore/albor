@@ -48,6 +48,35 @@ namespace albor::blend2d
             return mutex;
         }
 
+        // map a composition mode onto the blend2d component operator it corresponds to (§6.2)
+        BLCompOp to_blend_comp(CompositionMode mode) {
+            switch (mode) {
+            case CompositionMode::SourceIn:
+                return BL_COMP_OP_SRC_IN;
+            case CompositionMode::SourceOut:
+                return BL_COMP_OP_SRC_OUT;
+            case CompositionMode::Atop:
+                return BL_COMP_OP_SRC_ATOP;
+            case CompositionMode::DestinationOver:
+                return BL_COMP_OP_DST_OVER;
+            case CompositionMode::DestinationIn:
+                return BL_COMP_OP_DST_IN;
+            case CompositionMode::DestinationOut:
+                return BL_COMP_OP_DST_OUT;
+            case CompositionMode::DestinationAtop:
+                return BL_COMP_OP_DST_ATOP;
+            case CompositionMode::Lighter:
+                return BL_COMP_OP_PLUS;
+            case CompositionMode::Copy:
+                return BL_COMP_OP_SRC_COPY;
+            case CompositionMode::Xor:
+                return BL_COMP_OP_XOR;
+            case CompositionMode::SourceOver:
+                break;
+            }
+            return BL_COMP_OP_SRC_OVER;
+        }
+
         // blur an image in place with two box passes, the soft shadow edge blend2d has no primitive for (§6.2)
         void blur_box(BLImageData& data, int radius) {
             // a radius below one leaves the image untouched, because a zero window is no blur at all (§6.2)
@@ -119,6 +148,26 @@ namespace albor::blend2d
             }
         }
     } // namespace
+
+    struct Blend2DRenderContext::Layer
+    {
+        // the state the group began under, which its pop returns to (§6.2)
+        State saved;
+
+        // the parent raster the layer composites back into, which a nested layer restores (§6.2)
+        BLContext* parent = nullptr;
+
+        // the group opacity the layer composites at, applied once rather than per draw (§6.2)
+        float opacity = 1.0f;
+
+        // the offscreen raster the group paints into, whose pixels the composite blits (§6.2)
+        BLImage image;
+
+        // the raster context over that image, which every draw inside the group lands in (§6.2)
+        BLContext context;
+    };
+
+    Blend2DRenderContext::~Blend2DRenderContext() = default;
 
     Blend2DRenderContext::Blend2DRenderContext(BLContext* context, float device_scale, Rect full_clip) :
         m_context(context), m_device_scale(device_scale), m_clip(full_clip) {
@@ -196,6 +245,68 @@ namespace albor::blend2d
         return m_opacity;
     }
 
+    void Blend2DRenderContext::push_layer(float opacity) {
+        // the layer owns the state it begins under, so an unmatched save inside it cannot shift the restore (§6.2)
+        auto layer = std::make_unique<Layer>();
+        layer->saved = State{m_transform, m_clip, m_opacity};
+        layer->opacity = std::clamp(opacity, 0.0f, 1.0f);
+        // a context with no raster context keeps the saved state only (§6.2)
+        if (m_context == nullptr) {
+            m_layers.push_back(std::move(layer));
+            return;
+        }
+        layer->parent = m_context;
+        // the offscreen raster spans the whole target, so the group keeps the device space it recorded in (§6.2)
+        const int width = static_cast<int>(m_context->targetWidth());
+        const int height = static_cast<int>(m_context->targetHeight());
+        // a refused raster or context draws no group, which the pop then composites as nothing (§6.2)
+        const bool ready = layer->image.create(width, height, BL_FORMAT_PRGB32) == BL_SUCCESS && layer->context.begin(layer->image) == BL_SUCCESS;
+        layer->parent = ready ? m_context : nullptr;
+        if (ready) {
+            // the offscreen starts transparent, because a pixel the group never paints must composite nothing (§6.2)
+            layer->context.clearAll();
+            // the layer context maps logical points onto the same pixels the parent does (§6.3, AD-27)
+            layer->context.scale(m_device_scale, m_device_scale);
+            layer->context.userToMeta();
+            layer->context.setTransform(to_blend_matrix(m_transform));
+            // the clip the context stood at carries into the layer, because a group may not paint outside it (§6.2)
+            layer->context.clipToRect(BLRect(m_clip.x, m_clip.y, m_clip.width, m_clip.height));
+            // the parent is saved, so its state returns when the layer composites (§6.2)
+            m_context->save();
+            // the later draws land in the offscreen raster, which the pop composites (§6.2)
+            m_context = &layer->context;
+        }
+        m_layers.push_back(std::move(layer));
+    }
+
+    void Blend2DRenderContext::pop_layer() {
+        // a pop with no layer open is a no operation, because the pair is the caller's contract (§6.2)
+        if (m_layers.empty())
+            return;
+        std::unique_ptr<Layer> layer = std::move(m_layers.back());
+        m_layers.pop_back();
+        // the state the layer saved becomes current again, which an inner save cannot shift (§6.2)
+        m_transform = layer->saved.transform;
+        m_clip = layer->saved.clip;
+        m_opacity = layer->saved.opacity;
+        // a context with no raster context kept the state only, so there is nothing to composite (§6.2)
+        if (layer->parent == nullptr)
+            return;
+        // the parent state returns to what the push saved, which is the clip and transform the group began under (§6.2)
+        m_context = layer->parent;
+        m_context->restore();
+        // the layer raster is finished, so its pixels are stable for the composite (§6.2)
+        layer->context.end();
+        m_context->save();
+        // the blit maps device pixels one to one, so the meta scale is undone in the user matrix (§6.3)
+        m_context->setTransform(BLMatrix2D::makeScaling(1.0 / m_device_scale, 1.0 / m_device_scale));
+        m_context->setGlobalAlpha(layer->opacity);
+        m_context->setCompOp(BL_COMP_OP_SRC_OVER);
+        // the whole group lands once at its own opacity, which dims overlapping children together (§6.2)
+        m_context->blitImage(BLRect(0.0, 0.0, layer->image.width(), layer->image.height()), layer->image);
+        m_context->restore();
+    }
+
     const Transform& Blend2DRenderContext::transform() const {
         // the recorded transform is what a test asserts against (§6.2)
         return m_transform;
@@ -232,11 +343,13 @@ namespace albor::blend2d
         // the stroke carries the colour with the opacity folded in, like every stroke of a frame (§6.1)
         m_context->setStrokeStyle(to_blend_color(stroke.color));
         m_context->setStrokeWidth(stroke.width);
+        m_context->setCompOp(to_blend_comp(stroke.composition));
         // the ends and the elbows both close roundly, which is how a control glyph reads (§6.2)
         m_context->setStrokeCaps(BL_STROKE_CAP_ROUND);
         m_context->setStrokeJoin(BL_STROKE_JOIN_ROUND);
         // the polyline draws at the current transform, which is where the scene placed it (§6.2)
         m_context->strokePath(path);
+        m_context->setCompOp(BL_COMP_OP_SRC_OVER);
     }
 
     void Blend2DRenderContext::draw_shadow(const Rect& rect, float radius, const Shadow& shadow) {
@@ -298,6 +411,7 @@ namespace albor::blend2d
             return;
         // the text takes the fill colour when the paint fills, and the stroke colour otherwise (§6.2)
         m_context->setFillStyle(to_blend_color(paint.fills() ? paint.fill : paint.stroke));
+        m_context->setCompOp(to_blend_comp(paint.composition));
         // the run is the shaped output stage one measured, so the glyphs are replayed as positioned (§9.1, AD-18)
         const ShapedRun& run = *layout.run;
         // every line carries its own typeface and its own baseline (§9.1)
@@ -333,6 +447,7 @@ namespace albor::blend2d
             // the line origin is the baseline, added to the run origin the caller placed the run at (§9.1)
             m_context->fillGlyphRun(BLPoint(origin.x + line.origin.x, origin.y + line.origin.y), font, glyph_run);
         }
+        m_context->setCompOp(BL_COMP_OP_SRC_OVER);
     }
 
     std::size_t Blend2DRenderContext::depth() const {
@@ -361,6 +476,7 @@ namespace albor::blend2d
             return;
         // a rounded shape clamps its radius, because a radius larger than half the extent cannot be drawn (§6.2)
         const double effective_radius = rounded ? static_cast<double>(std::min(radius, std::min(rect.width, rect.height) * 0.5f)) : 0.0;
+        m_context->setCompOp(to_blend_comp(paint.composition));
         // a transparent fill draws nothing, which is how a paint carries only a stroke (§6.2)
         if (paint.fills()) {
             m_context->setFillStyle(to_blend_color(paint.fill));
@@ -383,6 +499,7 @@ namespace albor::blend2d
             else
                 m_context->strokeRect(rect.x, rect.y, rect.width, rect.height);
         }
+        m_context->setCompOp(BL_COMP_OP_SRC_OVER);
     }
 
     BLMatrix2D Blend2DRenderContext::to_blend_matrix(const Transform& transform) {
@@ -416,7 +533,7 @@ namespace albor::blend2d
 
     BLFont Blend2DRenderContext::resolve_font(std::uint64_t font_hash, float font_size) {
         // the registered font is the only byte source here, because a handle borrows a foreign typeface (§9.2)
-        const resources::EmbeddedFont* embedded = resources::FontRegistry::find_hash(font_hash);
+        const std::shared_ptr<const resources::EmbeddedFont> embedded = resources::FontRegistry::find_hash(font_hash);
         // a run whose font is not registered carries no bytes this backend can load, so it is skipped (§9.2, AD-34)
         if (embedded == nullptr)
             return BLFont();
@@ -463,6 +580,7 @@ namespace albor::blend2d
         m_context->applyTransform(to_blend_matrix(transform));
         m_context->setStrokeStyle(to_blend_color(stroke.color));
         m_context->setStrokeWidth(stroke.width);
+        m_context->setCompOp(to_blend_comp(stroke.composition));
         // the butt cap and miter join match the skia reference, which sets neither for a batched stroke (§6.2, AD-26)
         m_context->setStrokeCaps(BL_STROKE_CAP_BUTT);
         m_context->setStrokeJoin(BL_STROKE_JOIN_MITER_CLIP);
@@ -482,6 +600,8 @@ namespace albor::blend2d
         // the retained transform concats under the current one, so the contour lands where the scene placed it (§6.4)
         m_context->save();
         m_context->applyTransform(to_blend_matrix(transform));
+        m_context->setCompOp(to_blend_comp(paint.composition));
+        m_context->setFillRule(paint.fill_rule == FillRule::EvenOdd ? BL_FILL_RULE_EVEN_ODD : BL_FILL_RULE_NON_ZERO);
         // a transparent fill draws nothing, which is how the paint carries only a stroke (§6.4)
         if (paint.fills()) {
             m_context->setFillStyle(to_blend_color(paint.fill));
@@ -561,6 +681,8 @@ namespace albor::blend2d
                 target += 4;
             }
         }
+        m_context->setCompOp(to_blend_comp(paint.composition));
         m_context->blitImage(BLRect(destination.x, destination.y, destination.width, destination.height), raster);
+        m_context->setCompOp(BL_COMP_OP_SRC_OVER);
     }
 } // namespace albor::blend2d

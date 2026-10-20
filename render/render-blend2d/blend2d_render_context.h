@@ -32,6 +32,9 @@ namespace albor::blend2d
         // wrap the raster context of the frame, scaled from logical points onto the physical pixels (§6.3, AD-27)
         Blend2DRenderContext(BLContext* context, float device_scale, Rect full_clip);
 
+        // release the open layers, which each own an offscreen raster (§6.2)
+        ~Blend2DRenderContext() override;
+
         // override: push the current transform and clip
         void save() override;
 
@@ -58,6 +61,12 @@ namespace albor::blend2d
 
         // override: read back the current opacity
         [[nodiscard]] float opacity() const override;
+
+        // override: begin a layer the later draws composite into, which restores this state at the matching pop
+        void push_layer(float opacity) override;
+
+        // override: end the layer the matching push began
+        void pop_layer() override;
 
         // override: draw a filled and stroked rectangle
         void draw_rect(const Rect& rect, const Paint& paint) override;
@@ -135,5 +144,11 @@ namespace albor::blend2d
 
         // the pushed states, which a restore pops
         std::vector<State> m_states;
+
+        // one open layer, whose type the source defines because it owns blend2d rasters (§6.2)
+        struct Layer;
+
+        // the open layers, innermost last, which a pop composites and releases (§6.2)
+        std::vector<std::unique_ptr<Layer>> m_layers;
     };
 } // namespace albor::blend2d

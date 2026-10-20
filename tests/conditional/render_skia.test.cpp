@@ -14,6 +14,8 @@
 #include <skia/core/SkColor.h>
 #include <skia/core/SkSurface.h>
 
+#include "render/font_face.h"
+#include "render/font_handle.h"
 #include "render/frame_scene.h"
 #include "render/glyph_outline.h"
 #include "render/image_resource.h"
@@ -118,6 +120,20 @@ namespace
         // the run keeps the shaped size and reports what the measurement reported (§9.1)
         return TextLayout{.run = ShapedRun::make(std::move(lines), layout.run->font_size()), .size = layout.size, .ascent = layout.ascent, .descent = layout.descent};
     }
+
+    // the font a run names whose bytes no registration carries, which the draw must refuse (§15, AD-34)
+    class UnregisteredFontFace final : public FontFace
+    {
+    public:
+        // an identity no registration answers (§15)
+        [[nodiscard]] std::uint64_t hash() const override { return 0xdeadbeefu; }
+
+        // the double carries no bytes, because the draw refuses it before reading any (§15)
+        [[nodiscard]] std::span<const std::uint8_t> bytes() const override { return {}; }
+
+        // the double outlines nothing, because no backend reaches it (§9.1)
+        [[nodiscard]] GlyphOutlineData outline(std::uint32_t, float) const override { return {}; }
+    };
 
     // a node that draws a measured run through the ordinary text call, which the builder expands (§6.1, §15)
     class EmbeddedTextNode final : public UiNode
@@ -261,6 +277,20 @@ TEST(SkiaRenderContextTextChecks, DrawTextSkipsALineWhoseTypefaceItCannotInterpr
     EXPECT_TRUE(ink_bounds(surface).empty());
 }
 
+TEST(SkiaRenderContextTextChecks, DrawTextSkipsARunWhoseBytesNothingCarries) {
+    // arrange a run whose font identity no registration answers, which is the shape of a lost font (§15, AD-34)
+    ShapedRun::Line line;
+    line.font = FontHandle::from_face(std::make_shared<const UnregisteredFontFace>());
+    line.glyphs.push_back(ShapedGlyph{.id = 3u, .position = Point{.x = 0.0f, .y = 0.0f}});
+    const TextLayout layout{.run = ShapedRun::make({line}, 20.0f, 0xdeadbeefu), .size = Size{100.0f, 24.0f}};
+    sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
+    SkiaRenderContext context(surface->getCanvas(), 1.0f);
+    // act
+    context.draw_text(layout, Point{10.0f, 40.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // assert a font whose bytes nothing carries draws nothing rather than a guessed face (§15, AD-34)
+    EXPECT_TRUE(ink_bounds(surface).empty());
+}
+
 TEST(SkiaRenderContextTextChecks, DrawTextOnAContextWithNoCanvasDrawsNothing) {
     // arrange
     const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
@@ -361,6 +391,83 @@ TEST(SkiaRenderContextShadowChecks, AContextWithNoCanvasSwallowsTheDraws) {
     // assert the state stayed usable, because a null context is a refusal rather than a crash (§6.2)
     EXPECT_FLOAT_EQ(context.opacity(), 1.0f);
     SUCCEED();
+}
+
+TEST(SkiaRenderContextLayerChecks, AContextWithNoCanvasSwallowsALayer) {
+    // arrange a context over no canvas at all, which is the refusal path a backend takes (§6.2)
+    SkiaRenderContext context(nullptr, 1.0f);
+    // act a mismatched pop and then a group around a draw, which every step has to survive (§6.2)
+    context.pop_layer();
+    context.push_layer(0.5f);
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.pop_layer();
+    // assert the state stayed usable, because a null canvas is a refusal rather than a crash (§6.2)
+    EXPECT_FLOAT_EQ(context.opacity(), 1.0f);
+    SUCCEED();
+}
+
+TEST(SkiaRenderContextLayerChecks, ALayerDimsOverlappingChildrenOnce) {
+    // arrange a white canvas and a half opaque group whose two red children overlap by design (§6.2)
+    sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
+    ASSERT_NE(surface, nullptr);
+    surface->getCanvas()->clear(0x00000000);
+    SkiaRenderContext context(surface->getCanvas(), 1.0f);
+    const Paint red{.fill = Color::rgb(0.8f, 0.2f, 0.2f)};
+    // act the group paints both children opaque and composites once at half opacity
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{static_cast<float>(SURFACE_WIDTH), static_cast<float>(SURFACE_HEIGHT)}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.push_layer(0.5f);
+    context.draw_rect(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{24.0f, 24.0f}), red);
+    context.draw_rect(Rect::from_origin_size(Point{12.0f, 12.0f}, Size{24.0f, 24.0f}), red);
+    context.pop_layer();
+    // assert the overlap matches the single region, because the reference composites the group once (§6.2, AD-26)
+    const SkImageInfo info = SkImageInfo::Make(SURFACE_WIDTH, SURFACE_HEIGHT, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(SURFACE_WIDTH * SURFACE_HEIGHT * 4));
+    ASSERT_TRUE(surface->readPixels(info, pixels.data(), info.minRowBytes(), 0, 0));
+    const std::size_t single = (8u * static_cast<std::size_t>(SURFACE_WIDTH) + 8u) * 4u;
+    const std::size_t overlap = (16u * static_cast<std::size_t>(SURFACE_WIDTH) + 16u) * 4u;
+    for (std::size_t channel = 0; channel < 4; channel++)
+        EXPECT_NEAR(pixels[overlap + channel], pixels[single + channel], 2) << "channel " << channel;
+    EXPECT_NEAR(pixels[single], 230u, 2);
+}
+
+TEST(SkiaRenderContextCompositionChecks, AStrokedPolylineUnderCopyReplacesThePlate) {
+    // arrange a white canvas and a blue line under copy, which replaces the pixels it covers (§6.2)
+    sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
+    ASSERT_NE(surface, nullptr);
+    surface->getCanvas()->clear(0x00000000);
+    SkiaRenderContext context(surface->getCanvas(), 1.0f);
+    const Point points[2] = {Point{4.0f, 24.0f}, Point{60.0f, 24.0f}};
+    // act
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{static_cast<float>(SURFACE_WIDTH), static_cast<float>(SURFACE_HEIGHT)}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.draw_polyline(std::span<const Point>(points), StrokeStyle{.color = Color::rgb(0.0f, 0.0f, 1.0f), .width = 8.0f, .composition = CompositionMode::Copy});
+    // assert the line replaced the plate with blue rather than blending over it (§6.2)
+    const SkImageInfo info = SkImageInfo::Make(SURFACE_WIDTH, SURFACE_HEIGHT, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(SURFACE_WIDTH * SURFACE_HEIGHT * 4));
+    ASSERT_TRUE(surface->readPixels(info, pixels.data(), info.minRowBytes(), 0, 0));
+    const std::size_t centre = (24u * static_cast<std::size_t>(SURFACE_WIDTH) + 32u) * 4u;
+    EXPECT_EQ(pixels[centre], 0u);
+    EXPECT_EQ(pixels[centre + 2u], 255u);
+}
+
+TEST(SkiaRenderContextCompositionChecks, AStrokedPathUnderCopyReplacesThePlate) {
+    // arrange a white canvas and a retained path stroked under copy, which replaces what it covers (§6.2)
+    sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
+    ASSERT_NE(surface, nullptr);
+    surface->getCanvas()->clear(0x00000000);
+    SkiaRenderContext context(surface->getCanvas(), 1.0f);
+    const Point points[3] = {Point{4.0f, 24.0f}, Point{32.0f, 24.0f}, Point{60.0f, 24.0f}};
+    const PathVerb verbs[3] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo};
+    const std::shared_ptr<const PathResource> path = std::make_shared<const PathResource>(77u, verbs, points);
+    // act
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{static_cast<float>(SURFACE_WIDTH), static_cast<float>(SURFACE_HEIGHT)}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.draw_path(path, Transform{}, Paint{.stroke = Color::rgb(0.0f, 0.0f, 1.0f), .stroke_width = 8.0f, .composition = CompositionMode::Copy});
+    // assert the stroke replaced the plate with blue rather than blending over it (§6.2)
+    const SkImageInfo info = SkImageInfo::Make(SURFACE_WIDTH, SURFACE_HEIGHT, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(SURFACE_WIDTH * SURFACE_HEIGHT * 4));
+    ASSERT_TRUE(surface->readPixels(info, pixels.data(), info.minRowBytes(), 0, 0));
+    const std::size_t centre = (24u * static_cast<std::size_t>(SURFACE_WIDTH) + 32u) * 4u;
+    EXPECT_EQ(pixels[centre], 0u);
+    EXPECT_EQ(pixels[centre + 2u], 255u);
 }
 
 TEST(SkiaRenderContextShadowChecks, ARefusedCastDrawsNothing) {

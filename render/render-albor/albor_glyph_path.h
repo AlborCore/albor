@@ -1,24 +1,15 @@
 #pragma once
 
 #include <cstdint>
-#include <vector>
 
-#include "core/geometry.h"
 #include "render/font_handle.h"
-#include "render/path_resource.h"
+#include "render/glyph_outline.h"
 
 namespace albor::render
 {
-    // one glyph's outline in logical pixels, whose baseline sits at the origin and whose y axis points down (§9.1, AD-27)
-    struct GlyphPath
-    {
-        // the verbs of every subpath, which the contour builder walks in order (§6.4)
-        std::vector<PathVerb> verbs;
+    // one glyph's outline in logical pixels, which the face reports and the cache stores as one stream (§6.4, §9.1)
+    using GlyphPath = GlyphOutlineData;
 
-        // the points those verbs consume, in the order they are recorded (§6.4)
-        std::vector<Point> points;
-    };
-
-    // walk the outline a platform typeface carries for one glyph, or an empty path when it carries none (§9.1, AD-28)
-    [[nodiscard]] GlyphPath platform_glyph_path(const FontHandle& font, std::uint32_t glyph_id, float font_size);
+    // walk the outline a run's font carries for one glyph, or an empty path when it carries none (§9.1, AD-34)
+    [[nodiscard]] GlyphPath glyph_path(const FontHandle& font, std::uint32_t glyph_id, float font_size);
 } // namespace albor::render

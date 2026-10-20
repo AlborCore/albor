@@ -32,6 +32,8 @@ namespace albor::software
         [[nodiscard]] const Rect& clip() const override;
         void set_opacity(float opacity) override;
         [[nodiscard]] float opacity() const override;
+        void push_layer(float opacity) override;
+        void pop_layer() override;
         void draw_rect(const Rect& rect, const Paint& paint) override;
         void draw_rounded_rect(const Rect& rect, float radius, const Paint& paint) override;
         void draw_polyline(const std::span<const Point>& points, const StrokeStyle& stroke) override;

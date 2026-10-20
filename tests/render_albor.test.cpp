@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstddef>
 #include <memory>
 #include <span>
@@ -1313,6 +1314,145 @@ TEST(AlborRenderContextChecks, FillsAndStrokesARetainedPath) {
     EXPECT_EQ(context.transform(), Transform{});
 }
 
+TEST(AlborRenderContextChecks, CarriesTheCompositionIntoEveryRecordedDraw) {
+    // arrange a context that paints one rectangle and one path with distinct compositions (§6.2)
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const PathVerb verbs[4] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const Point points[3] = {Point{.x = 10.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 50.0f}, Point{.x = 50.0f, .y = 50.0f}};
+    // act the rectangle blends lighter, the path xor and its stroke the same, and one draw keeps the default
+    context.draw_rect(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{20.0f, 20.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f), .composition = CompositionMode::Lighter});
+    context.draw_path(std::make_shared<const PathResource>(20u, verbs, points), Transform{}, Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f), .stroke = Color::rgb(0.0f, 0.0f, 1.0f), .stroke_width = 1.0f, .composition = CompositionMode::Xor});
+    context.draw_rect(Rect::from_origin_size(Point{30.0f, 4.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 0.0f)});
+    // assert each record carries the composition its paint named, which the backend maps to its blend
+    ASSERT_EQ(batch.draws.size(), 4u);
+    EXPECT_EQ(batch.draws[0].composition, CompositionMode::Lighter);
+    EXPECT_EQ(batch.draws[1].composition, CompositionMode::Xor);
+    EXPECT_EQ(batch.draws[2].composition, CompositionMode::Xor);
+    EXPECT_EQ(batch.draws[3].composition, CompositionMode::SourceOver);
+}
+
+TEST(AlborRenderContextChecks, RecordsTheDrawRangeALayerComposites) {
+    // arrange a context that paints one rectangle outside a group and two inside it (§6.2)
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const Paint paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)};
+    const Rect square = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f});
+    // act
+    context.draw_rect(square, paint);
+    context.push_layer(0.5f);
+    context.draw_rect(square, paint);
+    context.draw_rect(square, paint);
+    context.pop_layer();
+    context.draw_rect(square, paint);
+    // assert the layer names the two draws it covers and the opacity the group composites at (§6.2)
+    ASSERT_EQ(batch.draws.size(), 4u);
+    ASSERT_EQ(batch.layers.size(), 1u);
+    EXPECT_FLOAT_EQ(batch.layers[0].opacity, 0.5f);
+    EXPECT_EQ(batch.layers[0].draw_begin, 1u);
+    EXPECT_EQ(batch.layers[0].draw_end, 3u);
+}
+
+TEST(AlborRenderContextChecks, NestedLayersKeepTheirOwnDrawRanges) {
+    // arrange a group inside a group, where each composites its own children (§6.2)
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const Paint paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)};
+    const Rect square = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f});
+    // act
+    context.push_layer(0.5f);
+    context.draw_rect(square, paint);
+    context.push_layer(0.25f);
+    context.draw_rect(square, paint);
+    context.pop_layer();
+    context.draw_rect(square, paint);
+    context.pop_layer();
+    // assert the outer group covers every draw and the inner group only its own (§6.2)
+    ASSERT_EQ(batch.layers.size(), 2u);
+    EXPECT_EQ(batch.layers[0].draw_begin, 0u);
+    EXPECT_EQ(batch.layers[0].draw_end, 3u);
+    EXPECT_EQ(batch.layers[1].draw_begin, 1u);
+    EXPECT_EQ(batch.layers[1].draw_end, 2u);
+    EXPECT_FLOAT_EQ(batch.layers[1].opacity, 0.25f);
+}
+
+TEST(AlborRenderContextChecks, ALayerPopReturnsTheStateThePushSaved) {
+    // arrange a transform and clip the group begins under, which its pop must restore (§6.2)
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    context.set_transform(Transform::translation(7.0f, 9.0f));
+    context.clip_rect(Rect::from_origin_size(Point{2.0f, 2.0f}, Size{80.0f, 80.0f}));
+    const Transform saved = context.transform();
+    const Rect saved_clip = context.clip();
+    // act
+    context.push_layer(0.25f);
+    context.set_transform(Transform::translation(1.0f, 1.0f));
+    context.clip_rect(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{10.0f, 10.0f}));
+    context.pop_layer();
+    // assert
+    EXPECT_EQ(context.transform(), saved);
+    EXPECT_EQ(context.clip(), saved_clip);
+    EXPECT_EQ(context.depth(), 0u);
+}
+
+TEST(AlborRenderContextChecks, ALayerOfNoDrawsRecordsAnEmptyRange) {
+    // arrange a group that paints nothing, which an empty node subtree produces (§6.2)
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.push_layer(0.5f);
+    context.pop_layer();
+    // assert
+    ASSERT_EQ(batch.layers.size(), 1u);
+    EXPECT_EQ(batch.layers[0].draw_begin, batch.layers[0].draw_end);
+    EXPECT_TRUE(batch.draws.empty());
+}
+
+TEST(AlborRenderContextChecks, APopWithNoLayerOpenRecordsNothing) {
+    // arrange
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.pop_layer();
+    // assert a mismatched pop cannot close the frame's outer group (§6.2)
+    EXPECT_TRUE(batch.layers.empty());
+    EXPECT_EQ(context.depth(), 0u);
+}
+
+TEST(AlborRenderContextChecks, CutsASameWoundHoleUnderEvenOdd) {
+    // arrange a nested path of one winding, which the even odd rule sends through the sweep (§6.2)
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const PathVerb verbs[10] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close, PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const Point points[8] = {Point{.x = 8.0f, .y = 8.0f}, Point{.x = 8.0f, .y = 32.0f}, Point{.x = 32.0f, .y = 32.0f}, Point{.x = 32.0f, .y = 8.0f}, Point{.x = 16.0f, .y = 16.0f}, Point{.x = 16.0f, .y = 24.0f}, Point{.x = 24.0f, .y = 24.0f}, Point{.x = 24.0f, .y = 16.0f}};
+    // act
+    context.draw_path(std::make_shared<const PathResource>(21u, verbs, points), Transform{}, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f), .fill_rule = FillRule::EvenOdd});
+    // assert the hole centre lies outside every fill triangle, which the rule the paint named decides
+    ASSERT_EQ(batch.draws.size(), 1u);
+    const Point hole{.x = 20.0f, .y = 20.0f};
+    bool covered = false;
+    for (std::size_t index = 0; index + 2 < batch.indices.size(); index += 3) {
+        // the three corners of the triangle, which the hole centre is tested against
+        const BatchVertex& a = batch.vertices[batch.indices[index]];
+        const BatchVertex& b = batch.vertices[batch.indices[index + 1]];
+        const BatchVertex& c = batch.vertices[batch.indices[index + 2]];
+        // the three edge crosses decide whether the centre sits inside
+        const float ab = (b.x - a.x) * (hole.y - a.y) - (b.y - a.y) * (hole.x - a.x);
+        const float bc = (c.x - b.x) * (hole.y - b.y) - (c.y - b.y) * (hole.x - b.x);
+        const float ca = (a.x - c.x) * (hole.y - c.y) - (a.y - c.y) * (hole.x - c.x);
+        if ((ab <= 0.0f && bc <= 0.0f && ca <= 0.0f) || (ab >= 0.0f && bc >= 0.0f && ca >= 0.0f))
+            covered = true;
+    }
+    EXPECT_FALSE(covered);
+}
+
 TEST(AlborRenderContextChecks, RefusesAMissingOrEmptyPath) {
     // arrange
     FrameBatch batch;
@@ -1676,6 +1816,8 @@ namespace
         [[nodiscard]] const Rect& clip() const override { return m_clip; }
         void set_opacity(float opacity) override { m_opacity = opacity; }
         [[nodiscard]] float opacity() const override { return m_opacity; }
+        void push_layer(float) override {}
+        void pop_layer() override {}
         void draw_rect(const Rect&, const Paint&) override {}
         void draw_rounded_rect(const Rect&, float, const Paint&) override {}
         void draw_polyline(const std::span<const Point>&, const StrokeStyle&) override {}
@@ -1967,6 +2109,42 @@ TEST(SweepFillChecks, KeepsTheOverlapOfTwoSameWoundRings) {
     EXPECT_FLOAT_EQ(trapezoids[2].right_top, 20.0f);
 }
 
+TEST(SweepFillChecks, CutsTheOverlapOfTwoSameWoundRingsUnderEvenOdd) {
+    // arrange two overlapping rings of one winding, whose overlap the even odd rule leaves open
+    FillRing left;
+    left.points = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 0.0f, .y = 20.0f}, Point{.x = 14.0f, .y = 20.0f}, Point{.x = 14.0f, .y = 0.0f}};
+    FillRing right;
+    right.points = {Point{.x = 6.0f, .y = 0.0f}, Point{.x = 6.0f, .y = 20.0f}, Point{.x = 20.0f, .y = 20.0f}, Point{.x = 20.0f, .y = 0.0f}};
+    const std::vector<FillRing> rings = {left, right};
+    // act
+    const std::vector<FillTrapezoid> trapezoids = sweep_fill(rings, FillRule::EvenOdd);
+    // assert the two exclusive spans stay painted and the overlap between them is cut
+    ASSERT_EQ(trapezoids.size(), 2u);
+    EXPECT_FLOAT_EQ(trapezoids[0].left_top, 0.0f);
+    EXPECT_FLOAT_EQ(trapezoids[0].right_top, 6.0f);
+    EXPECT_FLOAT_EQ(trapezoids[1].left_top, 14.0f);
+    EXPECT_FLOAT_EQ(trapezoids[1].right_top, 20.0f);
+}
+
+TEST(SweepFillChecks, CutsASameWoundHoleUnderEvenOdd) {
+    // arrange a square ring with a concentric ring wound the same way, which only the even odd rule leaves open
+    FillRing outer;
+    outer.points = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 0.0f, .y = 20.0f}, Point{.x = 20.0f, .y = 20.0f}, Point{.x = 20.0f, .y = 0.0f}};
+    FillRing inner;
+    inner.points = {Point{.x = 8.0f, .y = 8.0f}, Point{.x = 8.0f, .y = 12.0f}, Point{.x = 12.0f, .y = 12.0f}, Point{.x = 12.0f, .y = 8.0f}};
+    const std::vector<FillRing> rings = {outer, inner};
+    // act
+    const std::vector<FillTrapezoid> trapezoids = sweep_fill(rings, FillRule::EvenOdd);
+    // assert the middle slab carries two trapezoids, which the nested ring cuts that row with
+    ASSERT_EQ(trapezoids.size(), 4u);
+    EXPECT_FLOAT_EQ(trapezoids[1].top, 8.0f);
+    EXPECT_FLOAT_EQ(trapezoids[1].bottom, 12.0f);
+    EXPECT_FLOAT_EQ(trapezoids[1].left_top, 0.0f);
+    EXPECT_FLOAT_EQ(trapezoids[1].right_top, 8.0f);
+    EXPECT_FLOAT_EQ(trapezoids[2].left_top, 12.0f);
+    EXPECT_FLOAT_EQ(trapezoids[2].right_top, 20.0f);
+}
+
 TEST(SweepFillChecks, FillsASelfIntersectingRingOnBothSidesOfTheMeeting) {
     // arrange a bow tie, whose edges meet in the middle of the only slab
     FillRing bowtie;
@@ -2109,6 +2287,60 @@ TEST(ExpandFillGroupChecks, CutsTheHoleOfANestedContour) {
         const float ab = (b.x - a.x) * (band.y - a.y) - (b.y - a.y) * (band.x - a.x);
         const float bc = (c.x - b.x) * (band.y - b.y) - (c.y - b.y) * (band.x - b.x);
         const float ca = (a.x - c.x) * (band.y - c.y) - (a.y - c.y) * (band.x - c.x);
+        if ((ab <= 0.0f && bc <= 0.0f && ca <= 0.0f) || (ab >= 0.0f && bc >= 0.0f && ca >= 0.0f))
+            covered = true;
+    }
+    EXPECT_TRUE(covered);
+}
+
+TEST(ExpandFillGroupChecks, CutsASameWoundHoleUnderEvenOdd) {
+    // arrange a square path with a square of the same winding, which the even odd rule must still cut
+    const PathVerb verbs[10] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close, PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const Point points[8] = {Point{.x = 8.0f, .y = 8.0f}, Point{.x = 8.0f, .y = 32.0f}, Point{.x = 32.0f, .y = 32.0f}, Point{.x = 32.0f, .y = 8.0f}, Point{.x = 16.0f, .y = 16.0f}, Point{.x = 16.0f, .y = 24.0f}, Point{.x = 24.0f, .y = 24.0f}, Point{.x = 24.0f, .y = 16.0f}};
+    std::vector<Contour> contours = build_contours(verbs, points);
+    ASSERT_EQ(contours.size(), 2u);
+    FrameBatch batch;
+    // act
+    const EmittedRange range = expand_fill_group(batch, contours, FillRule::EvenOdd);
+    // assert
+    ASSERT_GT(range.index_count, 0u);
+    // the hole centre lies outside every fill triangle, which a non zero fill of this winding would paint
+    const Point hole{.x = 20.0f, .y = 20.0f};
+    for (std::size_t index = 0; index + 2 < batch.indices.size(); index += 3) {
+        // the three corners of the triangle, which the batch indices name
+        const BatchVertex& a = batch.vertices[batch.indices[index]];
+        const BatchVertex& b = batch.vertices[batch.indices[index + 1]];
+        const BatchVertex& c = batch.vertices[batch.indices[index + 2]];
+        // the three edge crosses decide whether the hole centre sits inside
+        const float ab = (b.x - a.x) * (hole.y - a.y) - (b.y - a.y) * (hole.x - a.x);
+        const float bc = (c.x - b.x) * (hole.y - b.y) - (c.y - b.y) * (hole.x - b.x);
+        const float ca = (a.x - c.x) * (hole.y - c.y) - (a.y - c.y) * (hole.x - c.x);
+        // a triangle that encloses the centre is the defect this test exists for
+        EXPECT_FALSE((ab <= 0.0f && bc <= 0.0f && ca <= 0.0f) || (ab >= 0.0f && bc >= 0.0f && ca >= 0.0f));
+    }
+}
+
+TEST(ExpandFillGroupChecks, FillsASingleContourThroughTheSweepUnderEvenOdd) {
+    // arrange one square contour, which the even odd rule sends through the sweep rather than the fan
+    const PathVerb verbs[5] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const Point points[4] = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 0.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 0.0f}};
+    std::vector<Contour> contours = build_contours(verbs, points);
+    FrameBatch batch;
+    // act
+    const EmittedRange range = expand_fill_group(batch, contours, FillRule::EvenOdd);
+    // assert the square centre sits inside one of the sweep triangles
+    ASSERT_GT(range.index_count, 0u);
+    const Point centre{.x = 5.0f, .y = 5.0f};
+    bool covered = false;
+    for (std::size_t index = 0; index + 2 < batch.indices.size(); index += 3) {
+        // the three corners of the triangle, which the centre is tested against
+        const BatchVertex& a = batch.vertices[batch.indices[index]];
+        const BatchVertex& b = batch.vertices[batch.indices[index + 1]];
+        const BatchVertex& c = batch.vertices[batch.indices[index + 2]];
+        // the three edge crosses decide whether the centre sits inside
+        const float ab = (b.x - a.x) * (centre.y - a.y) - (b.y - a.y) * (centre.x - a.x);
+        const float bc = (c.x - b.x) * (centre.y - b.y) - (c.y - b.y) * (centre.x - b.x);
+        const float ca = (a.x - c.x) * (centre.y - c.y) - (a.y - c.y) * (centre.x - c.x);
         if ((ab <= 0.0f && bc <= 0.0f && ca <= 0.0f) || (ab >= 0.0f && bc >= 0.0f && ca >= 0.0f))
             covered = true;
     }
@@ -2264,10 +2496,9 @@ TEST(ExpandFillGroupChecks, ClampsTheRingOfANeedleCorner) {
 }
 
 TEST(GlyphPathCacheChecks, AnswersAPathItAlreadyWalked) {
-    // arrange an empty cache and the identity of one typeface glyph at one size (§6.4)
+    // arrange an empty cache and the identity of one font glyph at one size (§6.4)
     GlyphPathCache cache;
-    const int face = 0;
-    const GlyphPathKey key{.font = &face, .glyph_id = 3u, .font_size = 16.0f};
+    const GlyphPathKey key{.font_hash = 0x5eedu, .glyph_id = 3u, .font_size = 16.0f};
     // act nothing was ever walked under that identity (§6.4)
     EXPECT_EQ(cache.find(key), nullptr);
     // act one path is walked and stored under it (§6.4)
@@ -2280,29 +2511,26 @@ TEST(GlyphPathCacheChecks, AnswersAPathItAlreadyWalked) {
 
 TEST(GlyphPathCacheChecks, AnswersNothingForAnotherIdentity) {
     // arrange one walked path beside the identities it must not answer (§6.4)
-    const int face = 0;
-    const GlyphPathKey walked{.font = &face, .glyph_id = 3u, .font_size = 16.0f};
+    const GlyphPathKey walked{.font_hash = 0x5eedu, .glyph_id = 3u, .font_size = 16.0f};
     GlyphPathCache cache;
     cache.store(walked, std::make_shared<const GlyphPath>());
-    // act another glyph of the same typeface at the same size is asked for (§6.4)
-    const GlyphPathKey other_glyph{.font = &face, .glyph_id = 4u, .font_size = 16.0f};
+    // act another glyph of the same font at the same size is asked for (§6.4)
+    const GlyphPathKey other_glyph{.font_hash = 0x5eedu, .glyph_id = 4u, .font_size = 16.0f};
     // assert it answers nothing, because the identity carries the glyph (§6.4)
     EXPECT_EQ(cache.find(other_glyph), nullptr);
-    // act the same glyph of the same typeface at another size is asked for (§9.1, AD-27)
-    const GlyphPathKey other_size{.font = &face, .glyph_id = 3u, .font_size = 20.0f};
+    // act the same glyph of the same font at another size is asked for (§9.1, AD-27)
+    const GlyphPathKey other_size{.font_hash = 0x5eedu, .glyph_id = 3u, .font_size = 20.0f};
     // assert it answers nothing, because the identity carries the size (§9.1, AD-27)
     EXPECT_EQ(cache.find(other_size), nullptr);
-    // act the same glyph and size of another typeface is asked for (§9.1)
-    const int other_face = 0;
-    const GlyphPathKey other_typeface{.font = &other_face, .glyph_id = 3u, .font_size = 16.0f};
-    // assert it answers nothing, because the identity carries the typeface (§9.1)
+    // act the same glyph and size of another font is asked for (§15, AD-34)
+    const GlyphPathKey other_typeface{.font_hash = 0xfeedu, .glyph_id = 3u, .font_size = 16.0f};
+    // assert it answers nothing, because the identity carries the font content (§15, AD-34)
     EXPECT_EQ(cache.find(other_typeface), nullptr);
 }
 
 TEST(GlyphPathCacheChecks, DropsAPathNoDrawReached) {
     // arrange one walked path stored at a frame of its own (§6.4, AD-06)
-    const int face = 0;
-    const GlyphPathKey key{.font = &face, .glyph_id = 3u, .font_size = 16.0f};
+    const GlyphPathKey key{.font_hash = 0x5eedu, .glyph_id = 3u, .font_size = 16.0f};
     GlyphPathCache cache;
     cache.begin_frame(10u);
     cache.store(key, std::make_shared<const GlyphPath>());
@@ -2323,17 +2551,16 @@ TEST(GlyphPathCacheChecks, DropsAPathNoDrawReached) {
 
 TEST(GlyphPathCacheChecks, DropsTheColdestSliceWhenItFills) {
     // arrange a cache filled to its limit, with one entry drawn again at a later frame (§6.4, AD-06)
-    const int face = 0;
     GlyphPathCache cache;
     cache.begin_frame(0u);
     for (std::uint32_t index = 0u; index < GlyphPathCache::MAXIMUM_CACHED_PATHS; index++)
-        cache.store(GlyphPathKey{.font = &face, .glyph_id = index, .font_size = 16.0f}, std::make_shared<const GlyphPath>());
+        cache.store(GlyphPathKey{.font_hash = 0x5eedu, .glyph_id = index, .font_size = 16.0f}, std::make_shared<const GlyphPath>());
     // act one entry is drawn again at a later frame, which is what makes it the warmest of them (§6.4)
     cache.begin_frame(5u);
-    const GlyphPathKey warm{.font = &face, .glyph_id = 0u, .font_size = 16.0f};
+    const GlyphPathKey warm{.font_hash = 0x5eedu, .glyph_id = 0u, .font_size = 16.0f};
     EXPECT_NE(cache.find(warm), nullptr);
     // act one more path arrives, which the full cache answers by dropping its coldest slice (§6.4)
-    const GlyphPathKey fresh{.font = &face, .glyph_id = 99999u, .font_size = 16.0f};
+    const GlyphPathKey fresh{.font_hash = 0x5eedu, .glyph_id = 99999u, .font_size = 16.0f};
     cache.store(fresh, std::make_shared<const GlyphPath>());
     // assert a slice is gone rather than all of them, because a rebuilt path is not free (§6.4, AD-06)
     EXPECT_EQ(cache.count(), GlyphPathCache::MAXIMUM_CACHED_PATHS - GlyphPathCache::MAXIMUM_CACHED_PATHS / 8u + 1u);
@@ -2341,16 +2568,4 @@ TEST(GlyphPathCacheChecks, DropsTheColdestSliceWhenItFills) {
     EXPECT_NE(cache.find(warm), nullptr);
     // assert the new path is held, because the frame that walked it is the warmest there is (§6.4)
     EXPECT_NE(cache.find(fresh), nullptr);
-}
-
-TEST(GlyphPathCacheChecks, AnswersNoPathFromAnEarlierEra) {
-    // arrange one walked path stored in the era the typeface is currently named in (§6.4, AD-06)
-    const int face = 0;
-    const GlyphPathKey key{.font = &face, .glyph_id = 3u, .font_size = 16.0f};
-    GlyphPathCache cache;
-    cache.store(key, std::make_shared<const GlyphPath>());
-    // act the engine that issued the typeface dies, which is what drops the era (§6.4, AD-06)
-    FontHandle::drop_era();
-    // assert a key of the new era answers nothing, because the typeface behind the old one may be freed (§6.4)
-    EXPECT_EQ(cache.find(GlyphPathKey{.font = &face, .glyph_id = 3u, .font_size = 16.0f}), nullptr);
 }

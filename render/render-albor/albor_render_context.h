@@ -42,6 +42,9 @@ namespace albor::render
         void set_opacity(float opacity) override;
         [[nodiscard]] float opacity() const override;
 
+        void push_layer(float opacity) override;
+        void pop_layer() override;
+
         void draw_rect(const Rect& rect, const Paint& paint) override;
         void draw_rounded_rect(const Rect& rect, float radius, const Paint& paint) override;
         void draw_polyline(const std::span<const Point>& points, const StrokeStyle& stroke) override;
@@ -87,11 +90,11 @@ namespace albor::render
         // scale a logical length by the average device scale, which a stroke half width needs (§6.3, AD-27)
         [[nodiscard]] float to_device_length(float length) const;
 
-        // emit the fill of a scene space contour under a colour and a draw record (§6.2)
-        void emit_fill(Contour contour, const Color& color, std::uint64_t texture);
+        // emit the fill of a scene space contour under a colour, a blend and a draw record (§6.2)
+        void emit_fill(Contour contour, const Color& color, std::uint64_t texture, CompositionMode composition);
 
-        // emit the stroke of a scene space contour under a colour and a draw record (§6.2)
-        void emit_stroke(Contour contour, const Color& color, float width, Cap cap, Join join);
+        // emit the stroke of a scene space contour under a colour, a blend and a draw record (§6.2)
+        void emit_stroke(Contour contour, const Color& color, float width, Cap cap, Join join, CompositionMode composition);
 
         // expand the stroke of a scene space contour without recording it, which a batch coalesces (§6.4)
         [[nodiscard]] StrokeEmission stroke_geometry(Contour& contour, float width, Cap cap, Join join);
@@ -100,10 +103,10 @@ namespace albor::render
         void emit_shape(Contour contour, const Paint& paint, Cap cap, Join join);
 
         // emit an image as the two triangles its destination rectangle spans (§6.4)
-        void emit_image(const Rect& destination, const Color& color, std::uint64_t texture);
+        void emit_image(const Rect& destination, const Color& color, std::uint64_t texture, CompositionMode composition);
 
         // record one draw over the index range an expansion appended (§6.3)
-        void record(EmittedRange range, CoverageKind coverage, float ramp, const Color& color, std::uint64_t texture, bool convex);
+        void record(EmittedRange range, CoverageKind coverage, float ramp, const Color& color, std::uint64_t texture, bool convex, CompositionMode composition);
 
         // the batch the frame being built accumulates into (§6.3)
         FrameBatch& m_batch;
@@ -131,5 +134,8 @@ namespace albor::render
 
         // the pushed states, which a restore pops (§6.2)
         std::vector<State> m_states;
+
+        // the batch layers that are open, which a pop closes by index rather than by search (§6.2)
+        std::vector<std::size_t> m_layers;
     };
 } // namespace albor::render

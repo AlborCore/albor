@@ -10,6 +10,7 @@
 #include "render/draw_command.h"
 #include "render/line_batch.h"
 #include "render/picture_resource.h"
+#include "render/render-albor/albor_glyph_path.h"
 #include "render/render-software/software_glyph_atlas.h"
 #include "render/render-software/software_render_surface.h"
 #include "render/render-software/software_renderer_backend.h"
@@ -17,6 +18,7 @@
 #include "render/shaped_run.h"
 #include "resources/embedded_font.h"
 #include "text/text-harfbuzz/embedded_glyph_provider.h"
+#include "text/text-harfbuzz/harfbuzz_font_face.h"
 #include "text/text-harfbuzz/harfbuzz_text_engine.h"
 #include "ui/frame_pipeline.h"
 #include "ui/scene_builder.h"
@@ -112,17 +114,33 @@ TEST(DualEngineConformanceChecks, TheVendoredRunIsDrawable) {
     ASSERT_NE(vendored, nullptr);
     const TextLayout measured = vendored->measure("Albor", 0.0f, 16.0f);
     ASSERT_NE(measured.run, nullptr);
-    // act assert the run carries a typeface, which is what phase 3 needed before the oracle could go (§9.1, AD-28)
+    // act assert the run is drawable and names the font it shaped from (§9.1, AD-34)
     EXPECT_TRUE(vendored->drawable());
     // the handle is valid for the same reason, so the renderer has something to draw the glyphs with (§9.1)
     EXPECT_TRUE(measured.run->lines().front().font.valid());
+    // the bytes registered with the engine are what a backend resolves the run from (§15, AD-34)
+    EXPECT_TRUE(resources::FontRegistry::find_hash(measured.run->font_hash()) != nullptr);
 }
 
-TEST(DualEngineConformanceChecks, AnUnknownFamilyLeavesTheEngineUnusable) {
-    // arrange, act a family the platform does not have, which is the shape of a missing font (§9.1)
+TEST(DualEngineConformanceChecks, AFileEngineNeedsNoPlatformFamily) {
+    // arrange a family the platform does not have, which is the shape of an application shipping its own font (§9.1)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    // act an engine is built over complete font bytes under that unknown family (§15, AD-34)
     const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH, "NoSuchFamilyAlbor");
-    // assert
-    EXPECT_EQ(engine, nullptr);
+    // assert the bytes are enough to shape and draw, because the run carries them rather than a typeface (§15, AD-34)
+    ASSERT_NE(engine, nullptr);
+    EXPECT_TRUE(engine->ready());
+    EXPECT_TRUE(engine->drawable());
+    // assert the bytes were registered, which is what lets a backend resolve the run by content (§15)
+    const TextLayout measured = engine->measure("Albor", 0.0f, 16.0f);
+    ASSERT_NE(measured.run, nullptr);
+    EXPECT_TRUE(resources::FontRegistry::find_hash(measured.run->font_hash()) != nullptr);
+    // assert the run draws as outlines, because no platform face stands behind its family (§9.1, AD-34)
+    EXPECT_EQ(measured.run->shape_source(), ShapeSource::Embedded);
+    // exit
+    resources::FontRegistry::clear();
 }
 
 TEST(DualEngineConformanceChecks, ANonFontIsRefusedRatherThanHalfBuilt) {
@@ -264,8 +282,8 @@ TEST(EmbeddedFontChecks, TheOflFixtureIsPresentAndIdentifiedByItsBytes) {
     resources::FontRegistry::register_font(fixture);
     resources::FontRegistry::register_font(make_embedded_font("AlborFixtureAlias", ALBOR_TEST_FONT_PATH));
     // assert the two names resolve and share one identity, because identity is the bytes (§15, AD-34)
-    const resources::EmbeddedFont* named = resources::FontRegistry::find_family(ALBOR_TEST_FONT_FAMILY);
-    const resources::EmbeddedFont* alias = resources::FontRegistry::find_family("AlborFixtureAlias");
+    const std::shared_ptr<const resources::EmbeddedFont> named = resources::FontRegistry::find_family(ALBOR_TEST_FONT_FAMILY);
+    const std::shared_ptr<const resources::EmbeddedFont> alias = resources::FontRegistry::find_family("AlborFixtureAlias");
     ASSERT_NE(named, nullptr);
     ASSERT_NE(alias, nullptr);
     EXPECT_EQ(named->content_hash, alias->content_hash);
@@ -300,9 +318,9 @@ TEST(EmbeddedFontChecks, ARegisteredFontIsFoundByFamilyAndByHash) {
     // act a font is registered the way generated code registers one, over the carried bytes (§11.3, §15, AD-34)
     resources::FontRegistry::register_font(make_embedded_font("AlborTest", ALBOR_TEST_FONT_PATH));
     // assert both lookups answer, since a family is asked for and a hash is what a layout keys on (§15)
-    ASSERT_NE(resources::FontRegistry::find_family("AlborTest"), nullptr);
-    const resources::EmbeddedFont* found = resources::FontRegistry::find_family("AlborTest");
-    EXPECT_NE(resources::FontRegistry::find_hash(found->content_hash), nullptr);
+    ASSERT_TRUE(resources::FontRegistry::find_family("AlborTest") != nullptr);
+    const std::shared_ptr<const resources::EmbeddedFont> found = resources::FontRegistry::find_family("AlborTest");
+    EXPECT_TRUE(resources::FontRegistry::find_hash(found->content_hash) != nullptr);
     EXPECT_EQ(resources::FontRegistry::count(), 1u);
     // exit the registry is emptied, so the next test starts from nothing (§2.2)
     resources::FontRegistry::clear();
@@ -314,8 +332,8 @@ TEST(EmbeddedFontChecks, TheHashIsOverTheBytesAndNotTheName) {
     // the carried font is the fixture here, because the hash is over the bytes the build ships (§15, AD-34)
     resources::FontRegistry::register_font(make_embedded_font("AlborOne", ALBOR_TEST_FONT_PATH));
     resources::FontRegistry::register_font(make_embedded_font("AlborTwo", ALBOR_TEST_FONT_PATH));
-    const resources::EmbeddedFont* one = resources::FontRegistry::find_family("AlborOne");
-    const resources::EmbeddedFont* two = resources::FontRegistry::find_family("AlborTwo");
+    const std::shared_ptr<const resources::EmbeddedFont> one = resources::FontRegistry::find_family("AlborOne");
+    const std::shared_ptr<const resources::EmbeddedFont> two = resources::FontRegistry::find_family("AlborTwo");
     ASSERT_NE(one, nullptr);
     ASSERT_NE(two, nullptr);
     // act assert the names differ and the identity does not, because the identity is the bytes (§15, AD-34)
@@ -1015,7 +1033,7 @@ TEST(EmbeddedTextCallerChecks, ARunTheRendererCanDrawStillGoesThroughTheTextComm
     ASSERT_NE(layout.run, nullptr);
     // assert the run carries a registered identity, which is what lets a backend without the platform draw it (§15, AD-34)
     ASSERT_NE(layout.run->font_hash(), 0u);
-    ASSERT_NE(resources::FontRegistry::find_hash(layout.run->font_hash()), nullptr);
+    ASSERT_TRUE(resources::FontRegistry::find_hash(layout.run->font_hash()) != nullptr);
     SceneBuilder builder;
     EmbeddedTextNode node;
     node.m_layout = layout;
@@ -1624,7 +1642,7 @@ TEST(SoftwareGlyphAtlasChecks, TheAtlasRasterizesAGlyphFromTheCarriedBytes) {
     // arrange the carried fixture registered under its hash, which is what the atlas resolves (§6.3, AD-34)
     resources::FontRegistry::clear();
     resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
-    const resources::EmbeddedFont* font = resources::FontRegistry::find_family(ALBOR_TEST_FONT_FAMILY);
+    const std::shared_ptr<const resources::EmbeddedFont> font = resources::FontRegistry::find_family(ALBOR_TEST_FONT_FAMILY);
     ASSERT_NE(font, nullptr);
     const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
     ASSERT_NE(engine, nullptr);
@@ -1725,7 +1743,7 @@ TEST(SoftwareGlyphAtlasChecks, TheAtlasRefusesGlyphsItCannotRasterize) {
     // arrange the carried fixture, registered under its hash (§6.3, AD-34)
     resources::FontRegistry::clear();
     resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
-    const resources::EmbeddedFont* font = resources::FontRegistry::find_family(ALBOR_TEST_FONT_FAMILY);
+    const std::shared_ptr<const resources::EmbeddedFont> font = resources::FontRegistry::find_family(ALBOR_TEST_FONT_FAMILY);
     ASSERT_NE(font, nullptr);
     software::SoftwareGlyphAtlas atlas;
     // act, assert an out-of-range glyph has no extents, so it is refused (§6.3)
@@ -1738,7 +1756,7 @@ TEST(SoftwareGlyphAtlasChecks, TheAtlasRefusesACorruptCarriedFont) {
     // arrange a family whose bytes name no face, which the registry still accepts (§9.1)
     resources::FontRegistry::clear();
     resources::FontRegistry::register_font(resources::EmbeddedFont{.family = "AlborCorrupt", .content_hash = 0, .bytes = {1, 2, 3, 4, 5, 6, 7, 8}});
-    const resources::EmbeddedFont* font = resources::FontRegistry::find_family("AlborCorrupt");
+    const std::shared_ptr<const resources::EmbeddedFont> font = resources::FontRegistry::find_family("AlborCorrupt");
     ASSERT_NE(font, nullptr);
     software::SoftwareGlyphAtlas atlas;
     // act, assert a corrupt face is refused rather than rasterized (§6.3)
@@ -1751,7 +1769,7 @@ TEST(SoftwareGlyphAtlasChecks, ClearingTheAtlasDropsItsBitmaps) {
     // arrange a rasterized glyph, which the atlas caches (§6.3)
     resources::FontRegistry::clear();
     resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
-    const resources::EmbeddedFont* font = resources::FontRegistry::find_family(ALBOR_TEST_FONT_FAMILY);
+    const std::shared_ptr<const resources::EmbeddedFont> font = resources::FontRegistry::find_family(ALBOR_TEST_FONT_FAMILY);
     ASSERT_NE(font, nullptr);
     software::SoftwareGlyphAtlas atlas;
     ASSERT_NE(atlas.glyph(font->content_hash, 2u, 20.0f), nullptr);
@@ -1848,5 +1866,90 @@ TEST(TextEngineInstallChecks, ABuildWithoutACarriedFontFallsBackToThePlatformFac
     // exit
     set_text_engine_factory(nullptr);
     set_installed_font_family("");
+    resources::FontRegistry::clear();
+}
+
+TEST(HarfbuzzFontFaceChecks, CarriesTheBytesItWasBuiltFrom) {
+    // arrange the font the build carries, read whole because a face is built from a complete file (§15, AD-34)
+    std::ifstream file(ALBOR_TEST_FONT_PATH, std::ios::binary);
+    ASSERT_TRUE(file.good());
+    auto bytes = std::make_shared<const std::vector<std::uint8_t>>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    // act
+    const std::shared_ptr<const harfbuzz::HarfbuzzFontFace> face = harfbuzz::HarfbuzzFontFace::create(bytes);
+    // assert the face keeps the bytes it was built from and identifies them by content (§15, AD-34)
+    ASSERT_NE(face, nullptr);
+    EXPECT_NE(face->hash(), 0u);
+    EXPECT_EQ(face->bytes().size(), bytes->size());
+    EXPECT_EQ(face->bytes().front(), bytes->front());
+}
+
+TEST(HarfbuzzFontFaceChecks, RefusesBytesThatCarryNoFont) {
+    // arrange the three buffers a build could hand a face (§15, AD-34)
+    const std::shared_ptr<const std::vector<std::uint8_t>> nothing;
+    const auto empty = std::make_shared<const std::vector<std::uint8_t>>();
+    const auto noise = std::make_shared<const std::vector<std::uint8_t>>(64u, 0x5au);
+    // act
+    const std::shared_ptr<const harfbuzz::HarfbuzzFontFace> missing = harfbuzz::HarfbuzzFontFace::create(nothing);
+    const std::shared_ptr<const harfbuzz::HarfbuzzFontFace> blank = harfbuzz::HarfbuzzFontFace::create(empty);
+    const std::shared_ptr<const harfbuzz::HarfbuzzFontFace> garbage = harfbuzz::HarfbuzzFontFace::create(noise);
+    // assert none of them carries a face, which the factory refuses rather than half builds (§9.1)
+    EXPECT_EQ(missing, nullptr);
+    EXPECT_EQ(blank, nullptr);
+    EXPECT_EQ(garbage, nullptr);
+}
+
+TEST(HarfbuzzFontFaceChecks, OutlinesAGlyphFromItsOwnBytes) {
+    // arrange the font the build carries, and a glyph the engine shaped from that same file (§9.1, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("A", 0.0f, 24.0f);
+    ASSERT_FALSE(layout.empty());
+    ASSERT_FALSE(layout.run->lines().front().glyphs.empty());
+    const std::uint32_t glyph = layout.run->lines().front().glyphs.front().id;
+    std::ifstream file(ALBOR_TEST_FONT_PATH, std::ios::binary);
+    ASSERT_TRUE(file.good());
+    auto bytes = std::make_shared<const std::vector<std::uint8_t>>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    const std::shared_ptr<const harfbuzz::HarfbuzzFontFace> face = harfbuzz::HarfbuzzFontFace::create(bytes);
+    ASSERT_NE(face, nullptr);
+    // act
+    const GlyphOutlineData outline = face->outline(glyph, 24.0f);
+    // assert the face reports the closed contours the renderer fills, which no engine was needed for (§6.4, §9.1)
+    ASSERT_FALSE(outline.points.empty());
+    EXPECT_EQ(outline.verbs.front(), PathVerb::MoveTo);
+    EXPECT_EQ(outline.verbs.back(), PathVerb::Close);
+    // assert a size of no pixels and a glyph the face leaves empty both draw nothing (§9.1, AD-27)
+    EXPECT_TRUE(face->outline(glyph, 0.0f).points.empty());
+    EXPECT_TRUE(face->outline(0xFFFFu, 24.0f).points.empty());
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(HarfbuzzFontFaceChecks, OutlinesAGlyphForAHandleWithNoPlatformFace) {
+    // arrange a face built from the carried bytes, which is the whole of what a backend without a platform face has (§9.1)
+    std::ifstream file(ALBOR_TEST_FONT_PATH, std::ios::binary);
+    ASSERT_TRUE(file.good());
+    auto bytes = std::make_shared<const std::vector<std::uint8_t>>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    const std::shared_ptr<const harfbuzz::HarfbuzzFontFace> face = harfbuzz::HarfbuzzFontFace::create(bytes);
+    ASSERT_NE(face, nullptr);
+    // the glyph of "A" is shaped over the same bytes, which is the glyph a run would carry (§9.1, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("A", 0.0f, 24.0f);
+    ASSERT_FALSE(layout.empty());
+    const std::uint32_t glyph = layout.run->lines().front().glyphs.front().id;
+    // the registry is emptied, so only the handle's own face can answer the walk (§15, AD-34)
+    resources::FontRegistry::clear();
+    // act the handle carries the face and no platform typeface, which is the windows and linux case (§9.1, AD-34)
+    const FontHandle handle = FontHandle::from_face(face);
+    const render::GlyphPath path = render::glyph_path(handle, glyph, 24.0f);
+    // assert the portable walk returns the closed contour a fill needs, with no platform face behind it (§6.4)
+    ASSERT_FALSE(path.points.empty());
+    EXPECT_EQ(path.verbs.front(), PathVerb::MoveTo);
+    EXPECT_EQ(path.verbs.back(), PathVerb::Close);
+    // exit
     resources::FontRegistry::clear();
 }

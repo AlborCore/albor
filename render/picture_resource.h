@@ -86,6 +86,12 @@ namespace albor
         // override: read back the current opacity
         [[nodiscard]] float opacity() const override;
 
+        // override: begin a layer the later commands composite into, which restores this state at the matching pop
+        void push_layer(float opacity) override;
+
+        // override: end the layer the matching push began
+        void pop_layer() override;
+
         // override: record a filled and stroked rectangle
         void draw_rect(const Rect& rect, const Paint& paint) override;
 
@@ -156,6 +162,9 @@ namespace albor
 
         // the opacity the recorded commands are dimmed by, which starts fully opaque (§6.1)
         float m_opacity = 1.0f;
+
+        // how many layers are open, so a mismatched pop cannot unwind a save that was not one (§6.2)
+        std::size_t m_layers = 0;
 
         // the pushed states, which a restore pops (§6.2)
         std::vector<State> m_states;

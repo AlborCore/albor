@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <memory>
 #include <span>
 #include <vector>
@@ -49,6 +50,12 @@ namespace albor::skia
 
         // override: read back the current opacity
         [[nodiscard]] float opacity() const override;
+
+        // override: begin a layer the later draws composite into, which restores this state at the matching pop
+        void push_layer(float opacity) override;
+
+        // override: end the layer the matching push began
+        void pop_layer() override;
 
         // override: draw a filled and stroked rectangle
         void draw_rect(const Rect& rect, const Paint& paint) override;
@@ -123,5 +130,8 @@ namespace albor::skia
 
         // the pushed states, which a restore pops
         std::vector<State> m_states;
+
+        // how many layers are open, so a mismatched pop cannot unwind a save that was not one (§6.2)
+        std::size_t m_layers = 0;
     };
 } // namespace albor::skia

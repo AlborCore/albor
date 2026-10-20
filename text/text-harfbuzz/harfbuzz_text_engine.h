@@ -83,7 +83,7 @@ namespace albor::harfbuzz
         // load the face from bytes the build carries, which is how the engine avoids a file system (§15, AD-34)
         HarfbuzzTextEngine(const std::uint8_t* font_bytes, std::size_t byte_count, std::string_view family_name);
 
-        // resolve the platform typeface, which only the transitional path engine needs to draw (§9.1, AD-28)
+        // resolve the platform typeface when the platform offers one, which a run uses if it can (§9.1)
         void resolve_typeface(std::string_view family_name);
 
         // the opaque harfbuzz blob, face and font state, so no shaping type leaves this header (§3.5, AD-19)

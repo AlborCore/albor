@@ -638,7 +638,7 @@ TEST(Blend2DTextChecks, APlatformShapedRunCarriesARegisteredFontIdentity) {
     ASSERT_NE(layout.run, nullptr);
     EXPECT_FALSE(layout.run->empty());
     EXPECT_NE(layout.run->font_hash(), 0u);
-    EXPECT_NE(resources::FontRegistry::find_hash(layout.run->font_hash()), nullptr);
+    EXPECT_TRUE(resources::FontRegistry::find_hash(layout.run->font_hash()) != nullptr);
 }
 
 TEST(Blend2DTextChecks, APlatformShapedRunDrawsInkThroughTheBackend) {
@@ -650,7 +650,7 @@ TEST(Blend2DTextChecks, APlatformShapedRunDrawsInkThroughTheBackend) {
     ASSERT_NE(layout.run, nullptr);
     ASSERT_FALSE(layout.run->empty());
     // the run resolved its font in the registry, which is what a replaying backend loads from (§15, AD-34)
-    const resources::EmbeddedFont* embedded = resources::FontRegistry::find_hash(layout.run->font_hash());
+    const std::shared_ptr<const resources::EmbeddedFont> embedded = resources::FontRegistry::find_hash(layout.run->font_hash());
     ASSERT_NE(embedded, nullptr);
     ASSERT_FALSE(embedded->bytes.empty());
     const WindowMetrics metrics = scene_metrics(1.0f);
@@ -791,6 +791,174 @@ TEST(Blend2DRenderContextChecks, AStrokedPathDrawsInk) {
             ink++;
     }
     EXPECT_GT(ink, 0u);
+}
+
+TEST(Blend2DRenderContextChecks, AnEvenOddPathCutsASameWoundHole) {
+    // arrange two nested squares of one winding, whose hole only the even odd rule cuts (§6.2)
+    ResourceFactory factory;
+    const std::array<Point, 8> points{Point{8.0f, 8.0f}, Point{8.0f, 32.0f}, Point{32.0f, 32.0f}, Point{32.0f, 8.0f}, Point{16.0f, 16.0f}, Point{16.0f, 24.0f}, Point{24.0f, 24.0f}, Point{24.0f, 16.0f}};
+    const std::array<PathVerb, 10> verbs{PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close, PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const std::shared_ptr<const PathResource> path = factory.create_path(std::span<const PathVerb>(verbs), std::span<const Point>(points));
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    // act the even odd fill paints the band and leaves the nested ring open
+    context.draw_path(path, Transform{}, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f), .fill_rule = FillRule::EvenOdd});
+    surface->end_frame();
+    // assert the band carries ink while the hole stays clear, which is the parity the rule decides
+    const Screenshot covered = capture_surface(*surface);
+    ASSERT_FALSE(covered.empty());
+    const std::size_t band = (12u * 64u + 12u) * 4u;
+    const std::size_t hole = (20u * 64u + 20u) * 4u;
+    EXPECT_EQ(covered.pixels[band + 3u], 255u);
+    EXPECT_EQ(covered.pixels[hole + 3u], 0u);
+    RenderContext& solid = surface->begin_frame();
+    // act the default non zero rule fills the same winding solid, which the rule alone decides
+    solid.draw_path(path, Transform{}, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    surface->end_frame();
+    // assert the hole fills under the default rule, which proves the even odd paint carried the rule
+    const Screenshot filled = capture_surface(*surface);
+    ASSERT_FALSE(filled.empty());
+    EXPECT_EQ(filled.pixels[hole + 3u], 255u);
+}
+
+TEST(Blend2DRenderContextChecks, EveryCompositionModeLeavesTheOverlapItsOperatorDefines) {
+    // arrange one red base and one blue overlay per composition mode, whose overlap the operator alone decides (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    const CompositionMode modes[11] = {CompositionMode::SourceOver, CompositionMode::SourceIn, CompositionMode::SourceOut, CompositionMode::Atop, CompositionMode::DestinationOver, CompositionMode::DestinationIn, CompositionMode::DestinationOut, CompositionMode::DestinationAtop, CompositionMode::Lighter, CompositionMode::Copy, CompositionMode::Xor};
+    const std::uint8_t expected[11][4] = {{51, 51, 204, 255}, {51, 51, 204, 255}, {0, 0, 0, 0}, {51, 51, 204, 255}, {204, 51, 51, 255}, {204, 51, 51, 255}, {0, 0, 0, 0}, {204, 51, 51, 255}, {255, 102, 255, 255}, {51, 51, 204, 255}, {0, 0, 0, 0}};
+    for (std::size_t index = 0; index < 11; index++) {
+        // the trace names the mode a mismatch belongs to, which a loop otherwise hides
+        SCOPED_TRACE(static_cast<int>(modes[index]));
+        RenderContext& context = surface->begin_frame();
+        // act the base paints first and the overlay blends over it under the mode
+        context.draw_rect(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{16.0f, 16.0f}), Paint{.fill = Color{.red = 0.8f, .green = 0.2f, .blue = 0.2f}});
+        context.draw_rect(Rect::from_origin_size(Point{12.0f, 12.0f}, Size{16.0f, 16.0f}), Paint{.fill = Color{.red = 0.2f, .green = 0.2f, .blue = 0.8f}, .composition = modes[index]});
+        surface->end_frame();
+        // assert the overlap reads back the bytes the operator defines, which the blender must match
+        const Screenshot overlap = capture_surface(*surface);
+        ASSERT_FALSE(overlap.empty());
+        const std::size_t pixel = (16u * 64u + 16u) * 4u;
+        for (std::size_t channel = 0; channel < 4; channel++)
+            EXPECT_NEAR(overlap.pixels[pixel + channel], expected[index][channel], 2) << "channel " << channel;
+    }
+}
+
+TEST(Blend2DRenderContextChecks, ALayerDimsOverlappingChildrenOnce) {
+    // arrange a white plate and a half opaque group whose two red children overlap by design (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    const Paint red{.fill = Color::rgb(0.8f, 0.2f, 0.2f)};
+    // act the group paints both children opaque, then composites once at half opacity
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.push_layer(0.5f);
+    context.draw_rect(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{24.0f, 24.0f}), red);
+    context.draw_rect(Rect::from_origin_size(Point{12.0f, 12.0f}, Size{24.0f, 24.0f}), red);
+    context.pop_layer();
+    surface->end_frame();
+    // assert the overlap matches the single covered region, because the group dims once rather than per child (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    const std::size_t single = (8u * 64u + 8u) * 4u;
+    const std::size_t overlap = (16u * 64u + 16u) * 4u;
+    for (std::size_t channel = 0; channel < 4; channel++)
+        EXPECT_NEAR(shot.pixels[overlap + channel], shot.pixels[single + channel], 2) << "channel " << channel;
+    EXPECT_NEAR(shot.pixels[single], 230u, 2);
+    EXPECT_NEAR(shot.pixels[single + 1u], 153u, 2);
+}
+
+TEST(Blend2DRenderContextChecks, ANestedLayerCompositesIntoItsParentGroup) {
+    // arrange a group that holds only a second group, whose red passes through both halves (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    const Rect whole = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT});
+    // act the inner group paints inside the outer one, which composites the pair onto the plate
+    context.draw_rect(whole, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.push_layer(0.5f);
+    context.push_layer(0.5f);
+    context.draw_rect(whole, Paint{.fill = Color::rgb(0.8f, 0.2f, 0.2f)});
+    context.pop_layer();
+    context.pop_layer();
+    surface->end_frame();
+    // assert a quarter of the red reaches the plate, because each group dims the one it carries (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    const std::size_t centre = (32u * 64u + 32u) * 4u;
+    EXPECT_NEAR(shot.pixels[centre], 242u, 2);
+    EXPECT_NEAR(shot.pixels[centre + 1u], 204u, 2);
+}
+
+TEST(Blend2DRenderContextChecks, AnEmptyLayerLeavesTheTargetUntouched) {
+    // arrange a white plate and a group that paints nothing (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    // act
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.push_layer(0.5f);
+    context.pop_layer();
+    surface->end_frame();
+    // assert the plate stays whole, because an empty group has nothing to composite (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    const std::size_t centre = (32u * 64u + 32u) * 4u;
+    EXPECT_EQ(shot.pixels[centre], 255u);
+    EXPECT_EQ(shot.pixels[centre + 3u], 255u);
+}
+
+TEST(Blend2DRenderContextChecks, AContextWithNoRasterKeepsTheLayerStackOnly) {
+    // arrange a context over no raster, which a refused surface produces (§6.2)
+    Blend2DRenderContext context(nullptr, 1.0f, Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}));
+    // act a mismatched pop and a real pair, which every step has to survive without pixels (§6.2)
+    context.pop_layer();
+    context.push_layer(0.5f);
+    context.pop_layer();
+    // assert the pair balanced the stack even though no raster could carry it (§6.2)
+    EXPECT_FLOAT_EQ(context.opacity(), 1.0f);
+    SUCCEED();
+}
+
+TEST(Blend2DRenderContextChecks, AStrokedPolylineCarriesItsComposition) {
+    // arrange a white plate and a blue line under copy, which replaces the pixels it covers (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    const Point points[2] = {Point{4.0f, 24.0f}, Point{60.0f, 24.0f}};
+    // act
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.draw_polyline(std::span<const Point>(points), StrokeStyle{.color = Color::rgb(0.0f, 0.0f, 1.0f), .width = 8.0f, .composition = CompositionMode::Copy});
+    surface->end_frame();
+    // assert the line replaced the plate with blue rather than blending over it (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    const std::size_t centre = (24u * 64u + 32u) * 4u;
+    EXPECT_EQ(shot.pixels[centre], 0u);
+    EXPECT_EQ(shot.pixels[centre + 2u], 255u);
+    EXPECT_EQ(shot.pixels[centre + 3u], 255u);
+}
+
+TEST(Blend2DRenderContextChecks, AStrokedLineBatchCarriesItsComposition) {
+    // arrange a white plate and a retained line batch stroked under copy, which replaces what it covers (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    ResourceFactory factory;
+    const std::array<Point, 2> points{Point{4.0f, 24.0f}, Point{60.0f, 24.0f}};
+    const std::shared_ptr<const LineBatch> batch = factory.create_line_batch(std::span<const Point>(points));
+    RenderContext& context = surface->begin_frame();
+    // act
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.draw_line_batch(batch, Transform{}, StrokeStyle{.color = Color::rgb(0.0f, 0.0f, 1.0f), .width = 8.0f, .composition = CompositionMode::Copy});
+    surface->end_frame();
+    // assert the stroke replaced the plate with blue rather than blending over it (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    const std::size_t centre = (24u * 64u + 32u) * 4u;
+    EXPECT_EQ(shot.pixels[centre], 0u);
+    EXPECT_EQ(shot.pixels[centre + 2u], 255u);
+    EXPECT_EQ(shot.pixels[centre + 3u], 255u);
 }
 
 TEST(Blend2DRenderContextChecks, AStrokedRectangleDrawsInk) {

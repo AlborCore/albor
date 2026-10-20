@@ -37,9 +37,9 @@ namespace albor::render
         float right_bottom = 0.0f;
     };
 
-    // sweep closed rings into the trapezoids a non zero fill covers, which cuts the holes they wind around (§6.2)
-    [[nodiscard]] std::vector<FillTrapezoid> sweep_fill(std::span<const FillRing> rings);
+    // sweep closed rings into the trapezoids the fill rule covers, which cuts the holes the rings wind around (§6.2)
+    [[nodiscard]] std::vector<FillTrapezoid> sweep_fill(std::span<const FillRing> rings, FillRule rule = FillRule::NonZero);
 
-    // append the fill of a device space contour group, whose sweep cuts every hole the group carries (§6.2)
-    [[nodiscard]] EmittedRange expand_fill_group(FrameBatch& sink, std::vector<Contour>& contours);
+    // append the fill of a device space contour group, whose sweep cuts every hole the rule leaves open (§6.2)
+    [[nodiscard]] EmittedRange expand_fill_group(FrameBatch& sink, std::vector<Contour>& contours, FillRule rule = FillRule::NonZero);
 } // namespace albor::render

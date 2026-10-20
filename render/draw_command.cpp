@@ -85,6 +85,16 @@ namespace albor
         return DrawCommand(ShadowGeometry{.rect = rect, .radius = radius, .shadow = shadow}, Paint{});
     }
 
+    DrawCommand DrawCommand::layer_push(float opacity) {
+        // the opacity is clamped into the unit range, because a binding computed from data can land outside it (§6.2)
+        return DrawCommand(LayerGeometry{.opacity = std::clamp(opacity, 0.0f, 1.0f), .pop = false}, Paint{});
+    }
+
+    DrawCommand DrawCommand::layer_pop() {
+        // the marker carries no opacity of its own, because the push it matches already named one (§6.2)
+        return DrawCommand(LayerGeometry{.pop = true}, Paint{});
+    }
+
     DrawCommand::DrawCommand(Geometry geometry, Paint paint) :
         m_clip(unclipped()), m_paint(paint), m_geometry(std::move(geometry)) {}
 
@@ -118,6 +128,9 @@ namespace albor
         // a polyline is the ninth alternative, which is what a variant holds at most (§6.2)
         case 8:
             return DrawCommandKind::Polyline;
+        // a layer marker is the tenth alternative, and its flag says whether it opens or closes (§6.2)
+        case 9:
+            return layer_geometry().pop ? DrawCommandKind::LayerPop : DrawCommandKind::LayerPush;
         // an alternative outside the enumeration is read as the shadow, which a report sees (§6.2)
         default:
             return DrawCommandKind::Shadow;
@@ -184,6 +197,11 @@ namespace albor
         return std::get<ShadowGeometry>(m_geometry);
     }
 
+    const DrawCommand::LayerGeometry& DrawCommand::layer_geometry() const {
+        // the marker is the alternative a layer command was built with (§6.2)
+        return std::get<LayerGeometry>(m_geometry);
+    }
+
     void DrawCommand::set_clip_radius(float radius) {
         // the radius rides with the clip, which the replay rounds the scissor by (§6.2)
         m_clip_radius = radius;
@@ -224,8 +242,11 @@ namespace albor
     }
 
     bool DrawCommand::draws_nothing() const {
+        // the layer markers are structural, so a recorder may never drop one half of a pair (§6.2)
+        const DrawCommandKind command_kind = kind();
+        const bool structural = command_kind == DrawCommandKind::LayerPush || command_kind == DrawCommandKind::LayerPop;
         // a command under an empty clip can put no ink down, so a recorder culls it (§6.2)
-        if (m_clip.empty())
+        if (!structural && m_clip.empty())
             return true;
         // a paint that neither fills nor strokes draws nothing, whatever the shape (§6.2)
         const bool paints = m_paint.fills() || m_paint.strokes();
@@ -280,6 +301,10 @@ namespace albor
             const ShadowGeometry& cast = shadow_geometry();
             return cast.rect.empty() || !cast.shadow.casts();
         }
+        // a layer marker paints nothing itself, so it has nothing to cull (§6.2)
+        case DrawCommandKind::LayerPush:
+        case DrawCommandKind::LayerPop:
+            return false;
         }
         // the switch covers every kind, so nothing reaches here (§6.2)
         return true;
@@ -410,6 +435,10 @@ namespace albor
         case DrawCommandKind::Shadow:
             // a cast covers the blur reach around its shape, mapped by the transform it draws under (§6.2, §6.4)
             return mapped_bounds(shadow_bounds());
+        case DrawCommandKind::LayerPush:
+        case DrawCommandKind::LayerPop:
+            // a layer marker owns no geometry, so it covers the clip it draws under (§6.2)
+            return clip();
         }
         // a kind outside the enumeration covers nothing, which is the quiet default (§6.2)
         return Rect{};
@@ -443,6 +472,8 @@ namespace albor
         case DrawCommandKind::Path:
         case DrawCommandKind::Picture:
         case DrawCommandKind::GlyphOutline:
+        case DrawCommandKind::LayerPush:
+        case DrawCommandKind::LayerPop:
             return false;
         default:
             return true;
@@ -542,6 +573,14 @@ namespace albor
         case DrawCommandKind::Shadow:
             context.draw_shadow(shadow_geometry().rect, shadow_geometry().radius, shadow_geometry().shadow);
             return;
+        // a layer marker opens the group its later commands composite into (§6.2)
+        case DrawCommandKind::LayerPush:
+            context.push_layer(layer_geometry().opacity);
+            return;
+        // a layer marker closes the group the matching push opened (§6.2)
+        case DrawCommandKind::LayerPop:
+            context.pop_layer();
+            return;
         }
     }
     void replay_commands(const std::vector<DrawCommand>& commands, RenderContext& context, const Rect& unclipped) {
@@ -554,6 +593,19 @@ namespace albor
 
         // every command replays in paint order, which is the order the ui thread recorded (§6.1)
         for (const DrawCommand& command : commands) {
+            // a layer marker owns no geometry, so the switch closes around it and the next draw reopens (§6.2)
+            if (command.kind() == DrawCommandKind::LayerPush || command.kind() == DrawCommandKind::LayerPop) {
+                // a clip open above the marker would nest inside the layer rather than around it (§6.2)
+                if (switched)
+                    context.restore();
+                // the next draw opens its own switch, because the base clip is the one the marker saw (§6.2)
+                switched = false;
+                applied = unclipped;
+                applied_radius = 0.0f;
+                // the marker opens or closes the group at the base clip, which its children clip themselves (§6.2)
+                command.replay(context);
+                continue;
+            }
             // a narrower clip opens a switch, which is balanced again when the next command differs (§6.2)
             if (command.clip() != applied || command.clip_radius() != applied_radius) {
                 // the previous switch is closed first, because a clip intersects rather than replaces (§6.2)

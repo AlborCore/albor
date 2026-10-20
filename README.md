@@ -9,9 +9,13 @@ rendering (schematics, CAD views, waveforms, plots), real multi-window behavior 
 modality, and a two-stage render pipeline that never blocks the UI thread on drawing.
 
 > **Status: under heavy development.** macOS (AppKit + Metal) is the first platform
-> backend; Windows (Win32/Direct3D) and Linux (Wayland/X11/Vulkan) follow. The
-> architecture is settled and specified in
-> [`albor-design-v4.md`](albor-design-v4.md).
+> backend; Windows (Win32) is compiled on every push and its windowing layer is in
+> place, while the Direct3D renderer and the Linux (Wayland/X11/Vulkan) port follow.
+> `render-albor`, the in-repo GPU 2D renderer, now draws shapes, retained resources,
+> outlined text, shadows, composited layers and all Porter-Duff composition modes, and
+> is gated against a software reference by a parity suite. Skia remains the
+> transitional backend until Windows and Linux reach the same output. The architecture
+> is settled and specified in [`albor-design-v4.md`](albor-design-v4.md).
 
 ## Why Albor exists
 
@@ -160,8 +164,9 @@ reference to the extension from a Release target **fails to link** rather than c
 knows nothing about the extension beyond four null-checked hook calls.
 
 Complete, buildable versions live in [`examples/`](examples/) — a hand-built reactive
-counter, a manifest-driven chart with custom line-batch rendering, and the compiled
-`GreetingPanel` above.
+counter, a manifest-driven chart with custom line-batch rendering, the compiled
+`GreetingPanel` above, and the same window linked against each in-repo renderer
+(`hello-render-albor` for the GPU backend, `hello-render-blend2d` for the raster one).
 
 ## What is implemented
 
@@ -171,19 +176,23 @@ counter, a manifest-driven chart with custom line-batch rendering, and the compi
 | startup facade: one call wires window, surface, pipeline, executor and input | done (§4.1, §6.1) |
 | dev runtime extension: self-installing, patches a live tree in place | done (§12.1) |
 | macOS platform: AppKit window, display-link pacing, input | done (§5) |
-| Skia renderer backend (Metal/Ganesh), render executor thread | done (§6) |
+| `render-albor` GPU backend: fills, strokes, outlined text, retained resources, images, shadows, layers, fill rules, 11 composition modes | done on macOS (§6.2–§6.4, AD-26) |
+| Skia renderer backend (Metal/Ganesh) | transitional reference until Windows/Linux parity (§6, #102) |
+| software and Blend2D raster backends | done (§6.3, AD-26) |
+| GPU/software parity suite, headless CI | done (AD-26, §16) |
 | reactive properties, eager-push binding engine, snapshots | done (§7) |
 | ui tree, components, event routing, focus | done (§8) |
 | measure/arrange layout, row/column/stack/grid/padding | done (§8.2) |
-| widgets: Button, Label, CheckBox, Slider, Canvas | done (§8) |
+| widgets: Button, Label, CheckBox, Slider, Canvas, TextField, ListBox, ScrollView | done (§8) |
 | semantic tree, explicit keys, semantic provider | done (§10.1) |
-| `.ui` compiler, manifest, glue generator, codegen | in progress (phase 4, §11) |
-| text shaping (Skia/paragraph), i18n | baseline (§9.1) |
-| Win32 / Wayland / X11 platform backends | planned (phase 1 follow-up) |
-| software renderer, headless CI, parity suite | planned (AD-26) |
-| style/theme system, hover and pressed states | planned |
+| `.ui` compiler, manifest, glue generator, codegen | done (phase 4, §11) |
+| text shaping (HarfBuzz), embedded font outlines, i18n catalog | done (§9.1) |
+| animation engine, theme system and widget states | done (§7.3) |
+| inspector, LSP, preview host, automation core, MCP adapter | done (Dev/Test only, phase 5) |
+| accessibility: macOS bridge, Win32 adapter layer | done; AT-SPI adapter planned (§10.2) |
+| Win32 platform: window, clipboard, event loop, text encoding | compiles in CI; Direct3D renderer pending (§5.3) |
+| Wayland / X11 / Vulkan platform and renderer | planned (phase 1 follow-up) |
 | out-of-process dev service that delivers definitions to the extension | planned (§12.1, AD-12) |
-| LSP, preview, automation, accessibility adapters | planned (phase 5) |
 
 ## Building
 
