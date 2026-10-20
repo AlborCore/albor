@@ -216,6 +216,14 @@ namespace albor
         // the commands travel into the scene in paint order, because stage two replays them as recorded (§6.1, AD-18)
         for (const DrawCommand& command : m_commands)
             scene->append_command(command);
+        // a layer the caller left open is closed at the seal, so a malformed tree still composites once (§6.2)
+        for (std::size_t open = m_layers; open > 0; --open) {
+            // the synthesized pop carries the clip the recorder ended under, which the replay ignores for markers (§6.2)
+            DrawCommand close = DrawCommand::layer_pop();
+            close.set_clip(m_clip.rect);
+            close.set_clip_radius(m_clip.radius);
+            scene->append_command(std::move(close));
+        }
         return scene;
     }
 

@@ -1400,6 +1400,19 @@ TEST(PictureRecorder, ALayerRecordsItsTwoMarkersInPaintOrder) {
     EXPECT_EQ(recorder.commands()[3].kind(), DrawCommandKind::LayerPop);
 }
 
+TEST(PictureRecorder, ALayerLeftOpenIsClosedAtTheSeal) {
+    // arrange a recorder that opens a group and never closes it, which a malformed picture can do (§6.2)
+    PictureRecorder recorder;
+    recorder.push_layer(0.5f);
+    recorder.draw_rect(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    // act
+    const std::vector<DrawCommand> commands = recorder.commands();
+    // assert the picture is balanced, so every backend composites the group once instead of diverging (§6.2)
+    ASSERT_EQ(commands.size(), 3u);
+    EXPECT_EQ(commands[0].kind(), DrawCommandKind::LayerPush);
+    EXPECT_EQ(commands[2].kind(), DrawCommandKind::LayerPop);
+}
+
 TEST(PictureRecorder, APopWithNoLayerOpenRecordsNothing) {
     // arrange, act
     PictureRecorder recorder;
@@ -2250,14 +2263,15 @@ TEST(PictureRecorder, APolylineKeepsItsVerticesAndCarriesTheTransform) {
     const Point points[] = {{0.0f, 0.0f}, {10.0f, 10.0f}, {10.0f, 0.0f}};
     recorder.draw_polyline(points, StrokeStyle{});
     // assert the run keeps the vertices it was given, because the transform travels beside them (§6.4)
-    ASSERT_EQ(recorder.commands().size(), 1u);
-    const std::vector<Point>& kept = recorder.commands()[0].polyline_geometry().points;
+    const std::vector<DrawCommand> commands = recorder.commands();
+    ASSERT_EQ(commands.size(), 1u);
+    const std::vector<Point>& kept = commands[0].polyline_geometry().points;
     ASSERT_EQ(kept.size(), 3u);
     EXPECT_EQ(kept[1], (Point{10.0f, 10.0f}));
     // assert the command carries the transform, which is what places those vertices at replay (§6.4)
-    EXPECT_EQ(recorder.commands()[0].transform(), Transform::translation(5.0f, 6.0f));
+    EXPECT_EQ(commands[0].transform(), Transform::translation(5.0f, 6.0f));
     // assert the bound is the mapped run, because a bound reports where the command draws (§6.2)
-    EXPECT_EQ(recorder.commands()[0].bounds(), (Rect{.x = 5.0f, .y = 6.0f, .width = 10.0f, .height = 10.0f}));
+    EXPECT_EQ(commands[0].bounds(), (Rect{.x = 5.0f, .y = 6.0f, .width = 10.0f, .height = 10.0f}));
 }
 
 TEST(DrawCommandPlacementChecks, ALayerMarkerBoundIsTheClipItDrawsUnder) {

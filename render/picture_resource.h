@@ -120,7 +120,7 @@ namespace albor
         void draw_image(const std::shared_ptr<const ImageResource>& image, const Rect& destination, const Paint& paint) override;
 
         // hand out the recorded commands in order, which the factory turns into a picture (§6.4)
-        [[nodiscard]] const std::vector<DrawCommand>& commands() const;
+        [[nodiscard]] std::vector<DrawCommand> commands() const;
 
         // report whether no command was recorded (§6.4)
         [[nodiscard]] bool empty() const;

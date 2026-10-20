@@ -121,6 +121,7 @@ the value measured on this host plus margin; values are 8-bit channel levels.
 | gaussian shadows, square and sheared casters | 32–52 | 26–44 |
 | mipmapped downscale | 72 | 57 |
 | text, system and embedded | 80 / 64 | 70 / 57 |
+| transformed text, rotated and sheared | 160 | 104–130 |
 
 A bound is not a budget for drift: a new case records its measured value next to the
 assertion, and a case that samples a corner or a centre also compares the whole frame, so

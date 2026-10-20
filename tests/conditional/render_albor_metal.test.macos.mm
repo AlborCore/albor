@@ -1423,6 +1423,122 @@ TEST(AlborParityChecks, AShapedRunMatchesTheReference) {
     EXPECT_GE(actual_ink, (expected_ink * 3u) / 4u);
 }
 
+TEST(AlborParityChecks, ARotatedShapedRunMatchesTheReference) {
+    // arrange a platform run turned a fifth of a turn about its own baseline origin (§9.1)
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{64.0f, 48.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const std::unique_ptr<albor::harfbuzz::HarfbuzzTextEngine> engine = albor::harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("Al", 0.0f, 28.0f);
+    ASSERT_FALSE(layout.empty());
+    const Transform turn = Transform::translation(-8.0f, -36.0f).then(Transform{.scale_x = 0.9396926f, .skew_x = -0.34202015f, .skew_y = 0.34202015f, .scale_y = 0.9396926f}).then(Transform::translation(8.0f, 36.0f));
+    // act the same transform reaches both contexts, which the backends must map the same way (§6.3)
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    expected.set_transform(turn);
+    expected.draw_text(layout, AlborPoint{8.0f, 36.0f}, Paint{.fill = Color::rgb(0.1f, 0.1f, 0.1f)});
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    actual.set_transform(turn);
+    actual.draw_text(layout, AlborPoint{8.0f, 36.0f}, Paint{.fill = Color::rgb(0.1f, 0.1f, 0.1f)});
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert both turned runs cover the same area, which a run left unrotated would miss entirely (§9.1)
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    std::size_t expected_ink = 0;
+    std::size_t actual_ink = 0;
+    std::size_t expected_left = expected_shot.pixels.size();
+    std::size_t actual_left = actual_shot.pixels.size();
+    std::size_t expected_right = 0;
+    std::size_t actual_right = 0;
+    for (std::size_t index = 0; index < expected_shot.pixels.size(); index += 4) {
+        if (expected_shot.pixels[index] < 128u) {
+            expected_ink++;
+            expected_left = std::min(expected_left, (index / 4u) % static_cast<std::size_t>(expected_shot.width));
+            expected_right = std::max(expected_right, (index / 4u) % static_cast<std::size_t>(expected_shot.width));
+        }
+        if (actual_shot.pixels[index] < 128u) {
+            actual_ink++;
+            actual_left = std::min(actual_left, (index / 4u) % static_cast<std::size_t>(actual_shot.width));
+            actual_right = std::max(actual_right, (index / 4u) % static_cast<std::size_t>(actual_shot.width));
+        }
+    }
+    ASSERT_GT(expected_ink, 0u);
+    EXPECT_LE(actual_ink, (expected_ink * 5u) / 4u);
+    // the ink spans the same columns, which a transform mapped in the wrong order would displace
+    EXPECT_NEAR(static_cast<double>(actual_left), static_cast<double>(expected_left), 2.0);
+    EXPECT_NEAR(static_cast<double>(actual_right), static_cast<double>(expected_right), 2.0);
+    // the bound is the 130 measured on this host, which a turned outline leaves on its edges (§9.1)
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 160);
+}
+
+TEST(AlborParityChecks, AShearedShapedRunMatchesTheReference) {
+    // arrange a platform run sheared about its baseline origin, which tilts every glyph column (§9.1)
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{64.0f, 48.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const std::unique_ptr<albor::harfbuzz::HarfbuzzTextEngine> engine = albor::harfbuzz::HarfbuzzTextEngine::create_platform("");
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("Al", 0.0f, 28.0f);
+    ASSERT_FALSE(layout.empty());
+    const Transform shear = Transform::translation(-8.0f, -36.0f).then(Transform{.scale_x = 1.0f, .skew_x = 0.35f, .skew_y = 0.0f, .scale_y = 1.0f}).then(Transform::translation(8.0f, 36.0f));
+    // act
+    RenderContext& expected = expected_surface->begin_frame();
+    expected.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    expected.set_transform(shear);
+    expected.draw_text(layout, AlborPoint{8.0f, 36.0f}, Paint{.fill = Color::rgb(0.1f, 0.1f, 0.1f)});
+    expected_surface->end_frame();
+    RenderContext& actual = actual_surface->begin_frame();
+    actual.draw_rect(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    actual.set_transform(shear);
+    actual.draw_text(layout, AlborPoint{8.0f, 36.0f}, Paint{.fill = Color::rgb(0.1f, 0.1f, 0.1f)});
+    actual_surface->end_frame();
+    const Screenshot expected_shot = capture_surface(*expected_surface);
+    const Screenshot actual_shot = capture_surface(*actual_surface);
+    // assert the sheared run covers the same area in both backends (§9.1)
+    ASSERT_FALSE(expected_shot.empty());
+    ASSERT_FALSE(actual_shot.empty());
+    ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
+    std::size_t expected_ink = 0;
+    std::size_t actual_ink = 0;
+    std::size_t expected_left = expected_shot.pixels.size();
+    std::size_t actual_left = actual_shot.pixels.size();
+    std::size_t expected_right = 0;
+    std::size_t actual_right = 0;
+    for (std::size_t index = 0; index < expected_shot.pixels.size(); index += 4) {
+        if (expected_shot.pixels[index] < 128u) {
+            expected_ink++;
+            expected_left = std::min(expected_left, (index / 4u) % static_cast<std::size_t>(expected_shot.width));
+            expected_right = std::max(expected_right, (index / 4u) % static_cast<std::size_t>(expected_shot.width));
+        }
+        if (actual_shot.pixels[index] < 128u) {
+            actual_ink++;
+            actual_left = std::min(actual_left, (index / 4u) % static_cast<std::size_t>(actual_shot.width));
+            actual_right = std::max(actual_right, (index / 4u) % static_cast<std::size_t>(actual_shot.width));
+        }
+    }
+    ASSERT_GT(expected_ink, 0u);
+    EXPECT_LE(actual_ink, (expected_ink * 5u) / 4u);
+    // the ink spans the same columns, which a shear mapped in the wrong order would displace
+    EXPECT_NEAR(static_cast<double>(actual_left), static_cast<double>(expected_left), 2.0);
+    EXPECT_NEAR(static_cast<double>(actual_right), static_cast<double>(expected_right), 2.0);
+    // the bound is the 104 measured on this host, which a sheared outline leaves on its edges (§9.1)
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 160);
+}
+
 TEST(AlborParityChecks, AnEmbeddedShapedRunMatchesTheReference) {
     // arrange the carried font, whose run expands to outlines before either backend replays (§15, AD-34)
     std::ifstream file(ALBOR_TEST_FONT_PATH, std::ios::binary);

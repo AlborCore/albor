@@ -210,9 +210,18 @@ namespace albor
         record(DrawCommand::image(image, destination, paint));
     }
 
-    const std::vector<DrawCommand>& PictureRecorder::commands() const {
-        // the commands are handed back in recording order, which becomes the picture's replay order (§6.4)
-        return m_commands;
+    std::vector<DrawCommand> PictureRecorder::commands() const {
+        // the commands are copied in recording order, which becomes the picture's replay order (§6.4)
+        std::vector<DrawCommand> sealed = m_commands;
+        // a layer the caller left open is closed at the seal, so a malformed picture still composites once (§6.2)
+        for (std::size_t open = m_layers; open > 0; --open) {
+            // the synthesized pop carries the clip the recorder ended under, which the replay ignores for markers (§6.2)
+            DrawCommand close = DrawCommand::layer_pop();
+            close.set_clip(m_clip.rect);
+            close.set_clip_radius(m_clip.radius);
+            sealed.push_back(std::move(close));
+        }
+        return sealed;
     }
 
     bool PictureRecorder::empty() const {

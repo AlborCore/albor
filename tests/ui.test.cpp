@@ -1281,6 +1281,36 @@ TEST(SceneRecorder, ALayerPopReturnsTheStateThePushSaved) {
     EXPECT_EQ(recorder.depth(), 0u);
 }
 
+TEST(SceneRecorder, ALayerLeftOpenIsClosedAtTheSeal) {
+    // arrange a recorder that opens a group and never closes it, which a malformed tree can do (§6.2)
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    recorder.push_layer(0.5f);
+    recorder.draw_rect(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    // act
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    // assert the scene is balanced, so every backend composites the group once instead of diverging (§6.2)
+    ASSERT_EQ(scene->commands().size(), 3u);
+    EXPECT_EQ(scene->commands()[0].kind(), DrawCommandKind::LayerPush);
+    EXPECT_EQ(scene->commands()[2].kind(), DrawCommandKind::LayerPop);
+}
+
+TEST(SceneRecorder, ALayerUnderAnEmptyClipKeepsBothMarkers) {
+    // arrange a clip that cuts everything away, which culls the draws but not the structural pair (§6.2)
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    recorder.save();
+    recorder.clip_rect(Rect::from_origin_size(Point{100.0f, 100.0f}, Size{50.0f, 50.0f}));
+    recorder.clip_rect(Rect::from_origin_size(Point{300.0f, 300.0f}, Size{50.0f, 50.0f}));
+    // act
+    recorder.push_layer(0.5f);
+    recorder.draw_rect(Rect::from_origin_size(Point{100.0f, 100.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    recorder.pop_layer();
+    // assert the pair survives the cull, because a lone marker would unbalance the replay (§6.2)
+    ASSERT_TRUE(recorder.clip().empty());
+    ASSERT_EQ(recorder.scene()->commands().size(), 2u);
+    EXPECT_EQ(recorder.scene()->commands()[0].kind(), DrawCommandKind::LayerPush);
+    EXPECT_EQ(recorder.scene()->commands()[1].kind(), DrawCommandKind::LayerPop);
+}
+
 TEST(SceneRecorder, APopWithNoLayerOpenRecordsNothing) {
     // arrange
     SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
