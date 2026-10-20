@@ -115,6 +115,32 @@ fragment float4 albor_fragment(Varyings in [[stage_in]], constant DrawUniforms& 
     return result;
 }
 
+// the two outputs dual source blending reads, which leaves the destination available to the blender
+struct ExactFragment
+{
+    float4 color [[color(0), index(0)]];
+    float4 control [[color(0), index(1)]];
+};
+
+// shade one fragment of a mode that needs the destination, which the fixed factors alone cannot express
+fragment ExactFragment albor_fragment_exact(Varyings in [[stage_in]], constant DrawUniforms& uniforms [[buffer(1)]], texture2d<float> paint [[texture(0)]], sampler paintSampler [[sampler(0)]]) {
+    float4 source = uniforms.color;
+    if (uniforms.hasTexture != 0) {
+        source = paint.sample(paintSampler, in.uv) * uniforms.color;
+    }
+    float scale = coverage(in, uniforms) * scissor_mask(in.position.xy, uniforms);
+    ExactFragment out;
+    out.color = source * scale;
+    // destination atop dims the destination by the source alpha, which the blend control leaves uncovered
+    if (uniforms.blend == COMPOSITION_DESTINATION_ATOP) {
+        float control = scale * (1.0 - source.a);
+        out.control = float4(control, control, control, scale);
+    } else {
+        out.control = float4(scale);
+    }
+    return out;
+}
+
 // the per shadow state, which the silhouette, the blur and the composite read
 struct ShadowUniforms
 {

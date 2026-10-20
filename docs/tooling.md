@@ -148,11 +148,9 @@ and `Paint::fill_rule` selects `NonZero` or `EvenOdd` for a fill. Both follow th
 names the renderer was modelled on. Composition is per draw, not context state. A layer
 composites source-over at its opacity; composition modes apply inside the group.
 
-A translucent source under `SourceIn` differs from the reference in the alpha channel,
-because Porter-Duff source-in keeps the destination alpha while a fixed function blender
-must also use the fragment alpha as the destination factor. A translucent source under
-`DestinationAtop` differs in alpha for the same reason: destination-atop keeps the
-destination alpha. `Copy` differs in alpha the same way, while its colour follows the
-reference on both sides of an antialiased edge. Every other mode matches an opaque
-destination in colour and alpha, which `ATranslucentSourceFollowsEveryMode` holds.
+The three modes whose fixed factors cannot express the reference — `SourceIn`, `Copy` and
+`DestinationAtop` — bind a destination-aware pipeline instead. It writes the premultiplied
+source and a blend control through dual-source blending, so the destination is weighted by
+coverage and, for `DestinationAtop`, by `coverage * (1 - source alpha)`. Alpha factors are
+set per mode, which makes a translucent source over a translucent destination agree as well.
 

@@ -1822,22 +1822,46 @@ TEST(AlborParityChecks, ATranslucentSourceFollowsEveryMode) {
         ASSERT_FALSE(expected_shot.empty());
         ASSERT_FALSE(actual_shot.empty());
         ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
-        // assert every channel agrees within the feathered band, except the alphas a fixed blender cannot hold
-        const std::size_t pixel = (16u * 32u + 16u) * 4u;
-        if (mode == CompositionMode::DestinationAtop || mode == CompositionMode::SourceIn || mode == CompositionMode::Copy) {
-            std::size_t worst = 0;
-            for (std::size_t channel = 0; channel < 3; channel++)
-                for (std::size_t index = channel; index < actual_shot.pixels.size(); index += 4) {
-                    // the channel distance is read as a magnitude, because only its size decides the bound
-                    const int difference = static_cast<int>(actual_shot.pixels[index]) - static_cast<int>(expected_shot.pixels[index]);
-                    // the widest distance over the frame is what the assertion holds
-                    worst = std::max(worst, static_cast<std::size_t>(difference < 0 ? -difference : difference));
-                }
-            EXPECT_LE(worst, 8u);
-            for (std::size_t channel = 0; channel < 3; channel++)
-                EXPECT_NEAR(actual_shot.pixels[pixel + channel], expected_shot.pixels[pixel + channel], 8) << "channel " << channel;
-            continue;
-        }
+        // assert every channel agrees, which the destination-aware pipelines make possible (§6.2)
+        EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 8);
+    }
+}
+
+TEST(AlborParityChecks, ATranslucentSourceFollowsEveryModeOverATranslucentDestination) {
+    // arrange a half transparent plate inside a layer, which leaves a destination alpha to blend against (§6.2)
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{32.0f, 32.0f}, 1.0f);
+    albor::software::SoftwareRendererBackend reference;
+    albor::render::AlborRendererBackend backend;
+    const std::unique_ptr<RenderSurface> expected_surface = reference.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(expected_surface, nullptr);
+    ASSERT_NE(actual_surface, nullptr);
+    const CompositionMode modes[] = {CompositionMode::SourceIn, CompositionMode::DestinationAtop, CompositionMode::Copy};
+    const Paint plate{.fill = Color{.red = 0.8f, .green = 0.2f, .blue = 0.2f, .alpha = 0.6f}};
+    const Paint overlay{.fill = Color{.red = 0.2f, .green = 0.2f, .blue = 0.8f, .alpha = 0.5f}};
+    const AlborRect whole = AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size);
+    for (const CompositionMode mode : modes) {
+        // the trace names the mode a mismatch belongs to, which a loop otherwise hides
+        SCOPED_TRACE(static_cast<int>(mode));
+        // act the plate and the overlay meet inside one group, whose target alpha is not one
+        RenderContext& expected = expected_surface->begin_frame();
+        expected.push_layer(1.0f);
+        expected.draw_rect(whole, plate);
+        expected.draw_rect(whole, Paint{.fill = overlay.fill, .composition = mode});
+        expected.pop_layer();
+        expected_surface->end_frame();
+        RenderContext& actual = actual_surface->begin_frame();
+        actual.push_layer(1.0f);
+        actual.draw_rect(whole, plate);
+        actual.draw_rect(whole, Paint{.fill = overlay.fill, .composition = mode});
+        actual.pop_layer();
+        actual_surface->end_frame();
+        const Screenshot expected_shot = capture_surface(*expected_surface);
+        const Screenshot actual_shot = capture_surface(*actual_surface);
+        // assert the result agrees, which a destination factor that ignores the plate alpha would break (§6.2)
+        ASSERT_FALSE(expected_shot.empty());
+        ASSERT_FALSE(actual_shot.empty());
+        ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
         EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 8);
     }
 }

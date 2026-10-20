@@ -154,6 +154,9 @@ namespace albor::render
             // the pipeline each composition mode binds, indexed by the mode the draw carries (§6.2)
             std::array<id<MTLRenderPipelineState>, COMPOSITION_MODES> pipelines{};
 
+            // the pipelines that read the destination, which the modes a fixed blender cannot express bind (§6.2)
+            std::array<id<MTLRenderPipelineState>, COMPOSITION_MODES> exact_pipelines{};
+
             // the pipeline that rasterizes a rounded silhouette, which a cast is blurred from (§6.2)
             id<MTLRenderPipelineState> shadow_shape = nil;
 
@@ -209,6 +212,27 @@ namespace albor::render
             return state;
         }
 
+        // build a pipeline that reads the destination through dual source blending, which a translucent mode needs (§6.2)
+        id<MTLRenderPipelineState> build_exact_pipeline(id<MTLDevice> device, id<MTLLibrary> library, MTLBlendFactor source_rgb, MTLBlendFactor destination_rgb, MTLBlendFactor source_alpha, MTLBlendFactor destination_alpha) {
+            // the descriptor names the shared vertex stage and the fragment that writes the blend control (§6.2)
+            MTLRenderPipelineDescriptor* descriptor = [[MTLRenderPipelineDescriptor alloc] init];
+            descriptor.vertexFunction = [library newFunctionWithName:@"albor_vertex"];
+            descriptor.fragmentFunction = [library newFunctionWithName:@"albor_fragment_exact"];
+            // the destination factor reads the control attribute, which leaves coverage out of the source term (§6.2)
+            MTLRenderPipelineColorAttachmentDescriptor* attachment = descriptor.colorAttachments[0];
+            attachment.pixelFormat = TARGET_FORMAT;
+            attachment.blendingEnabled = YES;
+            attachment.sourceRGBBlendFactor = source_rgb;
+            attachment.destinationRGBBlendFactor = destination_rgb;
+            attachment.rgbBlendOperation = MTLBlendOperationAdd;
+            attachment.sourceAlphaBlendFactor = source_alpha;
+            attachment.destinationAlphaBlendFactor = destination_alpha;
+            attachment.alphaBlendOperation = MTLBlendOperationAdd;
+            // a pipeline the driver refuses leaves the draw slot empty, which readiness reports (§6.2)
+            NSError* error = nil;
+            return [device newRenderPipelineStateWithDescriptor:descriptor error:&error];
+        }
+
         // build one offscreen pipeline, which the shadow passes share the vertex stage of
         id<MTLRenderPipelineState> build_shadow_pipeline(id<MTLDevice> device, id<MTLLibrary> library, NSString* vertex, NSString* fragment, MTLBlendFactor source, MTLBlendFactor destination) {
             // the descriptor names the two functions and the target format of the offscreen pass (§6.2)
@@ -261,6 +285,12 @@ namespace albor::render
                 }
                 // premultiplied source over the destination is the pipeline a shadow composite resumes with (§6.3)
                 state.pipeline = state.pipelines[0];
+                // the three modes whose result depends on destination alpha use the exact ones (§6.2)
+                state.exact_pipelines[static_cast<std::size_t>(CompositionMode::SourceIn)] = build_exact_pipeline(state.device, state.library, MTLBlendFactorDestinationAlpha, MTLBlendFactorOneMinusSource1Alpha, MTLBlendFactorDestinationAlpha, MTLBlendFactorOneMinusSource1Alpha);
+                // a copy keeps the source alpha while the control leaves the uncovered destination to the blender (§6.2)
+                state.exact_pipelines[static_cast<std::size_t>(CompositionMode::Copy)] = build_exact_pipeline(state.device, state.library, MTLBlendFactorOne, MTLBlendFactorOneMinusSource1Alpha, MTLBlendFactorOne, MTLBlendFactorOneMinusSource1Alpha);
+                // destination atop dims the destination by its alpha and keeps the source alpha (§6.2)
+                state.exact_pipelines[static_cast<std::size_t>(CompositionMode::DestinationAtop)] = build_exact_pipeline(state.device, state.library, MTLBlendFactorOneMinusDestinationAlpha, MTLBlendFactorOneMinusSource1Color, MTLBlendFactorOne, MTLBlendFactorOneMinusSource1Alpha);
                 // the silhouette pass writes the cast alone, which no blend mixes with the clear (§6.2)
                 state.shadow_shape = build_shadow_pipeline(state.device, state.library, @"shadow_vertex", @"shadow_shape", MTLBlendFactorOne, MTLBlendFactorZero);
                 // the blur pass replaces its cleared target, which the one over zero blend and the ping pong give (§6.2)
@@ -283,7 +313,9 @@ namespace albor::render
             state.sampler = [state.device newSamplerStateWithDescriptor:sampler_descriptor];
             // the state is complete only when every piece the draw path binds came up (§6.3)
             const bool composed = std::all_of(state.pipelines.begin(), state.pipelines.end(), [](id<MTLRenderPipelineState> pipeline) { return pipeline != nil; });
-            state.built = state.device != nil && state.queue != nil && state.library != nil && composed && state.shadow_shape != nil && state.shadow_blur != nil && state.white != nil && state.sampler != nil;
+            // the exact pipelines are required, because the three modes would otherwise silently fall back (§6.2)
+            const bool exact = state.exact_pipelines[static_cast<std::size_t>(CompositionMode::SourceIn)] != nil && state.exact_pipelines[static_cast<std::size_t>(CompositionMode::Copy)] != nil && state.exact_pipelines[static_cast<std::size_t>(CompositionMode::DestinationAtop)] != nil;
+            state.built = state.device != nil && state.queue != nil && state.library != nil && composed && exact && state.shadow_shape != nil && state.shadow_blur != nil && state.white != nil && state.sampler != nil;
         }
 
         // the surface the backend presents into, which owns one colour target per frame (§6.2, §6.3)
@@ -707,7 +739,7 @@ namespace albor::render
                     composite_layer(command, texture, target, opacity);
                     encoder = reopen(target, false);
                 }
-                // the final index only closes the layers that reached the end of the frame (§6.2)
+                // the last index closes the layers that reached the end of the frame (§6.2)
                 if (draw_index == m_batch.draws.size())
                     break;
                 // every layer that begins here opens its offscreen pass before its first draw (§6.2)
@@ -739,8 +771,10 @@ namespace albor::render
                 }
                 // a draw with no geometry has nothing to encode, which a cast only frame leaves (§6.2)
                 if (vertices != nil && indices != nil && draw.index_count > 0) {
-                    // the draw binds the pipeline its composition names, which the fixed blender evaluates (§6.2)
-                    [encoder setRenderPipelineState:device_state().pipelines[static_cast<std::size_t>(draw.composition)]];
+                    // the draw binds its composition pipeline, and the three exact modes use theirs (§6.2)
+                    const std::size_t composition = static_cast<std::size_t>(draw.composition);
+                    const id<MTLRenderPipelineState> exact = device_state().exact_pipelines[composition];
+                    [encoder setRenderPipelineState:exact != nil ? exact : device_state().pipelines[composition]];
                     DrawUniforms uniforms{};
                     // the packed colour unpacks into premultiplied channels, which the shader multiplies through
                     const float alpha = static_cast<float>((draw.color >> 24) & 0xFFu) / 255.0f;
