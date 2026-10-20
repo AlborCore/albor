@@ -145,7 +145,7 @@ target_compile_features(albor-blend2d-auto-checks PRIVATE cxx_std_23)
 target_link_libraries(albor-blend2d-auto-checks PRIVATE GTest::gtest_main albor-render-blend2d-auto)
 gtest_discover_tests(albor-blend2d-auto-checks DISCOVERY_TIMEOUT 60)
 
-# the window half of the install only exists where the macos presenter does, so its suite joins under apple (§5.3, AD-16)
+# the apple window half of the install only exists where the macos presenter does, so its suite joins under apple (§5.3, AD-16)
 #
 # the suite builds a real foreign object for the handle, which the presenter refuses by kind, so it is an
 # objective c++ source and carries arc like the other conditional platform suites (§5.3, AD-16)
@@ -153,6 +153,11 @@ if(APPLE)
     target_sources(albor-blend2d-auto-checks PRIVATE "./conditional/blend2d_window_auto.test.macos.mm")
     set_source_files_properties("./conditional/blend2d_window_auto.test.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(albor-blend2d-auto-checks PRIVATE "-framework Foundation")
+endif()
+
+# the win32 window half builds a swapchain on a hidden window, which the suite drives through the real factory (§5.3, AD-16)
+if(WIN32)
+    target_sources(albor-blend2d-auto-checks PRIVATE "./conditional/blend2d_window_auto.test.win32.c++")
 endif()
 
 # the albor load time install checks need the whole archive link, which the main test binary cannot take (§6.3, AD-26)
