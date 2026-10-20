@@ -1,5 +1,6 @@
 #include <cmath>
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <span>
 #include <vector>
@@ -671,6 +672,25 @@ TEST(ExpandStrokeChecks, BevelsTheSpikeOfAnOpenSliver) {
     EXPECT_LE(max_y, 5.01f);
 }
 
+TEST(ExpandStrokeChecks, DoesNotRepeatTheVerticesOfABevelJoin) {
+    // arrange an open turn stroked with the bevel join, which must not emit duplicate vertices
+    const PathVerb verbs[3] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo};
+    const Point points[3] = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 10.0f, .y = 10.0f}, Point{.x = 20.0f, .y = 0.0f}};
+    std::vector<Contour> contours = build_contours(verbs, points);
+    FrameBatch batch;
+    // act
+    const StrokeEmission emission = expand_stroke(batch, contours[0], 2.0f, Cap::Butt, Join::Bevel, 4.0f, 0.25f);
+    // assert
+    EXPECT_NEAR(emission.alpha, 1.0f, 0.0001f);
+    ASSERT_GE(batch.vertices.size(), 2u);
+    // a repeated station would create zero area triangles, which the bevel join leaves to the miter branch
+    for (std::size_t index = 0; index + 1 < batch.vertices.size(); index++) {
+        const BatchVertex& current = batch.vertices[index];
+        const BatchVertex& next = batch.vertices[index + 1];
+        EXPECT_FALSE(current.x == next.x && current.y == next.y);
+    }
+}
+
 TEST(ContourChecks, MergesAPointThatRepeatsItsPredecessor) {
     // arrange a square whose second corner repeats the first
     const PathVerb verbs[6] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
@@ -1219,6 +1239,45 @@ TEST(AlborRenderContextChecks, RefusesAZeroWidthPolyline) {
     EXPECT_TRUE(batch.draws.empty());
 }
 
+TEST(AlborRenderContextChecks, CollapsesConsecutivePolylineDuplicates) {
+    // arrange the same line with a repeated point at each end and without the repeats
+    FrameBatch repeated_batch;
+    FrameBatch clean_batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext repeated_context(repeated_batch, extent, 1.0f);
+    AlborRenderContext clean_context(clean_batch, extent, 1.0f);
+    const Point repeated[4] = {Point{.x = 10.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 10.0f}, Point{.x = 50.0f, .y = 10.0f}, Point{.x = 50.0f, .y = 10.0f}};
+    const Point clean[2] = {Point{.x = 10.0f, .y = 10.0f}, Point{.x = 50.0f, .y = 10.0f}};
+    const StrokeStyle stroke{.color = Color::rgb(1.0f, 0.0f, 0.0f), .width = 4.0f};
+    // act the repeated points span no segment, so they must not add a cap or join
+    repeated_context.draw_polyline(repeated, stroke);
+    clean_context.draw_polyline(clean, stroke);
+    // assert the repeated run produces the same geometry as the clean one
+    ASSERT_EQ(repeated_batch.draws.size(), 1u);
+    ASSERT_EQ(clean_batch.draws.size(), 1u);
+    ASSERT_EQ(repeated_batch.vertices.size(), clean_batch.vertices.size());
+    ASSERT_EQ(repeated_batch.indices.size(), clean_batch.indices.size());
+    for (std::size_t index = 0; index < repeated_batch.vertices.size(); index++) {
+        EXPECT_FLOAT_EQ(repeated_batch.vertices[index].x, clean_batch.vertices[index].x);
+        EXPECT_FLOAT_EQ(repeated_batch.vertices[index].y, clean_batch.vertices[index].y);
+        EXPECT_FLOAT_EQ(repeated_batch.vertices[index].lateral, clean_batch.vertices[index].lateral);
+        EXPECT_FLOAT_EQ(repeated_batch.vertices[index].longitudinal, clean_batch.vertices[index].longitudinal);
+    }
+    EXPECT_EQ(repeated_batch.indices, clean_batch.indices);
+}
+
+TEST(AlborRenderContextChecks, RefusesAPolylineThatCollapsesToAPoint) {
+    // arrange three copies of one point, whose repeats leave no segment to stroke
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    const Point points[3] = {Point{.x = 10.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 10.0f}};
+    // act
+    context.draw_polyline(points, StrokeStyle{.color = Color::rgb(1.0f, 0.0f, 0.0f), .width = 4.0f});
+    // assert
+    EXPECT_TRUE(batch.draws.empty());
+}
+
 TEST(AlborRenderContextChecks, RecordsAShadowAsACastTheDrawComposites) {
     // arrange
     FrameBatch batch;
@@ -1246,6 +1305,24 @@ TEST(AlborRenderContextChecks, RefusesAShadowThatCastsNothing) {
     AlborRenderContext context(batch, extent, 1.0f);
     // act
     context.draw_shadow(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}), 4.0f, Shadow{});
+    // assert
+    EXPECT_TRUE(batch.shadows.empty());
+    EXPECT_TRUE(batch.draws.empty());
+}
+
+TEST(AlborRenderContextChecks, RefusesAShadowWithNonFiniteGeometry) {
+    // arrange a valid caster beside the non finite values a data driven shadow can carry
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    const Rect rect = Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f});
+    const Color color = Color::rgba(0.0f, 0.0f, 0.0f, 0.5f);
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const float infinity = std::numeric_limits<float>::infinity();
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act each non finite input is refused, because its device bound or blur has no finite size
+    context.draw_shadow(rect, 4.0f, Shadow{.color = color, .offset = Point{.x = nan, .y = 2.0f}, .blur = 4.0f});
+    context.draw_shadow(rect, 4.0f, Shadow{.color = color, .offset = Point{.x = 0.0f, .y = 2.0f}, .blur = infinity});
+    context.draw_shadow(Rect{.x = 10.0f, .y = 10.0f, .width = nan, .height = 20.0f}, 4.0f, Shadow{.color = color, .offset = Point{.x = 0.0f, .y = 2.0f}, .blur = 4.0f});
     // assert
     EXPECT_TRUE(batch.shadows.empty());
     EXPECT_TRUE(batch.draws.empty());
@@ -1580,9 +1657,9 @@ TEST(AlborRenderContextChecks, CarriesTheScissorOfAClippedDraw) {
     // the half extents are half the clip in device pixels, which the shader compares a fragment against
     EXPECT_NEAR(scissor.extent_x, 40.0f, 0.0001f);
     EXPECT_NEAR(scissor.extent_y, 20.0f, 0.0001f);
-    // the scales turn the extent into a one device pixel ramp, which doubles with the device scale
-    EXPECT_NEAR(scissor.scale_x, 2.0f, 0.0001f);
-    EXPECT_NEAR(scissor.scale_y, 2.0f, 0.0001f);
+    // the extents are already device pixels, so the feather stays one device pixel wide at any device scale
+    EXPECT_NEAR(scissor.scale_x, 1.0f, 0.0001f);
+    EXPECT_NEAR(scissor.scale_y, 1.0f, 0.0001f);
     // the inverse maps a raster position onto the clip centre, which the extent then compares against
     const Point mapped = scissor.inverse.apply(Point{.x = 60.0f, .y = 60.0f});
     EXPECT_NEAR(mapped.x, 0.0f, 0.0001f);
@@ -1600,6 +1677,22 @@ TEST(AlborRenderContextChecks, CutsEverythingAwayForAClipPushedUnderACollapsedTr
     context.set_transform(Transform{});
     context.draw_rect(extent, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
     // assert
+    EXPECT_TRUE(context.clip().empty());
+    EXPECT_TRUE(batch.draws.empty());
+    EXPECT_FALSE(context.scissor().enabled);
+}
+
+TEST(AlborRenderContextChecks, CutsEverythingAwayForARoundedClipPushedUnderACollapsedTransform) {
+    // arrange a rounded clip whose determinant collapses while the transform is pushed
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    // act
+    context.set_transform(Transform::scaling(0.0f, 0.0f));
+    context.clip_rounded_rect(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}), 8.0f);
+    context.set_transform(Transform{});
+    context.draw_rect(extent, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    // assert the singular clip cuts every draw, exactly as the rectangular one does
     EXPECT_TRUE(context.clip().empty());
     EXPECT_TRUE(batch.draws.empty());
     EXPECT_FALSE(context.scissor().enabled);

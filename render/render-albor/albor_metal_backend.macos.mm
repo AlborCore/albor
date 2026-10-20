@@ -343,7 +343,7 @@ namespace albor::render
             void allocate();
 
             // copy every image the frame carries into the texture cache, which a later frame reuses (AD-06)
-            void upload_textures();
+            void upload_textures(id<MTLCommandBuffer> command);
 
             // encode every recorded draw of the batch into the frame (§6.3)
             void encode(id<MTLCommandBuffer> command, MTLRenderPassDescriptor* pass) const;
@@ -479,18 +479,27 @@ namespace albor::render
         void blur_pass(id<MTLCommandBuffer> command, id<MTLTexture> source, id<MTLTexture> target, ShadowUniforms uniforms, float dx, float dy, float step, float width, float height);
 
         void AlborRenderSurface::composite_shadow(id<MTLCommandBuffer> command, const BatchShadow& shadow, id<MTLTexture> target) const {
-            // the offscreen target covers the caster plus the reach, and the edge ramp spans half a device pixel (§6.2)
+            // the offscreen target covers the caster plus the reach, clipped to the frame it lands on (§6.2)
             const float reach = std::max(shadow.reach, 1.0f);
-            const float left = shadow.rect.x - reach;
-            const float top = shadow.rect.y - reach;
-            const float width = shadow.rect.width + reach * 2.0f;
-            const float height = shadow.rect.height + reach * 2.0f;
+            const float left = std::max(shadow.rect.x - reach, 0.0f);
+            const float top = std::max(shadow.rect.y - reach, 0.0f);
+            const float right = std::min(shadow.rect.x + shadow.rect.width + reach, static_cast<float>(target.width));
+            const float bottom = std::min(shadow.rect.y + shadow.rect.height + reach, static_cast<float>(target.height));
+            // a cast entirely outside the frame reaches no pixel, so its offscreen passes stay unallocated (§6.2)
+            if (right <= left || bottom <= top)
+                return;
+            // the two offscreen dimensions never exceed the frame, which bounds the allocation a blur can request (§6.2)
+            const float width = right - left;
+            const float height = bottom - top;
             // two offscreen targets ping pong the silhouette through the two blur directions (§6.2)
             MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:TARGET_FORMAT width:static_cast<NSUInteger>(width) height:static_cast<NSUInteger>(height) mipmapped:NO];
             descriptor.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
             descriptor.storageMode = MTLStorageModePrivate;
             id<MTLTexture> silhouette = [device_state().device newTextureWithDescriptor:descriptor];
             id<MTLTexture> scratch = [device_state().device newTextureWithDescriptor:descriptor];
+            // a refused offscreen target leaves the cast unpainted, because the blur has no surface to land on (§6.2)
+            if (silhouette == nil || scratch == nil)
+                return;
             // the silhouette carries the cast colour, which the blur then spreads (§6.2)
             ShadowUniforms uniforms{};
             uniforms.color[0] = static_cast<float>(shadow.color & 0xFFu) / 255.0f;
@@ -577,7 +586,7 @@ namespace albor::render
             id<MTLRenderCommandEncoder> cast = [command renderCommandEncoderWithDescriptor:composite];
             [cast setRenderPipelineState:device_state().pipeline];
             [cast setFragmentSamplerState:device_state().sampler atIndex:0];
-            [cast setVertexBuffer:[device_state().device newBufferWithBytes:quad length:sizeof(quad) options:MTLResourceStorageModeShared] offset:0 atIndex:0];
+            [cast setVertexBytes:quad length:sizeof(quad) atIndex:0];
             [cast setVertexBytes:&draw length:sizeof(draw) atIndex:1];
             [cast setFragmentBytes:&draw length:sizeof(draw) atIndex:1];
             [cast setFragmentTexture:silhouette atIndex:0];
@@ -617,7 +626,7 @@ namespace albor::render
             id<MTLRenderCommandEncoder> encoder = [command renderCommandEncoderWithDescriptor:pass];
             [encoder setRenderPipelineState:device_state().pipeline];
             [encoder setFragmentSamplerState:device_state().sampler atIndex:0];
-            [encoder setVertexBuffer:[device_state().device newBufferWithBytes:quad length:sizeof(quad) options:MTLResourceStorageModeShared] offset:0 atIndex:0];
+            [encoder setVertexBytes:quad length:sizeof(quad) atIndex:0];
             [encoder setVertexBytes:&draw length:sizeof(draw) atIndex:1];
             [encoder setFragmentBytes:&draw length:sizeof(draw) atIndex:1];
             [encoder setFragmentTexture:layer atIndex:0];
@@ -645,7 +654,7 @@ namespace albor::render
             [encoder endEncoding];
         }
 
-        void AlborRenderSurface::upload_textures() {
+        void AlborRenderSurface::upload_textures(id<MTLCommandBuffer> command) {
             // a texture a draw references stays resident, which the eviction reads as its last use (AD-06)
             for (const BatchDraw& draw : m_batch.draws) {
                 // a draw that samples no texture reaches nothing, which is the case of a solid fill (AD-06)
@@ -667,13 +676,10 @@ namespace albor::render
                 [texture replaceRegion:MTLRegionMake2D(0, 0, upload.image->width(), upload.image->height()) mipmapLevel:0 withBytes:upload.image->pixels().data() bytesPerRow:upload.image->row_bytes()];
                 // a mip chain keeps a minified image from aliasing, which the reference also avoids (§6.4, AD-26)
                 if (texture.mipmapLevelCount > 1) {
-                    // the chain is generated on the queue, which the same frame then samples (§6.4)
-                    id<MTLCommandBuffer> mips = [device_state().queue commandBuffer];
-                    id<MTLBlitCommandEncoder> blit = [mips blitCommandEncoder];
+                    // the chain is generated on the frame command buffer, which the frame samples after the blit (§6.4)
+                    id<MTLBlitCommandEncoder> blit = [command blitCommandEncoder];
                     [blit generateMipmapsForTexture:texture];
                     [blit endEncoding];
-                    [mips commit];
-                    [mips waitUntilCompleted];
                 }
                 // the texture joins the cache under the identifier its image carries, aged to this frame (AD-06)
                 m_textures.store(upload.id, texture);
@@ -842,7 +848,7 @@ namespace albor::render
                 pass.colorAttachments[0].storeAction = MTLStoreActionStore;
                 pass.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 0.0);
                 // the images the frame carries become textures once, which a later frame reuses (AD-06)
-                upload_textures();
+                upload_textures(command);
                 // the encode replays every recorded draw, closing the pass around each shadow (§6.3)
                 encode(command, pass);
                 // a windowed frame blits the target onto the drawable, which keeps one pixel path for both kinds (§6.3)

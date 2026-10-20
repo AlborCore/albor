@@ -73,6 +73,12 @@ namespace albor::render
     void AlborRenderContext::clip_rounded_rect(const Rect& rect, float radius) {
         // the clip freezes the transform it is pushed under, which a later transform must not move (§6.2)
         m_clip_device = device_transform();
+        // a rounded clip pushed under a collapsed transform spans no device area, so it cuts everything away (§6.2)
+        const float determinant = m_clip_device.scale_x * m_clip_device.scale_y - m_clip_device.skew_x * m_clip_device.skew_y;
+        if (std::abs(determinant) < SINGULAR_LIMIT) {
+            m_clip = ClipState{};
+            return;
+        }
         // a rounded clip narrows the area and keeps the radius only where it governs (§6.2)
         clip_to_rounded_rect(m_clip, rect, radius);
     }
@@ -173,6 +179,9 @@ namespace albor::render
             const float top = std::round(std::min(origin.y, corner.y));
             const float right = std::round(std::max(origin.x, corner.x));
             const float bottom = std::round(std::max(origin.y, corner.y));
+            // the box is already in device pixels, so the ramp stays one device pixel wide
+            result.scale_x = 1.0f / FRINGE;
+            result.scale_y = 1.0f / FRINGE;
             // an identity inverse compares the raster position against the box centre (§6.2)
             result.inverse = Transform{};
             result.extent_x = (right - left) * 0.5f;
@@ -311,12 +320,18 @@ namespace albor::render
         // the vertices join into one open contour, which the polyline stroke walks (§6.2)
         Contour contour;
         for (const Point& point : points) {
+            // a point on top of its predecessor spans no segment, so it adds no cap or join to the contour
+            if (!contour.points.empty() && point == contour.points.back().position)
+                continue;
             // every vertex corners at, which the round join reads
             ContourPoint vertex;
             vertex.position = point;
             vertex.flags = Corner;
             contour.points.push_back(vertex);
         }
+        // a run that collapses onto one point puts no ink down, which the stroke has no segment to carry
+        if (contour.points.size() < 2)
+            return;
         // the ends and the elbows both close roundly, which is how a control glyph reads (§6.2)
         emit_stroke(contour, stroke.color, stroke.width, Cap::Round, Join::Round, stroke.composition);
     }
@@ -324,6 +339,9 @@ namespace albor::render
     void AlborRenderContext::draw_shadow(const Rect& rect, float radius, const Shadow& shadow) {
         // a cast needs both a colour and a shape, because one without the other puts no ink down (§6.2)
         if (!drawable() || !shadow.casts() || rect.empty())
+            return;
+        // a cast with a non finite bound or kernel cannot be sized or blurred, so it puts no ink down (§6.2)
+        if (!std::isfinite(rect.x) || !std::isfinite(rect.y) || !std::isfinite(rect.width) || !std::isfinite(rect.height) || !std::isfinite(radius) || !std::isfinite(shadow.offset.x) || !std::isfinite(shadow.offset.y) || !std::isfinite(shadow.blur))
             return;
         // the caster moves by the shadow offset, which is where the cast falls (§6.2)
         const Rect caster = Rect::from_origin_size(Point{.x = rect.x + shadow.offset.x, .y = rect.y + shadow.offset.y}, Size{.width = rect.width, .height = rect.height});

@@ -160,14 +160,8 @@ namespace albor::render
                 // the cross from the inner side to the outer side of the incoming segment
                 sequence.push_back(StripVertex{.x = inner0.x, .y = inner0.y, .lateral = lateral_in});
                 sequence.push_back(StripVertex{.x = point.position.x - normal0.x * width, .y = point.position.y - normal0.y * width, .lateral = lateral_out});
-                // a bevelled corner splits the outer edge, which a mitered one stitches through the centre
-                if ((point.flags & Bevel) != 0u) {
-                    sequence.push_back(StripVertex{.x = inner0.x, .y = inner0.y, .lateral = lateral_in});
-                    sequence.push_back(StripVertex{.x = point.position.x - normal0.x * width, .y = point.position.y - normal0.y * width, .lateral = lateral_out});
-                    sequence.push_back(StripVertex{.x = inner1.x, .y = inner1.y, .lateral = lateral_in});
-                    sequence.push_back(StripVertex{.x = point.position.x - normal1.x * width, .y = point.position.y - normal1.y * width, .lateral = lateral_out});
-                }
-                else {
+                // a bevelled corner crosses straight out, while a mitered one stitches through the centre
+                if ((point.flags & Bevel) == 0u) {
                     // the mitered outer point the wedge stitches through
                     const Point miter = Point{.x = point.position.x - point.miter_x * width, .y = point.position.y - point.miter_y * width};
                     sequence.push_back(StripVertex{.x = point.position.x, .y = point.position.y, .lateral = 0.5f});
@@ -189,14 +183,8 @@ namespace albor::render
                 // the cross from the inner side to the outer side of the incoming segment
                 sequence.push_back(StripVertex{.x = point.position.x + normal0.x * width, .y = point.position.y + normal0.y * width, .lateral = lateral_in});
                 sequence.push_back(StripVertex{.x = outer0.x, .y = outer0.y, .lateral = lateral_out});
-                // a bevelled corner splits the outer edge, which a mitered one stitches through the centre
-                if ((point.flags & Bevel) != 0u) {
-                    sequence.push_back(StripVertex{.x = point.position.x + normal0.x * width, .y = point.position.y + normal0.y * width, .lateral = lateral_in});
-                    sequence.push_back(StripVertex{.x = outer0.x, .y = outer0.y, .lateral = lateral_out});
-                    sequence.push_back(StripVertex{.x = point.position.x + normal1.x * width, .y = point.position.y + normal1.y * width, .lateral = lateral_in});
-                    sequence.push_back(StripVertex{.x = outer1.x, .y = outer1.y, .lateral = lateral_out});
-                }
-                else {
+                // a bevelled corner crosses straight out, while a mitered one stitches through the centre
+                if ((point.flags & Bevel) == 0u) {
                     // the mitered inner point the wedge stitches through
                     const Point miter = Point{.x = point.position.x + point.miter_x * width, .y = point.position.y + point.miter_y * width};
                     sequence.push_back(StripVertex{.x = point.position.x + normal0.x * width, .y = point.position.y + normal0.y * width, .lateral = lateral_in});
