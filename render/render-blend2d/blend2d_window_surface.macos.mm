@@ -6,7 +6,6 @@
 #import <QuartzCore/CAMetalLayer.h>
 
 #include <cstdint>
-#include <cstring>
 #include <memory>
 #include <mutex>
 #include <utility>
@@ -54,7 +53,7 @@ namespace albor::blend2d
         class WindowSurface final : public RenderSurface
         {
         public:
-            WindowSurface(CAMetalLayer* layer, std::unique_ptr<RenderSurface> raster, WindowMetrics metrics) :
+            WindowSurface(CAMetalLayer* layer, std::unique_ptr<Blend2DRenderSurface> raster, WindowMetrics metrics) :
                 m_layer(layer), m_raster(std::move(raster)), m_metrics(std::move(metrics)) {
                 // the layer draws from the shared device pool, which keeps two windows on one queue (§6.3)
                 m_layer.device = process_device();
@@ -128,13 +127,6 @@ namespace albor::blend2d
         private:
             // copy the finished raster into the drawable, which the layer presents (§6.3)
             void present() {
-                // the read is canonical rgba, whose red and blue swap back into the bga the metal expects (§6.3, AD-26)
-                std::vector<std::uint8_t> pixels = m_raster->read_pixels();
-                if (pixels.empty())
-                    return;
-                // the red and blue swap is in place, because a read back and a present want opposite orders (§6.3)
-                for (std::size_t index = 0; index < pixels.size(); index += 4)
-                    std::swap(pixels[index], pixels[index + 2]);
                 // the extent is the physical size the metrics shaped the raster into (§6.3, AD-27)
                 const std::size_t width = static_cast<std::size_t>(m_metrics.pixel_size.width);
                 const std::size_t height = static_cast<std::size_t>(m_metrics.pixel_size.height);
@@ -144,12 +136,14 @@ namespace albor::blend2d
                 if (device == nil)
                     return;
                 // the staging buffer lives in shared memory, which the copier reads from directly (§6.3)
-                const std::size_t bytes = pixels.size();
+                const std::size_t bytes = row * height;
                 id<MTLBuffer> stage = [device newBufferWithLength:bytes options:MTLResourceStorageModeShared];
                 if (stage == nil || stage.contents == nullptr)
                     return;
+                // the native raster is already premultiplied bgra, so it lands without a read back or a swap (§6.3, AD-26)
+                if (!m_raster->copy_native_pixels(stage.contents, row))
+                    return;
                 // the buffer is exercised once it lands, so the copier sees the flushed contents (§6.3)
-                std::memcpy(stage.contents, pixels.data(), bytes);
                 [stage didModifyRange:NSMakeRange(0, bytes)];
                 // the drawable is the back buffer, which may be vacant when the queue is under pressure (§6.3)
                 id<CAMetalDrawable> drawable = [m_layer nextDrawable];
@@ -170,8 +164,8 @@ namespace albor::blend2d
             // the native layer the window attached, which is borrowed and never owned (§5.3)
             CAMetalLayer* m_layer = nil;
 
-            // the cpu raster the frame is drawn and read back through (§6.3)
-            std::unique_ptr<RenderSurface> m_raster;
+            // the cpu raster the frame is drawn and presented through (§6.3)
+            std::unique_ptr<Blend2DRenderSurface> m_raster;
 
             // the metrics the layer is sized against (§6.2)
             WindowMetrics m_metrics;
@@ -194,7 +188,7 @@ namespace albor::blend2d
             if (process_device() == nil || process_queue() == nil)
                 return nullptr;
             // the raster is the frame source, which the layer-backed surface presents and reads (§6.3)
-            std::unique_ptr<RenderSurface> raster = Blend2DRenderSurface::create(metrics);
+            std::unique_ptr<Blend2DRenderSurface> raster = Blend2DRenderSurface::create(metrics);
             if (raster == nullptr)
                 return nullptr;
             // the surface is built through its private constructor, which owns the raster (§5.3)

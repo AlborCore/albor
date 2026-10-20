@@ -11,7 +11,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <memory>
 #include <mutex>
 #include <utility>
@@ -157,7 +156,7 @@ namespace albor::blend2d
         class WindowSurface final : public RenderSurface
         {
         public:
-            WindowSurface(HWND window, std::unique_ptr<RenderSurface> raster, WindowMetrics metrics) :
+            WindowSurface(HWND window, std::unique_ptr<Blend2DRenderSurface> raster, WindowMetrics metrics) :
                 m_window(window), m_raster(std::move(raster)), m_metrics(std::move(metrics)) {
                 // the buffers attach to the process device, which keeps two windows on one pool (§6.3)
                 m_swap_chain = create_swap_chain(m_metrics);
@@ -237,22 +236,6 @@ namespace albor::blend2d
         private:
             // copy the finished raster into the back buffer, which the swapchain presents (§6.3)
             void present() {
-                // the read is canonical rgba, whose red and blue swap back into the bgra the display expects (§6.3, AD-26)
-                std::vector<std::uint8_t> pixels = m_raster->read_pixels();
-                // a raster with no finished frame has nothing to copy, which skips the present (§6.3)
-                if (pixels.empty())
-                    return;
-                // the extent is the physical size the metrics shaped the raster into (§6.3, AD-27)
-                const std::size_t width = static_cast<std::size_t>(m_metrics.pixel_size.width);
-                const std::size_t height = static_cast<std::size_t>(m_metrics.pixel_size.height);
-                // the row is tightly packed, which is the layout the read back promises (§6.3)
-                const std::size_t row = width * 4u;
-                // a read that does not match the buffers cannot land in them, so the copy refuses before it swaps (§6.3)
-                if (pixels.size() != row * height)
-                    return;
-                // the red and blue swap is in place, because a read back and a present want opposite orders (§6.3)
-                for (std::size_t index = 0; index < pixels.size(); index += 4)
-                    std::swap(pixels[index], pixels[index + 2]);
                 // a host without a context or a swapchain has no buffer to land on, so the present refuses (§6.3)
                 ID3D11DeviceContext* context = process_context();
                 if (context == nullptr || m_swap_chain == nullptr || m_upload == nullptr)
@@ -267,9 +250,12 @@ namespace albor::blend2d
                 D3D11_MAPPED_SUBRESOURCE mapped{};
                 if (context->Map(m_upload.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped) != S_OK)
                     return;
-                // the frame is copied row by row, because the map pitch may exceed the tightly packed read (§6.3)
-                for (std::size_t y = 0; y < height; y++)
-                    std::memcpy(static_cast<std::uint8_t*>(mapped.pData) + y * mapped.RowPitch, pixels.data() + y * row, row);
+                // the native raster is already premultiplied bgra, so it lands without a read back or a swap (§6.3, AD-26)
+                if (!m_raster->copy_native_pixels(mapped.pData, mapped.RowPitch)) {
+                    // a refused copy must still close the map, which is what makes the texture writable again (§6.3)
+                    context->Unmap(m_upload.Get(), 0);
+                    return;
+                }
                 // the upload is closed before the copy reads it, which is what publishes the rows to the device (§6.3)
                 context->Unmap(m_upload.Get(), 0);
                 // the copy lands the whole frame in the back buffer, which the present then shows (§6.3)
@@ -340,8 +326,8 @@ namespace albor::blend2d
             // the visual whose content is the swapchain, which composes the frame (§5.3)
             ComPtr<IDCompositionVisual> m_visual;
 
-            // the cpu raster the frame is drawn and read back through (§6.3)
-            std::unique_ptr<RenderSurface> m_raster;
+            // the cpu raster the frame is drawn and presented through (§6.3)
+            std::unique_ptr<Blend2DRenderSurface> m_raster;
 
             // the metrics the swapchain is sized against (§6.2)
             WindowMetrics m_metrics;
@@ -364,7 +350,7 @@ namespace albor::blend2d
             if (process_device() == nullptr || process_context() == nullptr || process_factory() == nullptr)
                 return nullptr;
             // the raster is the frame source, which the swapchain-backed surface presents and reads (§6.3)
-            std::unique_ptr<RenderSurface> raster = Blend2DRenderSurface::create(metrics);
+            std::unique_ptr<Blend2DRenderSurface> raster = Blend2DRenderSurface::create(metrics);
             if (raster == nullptr)
                 return nullptr;
             // the surface is built through its private constructor, which owns the raster (§5.3)

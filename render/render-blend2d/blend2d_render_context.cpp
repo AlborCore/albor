@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -77,10 +78,25 @@ namespace albor::blend2d
             return BL_COMP_OP_SRC_OVER;
         }
 
-        // blur an image in place with two box passes, the soft shadow edge blend2d has no primitive for (§6.2)
+        // average a window sum with rounding, because truncation biases every blurred edge downward (§6.2)
+        [[nodiscard]] std::uint8_t box_average(std::int64_t sum, int window) {
+            // the half window rounds to the nearest byte rather than always down (§6.2)
+            return static_cast<std::uint8_t>((sum + window / 2) / window);
+        }
+
+        // clamp a window offset to the raster, because a blur samples the edge rather than beyond it (§6.2)
+        [[nodiscard]] int box_index(std::int64_t index, int extent) {
+            // the extent is positive, so the clamp has a valid last index (§6.2)
+            return static_cast<int>(std::clamp(index, std::int64_t{0}, static_cast<std::int64_t>(extent - 1)));
+        }
+
+        // blur an image in place with two sliding box passes, the soft shadow edge blend2d has no primitive for (§6.2)
         void blur_box(BLImageData& data, int radius) {
             // a radius below one leaves the image untouched, because a zero window is no blur at all (§6.2)
             if (radius < 1)
+                return;
+            // a window that overflows the channel sums is refused, which keeps every count bounded (§6.2)
+            if (radius > (std::numeric_limits<int>::max() - 1) / 2)
                 return;
             // the extent is read once, because both passes walk the same rows and then the same columns (§6.2)
             const int width = data.size.w;
@@ -95,57 +111,76 @@ namespace albor::blend2d
             const int window = radius * 2 + 1;
             // the horizontal result is held aside, because the vertical pass reads it back rather than the source (§6.2)
             std::vector<std::uint8_t> temporary(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4);
-            // every row is averaged across the window, which softens the edge horizontally (§6.2)
+            // every row slides a window, which costs one add and one remove per pixel (§6.2)
             for (int y = 0; y < height; y++) {
                 const std::uint8_t* source_row = base + static_cast<std::intptr_t>(y) * stride;
                 std::uint8_t* temporary_row = temporary.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(width) * 4;
+                // the window starts at the left edge, where every sample clamps to the first pixel (§6.2)
+                std::int64_t sum_blue = 0;
+                std::int64_t sum_green = 0;
+                std::int64_t sum_red = 0;
+                std::int64_t sum_alpha = 0;
+                for (int offset = -radius; offset <= radius; offset++) {
+                    // the sample is clamped to the row, because a blur has no pixel beyond the edge to read (§6.2)
+                    const std::uint8_t* pixel = source_row + static_cast<std::size_t>(box_index(offset, width)) * 4;
+                    sum_blue += pixel[0];
+                    sum_green += pixel[1];
+                    sum_red += pixel[2];
+                    sum_alpha += pixel[3];
+                }
                 for (int x = 0; x < width; x++) {
-                    // the four channels are summed over the clamped window, so an edge repeats rather than darkens (§6.2)
-                    int sum_blue = 0;
-                    int sum_green = 0;
-                    int sum_red = 0;
-                    int sum_alpha = 0;
-                    for (int offset = -radius; offset <= radius; offset++) {
-                        // the sample is clamped to the row, because a blur has no pixel beyond the edge to read (§6.2)
-                        const int sample = std::clamp(x + offset, 0, width - 1);
-                        const std::uint8_t* pixel = source_row + static_cast<std::size_t>(sample) * 4;
-                        sum_blue += pixel[0];
-                        sum_green += pixel[1];
-                        sum_red += pixel[2];
-                        sum_alpha += pixel[3];
-                    }
                     // the average is written in the same palette order the source used (§6.3)
                     std::uint8_t* destination = temporary_row + static_cast<std::size_t>(x) * 4;
-                    destination[0] = static_cast<std::uint8_t>(sum_blue / window);
-                    destination[1] = static_cast<std::uint8_t>(sum_green / window);
-                    destination[2] = static_cast<std::uint8_t>(sum_red / window);
-                    destination[3] = static_cast<std::uint8_t>(sum_alpha / window);
+                    destination[0] = box_average(sum_blue, window);
+                    destination[1] = box_average(sum_green, window);
+                    destination[2] = box_average(sum_red, window);
+                    destination[3] = box_average(sum_alpha, window);
+                    // the next window drops the pixel leaving behind and adds the one entering (§6.2)
+                    const std::uint8_t* leaving = source_row + static_cast<std::size_t>(box_index(static_cast<std::int64_t>(x) - radius, width)) * 4;
+                    const std::uint8_t* entering = source_row + static_cast<std::size_t>(box_index(static_cast<std::int64_t>(x) + radius + 1, width)) * 4;
+                    sum_blue += entering[0] - leaving[0];
+                    sum_green += entering[1] - leaving[1];
+                    sum_red += entering[2] - leaving[2];
+                    sum_alpha += entering[3] - leaving[3];
                 }
             }
-            // every column is averaged down the window, which softens the edge vertically (§6.2)
-            for (int y = 0; y < height; y++) {
-                std::uint8_t* destination_row = base + static_cast<std::intptr_t>(y) * stride;
-                for (int x = 0; x < width; x++) {
-                    int sum_blue = 0;
-                    int sum_green = 0;
-                    int sum_red = 0;
-                    int sum_alpha = 0;
-                    for (int offset = -radius; offset <= radius; offset++) {
-                        // the sample is clamped to the column, because a blur has no pixel beyond the edge to read (§6.2)
-                        const int sample = std::clamp(y + offset, 0, height - 1);
-                        const std::uint8_t* pixel = temporary.data() + static_cast<std::size_t>(sample) * static_cast<std::size_t>(width) * 4 + static_cast<std::size_t>(x) * 4;
-                        sum_blue += pixel[0];
-                        sum_green += pixel[1];
-                        sum_red += pixel[2];
-                        sum_alpha += pixel[3];
-                    }
-                    std::uint8_t* pixel = destination_row + static_cast<std::size_t>(x) * 4;
-                    pixel[0] = static_cast<std::uint8_t>(sum_blue / window);
-                    pixel[1] = static_cast<std::uint8_t>(sum_green / window);
-                    pixel[2] = static_cast<std::uint8_t>(sum_red / window);
-                    pixel[3] = static_cast<std::uint8_t>(sum_alpha / window);
+            // every column slides the same window down the temporary rows, which softens the edge vertically (§6.2)
+            for (int x = 0; x < width; x++) {
+                // the window starts at the top edge, where every sample clamps to the first row (§6.2)
+                std::int64_t sum_blue = 0;
+                std::int64_t sum_green = 0;
+                std::int64_t sum_red = 0;
+                std::int64_t sum_alpha = 0;
+                for (int offset = -radius; offset <= radius; offset++) {
+                    // the sample is clamped to the column, because a blur has no pixel beyond the edge to read (§6.2)
+                    const std::uint8_t* pixel = temporary.data() + (static_cast<std::size_t>(box_index(offset, height)) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x)) * 4;
+                    sum_blue += pixel[0];
+                    sum_green += pixel[1];
+                    sum_red += pixel[2];
+                    sum_alpha += pixel[3];
+                }
+                for (int y = 0; y < height; y++) {
+                    // the average lands in the same palette order the source used (§6.3)
+                    std::uint8_t* pixel = base + static_cast<std::intptr_t>(y) * stride + static_cast<std::size_t>(x) * 4;
+                    pixel[0] = box_average(sum_blue, window);
+                    pixel[1] = box_average(sum_green, window);
+                    pixel[2] = box_average(sum_red, window);
+                    pixel[3] = box_average(sum_alpha, window);
+                    // the next window drops the pixel leaving behind and adds the one entering (§6.2)
+                    const std::uint8_t* leaving = temporary.data() + (static_cast<std::size_t>(box_index(static_cast<std::int64_t>(y) - radius, height)) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x)) * 4;
+                    const std::uint8_t* entering = temporary.data() + (static_cast<std::size_t>(box_index(static_cast<std::int64_t>(y) + radius + 1, height)) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x)) * 4;
+                    sum_blue += entering[0] - leaving[0];
+                    sum_green += entering[1] - leaving[1];
+                    sum_red += entering[2] - leaving[2];
+                    sum_alpha += entering[3] - leaving[3];
                 }
             }
+        }
+
+        // report whether every coordinate a shadow rasterizes is finite, because a non finite edge has no bound (§6.2)
+        [[nodiscard]] bool shadow_is_finite(const Rect& rect, const Shadow& shadow) {
+            // the caster, the offset and the blur all feed a device rectangle, so each must be finite (§6.2)
+            return std::isfinite(rect.x) && std::isfinite(rect.y) && std::isfinite(rect.width) && std::isfinite(rect.height) && std::isfinite(shadow.offset.x) && std::isfinite(shadow.offset.y) && std::isfinite(shadow.blur);
         }
     } // namespace
 
@@ -190,6 +225,69 @@ namespace albor::blend2d
             const float qy = std::abs(y - (clip.rect.y + half_h)) - (half_h - radius);
             const float distance = std::hypot(std::max(qx, 0.0f), std::max(qy, 0.0f)) + std::min(std::max(qx, qy), 0.0f) - radius;
             return std::clamp(0.5f - distance / pixel, 0.0f, 1.0f);
+        }
+
+        // the device box a rounded clip can cover, where every edge is half open (§6.2)
+        struct DeviceBounds
+        {
+            // the first pixel column the clip can cover
+            int left = 0;
+
+            // the first pixel row the clip can cover
+            int top = 0;
+
+            // the pixel column after the last one the clip can cover
+            int right = 0;
+
+            // the pixel row after the last one the clip can cover
+            int bottom = 0;
+
+            // report whether the box holds no pixel at all
+            [[nodiscard]] bool empty() const { return right <= left || bottom <= top; }
+        };
+
+        // bound the device pixels a rounded clip can cover, leaving an unrestricted clip open (§6.2)
+        [[nodiscard]] bool rounded_clip_bounds(const RoundedClip& clip, float device_scale, int width, int height, DeviceBounds& bounds) {
+            // a clip with no radius covers through the rectangle, which the group already clips (§6.2)
+            if (clip.radius <= 0.0f)
+                return false;
+            // the inverse of the clip transform decides both the corners and the one pixel feather (§6.2)
+            const float det = clip.transform.scale_x * clip.transform.scale_y - clip.transform.skew_x * clip.transform.skew_y;
+            // a singular transform covers rather than vanishes, so it cannot bound the flatten (§6.2)
+            if (!std::isfinite(det) || std::abs(det) < 1e-6f || !std::isfinite(device_scale) || device_scale <= 0.0f)
+                return false;
+            // the four corners map onto the raster, which is the box the rounded shape can reach (§6.2)
+            const Transform device = clip.transform.then(Transform::scaling(device_scale, device_scale));
+            const Point first = device.apply(Point{clip.rect.x, clip.rect.y});
+            const Point second = device.apply(Point{clip.rect.x + clip.rect.width, clip.rect.y});
+            const Point third = device.apply(Point{clip.rect.x + clip.rect.width, clip.rect.y + clip.rect.height});
+            const Point fourth = device.apply(Point{clip.rect.x, clip.rect.y + clip.rect.height});
+            // a corner no affine transform can place has no finite box to bound (§6.2)
+            if (!std::isfinite(first.x) || !std::isfinite(first.y) || !std::isfinite(second.x) || !std::isfinite(second.y) || !std::isfinite(third.x) || !std::isfinite(third.y) || !std::isfinite(fourth.x) || !std::isfinite(fourth.y))
+                return false;
+            // one device pixel of feather is the margin the coverage ramp reaches beyond the transformed rectangle (§6.2)
+            const float pixel = std::max(std::hypot(clip.transform.scale_y, clip.transform.skew_y), std::hypot(clip.transform.scale_x, clip.transform.skew_x)) / (std::abs(det) * device_scale);
+            const float margin = std::max(1.0f, pixel * device_scale);
+            // a margin or corner outside the finite range falls back to the whole target rather than guessing (§6.2)
+            if (!std::isfinite(margin))
+                return false;
+            // the mapped corners are snapped outward, so no pixel the feather touches is left outside (§6.2)
+            const float min_x = std::min({first.x, second.x, third.x, fourth.x}) - margin;
+            const float min_y = std::min({first.y, second.y, third.y, fourth.y}) - margin;
+            const float max_x = std::max({first.x, second.x, third.x, fourth.x}) + margin;
+            const float max_y = std::max({first.y, second.y, third.y, fourth.y}) + margin;
+            // the box is clamped to the target, because a pixel outside it has no raster to mask (§6.2)
+            const float clamped_left = std::clamp(min_x, 0.0f, static_cast<float>(width));
+            const float clamped_top = std::clamp(min_y, 0.0f, static_cast<float>(height));
+            const float clamped_right = std::clamp(max_x, 0.0f, static_cast<float>(width));
+            const float clamped_bottom = std::clamp(max_y, 0.0f, static_cast<float>(height));
+            // the floor and ceiling keep the half open edges conservative (§6.2)
+            bounds.left = static_cast<int>(std::floor(clamped_left));
+            bounds.top = static_cast<int>(std::floor(clamped_top));
+            bounds.right = static_cast<int>(std::ceil(clamped_right));
+            bounds.bottom = static_cast<int>(std::ceil(clamped_bottom));
+            // a box with no area cannot narrow the target, so it is left open for the caller (§6.2)
+            return !bounds.empty();
         }
     } // namespace
 
@@ -486,6 +584,9 @@ namespace albor::blend2d
         // a cast needs both a colour and a shape, because one without the other puts no ink down (§6.2)
         if (!shadow.casts() || rect.empty())
             return;
+        // a non finite caster or offset has no device rectangle, so it is refused before any raster is sized (§6.2)
+        if (!shadow_is_finite(rect, shadow))
+            return;
         // the cast is the caster moved by the shadow offset, which is what lifts it off the surface (§6.2)
         const Rect cast{.x = rect.x + shadow.offset.x, .y = rect.y + shadow.offset.y, .width = rect.width, .height = rect.height};
         // a blur of zero is a hard copy of the caster, which needs no offscreen pass (§6.2)
@@ -495,9 +596,22 @@ namespace albor::blend2d
         }
         // three sigmas is the reach of the blur, so the offscreen covers the whole soft edge (§6.2)
         const float reach = shadow.blur * 3.0f;
+        // a reach or cast that overflows the float range has no offscreen extent (§6.2)
+        if (!std::isfinite(reach) || !std::isfinite(cast.x) || !std::isfinite(cast.y))
+            return;
         // offscreen is rendered at device resolution, so the blur is not softened twice by the meta scale (§6.2)
-        const int width = std::max(1, static_cast<int>(std::ceil((rect.width + reach * 2.0f) * m_device_scale)));
-        const int height = std::max(1, static_cast<int>(std::ceil((rect.height + reach * 2.0f) * m_device_scale)));
+        const double scaled_width = (static_cast<double>(rect.width) + static_cast<double>(reach) * 2.0) * static_cast<double>(m_device_scale);
+        const double scaled_height = (static_cast<double>(rect.height) + static_cast<double>(reach) * 2.0) * static_cast<double>(m_device_scale);
+        // a device extent outside the int range cannot become an image, so it is refused rather than truncated (§6.2)
+        if (!std::isfinite(scaled_width) || !std::isfinite(scaled_height) || scaled_width > static_cast<double>(std::numeric_limits<int>::max()) || scaled_height > static_cast<double>(std::numeric_limits<int>::max()))
+            return;
+        // the offscreen takes the ceiling of the scaled extent, because a partial pixel still needs a column (§6.2)
+        const int width = std::max(1, static_cast<int>(std::ceil(scaled_width)));
+        const int height = std::max(1, static_cast<int>(std::ceil(scaled_height)));
+        // the blur radius is bounded before rounding, because a wider window cannot be summed in an int (§6.2)
+        const double scaled_blur = static_cast<double>(shadow.blur) * static_cast<double>(m_device_scale);
+        if (!std::isfinite(scaled_blur) || scaled_blur > static_cast<double>(std::numeric_limits<int>::max() / 2))
+            return;
         // the offscreen is premultiplied, matching the raster the frame draws into (§6.3, AD-26)
         BLImage offscreen;
         if (offscreen.create(width, height, BL_FORMAT_PRGB32) != BL_SUCCESS)
@@ -524,7 +638,7 @@ namespace albor::blend2d
         BLImageData data;
         if (offscreen.makeMutable(&data) != BL_SUCCESS)
             return;
-        blur_box(data, static_cast<int>(std::lround(shadow.blur * m_device_scale)));
+        blur_box(data, static_cast<int>(std::lround(scaled_blur)));
         // the blurred cast is blitted one to one at device resolution, which the meta scale maps back (§6.2)
         m_context->blitImage(BLRect(cast.x - reach, cast.y - reach, static_cast<double>(width) / m_device_scale, static_cast<double>(height) / m_device_scale), offscreen);
     }
@@ -637,11 +751,34 @@ namespace albor::blend2d
         group->backup.getData(&backup_data);
         const int width = source_data.size.w;
         const int height = source_data.size.h;
+        // the rounded clips restrict the mask to their intersection, so a box no clip reaches is skipped (§6.2)
+        bool restricted = false;
+        DeviceBounds bounds{0, 0, width, height};
+        for (const RoundedClip& clip : group->clips) {
+            // a clip that is singular or has no radius covers fully, so it cannot narrow the box (§6.2)
+            DeviceBounds clip_bounds;
+            if (!rounded_clip_bounds(clip, m_device_scale, width, height, clip_bounds))
+                continue;
+            // the first bounded clip starts the intersection and later ones shrink it (§6.2)
+            if (!restricted) {
+                bounds = clip_bounds;
+                restricted = true;
+            }
+            else {
+                bounds.left = std::max(bounds.left, clip_bounds.left);
+                bounds.top = std::max(bounds.top, clip_bounds.top);
+                bounds.right = std::min(bounds.right, clip_bounds.right);
+                bounds.bottom = std::min(bounds.bottom, clip_bounds.bottom);
+            }
+            // an empty intersection leaves every pixel at its backup, so no further clipping can add one (§6.2)
+            if (bounds.empty())
+                break;
+        }
         // every pixel the shapes cover is the group, and every pixel outside keeps the backup (§6.2)
-        for (int y = 0; y < height; y++) {
+        for (int y = restricted ? bounds.top : 0; y < (restricted ? bounds.bottom : height); y++) {
             const auto* source_row = static_cast<const std::uint8_t*>(source_data.pixelData) + static_cast<std::intptr_t>(y) * source_data.stride;
             auto* result_row = static_cast<std::uint8_t*>(backup_data.pixelData) + static_cast<std::intptr_t>(y) * backup_data.stride;
-            for (int x = 0; x < width; x++) {
+            for (int x = restricted ? bounds.left : 0; x < (restricted ? bounds.right : width); x++) {
                 // the clips intersect, so their coverages multiply at the pixel centre (§6.2)
                 float coverage = 1.0f;
                 for (const RoundedClip& clip : group->clips)
@@ -881,6 +1018,11 @@ namespace albor::blend2d
             paint_alpha = paint.stroke.alpha;
         paint_alpha = std::clamp(paint_alpha * m_opacity, 0.0f, 1.0f);
         const int modulation = static_cast<int>(std::lround(paint_alpha * 255.0f));
+        // the modulation rounds to the nearest byte, because truncation darkens a translucent image (§6.4, AD-26)
+        const auto modulated = [modulation](std::uint8_t value) -> std::uint8_t {
+            // the half divisor rounds the byte before the cast (§6.4)
+            return static_cast<std::uint8_t>((static_cast<int>(value) * modulation + 127) / 255);
+        };
         BLImage raster;
         if (raster.create(width, height, BL_FORMAT_PRGB32) != BL_SUCCESS)
             return;
@@ -894,10 +1036,10 @@ namespace albor::blend2d
             std::uint8_t* target = static_cast<std::uint8_t*>(data.pixelData) + static_cast<std::intptr_t>(y) * data.stride;
             for (int x = 0; x < width; x++) {
                 // red and blue swap into bgra order, and the shared alpha modulation is applied (§6.4, AD-26)
-                target[0] = static_cast<std::uint8_t>(source[2] * modulation / 255);
-                target[1] = static_cast<std::uint8_t>(source[1] * modulation / 255);
-                target[2] = static_cast<std::uint8_t>(source[0] * modulation / 255);
-                target[3] = static_cast<std::uint8_t>(source[3] * modulation / 255);
+                target[0] = modulated(source[2]);
+                target[1] = modulated(source[1]);
+                target[2] = modulated(source[0]);
+                target[3] = modulated(source[3]);
                 source += 4;
                 target += 4;
             }

@@ -2,6 +2,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -135,6 +136,44 @@ TEST(Blend2DRenderSurfaceChecks, AFinishedFrameReadsBackInCanonicalOrder) {
     EXPECT_EQ(pixels[red + 3u], 255u);
 }
 
+TEST(Blend2DRenderSurfaceChecks, ANativeCopyMatchesTheCanonicalReadBack) {
+    // arrange a finished frame with one red rectangle, which both copies walk (§6.3)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    context.draw_rect(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{20.0f, 12.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    surface->end_frame();
+    // act the native copy honours a padded row, which is what a present path allocates (§6.3)
+    const std::size_t row = 64u * 4u + 16u;
+    std::vector<std::uint8_t> native(row * 48u, 0xaa);
+    const bool copied = surface->copy_native_pixels(native.data(), row);
+    const std::vector<std::uint8_t> canonical = surface->read_pixels();
+    // assert the native bytes are bgra in the canonical picture's red order (§6.3, AD-26)
+    ASSERT_TRUE(copied);
+    ASSERT_EQ(canonical.size(), 64u * 48u * 4u);
+    const std::size_t pixel = (12u * 64u + 14u) * 4u;
+    const std::size_t native_pixel = 12u * row + 14u * 4u;
+    EXPECT_EQ(native[native_pixel + 0u], canonical[pixel + 2u]);
+    EXPECT_EQ(native[native_pixel + 1u], canonical[pixel + 1u]);
+    EXPECT_EQ(native[native_pixel + 2u], canonical[pixel + 0u]);
+    EXPECT_EQ(native[native_pixel + 3u], canonical[pixel + 3u]);
+    // assert the row padding stayed untouched, because a copy must not write into the gap (§6.3)
+    EXPECT_EQ(native[64u * 4u], 0xaa);
+}
+
+TEST(Blend2DRenderSurfaceChecks, ANativeCopyRefusesARowNarrowerThanTheFrame) {
+    // arrange a finished frame and a destination too narrow for one row (§6.3)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    (void)surface->begin_frame();
+    surface->end_frame();
+    std::vector<std::uint8_t> narrow(4u, 0);
+    // act
+    const bool copied = surface->copy_native_pixels(narrow.data(), narrow.size());
+    // assert a narrow row would corrupt the frame, so it refuses instead (§6.3)
+    EXPECT_FALSE(copied);
+}
+
 TEST(Blend2DRenderSurfaceChecks, FramesCountOnlyTheBalancedEnds) {
     // arrange
     const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
@@ -220,6 +259,47 @@ TEST(Blend2DRenderContextChecks, ARoundedClipCutsItsCornersAway) {
     const std::size_t centre = (10u * 64u + 14u) * 4u;
     EXPECT_GT(shot.pixels[corner], 230u);
     EXPECT_EQ(shot.pixels[centre], 0u);
+}
+
+TEST(Blend2DRenderContextChecks, TwoRoundedClipsKeepOnlyTheirIntersection) {
+    // arrange a white plate and two rounded clips that overlap, which the group mask must intersect (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // act
+    context.clip_rounded_rect(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{20.0f, 12.0f}), 4.0f);
+    context.clip_rounded_rect(Rect::from_origin_size(Point{12.0f, 8.0f}, Size{20.0f, 12.0f}), 4.0f);
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    surface->end_frame();
+    // assert the shared centre takes the fill while a point in one clip alone keeps the plate (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    const std::size_t shared = (10u * 64u + 16u) * 4u;
+    const std::size_t single = (6u * 64u + 6u) * 4u;
+    EXPECT_EQ(shot.pixels[shared], 0u);
+    EXPECT_GT(shot.pixels[single], 230u);
+}
+
+TEST(Blend2DRenderContextChecks, ARoundedClipAfterInkKeepsTheInk) {
+    // arrange a plate inside a rounded group, with black ink painted before a collapsed clip (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.clip_rounded_rect(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{20.0f, 12.0f}), 4.0f);
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    // act a singular rounded clip covers rather than vanishes, so the ink before it must survive (§6.2)
+    context.set_transform(Transform{.scale_x = 0.0f, .scale_y = 0.0f});
+    context.clip_rounded_rect(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{20.0f, 12.0f}), 4.0f);
+    context.set_transform(Transform{});
+    surface->end_frame();
+    // assert the centre stays black, because a zero coverage there would erase the ink already drawn (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    const std::size_t centre = (10u * 64u + 10u) * 4u;
+    EXPECT_EQ(shot.pixels[centre], 0u);
+    EXPECT_EQ(shot.pixels[centre + 3u], 255u);
 }
 
 TEST(Blend2DRenderContextChecks, ARoundedClipEndsAtItsRestore) {
@@ -424,6 +504,64 @@ TEST(Blend2DRendererBackendChecks, AResizeIsFollowedByFramesAtTheNewMetrics) {
     ASSERT_NE(screenshot.width, 0);
     EXPECT_EQ(screenshot.width, 128);
     EXPECT_EQ(screenshot.height, 96);
+}
+
+TEST(Blend2DRenderContextChecks, ANonFiniteShadowCastsNothing) {
+    // arrange a context and the non finite values a data driven shadow can carry (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    const Rect caster = Rect::from_origin_size(Point{4.0f, 4.0f}, Size{8.0f, 8.0f});
+    const Color color = Color::rgba(0.0f, 0.0f, 0.0f, 0.5f);
+    const float infinity = std::numeric_limits<float>::infinity();
+    const float maximum = std::numeric_limits<float>::max();
+    // act each non finite or oversized bound is refused before it can size a raster (§6.2)
+    context.draw_shadow(caster, 0.0f, Shadow{.color = color, .offset = Point{infinity, 0.0f}, .blur = 2.0f});
+    context.draw_shadow(caster, 0.0f, Shadow{.color = color, .offset = Point{0.0f, 0.0f}, .blur = infinity});
+    context.draw_shadow(Rect{.x = 4.0f, .y = 4.0f, .width = maximum, .height = 8.0f}, 0.0f, Shadow{.color = color, .offset = Point{0.0f, 0.0f}, .blur = 2.0f});
+    surface->end_frame();
+    // assert no cast reached the raster, because none of them has a finite device extent (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    std::size_t ink = 0;
+    for (std::size_t index = 0; index < shot.pixels.size(); index += 4) {
+        if (shot.pixels[index + 3u] > 0u)
+            ink++;
+    }
+    EXPECT_EQ(ink, 0u);
+}
+
+TEST(Blend2DRenderContextChecks, ABlurredShadowRoundsItsEdgeUp) {
+    // arrange a half transparent cast at a whole pixel edge, whose blur corner is a known rounding case (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    // act
+    context.draw_shadow(Rect::from_origin_size(Point{8.0f, 8.0f}, Size{8.0f, 8.0f}), 0.0f, Shadow{.color = Color::rgba(1.0f, 1.0f, 1.0f, 0.5f), .offset = Point{0.0f, 0.0f}, .blur = 1.0f});
+    surface->end_frame();
+    // assert the corner rounds each box pass upward, which a truncating pass would leave at 56 (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    const std::size_t corner = (8u * 64u + 8u) * 4u;
+    EXPECT_EQ(shot.pixels[corner + 3u], 57u);
+}
+
+TEST(Blend2DRenderContextChecks, ABlurredShadowStaysSymmetric) {
+    // arrange a wide blur around a centred caster, which exercises the sliding window beyond one pixel (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    context.draw_shadow(Rect::from_origin_size(Point{24.0f, 16.0f}, Size{16.0f, 16.0f}), 0.0f, Shadow{.color = Color::rgba(1.0f, 1.0f, 1.0f, 0.5f), .offset = Point{0.0f, 0.0f}, .blur = 3.0f});
+    surface->end_frame();
+    // act the frame reads back after both sliding passes have run (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    // assert the mirrored alpha stays equal across the horizontal centre (§6.2)
+    for (int x = 24; x < 40; x++)
+        EXPECT_EQ(shot.pixels[(24u * 64u + static_cast<std::size_t>(x)) * 4u + 3u], shot.pixels[(24u * 64u + static_cast<std::size_t>(63 - x)) * 4u + 3u]);
+    // assert the mirrored alpha stays equal across the vertical centre (§6.2)
+    for (int y = 16; y < 32; y++)
+        EXPECT_EQ(shot.pixels[(static_cast<std::size_t>(y) * 64u + 32u) * 4u + 3u], shot.pixels[(static_cast<std::size_t>(47 - y) * 64u + 32u) * 4u + 3u]);
 }
 
 TEST(Blend2DRenderContextChecks, AnOpacityDimsTheReadbackBytes) {
@@ -849,6 +987,30 @@ TEST(Blend2DRenderContextChecks, AStrokedRectangleDrawsInk) {
     ASSERT_FALSE(screenshot.empty());
     const std::size_t edge = (6u * 64u + 6u) * 4u;
     EXPECT_GT(screenshot.pixels[edge], 0u);
+}
+
+TEST(Blend2DRenderContextChecks, AnImageModulationRoundsItsChannels) {
+    // arrange a translucent image whose low red byte is a known rounding case (§6.4, AD-26)
+    ResourceFactory factory;
+    std::vector<std::uint8_t> premultiplied(4u * 4u * 4u, 0u);
+    for (std::size_t index = 0; index < premultiplied.size(); index += 4) {
+        // the source pixel is premultiplied red with a full alpha, which the paint then halves (§6.4)
+        premultiplied[index] = 3u;
+        premultiplied[index + 3u] = 255u;
+    }
+    const std::shared_ptr<const ImageResource> image = factory.create_image(4, 4, ImageFormat::RGBA8, premultiplied);
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    // act a half opaque fill modulates the image by 128, which rounds the three upward to two (§6.4)
+    context.draw_image(image, Rect::from_origin_size(Point{4.0f, 4.0f}, Size{4.0f, 4.0f}), Paint{.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.5f)});
+    surface->end_frame();
+    // assert the low channel rounded rather than truncating, while the alpha took the modulation (§6.4)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    const std::size_t pixel = (5u * 64u + 5u) * 4u;
+    EXPECT_EQ(shot.pixels[pixel], 2u);
+    EXPECT_EQ(shot.pixels[pixel + 3u], 128u);
 }
 
 TEST(Blend2DRenderContextChecks, AnImageWithNoDestinationDrawsNothing) {
