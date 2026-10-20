@@ -470,6 +470,33 @@ TEST(SkiaRenderContextCompositionChecks, AStrokedPathUnderCopyReplacesThePlate) 
     EXPECT_EQ(pixels[centre + 2u], 255u);
 }
 
+TEST(SkiaRenderContextCompositionChecks, EveryCompositionModeDrawsThroughItsBlend) {
+    // arrange one raster canvas per composition mode, because the canvas state is not reset between modes (§6.2)
+    const CompositionMode modes[] = {CompositionMode::SourceOver, CompositionMode::SourceIn, CompositionMode::SourceOut, CompositionMode::Atop, CompositionMode::DestinationOver, CompositionMode::DestinationIn, CompositionMode::DestinationOut, CompositionMode::DestinationAtop, CompositionMode::Lighter, CompositionMode::Copy, CompositionMode::Xor};
+    const Point bends[3] = {Point{2.0f, 2.0f}, Point{8.0f, 6.0f}, Point{14.0f, 2.0f}};
+    const PathVerb verbs[3] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo};
+    const std::shared_ptr<const PathResource> path = std::make_shared<const PathResource>(88u, verbs, bends);
+    for (const CompositionMode mode : modes) {
+        // the trace names the mode a failure belongs to, which a loop otherwise hides
+        SCOPED_TRACE(static_cast<int>(mode));
+        sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
+        ASSERT_NE(surface, nullptr);
+        surface->getCanvas()->clear(0x00000000);
+        SkiaRenderContext context(surface->getCanvas(), 1.0f);
+        // act the plate and a translucent overlay meet under the mode
+        context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{static_cast<float>(SURFACE_WIDTH), static_cast<float>(SURFACE_HEIGHT)}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+        context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{static_cast<float>(SURFACE_WIDTH), static_cast<float>(SURFACE_HEIGHT)}), Paint{.fill = Color{.red = 0.2f, .green = 0.2f, .blue = 0.8f, .alpha = 0.5f}, .composition = mode});
+        // the retained path carries the same mode through its fill rule and its stroke (§6.2, §6.4)
+        context.draw_path(path, Transform{}, Paint{.fill = Color::rgb(1.0f, 1.0f, 0.0f), .stroke = Color::rgb(0.0f, 1.0f, 0.0f), .stroke_width = 2.0f, .fill_rule = FillRule::EvenOdd, .composition = mode});
+        // a rectangle stroke carries the mode through the primitive both backends share (§6.2)
+        context.draw_rect(Rect::from_origin_size(Point{2.0f, 2.0f}, Size{6.0f, 6.0f}), Paint{.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), .stroke = Color::rgb(0.5f, 0.5f, 0.5f), .stroke_width = 1.0f, .composition = mode});
+        // assert the blend produced a readable frame, because a mode that clears the destination is legal
+        const SkImageInfo info = SkImageInfo::Make(SURFACE_WIDTH, SURFACE_HEIGHT, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+        std::vector<std::uint8_t> pixels(static_cast<std::size_t>(SURFACE_WIDTH * SURFACE_HEIGHT * 4));
+        EXPECT_TRUE(surface->readPixels(info, pixels.data(), info.minRowBytes(), 0, 0));
+    }
+}
+
 TEST(SkiaRenderContextShadowChecks, ARefusedCastDrawsNothing) {
     // arrange a context over no canvas, plus a cast the primitive must refuse twice over (§6.2)
     SkiaRenderContext context(nullptr, 1.0f);

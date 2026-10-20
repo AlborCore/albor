@@ -8,7 +8,7 @@
 
 namespace albor::software
 {
-    // the cpu raster and the context a frame draws into, so that no skia header leaves this file (§3.5)
+    // the cpu raster and the context a frame draws into, so that no blend2d header leaves this file (§3.5)
     struct SoftwareSurfaceState;
 
     // the surface that rasterizes on the cpu, which is the reference CI compares against (§6.3, AD-26)
@@ -50,7 +50,7 @@ namespace albor::software
         // allocate the raster of the given metrics, which a create and a resize both do
         explicit SoftwareRenderSurface(WindowMetrics metrics);
 
-        // the raster and the context of the frame being drawn, which are behind one pimpl so no skia header leaks (§3.5)
+        // the raster and the context of the frame, behind one pimpl so no blend2d header leaks (§3.5)
         std::unique_ptr<SoftwareSurfaceState> m_state;
     };
 } // namespace albor::software

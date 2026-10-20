@@ -114,6 +114,9 @@ namespace albor::blend2d
         // an unbalanced end would count a frame that never began, so it is ignored (§6.1)
         if (!m_state->begun)
             return;
+        // a rounded clip the frame left open is closed before the raster ends (§6.2)
+        if (m_state->draw_context != nullptr)
+            m_state->draw_context->finish();
         // the frame is marked finished, which is what a headless test counts (§4.3)
         m_state->begun = false;
         // blend2d end flushes synchronously, which is the whole of cpu presentation (§6.3)

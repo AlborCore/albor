@@ -36,7 +36,6 @@ UNREACHABLE=(
     'text/text-harfbuzz/harfbuzz_text_engine.cpp|line_end = text.size();|the wrap always advances over the ICU offsets, so the fallback only guards an ICU failure that would otherwise loop forever'
     'render/render-albor/albor_metal_backend.macos.mm|std::fprintf(stderr, "albor-render-albor: the metal library could not be used: %s\n", reason);|the build embeds a valid library whose entry points resolve, so the report guards a corrupt embed no test can force'
     'render/render-software/software_glyph_atlas.cpp|return nullptr;|the rasterizer allocates through harfbuzz, so a failed allocation is the only way this refusal runs and it cannot be forced from a test'
-    'render/render-software/software_render_surface.cpp|m_state->scratch_context = std::make_unique<SoftwareRenderContext>(m_state->scratch->getCanvas(), 1.0f);|the scratch is only built when skia refuses the raster allocation, which cannot be forced from a test'
     'render/render-skia/skia_renderer_backend.macos.mm|return nullptr;|the offscreen target is only asked for when the backend is ready, which the parity test checks first, so the refusal cannot be forced'
     'render/render-software/software_render_context.cpp|continue;|a mask install and an image lift fail only on an allocation failure, which cannot be forced from a test'
     'compiler/ir_serializer.cpp|return std::nullopt;|the refusals guard values the lexer never produces (a malformed hex pair, a missing unit, a negated colour), so no valid source reaches them'

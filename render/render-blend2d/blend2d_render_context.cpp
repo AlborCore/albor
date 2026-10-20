@@ -149,6 +149,74 @@ namespace albor::blend2d
         }
     } // namespace
 
+    namespace
+    {
+        // one rounded clip a group intersects, kept in the space it was recorded in (§6.2)
+        struct RoundedClip
+        {
+            // the rectangle and radius the caller asked for
+            Rect rect;
+
+            // the radius the corners round by, where zero is a plain rectangle
+            float radius = 0.0f;
+
+            // the transform in effect when the clip was recorded
+            Transform transform;
+        };
+
+        // the coverage a rounded clip leaves at one device pixel centre, which maps back through the clip transform (§6.2)
+        float rounded_coverage(const RoundedClip& clip, float device_x, float device_y, float device_scale) {
+            // a clip with no radius is the rectangle the caller already intersected, so it covers fully (§6.2)
+            if (clip.radius <= 0.0f)
+                return 1.0f;
+            // the inverse of the affine clip transform maps the device point onto the space it was recorded in (§6.2)
+            const float det = clip.transform.scale_x * clip.transform.scale_y - clip.transform.skew_x * clip.transform.skew_y;
+            // a singular transform has no inverse, so the clip is treated as covering rather than vanishing (§6.2)
+            if (std::abs(det) < 1e-6f)
+                return 1.0f;
+            const float dx = device_x / device_scale - clip.transform.translate_x;
+            const float dy = device_y / device_scale - clip.transform.translate_y;
+            const float x = (clip.transform.scale_y * dx - clip.transform.skew_x * dy) / det;
+            const float y = (-clip.transform.skew_y * dx + clip.transform.scale_x * dy) / det;
+            // one device pixel in the clip space decides the one pixel ramp the edge is feathered by (§6.2)
+            const float pixel_x = std::hypot(clip.transform.scale_y, clip.transform.skew_y) / (std::abs(det) * device_scale);
+            const float pixel_y = std::hypot(clip.transform.scale_x, clip.transform.skew_x) / (std::abs(det) * device_scale);
+            const float pixel = std::max(pixel_x, pixel_y);
+            // the rounded rectangle distance is negative inside, which the ramp turns into coverage (§6.2)
+            const float half_w = clip.rect.width * 0.5f;
+            const float half_h = clip.rect.height * 0.5f;
+            const float radius = std::min({clip.radius, half_w, half_h});
+            const float qx = std::abs(x - (clip.rect.x + half_w)) - (half_w - radius);
+            const float qy = std::abs(y - (clip.rect.y + half_h)) - (half_h - radius);
+            const float distance = std::hypot(std::max(qx, 0.0f), std::max(qy, 0.0f)) + std::min(std::max(qx, qy), 0.0f) - radius;
+            return std::clamp(0.5f - distance / pixel, 0.0f, 1.0f);
+        }
+    } // namespace
+
+    struct Blend2DRenderContext::ClipGroup
+    {
+        // the image the group draws into, which starts as a copy of the destination (§6.2)
+        BLImage target;
+
+        // the destination the mask leaves outside the shape, kept for the composite (§6.2)
+        BLImage backup;
+
+        // the raster context over that image, which every draw inside the group lands in (§6.2)
+        BLContext context;
+
+        // the parent raster the group composites back into, which a nested group restores (§6.2)
+        BLContext* parent = nullptr;
+
+        // the group that was open before this one, or null when the parent is the frame (§6.2)
+        ClipGroup* parent_group = nullptr;
+
+        // the state the group began under, which its flatten restores (§6.2)
+        State parent_state;
+
+        // the rounded clips the group intersects, in recording order (§6.2)
+        std::vector<RoundedClip> clips;
+    };
+
     struct Blend2DRenderContext::Layer
     {
         // the state the group began under, which its pop returns to (§6.2)
@@ -168,7 +236,6 @@ namespace albor::blend2d
     };
 
     Blend2DRenderContext::~Blend2DRenderContext() = default;
-
     Blend2DRenderContext::Blend2DRenderContext(BLContext* context, float device_scale, Rect full_clip) :
         m_context(context), m_device_scale(device_scale), m_clip(full_clip) {
         // a context with no raster context draws nothing, so it keeps its own bookkeeping only (§6.2)
@@ -182,7 +249,7 @@ namespace albor::blend2d
 
     void Blend2DRenderContext::save() {
         // the albor state is pushed first, because the raster save is what the pop restores (§6.2)
-        m_states.push_back(State{m_transform, m_clip, m_opacity});
+        m_states.push_back(State{m_transform, m_clip, m_opacity, m_group});
         // a context with no raster context keeps its own stack only (§6.2)
         if (m_context == nullptr)
             return;
@@ -193,6 +260,9 @@ namespace albor::blend2d
         // a restore without a matching save is a programming error, so the stack is left alone (§6.2)
         if (m_states.empty())
             return;
+        // every clip group opened after this save closes before its state returns (§6.2)
+        while (m_group != nullptr && m_group != m_states.back().group)
+            flatten_clip_group();
         // the raster context is restored before the albor state, because it holds the real clip stack (§6.2)
         if (m_context != nullptr)
             m_context->restore();
@@ -216,7 +286,55 @@ namespace albor::blend2d
         m_transform = transform;
     }
 
+    void Blend2DRenderContext::apply_clip(BLContext& context, const Rect& rect) const {
+        // an empty clip cuts everything away, which a zero rectangle expresses to the raster (§6.2)
+        if (rect.empty()) {
+            context.clipToRect(BLRect(0.0, 0.0, 0.0, 0.0));
+            return;
+        }
+        // the device transform maps the logical clip onto the raster it was pushed for (§6.3, AD-27)
+        const Transform device = m_transform.then(Transform::scaling(m_device_scale, m_device_scale));
+        // a rotated or skewed clip is applied exactly, which no pixel grid can snap without moving it (§6.2)
+        const bool axis_aligned = std::abs(device.skew_x) < 0.0001f && std::abs(device.skew_y) < 0.0001f;
+        if (!axis_aligned) {
+            context.clipToRect(BLRect(rect.x, rect.y, rect.width, rect.height));
+            return;
+        }
+        // the two corners map onto the raster, which is snapped to the pixel grid the gpu scissor uses (§6.2, AD-26)
+        const Point origin = device.apply(Point{.x = rect.x, .y = rect.y});
+        const Point corner = device.apply(Point{.x = rect.x + rect.width, .y = rect.y + rect.height});
+        const float left = std::round(std::min(origin.x, corner.x));
+        const float top = std::round(std::min(origin.y, corner.y));
+        const float right = std::round(std::max(origin.x, corner.x));
+        const float bottom = std::round(std::max(origin.y, corner.y));
+        // the snapped box maps back into the logical space the raster context clips in (§6.3)
+        const float det = device.scale_x * device.scale_y - device.skew_x * device.skew_y;
+        const auto to_user = [&](float x, float y, float& out_x, float& out_y) {
+            // the inverse of the affine device transform, which maps a raster point onto logical space (§6.3)
+            out_x = (device.scale_y * x - device.skew_x * y) / det;
+            out_y = (-device.skew_y * x + device.scale_x * y) / det;
+        };
+        float user_left = 0.0f;
+        float user_top = 0.0f;
+        float user_right = 0.0f;
+        float user_bottom = 0.0f;
+        // the corners are inverted with the translation removed, because the inverse is linear around it (§6.3)
+        to_user(left - device.translate_x, top - device.translate_y, user_left, user_top);
+        to_user(right - device.translate_x, bottom - device.translate_y, user_right, user_bottom);
+        context.clipToRect(BLRect(user_left, user_top, user_right - user_left, user_bottom - user_top));
+    }
+
     void Blend2DRenderContext::clip_rect(const Rect& rect) {
+        // the clip freezes the transform it is pushed under, which a later transform must not move (§6.2)
+        const Transform device = m_transform.then(Transform::scaling(m_device_scale, m_device_scale));
+        // a clip pushed under a collapsed transform spans no device area, so it cuts everything away (§6.2)
+        const float determinant = device.scale_x * device.scale_y - device.skew_x * device.skew_y;
+        if (std::abs(determinant) < 1e-6f) {
+            m_clip = Rect{};
+            if (m_context != nullptr)
+                m_context->clipToRect(BLRect(0.0, 0.0, 0.0, 0.0));
+            return;
+        }
         // the recorded clip is the intersection of what was there and what was asked for (§6.2)
         const float left = std::max(m_clip.x, rect.x);
         const float top = std::max(m_clip.y, rect.y);
@@ -226,13 +344,22 @@ namespace albor::blend2d
         // a context with no raster context keeps its clip bookkeeping only (§6.2)
         if (m_context == nullptr)
             return;
-        m_context->clipToRect(BLRect(rect.x, rect.y, rect.width, rect.height));
+        // the clip is applied as the raster context's cumulative clip, which a save restores (§6.2)
+        apply_clip(*m_context, m_clip);
     }
 
     void Blend2DRenderContext::clip_rounded_rect(const Rect& rect, float radius) {
-        // blend2d clips to a rectangle only, so a rounded clip falls back to its bounding rectangle (§6.2, AD-26)
-        (void)radius;
+        // the rectangle narrows the clip like any other, which also bounds the rounded mask (§6.2)
         clip_rect(rect);
+        // a context with no raster context keeps its clip bookkeeping only (§6.2)
+        if (m_context == nullptr)
+            return;
+        // a save since the group began starts a nested group, so the clip ends where that save restores (§6.2)
+        if (m_group == nullptr || (!m_states.empty() && m_states.back().group != m_group))
+            begin_clip_group();
+        // the shape is kept in the space it was asked for, which the mask maps device pixels back through (§6.2)
+        if (m_group != nullptr)
+            m_group->clips.push_back(RoundedClip{.rect = rect, .radius = std::max(0.0f, radius), .transform = m_transform});
     }
 
     void Blend2DRenderContext::set_opacity(float opacity) {
@@ -453,6 +580,100 @@ namespace albor::blend2d
     std::size_t Blend2DRenderContext::depth() const {
         // the depth is what a test asserts the saves and restores produced (§6.2)
         return m_states.size();
+    }
+
+    void Blend2DRenderContext::finish() {
+        // a top level rounded clip is closed at the end of the frame, because no save owns it (§6.2)
+        while (m_group != nullptr)
+            flatten_clip_group();
+    }
+
+    void Blend2DRenderContext::begin_clip_group() {
+        // a context with no raster context keeps no offscreen, which the rectangular clip above already covers (§6.2)
+        BLImage* destination = m_context != nullptr ? m_context->targetImage() : nullptr;
+        BLImageData destination_data;
+        auto group = std::make_unique<ClipGroup>();
+        // a destination blend2d cannot describe keeps the rectangular clip rather than guessing (§6.2)
+        bool ready = destination != nullptr && destination->getData(&destination_data) == BL_SUCCESS;
+        if (ready) {
+            group->parent = m_context;
+            group->parent_group = m_group;
+            group->parent_state = State{m_transform, m_clip, m_opacity, m_group};
+            // the group and its backup match the destination, so a pixel keeps its meaning across the composite (§6.2)
+            ready = group->target.create(destination_data.size.w, destination_data.size.h, BL_FORMAT_PRGB32) == BL_SUCCESS && group->backup.create(destination_data.size.w, destination_data.size.h, BL_FORMAT_PRGB32) == BL_SUCCESS;
+        }
+        if (ready)
+            ready = group->context.begin(group->target) == BL_SUCCESS;
+        if (ready) {
+            // the group starts as a copy of the destination, so the draws inside see the pixels they blend with (§6.2)
+            group->context.blitImage(BLPoint(0.0, 0.0), *destination);
+            // the group draws in the same space the frame was recorded in (§6.3, AD-27)
+            group->context.scale(m_device_scale, m_device_scale);
+            group->context.userToMeta();
+            group->context.setTransform(to_blend_matrix(m_transform));
+            // the group clips to the intersected rectangle, which bounds the work the mask does (§6.2)
+            apply_clip(group->context, m_clip);
+            // the backup keeps the destination the mask leaves outside the shape (§6.2)
+            BLContext copy;
+            if (copy.begin(group->backup) == BL_SUCCESS) {
+                copy.blitImage(BLPoint(0.0, 0.0), *destination);
+                copy.end();
+            }
+            // the later draws land in the group, which its flatten composites through the rounded mask (§6.2)
+            m_group = group.get();
+            m_groups.push_back(std::move(group));
+            m_context = &m_groups.back()->context;
+        }
+    }
+
+    void Blend2DRenderContext::flatten_clip_group() {
+        std::unique_ptr<ClipGroup> group = std::move(m_groups.back());
+        m_groups.pop_back();
+        // the group raster is final, so its pixels and its backup are stable to read (§6.2)
+        group->context.end();
+        BLImageData source_data;
+        BLImageData backup_data;
+        group->target.getData(&source_data);
+        group->backup.getData(&backup_data);
+        const int width = source_data.size.w;
+        const int height = source_data.size.h;
+        // every pixel the shapes cover is the group, and every pixel outside keeps the backup (§6.2)
+        for (int y = 0; y < height; y++) {
+            const auto* source_row = static_cast<const std::uint8_t*>(source_data.pixelData) + static_cast<std::intptr_t>(y) * source_data.stride;
+            auto* result_row = static_cast<std::uint8_t*>(backup_data.pixelData) + static_cast<std::intptr_t>(y) * backup_data.stride;
+            for (int x = 0; x < width; x++) {
+                // the clips intersect, so their coverages multiply at the pixel centre (§6.2)
+                float coverage = 1.0f;
+                for (const RoundedClip& clip : group->clips)
+                    coverage *= rounded_coverage(clip, static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f, m_device_scale);
+                // a pixel the mask leaves alone already holds the destination (§6.2)
+                if (coverage <= 0.0f)
+                    continue;
+                const std::uint8_t* source = source_row + static_cast<std::size_t>(x) * 4;
+                std::uint8_t* result = result_row + static_cast<std::size_t>(x) * 4;
+                for (std::size_t channel = 0; channel < 4; channel++) {
+                    // the premultiplied group blends over the destination by the mask's coverage (§6.2)
+                    const float value = static_cast<float>(source[channel]) * coverage + static_cast<float>(result[channel]) * (1.0f - coverage);
+                    result[channel] = static_cast<std::uint8_t>(std::clamp(value, 0.0f, 255.0f) + 0.5f);
+                }
+            }
+        }
+        // the masked result replaces the destination in one source copy, which the parent context performs (§6.2)
+        BLContext* parent = group->parent != nullptr ? group->parent : m_context;
+        if (parent != nullptr) {
+            parent->save();
+            parent->setGlobalAlpha(1.0);
+            parent->setCompOp(BL_COMP_OP_SRC_COPY);
+            parent->setTransform(BLMatrix2D::makeScaling(1.0 / m_device_scale, 1.0 / m_device_scale));
+            parent->blitImage(BLRect(0.0, 0.0, static_cast<double>(width) / m_device_scale, static_cast<double>(height) / m_device_scale), group->backup);
+            parent->restore();
+        }
+        // the parent context becomes current again, with the state the group began under (§6.2)
+        m_context = parent;
+        m_group = group->parent_group;
+        m_transform = group->parent_state.transform;
+        m_clip = group->parent_state.clip;
+        m_opacity = group->parent_state.opacity;
     }
 
     BLRgba32 Blend2DRenderContext::to_blend_color(const Color& color) const {

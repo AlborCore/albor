@@ -108,20 +108,26 @@ Beyond per-file unit tests, the architecture defines cross-cutting suites
 ## Parity tolerance baseline
 
 `AlborParityChecks` (`tests/conditional/render_albor_metal.test.macos.mm`) compares
-`render-albor` against the software reference. Each case asserts a whole-frame
-`max_channel_difference` bound, and a case whose interiors are flat also asserts
+`render-albor` against the software reference. The reference is `render-software`, which
+rasterizes geometry and images through Blend2D and composites text through the HarfBuzz
+glyph-coverage atlas, so it shares no rasterizer with the GPU backend. Each case asserts a
+whole-frame `max_channel_difference` bound, and a case whose interiors are flat also asserts
 `band_count(..., 2) == 0`, so a uniform tint cannot pass a max-only check. The bound is
 the value measured on this host plus margin; values are 8-bit channel levels.
 
 | case class | bound | measured |
 | --- | --- | --- |
 | aligned geometry, 2x density, snapped scissor, texture reuse | 0 | 0 |
-| feathered edges, opacity, retained transforms, rounded clip | 8–40 | 1–31 |
+| feathered edges, opacity, retained transforms, rounded clip | 8–40 | 1–35 |
 | rounded fills and polylines | 64–80 | 55–73 |
-| gaussian shadows, square and sheared casters | 32–52 | 26–44 |
+| gaussian shadows, square and sheared casters | 32–64 | 26–61 |
 | mipmapped downscale | 72 | 57 |
 | text, system and embedded | 80 / 64 | 70 / 57 |
 | transformed text, rotated and sheared | 160 | 104–130 |
+
+The table was re-measured when the reference moved from Skia to Blend2D. `render-albor`
+snaps an axis-aligned clip to whole device pixels, and the reference applies the same snap,
+so a fractional scissor still compares exactly.
 
 A bound is not a budget for drift: a new case records its measured value next to the
 assertion, and a case that samples a corner or a centre also compares the whole frame, so
