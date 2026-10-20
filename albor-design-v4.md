@@ -589,7 +589,7 @@ that owns the layer, which in the shipped architecture means the UI thread.
 **Skia is the baseline primary rendering backend for Phase 1.**
 - Skia provides battle-tested Metal, Vulkan, and DirectX GPU backends.
 - It includes native integration with HarfBuzz for Unicode text shaping, bidi layout, font fallback, and complex path rasterization.
-- Skia includes a software rasterizer (`SkBitmap` / `SkCanvas`) which directly powers Albor's software rendering engine for headless CI tests and pixel-diff regression testing (AD-26).
+- **The software reference is no longer Skia** (AD-26 revision). It rasterizes through the in-tree Blend2D backend and a HarfBuzz glyph-coverage atlas, so the reference is independent of the engine it judges and Skia can eventually leave the tree.
 - **Pluggability:** Because all rendering operations route through `RenderContext` and `RendererBackend`, an alternative backend (such as Google Dawn / WebGPU or direct Metal) can be added as a separate module (`render-dawn/`) in the future without modifying any UI nodes, custom rendering components, or application code.
 
 **The CPU Reference Backend (`render-software`, AD-26):**
@@ -597,17 +597,16 @@ that owns the layer, which in the shipped architecture means the UI thread.
 AD-26 makes the software rasterizer the deterministic reference that CI compares against, and that
 obliges the module to be more than a convenience. Three properties are contractual:
 
-- **It draws through the same `RenderContext` as the GPU backend.** The Metal backend and the
-  reference share one portable Skia context implementation; only the surface differs. A second
-  context implementation would be a second interpretation of §6.2, which is exactly the drift the
-  shared replay of §6.1 exists to prevent.
+- **It draws through the same `RenderContext` as the GPU backend.** The reference wraps the same
+  portable Blend2D context implementation that the Blend2D backend uses; text is the only override,
+  where the atlas composites HarfBuzz coverage. A second interpretation of §6.2 is exactly the drift
+  the shared replay of §6.1 exists to prevent.
 - **It needs no native window.** `create_surface` ignores the `NativeWindowHandle` entirely and
   allocates a raster from `WindowMetrics` alone. That is what makes the reference reproducible: the
   same metrics and the same immutable scene must produce the same bytes, on any machine, with no
   display attached.
-- **The portable half of the Skia module builds everywhere.** Only the Metal backend is Apple-only.
-  A CI runner is not an Apple machine, so gating the whole module on `APPLE` would have made the
-  reference untestable on the platform it exists for (§3.5, AD-16).
+- **The reference builds everywhere without a GPU.** Blend2D and the HarfBuzz raster are portable
+  libraries, so the reference is testable on every CI runner, not only on Apple hardware (§3.5, AD-16).
 
 The reference also exposes what the HAL does not: `read_pixels()` for a screenshot comparison and a
 finished-frame count for a test to synchronize on. These are concrete-backend affordances for the
@@ -1380,7 +1379,7 @@ Every architectural decision from Phase 0 is formally settled for production imp
 | **AD-23** | Compiler Language | **Decided** | Compiler is implemented in modern C++23. |
 | **AD-24** | Write Precedence | **Decided** | Imperative write breaks binding; `rebind()` restores; animation writes through distinct channel. |
 | **AD-25** | Dual-Engine Equivalence| **Decided** | Compiled C++ and Dev IR evaluator validated against a shared conformance test corpus. |
-| **AD-26** | Software Parity | **Decided** | Skia software rasterizer provides deterministic reference rendering for CI headless testing. |
+| **AD-26** | Software Parity | **Decided, revised** | Blend2D plus the HarfBuzz glyph atlas provides deterministic reference rendering for CI headless testing; Skia is no longer the software reference. |
 | **AD-27** | Units Definition | **Decided** | `px` denotes logical pixels; `phx` denotes physical device pixels. |
 | **AD-28** | Candidate Primary HAL | **Decided** | **Skia is the primary HAL.** WebGPU/Dawn remains an optional future pluggable backend candidate. |
 | **AD-29** | Scene Command Vocabulary | **Decided** | A `FrameScene` is one ordered list of tagged `DrawCommand` values, shared verbatim with `PictureResource`; clips are stamped per command at record time rather than replayed as a stack. |

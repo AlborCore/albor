@@ -23,7 +23,7 @@ STD="metal3.0"
 DEPLOYMENT="13.3"
 
 # every name the backend looks up in the library, because a missing one fails where the frame is drawn
-ENTRY_POINTS="albor_vertex albor_fragment shadow_vertex shadow_shape shadow_blur"
+ENTRY_POINTS="albor_vertex albor_fragment albor_fragment_exact shadow_vertex shadow_shape shadow_blur"
 
 # the intermediate is always built outside the tree, so a check leaves nothing behind
 OUT="$(mktemp -d)"

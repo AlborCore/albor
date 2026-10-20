@@ -178,7 +178,7 @@ counter, a manifest-driven chart with custom line-batch rendering, the compiled
 | macOS platform: AppKit window, display-link pacing, input | done (§5) |
 | `render-albor` GPU backend: fills, strokes, outlined text, retained resources, images, shadows, layers, fill rules, 11 composition modes | done on macOS (§6.2–§6.4, AD-26) |
 | Skia renderer backend (Metal/Ganesh) | transitional reference until Windows/Linux parity (§6, #102) |
-| software and Blend2D raster backends | done (§6.3, AD-26) |
+| software reference (Blend2D + HarfBuzz glyph atlas) and Blend2D windowed backend | done (§6.3, AD-26) |
 | GPU/software parity suite, headless CI | done (AD-26, §16) |
 | reactive properties, eager-push binding engine, snapshots | done (§7) |
 | ui tree, components, event routing, focus | done (§8) |
