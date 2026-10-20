@@ -133,6 +133,29 @@ A bound is not a budget for drift: a new case records its measured value next to
 assertion, and a case that samples a corner or a centre also compares the whole frame, so
 an empty or uniformly wrong read cannot pass.
 
+## Reference determinism
+
+The software reference is byte-deterministic for its geometry corpus, not only reproducible
+on one host. At commit `3303e8b` a scratch probe rendered a fixed 64×48 corpus — aligned and
+rounded rectangles, a polyline, an even-odd path, a translucent image, a soft shadow and a
+composited layer, with no text — and hashed the canonical RGBA readback. macOS (Intel AMD)
+and Windows 11 x64 (AMD EPYC) produced the same digests:
+
+| corpus | hash | bytes |
+| --- | --- | --- |
+| 64×48 at 1× | `547e508416288d67` | 12288 |
+| 64×48 at 2× | `0a62d4beb95ce121` | 49152 |
+
+Both used Blend2D 2025-03-08 with the JIT feature. The Windows validation of the same
+commit ran 3006 tests with **0 failures** and 41 platform skips (conformance tests that read
+macOS font paths, and accessibility tests without a Win32 adapter); the 17 Windows-only
+tests and the missing 128 macOS-only tests reconcile exactly with the macOS count of 3117.
+
+Text is excluded from the cross-platform hash because platform font files differ between
+operating systems; embedded-font runs can be compared separately. A Blend2D upgrade, a JIT
+change, or a new primitive that changes the reference output requires re-running the probe
+and updating this record rather than treating the digests as permanent.
+
 ## Composited layers and blend semantics
 
 `RenderContext::push_layer(opacity)` opens a group the later draws paint into, and

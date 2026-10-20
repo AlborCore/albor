@@ -591,7 +591,7 @@ namespace albor::blend2d
     void Blend2DRenderContext::begin_clip_group() {
         // a context with no raster context keeps no offscreen, which the rectangular clip above already covers (§6.2)
         BLImage* destination = m_context != nullptr ? m_context->targetImage() : nullptr;
-        BLImageData destination_data;
+        BLImageData destination_data{};
         auto group = std::make_unique<ClipGroup>();
         // a destination blend2d cannot describe keeps the rectangular clip rather than guessing (§6.2)
         bool ready = destination != nullptr && destination->getData(&destination_data) == BL_SUCCESS;
@@ -631,8 +631,8 @@ namespace albor::blend2d
         m_groups.pop_back();
         // the group raster is final, so its pixels and its backup are stable to read (§6.2)
         group->context.end();
-        BLImageData source_data;
-        BLImageData backup_data;
+        BLImageData source_data{};
+        BLImageData backup_data{};
         group->target.getData(&source_data);
         group->backup.getData(&backup_data);
         const int width = source_data.size.w;
@@ -660,7 +660,7 @@ namespace albor::blend2d
         }
         // the masked result replaces the destination in one source copy, which the parent context performs (§6.2)
         BLContext* parent = group->parent != nullptr ? group->parent : m_context;
-        if (parent != nullptr) {
+        if (parent != nullptr && width > 0 && height > 0) {
             parent->save();
             parent->setGlobalAlpha(1.0);
             parent->setCompOp(BL_COMP_OP_SRC_COPY);
