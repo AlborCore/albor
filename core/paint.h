@@ -38,6 +38,53 @@ namespace albor
         friend bool operator==(const Color& lhs, const Color& rhs) = default;
     };
 
+    // how a filled path decides which points it covers, which the scanline sweep applies (§6.2)
+    enum class FillRule
+    {
+        // a point is covered when its winding is non zero, which every primitive defaults to (§6.2)
+        NonZero,
+
+        // a point is covered when an odd number of edges cross it, which cuts a same winding overlap (§6.2)
+        EvenOdd,
+    };
+
+    // how a draw combines with what the target already holds, which every backend maps to its blend state (§6.2)
+    enum class CompositionMode
+    {
+        // the source covers the destination, which is the default for ordinary content (§6.2)
+        SourceOver,
+
+        // only the part of the source inside the destination is kept (§6.2)
+        SourceIn,
+
+        // only the part of the source outside the destination is kept (§6.2)
+        SourceOut,
+
+        // the source covers the destination only where they overlap (§6.2)
+        Atop,
+
+        // the destination covers the source, which draws under what is already there (§6.2)
+        DestinationOver,
+
+        // only the part of the destination inside the source is kept (§6.2)
+        DestinationIn,
+
+        // only the part of the destination outside the source is kept (§6.2)
+        DestinationOut,
+
+        // the destination covers the source only where they overlap (§6.2)
+        DestinationAtop,
+
+        // the source is added to the destination, which makes an overlap lighter (§6.2)
+        Lighter,
+
+        // the destination is replaced by the source (§6.2)
+        Copy,
+
+        // only the areas that belong to exactly one of the two are kept (§6.2)
+        Xor,
+    };
+
     // how a primitive is filled and stroked, which is the drawing contract of a RenderContext (§6.2)
     struct Paint
     {
@@ -49,6 +96,12 @@ namespace albor
 
         // the stroke width in logical pixels
         float stroke_width = 1.0f;
+
+        // the rule a filled path is covered by, which a hole or an overlap reads (§6.2)
+        FillRule fill_rule = FillRule::NonZero;
+
+        // how the primitive combines with the target, which is the blend its draws apply (§6.2)
+        CompositionMode composition = CompositionMode::SourceOver;
 
         // report whether the paint fills its primitive
         [[nodiscard]] bool fills() const;
@@ -68,6 +121,9 @@ namespace albor
 
         // the stroke width in logical pixels
         float width = 1.0f;
+
+        // how the stroke combines with the target, which is the blend its draws apply (§6.2)
+        CompositionMode composition = CompositionMode::SourceOver;
 
         // compare two stroke styles component wise
         friend bool operator==(const StrokeStyle& lhs, const StrokeStyle& rhs) = default;

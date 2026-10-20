@@ -164,6 +164,10 @@ namespace
 
         [[nodiscard]] float opacity() const override { return current_opacity; }
 
+        void push_layer(float) override {}
+
+        void pop_layer() override {}
+
         void draw_rect(const Rect& rect, const Paint&) override {
             drawn_rects.push_back(rect);
             draw_log.emplace_back("rect");
@@ -1382,6 +1386,28 @@ TEST(PictureRecorder, CommandsAreRecordedInOrder) {
     EXPECT_FLOAT_EQ(recorder.commands()[1].rect_geometry().radius, 4.0f);
 }
 
+TEST(PictureRecorder, ALayerRecordsItsTwoMarkersInPaintOrder) {
+    // arrange, act
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{});
+    recorder.push_layer(0.5f);
+    recorder.draw_rect(Rect::from_origin_size(Point{20.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{});
+    recorder.pop_layer();
+    // assert the push carries the group opacity and the pop closes the same group (§6.2)
+    ASSERT_EQ(recorder.commands().size(), 4u);
+    EXPECT_EQ(recorder.commands()[1].kind(), DrawCommandKind::LayerPush);
+    EXPECT_FLOAT_EQ(recorder.commands()[1].layer_geometry().opacity, 0.5f);
+    EXPECT_EQ(recorder.commands()[3].kind(), DrawCommandKind::LayerPop);
+}
+
+TEST(PictureRecorder, APopWithNoLayerOpenRecordsNothing) {
+    // arrange, act
+    PictureRecorder recorder;
+    recorder.pop_layer();
+    // assert a mismatched pop cannot emit a marker that would close an outer group (§6.2)
+    EXPECT_TRUE(recorder.empty());
+}
+
 TEST(PictureRecorder, AnEmptyRectangleDoesNotRecord) {
     // arrange, act
     PictureRecorder recorder;
@@ -2232,6 +2258,15 @@ TEST(PictureRecorder, APolylineKeepsItsVerticesAndCarriesTheTransform) {
     EXPECT_EQ(recorder.commands()[0].transform(), Transform::translation(5.0f, 6.0f));
     // assert the bound is the mapped run, because a bound reports where the command draws (§6.2)
     EXPECT_EQ(recorder.commands()[0].bounds(), (Rect{.x = 5.0f, .y = 6.0f, .width = 10.0f, .height = 10.0f}));
+}
+
+TEST(DrawCommandPlacementChecks, ALayerMarkerBoundIsTheClipItDrawsUnder) {
+    // arrange a marker under a narrower clip, which carries no geometry of its own (§6.2)
+    DrawCommand marker = DrawCommand::layer_push(0.5f);
+    const Rect clip = Rect::from_origin_size(Point{4.0f, 5.0f}, Size{30.0f, 20.0f});
+    marker.set_clip(clip);
+    // act, assert the marker covers the clip it draws under rather than an empty rect (§6.2)
+    EXPECT_EQ(marker.bounds(), clip);
 }
 
 TEST(DrawCommandPlacementChecks, ARunBoundStartsAtTheOriginItWasRecordedAt) {

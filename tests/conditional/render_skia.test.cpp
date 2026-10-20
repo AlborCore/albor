@@ -393,6 +393,83 @@ TEST(SkiaRenderContextShadowChecks, AContextWithNoCanvasSwallowsTheDraws) {
     SUCCEED();
 }
 
+TEST(SkiaRenderContextLayerChecks, AContextWithNoCanvasSwallowsALayer) {
+    // arrange a context over no canvas at all, which is the refusal path a backend takes (§6.2)
+    SkiaRenderContext context(nullptr, 1.0f);
+    // act a mismatched pop and then a group around a draw, which every step has to survive (§6.2)
+    context.pop_layer();
+    context.push_layer(0.5f);
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.pop_layer();
+    // assert the state stayed usable, because a null canvas is a refusal rather than a crash (§6.2)
+    EXPECT_FLOAT_EQ(context.opacity(), 1.0f);
+    SUCCEED();
+}
+
+TEST(SkiaRenderContextLayerChecks, ALayerDimsOverlappingChildrenOnce) {
+    // arrange a white canvas and a half opaque group whose two red children overlap by design (§6.2)
+    sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
+    ASSERT_NE(surface, nullptr);
+    surface->getCanvas()->clear(0x00000000);
+    SkiaRenderContext context(surface->getCanvas(), 1.0f);
+    const Paint red{.fill = Color::rgb(0.8f, 0.2f, 0.2f)};
+    // act the group paints both children opaque and composites once at half opacity
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{static_cast<float>(SURFACE_WIDTH), static_cast<float>(SURFACE_HEIGHT)}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.push_layer(0.5f);
+    context.draw_rect(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{24.0f, 24.0f}), red);
+    context.draw_rect(Rect::from_origin_size(Point{12.0f, 12.0f}, Size{24.0f, 24.0f}), red);
+    context.pop_layer();
+    // assert the overlap matches the single region, because the reference composites the group once (§6.2, AD-26)
+    const SkImageInfo info = SkImageInfo::Make(SURFACE_WIDTH, SURFACE_HEIGHT, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(SURFACE_WIDTH * SURFACE_HEIGHT * 4));
+    ASSERT_TRUE(surface->readPixels(info, pixels.data(), info.minRowBytes(), 0, 0));
+    const std::size_t single = (8u * static_cast<std::size_t>(SURFACE_WIDTH) + 8u) * 4u;
+    const std::size_t overlap = (16u * static_cast<std::size_t>(SURFACE_WIDTH) + 16u) * 4u;
+    for (std::size_t channel = 0; channel < 4; channel++)
+        EXPECT_NEAR(pixels[overlap + channel], pixels[single + channel], 2) << "channel " << channel;
+    EXPECT_NEAR(pixels[single], 230u, 2);
+}
+
+TEST(SkiaRenderContextCompositionChecks, AStrokedPolylineUnderCopyReplacesThePlate) {
+    // arrange a white canvas and a blue line under copy, which replaces the pixels it covers (§6.2)
+    sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
+    ASSERT_NE(surface, nullptr);
+    surface->getCanvas()->clear(0x00000000);
+    SkiaRenderContext context(surface->getCanvas(), 1.0f);
+    const Point points[2] = {Point{4.0f, 24.0f}, Point{60.0f, 24.0f}};
+    // act
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{static_cast<float>(SURFACE_WIDTH), static_cast<float>(SURFACE_HEIGHT)}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.draw_polyline(std::span<const Point>(points), StrokeStyle{.color = Color::rgb(0.0f, 0.0f, 1.0f), .width = 8.0f, .composition = CompositionMode::Copy});
+    // assert the line replaced the plate with blue rather than blending over it (§6.2)
+    const SkImageInfo info = SkImageInfo::Make(SURFACE_WIDTH, SURFACE_HEIGHT, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(SURFACE_WIDTH * SURFACE_HEIGHT * 4));
+    ASSERT_TRUE(surface->readPixels(info, pixels.data(), info.minRowBytes(), 0, 0));
+    const std::size_t centre = (24u * static_cast<std::size_t>(SURFACE_WIDTH) + 32u) * 4u;
+    EXPECT_EQ(pixels[centre], 0u);
+    EXPECT_EQ(pixels[centre + 2u], 255u);
+}
+
+TEST(SkiaRenderContextCompositionChecks, AStrokedPathUnderCopyReplacesThePlate) {
+    // arrange a white canvas and a retained path stroked under copy, which replaces what it covers (§6.2)
+    sk_sp<SkSurface> surface = SkSurfaces::Raster(SkImageInfo::MakeN32Premul(SURFACE_WIDTH, SURFACE_HEIGHT));
+    ASSERT_NE(surface, nullptr);
+    surface->getCanvas()->clear(0x00000000);
+    SkiaRenderContext context(surface->getCanvas(), 1.0f);
+    const Point points[3] = {Point{4.0f, 24.0f}, Point{32.0f, 24.0f}, Point{60.0f, 24.0f}};
+    const PathVerb verbs[3] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo};
+    const std::shared_ptr<const PathResource> path = std::make_shared<const PathResource>(77u, verbs, points);
+    // act
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{static_cast<float>(SURFACE_WIDTH), static_cast<float>(SURFACE_HEIGHT)}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.draw_path(path, Transform{}, Paint{.stroke = Color::rgb(0.0f, 0.0f, 1.0f), .stroke_width = 8.0f, .composition = CompositionMode::Copy});
+    // assert the stroke replaced the plate with blue rather than blending over it (§6.2)
+    const SkImageInfo info = SkImageInfo::Make(SURFACE_WIDTH, SURFACE_HEIGHT, kRGBA_8888_SkColorType, kPremul_SkAlphaType);
+    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(SURFACE_WIDTH * SURFACE_HEIGHT * 4));
+    ASSERT_TRUE(surface->readPixels(info, pixels.data(), info.minRowBytes(), 0, 0));
+    const std::size_t centre = (24u * static_cast<std::size_t>(SURFACE_WIDTH) + 32u) * 4u;
+    EXPECT_EQ(pixels[centre], 0u);
+    EXPECT_EQ(pixels[centre + 2u], 255u);
+}
+
 TEST(SkiaRenderContextShadowChecks, ARefusedCastDrawsNothing) {
     // arrange a context over no canvas, plus a cast the primitive must refuse twice over (§6.2)
     SkiaRenderContext context(nullptr, 1.0f);

@@ -59,17 +59,27 @@ namespace albor::render
             }
         }
 
-        // the winding one ring contributes at a point, which the fill rule accumulates (§6.2)
-        int winding_along(const FillRing& ring, Point point) {
-            // the direction the normalization reversed, which inverts every crossing it contributes
+        // the coverage one ring contributes at a point, which either fill rule reads (§6.2)
+        struct CoverageCount
+        {
+            // the signed winding the ring adds, which a non zero fill reads
+            int winding = 0;
+
+            // the number of edges the ray crosses, which an even odd fill reads
+            int crossings = 0;
+        };
+
+        // count the crossings and the winding one ring contributes at a point (§6.2)
+        CoverageCount coverage_along(const FillRing& ring, Point point) {
+            // the direction the normalization reversed, which inverts the winding every crossing contributes
             const int direction = ring.reversed ? -1 : 1;
             // the crossings the point row meets, which add up to the winding
-            int winding = 0;
+            CoverageCount coverage;
             for (std::size_t index = 0; index < ring.points.size(); index++) {
                 // the edge runs from this point to the next, which wraps on the ring
                 const Point& from = ring.points[index];
                 const Point& to = ring.points[(index + 1) % ring.points.size()];
-                // a horizontal edge crosses no ray, which the winding skips
+                // a horizontal edge crosses no ray, which the count skips
                 if (from.y == to.y)
                     continue;
                 // only an edge that carries the point row on one side meets the ray
@@ -77,20 +87,29 @@ namespace albor::render
                     continue;
                 // the x where the edge meets the point row decides which side the point sits on
                 const float crossing = from.x + (point.y - from.y) / (to.y - from.y) * (to.x - from.x);
-                // an edge the ray passes stands on the point's right, which the winding counts by its direction
-                if (point.x < crossing)
-                    winding += (to.y > from.y ? 1 : -1) * direction;
+                // an edge the ray passes stands on the point's right, which the count reads
+                if (point.x < crossing) {
+                    coverage.winding += (to.y > from.y ? 1 : -1) * direction;
+                    coverage.crossings++;
+                }
             }
-            return winding;
+            return coverage;
         }
 
-        // the winding every ring contributes at a point, which is non zero exactly where the fill covers (§6.2)
-        int winding_at(std::span<const FillRing> rings, Point point) {
-            // every ring adds what it contributes at that point
+        // report whether a point is covered, which the fill rule decides across every ring (§6.2)
+        bool inside_at(std::span<const FillRing> rings, Point point, FillRule rule) {
+            // an even odd fill counts crossings regardless of their direction, so a same winding overlap cuts
+            if (rule == FillRule::EvenOdd) {
+                int crossings = 0;
+                for (const FillRing& ring : rings)
+                    crossings += coverage_along(ring, point).crossings;
+                return crossings % 2 != 0;
+            }
+            // a non zero fill adds the windings, so a hole is a ring that winds the other way
             int winding = 0;
             for (const FillRing& ring : rings)
-                winding += winding_along(ring, point);
-            return winding;
+                winding += coverage_along(ring, point).winding;
+            return winding != 0;
         }
 
         // collect the rows every ring turns at, which bound the slabs the sweep walks
@@ -161,26 +180,30 @@ namespace albor::render
         }
 
         // append the trapezoids one slab covers, splitting it at every row where its edges meet
-        void sweep_slab(std::span<const FillRing> rings, float top, float bottom, int depth, std::vector<FillTrapezoid>& out) {
-            // the crossings this slab sees, which the split test and the winding walk both read
+        void sweep_slab(std::span<const FillRing> rings, float top, float bottom, FillRule rule, int depth, std::vector<FillTrapezoid>& out) {
+            // the crossings this slab sees, which the split test and the coverage walk both read
             const std::vector<SweepCrossing> crossings = slab_crossings(rings, top, bottom);
             // two edges that meet inside the slab swap sides, so the slab splits there rather than spanning both
             const float split = crossing_row(crossings, top, bottom);
             if (split < bottom - SWEEP_TOLERANCE && depth < SLAB_SPLIT_DEPTH) {
-                sweep_slab(rings, top, split, depth + 1, out);
-                sweep_slab(rings, split, bottom, depth + 1, out);
+                sweep_slab(rings, top, split, rule, depth + 1, out);
+                sweep_slab(rings, split, bottom, rule, depth + 1, out);
                 return;
             }
-            // the crossings order left to right, which the winding walk reads
+            // the crossings order left to right, which the coverage walk reads
             std::vector<SweepCrossing> ordered = crossings;
             std::sort(ordered.begin(), ordered.end(), [](const SweepCrossing& lhs, const SweepCrossing& rhs) { return lhs.top + lhs.bottom < rhs.top + rhs.bottom; });
             // the winding the walk accumulates, which covers the span while it is non zero
             int winding = 0;
+            // the parity the walk toggles, which covers the span while it is odd
+            bool parity = false;
             for (std::size_t index = 0; index < ordered.size(); index++) {
                 // the edge on the left opens or closes the span it bounds
                 winding += ordered[index].winding;
-                // a span the winding puts back to zero is a hole, which stays open
-                if (winding == 0 || index + 1 >= ordered.size())
+                parity = !parity;
+                // a span the rule puts back outside is a hole, which stays open
+                const bool covered = rule == FillRule::EvenOdd ? parity : winding != 0;
+                if (!covered || index + 1 >= ordered.size())
                     continue;
                 // the two crossings that bound the covered span
                 const SweepCrossing& left = ordered[index];
@@ -211,8 +234,8 @@ namespace albor::render
             return Point{.x = point.miter_x * scale, .y = point.miter_y * scale};
         }
 
-        // the side of its boundary a contour fills on, which the winding of the rings decides (§6.2)
-        float ring_side(std::span<const FillRing> rings, const Contour& contour) {
+        // the side of its boundary a contour fills on, which the rings and the fill rule decide (§6.2)
+        float ring_side(std::span<const FillRing> rings, const Contour& contour, FillRule rule) {
             // the normal of the first point places the two probes, a half fringe apart
             const Point miter = clamped_miter(contour.points.front());
             const Point& position = contour.points.front().position;
@@ -220,25 +243,25 @@ namespace albor::render
             const Point inner{.x = position.x + miter.x * FRINGE * 0.5f, .y = position.y + miter.y * FRINGE * 0.5f};
             const Point outer{.x = position.x - miter.x * FRINGE * 0.5f, .y = position.y - miter.y * FRINGE * 0.5f};
             // a boundary whose fill lies outside it is a hole, which the ring and the fringe mirror onto that side
-            const bool outer_filled = winding_at(rings, outer) != 0;
-            const bool inner_filled = winding_at(rings, inner) != 0;
+            const bool outer_filled = inside_at(rings, outer, rule);
+            const bool inner_filled = inside_at(rings, inner, rule);
             return outer_filled && !inner_filled ? -1.0f : 1.0f;
         }
     } // namespace
 
-    std::vector<FillTrapezoid> sweep_fill(std::span<const FillRing> rings) {
+    std::vector<FillTrapezoid> sweep_fill(std::span<const FillRing> rings, FillRule rule) {
         // the trapezoids the sweep collects, in row order
         std::vector<FillTrapezoid> trapezoids;
         // every distinct row bounds one slab, which the sweep walks top down
         const std::vector<float> rows = sweep_rows(rings);
         for (std::size_t row = 0; row + 1 < rows.size(); row++)
-            sweep_slab(rings, rows[row], rows[row + 1], 0, trapezoids);
+            sweep_slab(rings, rows[row], rows[row + 1], rule, 0, trapezoids);
         return trapezoids;
     }
 
-    EmittedRange expand_fill_group(FrameBatch& sink, std::vector<Contour>& contours) {
-        // a group of one contour fills through the single contour expansion, which fans a convex ring exactly
-        if (contours.size() <= 1)
+    EmittedRange expand_fill_group(FrameBatch& sink, std::vector<Contour>& contours, FillRule rule) {
+        // a non zero group of one contour fills through the single contour expansion, which fans a convex ring exactly
+        if (rule == FillRule::NonZero && contours.size() <= 1)
             return contours.empty() ? EmittedRange{} : expand_fill(sink, contours.front());
         // the range the expansion appends starts at the current index count
         const std::uint32_t index_begin = static_cast<std::uint32_t>(sink.indices.size());
@@ -270,7 +293,7 @@ namespace albor::render
                 sides.push_back(1.0f);
                 continue;
             }
-            sides.push_back(ring_side(polygons, contours[index]));
+            sides.push_back(ring_side(polygons, contours[index], rule));
         }
         // the offset ring of every filled contour, which the sweep and the fringe both read
         std::vector<FillRing> rings;
@@ -292,8 +315,8 @@ namespace albor::render
             }
             rings.push_back(std::move(ring));
         }
-        // the sweep fills every ring at once, which its winding cuts the holes by (§6.2)
-        for (const FillTrapezoid& trapezoid : sweep_fill(rings)) {
+        // the sweep fills every ring at once, which the rule cuts the holes by (§6.2)
+        for (const FillTrapezoid& trapezoid : sweep_fill(rings, rule)) {
             // the two triangles cover the trapezoid, which its four corners bound
             const std::uint32_t left_top = emit_vertex(sink, trapezoid.left_top, trapezoid.top, 1.0f);
             const std::uint32_t right_top = emit_vertex(sink, trapezoid.right_top, trapezoid.top, 1.0f);

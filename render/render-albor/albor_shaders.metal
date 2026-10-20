@@ -24,6 +24,7 @@ struct DrawUniforms
     int kind;
     int scissorEnabled;
     int hasTexture;
+    int blend;
 };
 
 // the varying a rasterized fragment carries, which interpolates the coverage seeds
@@ -84,13 +85,34 @@ static float scissor_mask(float2 position, constant DrawUniforms& uniforms) {
     return clamp(ramp.x, 0.0, 1.0) * clamp(ramp.y, 0.0, 1.0);
 }
 
+// the composition modes that replace the destination, which the fragment reshapes its alpha for
+constant int COMPOSITION_SOURCE_IN = 1;
+constant int COMPOSITION_SOURCE_OUT = 2;
+constant int COMPOSITION_DESTINATION_IN = 5;
+constant int COMPOSITION_DESTINATION_ATOP = 7;
+constant int COMPOSITION_COPY = 9;
+
 // shade one fragment, which every pipeline shares and the kind selects between
 fragment float4 albor_fragment(Varyings in [[stage_in]], constant DrawUniforms& uniforms [[buffer(1)]], texture2d<float> paint [[texture(0)]], sampler paintSampler [[sampler(0)]]) {
     float4 base = uniforms.color;
     if (uniforms.hasTexture != 0) {
         base = paint.sample(paintSampler, in.uv) * uniforms.color;
     }
-    return base * (coverage(in, uniforms) * scissor_mask(in.position.xy, uniforms));
+    float scale = coverage(in, uniforms) * scissor_mask(in.position.xy, uniforms);
+    float4 result = base * scale;
+    // source in and source out keep the destination where the group does not cover, which the coverage alpha leaves
+    if (uniforms.blend == COMPOSITION_SOURCE_IN || uniforms.blend == COMPOSITION_SOURCE_OUT) {
+        result.a = scale;
+    }
+    // destination in and atop keep the uncovered destination, which the residual alpha leaves for the blender
+    else if (uniforms.blend == COMPOSITION_DESTINATION_IN || uniforms.blend == COMPOSITION_DESTINATION_ATOP) {
+        result.a = scale * (1.0 - base.a);
+    }
+    // a copy writes the painted surface alone, which leaves the uncovered part to the destination
+    else if (uniforms.blend == COMPOSITION_COPY) {
+        result.a = scale;
+    }
+    return result;
 }
 
 // the per shadow state, which the silhouette, the blur and the composite read

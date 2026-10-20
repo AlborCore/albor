@@ -125,6 +125,27 @@ namespace albor
         return m_opacity;
     }
 
+    void PictureRecorder::push_layer(float opacity) {
+        // the layer begins at the state the recorder stands at, which its pop returns to (§6.2)
+        save();
+        // the marker carries the clamped group opacity, which a replay composites once (§6.2)
+        record(DrawCommand::layer_push(opacity));
+        // the open count tells a later pop that a layer is waiting for it (§6.2)
+        m_layers++;
+    }
+
+    void PictureRecorder::pop_layer() {
+        // a pop with no layer open is a no operation, because the pair is the caller's contract (§6.2)
+        if (m_layers == 0)
+            return;
+        // the layer is no longer open, which the next pop reads (§6.2)
+        m_layers--;
+        // the state the push saved becomes current again, which balances its save (§6.2)
+        restore();
+        // the marker closes the group under the clip the push recorded, so the pair carries one clip (§6.2)
+        record(DrawCommand::layer_pop());
+    }
+
     void PictureRecorder::draw_rect(const Rect& rect, const Paint& paint) {
         // the rectangle stays raw, because the transform travels beside it (§6.4)
         record(DrawCommand::rectangle(rect, paint));
@@ -204,6 +225,8 @@ namespace albor
         m_states.clear();
         m_commands.clear();
         m_transform = Transform{};
+        // no layer stays open, because a reused recorder starts its pairs afresh (§6.2)
+        m_layers = 0;
         // the clip returns to the whole area, because a picture that was clipped records nothing under the old one (§6.2)
         m_clip = ClipState{.rect = DrawCommand::unclipped()};
     }

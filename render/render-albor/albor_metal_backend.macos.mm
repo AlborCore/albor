@@ -1,6 +1,7 @@
 #include "render/render-albor/albor_backend_support.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -60,6 +61,9 @@ namespace albor::render
 
             // whether the draw samples a texture rather than a flat colour
             int has_texture;
+
+            // the composition the draw blends with, which the shader reads its residual alpha from
+            int blend;
         };
 
         // the msl struct pads to a sixteen byte boundary, so the host side must carry the same size
@@ -87,6 +91,51 @@ namespace albor::render
         // the shadow struct pads to a sixteen byte boundary, which the msl side mirrors
         static_assert(sizeof(ShadowUniforms) == 80, "the shadow uniforms must match the msl layout");
 
+        // the two blend factors one composition mode applies, which the fixed function blender evaluates (§6.2)
+        struct BlendFactors
+        {
+            // the factor the source colour is multiplied by
+            MTLBlendFactor source = MTLBlendFactorOne;
+
+            // the factor the destination colour is multiplied by
+            MTLBlendFactor destination = MTLBlendFactorOneMinusSourceAlpha;
+        };
+
+        // map a composition mode onto the porter duff factors premultiplied colour leaves, which one blender covers (§6.2)
+        BlendFactors blend_factors(CompositionMode mode) {
+            switch (mode) {
+            case CompositionMode::SourceIn:
+                return {.source = MTLBlendFactorDestinationAlpha, .destination = MTLBlendFactorOneMinusSourceAlpha};
+            case CompositionMode::SourceOut:
+                return {.source = MTLBlendFactorOneMinusDestinationAlpha, .destination = MTLBlendFactorOneMinusSourceAlpha};
+            case CompositionMode::Atop:
+                return {.source = MTLBlendFactorDestinationAlpha, .destination = MTLBlendFactorOneMinusSourceAlpha};
+            case CompositionMode::DestinationOver:
+                return {.source = MTLBlendFactorOneMinusDestinationAlpha, .destination = MTLBlendFactorOne};
+            case CompositionMode::DestinationIn:
+                return {.source = MTLBlendFactorZero, .destination = MTLBlendFactorOneMinusSourceAlpha};
+            case CompositionMode::DestinationOut:
+                return {.source = MTLBlendFactorZero, .destination = MTLBlendFactorOneMinusSourceAlpha};
+            case CompositionMode::DestinationAtop:
+                return {.source = MTLBlendFactorOneMinusDestinationAlpha, .destination = MTLBlendFactorOneMinusSourceAlpha};
+            case CompositionMode::Lighter:
+                return {.source = MTLBlendFactorOne, .destination = MTLBlendFactorOne};
+            case CompositionMode::Copy:
+                return {.source = MTLBlendFactorOne, .destination = MTLBlendFactorOneMinusSourceAlpha};
+            case CompositionMode::Xor:
+                return {.source = MTLBlendFactorOneMinusDestinationAlpha, .destination = MTLBlendFactorOneMinusSourceAlpha};
+            case CompositionMode::SourceOver:
+                break;
+            }
+            return {.source = MTLBlendFactorOne, .destination = MTLBlendFactorOneMinusSourceAlpha};
+        }
+
+        // how many composition modes the pipeline table carries, which indexes the array the draw binds (§6.2)
+        constexpr std::size_t COMPOSITION_MODES = 11;
+
+        // the shader names modes by index, which must follow the hal order it shapes its alpha for (§6.2)
+        static_assert(static_cast<int>(CompositionMode::SourceIn) == 1 && static_cast<int>(CompositionMode::SourceOut) == 2 && static_cast<int>(CompositionMode::DestinationIn) == 5 && static_cast<int>(CompositionMode::DestinationAtop) == 7 && static_cast<int>(CompositionMode::Copy) == 9, "the shader composition constants must follow the hal order");
+
         // the device wide state every surface draws through, which outlives them (§6.3)
         struct DeviceState
         {
@@ -99,8 +148,11 @@ namespace albor::render
             // the shader library the two pipelines build from
             id<MTLLibrary> library = nil;
 
-            // the one pipeline every draw binds, which the kind uniform selects the coverage of (§6.3)
+            // the one pipeline every ordinary draw binds, which the kind uniform selects the coverage of (§6.3)
             id<MTLRenderPipelineState> pipeline = nil;
+
+            // the pipeline each composition mode binds, indexed by the mode the draw carries (§6.2)
+            std::array<id<MTLRenderPipelineState>, COMPOSITION_MODES> pipelines{};
 
             // the pipeline that rasterizes a rounded silhouette, which a cast is blurred from (§6.2)
             id<MTLRenderPipelineState> shadow_shape = nil;
@@ -201,8 +253,14 @@ namespace albor::render
                 std::fprintf(stderr, "albor-render-albor: the metal library could not be used: %s\n", reason);
             // no pipeline can be built from a library metal cannot use, because the descriptor would assert (§6.2)
             if (usable) {
-                // premultiplied source over the destination is the one blend the hal composites with (§6.3)
-                state.pipeline = build_pipeline(state.device, state.library, MTLBlendFactorOne, MTLBlendFactorOneMinusSourceAlpha);
+                // every composition mode gets its pipeline, which the draw record selects at encode time (§6.2)
+                for (std::size_t index = 0; index < COMPOSITION_MODES; index++) {
+                    // the mode the index names decided the two factors the blender evaluates (§6.2)
+                    const BlendFactors factors = blend_factors(static_cast<CompositionMode>(index));
+                    state.pipelines[index] = build_pipeline(state.device, state.library, factors.source, factors.destination);
+                }
+                // premultiplied source over the destination is the pipeline a shadow composite resumes with (§6.3)
+                state.pipeline = state.pipelines[0];
                 // the silhouette pass writes the cast alone, which no blend mixes with the clear (§6.2)
                 state.shadow_shape = build_shadow_pipeline(state.device, state.library, @"shadow_vertex", @"shadow_shape", MTLBlendFactorOne, MTLBlendFactorZero);
                 // the blur pass replaces its cleared target, which the one over zero blend and the ping pong give (§6.2)
@@ -224,7 +282,8 @@ namespace albor::render
             sampler_descriptor.tAddressMode = MTLSamplerAddressModeClampToEdge;
             state.sampler = [state.device newSamplerStateWithDescriptor:sampler_descriptor];
             // the state is complete only when every piece the draw path binds came up (§6.3)
-            state.built = state.device != nil && state.queue != nil && state.library != nil && state.pipeline != nil && state.shadow_shape != nil && state.shadow_blur != nil && state.white != nil && state.sampler != nil;
+            const bool composed = std::all_of(state.pipelines.begin(), state.pipelines.end(), [](id<MTLRenderPipelineState> pipeline) { return pipeline != nil; });
+            state.built = state.device != nil && state.queue != nil && state.library != nil && composed && state.shadow_shape != nil && state.shadow_blur != nil && state.white != nil && state.sampler != nil;
         }
 
         // the surface the backend presents into, which owns one colour target per frame (§6.2, §6.3)
@@ -258,7 +317,10 @@ namespace albor::render
             void encode(id<MTLCommandBuffer> command, MTLRenderPassDescriptor* pass) const;
 
             // blur a cast offscreen and composite it under the shape, which runs four passes (§6.2)
-            void composite_shadow(id<MTLCommandBuffer> command, const BatchShadow& shadow) const;
+            void composite_shadow(id<MTLCommandBuffer> command, const BatchShadow& shadow, id<MTLTexture> target) const;
+
+            // composite a layer onto the target beneath it at the opacity its group names (§6.2)
+            void composite_layer(id<MTLCommandBuffer> command, id<MTLTexture> layer, id<MTLTexture> target, float opacity) const;
 
             // the layer the surface presents into, which is nil for an offscreen surface (§6.2)
             CAMetalLayer* __strong m_layer = nil;
@@ -366,6 +428,7 @@ namespace albor::render
             m_batch.vertices.clear();
             m_batch.indices.clear();
             m_batch.draws.clear();
+            m_batch.layers.clear();
             m_batch.uploads.clear();
             m_batch.shadows.clear();
             // the context records logical points onto the physical target, so the device scale is handed to it (AD-27)
@@ -383,7 +446,7 @@ namespace albor::render
 
         void blur_pass(id<MTLCommandBuffer> command, id<MTLTexture> source, id<MTLTexture> target, ShadowUniforms uniforms, float dx, float dy, float step, float width, float height);
 
-        void AlborRenderSurface::composite_shadow(id<MTLCommandBuffer> command, const BatchShadow& shadow) const {
+        void AlborRenderSurface::composite_shadow(id<MTLCommandBuffer> command, const BatchShadow& shadow, id<MTLTexture> target) const {
             // the offscreen target covers the caster plus the reach, and the edge ramp spans half a device pixel (§6.2)
             const float reach = std::max(shadow.reach, 1.0f);
             const float left = shadow.rect.x - reach;
@@ -456,8 +519,8 @@ namespace albor::render
             draw.color[1] = 1.0f;
             draw.color[2] = 1.0f;
             draw.color[3] = 1.0f;
-            draw.target_size[0] = static_cast<float>(m_target.width);
-            draw.target_size[1] = static_cast<float>(m_target.height);
+            draw.target_size[0] = static_cast<float>(target.width);
+            draw.target_size[1] = static_cast<float>(target.height);
             // the cast carries the scissor of the moment it was recorded, which the mask applies (§6.2)
             draw.inverse0[0] = shadow.scissor.inverse.scale_x;
             draw.inverse0[1] = shadow.scissor.inverse.skew_x;
@@ -474,9 +537,9 @@ namespace albor::render
             draw.kind = 0;
             draw.scissor_enabled = shadow.scissor.enabled ? 1 : 0;
             draw.has_texture = 1;
-            // the cast composites into the frame target, which its own pass binds and loads (§6.2)
+            // the cast composites into the target it covers, which its own pass binds and loads (§6.2)
             MTLRenderPassDescriptor* composite = [MTLRenderPassDescriptor renderPassDescriptor];
-            composite.colorAttachments[0].texture = m_target;
+            composite.colorAttachments[0].texture = target;
             composite.colorAttachments[0].loadAction = MTLLoadActionLoad;
             composite.colorAttachments[0].storeAction = MTLStoreActionStore;
             id<MTLRenderCommandEncoder> cast = [command renderCommandEncoderWithDescriptor:composite];
@@ -488,6 +551,46 @@ namespace albor::render
             [cast setFragmentTexture:silhouette atIndex:0];
             [cast drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
             [cast endEncoding];
+        }
+
+        void AlborRenderSurface::composite_layer(id<MTLCommandBuffer> command, id<MTLTexture> layer, id<MTLTexture> target, float opacity) const {
+            // the quad spans the whole target, because a layer covers the frame it was recorded for (§6.2)
+            const float width = static_cast<float>(target.width);
+            const float height = static_cast<float>(target.height);
+            BatchVertex quad[4];
+            const float corners[4][2] = {{0.0f, 0.0f}, {width, 0.0f}, {0.0f, height}, {width, height}};
+            for (int index = 0; index < 4; index++) {
+                // the corner lands where the target it covers begins (§6.2)
+                quad[index].x = corners[index][0];
+                quad[index].y = corners[index][1];
+                quad[index].u = (index == 1 || index == 3) ? 1.0f : 0.0f;
+                quad[index].v = (index >= 2) ? 1.0f : 0.0f;
+            }
+            // the group dims once, which a premultiplied white at the opacity multiplies into every texel (§6.2)
+            DrawUniforms draw{};
+            draw.color[0] = opacity;
+            draw.color[1] = opacity;
+            draw.color[2] = opacity;
+            draw.color[3] = opacity;
+            draw.target_size[0] = width;
+            draw.target_size[1] = height;
+            draw.ramp = 1.0f;
+            draw.kind = 0;
+            draw.has_texture = 1;
+            // the layer composites source over the parent, which is the one blend a group lands with (§6.2)
+            MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
+            pass.colorAttachments[0].texture = target;
+            pass.colorAttachments[0].loadAction = MTLLoadActionLoad;
+            pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+            id<MTLRenderCommandEncoder> encoder = [command renderCommandEncoderWithDescriptor:pass];
+            [encoder setRenderPipelineState:device_state().pipeline];
+            [encoder setFragmentSamplerState:device_state().sampler atIndex:0];
+            [encoder setVertexBuffer:[device_state().device newBufferWithBytes:quad length:sizeof(quad) options:MTLResourceStorageModeShared] offset:0 atIndex:0];
+            [encoder setVertexBytes:&draw length:sizeof(draw) atIndex:1];
+            [encoder setFragmentBytes:&draw length:sizeof(draw) atIndex:1];
+            [encoder setFragmentTexture:layer atIndex:0];
+            [encoder drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
+            [encoder endEncoding];
         }
 
         void blur_pass(id<MTLCommandBuffer> command, id<MTLTexture> source, id<MTLTexture> target, ShadowUniforms uniforms, float dx, float dy, float step, float width, float height) {
@@ -546,80 +649,143 @@ namespace albor::render
         }
 
         void AlborRenderSurface::encode(id<MTLCommandBuffer> command, MTLRenderPassDescriptor* pass) const {
-            // the frame opens one encoder, which a shadow pass has to close and reopen (§6.2)
+            // the frame opens one encoder, which a layer or shadow pass has to close and reopen (§6.2)
             id<MTLRenderCommandEncoder> encoder = [command renderCommandEncoderWithDescriptor:pass];
             [encoder setRenderPipelineState:device_state().pipeline];
             [encoder setFragmentSamplerState:device_state().sampler atIndex:0];
-            // a frame with no geometry still composites its shadows, which a cast only layer carries (§6.2)
-            if (m_batch.vertices.empty() || m_batch.indices.empty()) {
-                [encoder endEncoding];
-                // the casts composite on their own, which no vertex range would have reached (§6.2)
-                for (const BatchDraw& draw : m_batch.draws) {
-                    // a draw that carries a cast composites it, which the frame has no geometry for (§6.2)
-                    if (draw.shadow >= 0)
-                        composite_shadow(command, m_batch.shadows[static_cast<std::size_t>(draw.shadow)]);
-                }
-                return;
+            // a frame with no geometry still composites its shadows, which the draw loop reaches without buffers (§6.2)
+            id<MTLBuffer> vertices = nil;
+            id<MTLBuffer> indices = nil;
+            if (!m_batch.vertices.empty() && !m_batch.indices.empty()) {
+                vertices = [device_state().device newBufferWithBytes:m_batch.vertices.data() length:m_batch.vertices.size() * sizeof(BatchVertex) options:MTLResourceStorageModeShared];
+                indices = [device_state().device newBufferWithBytes:m_batch.indices.data() length:m_batch.indices.size() * sizeof(std::uint32_t) options:MTLResourceStorageModeShared];
+                [encoder setVertexBuffer:vertices offset:0 atIndex:0];
             }
-            id<MTLBuffer> vertices = [device_state().device newBufferWithBytes:m_batch.vertices.data() length:m_batch.vertices.size() * sizeof(BatchVertex) options:MTLResourceStorageModeShared];
-            id<MTLBuffer> indices = [device_state().device newBufferWithBytes:m_batch.indices.data() length:m_batch.indices.size() * sizeof(std::uint32_t) options:MTLResourceStorageModeShared];
-            [encoder setVertexBuffer:vertices offset:0 atIndex:0];
-            // every recorded draw binds its own uniforms and its own texture, then draws its index range (§6.3)
-            for (const BatchDraw& draw : m_batch.draws) {
-                // a draw that casts a shadow closes the frame pass, blurs the cast and reopens it (§6.2)
+            // the target the open encoder writes into, which an open layer replaces (§6.2)
+            id<MTLTexture> target = m_target;
+            // one open layer records the target it paints and the draw it ends at (§6.2)
+            struct OpenLayer
+            {
+                // the offscreen texture the group paints into
+                id<MTLTexture> texture;
+
+                // the first draw after the group, which its composite waits for
+                std::size_t draw_end = 0;
+
+                // the opacity the group composites at
+                float opacity = 1.0f;
+            };
+            std::vector<OpenLayer> open;
+            // the next layer marker to open, which the push order keeps sorted by its first draw (§6.2)
+            std::size_t next_layer = 0;
+            // reopen a target after a composite, which loads what the target already carries (§6.2)
+            auto reopen = [&](id<MTLTexture> into, bool clear) -> id<MTLRenderCommandEncoder> {
+                MTLRenderPassDescriptor* descriptor = [MTLRenderPassDescriptor renderPassDescriptor];
+                descriptor.colorAttachments[0].texture = into;
+                descriptor.colorAttachments[0].loadAction = clear ? MTLLoadActionClear : MTLLoadActionLoad;
+                descriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
+                descriptor.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 0.0);
+                id<MTLRenderCommandEncoder> fresh = [command renderCommandEncoderWithDescriptor:descriptor];
+                [fresh setRenderPipelineState:device_state().pipeline];
+                [fresh setFragmentSamplerState:device_state().sampler atIndex:0];
+                // a frame with no geometry binds no vertex buffer, because no draw reads one (§6.2)
+                if (vertices != nil)
+                    [fresh setVertexBuffer:vertices offset:0 atIndex:0];
+                return fresh;
+            };
+            // every draw runs inside the layers whose offscreen passes are open at that point (§6.2)
+            for (std::size_t draw_index = 0; draw_index <= m_batch.draws.size(); draw_index++) {
+                // every layer that ends here composites into its parent before the next draw (§6.2)
+                while (!open.empty() && open.back().draw_end == draw_index) {
+                    [encoder endEncoding];
+                    // the texture and opacity are read before the stack pops (§6.2)
+                    const id<MTLTexture> texture = open.back().texture;
+                    const float opacity = open.back().opacity;
+                    open.pop_back();
+                    // the parent is the enclosing layer, or the frame target when none remains (§6.2)
+                    target = open.empty() ? m_target : open.back().texture;
+                    composite_layer(command, texture, target, opacity);
+                    encoder = reopen(target, false);
+                }
+                // the final index only closes the layers that reached the end of the frame (§6.2)
+                if (draw_index == m_batch.draws.size())
+                    break;
+                // every layer that begins here opens its offscreen pass before its first draw (§6.2)
+                while (next_layer < m_batch.layers.size() && m_batch.layers[next_layer].draw_begin == draw_index) {
+                    const BatchLayer& layer = m_batch.layers[next_layer++];
+                    // an empty group has nothing to composite, so it opens no pass at all (§6.2)
+                    if (layer.draw_end <= layer.draw_begin)
+                        continue;
+                    [encoder endEncoding];
+                    MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:TARGET_FORMAT width:m_target.width height:m_target.height mipmapped:NO];
+                    descriptor.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+                    descriptor.storageMode = MTLStorageModePrivate;
+                    id<MTLTexture> texture = [device_state().device newTextureWithDescriptor:descriptor];
+                    // a refused target draws the group into its parent instead, because no offscreen exists (§6.2)
+                    if (texture != nil) {
+                        encoder = reopen(texture, true);
+                        target = texture;
+                        open.push_back(OpenLayer{.texture = texture, .draw_end = layer.draw_end, .opacity = layer.opacity});
+                    }
+                }
+                const BatchDraw& draw = m_batch.draws[draw_index];
+                // a draw that casts a shadow closes the pass, blurs the cast and reopens it (§6.2)
                 if (draw.shadow >= 0) {
                     [encoder endEncoding];
-                    composite_shadow(command, m_batch.shadows[static_cast<std::size_t>(draw.shadow)]);
-                    // the frame pass resumes over what it already painted, which the load keeps (§6.2)
-                    pass.colorAttachments[0].loadAction = MTLLoadActionLoad;
-                    encoder = [command renderCommandEncoderWithDescriptor:pass];
-                    [encoder setRenderPipelineState:device_state().pipeline];
-                    [encoder setFragmentSamplerState:device_state().sampler atIndex:0];
-                    [encoder setVertexBuffer:vertices offset:0 atIndex:0];
+                    composite_shadow(command, m_batch.shadows[static_cast<std::size_t>(draw.shadow)], target);
+                    // the pass resumes over what it already painted, which the load keeps (§6.2)
+                    encoder = reopen(target, false);
                     continue;
                 }
-                DrawUniforms uniforms{};
-                // the packed colour unpacks into premultiplied channels, which the shader multiplies through
-                const float alpha = static_cast<float>((draw.color >> 24) & 0xFFu) / 255.0f;
-                uniforms.color[0] = static_cast<float>(draw.color & 0xFFu) / 255.0f;
-                uniforms.color[1] = static_cast<float>((draw.color >> 8) & 0xFFu) / 255.0f;
-                uniforms.color[2] = static_cast<float>((draw.color >> 16) & 0xFFu) / 255.0f;
-                uniforms.color[3] = alpha;
-                // the inverse clip matrix lands row wise, which maps a fragment onto the clip centre (§6.2)
-                uniforms.inverse0[0] = draw.scissor.inverse.scale_x;
-                uniforms.inverse0[1] = draw.scissor.inverse.skew_x;
-                uniforms.inverse0[2] = draw.scissor.inverse.translate_x;
-                uniforms.inverse1[0] = draw.scissor.inverse.skew_y;
-                uniforms.inverse1[1] = draw.scissor.inverse.scale_y;
-                uniforms.inverse1[2] = draw.scissor.inverse.translate_y;
-                // the half extents and the feather scales turn the masked distance into a one pixel ramp (§6.2)
-                uniforms.extent_scale[0] = draw.scissor.extent_x;
-                uniforms.extent_scale[1] = draw.scissor.extent_y;
-                uniforms.extent_scale[2] = draw.scissor.scale_x;
-                uniforms.extent_scale[3] = draw.scissor.scale_y;
-                // the corner radius rounds the mask, which zero leaves the clip rectangular (§6.2)
-                uniforms.extra[0] = draw.scissor.radius;
-                // the target extent projects a device position into clip space (§6.3)
-                uniforms.target_size[0] = static_cast<float>(m_target.width);
-                uniforms.target_size[1] = static_cast<float>(m_target.height);
-                uniforms.ramp = draw.ramp;
-                uniforms.kind = draw.coverage == CoverageKind::Folded ? 1 : 0;
-                uniforms.scissor_enabled = draw.scissor.enabled ? 1 : 0;
-                // a draw with a texture samples it, and a solid one samples the white texel (§6.3, §6.4)
-                uniforms.has_texture = draw.texture == 0 ? 0 : 1;
-                [encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:1];
-                [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:1];
-                // the draw binds its own texture, or the white texel a solid draw samples (§6.3, §6.4)
-                id<MTLTexture> texture = device_state().white;
-                if (draw.texture != 0) {
-                    // the upload the frame carried became the texture the cache holds (AD-06)
-                    const auto found = m_textures.peek(draw.texture);
-                    if (found != nullptr)
-                        texture = *found;
+                // a draw with no geometry has nothing to encode, which a cast only frame leaves (§6.2)
+                if (vertices != nil && indices != nil && draw.index_count > 0) {
+                    // the draw binds the pipeline its composition names, which the fixed blender evaluates (§6.2)
+                    [encoder setRenderPipelineState:device_state().pipelines[static_cast<std::size_t>(draw.composition)]];
+                    DrawUniforms uniforms{};
+                    // the packed colour unpacks into premultiplied channels, which the shader multiplies through
+                    const float alpha = static_cast<float>((draw.color >> 24) & 0xFFu) / 255.0f;
+                    uniforms.color[0] = static_cast<float>(draw.color & 0xFFu) / 255.0f;
+                    uniforms.color[1] = static_cast<float>((draw.color >> 8) & 0xFFu) / 255.0f;
+                    uniforms.color[2] = static_cast<float>((draw.color >> 16) & 0xFFu) / 255.0f;
+                    uniforms.color[3] = alpha;
+                    // the inverse clip matrix lands row wise, which maps a fragment onto the clip centre (§6.2)
+                    uniforms.inverse0[0] = draw.scissor.inverse.scale_x;
+                    uniforms.inverse0[1] = draw.scissor.inverse.skew_x;
+                    uniforms.inverse0[2] = draw.scissor.inverse.translate_x;
+                    uniforms.inverse1[0] = draw.scissor.inverse.skew_y;
+                    uniforms.inverse1[1] = draw.scissor.inverse.scale_y;
+                    uniforms.inverse1[2] = draw.scissor.inverse.translate_y;
+                    // the half extents and the feather scales turn the masked distance into a one pixel ramp (§6.2)
+                    uniforms.extent_scale[0] = draw.scissor.extent_x;
+                    uniforms.extent_scale[1] = draw.scissor.extent_y;
+                    uniforms.extent_scale[2] = draw.scissor.scale_x;
+                    uniforms.extent_scale[3] = draw.scissor.scale_y;
+                    // the corner radius rounds the mask, which zero leaves the clip rectangular (§6.2)
+                    uniforms.extra[0] = draw.scissor.radius;
+                    // the target extent projects a device position into clip space (§6.3)
+                    uniforms.target_size[0] = static_cast<float>(m_target.width);
+                    uniforms.target_size[1] = static_cast<float>(m_target.height);
+                    uniforms.ramp = draw.ramp;
+                    uniforms.kind = draw.coverage == CoverageKind::Folded ? 1 : 0;
+                    uniforms.scissor_enabled = draw.scissor.enabled ? 1 : 0;
+                    // a draw with a texture samples it, and a solid one samples the white texel (§6.3, §6.4)
+                    uniforms.has_texture = draw.texture == 0 ? 0 : 1;
+                    // the shader reshapes its alpha for the modes that replace the destination (§6.2)
+                    uniforms.blend = static_cast<int>(draw.composition);
+                    [encoder setVertexBytes:&uniforms length:sizeof(uniforms) atIndex:1];
+                    [encoder setFragmentBytes:&uniforms length:sizeof(uniforms) atIndex:1];
+                    // the draw binds its own texture, or the white texel a solid draw samples (§6.3, §6.4)
+                    id<MTLTexture> texture = device_state().white;
+                    if (draw.texture != 0) {
+                        // the upload the frame carried became the texture the cache holds (AD-06)
+                        const auto found = m_textures.peek(draw.texture);
+                        if (found != nullptr)
+                            texture = *found;
+                    }
+                    [encoder setFragmentTexture:texture atIndex:0];
+                    // the draw consumes its own index range, which the builder recorded (§6.3)
+                    [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:draw.index_count indexType:MTLIndexTypeUInt32 indexBuffer:indices indexBufferOffset:draw.index_begin * sizeof(std::uint32_t)];
                 }
-                [encoder setFragmentTexture:texture atIndex:0];
-                // the draw consumes its own index range, which the builder recorded (§6.3)
-                [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:draw.index_count indexType:MTLIndexTypeUInt32 indexBuffer:indices indexBufferOffset:draw.index_begin * sizeof(std::uint32_t)];
             }
             // the frame closes its encoder once every draw is recorded (§6.3)
             [encoder endEncoding];

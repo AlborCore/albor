@@ -54,6 +54,22 @@ TEST(SceneInspectorChecks, TheCoveredAreaSpansEveryCommand) {
     EXPECT_FLOAT_EQ(report.covered.height, 70.0f);
 }
 
+TEST(SceneInspectorChecks, ALayerMarkerIsCountedWithoutCoveringArea) {
+    // arrange a frame that draws one rectangle inside a layer (§6.2)
+    FrameScene scene(metrics(), Color::rgb(0.0f, 0.0f, 0.0f));
+    scene.add_command(DrawCommand::layer_push(0.5f));
+    scene.add_command(DrawCommand::rectangle(Rect{.x = 10.0f, .y = 10.0f, .width = 40.0f, .height = 20.0f}, Paint{}));
+    scene.add_command(DrawCommand::layer_pop());
+    // act
+    const inspector::SceneReport report = inspector::inspect(scene);
+    // assert both markers are counted, which the kind table must hold room for (§12.2)
+    EXPECT_EQ(report.commands, 3U);
+    EXPECT_EQ(report.per_kind.at(static_cast<std::size_t>(DrawCommandKind::LayerPush)), 1U);
+    EXPECT_EQ(report.per_kind.at(static_cast<std::size_t>(DrawCommandKind::LayerPop)), 1U);
+    // assert the covered extent is the child alone, because a marker owns no area (§6.2)
+    EXPECT_EQ(report.covered, (Rect{.x = 10.0f, .y = 10.0f, .width = 40.0f, .height = 20.0f}));
+}
+
 TEST(SceneInspectorChecks, AFrameThatDrawsNothingIsReported) {
     // arrange a frame with no command, which is legal but usually a mistake (§6.1)
     const FrameScene scene(metrics(), Color::rgb(0.0f, 0.0f, 0.0f));
@@ -95,6 +111,19 @@ TEST(BoundsOverlayChecks, TheOverlayDrawsFourEdgesPerCommand) {
     // assert two commands contribute four edges each (§12.2)
     ASSERT_NE(overlay, nullptr);
     EXPECT_EQ(overlay->command_count(), 8U);
+}
+
+TEST(BoundsOverlayChecks, TheOverlaySkipsALayerMarker) {
+    // arrange a frame that draws one rectangle inside a layer, so one marker pair surrounds it (§6.2)
+    FrameScene scene(metrics(), Color::rgb(0.0f, 0.0f, 0.0f));
+    scene.add_command(DrawCommand::layer_push(0.5f));
+    scene.add_command(DrawCommand::rectangle(Rect{.x = 10.0f, .y = 10.0f, .width = 40.0f, .height = 20.0f}, Paint{}));
+    scene.add_command(DrawCommand::layer_pop());
+    // act
+    const std::shared_ptr<const FrameScene> overlay = inspector::bounds_overlay(scene, Color::rgb(1.0f, 0.0f, 1.0f));
+    // assert only the rectangle contributes edges, because a marker owns no area to outline (§12.2)
+    ASSERT_NE(overlay, nullptr);
+    EXPECT_EQ(overlay->command_count(), 4U);
 }
 
 TEST(BoundsOverlayChecks, TheOverlayPutsInkOnTheSurface) {

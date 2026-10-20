@@ -53,6 +53,12 @@ namespace albor
 
         // a shadow cast by a rounded shape, which the replay blurs offscreen and composites (§6.2)
         Shadow,
+
+        // the start of a composited layer, which carries the opacity its group composites at (§6.2)
+        LayerPush,
+
+        // the end of the layer the matching push began (§6.2)
+        LayerPop,
     };
 
     // the geometry a rectangle command carries, which is the rectangle and its corner radii (§6.2)
@@ -176,8 +182,21 @@ namespace albor
     class DrawCommand
     {
     public:
+        // the opacity a layer marker carries, which is the one state a group composites at (§6.2)
+        struct LayerGeometry
+        {
+            // the opacity the whole group composites at, applied once rather than per draw (§6.2)
+            float opacity = 1.0f;
+
+            // whether the marker closes a layer rather than opening one (§6.2)
+            bool pop = false;
+
+            // compare two layer markers component wise, which a command comparison needs (§6.2)
+            friend bool operator==(const LayerGeometry& lhs, const LayerGeometry& rhs) = default;
+        };
+
         // the geometry a command carries, where the alternative index is the kind (§6.2)
-        using Geometry = std::variant<RectGeometry, TextGeometry, BatchGeometry, PathGeometry, PictureGeometry, ImageGeometry, GlyphOutlineGeometry, ShadowGeometry, PolylineGeometry>;
+        using Geometry = std::variant<RectGeometry, TextGeometry, BatchGeometry, PathGeometry, PictureGeometry, ImageGeometry, GlyphOutlineGeometry, ShadowGeometry, PolylineGeometry, LayerGeometry>;
 
         // the clip that stands for no clip at all, which is what a command carries until a recorder stamps one (§6.2)
         [[nodiscard]] static const Rect& unclipped();
@@ -214,6 +233,12 @@ namespace albor
 
         // build a shadow command, which the replay blurs offscreen and composites under the shape (§6.2)
         [[nodiscard]] static DrawCommand shadow(Rect rect, float radius, Shadow shadow);
+
+        // build the marker that opens a composited layer at the given group opacity (§6.2)
+        [[nodiscard]] static DrawCommand layer_push(float opacity);
+
+        // build the marker that closes the layer the matching push opened (§6.2)
+        [[nodiscard]] static DrawCommand layer_pop();
 
         // the kind of geometry the command carries (§6.2)
         [[nodiscard]] DrawCommandKind kind() const;
@@ -256,6 +281,9 @@ namespace albor
 
         // the casting shape and the cast of a shadow command (§6.2)
         [[nodiscard]] const ShadowGeometry& shadow_geometry() const;
+
+        // the opacity a layer marker carries (§6.2)
+        [[nodiscard]] const LayerGeometry& layer_geometry() const;
 
         // stamp the clip the recorder stood at, which is what the replay scissors to (§6.2)
         void set_clip(Rect clip);

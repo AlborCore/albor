@@ -9,7 +9,13 @@ namespace albor::inspector
     namespace
     {
         // how many kinds a report counts, which the last enumerator names, so a next kind cannot drift (§6.2)
-        constexpr std::size_t KIND_COUNT = static_cast<std::size_t>(DrawCommandKind::Shadow) + 1;
+        constexpr std::size_t KIND_COUNT = static_cast<std::size_t>(DrawCommandKind::LayerPop) + 1;
+
+        // report whether a kind is a layer marker, which groups draws rather than covering an area (§6.2)
+        bool structural(DrawCommandKind kind) {
+            // the two markers are the only kinds that paint nothing themselves (§6.2)
+            return kind == DrawCommandKind::LayerPush || kind == DrawCommandKind::LayerPop;
+        }
 
         // report whether a bound carries a number that is not finite, which no rasterizer can honour (§6.2)
         bool not_finite(const Rect& rect) {
@@ -50,6 +56,9 @@ namespace albor::inspector
             // a kind outside the count would overrun, so it is skipped rather than written (§12.2)
             if (kind < report.per_kind.size())
                 report.per_kind[kind]++;
+            // a marker groups draws without covering an area, so it contributes no extent (§6.2)
+            if (structural(command.kind()))
+                continue;
             // the bound is what the command could touch, which is what the overlay draws (§6.2)
             const Rect bound = command.bounds();
             // a command with no area contributes nothing to the covered extent (§6.2)
@@ -80,6 +89,9 @@ namespace albor::inspector
         }
         // every command is checked, because the rules are about individual commands (§6.2)
         for (const DrawCommand& command : scene.commands()) {
+            // a marker groups draws rather than landing on the surface, so the geometric rules skip it (§6.2)
+            if (structural(command.kind()))
+                continue;
             // the bound is read once, because both rules are about it (§6.2)
             const Rect bound = command.bounds();
             // a bound that cannot be honoured is reported, because a rasterizer would draw something odd (§6.2)
@@ -103,6 +115,9 @@ namespace albor::inspector
         std::vector<Rect> edges;
         // every command contributes its bound, because the point is to see where each landed (§12.2)
         for (const DrawCommand& command : scene.commands()) {
+            // a marker groups draws without an area of its own, so it is not outlined (§6.2)
+            if (structural(command.kind()))
+                continue;
             // the bound is read, which is what the overlay outlines (§6.2)
             const Rect bound = command.bounds();
             // a command with no area has nothing to outline (§6.2)
