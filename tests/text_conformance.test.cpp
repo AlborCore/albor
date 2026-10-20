@@ -28,17 +28,17 @@ using namespace albor;
 
 namespace
 {
-    // the font file the vendored engine shapes from, and the family the renderer draws with (§9.1, AD-28)
-    const char* const FONT_PATH = "/System/Library/Fonts/Supplemental/Arial.ttf";
+    // the ofl font the vendored engine shapes from, which the tree carries so every host runs the suite (§9.1, AD-28, #92)
+    const char* const FONT_PATH = ALBOR_TEST_FONT_PATH;
 
-    // the family the platform resolves for drawing, which must name that same face (§15, AD-28)
-    const char* const FONT_FAMILY = "Arial";
+    // the family the file engine is built with, which names the carried face (§15, AD-28)
+    const char* const FONT_FAMILY = ALBOR_TEST_FONT_FAMILY;
 
-    // the host hebrew face the rtl checks shape with, which a host without one skips the check for (§9.2)
-    const char* const RTL_FONT_PATH = "/System/Library/Fonts/SFHebrew.ttf";
+    // the ofl hebrew face the rtl checks shape with, which the tree carries beside the latin one (§9.2)
+    const char* const RTL_FONT_PATH = ALBOR_TEST_RTL_FONT_PATH;
 
-    // the family the embedded rtl face is registered under, which is what a run names to reach it (§9.2, AD-34)
-    const char* const RTL_FONT_FAMILY = "SFHebrew";
+    // the family the carried rtl face is registered under, which is what a run names to reach it (§9.2, AD-34)
+    const char* const RTL_FONT_FAMILY = ALBOR_TEST_RTL_FONT_FAMILY;
 
     // the largest difference the engines may report between their measured widths (§15, AD-25)
     bool has_font() {
@@ -116,9 +116,7 @@ TEST(DualEngineConformanceChecks, TheVendoredRunIsDrawable) {
     ASSERT_NE(measured.run, nullptr);
     // act assert the run is drawable and names the font it shaped from (§9.1, AD-34)
     EXPECT_TRUE(vendored->drawable());
-    // the handle is valid for the same reason, so the renderer has something to draw the glyphs with (§9.1)
-    EXPECT_TRUE(measured.run->lines().front().font.valid());
-    // the bytes registered with the engine are what a backend resolves the run from (§15, AD-34)
+    // the run draws through the bytes it carries, which the registry holds when no platform face exists (§15, AD-34)
     EXPECT_TRUE(resources::FontRegistry::find_hash(measured.run->font_hash()) != nullptr);
 }
 
@@ -221,7 +219,7 @@ TEST(DualEngineConformanceChecks, ASelectionChangesTheFaceTheRunShapesWith) {
         GTEST_SKIP() << "no second conformance font on this host";
     resources::FontRegistry::clear();
     resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
-    resources::FontRegistry::register_font(make_embedded_font("AlborSecond", FONT_PATH));
+    resources::FontRegistry::register_font(make_embedded_font("AlborSecond", RTL_FONT_PATH));
     const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
     ASSERT_NE(engine, nullptr);
     // act the same text is shaped once with the default face and once with the second family (§9.1, AD-34)

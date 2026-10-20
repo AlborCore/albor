@@ -26,6 +26,9 @@ target_compile_features(albor-tests PRIVATE cxx_std_23)
 # the ofl test font ships in the tree, so a suite that uses it has a carried font no host must supply (§15, AD-34, #92)
 target_compile_definitions(albor-tests PRIVATE ALBOR_TEST_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/fonts/Inter-Regular.ttf" ALBOR_TEST_FONT_FAMILY="Inter")
 
+# the ofl hebrew test font ships beside it, so the rtl checks reach a real face on every host (§9.2, AD-34)
+target_compile_definitions(albor-tests PRIVATE ALBOR_TEST_RTL_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansHebrew-Regular.ttf" ALBOR_TEST_RTL_FONT_FAMILY="Noto Sans Hebrew")
+
 # the dual-engine corpus source is compiled into a facade and serialized at test time, so the path is named here (§16)
 target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_UI="${CMAKE_CURRENT_SOURCE_DIR}/vectors/dual_engine_panel.ui")
 
