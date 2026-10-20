@@ -10,6 +10,9 @@
 
 namespace albor::automation
 {
+    // the MCP revision this adapter speaks, which the transparent host also publishes in discovery (§10.3)
+    [[nodiscard]] std::string_view mcp_protocol_version();
+
     // how the adapter reaches the automation layer, which is the only path it may take (AD-20, §10.3)
     struct McpRoute
     {
@@ -18,6 +21,12 @@ namespace albor::automation
 
         // run one command line through the automation layer, which is where every request ends (§10.3, AD-20)
         std::function<AutomationResult(std::string_view)> run;
+
+        // authenticate the token an initialize request carries, which the session compares (§10.3, AD-10)
+        std::function<bool(std::string_view)> authenticate;
+
+        // report whether the conversation has authenticated, which gates every later request (§10.3, AD-10)
+        std::function<bool()> authenticated;
     };
 
     // the protocol adapter, which reaches nothing the automation layer would refuse (§10.3, AD-20)
@@ -34,9 +43,6 @@ namespace albor::automation
         [[nodiscard]] std::size_t layer_calls() const;
 
     private:
-        // answer one request object, which is the whole of the protocol (§10.3)
-        [[nodiscard]] std::string answer(const class Json& request);
-
         // the route every call takes, which is the only path into the application (§10.3, AD-20)
         McpRoute m_route;
 

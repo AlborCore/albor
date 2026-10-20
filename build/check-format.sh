@@ -64,7 +64,7 @@ EXCLUDED=()
 files=()
 while IFS= read -r file; do
     [ -z "$file" ] && continue
-    files+=("$file")
+    [ -f "$file" ] && files+=("$file")
 done < <(git ls-files --cached --others --exclude-standard './**' | grep -E '\.(cpp|h|c\+\+|mm)$' | { if [ ${#EXCLUDED[@]} -gt 0 ]; then grep -Fxv -e "${EXCLUDED[0]}"; else cat; fi; })
 
 if [ ${#files[@]} -eq 0 ]; then

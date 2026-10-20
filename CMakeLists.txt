@@ -37,8 +37,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # build configurations (§2.2): the flags below select which libraries exist in the link
 option(ALBOR_DEV "Build the dev runtime extension (Dev configuration)" OFF)
-option(ALBOR_TEST "Build the test configuration extras: automation core, headless backend, software renderer" OFF)
-option(ALBOR_AUTOMATION "Build the automation core (Dev/Test configurations only, AD-10)" OFF)
+option(ALBOR_TEST "Build the test configuration extras: headless backend, software renderer, and, with ALBOR_AUTOMATION, the embedded automation host" OFF)
+option(ALBOR_AUTOMATION "Build the automation core and embedded host (Dev/Test configurations only, AD-10)" OFF)
 # a consumer that fetches these sources builds neither the framework's suites nor its examples unless it asks (§14.2)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     set(ALBOR_DEV_BUILD ON)

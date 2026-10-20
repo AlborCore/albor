@@ -183,6 +183,15 @@ if(APPLE)
     target_link_libraries(albor-tests PRIVATE "-framework Foundation" "-framework Metal" "-framework QuartzCore")
 endif()
 
+# the automation host integration test verifies the transparent host lifecycle (§10.3, AD-10, AD-20)
+if(ALBOR_AUTOMATION AND APPLE)
+    add_executable(albor-automation-host-tests "./conditional/automation_host.test.cpp")
+    target_include_directories(albor-automation-host-tests PRIVATE ${ALBOR_SOURCE_DIR})
+    target_compile_features(albor-automation-host-tests PRIVATE cxx_std_23)
+    target_link_libraries(albor-automation-host-tests PRIVATE GTest::gtest_main albor-automation-auto)
+    gtest_discover_tests(albor-automation-host-tests DISCOVERY_TIMEOUT 60)
+endif()
+
 # the build-scope fixture is its own product, which the §14.3 check compiles and observes (AGENTS.md, §14.3)
 add_subdirectory(scope)
 

@@ -1,0 +1,22 @@
+# the embedded host that starts on the first real tree and stops when none remains (§10.3)
+file(GLOB_RECURSE HOST_SOURCES "./*.cpp")
+
+# the platform identity source is platform specific, which carries no portable type (§10.3, AD-16)
+set(HOST_PLATFORM_SOURCES "")
+if(APPLE)
+    file(GLOB_RECURSE HOST_PLATFORM_SOURCES "./*.macos.mm")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    file(GLOB_RECURSE HOST_PLATFORM_SOURCES "./*.linux.c++")
+elseif(WIN32)
+    file(GLOB_RECURSE HOST_PLATFORM_SOURCES "./*.win32.c++")
+endif()
+
+# the host links the core, commands, semantics, ui and application modules it reaches (§10.3)
+add_library(albor-automation-host STATIC ${HOST_SOURCES} ${HOST_PLATFORM_SOURCES})
+target_include_directories(albor-automation-host PUBLIC ${ALBOR_SOURCE_DIR})
+target_compile_features(albor-automation-host PUBLIC cxx_std_23)
+target_link_libraries(albor-automation-host PUBLIC albor-automation albor-application albor-commands albor-semantics albor-ui albor-core)
+
+# the umbrella links the whole archive, which pulls the installer and the host at load (§10.3, AD-02)
+add_library(albor-automation-auto INTERFACE)
+target_link_libraries(albor-automation-auto INTERFACE "$<LINK_LIBRARY:WHOLE_ARCHIVE,albor-automation-host>")

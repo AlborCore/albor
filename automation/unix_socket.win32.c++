@@ -1,9 +1,13 @@
+#include <memory>
+#include <string>
+
 #include "automation/automation_platform.h"
+#include "automation/automation_transport.h"
 
 namespace albor::automation::platform
 {
     bool available() {
-        // the named pipe transport is not written yet, so this build reports none rather than a stub (§10.3, AD-16)
+        // the named pipe transport is not written yet, so this build reports none (§10.3, AD-16)
         return false;
     }
 

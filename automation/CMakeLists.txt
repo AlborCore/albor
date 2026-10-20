@@ -1,16 +1,19 @@
 # the automation core that exposes the running application to test tooling (§10.3)
 
 # the portable half names no platform type, so it builds wherever the framework builds (§10.3, AD-05)
-file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
+file(GLOB CPP_SOURCES "./*.cpp")
 
 # the local transport reaches the unix domain socket api, which each platform spells differently (§10.3, AD-16)
+#
+# the glob does not recurse, because the host keeps its own platform sources under host/ and the two
+# libraries would carry the same unit twice, which the linker refuses (§10.3)
 set(PLATFORM_SOURCES "")
 if(APPLE)
-    file(GLOB_RECURSE PLATFORM_SOURCES "./*.macos.mm")
+    file(GLOB PLATFORM_SOURCES "./*.macos.mm")
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    file(GLOB_RECURSE PLATFORM_SOURCES "./*.linux.c++")
+    file(GLOB PLATFORM_SOURCES "./*.linux.c++")
 elseif(WIN32)
-    file(GLOB_RECURSE PLATFORM_SOURCES "./*.win32.c++")
+    file(GLOB PLATFORM_SOURCES "./*.win32.c++")
 endif()
 
 # the units are objects rather than an archive, because the transport calls the session and the session is in the
@@ -32,3 +35,6 @@ add_library(albor-automation INTERFACE)
 # interface library does not forward an object library's units, so the two forms carry different halves
 # and neither duplicates what the other adds (§10.3)
 target_link_libraries(albor-automation INTERFACE albor-automation-objects $<TARGET_OBJECTS:albor-automation-objects>)
+
+# the host is a separate subdirectory because it is a whole archive target and not part of the portable core (§10.3)
+add_subdirectory(host)

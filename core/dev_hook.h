@@ -22,15 +22,18 @@ namespace albor::dev
     // hand a serialized component definition to the extension, doing nothing when none is installed (§12.1, AD-02)
     void reload(const std::string& ir);
 
-    // install the entry points an extension receives and releases a tree through, which a Dev build does at load (§12.1)
+    // replace every binding with one pair (§12.1)
     void install_root_binder(RootBindFunction bind, RootUnbindFunction unbind);
 
-    // report whether an extension installed a binder, which every call site checks before calling (§12.1, AD-02)
+    // append one binding (§12.1, AD-02)
+    [[nodiscard]] bool add_root_binding(RootBindFunction bind, RootUnbindFunction unbind);
+
+    // report whether any extension installed a binder, which every call site checks before calling (§12.1, AD-02)
     [[nodiscard]] bool binder_present();
 
-    // hand a live tree and its engines to the installed extension, doing nothing when none is (§12.1, AD-02)
+    // hand a live tree and its engines to every installed extension, doing nothing when none is (§12.1, AD-02)
     void bind_root(void* root, void* engine, void* text);
 
-    // tell the installed extension that a tree went away, doing nothing when it holds another (§12.1, §5.2)
+    // tell every installed extension that a tree went away, doing nothing when none holds it (§12.1, §5.2)
     void unbind_root(void* root);
 } // namespace albor::dev

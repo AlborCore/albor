@@ -71,8 +71,33 @@ namespace albor::automation
             // a dump takes nothing, because it reports the whole tree (§10.3)
             if (command == "semantic.tree")
                 return {};
+            // a lookup names the command it reads (§10.3, §18.1)
+            if (command == "command.get")
+                return {"id"};
+            // an invocation names the command and its optional argument (§10.3, §18.3)
+            if (command == "command.invoke")
+                return {"id", "argument"};
             // a command this adapter does not know takes nothing by name (§10.3)
             return {};
+        }
+
+        // extract token from initialize metadata (§10.3, AD-10)
+        std::optional<std::string> presented_token(const core::Json* params) {
+            // a request with no parameters carries no metadata, so it presents no token (§10.3)
+            if (params == nullptr || !params->is_object())
+                return std::nullopt;
+            // the metadata is an object, because that is where MCP carries extension values (§10.3)
+            const core::Json* meta = params->member("_meta");
+            // a request without metadata presents no token (§10.3, AD-10)
+            if (meta == nullptr || !meta->is_object())
+                return std::nullopt;
+            // the token is named by the albor key, which no other protocol member occupies (§10.3)
+            const core::Json* token = meta->member("albor/token");
+            // a token that is absent or not a string cannot authenticate (§10.3, AD-10)
+            if (token == nullptr || token->kind() != core::Json::Kind::String)
+                return std::nullopt;
+            // the token is copied, because the request outlives this call only until the route returns (§10.3)
+            return token->as_string();
         }
 
         // place a named argument object into the positional order the layer wire needs (§10.3)
@@ -132,6 +157,11 @@ namespace albor::automation
         }
     } // namespace
 
+    std::string_view mcp_protocol_version() {
+        // the revision is returned from one place, because discovery and the handshake must not drift (§10.3)
+        return PROTOCOL_VERSION;
+    }
+
     McpServer::McpServer(McpRoute route) :
         m_route(std::move(route)) {}
 
@@ -162,6 +192,14 @@ namespace albor::automation
 
         // the initialize handshake is answered from the protocol itself, because it reaches no application (§12.2)
         if (method->as_string() == "initialize") {
+            // auth requires host token from metadata (§10.3, AD-10)
+            if (m_route.authenticate) {
+                // the token is extracted before the session sees it, because the comparison belongs to the session (§10.3)
+                const std::optional<std::string> token = presented_token(params);
+                // a missing, malformed, or wrong token is refused with one generic reason (§10.3, AD-10)
+                if (!token || !m_route.authenticate(*token))
+                    return failure(*id, APPLICATION_ERROR, "authentication failed").to_string();
+            }
             // the result advertises the protocol and this adapter's one capability (§10.3)
             core::Json result;
             // the version is the one this adapter speaks (§10.3)
@@ -181,6 +219,10 @@ namespace albor::automation
             // the handshake answers without reaching the layer, because it concerns no application (§12.2, AD-20)
             return envelope(*id, std::move(result)).to_string();
         }
+
+        // every request after the handshake requires the conversation to have proved its token (§10.3, AD-10)
+        if (m_route.authenticated && !m_route.authenticated())
+            return failure(*id, APPLICATION_ERROR, "authentication failed").to_string();
 
         // the tool listing is answered from the allow list, so a client sees only what the layer permits (§10.3, AD-20)
         if (method->as_string() == "tools/list") {

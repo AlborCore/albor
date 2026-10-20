@@ -19,3 +19,8 @@ target_compile_features(hello-render-albor PRIVATE cxx_std_23)
 # the framework modules arrive transitively through the backends, and the application links a text engine even
 # without one text draw, so the harfbuzz engine installs itself at load beside the gpu backend (§6.2)
 target_link_libraries(hello-render-albor PRIVATE albor-platform-macos-auto albor-render-albor-auto albor-text-harfbuzz-auto)
+
+# when automation is enabled, link the whole-archive umbrella which installs the host at load (§10.3, AD-10)
+if(ALBOR_AUTOMATION)
+    target_link_libraries(hello-render-albor PRIVATE albor-automation-auto)
+endif()

@@ -50,8 +50,8 @@ namespace albor::devrt
         struct DevAutoInstall
         {
             DevAutoInstall() {
-                // the tree binder comes first, because a main window is built as soon as the application starts (§12.1)
-                dev::install_root_binder(&bind_root, &unbind_root);
+                // the tree binder is appended, because the automation host may observe the same tree (§12.1, AD-02)
+                dev::add_root_binding(&bind_root, &unbind_root);
                 // the reload entry follows, so a definition that arrives before any window is simply dropped (§12.1)
                 dev::install(&handle_reload);
             }

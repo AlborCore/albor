@@ -26,3 +26,8 @@ endif()
 # the framework modules arrive transitively through the backends, and the application needs a text engine and a
 # renderer even without one text draw, so the text engine installs itself at load beside the cpu backend (§6.2)
 target_link_libraries(hello-render-blend2d PRIVATE albor-render-blend2d-auto albor-text-harfbuzz-auto)
+
+# when automation is enabled, link the whole-archive umbrella which installs the host at load (§10.3, AD-10)
+if(ALBOR_AUTOMATION)
+    target_link_libraries(hello-render-albor PRIVATE albor-automation-auto)
+endif()

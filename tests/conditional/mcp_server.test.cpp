@@ -233,3 +233,52 @@ TEST(McpServer, AnAdapterWithNoRouteCannotReachAnything) {
     // assert the refusal is stated, because an empty answer would read as an empty tree (§10.3, AD-20)
     EXPECT_NE(line.find("not reachable"), std::string::npos);
 }
+
+TEST(McpServer, AnAuthenticateCallbackRefusesMissingToken) {
+    // arrange a route that requires authentication
+    McpRoute route;
+    route.permitted_commands = [] { return std::vector<std::string>{"semantic.tree"}; };
+    route.authenticate = [](std::string_view token) { return !token.empty(); };
+    route.authenticated = [] { return true; };
+    route.run = [](std::string_view) { return AutomationResult::answered("{}"); };
+    McpServer server(std::move(route));
+    // act initialize without _meta.albor/token
+    const std::string line = *server.handle_line(R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})");
+    // assert the reply is an error because token is missing
+    EXPECT_NE(line.find("authentication failed"), std::string::npos);
+}
+
+TEST(McpServer, AnAuthenticateCallbackAcceptsValidToken) {
+    // arrange a route that requires authentication
+    std::string valid_token = "abc123";
+    McpRoute route;
+    route.permitted_commands = [] { return std::vector<std::string>{"semantic.tree"}; };
+    route.authenticate = [&valid_token](std::string_view token) { return token == valid_token; };
+    route.authenticated = [] { return true; };
+    route.run = [](std::string_view) { return AutomationResult::answered("{}"); };
+    McpServer server(std::move(route));
+    // act initialize with correct token in metadata
+    const std::string line = *server.handle_line("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"_meta\":{\"albor/token\":\"abc123\"}}}");
+    // assert the reply is a success
+    EXPECT_NE(line.find("\"result\""), std::string::npos);
+}
+
+TEST(McpServer, AnAuthenticatedFlagGatesSubsequentCalls) {
+    // arrange a route that requires authentication but the flag is initially false
+    McpRoute route;
+    route.permitted_commands = [] { return std::vector<std::string>{"semantic.tree"}; };
+    route.authenticate = [](std::string_view) { return true; };
+    bool authenticated = false;
+    route.authenticated = [&authenticated] { return authenticated; };
+    route.run = [](std::string_view) { return AutomationResult::answered("{}"); };
+    McpServer server(std::move(route));
+    // act initialize without token (authenticate returns true but authenticated flag is false)
+    const std::string init_line = *server.handle_line(R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})");
+    // assert initialize fails because authenticated flag is false
+    EXPECT_NE(init_line.find("authentication failed"), std::string::npos);
+    // act set authenticated flag true and call a tool
+    authenticated = true;
+    const std::string call_line = *server.handle_line(tools_call("2", "semantic.tree", "{}"));
+    // assert the call succeeds
+    EXPECT_NE(call_line.find("\"result\""), std::string::npos);
+}
