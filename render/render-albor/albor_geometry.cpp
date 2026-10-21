@@ -128,42 +128,47 @@ namespace albor::render
         Point inward_normal(float dx, float dy) { return Point{.x = dy, .y = -dx}; }
 
         // the two points the bevel choice picks on one side of a join, which the miter collapses to one (nanovg technique)
-        void choose_bevel(unsigned flags, const ContourPoint& previous, const ContourPoint& point, float offset, Point& start, Point& end) {
+        void choose_bevel(unsigned flags, const ContourPoint& previous, const ContourPoint& point, float offset, float side, Point& start, Point& end) {
             // a bevelled join picks the two edge offsets, which a mitered one collapses onto the averaged normal
             if ((flags & InnerBevel) != 0u) {
                 // the two edge offsets of the incoming and the outgoing segment
                 const Point normal0 = inward_normal(previous.dx, previous.dy);
                 const Point normal1 = inward_normal(point.dx, point.dy);
-                start = Point{.x = point.position.x + normal0.x * offset, .y = point.position.y + normal0.y * offset};
-                end = Point{.x = point.position.x + normal1.x * offset, .y = point.position.y + normal1.y * offset};
+                // the side mirrors both offsets, which is what lets one routine serve a reversed ring
+                start = Point{.x = point.position.x + normal0.x * offset * side, .y = point.position.y + normal0.y * offset * side};
+                end = Point{.x = point.position.x + normal1.x * offset * side, .y = point.position.y + normal1.y * offset * side};
                 return;
             }
             // the mitered join collapses both offsets onto the averaged normal
-            const Point miter = Point{.x = point.position.x + point.miter_x * offset, .y = point.position.y + point.miter_y * offset};
+            const Point miter = Point{.x = point.position.x + point.miter_x * offset * side, .y = point.position.y + point.miter_y * offset * side};
             start = miter;
             end = miter;
         }
 
         // append the bevel or miter join geometry a point carries, which the strip stitches through (nanovg technique)
-        void emit_bevel_join(FrameBatch& sink, const ContourPoint& previous, const ContourPoint& point, float width, float lateral_in, float lateral_out) {
-            // the inward normals of the two segments
-            const Point normal0 = inward_normal(previous.dx, previous.dy);
-            const Point normal1 = inward_normal(point.dx, point.dy);
+        void emit_bevel_join(FrameBatch& sink, const ContourPoint& previous, const ContourPoint& point, float width, float lateral_in, float lateral_out, float side) {
+            // the inward normals of the two segments, which the side mirrors when the fill is on the other boundary
+            const Point inward0 = inward_normal(previous.dx, previous.dy);
+            const Point inward1 = inward_normal(point.dx, point.dy);
+            const Point normal0 = Point{.x = inward0.x * side, .y = inward0.y * side};
+            const Point normal1 = Point{.x = inward1.x * side, .y = inward1.y * side};
+            // the turn the sequence is built for, which the side flips because the flags describe the positive side
+            const bool inner_on_left = ((point.flags & Left) != 0u) == (side > 0.0f);
             // the sequence the join appends, which mirrors between the two turn sides
             std::vector<StripVertex> sequence;
             // the left turning side picks the inner offsets, which the mirrored one picks on the outer side
-            if ((point.flags & Left) != 0u) {
+            if (inner_on_left) {
                 // the inner side points the bevel choice picks
                 Point inner0 = Point{};
                 Point inner1 = Point{};
-                choose_bevel(point.flags, previous, point, width, inner0, inner1);
+                choose_bevel(point.flags, previous, point, width, side, inner0, inner1);
                 // the cross from the inner side to the outer side of the incoming segment
                 sequence.push_back(StripVertex{.x = inner0.x, .y = inner0.y, .lateral = lateral_in});
                 sequence.push_back(StripVertex{.x = point.position.x - normal0.x * width, .y = point.position.y - normal0.y * width, .lateral = lateral_out});
                 // a bevelled corner crosses straight out, while a mitered one stitches through the centre
                 if ((point.flags & Bevel) == 0u) {
                     // the mitered outer point the wedge stitches through
-                    const Point miter = Point{.x = point.position.x - point.miter_x * width, .y = point.position.y - point.miter_y * width};
+                    const Point miter = Point{.x = point.position.x - point.miter_x * width * side, .y = point.position.y - point.miter_y * width * side};
                     sequence.push_back(StripVertex{.x = point.position.x, .y = point.position.y, .lateral = 0.5f});
                     sequence.push_back(StripVertex{.x = point.position.x - normal0.x * width, .y = point.position.y - normal0.y * width, .lateral = lateral_out});
                     sequence.push_back(StripVertex{.x = miter.x, .y = miter.y, .lateral = lateral_out});
@@ -179,14 +184,14 @@ namespace albor::render
                 // the outer side points the bevel choice picks, which the mirrored branch offsets negatively
                 Point outer0 = Point{};
                 Point outer1 = Point{};
-                choose_bevel(point.flags, previous, point, -width, outer0, outer1);
+                choose_bevel(point.flags, previous, point, -width, side, outer0, outer1);
                 // the cross from the inner side to the outer side of the incoming segment
                 sequence.push_back(StripVertex{.x = point.position.x + normal0.x * width, .y = point.position.y + normal0.y * width, .lateral = lateral_in});
                 sequence.push_back(StripVertex{.x = outer0.x, .y = outer0.y, .lateral = lateral_out});
                 // a bevelled corner crosses straight out, while a mitered one stitches through the centre
                 if ((point.flags & Bevel) == 0u) {
                     // the mitered inner point the wedge stitches through
-                    const Point miter = Point{.x = point.position.x + point.miter_x * width, .y = point.position.y + point.miter_y * width};
+                    const Point miter = Point{.x = point.position.x + point.miter_x * width * side, .y = point.position.y + point.miter_y * width * side};
                     sequence.push_back(StripVertex{.x = point.position.x + normal0.x * width, .y = point.position.y + normal0.y * width, .lateral = lateral_in});
                     sequence.push_back(StripVertex{.x = point.position.x, .y = point.position.y, .lateral = 0.5f});
                     sequence.push_back(StripVertex{.x = miter.x, .y = miter.y, .lateral = lateral_in});
@@ -222,7 +227,7 @@ namespace albor::render
                 // the inner side points the bevel choice picks
                 Point inner0 = Point{};
                 Point inner1 = Point{};
-                choose_bevel(point.flags, previous, point, width, inner0, inner1);
+                choose_bevel(point.flags, previous, point, width, 1.0f, inner0, inner1);
                 sequence.push_back(StripVertex{.x = inner0.x, .y = inner0.y, .lateral = 0.0f});
                 sequence.push_back(StripVertex{.x = point.position.x - normal0.x * width, .y = point.position.y - normal0.y * width, .lateral = 1.0f});
             }
@@ -230,7 +235,7 @@ namespace albor::render
                 // the outer side points the bevel choice picks, which the mirrored branch offsets negatively
                 Point outer0 = Point{};
                 Point outer1 = Point{};
-                choose_bevel(point.flags, previous, point, -width, outer0, outer1);
+                choose_bevel(point.flags, previous, point, -width, 1.0f, outer0, outer1);
                 sequence.push_back(StripVertex{.x = point.position.x + normal0.x * width, .y = point.position.y + normal0.y * width, .lateral = 0.0f});
                 sequence.push_back(StripVertex{.x = outer0.x, .y = outer0.y, .lateral = 1.0f});
             }
@@ -255,7 +260,7 @@ namespace albor::render
                 // the inner side points the bevel choice picks
                 Point inner0 = Point{};
                 Point inner1 = Point{};
-                choose_bevel(point.flags, previous, point, width, inner0, inner1);
+                choose_bevel(point.flags, previous, point, width, 1.0f, inner0, inner1);
                 sequence.push_back(StripVertex{.x = inner1.x, .y = inner1.y, .lateral = 0.0f});
                 sequence.push_back(StripVertex{.x = point.position.x - normal1.x * width, .y = point.position.y - normal1.y * width, .lateral = 1.0f});
             }
@@ -263,7 +268,7 @@ namespace albor::render
                 // the outer side points the bevel choice picks, which the mirrored branch offsets negatively
                 Point outer0 = Point{};
                 Point outer1 = Point{};
-                choose_bevel(point.flags, previous, point, -width, outer0, outer1);
+                choose_bevel(point.flags, previous, point, -width, 1.0f, outer0, outer1);
                 sequence.push_back(StripVertex{.x = point.position.x + normal1.x * width, .y = point.position.y + normal1.y * width, .lateral = 0.0f});
                 sequence.push_back(StripVertex{.x = outer1.x, .y = outer1.y, .lateral = 1.0f});
             }
@@ -435,6 +440,11 @@ namespace albor::render
         return contour;
     }
 
+    void emit_fill_join(FrameBatch& sink, const ContourPoint& previous, const ContourPoint& point, float offset, float side) {
+        // the ring side carries full coverage and the mirrored one none, which the side places (nanovg technique)
+        emit_bevel_join(sink, previous, point, offset, 1.0f, 0.0f, side);
+    }
+
     EmittedRange expand_fill(FrameBatch& sink, Contour& contour) {
         // the fill fringe joins with the miter the technique fixes
         calculate_joins(contour, FRINGE, Join::Miter, FILL_MITER_LIMIT);
@@ -485,7 +495,7 @@ namespace albor::render
         for (const ContourPoint& point : contour.points) {
             // a join that bevels on either side emits the join geometry, which a plain corner crosses directly
             if ((point.flags & (Bevel | InnerBevel)) != 0u) {
-                emit_bevel_join(sink, *previous, point, offset, 1.0f, 0.0f);
+                emit_bevel_join(sink, *previous, point, offset, 1.0f, 0.0f, 1.0f);
             }
             else {
                 // the plain corner crosses from the inset ring to the outward fringe
@@ -535,7 +545,7 @@ namespace albor::render
                     if (join == Join::Round && (point.flags & Bevel) != 0u)
                         emit_round_join(sink, *previous, point, width, segments);
                     else
-                        emit_bevel_join(sink, *previous, point, width, 0.0f, 1.0f);
+                        emit_bevel_join(sink, *previous, point, width, 0.0f, 1.0f, 1.0f);
                 }
                 else {
                     // the plain station crosses the band along the averaged normal
@@ -586,7 +596,7 @@ namespace albor::render
                 if (join == Join::Round && (point.flags & Bevel) != 0u)
                     emit_round_join(sink, previous, point, width, segments);
                 else
-                    emit_bevel_join(sink, previous, point, width, 0.0f, 1.0f);
+                    emit_bevel_join(sink, previous, point, width, 0.0f, 1.0f, 1.0f);
             }
             else {
                 // the plain station crosses the band along the averaged normal

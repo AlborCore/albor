@@ -2541,7 +2541,7 @@ TEST(ExpandFillGroupChecks, CutsASameWoundHoleUnderEvenOdd) {
 }
 
 TEST(ExpandFillGroupChecks, FillsASingleContourThroughTheSweepUnderEvenOdd) {
-    // arrange one square contour, which the even odd rule sends through the sweep rather than the fan
+    // arrange one square contour, which the even odd rule fills through the same winding sweep
     const PathVerb verbs[5] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
     const Point points[4] = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 0.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 0.0f}};
     std::vector<Contour> contours = build_contours(verbs, points);

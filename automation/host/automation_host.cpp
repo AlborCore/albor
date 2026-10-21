@@ -243,7 +243,7 @@ namespace albor::automation
         const HostBinding* active = m_bindings.active();
         // no bound window has nothing to read, which is refused rather than answered as a blank frame (§10.3)
         if (active == nullptr)
-            return CapturedFrame{.error = "no window is bound"};
+            return CapturedFrame{.error = "no window is bound", .pixels = {}};
         // the binding is copied before the capture blocks, so a later close cannot change the handles read (§10.3)
         const dev::WindowBinding binding = *active;
         // the frame is read from that binding alone, which keeps the cast to one function (§6.3)

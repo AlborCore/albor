@@ -1627,8 +1627,8 @@ TEST(AlborParityChecks, AShearedRetainedPathMatchesTheReference) {
     const std::size_t before = (16u * 64u + 22u) * 4u;
     EXPECT_GT(actual_shot.pixels[before], 230u);
     EXPECT_GT(expected_shot.pixels[before], 230u);
-    // the slanted edges follow the reference within a band, at the 50 its sharp corner measures with the group fringe
-    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 64);
+    // the slanted edges follow the reference within its one pixel feather band, at the 26 measured on this host
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 32);
 }
 
 TEST(AlborParityChecks, ASelfOverlappingPathCutsItsCounterOnBothBackends) {

@@ -27,6 +27,9 @@ namespace albor::render
     // append the fill of a device space contour, whose fringe is one device pixel (nanovg technique)
     [[nodiscard]] EmittedRange expand_fill(FrameBatch& sink, Contour& contour);
 
+    // append the fringe vertices of one fill join on the given side, which the primitive and group fills share (§6.2)
+    void emit_fill_join(FrameBatch& sink, const ContourPoint& previous, const ContourPoint& point, float offset, float side);
+
     // append a device space stroke, handing back the alpha a sub fringe width emulates (nanovg technique)
     [[nodiscard]] StrokeEmission expand_stroke(FrameBatch& sink, Contour& contour, float half_width, Cap cap, Join join, float miter_limit, float tess_tolerance);
 } // namespace albor::render

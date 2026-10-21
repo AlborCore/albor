@@ -305,10 +305,25 @@ namespace albor::render
                 const float side = sides[index];
                 const Contour& contour = contours[index];
                 ring.points.reserve(contour.points.size());
+                // the corner pair reads the previous direction, which the walk carries
+                const ContourPoint* previous_point = &contour.points.back();
                 for (const ContourPoint& point : contour.points) {
-                    // the miter normal is clamped, which keeps a needle corner from spiking the ring
-                    const Point miter = clamped_miter(point);
-                    ring.points.push_back(Point{.x = point.position.x + miter.x * side * offset, .y = point.position.y + miter.y * side * offset});
+                    // a bevelled corner splits the ring into its two edge offsets, which cuts it flat (nanovg technique)
+                    const bool splits = (point.flags & Bevel) != 0u && ((point.flags & Left) != 0u) == (side < 0.0f);
+                    if (splits) {
+                        // the two edge offsets the split corner sits between, which the side mirrors
+                        const Point normal0{.x = previous_point->dy, .y = -previous_point->dx};
+                        const Point normal1{.x = point.dy, .y = -point.dx};
+                        ring.points.push_back(Point{.x = point.position.x + normal0.x * side * offset, .y = point.position.y + normal0.y * side * offset});
+                        ring.points.push_back(Point{.x = point.position.x + normal1.x * side * offset, .y = point.position.y + normal1.y * side * offset});
+                    }
+                    else {
+                        // the miter normal is clamped, which keeps a needle corner from spiking the ring
+                        const Point miter = clamped_miter(point);
+                        ring.points.push_back(Point{.x = point.position.x + miter.x * side * offset, .y = point.position.y + miter.y * side * offset});
+                    }
+                    // the previous point advances with the walk
+                    previous_point = &point;
                 }
             }
             rings.push_back(std::move(ring));
@@ -333,12 +348,20 @@ namespace albor::render
             const Contour& contour = contours[index];
             // the strip starts at the current vertex count, which the wrap closes back to
             const std::uint32_t strip_first = static_cast<std::uint32_t>(sink.vertices.size());
+            const ContourPoint* previous_point = &contour.points.back();
             for (const ContourPoint& point : contour.points) {
-                // the miter normal is clamped, which keeps a needle corner from folding the strip
-                const Point miter = clamped_miter(point);
-                // the ring side is the fill side, which the mirror across the boundary leaves bare
-                emit_vertex(sink, point.position.x + miter.x * side * offset, point.position.y + miter.y * side * offset, 1.0f);
-                emit_vertex(sink, point.position.x - miter.x * side * offset, point.position.y - miter.y * side * offset, 0.0f);
+                // a bevelled corner emits the primitive fill join, which a plain corner crosses directly (nanovg technique)
+                if ((point.flags & (Bevel | InnerBevel)) != 0u)
+                    emit_fill_join(sink, *previous_point, point, offset, side);
+                else {
+                    // the miter normal is clamped, which keeps a needle corner from folding the strip
+                    const Point miter = clamped_miter(point);
+                    // the ring side is the fill side, which the mirror across the boundary leaves bare
+                    emit_vertex(sink, point.position.x + miter.x * side * offset, point.position.y + miter.y * side * offset, 1.0f);
+                    emit_vertex(sink, point.position.x - miter.x * side * offset, point.position.y - miter.y * side * offset, 0.0f);
+                }
+                // the previous point advances with the walk
+                previous_point = &point;
             }
             // the wrap repeats the first pair, which closes the strip through the seam
             emit_vertex(sink, sink.vertices[strip_first].x, sink.vertices[strip_first].y, sink.vertices[strip_first].lateral);

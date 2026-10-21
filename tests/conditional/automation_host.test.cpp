@@ -14,7 +14,6 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-#include "application/application.h"
 #include "automation/host/automation_host.h"
 #include "automation/host/host_state.h"
 #include "core/dev_hook.h"
