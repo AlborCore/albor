@@ -348,7 +348,7 @@ namespace albor::automation::platform
             // the reply the client has not taken yet, because a non blocking write may be partial (§10.3)
             std::string m_output;
 
-            // how many bytes of the output the client already took, which keeps a large reply linear (§10.3)
+            // the delivered prefix the next send skips: erasing it per send made a 44 MB frame take ten seconds (§10.3)
             std::size_t m_output_offset = 0;
 
             // protocol: raw default, MCP with host (§10.3, AD-20)
