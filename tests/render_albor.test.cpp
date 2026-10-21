@@ -2326,21 +2326,148 @@ TEST(ExpandFillGroupChecks, RefusesAGroupWithoutAContour) {
     EXPECT_TRUE(batch.vertices.empty());
 }
 
-TEST(ExpandFillGroupChecks, FillsASingleContourThroughTheRingFan) {
-    // arrange one square contour, which the group hands to the single contour expansion
+TEST(ExpandFillGroupChecks, FillsASingleConvexContourThroughTheSweep) {
+    // arrange one square contour, which the group fills without a single contour shortcut
     const PathVerb verbs[5] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
     const Point points[4] = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 0.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 0.0f}};
     std::vector<Contour> contours = build_contours(verbs, points);
-    std::vector<Contour> reference = build_contours(verbs, points);
+    ASSERT_EQ(contours.size(), 1u);
     FrameBatch batch;
-    FrameBatch expected;
     // act
     const EmittedRange range = expand_fill_group(batch, contours);
-    const EmittedRange expected_range = expand_fill(expected, reference[0]);
     // assert
     ASSERT_GT(range.index_count, 0u);
-    EXPECT_EQ(range.index_count, expected_range.index_count);
-    EXPECT_EQ(batch.vertices.size(), expected.vertices.size());
+    // the square centre lies inside a fill triangle, which the sweep must still cover
+    const Point centre{.x = 5.0f, .y = 5.0f};
+    bool covered = false;
+    for (std::size_t index = 0; index + 2 < batch.indices.size(); index += 3) {
+        // the three corners of the triangle, which the batch indices name
+        const BatchVertex& a = batch.vertices[batch.indices[index]];
+        const BatchVertex& b = batch.vertices[batch.indices[index + 1]];
+        const BatchVertex& c = batch.vertices[batch.indices[index + 2]];
+        // the three edge crosses decide whether the centre sits inside
+        const float ab = (b.x - a.x) * (centre.y - a.y) - (b.y - a.y) * (centre.x - a.x);
+        const float bc = (c.x - b.x) * (centre.y - b.y) - (c.y - b.y) * (centre.x - b.x);
+        const float ca = (a.x - c.x) * (centre.y - c.y) - (a.y - c.y) * (centre.x - c.x);
+        if ((ab <= 0.0f && bc <= 0.0f && ca <= 0.0f) || (ab >= 0.0f && bc >= 0.0f && ca >= 0.0f))
+            covered = true;
+    }
+    EXPECT_TRUE(covered);
+}
+
+TEST(ExpandFillGroupChecks, CutsTheCounterOfASelfOverlappingContour) {
+    // arrange one contour whose bar is crossed by its own stroke, which leaves the pocket below the bar at winding zero
+    const PathVerb verbs[17] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const Point points[16] = {Point{.x = 2.0f, .y = 2.0f}, Point{.x = 22.0f, .y = 2.0f}, Point{.x = 22.0f, .y = 22.0f}, Point{.x = 2.0f, .y = 22.0f}, Point{.x = 2.0f, .y = 12.0f}, Point{.x = 18.0f, .y = 12.0f}, Point{.x = 18.0f, .y = 8.0f}, Point{.x = 2.0f, .y = 8.0f}, Point{.x = 2.0f, .y = 6.0f}, Point{.x = 4.0f, .y = 6.0f}, Point{.x = 4.0f, .y = 16.0f}, Point{.x = 20.0f, .y = 16.0f}, Point{.x = 20.0f, .y = 5.0f}, Point{.x = 6.0f, .y = 5.0f}, Point{.x = 6.0f, .y = 10.0f}, Point{.x = 2.0f, .y = 10.0f}};
+    std::vector<Contour> contours = build_contours(verbs, points);
+    ASSERT_EQ(contours.size(), 1u);
+    // the normalization reverses the ring, which the winding signs below depend on
+    EXPECT_TRUE(contours[0].reversed);
+    FrameBatch batch;
+    // act
+    const EmittedRange range = expand_fill_group(batch, contours);
+    // assert
+    ASSERT_GT(range.index_count, 0u);
+    // the pocket lies outside every fill triangle, which a simple ring triangulation paints
+    const Point pocket{.x = 12.0f, .y = 13.0f};
+    for (std::size_t index = 0; index + 2 < batch.indices.size(); index += 3) {
+        // the three corners of the triangle, which the batch indices name
+        const BatchVertex& a = batch.vertices[batch.indices[index]];
+        const BatchVertex& b = batch.vertices[batch.indices[index + 1]];
+        const BatchVertex& c = batch.vertices[batch.indices[index + 2]];
+        // the three edge crosses decide whether the pocket sits inside
+        const float ab = (b.x - a.x) * (pocket.y - a.y) - (b.y - a.y) * (pocket.x - a.x);
+        const float bc = (c.x - b.x) * (pocket.y - b.y) - (c.y - b.y) * (pocket.x - b.x);
+        const float ca = (a.x - c.x) * (pocket.y - c.y) - (a.y - c.y) * (pocket.x - c.x);
+        // a triangle that encloses the pocket is the defect this test exists for
+        EXPECT_FALSE((ab <= 0.0f && bc <= 0.0f && ca <= 0.0f) || (ab >= 0.0f && bc >= 0.0f && ca >= 0.0f));
+    }
+    // a point inside the bar fills, which the winding keeps painted off the slab rows
+    const Point bar{.x = 10.0f, .y = 11.0f};
+    bool covered = false;
+    for (std::size_t index = 0; index + 2 < batch.indices.size(); index += 3) {
+        // the three corners of the triangle, which the bar point is tested against
+        const BatchVertex& a = batch.vertices[batch.indices[index]];
+        const BatchVertex& b = batch.vertices[batch.indices[index + 1]];
+        const BatchVertex& c = batch.vertices[batch.indices[index + 2]];
+        // the three edge crosses decide whether the bar point sits inside
+        const float ab = (b.x - a.x) * (bar.y - a.y) - (b.y - a.y) * (bar.x - a.x);
+        const float bc = (c.x - b.x) * (bar.y - b.y) - (c.y - b.y) * (bar.x - b.x);
+        const float ca = (a.x - c.x) * (bar.y - c.y) - (a.y - c.y) * (bar.x - c.x);
+        if ((ab <= 0.0f && bc <= 0.0f && ca <= 0.0f) || (ab >= 0.0f && bc >= 0.0f && ca >= 0.0f))
+            covered = true;
+    }
+    EXPECT_TRUE(covered);
+}
+
+TEST(ExpandFillGroupChecks, CutsTheCounterOfASelfOverlappingContourUnderEvenOdd) {
+    // arrange the same crossed contour, whose even odd winding leaves the pocket bare as well
+    const PathVerb verbs[17] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const Point points[16] = {Point{.x = 2.0f, .y = 2.0f}, Point{.x = 22.0f, .y = 2.0f}, Point{.x = 22.0f, .y = 22.0f}, Point{.x = 2.0f, .y = 22.0f}, Point{.x = 2.0f, .y = 12.0f}, Point{.x = 18.0f, .y = 12.0f}, Point{.x = 18.0f, .y = 8.0f}, Point{.x = 2.0f, .y = 8.0f}, Point{.x = 2.0f, .y = 6.0f}, Point{.x = 4.0f, .y = 6.0f}, Point{.x = 4.0f, .y = 16.0f}, Point{.x = 20.0f, .y = 16.0f}, Point{.x = 20.0f, .y = 5.0f}, Point{.x = 6.0f, .y = 5.0f}, Point{.x = 6.0f, .y = 10.0f}, Point{.x = 2.0f, .y = 10.0f}};
+    std::vector<Contour> contours = build_contours(verbs, points);
+    ASSERT_EQ(contours.size(), 1u);
+    FrameBatch batch;
+    // act
+    const EmittedRange range = expand_fill_group(batch, contours, FillRule::EvenOdd);
+    // assert
+    ASSERT_GT(range.index_count, 0u);
+    // the pocket and the bar answer the rule, which one pass over the triangles reads
+    const Point probes[2] = {Point{.x = 12.0f, .y = 14.0f}, Point{.x = 10.0f, .y = 11.0f}};
+    bool covered[2] = {false, false};
+    for (std::size_t index = 0; index + 2 < batch.indices.size(); index += 3) {
+        // the three corners of the triangle, which both probes are tested against
+        const BatchVertex& a = batch.vertices[batch.indices[index]];
+        const BatchVertex& b = batch.vertices[batch.indices[index + 1]];
+        const BatchVertex& c = batch.vertices[batch.indices[index + 2]];
+        for (int probe = 0; probe < 2; probe++) {
+            // the three edge crosses decide whether this probe sits inside
+            const float ab = (b.x - a.x) * (probes[probe].y - a.y) - (b.y - a.y) * (probes[probe].x - a.x);
+            const float bc = (c.x - b.x) * (probes[probe].y - b.y) - (c.y - b.y) * (probes[probe].x - b.x);
+            const float ca = (a.x - c.x) * (probes[probe].y - c.y) - (a.y - c.y) * (probes[probe].x - c.x);
+            if ((ab <= 0.0f && bc <= 0.0f && ca <= 0.0f) || (ab >= 0.0f && bc >= 0.0f && ca >= 0.0f))
+                covered[probe] = true;
+        }
+    }
+    // the pocket stays bare, which a simple ring triangulation paints
+    EXPECT_FALSE(covered[0]);
+    // the bar fills, because its crossing count is odd under either rule
+    EXPECT_TRUE(covered[1]);
+}
+
+TEST(ExpandFillGroupChecks, FillsAStarWhoseCentreWindsTwice) {
+    // arrange a pentagram, whose centre winds twice and whose five valleys wind zero
+    const PathVerb verbs[6] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const Point points[5] = {Point{.x = 20.0f, .y = 2.0f}, Point{.x = 30.58f, .y = 34.56f}, Point{.x = 2.88f, .y = 14.44f}, Point{.x = 37.12f, .y = 14.44f}, Point{.x = 9.42f, .y = 34.56f}};
+    std::vector<Contour> contours = build_contours(verbs, points);
+    ASSERT_EQ(contours.size(), 1u);
+    FrameBatch batch;
+    // act
+    const EmittedRange range = expand_fill_group(batch, contours);
+    // assert
+    ASSERT_GT(range.index_count, 0u);
+    // the centre, one tip and one valley tell a winding fill apart from a fan, which one pass reads
+    const Point probes[3] = {Point{.x = 20.0f, .y = 20.0f}, Point{.x = 20.0f, .y = 6.0f}, Point{.x = 11.0f, .y = 13.0f}};
+    bool covered[3] = {false, false, false};
+    for (std::size_t index = 0; index + 2 < batch.indices.size(); index += 3) {
+        // the three corners of the triangle, which all three probes are tested against
+        const BatchVertex& a = batch.vertices[batch.indices[index]];
+        const BatchVertex& b = batch.vertices[batch.indices[index + 1]];
+        const BatchVertex& c = batch.vertices[batch.indices[index + 2]];
+        for (int probe = 0; probe < 3; probe++) {
+            // the three edge crosses decide whether this probe sits inside
+            const float ab = (b.x - a.x) * (probes[probe].y - a.y) - (b.y - a.y) * (probes[probe].x - a.x);
+            const float bc = (c.x - b.x) * (probes[probe].y - b.y) - (c.y - b.y) * (probes[probe].x - b.x);
+            const float ca = (a.x - c.x) * (probes[probe].y - c.y) - (a.y - c.y) * (probes[probe].x - c.x);
+            if ((ab <= 0.0f && bc <= 0.0f && ca <= 0.0f) || (ab >= 0.0f && bc >= 0.0f && ca >= 0.0f))
+                covered[probe] = true;
+        }
+    }
+    // the centre fills, because a non zero rule reads a winding of two as filled
+    EXPECT_TRUE(covered[0]);
+    // the tip fills, because the star runs through it
+    EXPECT_TRUE(covered[1]);
+    // the valley stays bare, which a fan from the first tip would paint
+    EXPECT_FALSE(covered[2]);
 }
 
 TEST(ExpandFillGroupChecks, CutsTheHoleOfANestedContour) {

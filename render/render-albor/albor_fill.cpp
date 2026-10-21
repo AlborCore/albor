@@ -260,9 +260,6 @@ namespace albor::render
     }
 
     EmittedRange expand_fill_group(FrameBatch& sink, std::vector<Contour>& contours, FillRule rule) {
-        // a non zero group of one contour fills through the single contour expansion, which fans a convex ring exactly
-        if (rule == FillRule::NonZero && contours.size() <= 1)
-            return contours.empty() ? EmittedRange{} : expand_fill(sink, contours.front());
         // the range the expansion appends starts at the current index count
         const std::uint32_t index_begin = static_cast<std::uint32_t>(sink.indices.size());
         // the ring sits half a device pixel on the fill side of the boundary, which the fringe straddles
@@ -293,6 +290,7 @@ namespace albor::render
                 sides.push_back(1.0f);
                 continue;
             }
+            // one side serves the whole contour, so a crossed contour offsets the edges its winding mirrors outward
             sides.push_back(ring_side(polygons, contours[index], rule));
         }
         // the offset ring of every filled contour, which the sweep and the fringe both read
@@ -315,7 +313,7 @@ namespace albor::render
             }
             rings.push_back(std::move(ring));
         }
-        // the sweep fills every ring at once, which the rule cuts the holes by (§6.2)
+        // the sweep fills every ring at once, which reads a crossing contour and cuts the holes by the rule (§6.2)
         for (const FillTrapezoid& trapezoid : sweep_fill(rings, rule)) {
             // the two triangles cover the trapezoid, which its four corners bound
             const std::uint32_t left_top = emit_vertex(sink, trapezoid.left_top, trapezoid.top, 1.0f);
