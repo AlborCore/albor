@@ -588,7 +588,7 @@ TEST(DevHookChecks, ALinkedExtensionInstalledItsReloadEntry) {
 
 TEST(DevHookChecks, AReloadWithNoBoundTreeChangesNothing) {
     // arrange the extension holding no tree, which is the state before any window exists (§12.1, AD-02)
-    bind_root(nullptr, nullptr, nullptr);
+    albor::devrt::bind_root(dev::WindowBinding{});
     ASSERT_FALSE(bound());
     // act a definition arrives with no tree to patch (§12.1, AD-12)
     dev::reload("node Column id=root\n  node Label id=title\n");
@@ -600,7 +600,7 @@ TEST(DevHookChecks, AClosingWindowReleasesTheExtensionBinding) {
     // arrange a bound tree, which is what a main window hands the extension (§12.1, AD-02)
     ReloadFixture fixture;
     UiNode root;
-    bind_root(&root, &fixture.engine, &fixture.text);
+    albor::devrt::bind_root(dev::WindowBinding{.root = &root, .engine = &fixture.engine, .text = &fixture.text, .has_tree = true});
     ASSERT_TRUE(bound());
     // act the window closes, which is what the runtime announces (§5.2, §12.1)
     unbind_root(&root);
@@ -608,10 +608,33 @@ TEST(DevHookChecks, AClosingWindowReleasesTheExtensionBinding) {
     EXPECT_FALSE(bound());
     // act and assert another window's tree is left alone, because the release names the root it owns (§5.2)
     UiNode other;
-    bind_root(&other, &fixture.engine, &fixture.text);
+    albor::devrt::bind_root(dev::WindowBinding{.root = &other, .engine = &fixture.engine, .text = &fixture.text, .has_tree = true});
     unbind_root(&root);
     EXPECT_TRUE(bound());
-    bind_root(nullptr, nullptr, nullptr);
+    unbind_root(&other);
+    EXPECT_FALSE(bound());
+}
+
+TEST(DevHookChecks, AHandDrawnWindowLeavesTheBoundTreeAlone) {
+    // arrange a real tree bound for reload, which is what a developer edits (§12.1)
+    ReloadFixture fixture;
+    UiNode root;
+    albor::devrt::bind_root(dev::WindowBinding{.root = &root, .engine = &fixture.engine, .text = &fixture.text, .has_tree = true});
+    ASSERT_TRUE(bound());
+    // act a hand drawn window binds without a tree, which the automation host still observes (§6.1, §10.3)
+    UiNode hand_drawn;
+    albor::devrt::bind_root(dev::WindowBinding{.root = &hand_drawn, .has_tree = false});
+    // act a definition arrives, which must patch the real tree rather than the hand drawn one (§12.1)
+    dev::reload("node Column id=root\n  node Label id=title\n");
+    // assert the real tree changed and the hand drawn one kept its single node, which is the point of the flag (§12.1)
+    EXPECT_TRUE(bound());
+    EXPECT_EQ(count_nodes(root), 2U);
+    EXPECT_EQ(count_nodes(hand_drawn), 1U);
+    // act the hand drawn window closes, which must not release a tree it never owned (§5.2)
+    unbind_root(&hand_drawn);
+    EXPECT_TRUE(bound());
+    // act the real window closes, which is what clears the slot (§5.2)
+    unbind_root(&root);
     EXPECT_FALSE(bound());
 }
 
@@ -619,7 +642,7 @@ TEST(DevHookChecks, ADefinitionTheReaderRefusedIsDropped) {
     // arrange a bound tree, because only a bound tree is patched (§12.1)
     ReloadFixture fixture;
     UiNode root;
-    bind_root(&root, &fixture.engine, &fixture.text);
+    albor::devrt::bind_root(dev::WindowBinding{.root = &root, .engine = &fixture.engine, .text = &fixture.text, .has_tree = true});
     ASSERT_TRUE(bound());
     // act malformed text arrives, which the reader refuses (§12.1)
     dev::reload("not a definition\n");
@@ -632,7 +655,7 @@ TEST(DevHookChecks, ADefinitionPatchesTheBoundTreeInPlace) {
     // arrange a bound tree, which is what a main window hands the extension (§12.1, AD-02)
     ReloadFixture fixture;
     UiNode root;
-    bind_root(&root, &fixture.engine, &fixture.text);
+    albor::devrt::bind_root(dev::WindowBinding{.root = &root, .engine = &fixture.engine, .text = &fixture.text, .has_tree = true});
     // act the dev service delivers the definition, which is the whole of a reload (§12.1, AD-12)
     dev::reload("node Column id=root\n  node Label id=title\n    prop text hello\n");
     // assert the tree now carries what the file declares, which is what hot swap means (§12.1)
@@ -648,7 +671,7 @@ TEST(DevHookChecks, ABoundTreeRepaintsAfterAPatch) {
     // arrange a bound tree that has already settled, because a settled tree is the one that would not repaint (§6.1)
     ReloadFixture fixture;
     UiNode root;
-    bind_root(&root, &fixture.engine, &fixture.text);
+    albor::devrt::bind_root(dev::WindowBinding{.root = &root, .engine = &fixture.engine, .text = &fixture.text, .has_tree = true});
     dev::reload("node Column id=root\n  node Label id=title\n");
     root.clear_dirty();
     // act the definition changes the tree, which must invalidate it (§12.1, §6.1)

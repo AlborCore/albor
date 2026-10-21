@@ -6,6 +6,7 @@
 #include "application/task_queue.h"
 #include "automation/automation_registry.h"
 #include "automation/automation_transport.h"
+#include "automation/capture_commands.h"
 #include "automation/host/host_paths.h"
 #include "automation/host/host_state.h"
 #include "semantics/semantic_provider.h"
@@ -20,14 +21,12 @@ namespace albor::automation
         [[nodiscard]] static AutomationHost& instance();
 
         // observe a window tree, which starts the server when this is the first binding (§10.3)
-        void bind(void* root, void* engine, void* text);
+        void bind(const dev::WindowBinding& binding);
 
         // release a closing window tree, which stops the server when none remains (§10.3)
         void unbind(void* root);
 
-        // start the MCP server without a bound tree, useful for apps that need MCP but no UI (§10.3)
-        // when tree is supplied, the app owns it and semantic commands read it as-is;
-        // when null, semantic commands read the active bound tree, or an empty tree when none is bound (§10.3)
+        // start the MCP server, which reads the given tree or the active bound tree when null (§10.3)
         void start_mcp(SemanticTree* tree = nullptr);
 
         // serve one transport pass, which the repeating timer calls on the ui thread (§6.1, §10.3)
@@ -42,8 +41,7 @@ namespace albor::automation
         // hand out the published paths, which the integration test reads after startup (§10.3)
         [[nodiscard]] const HostPaths& paths() const;
 
-        // hand out the semantic tree the commands read, which is the active bound tree
-        // or an externally supplied one, or an empty scratch tree when none is bound (§10.3)
+        // hand out the semantic tree the commands read, which is the supplied one or the active bound tree (§10.3)
         [[nodiscard]] SemanticTree* semantic_tree();
 
     private:
@@ -55,6 +53,9 @@ namespace albor::automation
 
         // tear down the transport, registry, timer, and directory in the order each borrows the next (§10.3)
         void stop();
+
+        // read the last frame the active window presented, which is the window most recently bound (§6.3, §10.3)
+        [[nodiscard]] CapturedFrame capture_frame();
 
         // an app supplied tree the semantic commands read as-is, or null when the bound tree is used (§10.3)
         SemanticTree* m_external_tree = nullptr;

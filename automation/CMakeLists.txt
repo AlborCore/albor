@@ -1,5 +1,8 @@
 # the automation core that exposes the running application to test tooling (§10.3)
 
+# the png encoder deflates through zlib, which is discovered here so a release configure never needs it (§10.3, AD-10)
+find_package(ZLIB REQUIRED)
+
 # the portable half names no platform type, so it builds wherever the framework builds (§10.3, AD-05)
 file(GLOB CPP_SOURCES "./*.cpp")
 
@@ -25,7 +28,7 @@ target_include_directories(albor-automation-objects PUBLIC ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-automation-objects PUBLIC cxx_std_23)
 
 # the command surface routes through the shared action object of AD-15, which is production code below this module (§10.3, §18)
-target_link_libraries(albor-automation-objects PUBLIC albor-commands albor-semantics)
+target_link_libraries(albor-automation-objects PUBLIC albor-commands albor-semantics ZLIB::ZLIB)
 
 # the linkable name the consumers use, which carries every unit so a cycle inside the library still resolves (§10.3)
 add_library(albor-automation INTERFACE)

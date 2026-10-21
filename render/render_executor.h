@@ -44,7 +44,7 @@ namespace albor
         // report whether a scene is waiting for the render thread
         [[nodiscard]] bool pending() const;
 
-        // block until the render thread has no pending frame, which a test synchronizes on (§6.1)
+        // block until the render thread has no pending frame, which a test or a capture synchronizes on (§6.1)
         void flush();
 
         // stop the render thread after it finishes the frame it already started (§6.1)

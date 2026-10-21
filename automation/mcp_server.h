@@ -48,5 +48,8 @@ namespace albor::automation
 
         // how many calls reached the layer, which a test asserts against (§10.3, AD-20)
         std::size_t m_layer_calls = 0;
+
+        // how many byte replies this server carried, which names each resource distinctly (§10.3)
+        std::size_t m_resource_sequence = 0;
     };
 } // namespace albor::automation

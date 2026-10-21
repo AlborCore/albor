@@ -7,9 +7,9 @@
 namespace
 {
     // the host observes the same tree the reload extension does, so a coverage build runs both (§12.1, AD-02)
-    void bind_root(void* root, void* engine, void* text) {
+    void bind_root(const albor::dev::WindowBinding& binding) {
         // the singleton is reached at load, which is the only moment the process has a window (§10.3)
-        albor::automation::AutomationHost::instance().bind(root, engine, text);
+        albor::automation::AutomationHost::instance().bind(binding);
     }
 
     // the host releases the tree when the window closes, which is how it stops without an application call (§10.3)

@@ -86,9 +86,10 @@ semantic identity: find a node, read a property, invoke a command, take a screen
 never reaches internals directly; every command goes through the same registry an
 application's own handlers use ([Commands](concepts/commands.md)).
 
-`inspector/` is the MCP server: an adapter over the automation layer, nothing more (AD-20).
-A client sees a set of tools — query, act, inspect — whose semantics are the automation
-API's; there is no second path to the runtime.
+The MCP server is the adapter in `automation/host/`: an adapter over the automation layer,
+nothing more (AD-20). A client sees a set of tools — query, act, inspect, capture — whose
+semantics are the automation API's; there is no second path to the runtime. `inspector/`
+consumes the same automation surface for its diagnostics; it is not a transport.
 
 ## What the test suite covers
 

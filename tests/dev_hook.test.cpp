@@ -14,6 +14,10 @@ namespace
         void* bound_engine = nullptr;
         void* bound_text = nullptr;
 
+        // the capture handles the runtime offered, which an automation screenshot reads (§6.3, §10.3)
+        void* bound_surface = nullptr;
+        void* bound_executor = nullptr;
+
         // how many offers arrived, because every observer must receive the same tree (§12.1, AD-02)
         int binds = 0;
 
@@ -31,12 +35,14 @@ namespace
     BinderDouble g_second;
 
     // the first offer, which records the tree and its engines (§12.1)
-    void bind_first(void* root, void* engine, void* text) {
+    void bind_first(const albor::dev::WindowBinding& binding) {
         // the offered tree and its engines are recorded whole, because that is the whole contract (§12.1)
-        g_first.bound_root = root;
-        g_first.bound_engine = engine;
-        g_first.bound_text = text;
-        g_first.named_root = root;
+        g_first.bound_root = binding.root;
+        g_first.bound_engine = binding.engine;
+        g_first.bound_text = binding.text;
+        g_first.bound_surface = binding.surface;
+        g_first.bound_executor = binding.executor;
+        g_first.named_root = binding.root;
         g_first.binds++;
     }
 
@@ -48,12 +54,14 @@ namespace
     }
 
     // the second offer, which proves the table reaches every observer rather than only the last (§12.1)
-    void bind_second(void* root, void* engine, void* text) {
+    void bind_second(const albor::dev::WindowBinding& binding) {
         // the offered tree and its engines are recorded whole, because that is the whole contract (§12.1)
-        g_second.bound_root = root;
-        g_second.bound_engine = engine;
-        g_second.bound_text = text;
-        g_second.named_root = root;
+        g_second.bound_root = binding.root;
+        g_second.bound_engine = binding.engine;
+        g_second.bound_text = binding.text;
+        g_second.bound_surface = binding.surface;
+        g_second.bound_executor = binding.executor;
+        g_second.named_root = binding.root;
         g_second.binds++;
     }
 
@@ -70,7 +78,7 @@ TEST(DevRootHookChecks, ABuildWithNoBinderReportsNone) {
     albor::dev::install_root_binder(nullptr, nullptr);
     int root = 0;
     // act the runtime offers and releases a tree that nobody is listening for (§12.1, AD-02)
-    albor::dev::bind_root(&root, nullptr, nullptr);
+    albor::dev::bind_root(albor::dev::WindowBinding{.root = &root});
     albor::dev::unbind_root(&root);
     // assert nothing crashed, because the hook is null checked in every configuration (§12.1, AD-02)
     EXPECT_FALSE(albor::dev::binder_present());
@@ -85,24 +93,30 @@ TEST(DevRootHookChecks, AnInstalledBinderIsReported) {
 }
 
 TEST(DevRootHookChecks, ATreeIsOfferedToEveryInstalledBinder) {
-    // arrange two observers and the three opaque pointers a stage hands over (§12.1, AD-02)
+    // arrange two observers and the five opaque pointers a stage hands over (§12.1, AD-02)
     albor::dev::install_root_binder(nullptr, nullptr);
     ASSERT_TRUE(albor::dev::add_root_binding(&bind_first, &unbind_first));
     ASSERT_TRUE(albor::dev::add_root_binding(&bind_second, &unbind_second));
     int root = 0;
     int engine = 0;
     int text = 0;
+    int surface = 0;
+    int executor = 0;
     g_first.binds = 0;
     g_second.binds = 0;
     // act hand a tree to the runtime, which forwards it to every observer (§12.1)
-    albor::dev::bind_root(&root, &engine, &text);
-    // assert all three arrived at both observers, because a rebuild needs the engines as much as the tree (§8.1, §9.1)
+    albor::dev::bind_root(albor::dev::WindowBinding{.root = &root, .engine = &engine, .text = &text, .surface = &surface, .executor = &executor});
+    // assert all five arrived at both observers, because a capture needs the surface as much as a rebuild needs the engines
     EXPECT_EQ(g_first.bound_root, &root);
     EXPECT_EQ(g_first.bound_engine, &engine);
     EXPECT_EQ(g_first.bound_text, &text);
+    EXPECT_EQ(g_first.bound_surface, &surface);
+    EXPECT_EQ(g_first.bound_executor, &executor);
     EXPECT_EQ(g_second.bound_root, &root);
     EXPECT_EQ(g_second.bound_engine, &engine);
     EXPECT_EQ(g_second.bound_text, &text);
+    EXPECT_EQ(g_second.bound_surface, &surface);
+    EXPECT_EQ(g_second.bound_executor, &executor);
     EXPECT_EQ(g_first.binds, 1);
     EXPECT_EQ(g_second.binds, 1);
 }
@@ -115,7 +129,7 @@ TEST(DevRootHookChecks, ATreeIsReleasedToEveryInstalledBinder) {
     int root = 0;
     g_first.releases = 0;
     g_second.releases = 0;
-    albor::dev::bind_root(&root, nullptr, nullptr);
+    albor::dev::bind_root(albor::dev::WindowBinding{.root = &root});
     // act the window closes, which is what the runtime announces (§5.2)
     albor::dev::unbind_root(&root);
     // assert every observer heard the release and named that tree, because a rebuild must not outlive its window (§5.2)
@@ -134,7 +148,7 @@ TEST(DevRootHookChecks, InstallingOneBinderReplacesThePreviousSet) {
     g_first.binds = 0;
     g_second.binds = 0;
     // act the runtime offers a tree after the replacement (§12.1)
-    albor::dev::bind_root(&root, nullptr, nullptr);
+    albor::dev::bind_root(albor::dev::WindowBinding{.root = &root});
     // assert only the replacement heard it, because replace means replace rather than append (§12.1)
     EXPECT_EQ(g_first.binds, 0);
     EXPECT_EQ(g_second.binds, 1);
@@ -168,7 +182,7 @@ TEST(DevRootHookChecks, AFullBinderTableRefusesAnotherObserver) {
     // act one more observer is offered, then the tree is bound and released (§12.1)
     const bool overflow = albor::dev::add_root_binding(&bind_second, &unbind_second);
     int root = 0;
-    albor::dev::bind_root(&root, nullptr, nullptr);
+    albor::dev::bind_root(albor::dev::WindowBinding{.root = &root});
     albor::dev::unbind_root(&root);
     // assert the table refused the ninth, kept the eight, and called every one of them (§12.1, AD-02)
     EXPECT_FALSE(overflow);

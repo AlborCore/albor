@@ -4,10 +4,11 @@
 #include <cstdio>
 #include <string>
 #include <string_view>
-#include <utility>
 
 #include "application/application.h"
+#include "automation/capture_commands.h"
 #include "automation/command_commands.h"
+#include "automation/host/capture_target.h"
 #include "automation/mcp_connection.h"
 #include "automation/mcp_server.h"
 #include "automation/semantic_commands.h"
@@ -35,12 +36,12 @@ namespace albor::automation
         return *host;
     }
 
-    void AutomationHost::bind(void* root, void* engine, void* text) {
+    void AutomationHost::bind(const dev::WindowBinding& binding) {
         // a null tree names no window, so it cannot become the active semantic root (§10.3)
-        if (root == nullptr)
+        if (binding.root == nullptr)
             return;
         // the tree is appended or moved to the front of the stack, which makes it active (§10.3)
-        m_bindings.bind(root, engine, text);
+        m_bindings.bind(binding);
         // pending stop stays alive if tree remains (§10.3)
         m_stop_pending = false;
         // the server starts on the first tree, which is what makes the host transparent to the application (§10.3)
@@ -101,8 +102,7 @@ namespace albor::automation
     }
 
     void AutomationHost::start() {
-        // a start is attempted once per transition from no transport to a live one (§10.3)
-        // start_mcp() owns the guard, which keeps the single transition rule in one place (§10.3)
+        // start_mcp() owns the transition guard, which is attempted once per live transport (§10.3)
         start_mcp();
     }
 
@@ -118,6 +118,8 @@ namespace albor::automation
         register_semantic_commands(*m_registry, [this] { return semantic_tree(); });
         // commands read the process-wide registry (§10.3, §18.1)
         register_command_commands(*m_registry, [] { return &Application::instance().commands(); });
+        // the capture reads the active window on demand, which is the only handle a command has (§10.3, §6.3)
+        register_capture_commands(*m_registry, [this] { return capture_frame(); });
         // the standard surface is permitted explicitly, because registration alone is not consent (§10.3, AD-10)
         for (const std::string& name : semantic_command_names()) {
             // a name this build did not register is skipped, because the allow list may only name a live command (§10.3)
@@ -126,6 +128,12 @@ namespace albor::automation
         }
         // the command half of the standard surface is permitted the same way (§10.3, AD-10)
         for (const std::string& name : command_command_names()) {
+            // a name this build did not register is skipped, because the allow list may only name a live command (§10.3)
+            if (m_registry->knows(name))
+                m_registry->allow(name);
+        }
+        // the capture surface is permitted the same way, which is what lets a client ask for a frame (§10.3, AD-10)
+        for (const std::string& name : capture_command_names()) {
             // a name this build did not register is skipped, because the allow list may only name a live command (§10.3)
             if (m_registry->knows(name))
                 m_registry->allow(name);
@@ -215,8 +223,8 @@ namespace albor::automation
         // an app supplied tree is read as-is, because the app owns its content (§10.3)
         if (m_external_tree != nullptr)
             return m_external_tree;
-        // the active tree is the most recently bound window, which is what a client drives (§10.3)
-        const HostBinding* active = m_bindings.active();
+        // the active tree is the newest window that carries one, which is what a client drives (§10.3)
+        const HostBinding* active = m_bindings.active_tree();
         // a host with no active tree reports an empty one, because a command may race the last unbind (§10.3)
         if (active == nullptr) {
             // the scratch tree is cleared, so no stale node survives its window (§10.3)
@@ -228,5 +236,17 @@ namespace albor::automation
         m_tree = build_semantic_tree(*static_cast<const UiNode*>(active->root));
         // the rebuilt tree is what every semantic command reads and writes for this line (§10.3)
         return &m_tree;
+    }
+
+    CapturedFrame AutomationHost::capture_frame() {
+        // the active binding is resolved per request, because another window may have taken over (§10.3)
+        const HostBinding* active = m_bindings.active();
+        // no bound window has nothing to read, which is refused rather than answered as a blank frame (§10.3)
+        if (active == nullptr)
+            return CapturedFrame{.error = "no window is bound"};
+        // the binding is copied before the capture blocks, so a later close cannot change the handles read (§10.3)
+        const dev::WindowBinding binding = *active;
+        // the frame is read from that binding alone, which keeps the cast to one function (§6.3)
+        return capture_window(binding);
     }
 } // namespace albor::automation

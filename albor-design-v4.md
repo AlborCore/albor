@@ -1021,6 +1021,8 @@ Platform accessibility bridges consume the semantic tree:
 - **Test Automation:** The `albor-automation` library exposes out-of-process test control via a local, token-authenticated UNIX domain socket or named pipe.
 - **Release Exclusion:** The automation engine is excluded at link time from Release configurations.
 - **Model Context Protocol (MCP):** AI and developer tooling agents interact with the application via an MCP server adapter that connects to the automation layer. MCP operations are subject to the same authentication and application command allow-lists.
+- **Typed Answers:** every answer states its kind (`text`, `number`, `boolean`, `json`, `image`, `binary`), so a client decodes a value rather than guessing at a string. An `image` or `binary` payload travels as base64, because the wire is a line.
+- **Frame Capture:** `capture.screenshot` reads the active window's last presented frame once the render executor settles. It never rebuilds a frame, so a mutation issued in the same transport pass is visible only to a later capture, and the raw form is byte-exact with the surface read.
 
 ---
 
@@ -1314,11 +1316,14 @@ links it enables the feature and an application that does not is unaffected. Not
 
 **The bind seam (AD-02).** `core/dev_hook.h` carries four free functions, present and
 null-checked in every configuration: `install`, `present`, `reload`, plus `install_root_binder`,
-`binder_present`, `bind_root` and `unbind_root` for the tree itself. The three bind functions
-exchange `void*` because the core names no UI type and no layout may vary by configuration. A
-main window offers its live tree, its `BindingEngine` and its `TextEngine` once, as it is wired;
-it withdraws the offer when the window closes, naming the root so that closing one window
-releases only the binding that window owned.
+`binder_present`, `bind_root` and `unbind_root` for the tree itself. The bind functions
+exchange `void*` because the core names no UI type or render type and no layout may vary by
+configuration. A main window offers its live tree, its `BindingEngine`, its `TextEngine`, the
+`RenderSurface` it presents and the `RenderExecutor` that settles it once, as it is wired; it
+withdraws the offer when the window closes, naming the root so that closing one window releases
+only the binding that window owned. A window that draws by hand offers the same handles and
+states that it carries no reloadable tree, which the reload extension skips and the automation
+host keeps, because it observes and captures every window.
 
 **What carries the registry.** The element-name-to-class table and the property-name-to-setter
 catalogue live in `devrt/`, which a Release link never carries (AD-01). The extension is

@@ -85,7 +85,7 @@ namespace albor::dev
         return g_binding_count.load(std::memory_order_acquire) != 0;
     }
 
-    void bind_root(void* root, void* engine, void* text) {
+    void bind_root(const WindowBinding& binding) {
         // the count is read once, because every observer registered before this call must receive the same tree (§12.1)
         const std::size_t count = g_binding_count.load(std::memory_order_acquire);
         // each observer is called in registration order, because the reload extension and the host are independent (§12.1)
@@ -93,7 +93,7 @@ namespace albor::dev
             // the entry is read after the count, because the release that published it happened before the count (§12.1)
             const RootBindFunction entry = g_bindings[index].bind;
             // the tree and its engines are handed over, which is what a reload needs to patch (§12.1, AD-02)
-            entry(root, engine, text);
+            entry(binding);
         }
     }
 

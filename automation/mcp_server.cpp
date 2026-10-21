@@ -2,6 +2,7 @@
 
 #include <optional>
 
+#include "automation/capture_commands.h"
 #include "core/json.h"
 
 namespace albor::automation
@@ -77,6 +78,9 @@ namespace albor::automation
             // an invocation names the command and its optional argument (§10.3, §18.3)
             if (command == "command.invoke")
                 return {"id", "argument"};
+            // a capture names the format it wants, which the layer defaults and refuses by name (§6.3)
+            if (command == SCREENSHOT_COMMAND)
+                return {"format"};
             // a command this adapter does not know takes nothing by name (§10.3)
             return {};
         }
@@ -122,15 +126,23 @@ namespace albor::automation
                 return std::nullopt;
             // the order comes from the table, because a map has no order of its own (§10.3)
             const std::vector<std::string> order = parameter_names(command);
+            // whether an earlier parameter was omitted, which no later one may leap over (§10.3)
+            bool ended = false;
             // the arguments are placed by that order, which is what makes a named call match the wire (§10.3)
             std::vector<std::string> arguments;
             // each parameter is looked up by name, which is what a client wrote (§10.3)
             for (const std::string& parameter : order) {
                 // the member is read, because a client names what it passed (§10.3)
                 const core::Json* value = given.member(parameter);
-                // a member that is absent is left empty, which the layer refuses as a missing argument (§10.3)
-                if (value == nullptr)
+                // an omitted parameter is the tail the wire can carry, because a later one cannot name its slot (§10.3)
+                if (value == nullptr) {
+                    // the omission is remembered, because a parameter after it would be read as the one before (§10.3)
+                    ended = true;
                     continue;
+                }
+                // a parameter after an omission cannot be placed, which is refused rather than shifted (§10.3)
+                if (ended)
+                    return std::nullopt;
                 // only a string is sent, because the layer wire carries strings (§10.3)
                 if (value->kind() != core::Json::Kind::String)
                     return std::nullopt;
@@ -250,6 +262,9 @@ namespace albor::automation
                     core::Json property;
                     // the type is a string, which is the only shape the wire carries (§10.3)
                     property.set("type", core::Json(std::string("string")));
+                    // the capture formats are the two this build carries, which a client picks by name (§6.3)
+                    if (name == SCREENSHOT_COMMAND && parameter == "format")
+                        property.set("enum", core::Json(std::vector<core::Json>{core::Json(std::string(PNG_FORMAT)), core::Json(std::string(RAW_FORMAT))}));
                     // the description states what the parameter means for this command (§10.3)
                     property.set("description", core::Json("the " + parameter + " this command takes"));
                     // the property joins the schema (§10.3)
@@ -257,6 +272,8 @@ namespace albor::automation
                 }
                 // the properties join the schema (§10.3)
                 schema.set("properties", core::Json(std::move(properties)));
+                // a member outside the table cannot be placed, which the schema states rather than dropping it (§10.3)
+                schema.set("additionalProperties", core::Json(false));
                 // the tool carries its schema, which is what a client validates against (§10.3)
                 tool.set("inputSchema", std::move(schema));
                 // the tool joins the listing (§10.3)
@@ -304,12 +321,35 @@ namespace albor::automation
             // a refusal becomes an error carrying the layer's own reason, which keeps the two aligned (AD-20)
             if (!result.ok)
                 return failure(*id, APPLICATION_ERROR, result.error).to_string();
-            // an answer is wrapped as text, because the layer returns one payload and the protocol wants content (§10.3)
+            // an answer is wrapped in the block its kind names, which is what a client decodes (§10.3, AD-20)
             core::Json content;
-            // the text block is what the protocol describes for a string result (§10.3)
-            content.set("type", core::Json(std::string("text")));
-            // the payload is the layer's answer, unchanged (§10.3, AD-20)
-            content.set("text", core::Json(result.payload));
+            switch (result.kind) {
+            // an image is the protocol's own block, whose only image type this layer produces is a png (§6.3)
+            case ValueKind::Image:
+                content.set("type", core::Json(std::string("image")));
+                content.set("data", core::Json(base64_encode(result.payload)));
+                content.set("mimeType", core::Json(std::string("image/png")));
+                break;
+            // an opaque byte string is a resource, because the protocol has no block for raw bytes (§10.3)
+            case ValueKind::Binary: {
+                content.set("type", core::Json(std::string("resource")));
+                // the resource is named per call, because two frames of one window are two different resources (§10.3)
+                core::Json resource;
+                resource.set("uri", core::Json("albor://" + name->as_string() + "/" + std::to_string(++m_resource_sequence)));
+                resource.set("mimeType", core::Json(std::string("application/octet-stream")));
+                resource.set("blob", core::Json(base64_encode(result.payload)));
+                content.set("resource", std::move(resource));
+                break;
+            }
+            // every scalar kind is still text on this protocol, which is the only scalar block it has (§10.3)
+            case ValueKind::Text:
+            case ValueKind::Number:
+            case ValueKind::Boolean:
+            case ValueKind::Json:
+                content.set("type", core::Json(std::string("text")));
+                content.set("text", core::Json(result.payload));
+                break;
+            }
             // the tool result is the protocol's shape around it (§10.3)
             core::Json tool_result;
             // the content joins the result (§10.3)

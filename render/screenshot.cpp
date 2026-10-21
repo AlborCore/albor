@@ -59,7 +59,13 @@ namespace albor
         // a read of no extent cannot be a frame, so it is refused (§6.3)
         if (size.width <= 0.0f || size.height <= 0.0f)
             return Screenshot{};
+        // the extent the bytes must fill, which a surface that was just resized does not match yet (§6.3)
+        const int width = static_cast<int>(size.width);
+        const int height = static_cast<int>(size.height);
+        // a read that is not a whole frame of the current extent is a stale snapshot, which a capture refuses (§6.3)
+        if (pixels.size() != static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u)
+            return Screenshot{};
         // the screenshot carries the extent the comparison needs alongside the bytes (§6.3, AD-26)
-        return Screenshot{.width = static_cast<int>(size.width), .height = static_cast<int>(size.height), .pixels = pixels};
+        return Screenshot{.width = width, .height = height, .pixels = pixels};
     }
 } // namespace albor

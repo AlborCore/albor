@@ -34,7 +34,7 @@ The application source is identical in Release, where the automation targets do 
 1. **`ALBOR_AUTOMATION` is independent of `ALBOR_DEV` and `ALBOR_TEST`.** It may be paired with either, or both. It is still forbidden in Release.
 2. **Automation and `devrt` are independent build concepts.** A Dev build may have `devrt` without automation; a Test build has automation without `devrt`.
 3. **The transparent host is owned by `automation/`, not `devrt/` or `inspector/`.** `devrt-auto` includes it as an umbrella; Test links it directly. `inspector/` is the scene inspector and is not the MCP server.
-4. **The default surface is full.** The host registers the five semantic commands and the six command commands, and explicitly permits all of them. `AutomationRegistry` remains deny-by-default as a primitive; the host is the component that opts into the standard surface.
+4. **The default surface is full.** The host registers the five semantic commands, the six command commands and the capture command, and explicitly permits all of them. `AutomationRegistry` remains deny-by-default as a primitive; the host is the component that opts into the standard surface.
 5. **No per-application narrowing API is added in this change.** The effective capability boundary is the application's explicit `id:` set plus command enablement/visibility. A host that needs a narrower protocol surface remains a manual integration over `albor-automation`; a build-level deny list is a possible follow-up, not part of the transparent path.
 6. **One active root.** The most recently bound tree is active. Unbinding it falls back to the next most recently bound tree; the host stops only when no bound tree remains.
 7. **MCP-only on the transparent path.** The transport's default raw automation protocol remains available for manually wired hosts and tests. The transparent host installs an MCP connection factory.
@@ -396,7 +396,16 @@ The transport must still return `false` only for listener-level failure; a dead 
 The host explicitly allows exactly these registered commands:
 
 - semantic: `semantic.tree`, `semantic.find`, `semantic.invoke`, `semantic.actions`, `semantic.set_focused`;
-- command: `command.list`, `command.get`, `command.invoke`, `command.can_undo`, `command.undo`, `command.redo`.
+- command: `command.list`, `command.get`, `command.invoke`, `command.can_undo`, `command.undo`, `command.redo`;
+- capture: `capture.screenshot`.
+
+An answer states its shape. The wire writes `!ok <kind> <payload>` with `text`, `number`,
+`boolean`, `json`, `image` or `binary`; a scalar payload escapes its newlines so one reply stays
+one line, and an `image` or `binary` payload is base64. `capture.screenshot` takes an optional
+`format`, answers `png` (an `image`) by default and `raw` (a `binary` frame whose 24-byte
+`ALBRSHOT` header names the extent, stride and premultiplied rgba8 layout) when asked. A capture
+flushes the render executor and returns the last frame the window presented; it never rebuilds
+one, so a mutation issued in the same transport pass is visible only to a later capture.
 
 `AutomationRegistry` remains deny-by-default: `allow()` is still the primitive, and the host calls it for each standard name the registry knows. A command that is not registered cannot be listed or called.
 
@@ -559,7 +568,7 @@ The test:
 4. reads `$TMPDIR/albor-mcp/<pid>/host.json` and the token;
 5. connects to the socket and sends MCP `initialize` with `_meta["albor/token"]`;
 6. sends `notifications/initialized` and asserts no reply is required;
-7. calls `tools/list` and asserts all eleven standard tools are present;
+7. calls `tools/list` and asserts all twelve standard tools are present;
 8. calls `semantic.tree` and asserts the `root` id is reported;
 9. calls `command.invoke` by named `id` and asserts the action ran on the UI thread;
 10. calls `tools/list` before authentication in a second connection, after closing the first, and asserts refusal;
@@ -676,7 +685,7 @@ Add a "Transparent host baseline" section to the issue body:
 
 - the sample application runs the embedded host through `albor-devrt-auto` / `albor-automation-auto`, with no `Drivable` wiring;
 - the reference test discovers `host.json`, reads the token, initializes MCP with `_meta["albor/token"]`, and drives the app over the local transport;
-- the test asserts the default eleven-tool surface, semantic lookup/invoke, command lookup/invoke, token refusal, and endpoint cleanup;
+- the test asserts the default twelve-tool surface, semantic lookup/invoke, command lookup/invoke, capture refusal, token refusal, and endpoint cleanup;
 - keep the existing requirements for layout bounds, input, capture, and a real sample application;
 - name `albor-form` as the intended sample once it migrates to the transparent host.
 
@@ -712,7 +721,7 @@ Update the issue from "raw automation protocol client" to "MCP client over the l
 
 - A fresh external Dev application sets `ALBOR_DEV=ON`, `ALBOR_AUTOMATION=ON`, links `albor-devrt-auto`, and writes no automation code; its MCP host starts when its first window is created.
 - `host.json`, `token`, and `mcp.sock` exist with the stated names, locations, and permissions.
-- An MCP client authenticates with the token from `initialize.params._meta["albor/token"]`, lists all eleven standard tools, drives the semantic tree, and invokes an application command by explicit id.
+- An MCP client authenticates with the token from `initialize.params._meta["albor/token"]`, lists all twelve standard tools, drives the semantic tree, invokes an application command by explicit id, and reads a screenshot.
 - A wrong or missing token is refused; a tool call before initialization is refused.
 - Closing the last tree removes the endpoint directory; opening another tree starts a new host with a new token.
 - An application that links `albor-devrt-auto` with `ALBOR_AUTOMATION=OFF` still gets hot reload and no automation symbols.

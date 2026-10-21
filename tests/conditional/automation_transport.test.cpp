@@ -113,9 +113,9 @@ TEST(AutomationTransport, AClientAuthenticatesAndRunsAPermittedCommand) {
     ASSERT_NE(client, -1);
     apply_timeout(client);
     write_line(client, encode_handshake(token));
-    EXPECT_EQ(read_line(client), "!ok ");
+    EXPECT_EQ(read_line(client), "!ok text ");
     write_line(client, "probe");
-    EXPECT_EQ(read_line(client), "!ok yes");
+    EXPECT_EQ(read_line(client), "!ok text yes");
     ::close(client);
     done.store(true);
     server.join();
@@ -242,7 +242,7 @@ TEST(AutomationTransport, AConnectedClientDoesNotStallTheServer) {
     ASSERT_NE(client, -1);
     apply_timeout(client);
     write_line(client, encode_handshake(transport->session_token()));
-    EXPECT_EQ(read_line(client), "!ok ");
+    EXPECT_EQ(read_line(client), "!ok text ");
     // assert further passes keep returning while the client is quiet, because a frame loop calls this every frame (§6.1)
     for (int pass = 0; pass < 20; pass++) {
         const auto before = std::chrono::steady_clock::now();
@@ -251,11 +251,52 @@ TEST(AutomationTransport, AConnectedClientDoesNotStallTheServer) {
     }
     // act the client speaks again, which is what proves the conversation survived the quiet (§10.3)
     write_line(client, "probe");
-    EXPECT_EQ(read_line(client), "!ok yes");
+    EXPECT_EQ(read_line(client), "!ok text yes");
     // exit
     ::close(client);
     done.store(true);
     server.join();
     EXPECT_EQ(runs, 1U);
+    transport->stop();
+}
+
+TEST(AutomationTransport, ALargeReplyArrivesWholeAndTheNextOneFollowsIt) {
+    // arrange a layer whose answer is far larger than one socket buffer, which is what a frame becomes (§10.3)
+    const std::string large(256u * 1024u, 'a');
+    AutomationRegistry registry;
+    registry.register_command("large", [large](const AutomationRequest&) { return AutomationResult::answered(large); });
+    registry.allow("large");
+    registry.register_command("probe", [](const AutomationRequest&) { return AutomationResult::answered("yes"); });
+    registry.allow("probe");
+    const std::unique_ptr<AutomationTransport> transport = create_transport(registry);
+    const std::string socket = endpoint_path("large");
+    ASSERT_TRUE(transport->listen(AutomationEndpoint{.socket_path = socket, .token_path = {}}));
+    const std::string token = transport->session_token();
+    std::atomic<bool> done{false};
+    std::thread server([&] { pump_until(done, *transport); });
+    const int client = connect_to(socket);
+    ASSERT_NE(client, -1);
+    apply_timeout(client);
+    write_line(client, encode_handshake(token));
+    // the handshake answer is small, which the test drains before the large one (§10.3)
+    (void)read_line(client);
+    // act the large reply is requested, then a small one behind it (§10.3)
+    write_line(client, "large");
+    std::string received;
+    char chunk[65536];
+    ssize_t got = 0;
+    while ((got = ::read(client, chunk, sizeof(chunk))) > 0) {
+        received.append(chunk, static_cast<std::size_t>(got));
+        if (!received.empty() && received.back() == '\n')
+            break;
+    }
+    write_line(client, "probe");
+    const std::string next = read_line(client);
+    ::close(client);
+    done.store(true);
+    server.join();
+    // assert the whole reply arrived and the stream stayed aligned, which a prefix left behind would break (§10.3)
+    EXPECT_EQ(received, "!ok text " + large + "\n");
+    EXPECT_EQ(next, "!ok text yes");
     transport->stop();
 }

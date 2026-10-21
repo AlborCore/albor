@@ -138,6 +138,7 @@ namespace albor::automation::platform
                 m_pending.clear();
                 // the output starts empty, because a new client has not been sent a reply yet (§10.3)
                 m_output.clear();
+                m_output_offset = 0;
                 // the client is answered this frame, because its first line is usually already waiting (§10.3)
                 converse(client);
                 return true;
@@ -199,6 +200,7 @@ namespace albor::automation::platform
                 m_pending.clear();
                 // a partial reply belongs to a client that is gone (§10.3)
                 m_output.clear();
+                m_output_offset = 0;
             }
 
             // record a refusal and report it, so a host can log why a client was turned away (§10.3, AD-10)
@@ -306,9 +308,9 @@ namespace albor::automation::platform
                 if (m_client < 0)
                     return false;
                 // the buffer is drained in order, because a reply is a sequence of bytes on the wire (§10.3)
-                while (!m_output.empty()) {
-                    // the send is attempted once per pass, which is what keeps the frame non blocking (§6.1, §10.3)
-                    const ssize_t sent = ::send(m_client, m_output.data(), m_output.size(), 0);
+                while (m_output_offset < m_output.size()) {
+                    // the send starts at the first undelivered byte, which keeps a large reply linear (§10.3)
+                    const ssize_t sent = ::send(m_client, m_output.data() + m_output_offset, m_output.size() - m_output_offset, 0);
                     // a full socket buffer keeps the remainder for the next frame rather than dropping it (§10.3)
                     if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
                         return true;
@@ -319,10 +321,12 @@ namespace albor::automation::platform
                         // the caller stops serving this client (§10.3)
                         return false;
                     }
-                    // the delivered bytes leave the buffer, because sending them again would duplicate the reply (§10.3)
-                    m_output.erase(0, static_cast<std::size_t>(sent));
+                    // the delivered bytes are counted, because erasing them would rewrite the tail on every send (§10.3)
+                    m_output_offset += static_cast<std::size_t>(sent);
                 }
-                // the output is empty, so the client has everything the server wrote (§10.3)
+                // the whole reply is delivered, so the buffer is released and the next reply starts fresh (§10.3)
+                m_output.clear();
+                m_output_offset = 0;
                 return true;
             }
 
@@ -343,6 +347,9 @@ namespace albor::automation::platform
 
             // the reply the client has not taken yet, because a non blocking write may be partial (§10.3)
             std::string m_output;
+
+            // how many bytes of the output the client already took, which keeps a large reply linear (§10.3)
+            std::size_t m_output_offset = 0;
 
             // protocol: raw default, MCP with host (§10.3, AD-20)
             std::unique_ptr<AutomationConnection> m_connection;

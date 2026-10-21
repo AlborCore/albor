@@ -26,13 +26,19 @@ namespace albor::devrt
         // the reload entry the runtime calls, which applies the definition the dev service delivered (§12.1, AD-12)
         void handle_reload(const std::string& ir) {
             // a reload before any window exists has no tree to patch, which is the quiet default (§12.1, AD-02)
-            if (g_root == nullptr)
+            if (g_root == nullptr) {
+                // the report is cleared, because a tool that reads it must see that this attempt applied nothing (§12.1)
+                g_last = ReloadReport{};
                 return;
+            }
             // the definition is parsed first, because a malformed one changes nothing (§12.1)
             const std::optional<IrNode> parsed = parse_ir(ir);
             // a definition the reader refused is dropped, because patching half of it would be a lie (§12.1)
-            if (!parsed)
+            if (!parsed) {
+                // the report is cleared, because a tool that reads it must see that this attempt applied nothing (§12.1)
+                g_last = ReloadReport{};
                 return;
+            }
             // the context carries the engines and the closed set, which is all a patch needs (§12.1, AD-01)
             const ReloadContext context{
                 .engine = g_engine,
@@ -66,11 +72,14 @@ namespace albor::devrt
         const DevAutoInstall g_dev_auto_install;
     } // namespace
 
-    void bind_root(void* root, void* engine, void* text) {
+    void bind_root(const dev::WindowBinding& binding) {
+        // a hand drawn window brings no tree a reload could patch, so it never displaces the one a developer edits (§6.1)
+        if (!binding.has_tree)
+            return;
         // the opaque pointers are the runtime's own types, because core names neither of them (§12.1, AD-02)
-        g_root = static_cast<UiNode*>(root);
-        g_engine = static_cast<BindingEngine*>(engine);
-        g_text = static_cast<TextEngine*>(text);
+        g_root = static_cast<UiNode*>(binding.root);
+        g_engine = static_cast<BindingEngine*>(binding.engine);
+        g_text = static_cast<TextEngine*>(binding.text);
     }
 
     void unbind_root(void* root) {
