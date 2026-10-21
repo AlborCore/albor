@@ -2789,3 +2789,45 @@ TEST(GlyphPathCacheChecks, DropsTheColdestSliceWhenItFills) {
     // assert the new path is held, because the frame that walked it is the warmest there is (§6.4)
     EXPECT_NE(cache.find(fresh), nullptr);
 }
+
+TEST(ExpandFillGroupChecks, FillsAStarburstWhoseEdgesMeetInsideOneSlab) {
+    // arrange forty alternating radii whose edges all pass near the centre, which is the fan a slab split cannot exhaust (§6.2)
+    std::vector<PathVerb> verbs;
+    std::vector<Point> points;
+    verbs.push_back(PathVerb::MoveTo);
+    for (int index = 0; index < 40; index++) {
+        // every other vertex pinches to the centre, so consecutive edges meet inside the same slab (§6.2)
+        const float angle = static_cast<float>(index) * 0.15707963f;
+        const float radius = index % 2 == 0 ? 10.0f : 0.05f;
+        points.push_back(Point{.x = 20.0f + radius * std::cos(angle), .y = 20.0f + radius * std::sin(angle)});
+        // every vertex after the first is a line, which keeps the ring closed by the verb that follows (§6.2)
+        if (index > 0)
+            verbs.push_back(PathVerb::LineTo);
+    }
+    verbs.push_back(PathVerb::Close);
+    std::vector<Contour> contours = build_contours(verbs, points);
+    ASSERT_EQ(contours.size(), 1u);
+    FrameBatch batch;
+    // act the group fills a contour whose crossings the sweep cannot separate in one slab (§6.2)
+    const EmittedRange range = expand_fill_group(batch, contours);
+    // assert a range was emitted, which the fallback must still produce (§6.2)
+    ASSERT_GT(range.index_count, 0u);
+    // assert every vertex is a finite position, which a degenerate split would not produce (§6.2)
+    for (const BatchVertex& vertex : batch.vertices) {
+        EXPECT_TRUE(std::isfinite(vertex.x));
+        EXPECT_TRUE(std::isfinite(vertex.y));
+    }
+    // assert a point outside the starburst stays outside, which a mis-paired crossing would paint (§6.2)
+    const Point outside{.x = 200.0f, .y = 200.0f};
+    for (std::size_t index = 0; index + 2 < batch.indices.size(); index += 3) {
+        // the three corners of the triangle, which the outside point is tested against
+        const BatchVertex& a = batch.vertices[batch.indices[index]];
+        const BatchVertex& b = batch.vertices[batch.indices[index + 1]];
+        const BatchVertex& c = batch.vertices[batch.indices[index + 2]];
+        // the three edge crosses decide whether the point sits inside
+        const float ab = (b.x - a.x) * (outside.y - a.y) - (b.y - a.y) * (outside.x - a.x);
+        const float bc = (c.x - b.x) * (outside.y - b.y) - (c.y - b.y) * (outside.x - b.x);
+        const float ca = (a.x - c.x) * (outside.y - c.y) - (a.y - c.y) * (outside.x - c.x);
+        EXPECT_FALSE((ab <= 0.0f && bc <= 0.0f && ca <= 0.0f) || (ab >= 0.0f && bc >= 0.0f && ca >= 0.0f));
+    }
+}
