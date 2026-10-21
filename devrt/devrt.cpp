@@ -1,3 +1,5 @@
+#include <cstdio>
+
 #include "devrt/devrt.h"
 
 #include "core/dev_hook.h"
@@ -51,7 +53,10 @@ namespace albor::devrt
         {
             DevAutoInstall() {
                 // the tree binder is appended, because the automation host may observe the same tree (§12.1, AD-02)
-                dev::add_root_binding(&bind_root, &unbind_root);
+                const bool installed = dev::add_root_binding(&bind_root, &unbind_root);
+                // a refusal is reported, because a silent refusal leaves the extension without a tree to reload (§12.1)
+                if (!installed)
+                    std::fprintf(stderr, "albor devrt: the extension could not register its tree observer\n");
                 // the reload entry follows, so a definition that arrives before any window is simply dropped (§12.1)
                 dev::install(&handle_reload);
             }

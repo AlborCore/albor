@@ -35,7 +35,8 @@ target_include_directories(albor-render-software SYSTEM PRIVATE ${HARFBUZZ_INCLU
 # the reference draws through the same portable context the gpu backend uses, so the two cannot drift (§6.3, AD-26)
 #
 # the atlas reads the carried font bytes through the registry, so the reference stops asking a gpu text stack (§6.3)
-target_link_libraries(albor-render-software PUBLIC albor-render albor-render-blend2d albor-harfbuzz-raster PRIVATE blend2d::blend2d harfbuzz::harfbuzz albor-resources)
+# blend2d arrives through albor-render-blend2d, so a second listing here would put the archive on the link line twice (§6.3)
+target_link_libraries(albor-render-software PUBLIC albor-render albor-render-blend2d albor-harfbuzz-raster PRIVATE harfbuzz::harfbuzz albor-resources)
 
 # the auto target links the archive whole, so the cpu reference installs itself at load without a call (§6.3, AD-26)
 add_library(albor-render-software-auto INTERFACE)

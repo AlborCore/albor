@@ -25,7 +25,7 @@ namespace albor::automation::platform
         public:
             // the registry is taken at construction, because a transport that could dispatch nothing is useless (§10.3)
             explicit UnixSocketTransport(AutomationRegistry& registry) :
-                m_registry(registry), m_token(AutomationSession(registry).token()), m_factory(default_factory()) {}
+                m_factory(default_factory()), m_registry(registry), m_token(AutomationSession(registry).token()) {}
 
             ~UnixSocketTransport() override { stop(); }
 
@@ -91,7 +91,7 @@ namespace albor::automation::platform
                 // a client already connected is served first, because one conversation spans many frames (§10.3)
                 if (m_client >= 0) {
                     // a reply that could not be written last frame is retried before anything is read (§10.3)
-                    flush_output();
+                    (void)flush_output();
                     // a client that could not take its reply is gone, so this frame has nothing left to serve (§10.3)
                     if (m_client < 0)
                         return true;
