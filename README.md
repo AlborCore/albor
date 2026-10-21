@@ -166,7 +166,7 @@ knows nothing about the extension beyond four null-checked hook calls.
 Complete, buildable versions live in [`examples/`](examples/) — a hand-built reactive
 counter, a manifest-driven chart with custom line-batch rendering, the compiled
 `GreetingPanel` above, and the same window linked against each in-repo renderer
-(`hello-render-albor` for the GPU backend, `hello-render-blend2d` for the raster one).
+(`hello-world-albor` for the GPU backend, `hello-world-blend2d` for the raster one).
 
 ## What is implemented
 

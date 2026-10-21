@@ -6,8 +6,8 @@
 - **CMake** ≥ 3.28 and **Ninja** — the presets pin Ninja as the generator, so a build directory
   configured with another one has to be configured fresh
 - **[vcpkg](https://vcpkg.io)** in manifest mode — dependencies are pinned in `vcpkg.json`
-  and are fetched on the first configure. Export `MACOSX_DEPLOYMENT_TARGET=13.3` so the ports
-  build for the same floor, which CMake reads and vcpkg forwards to them; a port built for a
+  and are fetched on the first configure. The build declares the floor to the install itself,
+  so the ports are stamped with the same 13.3 the framework is tested at; a port built for a
   newer floor links with a warning and may call an API the minimum system lacks
 - **macOS 13.3 or later** on Intel or Apple silicon to build and run the macOS targets (the
   example applications drive the AppKit platform adapter directly; see
@@ -68,8 +68,18 @@ target_link_libraries(my_app PRIVATE
 
 The dependencies come from vcpkg. A consumer in manifest mode lists the same packages in
 its own `vcpkg.json`, or points `VCPKG_MANIFEST_DIR` at the fetched sources so the pinned
-versions of the framework's manifest are the ones built. Export
-`MACOSX_DEPLOYMENT_TARGET=13.3` so the ports build for the framework's floor.
+versions of the framework's manifest are the ones built — that needs the sources to exist at
+the first configure, so a vendored copy rather than a fetch that has not run yet. With the
+sources present, `VCPKG_OVERLAY_TRIPLETS` pointed at the framework's `.triplets` adds the
+framework's own triplets: the ports are stamped through the triplet itself, and a missing
+floor is a configure error rather than a link-time surprise.
+
+The floor is the consumer's to declare, and it has to be in place before the first
+configure, because the install runs inside `project()` and inherits it from the environment:
+export `MACOSX_DEPLOYMENT_TARGET` with the application's floor — 13.3 at the lowest, higher
+when the application requires a newer system — and give `CMAKE_OSX_DEPLOYMENT_TARGET` the
+same value when naming it explicitly. A floor below 13.3 is rejected while the framework
+configures: the shipped shader and the test suites do not cover it.
 
 ## A component from a `.ui` file
 

@@ -2,15 +2,6 @@
 
 add_subdirectory(hello-window)
 
-# the render-albor window example, which is hello-window linked against the in-repo gpu backend instead (§6.3, AD-26)
-add_subdirectory(hello-render-albor)
-
-# the render-blend2d window example, which is hello-window linked against the in-repo cpu backend instead (§6.3, AD-26)
-add_subdirectory(hello-render-blend2d)
-
-# the reactive counter, which shows the reactive engine driving the frame pipeline (§14, phase 2)
-add_subdirectory(reactive-counter)
-
 # the compiled ui greeting, which shows a component generated from a ui file at build time (§14, phase 4)
 add_subdirectory(greeting)
 
@@ -22,3 +13,9 @@ add_subdirectory(form)
 
 # the shared action object, which shows one command bound across a toolbar, a menu row and the keyboard (§14, §18)
 add_subdirectory(commands)
+
+# the hello world application using all rendering backends
+add_subdirectory(hello-world)
+
+# the reactive counter, which shows the reactive engine driving the frame pipeline (§14, phase 2)
+add_subdirectory(reactive-counter)

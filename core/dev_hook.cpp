@@ -76,6 +76,7 @@ namespace albor::dev
         g_bindings[count] = RootBinding{bind, unbind};
         // the release publishes the new entry, because bind_root reads the count before it walks the table (§12.1, AD-02)
         g_binding_count.store(count + 1, std::memory_order_release);
+        // binding was added
         return true;
     }
 

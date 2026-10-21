@@ -11,16 +11,29 @@ if(APPLE AND CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT DEFINED 
     set(CMAKE_OSX_DEPLOYMENT_TARGET "${ALBOR_OSX_MINIMUM}" CACHE STRING "the oldest macOS the framework runs on")
 endif()
 
+# the install runs inside project(), so the floor has to be in the environment before it: the local triplets stamp every dependency with this build's value, while a consumer wires its own before its own project() (§6.3)
+if(APPLE AND CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    # check macos target is set
+    if(CMAKE_OSX_DEPLOYMENT_TARGET)
+        set(ENV{MACOSX_DEPLOYMENT_TARGET} "${CMAKE_OSX_DEPLOYMENT_TARGET}")
+    else()
+        # an empty cache value means no opinion, so the environment falls back to the floor
+        set(ENV{MACOSX_DEPLOYMENT_TARGET} "${ALBOR_OSX_MINIMUM}")
+    endif()
+    # the local triplets shadow the builtin ones of the same name, so the selected triplet does not change
+    set(VCPKG_OVERLAY_TRIPLETS "${ALBOR_SOURCE_DIR}/.triplets" CACHE STRING "the local triplets that stamp the dependencies with the floor")
+endif()
+
 project(albor LANGUAGES CXX)
 
 # a consumer inherits the framework's targets rather than its cache, so the floor is applied to them after the project
 if(APPLE)
-    # a consumer that named a lower floor is told why it rises, because the shipped shader targets the minimum
+    # a floor below albor's minimum cannot work: the shipped metallib is stamped 13.3 and refuses to load under it (§6.3, AD-16)
     if(CMAKE_OSX_DEPLOYMENT_TARGET AND CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS ALBOR_OSX_MINIMUM)
-        message(STATUS "albor: raising the deployment target from ${CMAKE_OSX_DEPLOYMENT_TARGET} to ${ALBOR_OSX_MINIMUM}, which the shipped shader targets")
+        message(FATAL_ERROR "albor: CMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET} is below albor's minimum ${ALBOR_OSX_MINIMUM}, which the shipped shader targets and the test suites cover. Set CMAKE_OSX_DEPLOYMENT_TARGET to ${ALBOR_OSX_MINIMUM} or higher.")
     endif()
-    # an empty value inherits the sdk, which may be newer, so only a lower one is raised
-    if(NOT CMAKE_OSX_DEPLOYMENT_TARGET OR CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS ALBOR_OSX_MINIMUM)
+    # an empty value means the consumer has no opinion, so albor's scope adopts its tested floor
+    if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
         set(CMAKE_OSX_DEPLOYMENT_TARGET "${ALBOR_OSX_MINIMUM}")
     endif()
 endif()

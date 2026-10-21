@@ -11,7 +11,7 @@ namespace
     // the background the window is cleared with every frame (§6.1)
     const albor::Color BACKGROUND = albor::Color::rgb(0.06f, 0.07f, 0.09f);
 
-    // the scene the example draws, which is the same one hello-blend2d draws so the two can be compared (§6.3, AD-26)
+    // the scene the example draws, the same in both binaries so the backends can be compared (§6.3, AD-26)
     std::shared_ptr<const albor::FrameScene> build_frame(const albor::WindowMetrics& metrics, std::uint64_t index, const albor::TextLayout& greeting) {
         // the shapes are gathered in paint order, which is the order the scene replays them (§6.1)
         std::vector<albor::DrawCommand> commands;
@@ -54,7 +54,7 @@ int main() {
     albor::Application& application = albor::Application::instance();
     // the window opens with the documented title and the documented 800 by 600 size (§5.1)
     albor::WindowOptions options;
-    options.title = "Albor \xE2\x80\x94 Hello render-albor";
+    options.title = "Albor \xE2\x80\x94 Hello world";
     options.size = albor::Size{800.0f, 600.0f};
     // this example owns its scene rather than a tree, which is what the scene source is for (§6.1)
     albor::MainWindowConfig config;
@@ -64,7 +64,7 @@ int main() {
     const albor::WindowHandle handle = application.create_window(options, albor::RootBuilder{}, config);
     // a window that could not be created leaves nothing to present (§5.1)
     if (!handle.valid()) {
-        std::fprintf(stderr, "hello-render-albor: the window could not be created\n");
+        std::fprintf(stderr, "hello-world: the window could not be created\n");
         return 1;
     }
     // the loop blocks until the window closes, which is what ends the application (§4.1)
