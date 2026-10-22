@@ -2,10 +2,14 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace albor::devrt
 {
+    // the prefix an image property value carries, which tells it apart from a plain string (§12.1)
+    inline constexpr std::string_view IMAGE_VALUE_PREFIX = "@image:";
+
     // one property the ir assigns, which a reload may apply (§12.1)
     struct IrProperty
     {

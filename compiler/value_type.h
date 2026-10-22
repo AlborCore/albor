@@ -32,6 +32,9 @@ namespace albor::compiler
         // a colour value, which a colour literal produces (§11.1)
         Color,
 
+        // an immutable image handle, which an embedded asset produces (§6.4, §11.1)
+        Image,
+
         // an alignment, which a named member of a value set produces (§8.2)
         Align,
 

@@ -38,6 +38,8 @@ UNREACHABLE=(
     'render/render-software/software_glyph_atlas.cpp|return nullptr;|the rasterizer allocates through harfbuzz, so a failed allocation is the only way this refusal runs and it cannot be forced from a test'
     'render/render-skia/skia_renderer_backend.macos.mm|return nullptr;|the offscreen target is only asked for when the backend is ready, which the parity test checks first, so the refusal cannot be forced'
     'render/render-software/software_render_context.cpp|continue;|a mask install and an image lift fail only on an allocation failure, which cannot be forced from a test'
+    'resources/embedded_image.cpp|if (!resource)|the decoder hands back an extent and byte count the factory accepts, so this refusal guards a contract violation no valid png can force'
+    'language-server/lsp_server.cpp|decoded.erase(decoded.begin());|the leading slash before a drive letter exists only on a windows file uri, which this host cannot produce'
     'compiler/ir_serializer.cpp|return std::nullopt;|the refusals guard values the lexer never produces (a malformed hex pair, a missing unit, a negated colour), so no valid source reaches them'
     'render/render-skia/skia_offscreen_surface.macos.mm|return nullptr;|the target is only built over a live context and valid metrics, which the parity test supplies, so the refusals cannot be forced'
     'render/render-skia/skia_offscreen_surface.macos.mm|return;|an invalid resize or an unallocated target is refused before a frame, which the parity test never triggers'

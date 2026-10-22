@@ -54,6 +54,9 @@ namespace albor::compiler
         // the translatable string macro, which is a distinct form rather than a general call (§11.1, §9.2)
         constexpr std::string_view TR_MACRO = "tr";
 
+        // the embedded image macro, which names an asset the compiler registers at build time (§6.4, §11.1)
+        constexpr std::string_view IMAGE_MACRO = "image";
+
         // the conversion target names the language defines, which is a closed set (§11.1)
         [[nodiscard]] bool is_conversion_name(std::string_view name) {
             // the four builtin conversions are the only single value call forms a binding may use (§11.1)
@@ -1184,6 +1187,9 @@ namespace albor::compiler
         // a translatable string is a macro, which has its own rule (§11.1, §9.2)
         if (peek().kind == Token::Kind::Macro && peek().text == TR_MACRO)
             return parse_translation();
+        // an embedded image is a macro as well, because its path is resolved at build time (§6.4, §11.1)
+        if (peek().kind == Token::Kind::Macro && peek().text == IMAGE_MACRO)
+            return parse_image();
         // an opening parenthesis starts a grouping (§11.1)
         if (at_punctuation("(")) {
             // the opening parenthesis is consumed, so the inner expression starts after it (§11.1)
@@ -1350,6 +1356,29 @@ namespace albor::compiler
             return argument;
         }
         return TranslationExpression::make(literal->text, span);
+    }
+
+    ExpressionPtr Parser::parse_image() {
+        // the span starts at the macro unit, so a diagnostic covers the whole call (§11.1)
+        const SourceSpan span = peek().span;
+        // the macro unit is consumed, so the argument starts after it (§11.1)
+        advance();
+        // the argument list is delimited, so the path is read until it closes (§11.1)
+        expect_punctuation("(");
+        // the path is a full expression, which the literal check below then narrows (§11.1)
+        ExpressionPtr argument = parse_expression();
+        // the list is closed, which is required (§11.1)
+        expect_punctuation(")");
+        // only a literal names an asset at build time, because a computed path cannot be embedded (§6.4)
+        const LiteralExpression* literal = dynamic_cast<const LiteralExpression*>(argument.get());
+        // a non-literal path is reported, because the generator cannot read an expression (§6.4)
+        if (literal == nullptr || literal->kind != LiteralExpression::Kind::String) {
+            // the problem names the rule, because that is what the author must change (§6.4)
+            m_diagnostics.add(Diagnostic::Severity::Error, span, "E0205", "@image takes a string literal path");
+            // the argument is still returned, so the enclosing expression stays well formed (§11.1)
+            return argument;
+        }
+        return ImageExpression::make(literal->text, span);
     }
 
     ExpressionPtr Parser::parse_conversion() {

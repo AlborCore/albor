@@ -1319,6 +1319,9 @@ namespace albor::compiler
         // a translation macro always produces a string, because that is what the catalog holds (§9.2)
         if (dynamic_cast<const TranslationExpression*>(&expression) != nullptr)
             return scalar(TypeKind::String);
+        // an embedded image produces an immutable handle, which is what the render path takes (§6.4)
+        if (dynamic_cast<const ImageExpression*>(&expression) != nullptr)
+            return scalar(TypeKind::Image);
         // a reference resolves against the scope (§11.1)
         if (const auto* reference = dynamic_cast<const PropertyExpression*>(&expression))
             return type_property(*reference, scope, dependencies);

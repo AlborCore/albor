@@ -33,6 +33,12 @@ namespace albor::compiler
         // set the catalog the components resolve records against, because a record header lives in a module (§11.2, AD-17)
         void set_catalog(const ElementCatalog* catalog);
 
+        // set the .ui file an embedded image is resolved against, which the driver takes from its input (§6.4)
+        void set_source_path(std::filesystem::path path);
+
+        // hand out the asset files the last generation read, which the driver writes into its depfile (§14.2)
+        [[nodiscard]] const std::vector<std::filesystem::path>& asset_paths() const { return m_asset_paths; }
+
         // generate one file of components, which is empty when a diagnostic blocked the output (§11.3, §14.3)
         [[nodiscard]] std::vector<GeneratedFile> generate(const CheckedFile& file);
 
@@ -45,6 +51,12 @@ namespace albor::compiler
 
         // the catalog records resolve against, which is null when the caller registered none (§11.2, AD-17)
         const ElementCatalog* m_catalog = nullptr;
+
+        // the .ui file embedded paths resolve against, which is empty when the caller names none (§6.4)
+        std::filesystem::path m_source_path;
+
+        // the asset files the last generation read, which the driver writes into its depfile (§14.2)
+        std::vector<std::filesystem::path> m_asset_paths;
     };
 
     // rewrite the file only when its content changed, which is what keeps incremental builds quiet (§14.2, AD-03a)

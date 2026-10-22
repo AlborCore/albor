@@ -19,6 +19,9 @@ find_package(GTest CONFIG REQUIRED)
 # create the test binary from the gathered suites, which link into one executable (STYLE-GUIDE.md)
 add_executable(albor-tests ${CPP_SOURCES})
 
+# the codegen depfile writer is a tool unit the suites exercise directly, so it compiles into the runner (§14.2)
+target_sources(albor-tests PRIVATE "${ALBOR_SOURCE_DIR}/tools/albor-codegen/depfile.cpp")
+
 # the tests reach the framework through the project root, which is where the module includes point (§3.5)
 target_include_directories(albor-tests PRIVATE ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-tests PRIVATE cxx_std_23)
@@ -34,6 +37,9 @@ target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_UI="${CMAKE_CUR
 
 # the control corpus source widens the same comparison past the panel, so the path is named here too (§16)
 target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_CONTROLS_UI="${CMAKE_CURRENT_SOURCE_DIR}/vectors/dual_engine_controls.ui")
+
+# the asset fixtures live together, so a generator suite resolves an embedded image from a carried png (§6.4)
+target_compile_definitions(albor-tests PRIVATE ALBOR_TEST_VECTORS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/vectors")
 
 # the tests link the framework modules and nothing platform specific, so they run without a window server (§3.2)
 #

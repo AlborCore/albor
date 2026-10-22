@@ -203,7 +203,7 @@ namespace albor::preview
         }
     } // namespace
 
-    PreviewResult build(const std::string& source, BindingEngine& engine) {
+    PreviewResult build(const std::string& source, BindingEngine& engine, const std::filesystem::path& source_path) {
         // the diagnostics accumulate, because a preview window shows them rather than swallowing them (§12.2)
         compiler::DiagnosticList diagnostics;
         // the front end runs in process, which makes this a design time tool and not a shipped path (§12.2)
@@ -213,7 +213,12 @@ namespace albor::preview
         // the checker resolves it, which is what carries the property types (§11.1)
         const compiler::CheckedFile checked = compiler::TypeChecker(compiler::ElementCatalog::with_builtins(), diagnostics).check(file);
         // the generator runs too, because a diagnostic may come only from codegen (§11.3)
-        (void)compiler::CodeGenerator(diagnostics).generate(checked);
+        compiler::CodeGenerator generator(diagnostics);
+        // a saved source resolves its assets beside itself, which is what the build does (§12.2, §6.4)
+        if (!source_path.empty())
+            generator.set_source_path(source_path);
+        // the generated output is discarded, because the preview only needs the diagnostics (§11.3)
+        (void)generator.generate(checked);
         // the result is reported even when nothing could be built, because the window shows the count (§12.2)
         PreviewResult result;
         // the count is kept, which is what a designer reads (§12.2)

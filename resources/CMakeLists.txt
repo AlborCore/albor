@@ -1,4 +1,4 @@
-# the embedded resource registry of §3.2, which carries a build's fonts into its binary (§11.3, AD-34)
+# the embedded resource registry of §3.2, which carries a build's fonts and images into its binary (§11.3, AD-34)
 
 # gather cpp sources (all platforms)
 file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
@@ -9,3 +9,9 @@ add_library(albor-resources STATIC ${CPP_SOURCES})
 # the registry is header visible, because generated code registers into it (§3.5, §11.3)
 target_include_directories(albor-resources PUBLIC ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-resources PUBLIC cxx_std_23)
+
+# the decoder asks libpng for the png container, which uses the same zlib the automation writer already depends on (§6.4)
+find_package(PNG REQUIRED)
+
+# the registry returns the render image handle, so every consumer sees that contract and libpng stays private (§3.5, §6.4)
+target_link_libraries(albor-resources PUBLIC albor-render PRIVATE PNG::PNG)

@@ -5,3 +5,10 @@ record Task {
     title: string;
     done: bool = false;
 }
+
+// the image record fixture, which proves a manifest record can carry a decoded handle (§6.4, §11.2)
+
+record ImageRecord {
+    key: string;
+    icon: image;
+}

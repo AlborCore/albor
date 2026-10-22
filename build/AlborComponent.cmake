@@ -16,12 +16,15 @@ function(albor_build_ui_component target ui_source)
     set(generated_dir "${CMAKE_BINARY_DIR}/generated/${target}")
     # the unit stem is the source base, which is the file name the component compiles to (§11.3)
     get_filename_component(stem "${ui_source}" NAME_WE)
-    # the facade header and its implementation unit are the outputs, which the build orders on (§14.2)
-    set(units "${generated_dir}/${stem}.h" "${generated_dir}/${stem}.cpp")
+    # the facade and its per-source asset pair are the outputs, which the build orders on (§14.2)
+    set(units "${generated_dir}/${stem}.h" "${generated_dir}/${stem}.cpp" "${generated_dir}/${stem}_assets.h" "${generated_dir}/${stem}_assets.cpp")
+    # the depfile records the png bytes the generator embedded, which an edit must rebuild (§6.4, §14.2)
+    set(depfile "${generated_dir}/${stem}.d")
     # the driver compiles the ui file into the units, which write only when their content changed (§14.2, AD-03a)
     add_custom_command(
         OUTPUT ${units}
-        COMMAND $<TARGET_FILE:albor-codegen> --input "${ui_source}" --output "${generated_dir}" ${ARGN}
+        COMMAND $<TARGET_FILE:albor-codegen> --input "${ui_source}" --output "${generated_dir}" --depfile "${depfile}" ${ARGN}
+        DEPFILE "${depfile}"
         DEPENDS "${ui_source}" albor-codegen
         COMMENT "${target}: generating ${stem} from ${ui_source}"
         VERBATIM
@@ -30,6 +33,8 @@ function(albor_build_ui_component target ui_source)
     target_sources(${target} PRIVATE ${units})
     # the generated directory joins the include path, which is where the facade header lives (§3.5, §11.3)
     target_include_directories(${target} PRIVATE "${generated_dir}")
+    # the generated asset unit reaches the image registry, which the target links whether or not a source embeds one (§6.4)
+    target_link_libraries(${target} PRIVATE albor-resources)
 endfunction()
 
 # generate the record structs a manifest declares for a target, because a repeat names them as element types (§11.2, AD-17, AD-13)

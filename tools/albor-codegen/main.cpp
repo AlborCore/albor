@@ -16,23 +16,17 @@
 #include "compiler/type_checker.h"
 #include "compiler/value_type.h"
 #include "manifest/manifest.h"
+#include "tools/albor-codegen/depfile.h"
 
 namespace
 {
-    std::string utf8_path(const std::filesystem::path& path) {
-        // the u8 spelling is the portable one, because std::filesystem makes a path wide on windows alone (§11.1)
-        const std::u8string encoded = path.u8string();
-        // the bytes are taken as they stand, because the u8 form is already utf-8 and no locale is involved (§11.1)
-        return std::string(reinterpret_cast<const char*>(encoded.data()), encoded.size());
-    }
-
     // write every generated file under the output directory, which is the compile step of a ui file (§14.2)
     void write_files(const std::vector<albor::compiler::GeneratedFile>& files, const std::filesystem::path& output) {
         // the directory must exist before a file lands in it, which is what the driver arranges (§14.2)
         std::error_code error;
         std::filesystem::create_directories(output, error);
         if (error) {
-            std::fprintf(stderr, "albor-codegen: cannot create '%s'\n", utf8_path(output).c_str());
+            std::fprintf(stderr, "albor-codegen: cannot create '%s'\n", albor::codegen::utf8_path(output).c_str());
             return;
         }
         // each file is written only when its content changed, which keeps incremental builds quiet (§14.2, AD-03a)
@@ -66,6 +60,8 @@ int main(int argc, char** argv) {
     std::size_t tu_chunk_size = 1;
     // the manifest declares the records a ui file may name, which is optional because a file may use none (§11.2, AD-17)
     std::filesystem::path manifest;
+    // the depfile tracks embedded assets, which the build reads, and stays optional for a direct run (§14.2)
+    std::filesystem::path depfile;
     // the catalog starts with the builtin widgets, which every ui file may instantiate (§11.1, §8)
     albor::compiler::ElementCatalog catalog = albor::compiler::ElementCatalog::with_builtins();
     // the flags are consumed in order, because each names its following value (§11.3)
@@ -97,20 +93,25 @@ int main(int argc, char** argv) {
             manifest = argv[++i];
             continue;
         }
+        // the depfile flag names the make dependency file the build reads after this run (§14.2)
+        if (std::string_view(argv[i]) == "--depfile" && i + 1 < argc) {
+            depfile = argv[++i];
+            continue;
+        }
         // an unknown flag is a misuse, which the build that wired it up got wrong (§11.3)
         std::fprintf(stderr, "albor-codegen: unknown flag '%s'\n", argv[i]);
-        std::fprintf(stderr, "albor-codegen: usage: albor-codegen --input <file.ui> --output <dir> [--tu-chunk-size <n>]\n");
+        std::fprintf(stderr, "albor-codegen: usage: albor-codegen --input <file.ui> --output <dir> [--tu-chunk-size <n>] [--manifest <file>] [--depfile <file>]\n");
         return 2;
     }
     // both flags are mandatory, because a driver without a source or a target has nothing to do (§11.3)
     if (input.empty() || output.empty()) {
-        std::fprintf(stderr, "albor-codegen: usage: albor-codegen --input <file.ui> --output <dir> [--tu-chunk-size <n>]\n");
+        std::fprintf(stderr, "albor-codegen: usage: albor-codegen --input <file.ui> --output <dir> [--tu-chunk-size <n>] [--manifest <file>] [--depfile <file>]\n");
         return 2;
     }
     // the file is read whole, because the scanner takes the complete unit (§11.1)
     std::ifstream stream(input, std::ios::binary);
     if (!stream) {
-        std::fprintf(stderr, "albor-codegen: cannot open '%s'\n", utf8_path(input).c_str());
+        std::fprintf(stderr, "albor-codegen: cannot open '%s'\n", albor::codegen::utf8_path(input).c_str());
         return 1;
     }
     // the source text is read, because a scanner needs every character before it produces a token (§11.1)
@@ -123,7 +124,7 @@ int main(int argc, char** argv) {
         std::ifstream manifest_stream(manifest, std::ios::binary);
         // a manifest that cannot be read is reported, because the compiler cannot resolve records without it (§11.2)
         if (!manifest_stream) {
-            std::fprintf(stderr, "albor-codegen: cannot open '%s'\n", utf8_path(manifest).c_str());
+            std::fprintf(stderr, "albor-codegen: cannot open '%s'\n", albor::codegen::utf8_path(manifest).c_str());
             return 1;
         }
         // the module name is the file stem, which is what the glue generator names the directory after (§11.2)
@@ -148,7 +149,7 @@ int main(int argc, char** argv) {
     const albor::compiler::CheckedFile checked = albor::compiler::TypeChecker(catalog, diagnostics).check(file);
     // a blocking problem stops the driver before any generation, which is what a console compile reports (§11.1)
     if (diagnostics.has_errors()) {
-        print_diagnostics(diagnostics, utf8_path(input));
+        print_diagnostics(diagnostics, albor::codegen::utf8_path(input));
         return 1;
     }
     // the generator turns the checked file into the facade units (§11.3, AD-03a)
@@ -157,16 +158,24 @@ int main(int argc, char** argv) {
     generator.set_catalog(&catalog);
     // the chunk size is passed through, which tunes clean rebuild times on large projects (AD-03b)
     generator.set_tu_chunk_size(tu_chunk_size);
+    // the source path is what embedded assets resolve against, because a build runs from any directory (§6.4)
+    generator.set_source_path(input);
     const std::vector<albor::compiler::GeneratedFile> files = generator.generate(checked);
     // the generator adds its own blocking problems, which are reported the same way (§11.3)
     if (files.empty() || diagnostics.has_errors()) {
-        print_diagnostics(diagnostics, utf8_path(input));
+        print_diagnostics(diagnostics, albor::codegen::utf8_path(input));
         return 1;
     }
     // the non blocking warnings still reach the console, because they are worth reading (§11.1)
     if (diagnostics.count() != 0U)
-        print_diagnostics(diagnostics, utf8_path(input));
+        print_diagnostics(diagnostics, albor::codegen::utf8_path(input));
     // the generated files land under the output directory, which is the compile result of the ui unit (§14.2)
     write_files(files, output);
+    // the depfile is written after the units, so a build only reads dependencies for a successful run (§14.2)
+    if (!depfile.empty() && !albor::codegen::write_depfile(depfile, files, output, input, generator.asset_paths())) {
+        // a depfile that cannot be written leaves the build unable to track assets, which is a failed run (§14.2)
+        std::fprintf(stderr, "albor-codegen: cannot write '%s'\n", albor::codegen::utf8_path(depfile).c_str());
+        return 1;
+    }
     return 0;
 }

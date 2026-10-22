@@ -28,6 +28,12 @@ namespace
         return static_cast<TranslationExpression&>(*expression);
     }
 
+    // reach an embedded image without naming its concrete type (§6.4)
+    ImageExpression& as_image(const ExpressionPtr& expression) {
+        // the cast is safe because every test in this file builds an image itself (§6.4)
+        return static_cast<ImageExpression&>(*expression);
+    }
+
     // reach a conversion without naming its concrete type (§11.1)
     ConversionExpression& as_conversion(const ExpressionPtr& expression) {
         // the cast is safe because every test in this file builds a conversion itself (§11.1)
@@ -91,10 +97,18 @@ TEST(TranslationExpression, CarriesItsTextAndSpan) {
     // arrange, act
     ExpressionPtr expression = TranslationExpression::make("Hello", whole_span());
     // assert
-    // the text is what the catalog records, so it must survive the move into the node (§11.1, §9.2)
     const TranslationExpression& translation = as_translation(expression);
     EXPECT_EQ(translation.text, "Hello");
     EXPECT_EQ(translation.span.end.column, 2U);
+}
+
+TEST(ImageExpression, CarriesItsPathAndSpan) {
+    // arrange, act
+    ExpressionPtr expression = ImageExpression::make("icons/icon.png", whole_span());
+    // assert
+    const ImageExpression& image = as_image(expression);
+    EXPECT_EQ(image.path, "icons/icon.png");
+    EXPECT_EQ(image.span.end.column, 2U);
 }
 
 TEST(ConversionExpression, CarriesItsTargetValueAndSpan) {
@@ -135,7 +149,6 @@ TEST(BinaryExpression, CarriesEveryOperatorTheLanguageDefines) {
             count++;
     }
     // assert
-    // every operator the grammar accepts is represented, because the parser maps a token straight onto one (§11.1)
     EXPECT_EQ(count, operators.size());
 }
 

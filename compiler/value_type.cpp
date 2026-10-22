@@ -62,7 +62,7 @@ namespace albor::compiler
 
     std::string ValueType::to_string() const {
         // the spellings are a table indexed by kind, so a new kind cannot leave a path unhandled (§11.1)
-        static const char* const SPELLINGS[] = {"<error>", "void", "bool", "int", "float", "string", "color", "align", "scrollbar", "font_weight", "length", "Snapshot<", "vector<", "", "command"};
+        static const char* const SPELLINGS[] = {"<error>", "void", "bool", "int", "float", "string", "color", "image", "align", "scrollbar", "font_weight", "length", "Snapshot<", "vector<", "", "command"};
         // the two parameter forms append their element, so only their prefix comes from the table (§11.1)
         if (m_kind == TypeKind::Snapshot)
             return std::string(SPELLINGS[static_cast<std::size_t>(m_kind)]) + element().to_string() + ">";
@@ -534,6 +534,9 @@ namespace albor::compiler
         // a colour is spelled color (§11.1)
         if (written == "color")
             return scalar(TypeKind::Color);
+        // an image handle is spelled image, which an embedded asset produces (§6.4, §11.1)
+        if (written == "image")
+            return scalar(TypeKind::Image);
         // a length is spelled length, so a declared length and a literal length agree (§11.1, AD-27)
         if (written == "length")
             return scalar(TypeKind::Length);

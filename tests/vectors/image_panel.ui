@@ -1,0 +1,15 @@
+global app_icon: image = @image("icon.png");
+
+fn fallback_icon(): image {
+    return @image("icon.png");
+}
+
+component ImagePanel {
+    in property<image> icon: @image("icon.png");
+
+    Column {
+        Label {
+            text: "image";
+        }
+    }
+}

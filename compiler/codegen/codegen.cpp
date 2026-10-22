@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -225,6 +226,9 @@ namespace albor::compiler
                 return "std::string";
             case TypeKind::Color:
                 return "Color";
+            case TypeKind::Image:
+                // an image crosses as the immutable handle the render path retains (§6.4, AD-06)
+                return "std::shared_ptr<const ImageResource>";
             case TypeKind::Align:
                 // the language spells alignment as the framework enumeration, which the generated code names (§11.3)
                 return "Align";
@@ -265,6 +269,267 @@ namespace albor::compiler
             // the element is walked, because a snapshot may carry a collection of any depth (§8.1)
             return carries_vector(type.element());
         }
+
+        // build a path from the utf-8 bytes a ui literal carries, which a windows code page does not decode (§6.4)
+        std::filesystem::path path_from_utf8(const std::string& text) {
+            // the u8 spelling is what makes the conversion locale independent (§6.4)
+            return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(text.data()), text.size()));
+        }
+
+        // report whether a type carries an image at any depth, which decides whether the handle header is needed (§6.4)
+        bool carries_image(const ValueType& type) {
+            // an image is carried at its own depth, and its element is where a nested one hides (§6.4)
+            if (type.is(TypeKind::Image))
+                return true;
+            // only a collection can carry another type, because a snapshot refuses a scalar element (§11.1)
+            if (type.kind() != TypeKind::Vector)
+                return false;
+            // the element is walked, because a collection may carry a collection of any depth (§8.1)
+            return carries_image(type.element());
+        }
+
+        // one embedded asset the generator read, which the generated accessor registers (§6.4)
+        struct AssetEntry
+        {
+            // the resolved source path, which names the asset in the generated comment (§6.4)
+            std::filesystem::path path;
+
+            // the encoded png bytes, which the generated array carries into the binary (§6.4)
+            std::vector<std::uint8_t> bytes;
+        };
+
+        // the embedded assets one source file names, which every component of the file shares (§6.4)
+        class AssetTable
+        {
+        public:
+            // build the table over the source file, whose directory resolves every relative path (§6.4)
+            AssetTable(std::filesystem::path source, DiagnosticList& diagnostics) :
+                m_source(std::move(source)), m_diagnostics(diagnostics) {
+                // the stem names both generated units, which the build rule names as outputs (§14.2)
+                m_stem = m_source.stem().string();
+                // the namespace keeps each source file's accessors apart in one target (§6.4)
+                m_namespace = asset_identifier(m_stem) + "_assets";
+                // the header is what every component of the source includes (§6.4)
+                m_header = m_stem + "_assets.h";
+            }
+
+            // report whether the source path is known, which an embedded asset requires (§6.4)
+            [[nodiscard]] bool has_source() const { return !m_source.empty(); }
+
+            // hand out the generated header name, which a component source includes (§6.4)
+            [[nodiscard]] const std::string& header_name() const { return m_header; }
+
+            // hand out the call that registers and returns one asset, which a binding emits (§6.4)
+            std::string accessor(const ImageExpression& image) {
+                // a source path is what makes a relative asset resolvable, so its absence blocks (§6.4)
+                if (m_source.empty()) {
+                    // the problem is reported once, because every reference has the same cause (§6.4)
+                    if (!m_source_reported) {
+                        // the diagnostic points at the macro, which is what the author can move (§6.4)
+                        m_diagnostics.add(Diagnostic::Severity::Error, image.span, "E0505", "an embedded image needs the source file path, which the driver did not provide");
+                        // the flag keeps a second reference from repeating the complaint (§6.4)
+                        m_source_reported = true;
+                    }
+                    // the null handle keeps the emitted expression well formed while the output is blocked (§11.3)
+                    return "nullptr";
+                }
+                // an empty path or one with a line break cannot name a file the generated source can carry (§6.4)
+                if (image.path.empty() || image.path.find_first_of("\r\n") != std::string::npos) {
+                    // a path is reported once per spelling, because a second reference has the same cause (§6.4)
+                    if (m_failed.insert("path:" + image.path).second) {
+                        // the diagnostic points at the macro, which is what the author must fix (§6.4)
+                        m_diagnostics.add(Diagnostic::Severity::Error, image.span, "E0508", "an embedded image needs a non-empty path with no line break");
+                    }
+                    // the null handle keeps the emitted expression well formed while the output is blocked (§11.3)
+                    return "nullptr";
+                }
+                // the path is resolved against the .ui file, because a build runs from any directory (§6.4)
+                const std::filesystem::path resolved = (m_source.parent_path() / path_from_utf8(image.path)).lexically_normal();
+                // the normalized path is the identity, so two spellings of one file share one accessor (§6.4)
+                const std::u8string encoded_key = resolved.generic_u8string();
+                // the bytes are kept as they stand, because the identity is the utf-8 spelling a depfile carries (§6.4)
+                const std::string key(reinterpret_cast<const char*>(encoded_key.data()), encoded_key.size());
+                // an asset already read is reused, because one file must not be embedded twice (§6.4)
+                if (const auto found = m_accessors.find(key); found != m_accessors.end())
+                    return found->second;
+                // a path that already failed is refused without re-reading the file or repeating the problem (§6.4)
+                if (m_failed.contains("file:" + key))
+                    return "nullptr";
+                // the bytes are read whole, because the generated unit carries the encoded png (§6.4)
+                std::vector<std::uint8_t> bytes;
+                // the file is opened in binary mode, because a png is not text (§6.4)
+                if (std::ifstream input(resolved, std::ios::binary); input.is_open())
+                    // the stream iterator copies the exact bytes, which the array then carries (§6.4)
+                    bytes.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+                // a missing or empty file has no image to embed, so it blocks the output (§6.4)
+                if (bytes.empty()) {
+                    // the path is marked failed, so a second reference does not repeat the complaint (§6.4)
+                    m_failed.insert("file:" + key);
+                    // the diagnostic names the authored path, which is what a reader can locate (§6.4)
+                    m_diagnostics.add(Diagnostic::Severity::Error, image.span, "E0506", "cannot read embedded image '" + image.path + "'");
+                    // the null handle keeps the emitted expression well formed while the output is blocked (§11.3)
+                    return "nullptr";
+                }
+                // the compiler embeds only a png, because that is the format the registry decodes (§6.4)
+                if (!has_png_signature(bytes)) {
+                    // the path is marked failed, so a second reference does not repeat the complaint (§6.4)
+                    m_failed.insert("file:" + key);
+                    // the diagnostic names the authored path, which is what a reader can locate (§6.4)
+                    m_diagnostics.add(Diagnostic::Severity::Error, image.span, "E0507", "embedded image '" + image.path + "' is not a PNG");
+                    // the null handle keeps the emitted expression well formed while the output is blocked (§11.3)
+                    return "nullptr";
+                }
+                // the accessor index is the position of the asset in the generated array table (§6.4)
+                const std::size_t index = m_assets.size();
+                // the bytes join the table, which the generated source emits in this order (§6.4)
+                m_assets.push_back(AssetEntry{.path = resolved, .bytes = std::move(bytes)});
+                // the resolved path joins the dependency list, which the driver writes into the depfile (§14.2)
+                m_paths.push_back(resolved);
+                // the accessor call is cached, so every reference emits the same call (§6.4)
+                const std::string call = m_namespace + "::image_" + std::to_string(index) + "()";
+                // the call is stored under the normalized path, which the next reference finds (§6.4)
+                m_accessors.emplace(key, call);
+                // the call is what the binding emits (§6.4)
+                return call;
+            }
+
+            // hand out the files to read, which the build rule names as dependencies (§14.2)
+            [[nodiscard]] const std::vector<std::filesystem::path>& paths() const { return m_paths; }
+
+            // emit the per-source header and unit, which carry every accessor and its bytes (§6.4)
+            [[nodiscard]] std::vector<GeneratedFile> files() const {
+                // the provenance names the source file, which is what a reader can locate (§14.2)
+                const std::string provenance = "// generated from " + m_source.filename().string() + ", do not edit (§14, AD-03a)";
+                // the header opens with its provenance and guard (§14.1)
+                std::string header = provenance + "\n#pragma once\n";
+                // the source opens with its provenance and includes its own header first (§14.1)
+                std::string source = provenance + "\n\n#include \"" + m_header + "\"\n";
+                // a source with no image still emits an empty pair, because the build names both outputs (§14.2)
+                if (!m_assets.empty()) {
+                    // the accessor signature needs the owning pointer and the handle definition (§6.4)
+                    header += "\n#include <memory>\n\n#include \"render/image_resource.h\"\n";
+                    // the accessors live under the framework namespace and the source's own nested name (§6.4)
+                    header += "\nnamespace albor\n{\n    namespace " + m_namespace + "\n    {\n";
+                    // each asset declares one accessor, which the component sources call (§6.4)
+                    for (std::size_t index = 0; index < m_assets.size(); index++) {
+                        // the comment names the file and its index, which is what a reader can locate (§6.4)
+                        header += "        // hand out the embedded image " + m_assets[index].path.filename().string() + ", which is decoded once (§6.4)\n";
+                        // the accessor returns the immutable handle the render path retains (§6.4, AD-06)
+                        header += "        [[nodiscard]] std::shared_ptr<const ImageResource> image_" + std::to_string(index) + "();\n";
+                    }
+                    // the namespace closes after the declarations (§6.4)
+                    header += "    } // namespace " + m_namespace + "\n} // namespace albor\n";
+                    // the source needs the byte type and the vector that carries the bytes (§6.4)
+                    source += "\n#include <cstdint>\n#include <vector>\n\n#include \"resources/embedded_image.h\"\n";
+                    // the accessors live under the same namespaces as their declarations (§6.4)
+                    source += "\nnamespace albor\n{\n    namespace " + m_namespace + "\n    {\n";
+                    // each asset emits its bytes and the accessor that registers them (§6.4)
+                    for (std::size_t index = 0; index < m_assets.size(); index++) {
+                        // the comment names the source file the bytes came from (§6.4)
+                        source += "        // the encoded bytes of " + m_assets[index].path.filename().string() + " (§6.4)\n";
+                        // the array is constant, because the bytes never change after generation (§6.4)
+                        source += "        constexpr std::uint8_t IMAGE_" + std::to_string(index) + "[] = {";
+                        // each byte is emitted in hex, with a bounded line length for readability (§6.4)
+                        for (std::size_t byte = 0; byte < m_assets[index].bytes.size(); byte++) {
+                            // a new line starts every twelve bytes, which keeps the generated unit readable (§6.4)
+                            if (byte % 12 == 0)
+                                source += "\n            ";
+                            // the byte is formatted as a fixed width hex literal (§6.4)
+                            char formatted[8];
+                            // the formatting is bounded by the buffer, and two hex digits are all a byte needs (§6.4)
+                            std::snprintf(formatted, sizeof formatted, "0x%02X, ", static_cast<unsigned int>(m_assets[index].bytes[byte]));
+                            // the literal joins the array (§6.4)
+                            source += formatted;
+                        }
+                        // the array closes, which ends the byte table (§6.4)
+                        source += "\n        };\n\n";
+                        // the accessor registers the bytes on first use, which keeps startup free of image work (§6.4)
+                        source += "        std::shared_ptr<const ImageResource> image_" + std::to_string(index) + "() {\n";
+                        // the function local static is the one registration per asset and process (§6.4)
+                        source += "            // the function local static registers the encoded bytes once, on first use (§6.4)\n";
+                        source += "            static const std::shared_ptr<const ImageResource> image = resources::ImageRegistry::register_image(resources::EmbeddedImage{.bytes = std::vector<std::uint8_t>(IMAGE_" + std::to_string(index) + ", IMAGE_" + std::to_string(index) + " + sizeof IMAGE_" + std::to_string(index) + ")});\n";
+                        // the retained handle is handed out, which the binding stores in its property (§6.4)
+                        source += "            return image;\n        }\n";
+                    }
+                    // the namespace closes after the definitions (§6.4)
+                    source += "    } // namespace " + m_namespace + "\n} // namespace albor\n";
+                }
+                // the pair is returned in build order, header first (§14.2)
+                return {GeneratedFile{.path = m_header, .content = std::move(header)}, GeneratedFile{.path = m_stem + "_assets.cpp", .content = std::move(source)}};
+            }
+
+        private:
+            // turn the source stem into a namespace identifier, because a file name may carry a dash (§6.4)
+            static std::string asset_identifier(std::string_view stem) {
+                // the identifier accumulates one byte at a time (§6.4)
+                std::string out;
+                // each word character is kept, because the stem is usually already an identifier (§6.4)
+                for (const char byte : stem) {
+                    // an ascii letter or digit is part of the identifier, because a c++ name is locale independent (§6.4)
+                    const bool alphanumeric = (byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') || (byte >= '0' && byte <= '9');
+                    // an alphanumeric byte is kept as written (§6.4)
+                    if (alphanumeric) {
+                        out += byte;
+                        continue;
+                    }
+                    // a separator joins the words once, but never opens the identifier or doubles (§6.4)
+                    if (!out.empty() && out.back() != '_')
+                        out += '_';
+                }
+                // a trailing separator carries no word, so it is dropped before the suffix (§6.4)
+                if (!out.empty() && out.back() == '_')
+                    out.pop_back();
+                // a stem with no usable character still needs a name, because the generated pair always exists (§14.2)
+                if (out.empty())
+                    out = "image";
+                // a leading digit is not an identifier start, so a neutral word is prefixed (§6.4)
+                if (out.front() >= '0' && out.front() <= '9')
+                    out.insert(0, "assets_");
+                // the identifier is ready, and the caller appends the suffix that marks an asset namespace (§6.4)
+                return out;
+            }
+
+            // report whether the bytes open with the png signature, which is the format the registry decodes (§6.4)
+            static bool has_png_signature(const std::vector<std::uint8_t>& bytes) {
+                // the eight byte signature is the fixed lead of every png (§6.4)
+                constexpr std::uint8_t SIGNATURE[] = {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
+                // a file shorter than the signature cannot be a png (§6.4)
+                if (bytes.size() < sizeof SIGNATURE)
+                    return false;
+                // every signature byte must match, because a truncated or foreign file is refused (§6.4)
+                return std::equal(std::begin(SIGNATURE), std::end(SIGNATURE), bytes.begin());
+            }
+
+            // the source file whose directory resolves the assets (§6.4)
+            std::filesystem::path m_source;
+
+            // the problems the table reports, which the caller owns (§6.4)
+            DiagnosticList& m_diagnostics;
+
+            // the asset file stem, which names the generated pair (§14.2)
+            std::string m_stem;
+
+            // the namespace the generated accessors live in (§6.4)
+            std::string m_namespace;
+
+            // the generated header name, which a component source includes (§6.4)
+            std::string m_header;
+
+            // the assets in first reference order, which fixes the accessor indices (§6.4)
+            std::vector<AssetEntry> m_assets;
+
+            // the resolved dependencies, which the driver writes into the depfile (§14.2)
+            std::vector<std::filesystem::path> m_paths;
+
+            // the accessor call for each normalized path, which deduplicates the embedded bytes (§6.4)
+            std::unordered_map<std::string, std::string> m_accessors;
+
+            // the paths or spellings that already failed, so one mistake is reported once (§6.4)
+            std::unordered_set<std::string> m_failed;
+
+            // whether the missing source path has been reported, which is one problem per table (§6.4)
+            bool m_source_reported = false;
+        };
 
         // the C++ spelling a read accessor returns, which is a reference for a large value and a copy otherwise (§14.1)
         std::string read_return_type(const ValueType& type) {
@@ -383,8 +648,8 @@ namespace albor::compiler
             };
 
             // build the emitter over the component and the shared problem list (§11.3)
-            ComponentEmitter(const CheckedComponent& component, DiagnosticList& diagnostics, const ElementCatalog* catalog, std::vector<std::string> modules, const std::vector<CheckedFunction>* functions, const std::vector<CheckedGlobal>* globals, const std::vector<CheckedComponent>* file_components) :
-                m_component(component), m_diagnostics(diagnostics), m_class(component.name), m_stem(snake_case(component.name)), m_functions(functions), m_globals(globals), m_catalog(catalog), m_modules(std::move(modules)), m_file_components(file_components) {
+            ComponentEmitter(const CheckedComponent& component, DiagnosticList& diagnostics, const ElementCatalog* catalog, std::vector<std::string> modules, const std::vector<CheckedFunction>* functions, const std::vector<CheckedGlobal>* globals, const std::vector<CheckedComponent>* file_components, AssetTable& assets) :
+                m_component(component), m_diagnostics(diagnostics), m_class(component.name), m_stem(snake_case(component.name)), m_functions(functions), m_globals(globals), m_catalog(catalog), m_assets(assets), m_modules(std::move(modules)), m_file_components(file_components) {
                 // the declared function names are collected, which tells a call apart from a colour op (§11.1)
                 if (m_functions != nullptr)
                     for (const CheckedFunction& function : *m_functions)
@@ -694,6 +959,12 @@ namespace albor::compiler
             // the catalog the records resolve against, which is null when the caller registered none (§11.2, AD-17)
             const ElementCatalog* m_catalog = nullptr;
 
+            // the assets the source file embeds, which every component of the file shares (§6.4)
+            AssetTable& m_assets;
+
+            // whether an image reaches the facade, which decides the handle header (§6.4)
+            bool m_uses_image = false;
+
             // the manifest modules the file imported, which name the directories the record headers live in (§11.1, AD-17)
             std::vector<std::string> m_modules;
 
@@ -912,6 +1183,10 @@ namespace albor::compiler
                     for (const RecordFieldType& field : record->fields)
                         if (field.type.is(TypeKind::Color))
                             m_uses_color = true;
+                    // an image field pulls the handle header, which the emitted definition names (§6.4)
+                    for (const RecordFieldType& field : record->fields)
+                        if (carries_image(field.type))
+                            m_uses_image = true;
                     return;
                 }
                 // each imported module is searched, because the record lives in exactly one of them (§11.1, §11.2, AD-17)
@@ -940,6 +1215,8 @@ namespace albor::compiler
                     m_uses_vector = true;
                 // a record anywhere in a declared type pulls the manifest header that declares its struct (§11.2, AD-17)
                 collect_record_headers(property.type);
+                // an image anywhere in a declared type pulls the handle header, which the signature names (§6.4)
+                m_uses_image = m_uses_image || carries_image(property.type);
                 validate_type(property.type, property.span);
             }
             // the signal parameter types are rejected with them, because the facade signatures need them (§11.3)
@@ -951,6 +1228,8 @@ namespace albor::compiler
                         m_uses_vector = true;
                     // a record parameter is spelled in the facade signature, so its manifest header is needed (§11.2)
                     collect_record_headers(parameter);
+                    // an image parameter pulls the handle header, which the signature names (§6.4)
+                    m_uses_image = m_uses_image || carries_image(parameter);
                     validate_type(parameter, signal.span);
                 }
             }
@@ -968,10 +1247,24 @@ namespace albor::compiler
                         m_uses_vector = true;
                     // a record anywhere in the declared type pulls the header that declares its struct (§11.2, AD-17)
                     collect_record_headers(global.type);
+                    // an image anywhere in the declared type pulls the handle header (§6.4)
+                    m_uses_image = m_uses_image || carries_image(global.type);
                     // the type is validated the same way, because a module value is checked like a property (§11.1)
                     validate_type(global.type, global.span);
                     // the value is scanned for physical lengths, because their density is undefined (§11.3, AD-27)
                     scan_expression(*global.value);
+                }
+            // the file-level functions are scanned too, because a body may embed an asset or name an image (§6.4)
+            if (m_functions != nullptr)
+                for (const CheckedFunction& function : *m_functions) {
+                    // the return and parameter types decide whether the facade needs the handle header (§6.4)
+                    m_uses_image = m_uses_image || carries_image(function.return_type);
+                    // each parameter carries the same rule, because it is part of the function signature (§11.3)
+                    for (const std::pair<std::string, ValueType>& parameter : function.parameters)
+                        m_uses_image = m_uses_image || carries_image(parameter.second);
+                    // a body embeds the asset its return expression names, which the shared table reads once (§6.4)
+                    if (function.return_value != nullptr)
+                        scan_expression(*function.return_value);
                 }
             // the tree is walked, which finds a repeat, a native element or a physical length (§11.3)
             if (m_component.root != nullptr)
@@ -1029,6 +1322,8 @@ namespace albor::compiler
                     m_uses_vector = true;
                 // a record anywhere in the assigned type pulls the header that declares its struct (§11.2, AD-17)
                 collect_record_headers(assignment.type);
+                // an image anywhere in the assigned type pulls the handle header (§6.4)
+                m_uses_image = m_uses_image || carries_image(assignment.type);
                 // the value type is rejected, because a native or a collection value cannot be built (§11.3)
                 validate_type(assignment.type, assignment.span);
                 // the value is scanned for physical lengths, because their density is undefined (§11.3, AD-27)
@@ -1083,7 +1378,7 @@ namespace albor::compiler
 
         void ComponentEmitter::validate_type(const ValueType& type, const SourceSpan& span) {
             // a scalar type translates directly, which is what every other check assumes (§11.3)
-            if (type.is(TypeKind::Bool) || type.is(TypeKind::Int) || type.is(TypeKind::Float) || type.is(TypeKind::String) || type.is(TypeKind::Color) || type.is(TypeKind::Length) || type.is(TypeKind::Align) || type.is(TypeKind::Scrollbar) || type.is(TypeKind::FontWeight) || type.is(TypeKind::Command))
+            if (type.is(TypeKind::Bool) || type.is(TypeKind::Int) || type.is(TypeKind::Float) || type.is(TypeKind::String) || type.is(TypeKind::Color) || type.is(TypeKind::Image) || type.is(TypeKind::Length) || type.is(TypeKind::Align) || type.is(TypeKind::Scrollbar) || type.is(TypeKind::FontWeight) || type.is(TypeKind::Command))
                 return;
             // a collection is generatable when its element is, which is the same rule applied one level in (§8.1)
             if (type.is(TypeKind::Vector)) {
@@ -1142,6 +1437,15 @@ namespace albor::compiler
         }
 
         void ComponentEmitter::scan_expression(const Expression& expression) {
+            // an embedded image is read here, before the include set and the output are fixed (§6.4)
+            if (const auto* image = dynamic_cast<const ImageExpression*>(&expression)) {
+                // an image reaches the facade, which needs the handle header even without a property (§6.4)
+                m_uses_image = true;
+                // the shared table reads and caches the bytes, or reports why it cannot (§6.4)
+                if (m_assets.accessor(*image) == "nullptr")
+                    // a missing asset empties the output, because the generated binding has no handle (§11.3)
+                    m_blocked = true;
+            }
             // a physical length is reported, because its density is not known at build time (§11.3, AD-27)
             if (const auto* literal = dynamic_cast<const LiteralExpression*>(&expression); literal != nullptr && literal->kind == LiteralExpression::Kind::Length && ends_with(literal->text, "phx")) {
                 // the problem points at the literal, because that is what carries the unit (§11.3, AD-27)
@@ -1372,6 +1676,9 @@ namespace albor::compiler
             // a translation always produces a string, because that is what the catalog holds (§11.3)
             if (dynamic_cast<const TranslationExpression*>(&expression) != nullptr)
                 return scalar(TypeKind::String);
+            // an embedded image produces the immutable handle the render path takes (§6.4)
+            if (dynamic_cast<const ImageExpression*>(&expression) != nullptr)
+                return scalar(TypeKind::Image);
             // a bracketed list is the collection its first element declares, which is what the initialiser names (§8.1)
             if (const auto* array = dynamic_cast<const ArrayExpression*>(&expression)) {
                 // an empty list names no element, and its value initialisation takes the type from the target (§8.1)
@@ -1459,6 +1766,9 @@ namespace albor::compiler
             // a colour signature pulls the paint header, which only a colour component needs (§14.1)
             if (m_uses_color)
                 line(0, "#include \"core/paint.h\"");
+            // an image signature pulls the handle header, which the facade type names (§6.4)
+            if (m_uses_image)
+                line(0, "#include \"render/image_resource.h\"");
             // the text engine parameter pulls its header, which every component takes (§14.1)
             line(0, "#include \"text/text_engine.h\"");
             // the base class pulls the component header, which every facade inherits (§14.1)
@@ -1662,6 +1972,9 @@ namespace albor::compiler
             line(0, "#include <utility>");
             line(0, "");
             std::vector<std::string> project_headers;
+            // an embedded asset is reached through the per-source accessors, which the unit includes (§6.4)
+            if (m_assets.has_source())
+                project_headers.push_back(m_assets.header_name());
             // the emits above only need the cstdio section, so the project section is the tree's (§14.1)
             if (m_uses_canvas)
                 project_headers.push_back("core/geometry.h");
@@ -3262,6 +3575,9 @@ namespace albor::compiler
             // a translation is resolved through the catalog, which is what makes @tr mean something (§9.2, §11.3)
             if (const auto* translation = dynamic_cast<const TranslationExpression*>(&expression))
                 return "albor::i18n::translate(" + emit_string_literal(translation->text) + ")";
+            // an embedded image renders as its accessor call, which registers the bytes once (§6.4)
+            if (const auto* image = dynamic_cast<const ImageExpression*>(&expression))
+                return m_assets.accessor(*image);
             // a construction renders in the record's declared field order, which designated initializers require (§11.1)
             if (const auto* construction = dynamic_cast<const RecordConstructionExpression*>(&expression))
                 return emit_record_construction(*construction);
@@ -3645,22 +3961,31 @@ namespace albor::compiler
         m_catalog = catalog;
     }
 
+    void CodeGenerator::set_source_path(std::filesystem::path path) {
+        // the source path is stored as written, because its parent resolves every relative asset (§6.4)
+        m_source_path = std::move(path);
+    }
+
     void CodeGenerator::set_tu_chunk_size(std::size_t size) {
         // a size of zero would leave no components in a chunk, so it is clamped back to the default (AD-03b)
         m_tu_chunk_size = size == 0 ? 1 : size;
     }
 
     std::vector<GeneratedFile> CodeGenerator::generate(const CheckedFile& file) {
+        // the previous dependency list is dropped first, because a failed run must not leave stale paths (§14.2)
+        m_asset_paths.clear();
         // a file the checker blocked produces nothing, because the generator cannot trust it (§11.3)
         if (m_diagnostics.has_errors())
             return {};
+        // the shared table resolves every asset against the source file, which all components of it use (§6.4)
+        AssetTable assets(m_source_path, m_diagnostics);
         // the files accumulate in declaration order, which matches the source (§11.3)
         std::vector<GeneratedFile> files;
         // the implementation units accumulate when chunking, which the merge below groups (AD-03b)
         std::vector<std::string> chunk_contents;
         for (const CheckedComponent& component : file.components) {
             // the emitter is built per component, because the output files are per component (§14.1)
-            ComponentEmitter emitter(component, m_diagnostics, m_catalog, file.imported_modules, &file.functions, &file.globals, &file.components);
+            ComponentEmitter emitter(component, m_diagnostics, m_catalog, file.imported_modules, &file.functions, &file.globals, &file.components, assets);
             // a component that was blocked empties the whole output, which the driver then treats as failed (§11.3)
             if (!emitter.emit())
                 return {};
@@ -3692,6 +4017,16 @@ namespace albor::compiler
                 chunk_index++;
             }
         }
+        // a source path always emits the asset pair, because the build names both outputs (§14.2)
+        if (assets.has_source()) {
+            // the pair is appended after the component units, which keeps the file order stable (§14.2)
+            std::vector<GeneratedFile> asset_files = assets.files();
+            // each generated unit joins the output, header first (§14.2)
+            for (GeneratedFile& asset_file : asset_files)
+                files.push_back(std::move(asset_file));
+        }
+        // the dependency list is what the driver writes into its depfile, whether or not an asset exists (§14.2)
+        m_asset_paths = assets.paths();
         // the generated files are handed out, which the driver writes under its output directory (§14.2)
         return files;
     }
