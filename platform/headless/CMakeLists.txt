@@ -9,7 +9,7 @@ file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 add_library(albor-platform-headless STATIC ${CPP_SOURCES})
 
 # the adapter implements the framework's platform interfaces, which stay free of any platform type (§3.5, AD-05)
-target_include_directories(albor-platform-headless PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-platform-headless PUBLIC ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-platform-headless PUBLIC cxx_std_23)
 
 # the adapter implements the loop and the window interfaces, which arrive through the application (§3.2)

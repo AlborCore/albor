@@ -9,18 +9,27 @@ file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 # gather macos sources, which are the ones that reach metal and the core animation layer (AD-16)
 file(GLOB_RECURSE MACOS_SOURCES "./*.macos.mm")
 
+# gather win32 sources, which are the ones that reach direct3d and dxgi (AD-16)
+file(GLOB_RECURSE WIN32_SOURCES "./*.win32.c++")
+
 # create the static library from the gathered sources
 add_library(albor-render-blend2d STATIC ${CPP_SOURCES})
 
-# the windowed half only exists where metal does, and it is the only part gated on apple (AD-16)
+# the apple windowed half only exists where metal does, which is the one part gated on apple (AD-16)
 if(APPLE)
     set_source_files_properties(${MACOS_SOURCES} PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_sources(albor-render-blend2d PRIVATE ${MACOS_SOURCES})
     target_link_libraries(albor-render-blend2d PRIVATE "-framework Metal" "-framework QuartzCore" "-framework Foundation")
 endif()
 
+# the win32 windowed half presents through direct composition, which is the platform path of §5.3 (AD-16)
+if(WIN32)
+    target_sources(albor-render-blend2d PRIVATE ${WIN32_SOURCES})
+    target_link_libraries(albor-render-blend2d PRIVATE d3d11 dxgi dcomp)
+endif()
+
 # the backend implements the rendering hal and names albor types only (§3.5, AD-05)
-target_include_directories(albor-render-blend2d PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-render-blend2d PUBLIC ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-render-blend2d PUBLIC cxx_std_23)
 
 # the blend2d headers are consumed as system headers, because their own warnings are not the framework's (§3.5)

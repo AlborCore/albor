@@ -7,7 +7,7 @@ file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 add_library(albor-focus STATIC ${CPP_SOURCES})
 
 # the focus manager is header visible, because a window owns one (§3.5)
-target_include_directories(albor-focus PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-focus PUBLIC ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-focus PUBLIC cxx_std_23)
 
 # the focus module needs the ui tree it walks and nothing else (§3.2)

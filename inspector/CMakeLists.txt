@@ -7,7 +7,7 @@ file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 add_library(albor-inspector STATIC ${CPP_SOURCES})
 
 # the tool reaches the project root, which is where the module includes point (§3.2)
-target_include_directories(albor-inspector PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-inspector PUBLIC ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-inspector PUBLIC cxx_std_23)
 
 # the tool describes and overlays a retained scene, so it reads the render module (§6.1, §12.2)

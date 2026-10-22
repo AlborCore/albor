@@ -1,6 +1,42 @@
 cmake_minimum_required(VERSION 3.28)
 
+# the framework's own root, which every module includes through, so a consumer keeps its own root (§3.5, AD-05)
+set(ALBOR_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+
+# the oldest macOS the framework runs on, which the build states rather than inheriting from the sdk (§6.3)
+set(ALBOR_OSX_MINIMUM "13.3")
+
+# the framework's own build declares the floor in its cache, while a consumer that fetches it keeps its own
+if(APPLE AND CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "${ALBOR_OSX_MINIMUM}" CACHE STRING "the oldest macOS the framework runs on")
+endif()
+
+# the install runs inside project(), so the floor has to be in the environment before it: the local triplets stamp every dependency with this build's value, while a consumer wires its own before its own project() (§6.3)
+if(APPLE AND CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    # check macos target is set
+    if(CMAKE_OSX_DEPLOYMENT_TARGET)
+        set(ENV{MACOSX_DEPLOYMENT_TARGET} "${CMAKE_OSX_DEPLOYMENT_TARGET}")
+    else()
+        # an empty cache value means no opinion, so the environment falls back to the floor
+        set(ENV{MACOSX_DEPLOYMENT_TARGET} "${ALBOR_OSX_MINIMUM}")
+    endif()
+    # the local triplets shadow the builtin ones of the same name, so the selected triplet does not change
+    set(VCPKG_OVERLAY_TRIPLETS "${ALBOR_SOURCE_DIR}/.triplets" CACHE STRING "the local triplets that stamp the dependencies with the floor")
+endif()
+
 project(albor LANGUAGES CXX)
+
+# a consumer inherits the framework's targets rather than its cache, so the floor is applied to them after the project
+if(APPLE)
+    # a floor below albor's minimum cannot work: the shipped metallib is stamped 13.3 and refuses to load under it (§6.3, AD-16)
+    if(CMAKE_OSX_DEPLOYMENT_TARGET AND CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS ALBOR_OSX_MINIMUM)
+        message(FATAL_ERROR "albor: CMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET} is below albor's minimum ${ALBOR_OSX_MINIMUM}, which the shipped shader targets and the test suites cover. Set CMAKE_OSX_DEPLOYMENT_TARGET to ${ALBOR_OSX_MINIMUM} or higher.")
+    endif()
+    # an empty value means the consumer has no opinion, so albor's scope adopts its tested floor
+    if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "${ALBOR_OSX_MINIMUM}")
+    endif()
+endif()
 
 # c++23 is the language of the whole framework (§14, AD-23)
 set(CMAKE_CXX_STANDARD 23)
@@ -14,10 +50,16 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # build configurations (§2.2): the flags below select which libraries exist in the link
 option(ALBOR_DEV "Build the dev runtime extension (Dev configuration)" OFF)
-option(ALBOR_TEST "Build the test configuration extras: automation core, headless backend, software renderer" OFF)
-option(ALBOR_AUTOMATION "Build the automation core (Dev/Test configurations only, AD-10)" OFF)
-option(ALBOR_EXAMPLES "Build the example applications" ON)
-option(ALBOR_TESTS "Build the unit test binary" ON)
+option(ALBOR_TEST "Build the test configuration extras: headless backend, software renderer, and, with ALBOR_AUTOMATION, the embedded automation host" OFF)
+option(ALBOR_AUTOMATION "Build the automation core and embedded host (Dev/Test configurations only, AD-10)" OFF)
+# a consumer that fetches these sources builds neither the framework's suites nor its examples unless it asks (§14.2)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    set(ALBOR_DEV_BUILD ON)
+else()
+    set(ALBOR_DEV_BUILD OFF)
+endif()
+option(ALBOR_EXAMPLES "Build the example applications" ${ALBOR_DEV_BUILD})
+option(ALBOR_TESTS "Build the unit test binary" ${ALBOR_DEV_BUILD})
 option(ALBOR_COVERAGE "Instrument the unit tests so a coverage report can be generated from them" OFF)
 
 # the configuration name that the debug information and the log labels carry
@@ -26,8 +68,8 @@ set(ALBOR_CONFIGURATION "Release" CACHE STRING "The albor configuration this bui
 # the shared build rules for generated components, which the examples and the fixtures use (§14.2)
 include(build/AlborComponent.cmake)
 
-# include paths are relative to the root of the project
-include_directories(".")
+# include paths are relative to the framework root, which the targets publish to their consumers (§3.5, AD-05)
+include_directories("${ALBOR_SOURCE_DIR}")
 
 # a configuration is Release when neither the dev runtime extension nor the test extras are enabled (§2.2)
 if(NOT ALBOR_DEV AND NOT ALBOR_TEST)
@@ -42,7 +84,18 @@ if(ALBOR_AUTOMATION AND ALBOR_RELEASE)
 endif()
 
 # the phase 1 modules are warning free, so the checks the prototype tree already ran stay in force
-add_compile_options(-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion)
+if(MSVC)
+    # msvc reads -Wall as /Wall and -Wextra as /Wextra, and /W demands a numeric level, so the gcc and clang
+    # spelling is a hard error there rather than a weaker warning level. /W4 is the closest equivalent strictness,
+    # because it covers the conversion and shadowing diagnostics that -Wconversion and -Wshadow ask for (§5.3, AD-19)
+    add_compile_options(/W4 /permissive- /Zc:__cplusplus /EHsc)
+    # the tree is utf8 on every platform: the universal character names a literal carries and the corpus the text
+    # suites pin are utf8, so the source and the execution charset have to be named, or msvc narrows them into the
+    # ansi code page the host picked and the text the shaper sees is not the text the file wrote (§9.1, §15, AD-25)
+    add_compile_options(/utf-8)
+else()
+    add_compile_options(-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion)
+endif()
 
 # the coverage build instruments every module, because a profile that only covers the test sources
 # cannot report on the module code the suites exercise (§2.2)
@@ -158,9 +211,15 @@ add_subdirectory(render/render-software)
 # the blend2d cpu backend, a portable alternative to the skia reference (§3.2, AD-26)
 add_subdirectory(render/render-blend2d)
 
+# the in-repo gpu backend whose retirement of skia is decided on issue 102 (§6.3, AD-26)
+add_subdirectory(render/render-albor)
+
 # the macos appkit adapter with its display link pacing (§3.2, AD-16)
 add_subdirectory(platform/macos)
 add_subdirectory(platform/headless)
+
+# the win32 adapter with its waitable timer pacing, which self registers when linked (§3.2, AD-16)
+add_subdirectory(platform/windows)
 
 # the compiler frontend that turns .ui source into native c++ (§11.1)
 add_subdirectory(compiler)

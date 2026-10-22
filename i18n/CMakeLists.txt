@@ -7,5 +7,5 @@ file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 add_library(albor-i18n STATIC ${CPP_SOURCES})
 
 # the module reaches the project root, which is where the includes point (§3.2)
-target_include_directories(albor-i18n PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-i18n PUBLIC ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-i18n PUBLIC cxx_std_23)

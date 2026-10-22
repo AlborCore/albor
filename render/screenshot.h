@@ -24,6 +24,9 @@ namespace albor
 
         // compare two reads of the same frame and report the largest per channel difference (§6.3, AD-26)
         [[nodiscard]] int max_channel_difference(const Screenshot& other) const;
+
+        // how many pixels differ by more than a tolerance, which a flat interior must keep at zero (§15, AD-26)
+        [[nodiscard]] std::size_t band_count(const Screenshot& other, int tolerance) const;
     };
 
     // read a surface back into a screenshot, which is what a parity check and an automation capture both do (§6.3, AD-10)

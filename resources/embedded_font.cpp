@@ -1,6 +1,7 @@
 #include "resources/embedded_font.h"
 
 #include <algorithm>
+#include <memory>
 #include <mutex>
 #include <utility>
 
@@ -9,9 +10,9 @@ namespace albor::resources
     namespace
     {
         // the fonts a build carries, which generated code fills at startup and a test empties (§11.3, §2.2)
-        std::vector<EmbeddedFont>& registry() {
+        std::vector<std::shared_ptr<const EmbeddedFont>>& registry() {
             // the registry is one per process, because registration happens once per generated font (§11.3)
-            static std::vector<EmbeddedFont> fonts;
+            static std::vector<std::shared_ptr<const EmbeddedFont>> fonts;
             // the fonts are handed back by reference, because a caller registers into the one list (§11.3)
             return fonts;
         }
@@ -56,32 +57,32 @@ namespace albor::resources
         if (font.family.empty())
             return;
         // an existing font of that family is dropped first, because the newest bytes are the truth (§15)
-        registry().erase(std::remove_if(registry().begin(), registry().end(), [&font](const EmbeddedFont& existing) { return existing.family == font.family; }), registry().end());
-        // the font joins the registry, and its bytes travel with it into the binary (§11.3, AD-34)
-        registry().push_back(std::move(font));
+        registry().erase(std::remove_if(registry().begin(), registry().end(), [&font](const std::shared_ptr<const EmbeddedFont>& existing) { return existing->family == font.family; }), registry().end());
+        // the font joins the registry as one shared object, so a reader keeps it alive past the lock (§11.3, AD-18)
+        registry().push_back(std::make_shared<const EmbeddedFont>(std::move(font)));
     }
 
-    const EmbeddedFont* FontRegistry::find_family(std::string_view family) {
+    std::shared_ptr<const EmbeddedFont> FontRegistry::find_family(std::string_view family) {
         // the lock is held over the search, because a registration may land mid walk (§10.5, AD-18)
         const std::lock_guard<std::mutex> lock(registry_mutex());
         // the families are searched in registration order, because the newest of a family replaced the oldest (§15)
-        for (const EmbeddedFont& font : registry()) {
+        for (const std::shared_ptr<const EmbeddedFont>& font : registry()) {
             // an exact match is the only one that counts, because a prefix would resolve differently per platform (§15)
-            if (font.family == family)
-                return &font;
+            if (font->family == family)
+                return font;
         }
         // no family of that name is registered, which is a refusal rather than a fallback (§9.1, AD-34)
         return nullptr;
     }
 
-    const EmbeddedFont* FontRegistry::find_hash(std::uint64_t content_hash) {
+    std::shared_ptr<const EmbeddedFont> FontRegistry::find_hash(std::uint64_t content_hash) {
         // the lock is held over the search, because a registration may land mid walk (§10.5, AD-18)
         const std::lock_guard<std::mutex> lock(registry_mutex());
         // the hashes are searched, because a layout is keyed on the bytes and not on a name (§15, AD-34)
-        for (const EmbeddedFont& font : registry()) {
+        for (const std::shared_ptr<const EmbeddedFont>& font : registry()) {
             // a matching hash is the same font, whatever it was called (§15)
-            if (font.content_hash == content_hash)
-                return &font;
+            if (font->content_hash == content_hash)
+                return font;
         }
         // no registered font has those bytes, which is a refusal rather than a fallback (§9.1, AD-34)
         return nullptr;

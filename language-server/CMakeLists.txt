@@ -7,7 +7,7 @@ file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 add_library(albor-language-server STATIC ${CPP_SOURCES})
 
 # the server reaches the project root, which is where the module includes point (§3.2)
-target_include_directories(albor-language-server PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-language-server PUBLIC ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-language-server PUBLIC cxx_std_23)
 
 # the server runs the same compiler the build runs, which is what makes its diagnostics the compiler's (§16)

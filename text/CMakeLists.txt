@@ -10,7 +10,7 @@ list(FILTER CPP_SOURCES EXCLUDE REGEX "/text-harfbuzz/")
 add_library(albor-text STATIC ${CPP_SOURCES})
 
 # the contract is header visible, because the standard widgets measure through it (§3.5)
-target_include_directories(albor-text PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-text PUBLIC ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-text PUBLIC cxx_std_23)
 
 # the text module needs the run type it measures into and nothing else, so it sits below widgets (§3.2)

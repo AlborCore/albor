@@ -4,6 +4,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <vector>
 
@@ -114,6 +115,9 @@ namespace albor::blend2d
         // an unbalanced end would count a frame that never began, so it is ignored (§6.1)
         if (!m_state->begun)
             return;
+        // a rounded clip the frame left open is closed before the raster ends (§6.2)
+        if (m_state->draw_context != nullptr)
+            m_state->draw_context->finish();
         // the frame is marked finished, which is what a headless test counts (§4.3)
         m_state->begun = false;
         // blend2d end flushes synchronously, which is the whole of cpu presentation (§6.3)
@@ -154,6 +158,36 @@ namespace albor::blend2d
             }
         }
         return pixels;
+    }
+
+    bool Blend2DRenderSurface::copy_native_pixels(void* destination, std::size_t row_bytes) const {
+        // a missing destination or an unusable surface has nothing to copy (§6.3)
+        if (destination == nullptr || !valid())
+            return false;
+        // a copy is of the last finished frame, so an unfinished one refuses like the canonical read (§6.3)
+        if (m_state->frames == 0 || m_state->begun)
+            return false;
+        BLImageData data;
+        // a raster blend2d cannot describe is refused, because a half copy is not a present (§6.3)
+        if (m_state->raster.getData(&data) != BL_SUCCESS)
+            return false;
+        const int width = data.size.w;
+        const int height = data.size.h;
+        // an extent with no area has no rows to copy (§6.3)
+        if (width <= 0 || height <= 0)
+            return false;
+        const std::size_t tight_row = static_cast<std::size_t>(width) * 4;
+        // a destination row narrower than the frame would overwrite the next row (§6.3)
+        if (row_bytes < tight_row)
+            return false;
+        auto* target = static_cast<std::uint8_t*>(destination);
+        for (int y = 0; y < height; y++) {
+            // the source row honours the padded stride blend2d reports (§6.3)
+            const auto* source = static_cast<const std::uint8_t*>(data.pixelData) + static_cast<std::intptr_t>(y) * data.stride;
+            // the native bytes are already premultiplied bgra, so no channel swap is needed (§6.3, AD-26)
+            std::memcpy(target + static_cast<std::size_t>(y) * row_bytes, source, tight_row);
+        }
+        return true;
     }
 
     std::size_t Blend2DRenderSurface::frame_count() const {

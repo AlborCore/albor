@@ -53,6 +53,12 @@ namespace albor
 
         // a shadow cast by a rounded shape, which the replay blurs offscreen and composites (§6.2)
         Shadow,
+
+        // the start of a composited layer, which carries the opacity its group composites at (§6.2)
+        LayerPush,
+
+        // the end of the layer the matching push began (§6.2)
+        LayerPop,
     };
 
     // the geometry a rectangle command carries, which is the rectangle and its corner radii (§6.2)
@@ -176,8 +182,21 @@ namespace albor
     class DrawCommand
     {
     public:
+        // the opacity a layer marker carries, which is the one state a group composites at (§6.2)
+        struct LayerGeometry
+        {
+            // the opacity the whole group composites at, applied once rather than per draw (§6.2)
+            float opacity = 1.0f;
+
+            // whether the marker closes a layer rather than opening one (§6.2)
+            bool pop = false;
+
+            // compare two layer markers component wise, which a command comparison needs (§6.2)
+            friend bool operator==(const LayerGeometry& lhs, const LayerGeometry& rhs) = default;
+        };
+
         // the geometry a command carries, where the alternative index is the kind (§6.2)
-        using Geometry = std::variant<RectGeometry, TextGeometry, BatchGeometry, PathGeometry, PictureGeometry, ImageGeometry, GlyphOutlineGeometry, ShadowGeometry, PolylineGeometry>;
+        using Geometry = std::variant<RectGeometry, TextGeometry, BatchGeometry, PathGeometry, PictureGeometry, ImageGeometry, GlyphOutlineGeometry, ShadowGeometry, PolylineGeometry, LayerGeometry>;
 
         // the clip that stands for no clip at all, which is what a command carries until a recorder stamps one (§6.2)
         [[nodiscard]] static const Rect& unclipped();
@@ -206,11 +225,20 @@ namespace albor
         // build a retained image command (§6.4, AD-06)
         [[nodiscard]] static DrawCommand image(std::shared_ptr<const ImageResource> image, Rect destination, Paint paint);
 
+        // report whether a kind's primitive takes no transform, so its command has to compose one (§6.4)
+        [[nodiscard]] static bool uses_the_context_transform(DrawCommandKind kind);
+
         // build a glyph outline command, which is how embedded text reaches the surface (§6.4, AD-34)
-        [[nodiscard]] static DrawCommand glyph_outline(std::shared_ptr<const GlyphOutline> outline, Point position, Paint paint);
+        [[nodiscard]] static DrawCommand glyph_outline(std::shared_ptr<const GlyphOutline> outline, Point position, Paint paint, Transform transform = Transform{});
 
         // build a shadow command, which the replay blurs offscreen and composites under the shape (§6.2)
         [[nodiscard]] static DrawCommand shadow(Rect rect, float radius, Shadow shadow);
+
+        // build the marker that opens a composited layer at the given group opacity (§6.2)
+        [[nodiscard]] static DrawCommand layer_push(float opacity);
+
+        // build the marker that closes the layer the matching push opened (§6.2)
+        [[nodiscard]] static DrawCommand layer_pop();
 
         // the kind of geometry the command carries (§6.2)
         [[nodiscard]] DrawCommandKind kind() const;
@@ -254,8 +282,17 @@ namespace albor
         // the casting shape and the cast of a shadow command (§6.2)
         [[nodiscard]] const ShadowGeometry& shadow_geometry() const;
 
+        // the opacity a layer marker carries (§6.2)
+        [[nodiscard]] const LayerGeometry& layer_geometry() const;
+
         // stamp the clip the recorder stood at, which is what the replay scissors to (§6.2)
         void set_clip(Rect clip);
+
+        // stamp the corner radius of the clip, which zero leaves it rectangular (§6.2)
+        void set_clip_radius(float radius);
+
+        // hand out the corner radius of the clip, which the replay rounds the scissor by (§6.2)
+        [[nodiscard]] float clip_radius() const;
 
         // stamp the transform the recorder stood at, which retained geometry draws under (§6.4)
         void set_transform(Transform transform);
@@ -282,11 +319,23 @@ namespace albor
         // read the area a cast covers, which is the shape plus the reach of its blur (§6.2)
         [[nodiscard]] Rect shadow_bounds() const;
 
+        // report whether the primitive takes no transform of its own, so the command composes one for it (§6.4)
+        [[nodiscard]] bool draws_under_the_context_transform() const;
+
+        // map a geometry space rectangle through the command transform, which keeps a bound conservative (§6.2)
+        [[nodiscard]] Rect mapped_bounds(const Rect& rect) const;
+
+        // draw the command into the context, which every kind dispatches from here (§6.1)
+        void replay_primitive(RenderContext& context) const;
+
         // build a command over its geometry, so the clip and the transform are stamped after (§6.2)
         explicit DrawCommand(Geometry geometry, Paint paint);
 
         // the clip the command draws under, which is the unclipped one until a recorder stamps it (§6.2)
         Rect m_clip;
+
+        // the corner radius of the clip, which zero leaves it rectangular (§6.2)
+        float m_clip_radius = 0.0f;
 
         // the transform the retained geometry draws under (§6.4)
         Transform m_transform;

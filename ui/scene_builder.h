@@ -5,6 +5,7 @@
 
 #include "core/geometry.h"
 #include "core/paint.h"
+#include "render/clip_state.h"
 #include "render/draw_command.h"
 #include "render/frame_scene.h"
 #include "render/glyph_outline.h"
@@ -47,6 +48,12 @@ namespace albor
         // override: read back the current opacity
         [[nodiscard]] float opacity() const override;
 
+        // override: begin a layer the later draws composite into, which restores this state at the matching pop
+        void push_layer(float opacity) override;
+
+        // override: end the layer the matching push began
+        void pop_layer() override;
+
         // override: record a filled and stroked rectangle
         void draw_rect(const Rect& rect, const Paint& paint) override;
 
@@ -80,6 +87,9 @@ namespace albor
         // install the resolver that turns an embedded run into outline commands, which a composition root does (§6.4)
         void set_outline_resolver(GlyphOutlineResolver resolver);
 
+        // borrow the outline cache a longer lived builder keeps, which stops a frame rebuilding a glyph (§6.4, AD-06)
+        void set_outline_cache(GlyphOutlineCache* cache);
+
         // report how many outline commands this recorder emitted, which a test asserts on (§6.4)
         [[nodiscard]] std::size_t outline_command_count() const;
 
@@ -99,8 +109,8 @@ namespace albor
         // the resolver that builds a glyph outline, which is empty until a composition root installs one (§6.4)
         GlyphOutlineResolver m_outline_resolver;
 
-        // the outlines this recorder already built, which a frame would otherwise rebuild per glyph (§6.4)
-        GlyphOutlineCache m_outline_cache;
+        // the outline cache this recorder borrows, which the builder owns so it outlives the frame (§6.4, AD-06)
+        GlyphOutlineCache* m_outline_cache = nullptr;
 
         // the outline commands this recorder emitted, which a test asserts on (§6.4)
         std::size_t m_outline_commands = 0;
@@ -111,8 +121,8 @@ namespace albor
             // the transform at the time of the save
             Transform transform;
 
-            // the clip at the time of the save
-            Rect clip;
+            // the clip at the time of the save, radius included
+            ClipState clip;
 
             // the opacity at the time of the save
             float opacity = 1.0f;
@@ -137,10 +147,13 @@ namespace albor
         Transform m_transform;
 
         // the current clip
-        Rect m_clip;
+        ClipState m_clip;
 
         // the opacity the recorded commands are dimmed by, which starts fully opaque (§6.1)
         float m_opacity = 1.0f;
+
+        // how many layers are open, so a mismatched pop cannot unwind a save that was not one (§6.2)
+        std::size_t m_layers = 0;
 
         // the pushed states, which a restore pops (§6.2)
         std::vector<State> m_states;
@@ -180,6 +193,9 @@ namespace albor
 
         // the resolver embedded text draws through, which a builder without one has none of (§6.4, AD-34)
         GlyphOutlineResolver m_outline_resolver;
+
+        // the outlines every build shares, which a frame would otherwise rebuild per glyph (§6.4, AD-06)
+        GlyphOutlineCache m_outline_cache;
 
         // how many nodes the last build visited, which a test asserts on (§6.1)
         std::size_t m_visited = 0;

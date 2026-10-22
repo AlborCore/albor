@@ -8,7 +8,7 @@ the architecture specification `albor-design-v4.md`.
 
 | platform | state |
 | --- | --- |
-| macOS (AppKit, Metal) | implemented — the primary platform |
+| macOS 13.3+ (AppKit, Metal), Intel and Apple silicon | implemented — the primary platform |
 | headless | implemented — the test and CI surface |
 | Windows (Win32) | planned — the HAL interface is fixed |
 | Linux (Wayland, X11) | planned — the HAL interface is fixed |

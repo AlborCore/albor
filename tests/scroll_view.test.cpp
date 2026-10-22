@@ -47,6 +47,10 @@ namespace
 
         [[nodiscard]] float opacity() const override { return m_opacity; }
 
+        void push_layer(float) override {}
+
+        void pop_layer() override {}
+
         void draw_rect(const Rect& rect, const Paint&) override { rects.push_back(rect); }
 
         void draw_shadow(const Rect&, float, const Shadow&) override {}

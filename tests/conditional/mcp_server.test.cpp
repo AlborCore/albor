@@ -5,6 +5,7 @@
 
 #include "automation/automation_registry.h"
 #include "automation/automation_session.h"
+#include "automation/capture_commands.h"
 #include "automation/mcp_server.h"
 #include "automation/semantic_commands.h"
 #include "core/json.h"
@@ -232,4 +233,267 @@ TEST(McpServer, AnAdapterWithNoRouteCannotReachAnything) {
     const std::string line = *server.handle_line(tools_call("9", "semantic.tree", "{}"));
     // assert the refusal is stated, because an empty answer would read as an empty tree (§10.3, AD-20)
     EXPECT_NE(line.find("not reachable"), std::string::npos);
+}
+
+TEST(McpServer, AnAuthenticateCallbackRefusesMissingToken) {
+    // arrange a route that requires authentication
+    McpRoute route;
+    route.permitted_commands = [] { return std::vector<std::string>{"semantic.tree"}; };
+    route.authenticate = [](std::string_view token) { return !token.empty(); };
+    route.authenticated = [] { return true; };
+    route.run = [](std::string_view) { return AutomationResult::answered("{}"); };
+    McpServer server(std::move(route));
+    // act initialize without _meta.albor/token
+    const std::string line = *server.handle_line(R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})");
+    // assert the reply is an error because token is missing
+    EXPECT_NE(line.find("authentication failed"), std::string::npos);
+}
+
+TEST(McpServer, AnAuthenticateCallbackAcceptsValidToken) {
+    // arrange a route that requires authentication
+    std::string valid_token = "abc123";
+    McpRoute route;
+    route.permitted_commands = [] { return std::vector<std::string>{"semantic.tree"}; };
+    route.authenticate = [&valid_token](std::string_view token) { return token == valid_token; };
+    route.authenticated = [] { return true; };
+    route.run = [](std::string_view) { return AutomationResult::answered("{}"); };
+    McpServer server(std::move(route));
+    // act initialize with correct token in metadata
+    const std::string line = *server.handle_line("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"_meta\":{\"albor/token\":\"abc123\"}}}");
+    // assert the reply is a success
+    EXPECT_NE(line.find("\"result\""), std::string::npos);
+}
+
+TEST(McpServer, AnAuthenticatedFlagGatesSubsequentCalls) {
+    // arrange a route that requires authentication but the flag is initially false
+    McpRoute route;
+    route.permitted_commands = [] { return std::vector<std::string>{"semantic.tree"}; };
+    route.authenticate = [](std::string_view) { return true; };
+    bool authenticated = false;
+    route.authenticated = [&authenticated] { return authenticated; };
+    route.run = [](std::string_view) { return AutomationResult::answered("{}"); };
+    McpServer server(std::move(route));
+    // act initialize without token (authenticate returns true but authenticated flag is false)
+    const std::string init_line = *server.handle_line(R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})");
+    // assert initialize fails because authenticated flag is false
+    EXPECT_NE(init_line.find("authentication failed"), std::string::npos);
+    // act set authenticated flag true and call a tool
+    authenticated = true;
+    const std::string call_line = *server.handle_line(tools_call("2", "semantic.tree", "{}"));
+    // assert the call succeeds
+    EXPECT_NE(call_line.find("\"result\""), std::string::npos);
+}
+
+TEST(McpServer, AByteAnswerBecomesAResourceBlockCarryingBase64) {
+    // arrange a layer that answers a byte string, which the protocol has no raw block for (§10.3)
+    AutomationRegistry registry;
+    registry.register_command("capture.screenshot", [](const AutomationRequest&) { return AutomationResult::answered(ValueKind::Binary, std::string("\x00\x01\xfe\xff", 4)); });
+    registry.allow("capture.screenshot");
+    McpRoute route;
+    route.permitted_commands = [&registry] { return registry.allowed_commands(); };
+    route.run = [&registry](std::string_view line) { return registry.dispatch(decode_request(line)); };
+    McpServer server(std::move(route));
+    // act
+    const std::string line = *server.handle_line(R"({"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"capture.screenshot","arguments":{}}})");
+    // assert the block names the resource and carries the bytes as base64, because json cannot hold them raw (§10.3)
+    const std::optional<core::Json> reply = core::Json::parse(line);
+    ASSERT_TRUE(reply.has_value());
+    const core::Json* content = reply->member("result")->member("content");
+    ASSERT_NE(content, nullptr);
+    ASSERT_EQ(content->as_array().size(), 1U);
+    const core::Json& block = content->as_array().at(0);
+    EXPECT_EQ(block.member("type")->as_string(), "resource");
+    const core::Json* resource = block.member("resource");
+    ASSERT_NE(resource, nullptr);
+    EXPECT_EQ(resource->member("mimeType")->as_string(), "application/octet-stream");
+    EXPECT_EQ(resource->member("blob")->as_string(), "AAH+/w==");
+}
+
+TEST(McpServer, AnImageAnswerBecomesAnImageBlock) {
+    // arrange a layer that answers a picture, which a client decodes rather than reads (§6.3, §10.3)
+    AutomationRegistry registry;
+    registry.register_command("capture.screenshot", [](const AutomationRequest&) { return AutomationResult::answered(ValueKind::Image, std::string("\x89PNG", 4)); });
+    registry.allow("capture.screenshot");
+    McpRoute route;
+    route.permitted_commands = [&registry] { return registry.allowed_commands(); };
+    route.run = [&registry](std::string_view line) { return registry.dispatch(decode_request(line)); };
+    McpServer server(std::move(route));
+    // act
+    const std::string line = *server.handle_line(R"({"jsonrpc":"2.0","id":21,"method":"tools/call","params":{"name":"capture.screenshot","arguments":{}}})");
+    // assert the block is the protocol's image, which carries the png and never the raw bytes (§10.3)
+    const std::optional<core::Json> reply = core::Json::parse(line);
+    ASSERT_TRUE(reply.has_value());
+    const core::Json* content = reply->member("result")->member("content");
+    ASSERT_NE(content, nullptr);
+    const core::Json& block = content->as_array().at(0);
+    EXPECT_EQ(block.member("type")->as_string(), "image");
+    EXPECT_EQ(block.member("mimeType")->as_string(), "image/png");
+    EXPECT_EQ(block.member("data")->as_string(), "iVBORw==");
+}
+
+TEST(McpServer, TheCaptureToolDeclaresTheFormatItTakes) {
+    // arrange a layer permitting the capture, which is what puts it in the listing (§10.3, AD-10)
+    AutomationRegistry registry;
+    registry.register_command("capture.screenshot", [](const AutomationRequest&) { return AutomationResult::answered(ValueKind::Binary, std::string()); });
+    registry.allow("capture.screenshot");
+    McpRoute route;
+    route.permitted_commands = [&registry] { return registry.allowed_commands(); };
+    route.run = [](std::string_view) { return AutomationResult::answered(""); };
+    McpServer server(std::move(route));
+    // act
+    const std::string line = *server.handle_line(R"({"jsonrpc":"2.0","id":22,"method":"tools/list"})");
+    // assert the schema names format and its enum, because a client cannot discover either otherwise (§10.3)
+    const std::optional<core::Json> reply = core::Json::parse(line);
+    ASSERT_TRUE(reply.has_value());
+    const core::Json* tools = reply->member("result")->member("tools");
+    ASSERT_NE(tools, nullptr);
+    ASSERT_EQ(tools->as_array().size(), 1U);
+    const core::Json* properties = tools->as_array().at(0).member("inputSchema")->member("properties");
+    ASSERT_NE(properties, nullptr);
+    const core::Json* format = properties->member("format");
+    ASSERT_NE(format, nullptr);
+    EXPECT_EQ(format->member("type")->as_string(), "string");
+    const core::Json* allowed = format->member("enum");
+    ASSERT_NE(allowed, nullptr);
+    ASSERT_EQ(allowed->as_array().size(), 2U);
+    EXPECT_EQ(allowed->as_array().at(0).as_string(), "png");
+    EXPECT_EQ(allowed->as_array().at(1).as_string(), "raw");
+}
+
+TEST(McpServer, TheCaptureFormatLandsInThePositionTheLayerExpects) {
+    // arrange a layer that records what it received, which is how the adapter's placement is observed (§10.3)
+    AutomationRegistry registry;
+    std::string received;
+    registry.register_command("capture.screenshot", [&received](const AutomationRequest& request) {
+        received = request.arguments.empty() ? std::string() : request.arguments.front();
+        return AutomationResult::answered("ok");
+    });
+    registry.allow("capture.screenshot");
+    McpRoute route;
+    route.permitted_commands = [&registry] { return registry.allowed_commands(); };
+    route.run = [&registry](std::string_view line) { return registry.dispatch(decode_request(line)); };
+    McpServer server(std::move(route));
+    // act a client names the format, which the adapter must place by the table rather than by the object order (§10.3)
+    (void)server.handle_line(R"({"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"capture.screenshot","arguments":{"format":"raw"}}})");
+    // assert the format arrived, which a missing table entry would have dropped silently (§10.3)
+    EXPECT_EQ(received, "raw");
+}
+
+TEST(McpServer, AnUnsupportedCaptureFormatReachesTheClientAsTheLayersRefusal) {
+    // arrange the real capture command behind the adapter, which is the path AD-20 describes (§10.3)
+    AutomationRegistry registry;
+    register_capture_commands(registry, [] { return CapturedFrame{.width = 1, .height = 1, .pixels = {1, 2, 3, 4}}; });
+    registry.allow(std::string(SCREENSHOT_COMMAND));
+    McpRoute route;
+    route.permitted_commands = [&registry] { return registry.allowed_commands(); };
+    route.run = [&registry](std::string_view line) { return registry.dispatch(decode_request(line)); };
+    McpServer server(std::move(route));
+    // act a client names a format this build cannot produce (§6.3)
+    const std::string line = *server.handle_line(R"({"jsonrpc":"2.0","id":30,"method":"tools/call","params":{"name":"capture.screenshot","arguments":{"format":"tiff"}}})");
+    // assert the layer's own words arrive, because the adapter must not answer for it (§10.3, AD-20)
+    const std::optional<core::Json> reply = core::Json::parse(line);
+    ASSERT_TRUE(reply.has_value());
+    const core::Json* error = reply->member("error");
+    ASSERT_NE(error, nullptr);
+    EXPECT_EQ(error->member("code")->as_number(), -32000.0);
+    EXPECT_EQ(error->member("message")->as_string(), "the capture format is not available: tiff");
+}
+
+TEST(McpServer, AnEmptyByteAnswerCarriesAnEmptyBlob) {
+    // arrange a layer answering no bytes, which is still a byte answer rather than an absent one (§10.3)
+    AutomationRegistry registry;
+    registry.register_command("capture.screenshot", [](const AutomationRequest&) { return AutomationResult::answered(ValueKind::Binary, ""); });
+    registry.allow("capture.screenshot");
+    McpRoute route;
+    route.permitted_commands = [&registry] { return registry.allowed_commands(); };
+    route.run = [&registry](std::string_view line) { return registry.dispatch(decode_request(line)); };
+    McpServer server(std::move(route));
+    // act
+    const std::string line = *server.handle_line(R"({"jsonrpc":"2.0","id":31,"method":"tools/call","params":{"name":"capture.screenshot","arguments":{}}})");
+    // assert the block is a resource with an empty blob, because a client reads presence rather than size (§10.3)
+    const std::optional<core::Json> reply = core::Json::parse(line);
+    ASSERT_TRUE(reply.has_value());
+    const core::Json* content = reply->member("result")->member("content");
+    ASSERT_NE(content, nullptr);
+    ASSERT_EQ(content->as_array().size(), 1U);
+    const core::Json* resource = content->as_array().at(0).member("resource");
+    ASSERT_NE(resource, nullptr);
+    EXPECT_EQ(resource->member("blob")->as_string(), "");
+}
+
+TEST(McpServer, TwoByteAnswersAreTwoResources) {
+    // arrange a layer answering one byte per call, which is what two frames of one window look like (§6.3)
+    AutomationRegistry registry;
+    registry.register_command("capture.screenshot", [](const AutomationRequest&) { return AutomationResult::answered(ValueKind::Binary, std::string("\x00", 1)); });
+    registry.allow("capture.screenshot");
+    McpRoute route;
+    route.permitted_commands = [&registry] { return registry.allowed_commands(); };
+    route.run = [&registry](std::string_view line) { return registry.dispatch(decode_request(line)); };
+    McpServer server(std::move(route));
+    // act two calls arrive, which carry different bytes under the same tool (§10.3)
+    const std::string first = *server.handle_line(R"({"jsonrpc":"2.0","id":32,"method":"tools/call","params":{"name":"capture.screenshot","arguments":{}}})");
+    const std::string second = *server.handle_line(R"({"jsonrpc":"2.0","id":33,"method":"tools/call","params":{"name":"capture.screenshot","arguments":{}}})");
+    // assert each answer names its own resource, because a client caches one resource per uri (§10.3)
+    const std::optional<core::Json> first_reply = core::Json::parse(first);
+    const std::optional<core::Json> second_reply = core::Json::parse(second);
+    ASSERT_TRUE(first_reply.has_value());
+    ASSERT_TRUE(second_reply.has_value());
+    const core::Json* first_resource = first_reply->member("result")->member("content")->as_array().at(0).member("resource");
+    const core::Json* second_resource = second_reply->member("result")->member("content")->as_array().at(0).member("resource");
+    ASSERT_NE(first_resource, nullptr);
+    ASSERT_NE(second_resource, nullptr);
+    EXPECT_EQ(first_resource->member("mimeType")->as_string(), "application/octet-stream");
+    EXPECT_NE(first_resource->member("uri")->as_string(), second_resource->member("uri")->as_string());
+}
+
+TEST(McpServer, AnImageBlockCarriesNoResource) {
+    // arrange a layer answering a picture, whose block is the protocol's image and nothing else (§10.3)
+    AutomationRegistry registry;
+    registry.register_command("capture.screenshot", [](const AutomationRequest&) { return AutomationResult::answered(ValueKind::Image, std::string("png", 3)); });
+    registry.allow("capture.screenshot");
+    McpRoute route;
+    route.permitted_commands = [&registry] { return registry.allowed_commands(); };
+    route.run = [&registry](std::string_view line) { return registry.dispatch(decode_request(line)); };
+    McpServer server(std::move(route));
+    // act
+    const std::string line = *server.handle_line(R"({"jsonrpc":"2.0","id":34,"method":"tools/call","params":{"name":"capture.screenshot","arguments":{}}})");
+    // assert the block is an image and carries no resource member, which a client would otherwise read twice (§10.3)
+    const std::optional<core::Json> reply = core::Json::parse(line);
+    ASSERT_TRUE(reply.has_value());
+    ASSERT_EQ(reply->member("result")->member("content")->as_array().size(), 1U);
+    const core::Json& block = reply->member("result")->member("content")->as_array().at(0);
+    EXPECT_EQ(block.member("type")->as_string(), "image");
+    EXPECT_EQ(block.member("resource"), nullptr);
+    EXPECT_NE(block.member("data"), nullptr);
+}
+
+TEST(McpServer, AnArgumentThatSkipsASlotIsRefusedRatherThanShifted) {
+    // arrange a fixture whose layer would read the first argument as an id (§10.3)
+    Fixture fixture;
+    // act the client names only the second parameter, which the position wire cannot carry (§10.3)
+    const core::Json reply = fixture.ask(tools_call("35", "semantic.invoke", R"({"action":"activate"})"));
+    // assert the call is refused before the layer, because shifting it would select a node named activate (§10.3, AD-11)
+    const core::Json* error = reply.member("error");
+    ASSERT_NE(error, nullptr);
+    EXPECT_EQ(error->member("code")->as_number(), -32602.0);
+    EXPECT_EQ(fixture.server->layer_calls(), 0U);
+}
+
+TEST(McpServer, TheCaptureTakesItsFormatFromAPositionalArray) {
+    // arrange a layer that records what it received, which is how the positional form is observed (§10.3)
+    AutomationRegistry registry;
+    std::string received;
+    registry.register_command("capture.screenshot", [&received](const AutomationRequest& request) {
+        received = request.arguments.empty() ? std::string() : request.arguments.front();
+        return AutomationResult::answered("ok");
+    });
+    registry.allow("capture.screenshot");
+    McpRoute route;
+    route.permitted_commands = [&registry] { return registry.allowed_commands(); };
+    route.run = [&registry](std::string_view line) { return registry.dispatch(decode_request(line)); };
+    McpServer server(std::move(route));
+    // act the client sends the array form, which is already positional (§10.3)
+    (void)server.handle_line(R"({"jsonrpc":"2.0","id":36,"method":"tools/call","params":{"name":"capture.screenshot","arguments":["raw"]}})");
+    // assert the array arrived unchanged, because a client may write either form (§10.3)
+    EXPECT_EQ(received, "raw");
 }

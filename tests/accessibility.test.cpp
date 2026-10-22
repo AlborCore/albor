@@ -65,26 +65,37 @@ namespace
 
 } // namespace
 
-TEST(AccessibilityBridge, ABuildThatHasABridgeSaysSo) {
-    // assert the bridge exists on this platform, because the macos adapter is compiled (§10.2)
+// the bridge every accessibility check runs over, which skips where the platform installs no adapter (§10.2, AD-08)
+class AccessibilityBridge : public ::testing::Test
+{
+protected:
+    void SetUp() override {
+        // the win32 adapter is not written yet, so its build reports no bridge rather than a stub (§10.2, AD-16)
+        if (!accessibility::AccessibilityAdapter::available())
+            GTEST_SKIP() << "this platform installs no accessibility adapter yet";
+    }
+};
+
+TEST_F(AccessibilityBridge, ABuildThatHasABridgeSaysSo) {
+    // assert the bridge exists on this platform, because the adapter it was built with publishes one (§10.2)
     EXPECT_TRUE(accessibility::AccessibilityAdapter::available());
 }
 
-TEST(AccessibilityBridge, TheFactoryHandsBackABridge) {
+TEST_F(AccessibilityBridge, TheFactoryHandsBackABridge) {
     // act
     const std::unique_ptr<accessibility::AccessibilityAdapter> adapter = accessibility::create_adapter();
     // assert
     ASSERT_NE(adapter, nullptr);
 }
 
-TEST(AccessibilityBridge, ANewBridgeHasPublishedNothing) {
+TEST_F(AccessibilityBridge, ANewBridgeHasPublishedNothing) {
     // arrange
     const std::unique_ptr<accessibility::AccessibilityAdapter> adapter = accessibility::create_adapter();
     // assert a bridge that has never published reports nothing (§10.2)
     EXPECT_EQ(adapter->published_node_count(), 0U);
 }
 
-TEST(AccessibilityBridge, PublishingReportsHowManyNodesItCarries) {
+TEST_F(AccessibilityBridge, PublishingReportsHowManyNodesItCarries) {
     // arrange
     const std::unique_ptr<accessibility::AccessibilityAdapter> adapter = accessibility::create_adapter();
     SemanticTree tree;
@@ -95,7 +106,7 @@ TEST(AccessibilityBridge, PublishingReportsHowManyNodesItCarries) {
     EXPECT_EQ(adapter->published_node_count(), 3U);
 }
 
-TEST(AccessibilityBridge, PublishingTwiceReplacesRatherThanAccumulates) {
+TEST_F(AccessibilityBridge, PublishingTwiceReplacesRatherThanAccumulates) {
     // arrange
     const std::unique_ptr<accessibility::AccessibilityAdapter> adapter = accessibility::create_adapter();
     SemanticTree first;
@@ -109,7 +120,7 @@ TEST(AccessibilityBridge, PublishingTwiceReplacesRatherThanAccumulates) {
     EXPECT_EQ(adapter->published_node_count(), 3U);
 }
 
-TEST(AccessibilityBridge, PublishingWithoutAWindowIsStillAccepted) {
+TEST_F(AccessibilityBridge, PublishingWithoutAWindowIsStillAccepted) {
     // arrange
     const std::unique_ptr<accessibility::AccessibilityAdapter> adapter = accessibility::create_adapter();
     SemanticTree tree;
@@ -119,7 +130,7 @@ TEST(AccessibilityBridge, PublishingWithoutAWindowIsStillAccepted) {
     EXPECT_EQ(adapter->published_node_count(), 3U);
 }
 
-TEST(AccessibilityBridge, ADetachedBridgePublishesNothing) {
+TEST_F(AccessibilityBridge, ADetachedBridgePublishesNothing) {
     // arrange
     const std::unique_ptr<accessibility::AccessibilityAdapter> adapter = accessibility::create_adapter();
     SemanticTree tree;

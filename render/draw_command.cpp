@@ -66,12 +66,15 @@ namespace albor
         return DrawCommand(ImageGeometry{.image = std::move(image), .destination = destination}, paint);
     }
 
-    DrawCommand DrawCommand::glyph_outline(std::shared_ptr<const GlyphOutline> outline, Point position, Paint paint) {
+    DrawCommand DrawCommand::glyph_outline(std::shared_ptr<const GlyphOutline> outline, Point position, Paint paint, Transform transform) {
         // an outline with no points draws nothing, so it is refused rather than recorded (§6.2)
         if (outline == nullptr || outline->empty())
             return DrawCommand(RectGeometry{.rect = Rect::from_origin_size(position, Size{0.0f, 0.0f})}, paint);
-        // the outline and where it lands are the geometry, because the shape is the retained contour (§6.4, AD-06)
-        return DrawCommand(GlyphOutlineGeometry{.outline = std::move(outline), .position = position}, paint);
+        // the outline and its pen are the geometry, because the shape is the retained contour (§6.4, AD-06)
+        DrawCommand command(GlyphOutlineGeometry{.outline = std::move(outline), .position = position}, paint);
+        // the transform is stamped like every retained draw, so a scaled subtree scales the glyph (§6.4, §6.1)
+        command.set_transform(transform);
+        return command;
     }
 
     DrawCommand DrawCommand::shadow(Rect rect, float radius, Shadow shadow) {
@@ -80,6 +83,16 @@ namespace albor
             return DrawCommand(RectGeometry{.rect = Rect{}}, Paint{});
         // the casting shape and the cast are the geometry, because the blur needs both (§6.2)
         return DrawCommand(ShadowGeometry{.rect = rect, .radius = radius, .shadow = shadow}, Paint{});
+    }
+
+    DrawCommand DrawCommand::layer_push(float opacity) {
+        // the opacity is clamped into the unit range, because a binding computed from data can land outside it (§6.2)
+        return DrawCommand(LayerGeometry{.opacity = std::clamp(opacity, 0.0f, 1.0f), .pop = false}, Paint{});
+    }
+
+    DrawCommand DrawCommand::layer_pop() {
+        // the marker carries no opacity of its own, because the push it matches already named one (§6.2)
+        return DrawCommand(LayerGeometry{.pop = true}, Paint{});
     }
 
     DrawCommand::DrawCommand(Geometry geometry, Paint paint) :
@@ -115,6 +128,9 @@ namespace albor
         // a polyline is the ninth alternative, which is what a variant holds at most (§6.2)
         case 8:
             return DrawCommandKind::Polyline;
+        // a layer marker is the tenth alternative, and its flag says whether it opens or closes (§6.2)
+        case 9:
+            return layer_geometry().pop ? DrawCommandKind::LayerPop : DrawCommandKind::LayerPush;
         // an alternative outside the enumeration is read as the shadow, which a report sees (§6.2)
         default:
             return DrawCommandKind::Shadow;
@@ -181,6 +197,21 @@ namespace albor
         return std::get<ShadowGeometry>(m_geometry);
     }
 
+    const DrawCommand::LayerGeometry& DrawCommand::layer_geometry() const {
+        // the marker is the alternative a layer command was built with (§6.2)
+        return std::get<LayerGeometry>(m_geometry);
+    }
+
+    void DrawCommand::set_clip_radius(float radius) {
+        // the radius rides with the clip, which the replay rounds the scissor by (§6.2)
+        m_clip_radius = radius;
+    }
+
+    float DrawCommand::clip_radius() const {
+        // the recorded radius is what a replay reads (§6.2)
+        return m_clip_radius;
+    }
+
     void DrawCommand::set_clip(Rect clip) {
         // the clip is stamped before the command joins the list, so it is fixed for good (§6.2)
         m_clip = clip;
@@ -211,8 +242,11 @@ namespace albor
     }
 
     bool DrawCommand::draws_nothing() const {
+        // the layer markers are structural, so a recorder may never drop one half of a pair (§6.2)
+        const DrawCommandKind command_kind = kind();
+        const bool structural = command_kind == DrawCommandKind::LayerPush || command_kind == DrawCommandKind::LayerPop;
         // a command under an empty clip can put no ink down, so a recorder culls it (§6.2)
-        if (m_clip.empty())
+        if (!structural && m_clip.empty())
             return true;
         // a paint that neither fills nor strokes draws nothing, whatever the shape (§6.2)
         const bool paints = m_paint.fills() || m_paint.strokes();
@@ -267,6 +301,10 @@ namespace albor
             const ShadowGeometry& cast = shadow_geometry();
             return cast.rect.empty() || !cast.shadow.casts();
         }
+        // a layer marker paints nothing itself, so it has nothing to cull (§6.2)
+        case DrawCommandKind::LayerPush:
+        case DrawCommandKind::LayerPop:
+            return false;
         }
         // the switch covers every kind, so nothing reaches here (§6.2)
         return true;
@@ -277,25 +315,36 @@ namespace albor
         switch (kind()) {
         case DrawCommandKind::Rect:
         case DrawCommandKind::RoundedRect:
-            // a rectangle covers exactly the rectangle it was given (§6.2)
-            return rect_geometry().rect;
+            // a rectangle covers the rectangle it was given, mapped by the transform it draws under (§6.2, §6.4)
+            return mapped_bounds(rect_geometry().rect);
         case DrawCommandKind::Polyline: {
             // a polyline is bounded by its own vertices, which is what the run carries (§6.2)
             const std::vector<Point>& points = polyline_geometry().points;
             // a run with no vertex covers nothing, which is the quiet default (§6.2)
             if (points.empty())
                 return Rect{};
-            // the edges start at the first vertex, which every run has (§6.2)
-            float left = points.front().x;
+            // the edges start at the first vertex, placed where the draw puts it (§6.2, §6.4)
+            const Point first = m_transform.apply(points.front());
+            // the left edge starts at the first vertex, which every run has (§6.2)
+            float left = first.x;
+            // the right edge starts at the same vertex (§6.2)
             float right = left;
-            float top = points.front().y;
+            // the top edge starts at the same vertex (§6.2)
+            float top = first.y;
+            // the bottom edge starts at the same vertex (§6.2)
             float bottom = top;
             // every further vertex widens the edges, which is what makes the bound conservative (§6.2)
             for (const Point& point : points) {
-                left = std::min(left, point.x);
-                right = std::max(right, point.x);
-                top = std::min(top, point.y);
-                bottom = std::max(bottom, point.y);
+                // the vertex lands where the transform places it (§6.4)
+                const Point drawn = m_transform.apply(point);
+                // the left edge follows the leftmost vertex (§6.2)
+                left = std::min(left, drawn.x);
+                // the right edge follows the rightmost (§6.2)
+                right = std::max(right, drawn.x);
+                // the top edge follows the topmost (§6.2)
+                top = std::min(top, drawn.y);
+                // the bottom edge follows the bottommost (§6.2)
+                bottom = std::max(bottom, drawn.y);
             }
             // the bound is returned whole (§6.2)
             return Rect{.x = left, .y = top, .width = right - left, .height = bottom - top};
@@ -303,8 +352,10 @@ namespace albor
         case DrawCommandKind::Text: {
             // a run covers its measured extent, which the layout already carries (§9.1)
             const TextLayout& layout = text_geometry().layout;
-            // the size is measured, so the bound is the origin at zero with that extent (§6.2, §9.1)
-            return Rect{.x = 0.0f, .y = 0.0f, .width = layout.size.width, .height = layout.size.height};
+            // the extent starts at the origin the run draws at, which the geometry carries (§6.2, §9.1)
+            const Rect extent = Rect::from_origin_size(text_geometry().origin, Size{.width = layout.size.width, .height = layout.size.height});
+            // the run covers where the transform places that extent (§6.4)
+            return mapped_bounds(extent);
         }
         case DrawCommandKind::LineBatch:
             // a batch has no single rectangle of its own, so it covers the clip it draws under (§6.2)
@@ -315,24 +366,28 @@ namespace albor
             // a missing contour covers nothing, which is the quiet default (§6.4)
             if (path == nullptr || path->points().empty())
                 return Rect{};
+            // the first point is placed under the transform the contour draws under (§6.4, §6.2)
+            const Point first = m_transform.apply(path->points().front());
             // the left edge starts at the first point, which every contour has (§6.4)
-            float left = path->points().front().x;
+            float left = first.x;
             // the right edge starts at the same point (§6.4)
             float right = left;
             // the top edge starts at the same point (§6.4)
-            float top = path->points().front().y;
+            float top = first.y;
             // the bottom edge starts at the same point (§6.4)
             float bottom = top;
             // every further point widens the edges, which is what makes the bound conservative (§6.4)
             for (const Point& point : path->points()) {
+                // the point lands where the retained transform places it (§6.4)
+                const Point drawn = m_transform.apply(point);
                 // the left edge follows the leftmost point (§6.4)
-                left = std::min(left, point.x);
+                left = std::min(left, drawn.x);
                 // the right edge follows the rightmost (§6.4)
-                right = std::max(right, point.x);
+                right = std::max(right, drawn.x);
                 // the top edge follows the topmost (§6.4)
-                top = std::min(top, point.y);
+                top = std::min(top, drawn.y);
                 // the bottom edge follows the bottommost (§6.4)
-                bottom = std::max(bottom, point.y);
+                bottom = std::max(bottom, drawn.y);
             }
             // the bound is returned whole (§6.4)
             return Rect{.x = left, .y = top, .width = right - left, .height = bottom - top};
@@ -341,40 +396,49 @@ namespace albor
             // a picture may draw anything, so it covers the clip entirely (§6.2)
             return clip();
         case DrawCommandKind::Image:
-            // an image covers exactly where it was placed (§6.2)
-            return image_geometry().destination;
+            // an image covers where it was placed, mapped by the transform it draws under (§6.2, §6.4)
+            return mapped_bounds(image_geometry().destination);
         case DrawCommandKind::GlyphOutline: {
-            // an outline covers its own points placed at its position (§6.4, §6.2)
-            const std::shared_ptr<const GlyphOutline>& outline = glyph_outline_geometry().outline;
+            // an outline covers its own points placed at its pen and under its transform (§6.4, §6.2)
+            const GlyphOutlineGeometry& geometry = glyph_outline_geometry();
             // a missing outline covers nothing, which is the quiet default (§6.4)
-            if (outline == nullptr || outline->points().empty())
+            if (geometry.outline == nullptr || geometry.outline->points().empty())
                 return Rect{};
-            // the position places the glyph, which the geometry carries (§6.2)
-            const Point position = glyph_outline_geometry().position;
+            // a point of the glyph is placed at the pen first, then under the command's transform (§6.4, §6.1)
+            const auto placed_point = [this, &geometry](const Point& point) { return m_transform.apply(Point{.x = geometry.position.x + point.x, .y = geometry.position.y + point.y}); };
+            // the first point starts every edge, and it is placed once because the transform is not free (§6.4)
+            const Point first = placed_point(geometry.outline->points().front());
             // the left edge starts at the first point, placed (§6.4)
-            float left = position.x + outline->points().front().x;
+            float left = first.x;
             // the right edge starts at the same point (§6.4)
             float right = left;
             // the top edge starts at the same point (§6.4)
-            float top = position.y + outline->points().front().y;
+            float top = first.y;
             // the bottom edge starts at the same point (§6.4)
             float bottom = top;
             // every further point widens the edges, which is what makes the bound conservative (§6.4)
-            for (const Point& point : outline->points()) {
+            for (const Point& point : geometry.outline->points()) {
+                // the point is placed where the replay draws it, because a skewed outline covers elsewhere (§6.1)
+                const Point drawn = placed_point(point);
                 // the left edge follows the leftmost point (§6.4)
-                left = std::min(left, position.x + point.x);
+                left = std::min(left, drawn.x);
                 // the right edge follows the rightmost (§6.4)
-                right = std::max(right, position.x + point.x);
+                right = std::max(right, drawn.x);
                 // the top edge follows the topmost (§6.4)
-                top = std::min(top, position.y + point.y);
+                top = std::min(top, drawn.y);
                 // the bottom edge follows the bottommost (§6.4)
-                bottom = std::max(bottom, position.y + point.y);
+                bottom = std::max(bottom, drawn.y);
             }
             // the bound is returned whole (§6.4)
             return Rect{.x = left, .y = top, .width = right - left, .height = bottom - top};
         }
         case DrawCommandKind::Shadow:
-            return shadow_bounds();
+            // a cast covers the blur reach around its shape, mapped by the transform it draws under (§6.2, §6.4)
+            return mapped_bounds(shadow_bounds());
+        case DrawCommandKind::LayerPush:
+        case DrawCommandKind::LayerPop:
+            // a layer marker owns no geometry, so it covers the clip it draws under (§6.2)
+            return clip();
         }
         // a kind outside the enumeration covers nothing, which is the quiet default (§6.2)
         return Rect{};
@@ -390,18 +454,83 @@ namespace albor
     }
 
     void DrawCommand::replay_glyph_outline(RenderContext& context) const {
-        // the outline is one closed contour, whose path was built once when the outline was built (§6.4, AD-06)
+        // the outline carries every contour of the glyph, whose path was built once with it (§6.4, AD-06)
         const GlyphOutlineGeometry& geometry = glyph_outline_geometry();
-        // a contour of fewer than three points encloses nothing, so there is nothing to draw (§6.2)
+        // an outline of fewer than three points encloses no area, so there is nothing to draw (§6.2)
         if (geometry.outline->points().size() < 3)
             return;
-        // the outline draws as a filled path at the pen position, which is the same fill a glyph rasterizes with (§6.4)
-        const Transform placed{.translate_x = geometry.position.x, .translate_y = geometry.position.y};
-        // the retained path draws as it is, so a frame allocates no resource per glyph (§6.4, AD-06)
-        context.draw_path(geometry.outline->path(), placed, m_paint);
+        // the pen places the glyph, and the command's transform places the pen (§6.4, §6.1)
+        const Transform pen{.translate_x = geometry.position.x, .translate_y = geometry.position.y};
+        // the retained path draws under both, so a scaled subtree scales its glyphs (§6.4, AD-06)
+        context.draw_path(geometry.outline->path(), pen.then(m_transform), m_paint);
+    }
+
+    bool DrawCommand::uses_the_context_transform(DrawCommandKind kind) {
+        // the retained kinds take the transform as an argument, so composing one here would apply it twice (§6.4)
+        switch (kind) {
+        case DrawCommandKind::LineBatch:
+        case DrawCommandKind::Path:
+        case DrawCommandKind::Picture:
+        case DrawCommandKind::GlyphOutline:
+        case DrawCommandKind::LayerPush:
+        case DrawCommandKind::LayerPop:
+            return false;
+        default:
+            return true;
+        }
+    }
+
+    bool DrawCommand::draws_under_the_context_transform() const {
+        // a command with no transform of its own composes none, which is every command a frame records (§6.4)
+        if (m_transform == Transform{})
+            return false;
+        // the kinds that take no transform argument draw under the one this command carries (§6.4)
+        return uses_the_context_transform(kind());
+    }
+
+    Rect DrawCommand::mapped_bounds(const Rect& rect) const {
+        // the four corners are mapped and their extremes taken, because a skewed rectangle is a quad (§6.2)
+        const Point corners[] = {Point{.x = rect.x, .y = rect.y}, Point{.x = rect.x + rect.width, .y = rect.y}, Point{.x = rect.x + rect.width, .y = rect.y + rect.height}, Point{.x = rect.x, .y = rect.y + rect.height}};
+        // the bound starts at the first mapped corner, which every rectangle has (§6.2)
+        const Point first = m_transform.apply(corners[0]);
+        // the left edge starts at the first corner (§6.2)
+        float left = first.x;
+        // the right edge starts at the same corner (§6.2)
+        float right = left;
+        // the top edge starts at the same corner (§6.2)
+        float top = first.y;
+        // the bottom edge starts at the same corner (§6.2)
+        float bottom = top;
+        // every further corner widens the edges, which is what makes the bound conservative (§6.2)
+        for (const Point& corner : corners) {
+            // the corner lands where the draw places it (§6.2)
+            const Point drawn = m_transform.apply(corner);
+            // the left edge follows the leftmost corner (§6.2)
+            left = std::min(left, drawn.x);
+            // the right edge follows the rightmost (§6.2)
+            right = std::max(right, drawn.x);
+            // the top edge follows the topmost (§6.2)
+            top = std::min(top, drawn.y);
+            // the bottom edge follows the bottommost (§6.2)
+            bottom = std::max(bottom, drawn.y);
+        }
+        // the bound is returned whole (§6.2)
+        return Rect{.x = left, .y = top, .width = right - left, .height = bottom - top};
     }
 
     void DrawCommand::replay(RenderContext& context) const {
+        // a command whose primitive takes no transform draws under the one it carries, composed with the context's (§6.4)
+        if (!draws_under_the_context_transform())
+            return replay_primitive(context);
+        // the context is pushed first, because a transform must not outlive the command that asked for it (§6.2)
+        context.save();
+        // the command transform sits under the context's, which is how a picture inside a picture composes (§6.4)
+        context.set_transform(m_transform.then(context.transform()));
+        replay_primitive(context);
+        context.restore();
+    }
+
+    void DrawCommand::replay_primitive(RenderContext& context) const {
         // the switch is the one place a kind is drawn, which keeps a frame and a picture in agreement (§6.1, §6.4)
         switch (kind()) {
         // a shape draws through its own primitive, which keeps the radii a plain rectangle has no use for (§6.2)
@@ -444,27 +573,54 @@ namespace albor
         case DrawCommandKind::Shadow:
             context.draw_shadow(shadow_geometry().rect, shadow_geometry().radius, shadow_geometry().shadow);
             return;
+        // a layer marker opens the group its later commands composite into (§6.2)
+        case DrawCommandKind::LayerPush:
+            context.push_layer(layer_geometry().opacity);
+            return;
+        // a layer marker closes the group the matching push opened (§6.2)
+        case DrawCommandKind::LayerPop:
+            context.pop_layer();
+            return;
         }
     }
     void replay_commands(const std::vector<DrawCommand>& commands, RenderContext& context, const Rect& unclipped) {
         // the applied clip starts as the whole area, which is what the commands of an unclipped tree record (§6.2)
         Rect applied = unclipped;
+        // the applied radius starts at zero, because the whole area carries no corners (§6.2)
+        float applied_radius = 0.0f;
         // the switch is closed until a command asks for a narrower clip (§6.2)
         bool switched = false;
 
         // every command replays in paint order, which is the order the ui thread recorded (§6.1)
         for (const DrawCommand& command : commands) {
+            // a layer marker owns no geometry, so the switch closes around it and the next draw reopens (§6.2)
+            if (command.kind() == DrawCommandKind::LayerPush || command.kind() == DrawCommandKind::LayerPop) {
+                // a clip open above the marker would nest inside the layer rather than around it (§6.2)
+                if (switched)
+                    context.restore();
+                // the next draw opens its own switch, because the base clip is the one the marker saw (§6.2)
+                switched = false;
+                applied = unclipped;
+                applied_radius = 0.0f;
+                // the marker opens or closes the group at the base clip, which its children clip themselves (§6.2)
+                command.replay(context);
+                continue;
+            }
             // a narrower clip opens a switch, which is balanced again when the next command differs (§6.2)
-            if (command.clip() != applied) {
+            if (command.clip() != applied || command.clip_radius() != applied_radius) {
                 // the previous switch is closed first, because a clip intersects rather than replaces (§6.2)
                 if (switched)
                     context.restore();
                 // the new clip is pushed, so it intersects whatever was already applied (§6.2)
                 context.save();
                 // the command's own clip is applied, which is what stage one recorded (§6.2)
-                context.clip_rect(command.clip());
+                if (command.clip_radius() > 0.0f)
+                    context.clip_rounded_rect(command.clip(), command.clip_radius());
+                else
+                    context.clip_rect(command.clip());
                 // the applied clip is remembered, so a run of commands under it costs nothing more (§6.2)
                 applied = command.clip();
+                applied_radius = command.clip_radius();
                 // the switch is open, which the closing branch above balances (§6.2)
                 switched = true;
             }

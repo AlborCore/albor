@@ -32,6 +32,9 @@ namespace albor::blend2d
         // wrap the raster context of the frame, scaled from logical points onto the physical pixels (§6.3, AD-27)
         Blend2DRenderContext(BLContext* context, float device_scale, Rect full_clip);
 
+        // release the open layers, which each own an offscreen raster (§6.2)
+        ~Blend2DRenderContext() override;
+
         // override: push the current transform and clip
         void save() override;
 
@@ -58,6 +61,12 @@ namespace albor::blend2d
 
         // override: read back the current opacity
         [[nodiscard]] float opacity() const override;
+
+        // override: begin a layer the later draws composite into, which restores this state at the matching pop
+        void push_layer(float opacity) override;
+
+        // override: end the layer the matching push began
+        void pop_layer() override;
 
         // override: draw a filled and stroked rectangle
         void draw_rect(const Rect& rect, const Paint& paint) override;
@@ -89,7 +98,13 @@ namespace albor::blend2d
         // hand out how deep the state stack is, which a test asserts against the saves it made
         [[nodiscard]] std::size_t depth() const;
 
+        // close every clip group a frame left open, which the surface calls before it ends the raster
+        void finish();
+
     private:
+        // one open clip group, whose type the source defines because it owns blend2d rasters (§6.2)
+        struct ClipGroup;
+
         // the transform, clip and opacity one save pushed
         struct State
         {
@@ -101,6 +116,9 @@ namespace albor::blend2d
 
             // the opacity at the time of the save
             float opacity = 1.0f;
+
+            // the clip group that was open at the time of the save
+            ClipGroup* group = nullptr;
         };
 
         // convert an albor colour into the blend2d colour the raster expects, with the opacity folded into alpha
@@ -112,11 +130,20 @@ namespace albor::blend2d
         // convert an albor transform into the matrix the raster context concats, without the base scale (§6.3)
         [[nodiscard]] static BLMatrix2D to_blend_matrix(const Transform& transform);
 
+        // clip a context to a rectangle, snapping an axis aligned box onto the device pixel grid (§6.2, AD-26)
+        void apply_clip(BLContext& context, const Rect& rect) const;
+
         // build the blend2d path of a command stream, which the batch and the path replay share
         [[nodiscard]] static BLPath build_path(std::span<const PathVerb> verbs, std::span<const Point> points);
 
         // resolve the run's font from the registered bytes, which is empty when no font of that hash is registered (§9.2)
         [[nodiscard]] BLFont resolve_font(std::uint64_t font_hash, float font_size);
+
+        // begin an offscreen group a rounded clip draws through, which copies the destination it must see (§6.2)
+        void begin_clip_group();
+
+        // composite the open group through its rounded mask, which the save that began it closes (§6.2)
+        void flatten_clip_group();
 
         // the raster context of the frame being drawn, which is null when no frame began
         BLContext* m_context;
@@ -135,5 +162,17 @@ namespace albor::blend2d
 
         // the pushed states, which a restore pops
         std::vector<State> m_states;
+
+        // the clip group the draws are currently clipped by, or null when the clip is rectangular (§6.2)
+        ClipGroup* m_group = nullptr;
+
+        // the open clip groups, innermost last, which a flatten composites and releases (§6.2)
+        std::vector<std::unique_ptr<ClipGroup>> m_groups;
+
+        // one open layer, whose type the source defines because it owns blend2d rasters (§6.2)
+        struct Layer;
+
+        // the open layers, innermost last, which a pop composites and releases (§6.2)
+        std::vector<std::unique_ptr<Layer>> m_layers;
     };
 } // namespace albor::blend2d

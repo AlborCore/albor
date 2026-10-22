@@ -10,6 +10,7 @@
 #include "render/draw_command.h"
 #include "render/line_batch.h"
 #include "render/picture_resource.h"
+#include "render/render-albor/albor_glyph_path.h"
 #include "render/render-software/software_glyph_atlas.h"
 #include "render/render-software/software_render_surface.h"
 #include "render/render-software/software_renderer_backend.h"
@@ -17,6 +18,7 @@
 #include "render/shaped_run.h"
 #include "resources/embedded_font.h"
 #include "text/text-harfbuzz/embedded_glyph_provider.h"
+#include "text/text-harfbuzz/harfbuzz_font_face.h"
 #include "text/text-harfbuzz/harfbuzz_text_engine.h"
 #include "ui/frame_pipeline.h"
 #include "ui/scene_builder.h"
@@ -26,17 +28,17 @@ using namespace albor;
 
 namespace
 {
-    // the font file the vendored engine shapes from, and the family the renderer draws with (§9.1, AD-28)
-    const char* const FONT_PATH = "/System/Library/Fonts/Supplemental/Arial.ttf";
+    // the ofl font the vendored engine shapes from, which the tree carries so every host runs the suite (§9.1, AD-28, #92)
+    const char* const FONT_PATH = ALBOR_TEST_FONT_PATH;
 
-    // the family the platform resolves for drawing, which must name that same face (§15, AD-28)
-    const char* const FONT_FAMILY = "Arial";
+    // the family the file engine is built with, which names the carried face (§15, AD-28)
+    const char* const FONT_FAMILY = ALBOR_TEST_FONT_FAMILY;
 
-    // the host hebrew face the rtl checks shape with, which a host without one skips the check for (§9.2)
-    const char* const RTL_FONT_PATH = "/System/Library/Fonts/SFHebrew.ttf";
+    // the ofl hebrew face the rtl checks shape with, which the tree carries beside the latin one (§9.2)
+    const char* const RTL_FONT_PATH = ALBOR_TEST_RTL_FONT_PATH;
 
-    // the family the embedded rtl face is registered under, which is what a run names to reach it (§9.2, AD-34)
-    const char* const RTL_FONT_FAMILY = "SFHebrew";
+    // the family the carried rtl face is registered under, which is what a run names to reach it (§9.2, AD-34)
+    const char* const RTL_FONT_FAMILY = ALBOR_TEST_RTL_FONT_FAMILY;
 
     // the largest difference the engines may report between their measured widths (§15, AD-25)
     bool has_font() {
@@ -112,17 +114,31 @@ TEST(DualEngineConformanceChecks, TheVendoredRunIsDrawable) {
     ASSERT_NE(vendored, nullptr);
     const TextLayout measured = vendored->measure("Albor", 0.0f, 16.0f);
     ASSERT_NE(measured.run, nullptr);
-    // act assert the run carries a typeface, which is what phase 3 needed before the oracle could go (§9.1, AD-28)
+    // act assert the run is drawable and names the font it shaped from (§9.1, AD-34)
     EXPECT_TRUE(vendored->drawable());
-    // the handle is valid for the same reason, so the renderer has something to draw the glyphs with (§9.1)
-    EXPECT_TRUE(measured.run->lines().front().font.valid());
+    // the run draws through the bytes it carries, which the registry holds when no platform face exists (§15, AD-34)
+    EXPECT_TRUE(resources::FontRegistry::find_hash(measured.run->font_hash()) != nullptr);
 }
 
-TEST(DualEngineConformanceChecks, AnUnknownFamilyLeavesTheEngineUnusable) {
-    // arrange, act a family the platform does not have, which is the shape of a missing font (§9.1)
+TEST(DualEngineConformanceChecks, AFileEngineNeedsNoPlatformFamily) {
+    // arrange a family the platform does not have, which is the shape of an application shipping its own font (§9.1)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    // act an engine is built over complete font bytes under that unknown family (§15, AD-34)
     const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create(FONT_PATH, "NoSuchFamilyAlbor");
-    // assert
-    EXPECT_EQ(engine, nullptr);
+    // assert the bytes are enough to shape and draw, because the run carries them rather than a typeface (§15, AD-34)
+    ASSERT_NE(engine, nullptr);
+    EXPECT_TRUE(engine->ready());
+    EXPECT_TRUE(engine->drawable());
+    // assert the bytes were registered, which is what lets a backend resolve the run by content (§15)
+    const TextLayout measured = engine->measure("Albor", 0.0f, 16.0f);
+    ASSERT_NE(measured.run, nullptr);
+    EXPECT_TRUE(resources::FontRegistry::find_hash(measured.run->font_hash()) != nullptr);
+    // assert the run draws as outlines, because no platform face stands behind its family (§9.1, AD-34)
+    EXPECT_EQ(measured.run->shape_source(), ShapeSource::Embedded);
+    // exit
+    resources::FontRegistry::clear();
 }
 
 TEST(DualEngineConformanceChecks, ANonFontIsRefusedRatherThanHalfBuilt) {
@@ -203,7 +219,7 @@ TEST(DualEngineConformanceChecks, ASelectionChangesTheFaceTheRunShapesWith) {
         GTEST_SKIP() << "no second conformance font on this host";
     resources::FontRegistry::clear();
     resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
-    resources::FontRegistry::register_font(make_embedded_font("AlborSecond", FONT_PATH));
+    resources::FontRegistry::register_font(make_embedded_font("AlborSecond", RTL_FONT_PATH));
     const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
     ASSERT_NE(engine, nullptr);
     // act the same text is shaped once with the default face and once with the second family (§9.1, AD-34)
@@ -264,8 +280,8 @@ TEST(EmbeddedFontChecks, TheOflFixtureIsPresentAndIdentifiedByItsBytes) {
     resources::FontRegistry::register_font(fixture);
     resources::FontRegistry::register_font(make_embedded_font("AlborFixtureAlias", ALBOR_TEST_FONT_PATH));
     // assert the two names resolve and share one identity, because identity is the bytes (§15, AD-34)
-    const resources::EmbeddedFont* named = resources::FontRegistry::find_family(ALBOR_TEST_FONT_FAMILY);
-    const resources::EmbeddedFont* alias = resources::FontRegistry::find_family("AlborFixtureAlias");
+    const std::shared_ptr<const resources::EmbeddedFont> named = resources::FontRegistry::find_family(ALBOR_TEST_FONT_FAMILY);
+    const std::shared_ptr<const resources::EmbeddedFont> alias = resources::FontRegistry::find_family("AlborFixtureAlias");
     ASSERT_NE(named, nullptr);
     ASSERT_NE(alias, nullptr);
     EXPECT_EQ(named->content_hash, alias->content_hash);
@@ -288,7 +304,7 @@ TEST(EmbeddedFontChecks, AnEmbeddedFixtureShapesWithoutAPlatformFont) {
     EXPECT_GT(layout.run->glyph_count(), 0u);
     // assert the run carries no typeface and still draws, because the renderer walks its outlines (§15, AD-34)
     EXPECT_FALSE(layout.run->lines().front().font.valid());
-    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 16.0f);
+    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 16.0f).points;
     EXPECT_FALSE(outline.empty());
     // exit
     resources::FontRegistry::clear();
@@ -297,12 +313,12 @@ TEST(EmbeddedFontChecks, ARegisteredFontIsFoundByFamilyAndByHash) {
     // arrange the registry starts empty, because a registration from another test would answer this (§2.2)
     resources::FontRegistry::clear();
     EXPECT_EQ(resources::FontRegistry::count(), 0u);
-    // act a font is registered the way generated code registers one (§11.3, AD-34)
-    resources::FontRegistry::register_font(make_embedded_font("AlborTest", FONT_PATH));
+    // act a font is registered the way generated code registers one, over the carried bytes (§11.3, §15, AD-34)
+    resources::FontRegistry::register_font(make_embedded_font("AlborTest", ALBOR_TEST_FONT_PATH));
     // assert both lookups answer, since a family is asked for and a hash is what a layout keys on (§15)
-    ASSERT_NE(resources::FontRegistry::find_family("AlborTest"), nullptr);
-    const resources::EmbeddedFont* found = resources::FontRegistry::find_family("AlborTest");
-    EXPECT_NE(resources::FontRegistry::find_hash(found->content_hash), nullptr);
+    ASSERT_TRUE(resources::FontRegistry::find_family("AlborTest") != nullptr);
+    const std::shared_ptr<const resources::EmbeddedFont> found = resources::FontRegistry::find_family("AlborTest");
+    EXPECT_TRUE(resources::FontRegistry::find_hash(found->content_hash) != nullptr);
     EXPECT_EQ(resources::FontRegistry::count(), 1u);
     // exit the registry is emptied, so the next test starts from nothing (§2.2)
     resources::FontRegistry::clear();
@@ -311,10 +327,11 @@ TEST(EmbeddedFontChecks, ARegisteredFontIsFoundByFamilyAndByHash) {
 TEST(EmbeddedFontChecks, TheHashIsOverTheBytesAndNotTheName) {
     // arrange the same bytes registered under two names (§15, AD-34)
     resources::FontRegistry::clear();
-    resources::FontRegistry::register_font(make_embedded_font("AlborOne", FONT_PATH));
-    resources::FontRegistry::register_font(make_embedded_font("AlborTwo", FONT_PATH));
-    const resources::EmbeddedFont* one = resources::FontRegistry::find_family("AlborOne");
-    const resources::EmbeddedFont* two = resources::FontRegistry::find_family("AlborTwo");
+    // the carried font is the fixture here, because the hash is over the bytes the build ships (§15, AD-34)
+    resources::FontRegistry::register_font(make_embedded_font("AlborOne", ALBOR_TEST_FONT_PATH));
+    resources::FontRegistry::register_font(make_embedded_font("AlborTwo", ALBOR_TEST_FONT_PATH));
+    const std::shared_ptr<const resources::EmbeddedFont> one = resources::FontRegistry::find_family("AlborOne");
+    const std::shared_ptr<const resources::EmbeddedFont> two = resources::FontRegistry::find_family("AlborTwo");
     ASSERT_NE(one, nullptr);
     ASSERT_NE(two, nullptr);
     // act assert the names differ and the identity does not, because the identity is the bytes (§15, AD-34)
@@ -415,7 +432,7 @@ TEST(GlyphOutlineChecks, AVisibleGlyphHasAnOutline) {
     ASSERT_NE(layout.run, nullptr);
     ASSERT_GT(layout.run->glyph_count(), 0u);
     // act the first glyph is the letter, because a one letter string shapes one glyph (§9.1)
-    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 20.0f);
+    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 20.0f).points;
     // assert the outline is a real shape, because an empty outline would draw nothing (§6.2, §15)
     ASSERT_FALSE(outline.empty());
     EXPECT_GT(outline.size(), 3u);
@@ -434,7 +451,7 @@ TEST(GlyphOutlineChecks, ASpaceHasNoOutline) {
     const TextLayout layout = engine->measure(" ", 0.0f, 20.0f);
     ASSERT_NE(layout.run, nullptr);
     // act the space glyph is drawn as nothing, so it has no points (§6.2)
-    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 20.0f);
+    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 20.0f).points;
     // assert an empty outline is returned rather than a degenerate shape (§6.2)
     EXPECT_TRUE(outline.empty());
     // exit
@@ -453,8 +470,8 @@ TEST(GlyphOutlineChecks, AnOutlineIsReproducible) {
     ASSERT_NE(layout.run, nullptr);
     const std::uint32_t glyph = layout.run->lines().front().glyphs.front().id;
     // act the same glyph is walked twice from the same bytes (§15, AD-34)
-    const std::vector<Point> first = engine->glyph_outline(glyph, 20.0f);
-    const std::vector<Point> second = engine->glyph_outline(glyph, 20.0f);
+    const std::vector<Point> first = engine->glyph_outline(glyph, 20.0f).points;
+    const std::vector<Point> second = engine->glyph_outline(glyph, 20.0f).points;
     // assert the two outlines are identical, because the shape comes from the font and not from a rasterizer (§15)
     ASSERT_EQ(first.size(), second.size());
     for (std::size_t index = 0; index < first.size(); index++) {
@@ -479,8 +496,8 @@ TEST(GlyphOutlineChecks, AnOutlineScalesWithTheFontSize) {
     ASSERT_NE(layout.run, nullptr);
     const std::uint32_t glyph = layout.run->lines().front().glyphs.front().id;
     // act
-    const std::vector<Point> small = engine->glyph_outline(glyph, 20.0f);
-    const std::vector<Point> large = engine->glyph_outline(glyph, 40.0f);
+    const std::vector<Point> small = engine->glyph_outline(glyph, 20.0f).points;
+    const std::vector<Point> large = engine->glyph_outline(glyph, 40.0f).points;
     // assert doubling the size doubles the shape, because the outline is in logical pixels (§9.1, AD-27)
     ASSERT_EQ(small.size(), large.size());
     float small_height = 0.0f;
@@ -496,6 +513,66 @@ TEST(GlyphOutlineChecks, AnOutlineScalesWithTheFontSize) {
     resources::FontRegistry::clear();
 }
 
+TEST(GlyphOutlineChecks, ACounterGlyphCarriesTwoClosedContours) {
+    // arrange a round letter, whose counter is a second contour rather than the end of the first (§6.4)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("o", 0.0f, 40.0f);
+    ASSERT_NE(layout.run, nullptr);
+    // act the verb stream is counted, because a counter survives only when its contour is sealed (§6.4)
+    const GlyphOutlineData walked = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 40.0f);
+    std::size_t opened = 0;
+    std::size_t sealed = 0;
+    for (const PathVerb verb : walked.verbs) {
+        // a move opens one contour of the glyph (§6.4)
+        if (verb == PathVerb::MoveTo)
+            opened++;
+        // a close seals the contour it opened, which keeps the counter apart from the ring (§6.4)
+        if (verb == PathVerb::Close)
+            sealed++;
+    }
+    // assert the ring and its counter both reach the stream, which one flat point run cannot carry (§6.4)
+    EXPECT_EQ(opened, 2u);
+    EXPECT_EQ(sealed, 2u);
+    // assert the stream consumes every point it carries, which a dropped verb would leave behind (§6.4)
+    EXPECT_EQ(PathResource::point_demand(std::span<const PathVerb>(walked.verbs)), walked.points.size());
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(GlyphOutlineChecks, AnOutlineIsHandedOverYDownTheBaseline) {
+    // arrange a letter whose ink sits entirely above the baseline, which makes the sign of every y unambiguous (§9.1)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("x", 0.0f, 40.0f);
+    ASSERT_NE(layout.run, nullptr);
+    // act the vertical extent is measured against the baseline, which the walk puts at the origin (§9.1, AD-27)
+    const GlyphOutlineData walked = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 40.0f);
+    ASSERT_FALSE(walked.points.empty());
+    float top = walked.points.front().y;
+    float bottom = walked.points.front().y;
+    for (const Point& point : walked.points) {
+        // the top edge follows the smallest coordinate, which is where the x height lands (§9.1)
+        top = std::min(top, point.y);
+        // the bottom edge follows the largest, which stays at the baseline for a letter without a descender (§9.1)
+        bottom = std::max(bottom, point.y);
+    }
+    // assert the x height rises above the baseline, which is negative in the y down space a surface draws in (§9.1)
+    EXPECT_LT(top, -1.0f);
+    // assert no ink falls below the baseline, which a y up walk would place there instead (§9.1)
+    EXPECT_LT(bottom, 1.0f);
+    // exit
+    resources::FontRegistry::clear();
+}
+
 TEST(GlyphOutlineChecks, AnUnknownGlyphHasNoOutline) {
     // arrange an engine whose face carries fewer glyphs than the index asks for (§6.2)
     if (!has_font())
@@ -505,7 +582,7 @@ TEST(GlyphOutlineChecks, AnUnknownGlyphHasNoOutline) {
     const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
     ASSERT_NE(engine, nullptr);
     // act an index past the end of the font cannot be loaded (§9.1)
-    const std::vector<Point> outline = engine->glyph_outline(1000000u, 20.0f);
+    const std::vector<Point> outline = engine->glyph_outline(1000000u, 20.0f).points;
     // assert nothing is returned rather than a crash or a degenerate shape (§6.2)
     EXPECT_TRUE(outline.empty());
     // exit
@@ -523,7 +600,7 @@ TEST(GlyphOutlineChecks, ACurveGlyphIsTessellatedRatherThanSampled) {
     const TextLayout layout = engine->measure("o", 0.0f, 100.0f);
     ASSERT_NE(layout.run, nullptr);
     // act the round letter is walked, which is where a conic or a cubic is reported (§6.4)
-    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 100.0f);
+    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 100.0f).points;
     ASSERT_FALSE(outline.empty());
     // assert a real tessellation happened, which a polyline through control points would not produce (§6.4, §15)
     EXPECT_GT(outline.size(), 32u);
@@ -563,7 +640,7 @@ TEST(GlyphOutlineChecks, ACubicOutlineIsTessellated) {
     ASSERT_NE(layout.run, nullptr);
     ASSERT_GT(layout.run->glyph_count(), 0u);
     // act the round letter is walked, which is where a cubic is reported and flattened by the fixed segment count (§6.4)
-    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 100.0f);
+    const std::vector<Point> outline = engine->glyph_outline(layout.run->lines().front().glyphs.front().id, 100.0f).points;
     // assert the cubic path produced a tessellated shape rather than nothing, which pins the cubic callback (§6.4, §15)
     ASSERT_FALSE(outline.empty());
     EXPECT_GT(outline.size(), 32u);
@@ -636,6 +713,149 @@ TEST(EmbeddedTextDrawChecks, AnEmbeddedRunPutsInkOnTheReferenceSurface) {
     resources::FontRegistry::clear();
 }
 
+TEST(EmbeddedTextDrawChecks, AnEmbeddedCounterDrawsAsAHole) {
+    // arrange a round letter drawn alone, so a painted counter cannot be mistaken for the ring (§6.4)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("o", 0.0f, 60.0f);
+    ASSERT_NE(layout.run, nullptr);
+    const std::uint32_t glyph = layout.run->lines().front().glyphs.front().id;
+    const GlyphOutlineData walked = engine->glyph_outline(glyph, 60.0f);
+    // act the counter's points are gathered, which is the contour after the second move (§6.4)
+    std::vector<Point> counter;
+    std::size_t cursor = 0;
+    std::size_t contour = 0;
+    for (const PathVerb verb : walked.verbs) {
+        // a move opens the next contour and consumes the point it starts at (§6.4)
+        if (verb == PathVerb::MoveTo) {
+            contour++;
+            cursor++;
+            continue;
+        }
+        // a line consumes one point, which belongs to the counter while that contour is the second one (§6.4)
+        if (verb == PathVerb::LineTo) {
+            if (contour == 2)
+                counter.push_back(walked.points[cursor]);
+            cursor++;
+        }
+    }
+    ASSERT_GT(counter.size(), 3u);
+    // the centre of the round counter is the average of its points, which lands inside it (§6.4)
+    float centre_x = 0.0f;
+    float centre_y = 0.0f;
+    for (const Point& point : counter) {
+        centre_x += point.x;
+        centre_y += point.y;
+    }
+    centre_x /= static_cast<float>(counter.size());
+    centre_y /= static_cast<float>(counter.size());
+    // the glyph is placed with its baseline below its x height, which keeps the whole letter on the surface (§9.1)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{120.0f, 120.0f}, 1.0f);
+    // the pen sits low enough that the letter clears the top edge and its counter stays on the surface (§9.1)
+    const Point placed{40.0f, 80.0f};
+    // the outline is retained once, which is what a frame replays (§6.4, AD-06)
+    const std::shared_ptr<const GlyphOutline> outline = std::make_shared<const GlyphOutline>(engine->font_hash(), glyph, 60.0f, walked);
+    // the frame clears to white, so an unfilled counter reads as background rather than as ink (§6.1)
+    FrameScene scene(metrics, Color::rgb(1.0f, 1.0f, 1.0f));
+    // the glyph is drawn as a filled outline, which is exactly what the replay records (§6.4)
+    scene.add_command(DrawCommand::glyph_outline(outline, placed, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)}));
+    software::SoftwareRendererBackend backend;
+    // the surface is the software reference, which is the screenshot oracle of the parity suite (§16, AD-26)
+    const std::unique_ptr<RenderSurface> surface = software::SoftwareRenderSurface::create(metrics);
+    ASSERT_NE(surface, nullptr);
+    // the frame is executed in one pass, which is what a composition root does (§6.1)
+    backend.execute_frame(*surface, scene);
+    const Screenshot drawn = capture_surface(*surface);
+    ASSERT_FALSE(drawn.empty());
+    // the sampled index needs the readback width, which is the physical extent and not the logical one (§6.3, AD-27)
+    const std::size_t width = static_cast<std::size_t>(drawn.width);
+    const std::size_t hole = (static_cast<std::size_t>(placed.y + centre_y) * width + static_cast<std::size_t>(placed.x + centre_x)) * 4u;
+    ASSERT_LT(hole + 2u, drawn.pixels.size());
+    // assert the counter stays background, which is the hole the second contour cuts (§6.4)
+    EXPECT_EQ(drawn.pixels[hole], 255u);
+    EXPECT_EQ(drawn.pixels[hole + 1], 255u);
+    EXPECT_EQ(drawn.pixels[hole + 2], 255u);
+    // act a point on the ring is sampled by stepping outward from the inner edge, which the stem spans (§6.4)
+    const float outward_x = counter.front().x - centre_x;
+    const float outward_y = counter.front().y - centre_y;
+    const float outward_length = std::hypot(outward_x, outward_y);
+    ASSERT_GT(outward_length, 1.0f);
+    // the sample sits three pixels into the stem, which is narrower than the gap to the outer edge (§6.4)
+    const float ring_x = counter.front().x + outward_x / outward_length * 3.0f;
+    const float ring_y = counter.front().y + outward_y / outward_length * 3.0f;
+    // the ring sample is checked for bounds before it is read, because the coordinates come from the font (§15)
+    const std::size_t ring = (static_cast<std::size_t>(placed.y + ring_y) * width + static_cast<std::size_t>(placed.x + ring_x)) * 4u;
+    ASSERT_LT(ring + 2u, drawn.pixels.size());
+    // assert the ring carries ink beside the hole, which proves the letter drew rather than vanished (§6.2)
+    EXPECT_LT(drawn.pixels[ring], 200u);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(EmbeddedTextPlacementChecks, ScalesTheOutlineByTheTransformTheRecorderStandsAt) {
+    // arrange a square outline, which is a glyph whose ink covers exactly its own corners (§6.4)
+    const std::vector<PathVerb> verbs{PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const std::vector<Point> points{Point{0.0f, 0.0f}, Point{10.0f, 0.0f}, Point{10.0f, 10.0f}, Point{0.0f, 10.0f}};
+    const std::shared_ptr<const GlyphOutline> outline = std::make_shared<const GlyphOutline>(7u, 3u, 16.0f, GlyphOutlineData{.verbs = verbs, .points = points});
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{40.0f, 40.0f}, 1.0f);
+    // the pen is the same in both scenes, so only the recorder transform differs between them (§6.1)
+    const Point pen{5.0f, 5.0f};
+    SceneRecorder plain(metrics);
+    // the frame clears to white, so the ink reads as the shape it is rather than as the background (§6.1)
+    plain.set_background(Color::rgb(1.0f, 1.0f, 1.0f));
+    plain.glyph_outline(outline, pen, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    SceneRecorder scaled(metrics);
+    // the frame clears to white as well, which keeps the two frames comparable pixel for pixel (§6.1)
+    scaled.set_background(Color::rgb(1.0f, 1.0f, 1.0f));
+    scaled.save();
+    // the scale is the transform a subtree carries into its children, which the glyph must inherit (§6.1, §6.4)
+    scaled.set_transform(Transform::scaling(2.0f, 2.0f));
+    scaled.glyph_outline(outline, pen, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    scaled.restore();
+    // act both scenes draw onto their own reference surface, which is the oracle of the parity suite (§16, AD-26)
+    software::SoftwareRendererBackend backend;
+    const std::unique_ptr<RenderSurface> plain_surface = software::SoftwareRenderSurface::create(metrics);
+    const std::unique_ptr<RenderSurface> scaled_surface = software::SoftwareRenderSurface::create(metrics);
+    ASSERT_NE(plain_surface, nullptr);
+    ASSERT_NE(scaled_surface, nullptr);
+    backend.execute_frame(*plain_surface, *plain.scene());
+    backend.execute_frame(*scaled_surface, *scaled.scene());
+    const Screenshot plain_drawn = capture_surface(*plain_surface);
+    const Screenshot scaled_drawn = capture_surface(*scaled_surface);
+    ASSERT_FALSE(plain_drawn.empty());
+    ASSERT_FALSE(scaled_drawn.empty());
+    // the lit channels are counted, because a doubling scale puts down four times the area (§6.4, §6.1)
+    std::size_t plain_lit = 0u;
+    std::size_t scaled_lit = 0u;
+    for (std::size_t index = 0u; index + 2u < plain_drawn.pixels.size(); index += 4u) {
+        // a lit channel in the plain frame is one pixel the unscaled glyph covered (§6.4)
+        if (plain_drawn.pixels[index] != 255u)
+            plain_lit++;
+        // a lit channel in the scaled frame is one pixel the scaled glyph covered (§6.4)
+        if (scaled_drawn.pixels[index] != 255u)
+            scaled_lit++;
+    }
+    // assert the plain glyph put ink down at all, which is what makes the comparison meaningful (§6.4)
+    ASSERT_GT(plain_lit, 0u);
+    // assert the scaled glyph covers about four times the area, because the transform doubled both axes (§6.1)
+    EXPECT_GT(scaled_lit, plain_lit * 3u);
+    EXPECT_LT(scaled_lit, plain_lit * 5u);
+    // the corner sample sits inside the unscaled square, which the scaled one has already left behind (§6.4)
+    const std::size_t corner = (7u * static_cast<std::size_t>(plain_drawn.width) + 7u) * 4u;
+    ASSERT_LT(corner + 2u, plain_drawn.pixels.size());
+    EXPECT_LT(plain_drawn.pixels[corner], 200u);
+    EXPECT_EQ(scaled_drawn.pixels[corner], 255u);
+    // the far sample sits inside the scaled square only, which is where the transform put the ink (§6.1)
+    const std::size_t far = (20u * static_cast<std::size_t>(scaled_drawn.width) + 20u) * 4u;
+    ASSERT_LT(far + 2u, scaled_drawn.pixels.size());
+    EXPECT_LT(scaled_drawn.pixels[far], 200u);
+    EXPECT_EQ(plain_drawn.pixels[far], 255u);
+}
+
 namespace
 {
     // the node that draws one run through the ordinary text path, which is what the caller fix is about (§6.1)
@@ -694,6 +914,76 @@ TEST(EmbeddedTextCallerChecks, AnEmbeddedRunDrawsThroughTheOrdinaryTextCall) {
     resources::FontRegistry::clear();
 }
 
+TEST(EmbeddedTextCallerChecks, AnEmbeddedRunWalksItsOutlinesOnceAcrossFrames) {
+    // arrange a run built twice, which is what two frames of the same text are (§6.1)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    harfbuzz::EmbeddedGlyphProvider provider;
+    const GlyphOutlineResolver build_outline = provider.resolver();
+    std::size_t resolved = 0u;
+    SceneBuilder builder;
+    // the resolver is counted, because not running it twice is the whole claim of a builder owned cache (§6.4, AD-06)
+    builder.set_outline_resolver([&resolved, build_outline](const GlyphOutlineKey& key) {
+        // every call is counted, because the cache is what has to stop a second one (§6.4, AD-06)
+        resolved++;
+        // the outline is built by the provider's own resolver, which is what the count wraps (§6.4)
+        return build_outline(key);
+    });
+    EmbeddedTextNode node;
+    node.m_layout = engine->measure("Albor", 0.0f, 40.0f);
+    ASSERT_NE(node.m_layout.run, nullptr);
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{200.0f, 80.0f}, 1.0f);
+    // act the same tree is built twice, which is the second frame of the same text (§6.1)
+    const std::shared_ptr<const FrameScene> first = builder.build(node, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    ASSERT_NE(first, nullptr);
+    const std::size_t after_first = resolved;
+    const std::shared_ptr<const FrameScene> second = builder.build(node, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    ASSERT_NE(second, nullptr);
+    // assert the first build walked every visible glyph once, which are the misses the cache records (§6.4)
+    EXPECT_EQ(after_first, node.m_layout.run->glyph_count());
+    // assert the second build walked nothing, because the builder's cache answered the same keys (§6.4, AD-06)
+    EXPECT_EQ(resolved, after_first);
+    // assert both scenes carry the same commands, because a cached outline is the very same shape (§6.4)
+    EXPECT_EQ(second->commands(), first->commands());
+    EXPECT_GT(second->commands().size(), 0u);
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(EmbeddedTextCallerChecks, ARecorderWithoutACacheStillBuildsItsOutlines) {
+    // arrange a recorder built directly, which is what a caller does when no builder borrows a cache (§6.4, AD-06)
+    if (!has_font())
+        GTEST_SKIP() << "no conformance font on this host";
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(FONT_FAMILY, FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    harfbuzz::EmbeddedGlyphProvider provider;
+    const GlyphOutlineResolver build_outline = provider.resolver();
+    std::size_t resolved = 0u;
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 80.0f}, 1.0f));
+    // the resolver is counted with no cache borrowed, which is the contract the fallback branch keeps (§6.4, AD-06)
+    recorder.set_outline_resolver([&resolved, build_outline](const GlyphOutlineKey& key) {
+        // every call is counted, because a recorder with no cache builds every glyph itself (§6.4)
+        resolved++;
+        // the outline is built by the provider's own resolver, which is what the count wraps (§6.4)
+        return build_outline(key);
+    });
+    // act an embedded run is drawn through the recorder directly (§6.1)
+    const TextLayout layout = engine->measure("Albor", 0.0f, 40.0f);
+    ASSERT_NE(layout.run, nullptr);
+    recorder.draw_text(layout, Point{.x = 0.0f, .y = 0.0f}, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    // assert every glyph was resolved, because nothing was borrowed to answer one (§6.4, AD-06)
+    EXPECT_EQ(resolved, layout.run->glyph_count());
+    EXPECT_EQ(recorder.outline_command_count(), layout.run->glyph_count());
+    // exit
+    resources::FontRegistry::clear();
+}
+
 TEST(EmbeddedTextCallerChecks, AnEmbeddedRunPutsInkOnTheSurfaceThroughTheOrdinaryTextCall) {
     // arrange the same build, drawn onto the software reference (§15, AD-26)
     if (!has_font())
@@ -741,7 +1031,7 @@ TEST(EmbeddedTextCallerChecks, ARunTheRendererCanDrawStillGoesThroughTheTextComm
     ASSERT_NE(layout.run, nullptr);
     // assert the run carries a registered identity, which is what lets a backend without the platform draw it (§15, AD-34)
     ASSERT_NE(layout.run->font_hash(), 0u);
-    ASSERT_NE(resources::FontRegistry::find_hash(layout.run->font_hash()), nullptr);
+    ASSERT_TRUE(resources::FontRegistry::find_hash(layout.run->font_hash()) != nullptr);
     SceneBuilder builder;
     EmbeddedTextNode node;
     node.m_layout = layout;
@@ -1189,8 +1479,8 @@ TEST(EmbeddedTextDrawChecks, TheEngineProvidesTheOutlineResolver) {
     // exit
     resources::FontRegistry::clear();
 }
-TEST(GlyphOutlineChecks, TheOutlinePairsAVerbWithEveryPointAndRetainsAPath) {
-    // arrange the carried fixture, whose glyph is walked into a closed contour of points (§6.4, AD-34)
+TEST(GlyphOutlineChecks, TheOutlinePairsItsVerbsWithThePointsOfEveryContour) {
+    // arrange the carried fixture, whose glyph is walked into closed contours of points (§6.4, AD-34)
     if (!has_font())
         GTEST_SKIP() << "no conformance font on this host";
     resources::FontRegistry::clear();
@@ -1200,42 +1490,51 @@ TEST(GlyphOutlineChecks, TheOutlinePairsAVerbWithEveryPointAndRetainsAPath) {
     const TextLayout layout = engine->measure("A", 0.0f, 20.0f);
     ASSERT_NE(layout.run, nullptr);
     const std::uint32_t glyph = layout.run->lines().front().glyphs.front().id;
-    const std::vector<Point> points = engine->glyph_outline(glyph, 20.0f);
-    ASSERT_FALSE(points.empty());
-    // act the outline is built once over the points, which pairs a verb with every point and retains a path (§6.4)
-    const GlyphOutline outline(engine->font_hash(), glyph, 20.0f, points);
-    // assert one verb per point, led by a move, because the contour is one closed polyline (§6.4)
-    ASSERT_EQ(outline.verbs().size(), points.size());
+    const GlyphOutlineData walked = engine->glyph_outline(glyph, 20.0f);
+    ASSERT_FALSE(walked.points.empty());
+    // act the outline is built once over the walked contours, which pairs the verbs with their points (§6.4)
+    const GlyphOutline outline(engine->font_hash(), glyph, 20.0f, walked);
+    // assert the stream consumes exactly the points it carries, which a dropped verb would break (§6.4)
+    EXPECT_EQ(PathResource::point_demand(std::span<const PathVerb>(outline.verbs())), outline.points().size());
+    // assert the stream opens with a move and seals with a close, which is the ring a glyph draws (§6.4)
     EXPECT_EQ(outline.verbs().front(), PathVerb::MoveTo);
-    for (std::size_t index = 1; index < outline.verbs().size(); index++)
-        EXPECT_EQ(outline.verbs()[index], PathVerb::LineTo);
-    // assert the retained path carries the same contour, which is what a frame draws without allocating (§6.4)
+    EXPECT_EQ(outline.verbs().back(), PathVerb::Close);
+    // assert the retained path carries the same stream, which is what a frame draws without allocating (§6.4)
     ASSERT_NE(outline.path(), nullptr);
-    EXPECT_EQ(outline.path()->points().size(), points.size());
+    EXPECT_EQ(outline.path()->verbs().size(), outline.verbs().size());
+    EXPECT_EQ(outline.path()->points().size(), outline.points().size());
     // exit
     resources::FontRegistry::clear();
 }
 
-TEST(GlyphOutlineChecks, AnOutlinePairsItsVerbsWithItsPointsAtEverySize) {
-    // arrange contours of zero to three points, which the constructor encodes without any font (§6.4)
-    const std::vector<Point> empty;
-    const std::vector<Point> one{Point{0.0f, 0.0f}};
-    const std::vector<Point> two{Point{0.0f, 0.0f}, Point{1.0f, 0.0f}};
-    const std::vector<Point> three{Point{0.0f, 0.0f}, Point{1.0f, 0.0f}, Point{0.0f, 1.0f}};
-    // act, assert the verbs pair one to one with the points at every size, led by a move (§6.4)
-    const GlyphOutline zero_outline(7u, 1u, 10.0f, empty);
-    EXPECT_TRUE(zero_outline.verbs().empty());
-    const GlyphOutline one_outline(7u, 1u, 10.0f, one);
-    ASSERT_EQ(one_outline.verbs().size(), 1u);
-    EXPECT_EQ(one_outline.verbs().front(), PathVerb::MoveTo);
-    const GlyphOutline two_outline(7u, 1u, 10.0f, two);
-    ASSERT_EQ(two_outline.verbs().size(), 2u);
-    EXPECT_EQ(two_outline.verbs()[1], PathVerb::LineTo);
-    const GlyphOutline three_outline(7u, 1u, 10.0f, three);
-    ASSERT_EQ(three_outline.verbs().size(), 3u);
-    // assert the retained path is built for a real contour, which the replay draws directly (§6.4)
-    ASSERT_NE(three_outline.path(), nullptr);
-    EXPECT_EQ(three_outline.path()->points().size(), 3u);
+TEST(GlyphOutlineChecks, AnOutlineKeepsTheContoursItWasBuiltFrom) {
+    // arrange a ring with a counter, which is two contours rather than one point run (§6.4)
+    const GlyphOutlineData ring{
+        .verbs = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close, PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close},
+        .points = {Point{0.0f, 0.0f}, Point{8.0f, 0.0f}, Point{4.0f, 8.0f}, Point{2.0f, 2.0f}, Point{3.0f, 6.0f}, Point{4.0f, 2.0f}},
+    };
+    // act
+    const GlyphOutline outline(7u, 1u, 10.0f, ring);
+    // assert the verbs are handed back as built, because a close and a move are what keep the counter apart (§6.4)
+    ASSERT_EQ(outline.verbs().size(), ring.verbs.size());
+    ASSERT_EQ(outline.points().size(), ring.points.size());
+    EXPECT_EQ(outline.verbs()[3], PathVerb::Close);
+    EXPECT_EQ(outline.verbs()[4], PathVerb::MoveTo);
+    // assert the retained path carries the same stream, which the replay draws directly (§6.4)
+    ASSERT_NE(outline.path(), nullptr);
+    EXPECT_EQ(outline.path()->verbs().size(), ring.verbs.size());
+    EXPECT_EQ(outline.path()->points().size(), ring.points.size());
+    // assert an outline with no contour is empty, which is the one case the replay skips (§6.2)
+    const GlyphOutline none(7u, 2u, 10.0f, GlyphOutlineData{});
+    EXPECT_TRUE(none.empty());
+    // assert a stream that asks for more points than it carries is refused, which keeps the replay in bounds (§6.4)
+    const GlyphOutline mismatched(7u, 3u, 10.0f, GlyphOutlineData{.verbs = ring.verbs, .points = {Point{0.0f, 0.0f}}});
+    EXPECT_TRUE(mismatched.empty());
+    // assert the path identity carries the size, because one glyph at two sizes is two different shapes (§6.4, AD-27)
+    const GlyphOutline same_size(7u, 1u, 10.0f, ring);
+    const GlyphOutline larger(7u, 1u, 20.0f, ring);
+    EXPECT_EQ(same_size.path()->id(), outline.path()->id());
+    EXPECT_NE(larger.path()->id(), outline.path()->id());
 }
 
 TEST(RtlChecks, AnRtlRunShapesInTheDeclaredDirection) {
@@ -1341,7 +1640,7 @@ TEST(SoftwareGlyphAtlasChecks, TheAtlasRasterizesAGlyphFromTheCarriedBytes) {
     // arrange the carried fixture registered under its hash, which is what the atlas resolves (§6.3, AD-34)
     resources::FontRegistry::clear();
     resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
-    const resources::EmbeddedFont* font = resources::FontRegistry::find_family(ALBOR_TEST_FONT_FAMILY);
+    const std::shared_ptr<const resources::EmbeddedFont> font = resources::FontRegistry::find_family(ALBOR_TEST_FONT_FAMILY);
     ASSERT_NE(font, nullptr);
     const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
     ASSERT_NE(engine, nullptr);
@@ -1442,7 +1741,7 @@ TEST(SoftwareGlyphAtlasChecks, TheAtlasRefusesGlyphsItCannotRasterize) {
     // arrange the carried fixture, registered under its hash (§6.3, AD-34)
     resources::FontRegistry::clear();
     resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
-    const resources::EmbeddedFont* font = resources::FontRegistry::find_family(ALBOR_TEST_FONT_FAMILY);
+    const std::shared_ptr<const resources::EmbeddedFont> font = resources::FontRegistry::find_family(ALBOR_TEST_FONT_FAMILY);
     ASSERT_NE(font, nullptr);
     software::SoftwareGlyphAtlas atlas;
     // act, assert an out-of-range glyph has no extents, so it is refused (§6.3)
@@ -1455,7 +1754,7 @@ TEST(SoftwareGlyphAtlasChecks, TheAtlasRefusesACorruptCarriedFont) {
     // arrange a family whose bytes name no face, which the registry still accepts (§9.1)
     resources::FontRegistry::clear();
     resources::FontRegistry::register_font(resources::EmbeddedFont{.family = "AlborCorrupt", .content_hash = 0, .bytes = {1, 2, 3, 4, 5, 6, 7, 8}});
-    const resources::EmbeddedFont* font = resources::FontRegistry::find_family("AlborCorrupt");
+    const std::shared_ptr<const resources::EmbeddedFont> font = resources::FontRegistry::find_family("AlborCorrupt");
     ASSERT_NE(font, nullptr);
     software::SoftwareGlyphAtlas atlas;
     // act, assert a corrupt face is refused rather than rasterized (§6.3)
@@ -1468,7 +1767,7 @@ TEST(SoftwareGlyphAtlasChecks, ClearingTheAtlasDropsItsBitmaps) {
     // arrange a rasterized glyph, which the atlas caches (§6.3)
     resources::FontRegistry::clear();
     resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
-    const resources::EmbeddedFont* font = resources::FontRegistry::find_family(ALBOR_TEST_FONT_FAMILY);
+    const std::shared_ptr<const resources::EmbeddedFont> font = resources::FontRegistry::find_family(ALBOR_TEST_FONT_FAMILY);
     ASSERT_NE(font, nullptr);
     software::SoftwareGlyphAtlas atlas;
     ASSERT_NE(atlas.glyph(font->content_hash, 2u, 20.0f), nullptr);
@@ -1565,5 +1864,90 @@ TEST(TextEngineInstallChecks, ABuildWithoutACarriedFontFallsBackToThePlatformFac
     // exit
     set_text_engine_factory(nullptr);
     set_installed_font_family("");
+    resources::FontRegistry::clear();
+}
+
+TEST(HarfbuzzFontFaceChecks, CarriesTheBytesItWasBuiltFrom) {
+    // arrange the font the build carries, read whole because a face is built from a complete file (§15, AD-34)
+    std::ifstream file(ALBOR_TEST_FONT_PATH, std::ios::binary);
+    ASSERT_TRUE(file.good());
+    auto bytes = std::make_shared<const std::vector<std::uint8_t>>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    // act
+    const std::shared_ptr<const harfbuzz::HarfbuzzFontFace> face = harfbuzz::HarfbuzzFontFace::create(bytes);
+    // assert the face keeps the bytes it was built from and identifies them by content (§15, AD-34)
+    ASSERT_NE(face, nullptr);
+    EXPECT_NE(face->hash(), 0u);
+    EXPECT_EQ(face->bytes().size(), bytes->size());
+    EXPECT_EQ(face->bytes().front(), bytes->front());
+}
+
+TEST(HarfbuzzFontFaceChecks, RefusesBytesThatCarryNoFont) {
+    // arrange the three buffers a build could hand a face (§15, AD-34)
+    const std::shared_ptr<const std::vector<std::uint8_t>> nothing;
+    const auto empty = std::make_shared<const std::vector<std::uint8_t>>();
+    const auto noise = std::make_shared<const std::vector<std::uint8_t>>(64u, 0x5au);
+    // act
+    const std::shared_ptr<const harfbuzz::HarfbuzzFontFace> missing = harfbuzz::HarfbuzzFontFace::create(nothing);
+    const std::shared_ptr<const harfbuzz::HarfbuzzFontFace> blank = harfbuzz::HarfbuzzFontFace::create(empty);
+    const std::shared_ptr<const harfbuzz::HarfbuzzFontFace> garbage = harfbuzz::HarfbuzzFontFace::create(noise);
+    // assert none of them carries a face, which the factory refuses rather than half builds (§9.1)
+    EXPECT_EQ(missing, nullptr);
+    EXPECT_EQ(blank, nullptr);
+    EXPECT_EQ(garbage, nullptr);
+}
+
+TEST(HarfbuzzFontFaceChecks, OutlinesAGlyphFromItsOwnBytes) {
+    // arrange the font the build carries, and a glyph the engine shaped from that same file (§9.1, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("A", 0.0f, 24.0f);
+    ASSERT_FALSE(layout.empty());
+    ASSERT_FALSE(layout.run->lines().front().glyphs.empty());
+    const std::uint32_t glyph = layout.run->lines().front().glyphs.front().id;
+    std::ifstream file(ALBOR_TEST_FONT_PATH, std::ios::binary);
+    ASSERT_TRUE(file.good());
+    auto bytes = std::make_shared<const std::vector<std::uint8_t>>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    const std::shared_ptr<const harfbuzz::HarfbuzzFontFace> face = harfbuzz::HarfbuzzFontFace::create(bytes);
+    ASSERT_NE(face, nullptr);
+    // act
+    const GlyphOutlineData outline = face->outline(glyph, 24.0f);
+    // assert the face reports the closed contours the renderer fills, which no engine was needed for (§6.4, §9.1)
+    ASSERT_FALSE(outline.points.empty());
+    EXPECT_EQ(outline.verbs.front(), PathVerb::MoveTo);
+    EXPECT_EQ(outline.verbs.back(), PathVerb::Close);
+    // assert a size of no pixels and a glyph the face leaves empty both draw nothing (§9.1, AD-27)
+    EXPECT_TRUE(face->outline(glyph, 0.0f).points.empty());
+    EXPECT_TRUE(face->outline(0xFFFFu, 24.0f).points.empty());
+    // exit
+    resources::FontRegistry::clear();
+}
+
+TEST(HarfbuzzFontFaceChecks, OutlinesAGlyphForAHandleWithNoPlatformFace) {
+    // arrange a face built from the carried bytes, which is the whole of what a backend without a platform face has (§9.1)
+    std::ifstream file(ALBOR_TEST_FONT_PATH, std::ios::binary);
+    ASSERT_TRUE(file.good());
+    auto bytes = std::make_shared<const std::vector<std::uint8_t>>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    const std::shared_ptr<const harfbuzz::HarfbuzzFontFace> face = harfbuzz::HarfbuzzFontFace::create(bytes);
+    ASSERT_NE(face, nullptr);
+    // the glyph of "A" is shaped over the same bytes, which is the glyph a run would carry (§9.1, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_FONT_FAMILY, ALBOR_TEST_FONT_PATH));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("A", 0.0f, 24.0f);
+    ASSERT_FALSE(layout.empty());
+    const std::uint32_t glyph = layout.run->lines().front().glyphs.front().id;
+    // the registry is emptied, so only the handle's own face can answer the walk (§15, AD-34)
+    resources::FontRegistry::clear();
+    // act the handle carries the face and no platform typeface, which is the windows and linux case (§9.1, AD-34)
+    const FontHandle handle = FontHandle::from_face(face);
+    const render::GlyphPath path = render::glyph_path(handle, glyph, 24.0f);
+    // assert the portable walk returns the closed contour a fill needs, with no platform face behind it (§6.4)
+    ASSERT_FALSE(path.points.empty());
+    EXPECT_EQ(path.verbs.front(), PathVerb::MoveTo);
+    EXPECT_EQ(path.verbs.back(), PathVerb::Close);
+    // exit
     resources::FontRegistry::clear();
 }

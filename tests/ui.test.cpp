@@ -223,6 +223,8 @@ namespace
         [[nodiscard]] const Rect& clip() const override { return m_clip; }
         void set_opacity(float opacity) override { m_opacity = opacity; }
         [[nodiscard]] float opacity() const override { return m_opacity; }
+        void push_layer(float) override {}
+        void pop_layer() override {}
         [[nodiscard]] std::size_t depth() const { return m_states.size(); }
         void draw_rect(const Rect&, const Paint&) override {}
         void draw_rounded_rect(const Rect&, float, const Paint&) override {}
@@ -1242,6 +1244,81 @@ TEST(SceneRecorder, AnEmptyRectangleIsNotRecorded) {
     recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{0.0f, 10.0f}), Paint{});
     // assert
     EXPECT_TRUE(recorder.scene()->empty());
+}
+
+TEST(SceneRecorder, ALayerRecordsItsTwoMarkersInPaintOrder) {
+    // arrange a recorder that paints one rectangle before and one inside a group (§6.2)
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    const Paint paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)};
+    // act
+    recorder.draw_rect(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{10.0f, 10.0f}), paint);
+    recorder.push_layer(0.5f);
+    recorder.draw_rect(Rect::from_origin_size(Point{30.0f, 10.0f}, Size{10.0f, 10.0f}), paint);
+    recorder.pop_layer();
+    // assert the push carries the group opacity and the pop closes the same group (§6.2)
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_EQ(scene->commands().size(), 4u);
+    EXPECT_EQ(scene->commands()[1].kind(), DrawCommandKind::LayerPush);
+    EXPECT_FLOAT_EQ(scene->commands()[1].layer_geometry().opacity, 0.5f);
+    EXPECT_EQ(scene->commands()[3].kind(), DrawCommandKind::LayerPop);
+}
+
+TEST(SceneRecorder, ALayerPopReturnsTheStateThePushSaved) {
+    // arrange a group that changes the transform and clip its single child draws under (§6.2)
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    recorder.set_transform(Transform::translation(100.0f, 50.0f));
+    recorder.clip_rect(Rect::from_origin_size(Point{20.0f, 20.0f}, Size{200.0f, 200.0f}));
+    const Transform saved = recorder.transform();
+    const Rect saved_clip = recorder.clip();
+    // act
+    recorder.push_layer(0.5f);
+    recorder.set_transform(Transform::translation(1.0f, 1.0f));
+    recorder.clip_rect(Rect::from_origin_size(Point{30.0f, 30.0f}, Size{40.0f, 40.0f}));
+    recorder.pop_layer();
+    // assert
+    EXPECT_EQ(recorder.transform(), saved);
+    EXPECT_EQ(recorder.clip(), saved_clip);
+    EXPECT_EQ(recorder.depth(), 0u);
+}
+
+TEST(SceneRecorder, ALayerLeftOpenIsClosedAtTheSeal) {
+    // arrange a recorder that opens a group and never closes it, which a malformed tree can do (§6.2)
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    recorder.push_layer(0.5f);
+    recorder.draw_rect(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    // act
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    // assert the scene is balanced, so every backend composites the group once instead of diverging (§6.2)
+    ASSERT_EQ(scene->commands().size(), 3u);
+    EXPECT_EQ(scene->commands()[0].kind(), DrawCommandKind::LayerPush);
+    EXPECT_EQ(scene->commands()[2].kind(), DrawCommandKind::LayerPop);
+}
+
+TEST(SceneRecorder, ALayerUnderAnEmptyClipKeepsBothMarkers) {
+    // arrange a clip that cuts everything away, which culls the draws but not the structural pair (§6.2)
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    recorder.save();
+    recorder.clip_rect(Rect::from_origin_size(Point{100.0f, 100.0f}, Size{50.0f, 50.0f}));
+    recorder.clip_rect(Rect::from_origin_size(Point{300.0f, 300.0f}, Size{50.0f, 50.0f}));
+    // act
+    recorder.push_layer(0.5f);
+    recorder.draw_rect(Rect::from_origin_size(Point{100.0f, 100.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    recorder.pop_layer();
+    // assert the pair survives the cull, because a lone marker would unbalance the replay (§6.2)
+    ASSERT_TRUE(recorder.clip().empty());
+    ASSERT_EQ(recorder.scene()->commands().size(), 2u);
+    EXPECT_EQ(recorder.scene()->commands()[0].kind(), DrawCommandKind::LayerPush);
+    EXPECT_EQ(recorder.scene()->commands()[1].kind(), DrawCommandKind::LayerPop);
+}
+
+TEST(SceneRecorder, APopWithNoLayerOpenRecordsNothing) {
+    // arrange
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f));
+    // act
+    recorder.pop_layer();
+    // assert a mismatched pop cannot emit a marker that would close an outer group (§6.2)
+    EXPECT_TRUE(recorder.scene()->empty());
+    EXPECT_EQ(recorder.depth(), 0u);
 }
 
 TEST(SceneRecorder, ARectangleIsRecordedInSceneCoordinates) {

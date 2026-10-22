@@ -49,6 +49,12 @@ namespace albor
         // read back the current opacity, which a test asserts against a test double (§6.1)
         [[nodiscard]] virtual float opacity() const = 0;
 
+        // begin a layer the later draws composite into, which restores this state at the matching pop (§6.2)
+        virtual void push_layer(float opacity) = 0;
+
+        // end the layer the matching push began, compositing its draws once at the layer opacity (§6.2)
+        virtual void pop_layer() = 0;
+
         // draw a filled and stroked rectangle (§6.2)
         virtual void draw_rect(const Rect& rect, const Paint& paint) = 0;
 

@@ -4,5 +4,5 @@
 add_library(albor-alloc-probe STATIC alloc_probe.cpp)
 
 # the tests reach the probe through the project root, which is where the module includes point (§3.2)
-target_include_directories(albor-alloc-probe PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-alloc-probe PUBLIC ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-alloc-probe PUBLIC cxx_std_23)

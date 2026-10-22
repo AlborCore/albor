@@ -7,6 +7,7 @@
 
 #include "core/geometry.h"
 #include "core/paint.h"
+#include "render/clip_state.h"
 #include "render/draw_command.h"
 #include "render/render_context.h"
 
@@ -85,6 +86,12 @@ namespace albor
         // override: read back the current opacity
         [[nodiscard]] float opacity() const override;
 
+        // override: begin a layer the later commands composite into, which restores this state at the matching pop
+        void push_layer(float opacity) override;
+
+        // override: end the layer the matching push began
+        void pop_layer() override;
+
         // override: record a filled and stroked rectangle
         void draw_rect(const Rect& rect, const Paint& paint) override;
 
@@ -113,7 +120,7 @@ namespace albor
         void draw_image(const std::shared_ptr<const ImageResource>& image, const Rect& destination, const Paint& paint) override;
 
         // hand out the recorded commands in order, which the factory turns into a picture (§6.4)
-        [[nodiscard]] const std::vector<DrawCommand>& commands() const;
+        [[nodiscard]] std::vector<DrawCommand> commands() const;
 
         // report whether no command was recorded (§6.4)
         [[nodiscard]] bool empty() const;
@@ -128,8 +135,8 @@ namespace albor
             // the transform at the time of the save
             Transform transform;
 
-            // the clip at the time of the save
-            Rect clip;
+            // the clip at the time of the save, radius included
+            ClipState clip;
 
             // the opacity at the time of the save
             float opacity = 1.0f;
@@ -138,14 +145,26 @@ namespace albor
         // record a command after skipping the ones that would draw nothing (§6.4)
         void record(DrawCommand command);
 
+        // record a command, stamping the recorder transform unless a picture already placed it (§6.4)
+        void record(DrawCommand command, bool placed);
+
+        // map a rectangle through the recorder transform, which keeps the clip in picture space (§6.2, §6.4)
+        [[nodiscard]] Rect mapped_rect(const Rect& rect) const;
+
+        // report the factor the recorder transform scales lengths by, which a clip radius follows (§6.2)
+        [[nodiscard]] float transform_scale() const;
+
         // the current transform the commands capture (§6.2)
         Transform m_transform;
 
         // the current clip the recorder reads back, which starts as the whole area because a picture has no surface (§6.2)
-        Rect m_clip;
+        ClipState m_clip;
 
         // the opacity the recorded commands are dimmed by, which starts fully opaque (§6.1)
         float m_opacity = 1.0f;
+
+        // how many layers are open, so a mismatched pop cannot unwind a save that was not one (§6.2)
+        std::size_t m_layers = 0;
 
         // the pushed states, which a restore pops (§6.2)
         std::vector<State> m_states;

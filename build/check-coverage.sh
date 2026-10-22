@@ -34,8 +34,8 @@ UNREACHABLE=(
     'compiler/codegen/codegen.cpp|case TypeKind::FontWeight:|the type checker rejects a named value set as a declarable type, so no property, signal parameter or record field ever carries one'
     'compiler/codegen/codegen.cpp|return "FontWeight";|the type checker rejects a named value set as a declarable type, so no property, signal parameter or record field ever carries one'
     'text/text-harfbuzz/harfbuzz_text_engine.cpp|line_end = text.size();|the wrap always advances over the ICU offsets, so the fallback only guards an ICU failure that would otherwise loop forever'
+    'render/render-albor/albor_metal_backend.macos.mm|std::fprintf(stderr, "albor-render-albor: the metal library could not be used: %s\n", reason);|the build embeds a valid library whose entry points resolve, so the report guards a corrupt embed no test can force'
     'render/render-software/software_glyph_atlas.cpp|return nullptr;|the rasterizer allocates through harfbuzz, so a failed allocation is the only way this refusal runs and it cannot be forced from a test'
-    'render/render-software/software_render_surface.cpp|m_state->scratch_context = std::make_unique<SoftwareRenderContext>(m_state->scratch->getCanvas(), 1.0f);|the scratch is only built when skia refuses the raster allocation, which cannot be forced from a test'
     'render/render-skia/skia_renderer_backend.macos.mm|return nullptr;|the offscreen target is only asked for when the backend is ready, which the parity test checks first, so the refusal cannot be forced'
     'render/render-software/software_render_context.cpp|continue;|a mask install and an image lift fail only on an allocation failure, which cannot be forced from a test'
     'compiler/ir_serializer.cpp|return std::nullopt;|the refusals guard values the lexer never produces (a malformed hex pair, a missing unit, a negated colour), so no valid source reaches them'
@@ -43,10 +43,11 @@ UNREACHABLE=(
     'render/render-skia/skia_offscreen_surface.macos.mm|return;|an invalid resize or an unallocated target is refused before a frame, which the parity test never triggers'
     'render/render-skia/skia_offscreen_surface.macos.mm|return {};|the read refusals guard an unallocated target or a refused pixel copy, which the parity test never triggers'
     'text/text-harfbuzz/harfbuzz_text_engine.cpp|bool operator()(const CacheKey& lhs, const CacheKey& rhs) const { return lhs.text == rhs.text && lhs.max_width == rhs.max_width && lhs.font_size == rhs.font_size && lhs.font_hash == rhs.font_hash && lhs.direction == rhs.direction; }|two owned keys reach this comparison only when their hashes collide, which no test can force without a synthetic hasher'
+    'text/text-harfbuzz/harfbuzz_text_engine.cpp|bool operator()(const CacheLookup& lookup, const CacheKey& owned) const { return (*this)(owned, lookup); }|one comparison direction runs per standard library, and libc++ asks the owned key first, so only a msvc build reaches this overload'
     'text/text-harfbuzz/harfbuzz_text_engine.cpp|return nullptr;|the platform constructor refuses a null resolver, empty bytes or a face that cannot shape, none of which a valid platform font produces'
     'text/text-harfbuzz/harfbuzz_text_engine.cpp|m_state->cache.clear();|the eviction runs only past 512 distinct runs, a bound no unit test needs to cross to prove the cache works'
     'render/render-skia/skia_render_context.cpp|continue;|a valid platform handle always resolves a typeface, so the refusal guards a font the platform could not parse'
-    'text/text-harfbuzz/harfbuzz_platform_font.macos.mm|return {};|a valid core text face always carries tables, so the refusal guards a face with no sfnt backing'
+    'text/text-harfbuzz/harfbuzz_platform_font.macos.mm|return {};|a valid core text face always carries tables, so the refusal guards a face with no sfnt backing'"'"'s own, so it only fails to compile on a broken toolchain, which cannot be forced from a test'
 )
 
 # an entry whose text no longer appears in the file, which means the hole was closed or moved (§27)

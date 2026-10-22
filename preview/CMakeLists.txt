@@ -8,7 +8,7 @@ file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 add_library(albor-preview-objects OBJECT ${CPP_SOURCES})
 
 # the objects reach the project root, which is where the module includes point (§3.2)
-target_include_directories(albor-preview-objects PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-preview-objects PUBLIC ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-preview-objects PUBLIC cxx_std_23)
 
 # the host drives the compiler and the widgets, so it links them (§12.2)

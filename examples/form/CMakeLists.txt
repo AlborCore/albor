@@ -17,7 +17,7 @@ add_executable(albor-form ${CPP_SOURCES})
 target_link_libraries(albor-form PRIVATE albor-platform-macos-auto albor-render-skia-auto albor-text-harfbuzz-auto albor-widgets albor-layout albor-accessibility albor-i18n)
 
 # compile the ui asset into a generated facade, which is what the application instantiates (§11.3, AD-03)
-include("${CMAKE_SOURCE_DIR}/build/AlborComponent.cmake")
+include("${ALBOR_SOURCE_DIR}/build/AlborComponent.cmake")
 
 # the todo record type for the form
 albor_build_native_record(albor-form "${CMAKE_CURRENT_SOURCE_DIR}/todo.manifest")

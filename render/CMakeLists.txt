@@ -4,13 +4,13 @@
 file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 
 # a backend module is a directory below render/, and its sources belong to its own target rather than this one
-list(FILTER CPP_SOURCES EXCLUDE REGEX "/render-(skia|software|blend2d)/")
+list(FILTER CPP_SOURCES EXCLUDE REGEX "/render-(skia|software|blend2d|albor)/")
 
 # create the static library from the gathered cpp sources
 add_library(albor-render STATIC ${CPP_SOURCES})
 
 # the rendering hal is header visible, because every backend implements it (§6.2)
-target_include_directories(albor-render PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-render PUBLIC ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-render PUBLIC cxx_std_23)
 
 # the render module needs the window metrics it presents into and the shared value types (§3.2)

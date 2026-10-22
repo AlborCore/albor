@@ -1,11 +1,18 @@
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
+#include <zlib.h>
 
+#include "automation/automation_platform.h"
 #include "automation/automation_protocol.h"
 #include "automation/automation_registry.h"
 #include "automation/automation_session.h"
+#include "automation/capture_commands.h"
+#include "automation/png_writer.h"
 
 using namespace albor::automation;
 
@@ -47,7 +54,7 @@ TEST(AutomationProtocol, ALineWithNoArgumentsDecodesToACommandAlone) {
 
 TEST(AutomationProtocol, AnAnswerAndARefusalEncodeDifferently) {
     // assert the prefixes differ, because a client must never read a refusal as an answer (§10.3, AD-10)
-    EXPECT_EQ(encode_result(AutomationResult::answered("yes")), "!ok yes");
+    EXPECT_EQ(encode_result(AutomationResult::answered("yes")), "!ok text yes");
     EXPECT_EQ(encode_result(AutomationResult::refused("no")), "!refused no");
 }
 
@@ -109,6 +116,23 @@ TEST(AutomationRegistry, TheAllowedListReadsBackInAStableOrder) {
     ASSERT_EQ(allowed.size(), 2U);
     EXPECT_EQ(allowed.at(0), "another");
     EXPECT_EQ(allowed.at(1), "probe");
+}
+
+TEST(AutomationTransport, ThePortableFactoryAgreesWithWhatThePlatformReports) {
+    // arrange, because the factory asks the platform before it builds anything (§10.3, AD-10)
+    AutomationRegistry registry;
+    // act
+    const std::unique_ptr<AutomationTransport> transport = create_transport(registry);
+    // assert a build with no transport hands back null rather than something that pretends to listen (§10.3, AD-10)
+    EXPECT_EQ(transport != nullptr, platform::available());
+}
+
+TEST(AutomationTransport, APlatformThatReportsNoTransportBuildsNone) {
+    // arrange, because a registry is what a transport would serve out of (§10.3, AD-10)
+    AutomationRegistry registry;
+    // act, assert the seam hands back nothing where there is none, so a caller can tell absence from a listener (§10.3)
+    const std::unique_ptr<AutomationTransport> transport = platform::build(registry);
+    EXPECT_EQ(transport != nullptr, platform::available());
 }
 
 TEST(AutomationSession, TwoSessionsHoldDifferentTokens) {
@@ -222,4 +246,61 @@ TEST(AutomationSession, AHandshakeCannotBeReplayedToChangeAClosedSession) {
     (void)session.handle(encode_handshake("wrong-after-auth"));
     // assert the session stays authenticated, because a later frame cannot unseat an earlier proof (§10.3, AD-10)
     EXPECT_TRUE(session.authenticated());
+}
+
+TEST(AutomationProtocol, Base64CarriesEveryTailShape) {
+    // act the three tails a byte string can end on each take their own padding, which the reference vectors fix (§10.3)
+    EXPECT_EQ(base64_encode(""), "");
+    EXPECT_EQ(base64_encode("f"), "Zg==");
+    EXPECT_EQ(base64_encode("fo"), "Zm8=");
+    EXPECT_EQ(base64_encode("foo"), "Zm9v");
+    EXPECT_EQ(base64_encode("foob"), "Zm9vYg==");
+    EXPECT_EQ(base64_encode("fooba"), "Zm9vYmE=");
+    EXPECT_EQ(base64_encode("foobar"), "Zm9vYmFy");
+}
+
+TEST(AutomationProtocol, AByteStringIsAnsweredAsBase64) {
+    // arrange a payload that is not text, which a line cannot carry raw (§10.3)
+    const AutomationResult result = AutomationResult::answered(ValueKind::Binary, std::string("\x00\x01\xfe\xff", 4));
+    // act and assert the kind is stated and the bytes are base64, so no line carries a raw control byte (§10.3)
+    EXPECT_EQ(encode_result(result), "!ok binary AAH+/w==");
+}
+
+TEST(AutomationProtocol, AnImageIsTaggedSoAClientDoesNotGuess) {
+    // arrange a payload that is a picture, which the adapter turns into an image block (§10.3)
+    const AutomationResult result = AutomationResult::answered(ValueKind::Image, std::string("\x89PNG", 4));
+    // act and assert the tag names the shape, which is what the png encoder answers once it lands (§6.3)
+    EXPECT_EQ(encode_result(result), "!ok image iVBORw==");
+}
+
+TEST(AutomationProtocol, EveryKindCarriesItsOwnTag) {
+    // act the six shapes a command may answer each carry their own word, which two kinds must not share (§10.3)
+    EXPECT_EQ(value_kind_name(ValueKind::Text), "text");
+    EXPECT_EQ(value_kind_name(ValueKind::Number), "number");
+    EXPECT_EQ(value_kind_name(ValueKind::Boolean), "boolean");
+    EXPECT_EQ(value_kind_name(ValueKind::Json), "json");
+    EXPECT_EQ(value_kind_name(ValueKind::Image), "image");
+    EXPECT_EQ(value_kind_name(ValueKind::Binary), "binary");
+}
+
+TEST(AutomationProtocol, ATextPayloadStaysOnOneLine) {
+    // arrange a payload carrying the three bytes a line cannot hold, which the encoder escapes (§10.3)
+    const AutomationResult result = AutomationResult::answered(std::string("a\nb\rc\\d"));
+    // act the reply is encoded, which must stay one line because the transport frames on a newline (§10.3)
+    const std::string line = encode_result(result);
+    // assert the escapes are written and no raw newline or carriage return survives (§10.3)
+    EXPECT_EQ(line, "!ok text a\\nb\\rc\\\\d");
+    EXPECT_EQ(line.find('\n'), std::string::npos);
+    EXPECT_EQ(line.find('\r'), std::string::npos);
+}
+
+TEST(AutomationProtocol, AnEmptyByteStringIsStillTagged) {
+    // act and assert an empty answer still carries its kind, which is the only way a client reads it as bytes (§10.3)
+    EXPECT_EQ(encode_result(AutomationResult::answered(ValueKind::Binary, "")), "!ok binary ");
+}
+
+TEST(AutomationProtocol, ALongPayloadPadsItsTail) {
+    // act and assert the two tail shapes of a long string, which the four characters per three bytes fix (§10.3)
+    EXPECT_EQ(base64_encode(std::string(1023, '\0')).size(), 1364U);
+    EXPECT_EQ(base64_encode(std::string(1024, '\0')).size(), 1368U);
 }

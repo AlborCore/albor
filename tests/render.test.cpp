@@ -10,7 +10,10 @@
 #include <gtest/gtest.h>
 
 #include "render/custom_render_node.h"
+#include "render/font_face.h"
+#include "render/font_handle.h"
 #include "render/frame_scene.h"
+#include "render/glyph_outline.h"
 #include "render/image_resource.h"
 #include "render/line_batch.h"
 #include "render/path_resource.h"
@@ -118,9 +121,24 @@ namespace
         // the destination of every drawn image, parallel to the images
         std::vector<Rect> drawn_image_destinations;
 
-        void save() override { save_count++; }
+        void save() override {
+            save_count++;
+            // the state is pushed, because a restore is what a caller reads back afterwards (§6.2)
+            states.push_back(State{.transform = current, .clip = current_clip, .opacity = current_opacity});
+        }
 
-        void restore() override { restore_count++; }
+        void restore() override {
+            restore_count++;
+            // a restore with nothing pushed is a no operation, like every backend (§6.2)
+            if (states.empty())
+                return;
+            // the state the matching save pushed becomes current again (§6.2)
+            const State state = states.back();
+            states.pop_back();
+            current = state.transform;
+            current_clip = state.clip;
+            current_opacity = state.opacity;
+        }
 
         void set_transform(const Transform& transform) override {
             transforms.push_back(transform);
@@ -129,11 +147,15 @@ namespace
 
         [[nodiscard]] const Transform& transform() const override { return current; }
 
-        void clip_rect(const Rect& rect) override { clips.push_back(rect); }
+        void clip_rect(const Rect& rect) override {
+            clips.push_back(rect);
+            current_clip = rect;
+        }
 
         void clip_rounded_rect(const Rect& rect, float radius) override {
             clips.push_back(rect);
             rounded_radii.push_back(radius);
+            current_clip = rect;
         }
 
         [[nodiscard]] const Rect& clip() const override { return current_clip; }
@@ -141,6 +163,10 @@ namespace
         void set_opacity(float opacity) override { current_opacity = opacity; }
 
         [[nodiscard]] float opacity() const override { return current_opacity; }
+
+        void push_layer(float) override {}
+
+        void pop_layer() override {}
 
         void draw_rect(const Rect& rect, const Paint&) override {
             drawn_rects.push_back(rect);
@@ -198,6 +224,19 @@ namespace
         }
 
     private:
+        // the state one save pushed, which the matching restore returns to (§6.2)
+        struct State
+        {
+            // the transform at the time of the save
+            Transform transform;
+
+            // the clip at the time of the save
+            Rect clip;
+
+            // the opacity at the time of the save
+            float opacity = 1.0f;
+        };
+
         // the transform the surface reads back
         Transform current;
 
@@ -206,6 +245,9 @@ namespace
 
         // the opacity the last set wrote, which a test asserts against (§6.1)
         float current_opacity = 1.0f;
+
+        // the pushed states, which a restore pops (§6.2)
+        std::vector<State> states;
     };
 
     // the surface test double, which hands out the context above and counts its frames (§6.2)
@@ -375,50 +417,68 @@ namespace
             context.draw_rect(bounds, Paint{});
         }
     };
+    // the font double a handle check wraps, which reports the identity it was given and outlines nothing (§9.1)
+    class TestFontFace final : public FontFace
+    {
+    public:
+        // a face over one content hash is all a handle check needs (§15, AD-34)
+        explicit TestFontFace(std::uint64_t hash) :
+            m_hash(hash) {}
+
+        // the identity the handle reports back (§15, AD-34)
+        [[nodiscard]] std::uint64_t hash() const override { return m_hash; }
+
+        // the double carries no bytes, because a handle check never outlines (§9.1)
+        [[nodiscard]] std::span<const std::uint8_t> bytes() const override { return {}; }
+
+        // the double outlines nothing, because a handle check never draws (§9.1)
+        [[nodiscard]] GlyphOutlineData outline(std::uint32_t, float) const override { return {}; }
+
+    private:
+        // the content hash the handle answers with (§15, AD-34)
+        std::uint64_t m_hash = 0;
+    };
 } // namespace
 
-TEST(FontHandle, ADefaultHandleNamesNoTypeface) {
+TEST(FontHandle, ADefaultHandleNamesNoFont) {
     // arrange, act
     const FontHandle handle;
-    // assert a handle with nothing in it names no typeface, so a backend skips the run rather than guessing (§9.1)
+    // assert a handle with nothing in it names no font, so a backend skips the run rather than guessing (§9.1)
     EXPECT_FALSE(handle.valid());
 }
 
-TEST(FontHandle, AWrappedTypefaceIsAValidHandle) {
-    // arrange
-    int typeface = 0;
+TEST(FontHandle, AHandleOverAFaceIsAValidHandle) {
+    // arrange the font a run shaped from, which is all a handle needs (§9.1, AD-34)
+    const std::shared_ptr<const FontFace> face = std::make_shared<const TestFontFace>(7u);
     // act
-    const FontHandle handle = FontHandle::from_object(&typeface);
-    // assert wrapping a resolved typeface is what makes the handle usable (§9.1)
+    const FontHandle handle = FontHandle::from_face(face);
+    // assert the handle is usable and answers the font identity a cache keys on (§9.1, §15)
     EXPECT_TRUE(handle.valid());
+    EXPECT_EQ(handle.face(), face);
+    EXPECT_EQ(handle.font_hash(), 7u);
 }
 
-TEST(FontHandle, TheWrappedTypefaceLeavesAsAnOpaquePointer) {
-    // arrange
-    int typeface = 0;
-    // act
-    const FontHandle handle = FontHandle::from_object(&typeface);
-    // assert the typeface leaves the handle untyped, so no shaping type reaches a public header (§3.5, §9.1)
-    EXPECT_EQ(handle.object(), static_cast<const void*>(&typeface));
-}
-
-TEST(FontHandle, AHandleOverNothingHandsBackNothing) {
+TEST(FontHandle, AnInvalidHandleCarriesNoFont) {
     // arrange, act
     const FontHandle handle;
-    // assert an invalid handle carries no object at all (§9.1)
-    EXPECT_EQ(handle.object(), nullptr);
+    // assert a handle no engine filled answers no face and no identity (§9.1, §15)
+    EXPECT_EQ(handle.face(), nullptr);
+    EXPECT_EQ(handle.font_hash(), 0u);
 }
 
-TEST(FontHandle, EqualityComparesTheWrappedTypeface) {
+TEST(FontHandle, EqualityComparesTheFont) {
     // arrange
-    int typeface = 0;
+    const std::shared_ptr<const FontFace> face = std::make_shared<const TestFontFace>(7u);
+    const std::shared_ptr<const FontFace> other = std::make_shared<const TestFontFace>(7u);
     // act
-    const FontHandle wrapped = FontHandle::from_object(&typeface);
-    const FontHandle same = FontHandle::from_object(&typeface);
-    const FontHandle other = FontHandle::from_object(nullptr);
-    // assert two handles are the same typeface or they are not (§9.1)
+    const FontHandle wrapped = FontHandle::from_face(face);
+    const FontHandle same = FontHandle::from_face(face);
+    const FontHandle different = FontHandle::from_face(other);
+    // assert two handles are the same font or they are not, because a face is one object per resolution (§9.1)
     EXPECT_EQ(wrapped, same);
-    EXPECT_NE(wrapped, other);
+    EXPECT_NE(wrapped, different);
+    // assert a default handle equals another, because neither names a font (§9.1)
+    EXPECT_EQ(FontHandle{}, FontHandle{});
 }
 
 TEST(ShapedRun, ARunOverNoLinesIsEmpty) {
@@ -487,9 +547,8 @@ TEST(ShapedRun, EveryLineCarriesItsOwnBaseline) {
 
 TEST(ShapedRun, EveryLineCarriesItsOwnTypeface) {
     // arrange
-    int typeface = 0;
     ShapedRun::Line shaped;
-    shaped.font = FontHandle::from_object(&typeface);
+    shaped.font = FontHandle::from_face(std::make_shared<const TestFontFace>(7u));
     ShapedRun::Line fallback;
     // act
     const std::shared_ptr<const ShapedRun> run = ShapedRun::make({shaped, fallback}, 16.0f);
@@ -510,6 +569,35 @@ TEST(ShapedRun, EqualityComparesTheGlyphsAndTheSize) {
     EXPECT_EQ(*first, *same);
     EXPECT_NE(*first, *other_size);
     EXPECT_NE(*first, *other_glyphs);
+}
+
+TEST(ShapedRun, EqualityExcludesTheFontHandle) {
+    // arrange two one glyph runs whose handles name different faces entirely (§9.1, AD-34)
+    ShapedRun::Line mine;
+    mine.font = FontHandle::from_face(std::make_shared<const TestFontFace>(7u));
+    mine.glyphs.push_back(ShapedGlyph{.id = 3, .position = Point{.x = 1.0f, .y = 0.0f}});
+    ShapedRun::Line theirs;
+    theirs.font = FontHandle::from_face(std::make_shared<const TestFontFace>(7u));
+    theirs.glyphs.push_back(ShapedGlyph{.id = 3, .position = Point{.x = 1.0f, .y = 0.0f}});
+    // act
+    const std::shared_ptr<const ShapedRun> first = ShapedRun::make({mine}, 16.0f, 7);
+    const std::shared_ptr<const ShapedRun> second = ShapedRun::make({theirs}, 16.0f, 7);
+    // assert the shape is the identity, because the handle is where the shape came from rather than it (§9.1, AD-34)
+    EXPECT_NE(first->lines().front().font, second->lines().front().font);
+    EXPECT_EQ(*first, *second);
+}
+
+TEST(ShapedRun, EqualityRejectsADifferentFontHash) {
+    // arrange the same glyphs shaped from two identities, which is what a different font is (§15, AD-34)
+    ShapedRun::Line mine;
+    mine.glyphs.push_back(ShapedGlyph{.id = 3, .position = Point{.x = 1.0f, .y = 0.0f}});
+    // act
+    const std::shared_ptr<const ShapedRun> first = ShapedRun::make({mine}, 16.0f, 7);
+    const std::shared_ptr<const ShapedRun> second = ShapedRun::make({mine}, 16.0f, 8);
+    // assert the hash is part of the identity, because two fonts shaped the same text are not one run (§15, AD-34)
+    ASSERT_EQ(first->font_hash(), 7u);
+    ASSERT_EQ(second->font_hash(), 8u);
+    EXPECT_NE(*first, *second);
 }
 
 TEST(TextLayout, AnUnmeasuredLayoutIsEmpty) {
@@ -1298,6 +1386,41 @@ TEST(PictureRecorder, CommandsAreRecordedInOrder) {
     EXPECT_FLOAT_EQ(recorder.commands()[1].rect_geometry().radius, 4.0f);
 }
 
+TEST(PictureRecorder, ALayerRecordsItsTwoMarkersInPaintOrder) {
+    // arrange, act
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{});
+    recorder.push_layer(0.5f);
+    recorder.draw_rect(Rect::from_origin_size(Point{20.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{});
+    recorder.pop_layer();
+    // assert the push carries the group opacity and the pop closes the same group (§6.2)
+    ASSERT_EQ(recorder.commands().size(), 4u);
+    EXPECT_EQ(recorder.commands()[1].kind(), DrawCommandKind::LayerPush);
+    EXPECT_FLOAT_EQ(recorder.commands()[1].layer_geometry().opacity, 0.5f);
+    EXPECT_EQ(recorder.commands()[3].kind(), DrawCommandKind::LayerPop);
+}
+
+TEST(PictureRecorder, ALayerLeftOpenIsClosedAtTheSeal) {
+    // arrange a recorder that opens a group and never closes it, which a malformed picture can do (§6.2)
+    PictureRecorder recorder;
+    recorder.push_layer(0.5f);
+    recorder.draw_rect(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    // act
+    const std::vector<DrawCommand> commands = recorder.commands();
+    // assert the picture is balanced, so every backend composites the group once instead of diverging (§6.2)
+    ASSERT_EQ(commands.size(), 3u);
+    EXPECT_EQ(commands[0].kind(), DrawCommandKind::LayerPush);
+    EXPECT_EQ(commands[2].kind(), DrawCommandKind::LayerPop);
+}
+
+TEST(PictureRecorder, APopWithNoLayerOpenRecordsNothing) {
+    // arrange, act
+    PictureRecorder recorder;
+    recorder.pop_layer();
+    // assert a mismatched pop cannot emit a marker that would close an outer group (§6.2)
+    EXPECT_TRUE(recorder.empty());
+}
+
 TEST(PictureRecorder, AnEmptyRectangleDoesNotRecord) {
     // arrange, act
     PictureRecorder recorder;
@@ -1582,6 +1705,47 @@ TEST(PictureRecorder, RestoreWithoutASavedStateKeepsTheTransform) {
     recorder.restore();
     // assert
     EXPECT_EQ(recorder.transform(), (Transform::translation(5.0f, 6.0f)));
+}
+
+TEST(PictureRecorder, AClipIsRecordedInTheSpaceTheGeometryIsPlacedIn) {
+    // arrange a recorder standing at a translation, which is what a transformed subtree holds (§6.4)
+    PictureRecorder recorder;
+    recorder.set_transform(Transform::translation(100.0f, 20.0f));
+    // act the clip is declared in local coordinates, like the geometry below it (§6.2)
+    recorder.clip_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 40.0f}));
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 40.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // assert the clip is held where the content that it cuts is placed, because both travel in picture space (§6.4)
+    EXPECT_EQ(recorder.clip(), (Rect{.x = 100.0f, .y = 20.0f, .width = 50.0f, .height = 40.0f}));
+    // assert the command carries that clip, so the replay scissors the shape it actually draws (§6.2, §6.4)
+    ASSERT_EQ(recorder.commands().size(), 1u);
+    EXPECT_EQ(recorder.commands()[0].clip(), (Rect{.x = 100.0f, .y = 20.0f, .width = 50.0f, .height = 40.0f}));
+}
+
+TEST(PictureRecorder, ARoundedClipScalesItsRadiusWithTheTransform) {
+    // arrange a recorder standing at a doubling scale, which a scaled subtree holds (§6.4)
+    PictureRecorder recorder;
+    recorder.set_transform(Transform::scaling(2.0f, 2.0f));
+    // act a rounded clip is declared in local coordinates (§6.2)
+    recorder.clip_rounded_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), 3.0f);
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // assert the clip covers the scaled square, because the geometry it cuts is scaled the same way (§6.4)
+    ASSERT_EQ(recorder.commands().size(), 1u);
+    EXPECT_EQ(recorder.commands()[0].clip(), (Rect{.x = 0.0f, .y = 0.0f, .width = 20.0f, .height = 20.0f}));
+    // assert the radius doubled with the extent, because a scaled corner keeps its shape (§6.2)
+    EXPECT_FLOAT_EQ(recorder.commands()[0].clip_radius(), 6.0f);
+}
+
+TEST(PictureRecorder, AShadowCarriesTheTransformItWasRecordedUnder) {
+    // arrange a recorder standing at a translation, which a transformed subtree holds (§6.4)
+    PictureRecorder recorder;
+    recorder.set_transform(Transform::translation(4.0f, 5.0f));
+    // act a cast is drawn at local coordinates, which the transform places (§6.2)
+    recorder.draw_shadow(Rect::from_origin_size(Point{1.0f, 2.0f}, Size{10.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgb(0.0f, 0.0f, 0.0f), .offset = Point{0.0f, 0.0f}, .blur = 2.0f});
+    // assert the cast carries the transform, because a cast is placed like every other draw (§6.4)
+    ASSERT_EQ(recorder.commands().size(), 1u);
+    EXPECT_EQ(recorder.commands()[0].transform(), Transform::translation(4.0f, 5.0f));
+    // assert the bound covers the reach where the transform places it, which is six pixels each way (§6.2)
+    EXPECT_EQ(recorder.commands()[0].bounds(), (Rect{.x = -1.0f, .y = 1.0f, .width = 22.0f, .height = 22.0f}));
 }
 
 TEST(PictureRecorder, EachClipKindNarrowsToTheRectangleItWasGiven) {
@@ -2091,16 +2255,239 @@ TEST(PictureRecorder, AZeroOpacityStillRecordsAShape) {
     EXPECT_FLOAT_EQ(recorder.commands()[0].paint().fill.alpha, 0.0f);
 }
 
-TEST(PictureRecorder, APolylineBakesTheTransformIntoItsVertices) {
+TEST(PictureRecorder, APolylineKeepsItsVerticesAndCarriesTheTransform) {
     // arrange a recorder standing at a translation, which is what a nested composition holds (§6.4)
     PictureRecorder recorder;
     recorder.set_transform(Transform::translation(5.0f, 6.0f));
-    // act a polyline is drawn through local vertices, which the replay cannot remap (§6.2)
+    // act a polyline is drawn through local vertices, which the replay places under the transform (§6.2)
     const Point points[] = {{0.0f, 0.0f}, {10.0f, 10.0f}, {10.0f, 0.0f}};
     recorder.draw_polyline(points, StrokeStyle{});
-    // assert the recorded run carries the mapped vertices, because the transform is baked (§6.4)
-    ASSERT_EQ(recorder.commands().size(), 1u);
-    const std::vector<Point>& mapped = recorder.commands()[0].polyline_geometry().points;
-    ASSERT_EQ(mapped.size(), 3u);
-    EXPECT_EQ(mapped[1], (Point{15.0f, 16.0f}));
+    // assert the run keeps the vertices it was given, because the transform travels beside them (§6.4)
+    const std::vector<DrawCommand> commands = recorder.commands();
+    ASSERT_EQ(commands.size(), 1u);
+    const std::vector<Point>& kept = commands[0].polyline_geometry().points;
+    ASSERT_EQ(kept.size(), 3u);
+    EXPECT_EQ(kept[1], (Point{10.0f, 10.0f}));
+    // assert the command carries the transform, which is what places those vertices at replay (§6.4)
+    EXPECT_EQ(commands[0].transform(), Transform::translation(5.0f, 6.0f));
+    // assert the bound is the mapped run, because a bound reports where the command draws (§6.2)
+    EXPECT_EQ(commands[0].bounds(), (Rect{.x = 5.0f, .y = 6.0f, .width = 10.0f, .height = 10.0f}));
+}
+
+TEST(DrawCommandPlacementChecks, ALayerMarkerBoundIsTheClipItDrawsUnder) {
+    // arrange a marker under a narrower clip, which carries no geometry of its own (§6.2)
+    DrawCommand marker = DrawCommand::layer_push(0.5f);
+    const Rect clip = Rect::from_origin_size(Point{4.0f, 5.0f}, Size{30.0f, 20.0f});
+    marker.set_clip(clip);
+    // act, assert the marker covers the clip it draws under rather than an empty rect (§6.2)
+    EXPECT_EQ(marker.bounds(), clip);
+}
+
+TEST(DrawCommandPlacementChecks, ARunBoundStartsAtTheOriginItWasRecordedAt) {
+    // arrange a run measured at a size, which a text command places at its box origin (§9.1, §6.2)
+    const TextLayout layout{.size = Size{.width = 40.0f, .height = 10.0f}};
+    // act the run is recorded at an origin, which is where its first line starts (§9.1)
+    const DrawCommand command = DrawCommand::text(layout, Point{30.0f, 50.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // assert the bound starts at that origin instead of the scene origin, which is where the run draws (§6.2)
+    EXPECT_EQ(command.bounds(), (Rect{.x = 30.0f, .y = 50.0f, .width = 40.0f, .height = 10.0f}));
+}
+
+TEST(DrawCommandPlacementChecks, ARunBoundFollowsTheTransformTheRunWasRecordedWith) {
+    // arrange the same run, recorded under a doubling scale (§6.4)
+    const TextLayout layout{.size = Size{.width = 40.0f, .height = 10.0f}};
+    DrawCommand command = DrawCommand::text(layout, Point{30.0f, 50.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // act the transform is stamped, which is what a scaled subtree does (§6.1)
+    command.set_transform(Transform::scaling(2.0f, 2.0f));
+    // assert the bound is the scaled run box, because the run draws at the size the transform gives it (§6.2)
+    EXPECT_EQ(command.bounds(), (Rect{.x = 60.0f, .y = 100.0f, .width = 80.0f, .height = 20.0f}));
+}
+
+TEST(DrawCommandPlacementChecks, AnImageBoundFollowsTheTransformItWasRecordedWith) {
+    // arrange one opaque pixel and the destination it fills (§6.4)
+    const std::vector<std::uint8_t> pixels{255u, 255u, 255u, 255u};
+    const std::shared_ptr<const ImageResource> image = std::make_shared<const ImageResource>(21u, 1u, 1u, ImageFormat::RGBA8, pixels);
+    // act the image is recorded at a destination under a translation (§6.4)
+    DrawCommand command = DrawCommand::image(image, Rect{.x = 10.0f, .y = 20.0f, .width = 8.0f, .height = 6.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    command.set_transform(Transform::translation(5.0f, 7.0f));
+    // assert the bound is the destination where the transform places it (§6.2)
+    EXPECT_EQ(command.bounds(), (Rect{.x = 15.0f, .y = 27.0f, .width = 8.0f, .height = 6.0f}));
+}
+
+TEST(DrawCommandPlacementChecks, APathBoundFollowsTheRetainedTransform) {
+    // arrange a triangle contour, which a scene records with a transform (§6.4)
+    const std::vector<PathVerb> verbs{PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const std::vector<Point> points{Point{0.0f, 0.0f}, Point{10.0f, 0.0f}, Point{0.0f, 10.0f}};
+    // act the contour is placed by the transform the retained draw carries (§6.4)
+    const DrawCommand command = DrawCommand::path(std::make_shared<const PathResource>(9u, verbs, points), Transform::translation(20.0f, 30.0f), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // assert the bound is where the replay draws the contour, not where its points were authored (§6.2)
+    EXPECT_EQ(command.bounds(), (Rect{.x = 20.0f, .y = 30.0f, .width = 10.0f, .height = 10.0f}));
+}
+
+TEST(DrawCommandPlacementChecks, ADrawingCommandReplaysUnderTheTransformItCarries) {
+    // arrange a rectangle command placed under a translation, which a flattened picture records (§6.4)
+    DrawCommand command = DrawCommand::rectangle(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    command.set_transform(Transform::translation(5.0f, 6.0f));
+    TestRenderContext context;
+    // act the command draws itself, which is what stage two does (§6.1)
+    command.replay(context);
+    // assert the context adopted the transform around the draw, because the primitive takes none (§6.4)
+    ASSERT_EQ(context.transforms.size(), 1u);
+    EXPECT_EQ(context.transforms.front(), Transform::translation(5.0f, 6.0f));
+    // assert the state is balanced, because a transform must not outlive its command (§6.2)
+    EXPECT_EQ(context.save_count, 1u);
+    EXPECT_EQ(context.restore_count, 1u);
+    // assert the context stands where it did, because a restore that did nothing would leak the transform (§6.2)
+    EXPECT_EQ(context.transform(), Transform{});
+    // assert the primitive still drew once, which is what the transform is for (§6.2)
+    ASSERT_EQ(context.drawn_rects.size(), 1u);
+}
+
+TEST(DrawCommandPlacementChecks, ADrawingCommandWithNoTransformDrawsWithoutAState) {
+    // arrange a rectangle command that carries no transform, which is every command a frame records (§6.4)
+    const DrawCommand command = DrawCommand::rectangle(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    TestRenderContext context;
+    // act the command draws itself (§6.1)
+    command.replay(context);
+    // assert no state was pushed, because an identity transform costs nothing (§6.2)
+    EXPECT_EQ(context.save_count, 0u);
+    EXPECT_EQ(context.transforms.size(), 0u);
+    EXPECT_EQ(context.drawn_rects.size(), 1u);
+}
+
+TEST(DrawCommandPlacementChecks, ARetainedCommandIsNotTransformedTwice) {
+    // arrange a path command that already takes its transform as an argument (§6.4)
+    const std::vector<PathVerb> verbs{PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const std::vector<Point> points{Point{0.0f, 0.0f}, Point{10.0f, 0.0f}, Point{0.0f, 10.0f}};
+    const DrawCommand command = DrawCommand::path(std::make_shared<const PathResource>(3u, verbs, points), Transform::translation(7.0f, 8.0f), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    TestRenderContext context;
+    // act the command draws itself (§6.1)
+    command.replay(context);
+    // assert the context was left alone, because composing the transform here would apply it twice (§6.4)
+    EXPECT_EQ(context.save_count, 0u);
+    EXPECT_EQ(context.transforms.size(), 0u);
+    // assert the path received its transform once, as the primitive argument (§6.4)
+    ASSERT_EQ(context.drawn_path_transforms.size(), 1u);
+    EXPECT_EQ(context.drawn_path_transforms.front(), Transform::translation(7.0f, 8.0f));
+}
+
+TEST(DrawCommandPlacementChecks, ADrawingCommandInANestedPictureComposesTheTransforms) {
+    // arrange a rectangle command carrying its own transform, replayed under a placed context (§6.4)
+    DrawCommand command = DrawCommand::rectangle(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    command.set_transform(Transform::translation(2.0f, 3.0f));
+    TestRenderContext context;
+    context.set_transform(Transform::translation(100.0f, 200.0f));
+    // act
+    command.replay(context);
+    // assert the command transform sits under the context's, so the inner picture lands inside the outer one (§6.4)
+    ASSERT_EQ(context.transforms.size(), 2u);
+    EXPECT_EQ(context.transforms.back(), Transform::translation(2.0f, 3.0f).then(Transform::translation(100.0f, 200.0f)));
+}
+
+TEST(GlyphOutlinePlacementChecks, BoundsFollowTheTransformTheGlyphWasRecordedWith) {
+    // arrange a square glyph outline, which is a shape whose every corner is known (§6.4)
+    const std::vector<PathVerb> verbs{PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const std::vector<Point> points{Point{0.0f, 0.0f}, Point{10.0f, 0.0f}, Point{10.0f, 10.0f}, Point{0.0f, 10.0f}};
+    const std::shared_ptr<const GlyphOutline> outline = std::make_shared<const GlyphOutline>(7u, 3u, 16.0f, GlyphOutlineData{.verbs = verbs, .points = points});
+    // act the glyph is placed at a pen under a doubling scale, which a scaled subtree composes (§6.4, §6.1)
+    const DrawCommand command = DrawCommand::glyph_outline(outline, Point{5.0f, 5.0f}, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)}, Transform::scaling(2.0f, 2.0f));
+    // assert the bound is the scaled square rather than the pen placed one, because the transform moves it (§6.2, §6.1)
+    EXPECT_EQ(command.bounds(), (Rect{.x = 10.0f, .y = 10.0f, .width = 20.0f, .height = 20.0f}));
+}
+
+TEST(GlyphOutlinePlacementChecks, BoundsFollowASkewedTransform) {
+    // arrange the same square, whose extent a skew leaves unchanged along one axis and doubles along the other (§6.4)
+    const std::vector<PathVerb> verbs{PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const std::vector<Point> points{Point{0.0f, 0.0f}, Point{10.0f, 0.0f}, Point{10.0f, 10.0f}, Point{0.0f, 10.0f}};
+    const std::shared_ptr<const GlyphOutline> outline = std::make_shared<const GlyphOutline>(7u, 3u, 16.0f, GlyphOutlineData{.verbs = verbs, .points = points});
+    // act the glyph is placed at the origin under a shear, which turns the square into a wider parallelogram (§6.1)
+    const DrawCommand command = DrawCommand::glyph_outline(outline, Point{0.0f, 0.0f}, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)}, Transform{.skew_x = 1.0f});
+    // assert the bound follows the sheared corners rather than the unsheared square (§6.2, §6.1)
+    EXPECT_EQ(command.bounds(), (Rect{.x = 0.0f, .y = 0.0f, .width = 20.0f, .height = 10.0f}));
+}
+
+TEST(GlyphOutlinePlacementChecks, ReplaysTheOutlineUnderThePenAndTheRecordedTransform) {
+    // arrange a square glyph outline and the context the command replays into (§6.4)
+    const std::vector<PathVerb> verbs{PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const std::vector<Point> points{Point{0.0f, 0.0f}, Point{10.0f, 0.0f}, Point{10.0f, 10.0f}, Point{0.0f, 10.0f}};
+    const std::shared_ptr<const GlyphOutline> outline = std::make_shared<const GlyphOutline>(7u, 3u, 16.0f, GlyphOutlineData{.verbs = verbs, .points = points});
+    TestRenderContext context;
+    // the glyph is placed at a pen under a shear, which is the transform a skewed subtree composes (§6.4, §6.1)
+    const Transform shear{.skew_x = 1.0f};
+    // act the recorded command draws itself, which is what stage two does (§6.1)
+    DrawCommand::glyph_outline(outline, Point{5.0f, 7.0f}, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)}, shear).replay(context);
+    // assert the retained path is drawn once, because the glyph is one command (§6.4, AD-06)
+    ASSERT_EQ(context.drawn_paths.size(), 1u);
+    EXPECT_EQ(context.drawn_paths.front(), outline->path());
+    // assert the path draws under the pen and the shear, because the two orders map a point differently (§6.4, §6.1)
+    EXPECT_EQ(context.drawn_path_transforms.front(), Transform::translation(5.0f, 7.0f).then(shear));
+}
+
+TEST(GlyphOutlineCacheChecks, AnswersAnOutlineItAlreadyBuilt) {
+    // arrange an empty cache and the identity of one glyph outline (§6.4)
+    GlyphOutlineCache cache;
+    const GlyphOutlineKey key{.font_hash = 7u, .glyph_id = 3u, .font_size = 16.0f};
+    std::size_t built = 0u;
+    // the resolver counts its calls, because not running twice is the claim of a cache (§6.4, AD-06)
+    const GlyphOutlineResolver counting = [&built](const GlyphOutlineKey&) {
+        // one empty outline is built per call, which is enough to pin the caching (§6.4)
+        built++;
+        // the outline carries the key it was asked for, which is what the cache stores it under (§6.4)
+        return std::make_shared<const GlyphOutline>(7u, 3u, 16.0f, GlyphOutlineData{});
+    };
+    // act the same key is looked up twice (§6.4)
+    EXPECT_NE(cache.lookup(key, counting), nullptr);
+    EXPECT_NE(cache.lookup(key, counting), nullptr);
+    // assert the resolver ran once, because the second lookup answered from the cache (§6.4, AD-06)
+    EXPECT_EQ(built, 1u);
+    EXPECT_EQ(cache.count(), 1u);
+}
+
+TEST(GlyphOutlineCacheChecks, AnswersNothingForAnotherIdentity) {
+    // arrange one built outline beside the identities it must not be confused with (§6.4)
+    GlyphOutlineCache cache;
+    const GlyphOutlineResolver building = [](const GlyphOutlineKey& key) {
+        // the outline carries the key it was asked for, which makes every entry its own shape (§6.4)
+        return std::make_shared<const GlyphOutline>(key.font_hash, key.glyph_id, key.font_size, GlyphOutlineData{});
+    };
+    // act the first key is built, and three neighbours of it are asked for (§6.4)
+    const std::shared_ptr<const GlyphOutline> first = cache.lookup(GlyphOutlineKey{.font_hash = 7u, .glyph_id = 3u, .font_size = 16.0f}, building);
+    EXPECT_NE(first, nullptr);
+    EXPECT_NE(cache.lookup(GlyphOutlineKey{.font_hash = 7u, .glyph_id = 4u, .font_size = 16.0f}, building), nullptr);
+    EXPECT_NE(cache.lookup(GlyphOutlineKey{.font_hash = 7u, .glyph_id = 3u, .font_size = 20.0f}, building), nullptr);
+    EXPECT_NE(cache.lookup(GlyphOutlineKey{.font_hash = 8u, .glyph_id = 3u, .font_size = 16.0f}, building), nullptr);
+    // assert the first key still answers its own outline, because no neighbour key aliased onto it (§6.4)
+    EXPECT_EQ(cache.lookup(GlyphOutlineKey{.font_hash = 7u, .glyph_id = 3u, .font_size = 16.0f}, building), first);
+    // assert every identity is held apart, because four keys were built and none answered another (§6.4)
+    EXPECT_EQ(cache.count(), 4u);
+}
+
+TEST(GlyphOutlineCacheChecks, DropsASliceWhenItFills) {
+    // arrange a cache filled to its limit by as many distinct glyphs as a run of scripts draws (§6.4, AD-06)
+    GlyphOutlineCache cache;
+    const GlyphOutlineResolver building = [](const GlyphOutlineKey& key) {
+        // the outline carries the key it was asked for, which makes every entry its own shape (§6.4)
+        return std::make_shared<const GlyphOutline>(key.font_hash, key.glyph_id, key.font_size, GlyphOutlineData{});
+    };
+    for (std::uint32_t index = 0u; index < GlyphOutlineCache::MAXIMUM_CACHED_OUTLINES; index++)
+        EXPECT_NE(cache.lookup(GlyphOutlineKey{.font_hash = 7u, .glyph_id = index, .font_size = 16.0f}, building), nullptr);
+    // assert the cache is holding exactly what the limit allows (§6.4)
+    EXPECT_EQ(cache.count(), GlyphOutlineCache::MAXIMUM_CACHED_OUTLINES);
+    // act one more outline arrives, which a full cache answers by dropping a slice of what it holds (§6.4)
+    EXPECT_NE(cache.lookup(GlyphOutlineKey{.font_hash = 7u, .glyph_id = 99999u, .font_size = 16.0f}, building), nullptr);
+    // assert a slice is gone rather than all of them, because a rebuilt outline is not free (§6.4, AD-06)
+    EXPECT_EQ(cache.count(), GlyphOutlineCache::MAXIMUM_CACHED_OUTLINES - GlyphOutlineCache::MAXIMUM_CACHED_OUTLINES / 8u + 1u);
+}
+
+TEST(GlyphOutlineCacheChecks, DropsEverythingItIsAskedToDrop) {
+    // arrange one cached outline, which the clear below must not answer afterwards (§2.2)
+    GlyphOutlineCache cache;
+    const GlyphOutlineResolver building = [](const GlyphOutlineKey& key) {
+        // the outline carries the key it was asked for, which makes every entry its own shape (§6.4)
+        return std::make_shared<const GlyphOutline>(key.font_hash, key.glyph_id, key.font_size, GlyphOutlineData{});
+    };
+    EXPECT_NE(cache.lookup(GlyphOutlineKey{.font_hash = 7u, .glyph_id = 3u, .font_size = 16.0f}, building), nullptr);
+    // act the cache is cleared, which one test does so its outlines cannot answer another's (§2.2)
+    cache.clear();
+    // assert nothing is held, because the clear dropped every entry (§2.2)
+    EXPECT_EQ(cache.count(), 0u);
 }

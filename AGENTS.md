@@ -28,6 +28,13 @@ Mandatory rules for a source that reaches a platform API (`AppKit`, `Metal`, `Co
 - A header that cannot be portable, because it declares platform types or imports platform headers, carries the infix as well, for example `native_surface.macos.h`
 - The infix is part of the file's identity: renaming a file is a build change, so the module `CMakeLists.txt` and every `#include` are updated in the same change
 
+A shader is `<name>.metal`, for example `render/render-albor/albor_shaders.metal`. Its compiled artifact
+(`<name>.metallib`) and a `.sha256` stamp of the pair are **committed build inputs**, because a framework consumer
+must not need the Metal toolchain to build (§6.3, AD-16): every Apple build embeds the artifact and verifies the stamp, so a
+shader change without regeneration fails. `bash build/shaders.sh --write` regenerates both, and is the only place the
+toolchain runs. A shader is not a C++ source: clang-format does not rewrite it, and the comment sweep in
+`build/check-format.sh` checks its comment length and adjacency like any other file.
+
 Never introduce an extension outside this list. Adding a platform extension family means updating the
 pattern in `build/check-format.sh` in the same change.
 
@@ -46,8 +53,8 @@ Violating any of these is a defect, not a style issue.
 - **No interpreter in Release** (AD-01, §2.1): production builds contain no `.ui` parser, no IR evaluator, no type registry, no property-by-name reflection, no automation channel.
 - **Layout invariance** (AD-02, §2.3): runtime class layout and virtual interfaces are identical in Release, Dev and Test. Dev/Test features attach only through registration hooks that exist in every build, side tables keyed by node identity, and separately linked/generated translation units. Never change class layout or inline code under `#ifdef`.
 - **Dev/Test-only code is excluded at link time, never with `#ifdef`** (AD-04, §2.3). Keep the source byte-identical across configurations, put the feature in its own linked target, and install it through the registration hook. A Release reference to an excluded symbol must fail the link, not compile away silently.
-- **Automation is excluded from Release at compile/link time** (AD-10, §19.6), not by a runtime flag. Local-only transport, per-session token, application allow-list, off unless explicitly enabled.
-- **MCP is an adapter over the automation layer only** (AD-20, §19.7). It must not reach commands or runtime internals directly.
+- **Automation is excluded from Release at compile/link time** (AD-10, §10.3), not by a runtime flag. Local-only transport, per-session token, application allow-list, off unless explicitly enabled. The embedded host is linked via the whole-archive umbrella when `ALBOR_AUTOMATION` is on, and is independent of the dev runtime extension (AD-02, §10.3).
+- **MCP is an adapter over the automation layer only** (AD-20, §10.3). It must not reach commands or runtime internals directly.
 - **Identity is explicit** (AD-11, §18.1): a node's `id:` is its identity; compiler-generated implicit keys are correlation hints for live reload and must never be used by automation selectors or semantic keys.
 - **Two-stage frame** (AD-18, §10.2): scene build runs on the UI thread and produces an immutable `FrameScene`; render execution may run on a render thread and must never call application code.
 - **Immutable snapshots cross threads** (§10.5, §13.2): application data reaches custom nodes and bindings as `std::shared_ptr<const T>` in an observable `Snapshot<T>`. `Observable<T>::post_set` is the thread-safe path; `set` is UI-thread only.
@@ -100,7 +107,7 @@ The layout follows §3.2. Module directories map to runtime modules and must sta
 core/ application/ ui/ layout/ input/ focus/ commands/ model/
 text/ style/ animation/ window/
 platform/ (macos/ windows/ linux/{wayland,x11}/ headless/)
-render/ render-skia/ render-software/ widgets/ semantics/ accessibility/
+render/ render-skia/ render-software/ render-blend2d/ render-albor/ widgets/ semantics/ accessibility/
 services/ resources/ i18n/
 compiler/ manifest/ language-server/ preview/ dev-service/
 devrt/ automation/ inspector/

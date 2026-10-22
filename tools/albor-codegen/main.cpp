@@ -19,13 +19,20 @@
 
 namespace
 {
+    std::string utf8_path(const std::filesystem::path& path) {
+        // the u8 spelling is the portable one, because std::filesystem makes a path wide on windows alone (§11.1)
+        const std::u8string encoded = path.u8string();
+        // the bytes are taken as they stand, because the u8 form is already utf-8 and no locale is involved (§11.1)
+        return std::string(reinterpret_cast<const char*>(encoded.data()), encoded.size());
+    }
+
     // write every generated file under the output directory, which is the compile step of a ui file (§14.2)
     void write_files(const std::vector<albor::compiler::GeneratedFile>& files, const std::filesystem::path& output) {
         // the directory must exist before a file lands in it, which is what the driver arranges (§14.2)
         std::error_code error;
         std::filesystem::create_directories(output, error);
         if (error) {
-            std::fprintf(stderr, "albor-codegen: cannot create '%s'\n", output.c_str());
+            std::fprintf(stderr, "albor-codegen: cannot create '%s'\n", utf8_path(output).c_str());
             return;
         }
         // each file is written only when its content changed, which keeps incremental builds quiet (§14.2, AD-03a)
@@ -103,7 +110,7 @@ int main(int argc, char** argv) {
     // the file is read whole, because the scanner takes the complete unit (§11.1)
     std::ifstream stream(input, std::ios::binary);
     if (!stream) {
-        std::fprintf(stderr, "albor-codegen: cannot open '%s'\n", input.c_str());
+        std::fprintf(stderr, "albor-codegen: cannot open '%s'\n", utf8_path(input).c_str());
         return 1;
     }
     // the source text is read, because a scanner needs every character before it produces a token (§11.1)
@@ -116,7 +123,7 @@ int main(int argc, char** argv) {
         std::ifstream manifest_stream(manifest, std::ios::binary);
         // a manifest that cannot be read is reported, because the compiler cannot resolve records without it (§11.2)
         if (!manifest_stream) {
-            std::fprintf(stderr, "albor-codegen: cannot open '%s'\n", manifest.c_str());
+            std::fprintf(stderr, "albor-codegen: cannot open '%s'\n", utf8_path(manifest).c_str());
             return 1;
         }
         // the module name is the file stem, which is what the glue generator names the directory after (§11.2)
@@ -141,7 +148,7 @@ int main(int argc, char** argv) {
     const albor::compiler::CheckedFile checked = albor::compiler::TypeChecker(catalog, diagnostics).check(file);
     // a blocking problem stops the driver before any generation, which is what a console compile reports (§11.1)
     if (diagnostics.has_errors()) {
-        print_diagnostics(diagnostics, input.c_str());
+        print_diagnostics(diagnostics, utf8_path(input));
         return 1;
     }
     // the generator turns the checked file into the facade units (§11.3, AD-03a)
@@ -153,12 +160,12 @@ int main(int argc, char** argv) {
     const std::vector<albor::compiler::GeneratedFile> files = generator.generate(checked);
     // the generator adds its own blocking problems, which are reported the same way (§11.3)
     if (files.empty() || diagnostics.has_errors()) {
-        print_diagnostics(diagnostics, input.c_str());
+        print_diagnostics(diagnostics, utf8_path(input));
         return 1;
     }
     // the non blocking warnings still reach the console, because they are worth reading (§11.1)
     if (diagnostics.count() != 0U)
-        print_diagnostics(diagnostics, input.c_str());
+        print_diagnostics(diagnostics, utf8_path(input));
     // the generated files land under the output directory, which is the compile result of the ui unit (§14.2)
     write_files(files, output);
     return 0;

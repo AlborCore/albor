@@ -7,10 +7,10 @@
 namespace albor::skia
 {
 #if defined(__APPLE__)
-    // adapt the platform font a run carries to the typeface this backend draws with (§9.1, AD-28)
-    [[nodiscard]] sk_sp<SkTypeface> typeface_from_platform_font(const void* font, std::uint64_t font_hash);
+    // parse the typeface whose bytes the registry carries under the hash the run names (§15, AD-34)
+    [[nodiscard]] sk_sp<SkTypeface> typeface_from_font_hash(std::uint64_t font_hash);
 #else
-    // no platform font source exists here, so a run that names one draws nothing (§9.1)
-    [[nodiscard]] inline sk_sp<SkTypeface> typeface_from_platform_font(const void*, std::uint64_t) { return nullptr; }
+    // no font manager here parses carried bytes, so a platform run draws nothing (§15)
+    [[nodiscard]] inline sk_sp<SkTypeface> typeface_from_font_hash(std::uint64_t) { return nullptr; }
 #endif
 } // namespace albor::skia

@@ -5,6 +5,10 @@
 # exits non-zero when .clang-format itself is not the pinned style file
 # exits non-zero when a comment rule of STYLE-GUIDE.md is violated in what the change touched
 # set ALBOR_COMMENT_BASE=<ref> to measure the comment rules against a branch point instead of HEAD
+#
+# the tool is part of the style, because a clang-format major can change how it formats objective c++
+# literals and one line blocks: the tree is formatted with clang-format 22, so run this same major
+# before trusting a failure, which is what keeps one style on every platform
 
 # root of the repository, independent of the current working directory
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -12,17 +16,21 @@ cd "$ROOT"
 
 # the digest of the style file this repository ships, so an environment that
 # overwrites it with clang-format's own dump output fails the check instead of
-# silently reformatting the whole tree against a different style
+# silently reformatting the whole tree against a different style.
+# the digest is taken over the carriage returns removed, because windows
+# checks the tree out with CRLF line endings and macos and linux check it out
+# with LF, and one pin has to name the file on every platform
 CLANG_FORMAT_SHA256="4f9e53ddf0d41a6c5e758cf5300fe9f0128a3d64f4550a99f82e522b95643260"
 
-# hash the style file with whatever digest tool the host provides
+# hash the style file with whatever digest tool the host provides, reading the
+# carriage returns out first so a checked out line ending never decides the pin
 clang_format_digest() {
     if command -v shasum > /dev/null 2>&1; then
-        shasum -a 256 "$1" | cut -d' ' -f1
+        tr -d '\r' < "$1" | shasum -a 256 | cut -d' ' -f1
     elif command -v sha256sum > /dev/null 2>&1; then
-        sha256sum "$1" | cut -d' ' -f1
+        tr -d '\r' < "$1" | sha256sum | cut -d' ' -f1
     else
-        openssl dgst -sha256 "$1" | sed 's/.*= *//'
+        tr -d '\r' < "$1" | openssl dgst -sha256 | sed 's/.*= *//'
     fi
 }
 
@@ -49,13 +57,14 @@ EXCLUDED=()
 #   *.cpp   *.h            — core, tests
 #   *.mm    (e.g. *.macos.mm)   — Objective-C++
 #   *.c++   (e.g. *.linux.c++, *.win32.c++) — platform C++ extensions
-# adding a new extension family requires updating the grep pattern on line ~51
+#   *.metal — a shader the metal toolchain compiles, which only the comment sweep below covers
+# adding a new extension family requires updating this list, the grep below and the comment sweep
 
 # collect the tracked and the not yet committed C++ sources, dropping the generated files
 files=()
 while IFS= read -r file; do
     [ -z "$file" ] && continue
-    files+=("$file")
+    [ -f "$file" ] && files+=("$file")
 done < <(git ls-files --cached --others --exclude-standard './**' | grep -E '\.(cpp|h|c\+\+|mm)$' | { if [ ${#EXCLUDED[@]} -gt 0 ]; then grep -Fxv -e "${EXCLUDED[0]}"; else cat; fi; })
 
 if [ ${#files[@]} -eq 0 ]; then
@@ -82,7 +91,7 @@ check_comment_rules() {
     while IFS= read -r file; do
         [ -z "$file" ] && continue
         [ -f "$file" ] && changed+=("$file")
-    done < <({ git diff --name-only --diff-filter=ACMR "$base" -- '*.cpp' '*.h' '*.c++' '*.mm'; git ls-files --others --exclude-standard -- '*.cpp' '*.h' '*.c++' '*.mm'; } | sort -u)
+    done < <({ git diff --name-only --diff-filter=ACMR "$base" -- '*.cpp' '*.h' '*.c++' '*.mm' '*.metal'; git ls-files --others --exclude-standard -- '*.cpp' '*.h' '*.c++' '*.mm' '*.metal'; } | sort -u)
 
     if [ ${#changed[@]} -eq 0 ]; then
         # nothing changed, so there is nothing to hold to the rules

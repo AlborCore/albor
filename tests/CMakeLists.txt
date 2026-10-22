@@ -20,11 +20,14 @@ find_package(GTest CONFIG REQUIRED)
 add_executable(albor-tests ${CPP_SOURCES})
 
 # the tests reach the framework through the project root, which is where the module includes point (§3.5)
-target_include_directories(albor-tests PRIVATE ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-tests PRIVATE ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-tests PRIVATE cxx_std_23)
 
 # the ofl test font ships in the tree, so a suite that uses it has a carried font no host must supply (§15, AD-34, #92)
 target_compile_definitions(albor-tests PRIVATE ALBOR_TEST_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/fonts/Inter-Regular.ttf" ALBOR_TEST_FONT_FAMILY="Inter")
+
+# the ofl hebrew test font ships beside it, so the rtl checks reach a real face on every host (§9.2, AD-34)
+target_compile_definitions(albor-tests PRIVATE ALBOR_TEST_RTL_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansHebrew-Regular.ttf" ALBOR_TEST_RTL_FONT_FAMILY="Noto Sans Hebrew")
 
 # the dual-engine corpus source is compiled into a facade and serialized at test time, so the path is named here (§16)
 target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_UI="${CMAKE_CURRENT_SOURCE_DIR}/vectors/dual_engine_panel.ui")
@@ -51,7 +54,10 @@ target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_CONTROLS_UI="${
 # albor-alloc-probe is linked because the binary counts its heap traffic, which is how a steady state frame and a
 # cached measure are measured rather than assumed (§2.2). A shipping build never links it, so the probe is excluded
 # at link time instead of behind a flag, which is the rule of AD-04 (§2.3)
-target_link_libraries(albor-tests PRIVATE albor-render-software albor-platform-headless albor-text-harfbuzz albor-resources albor-manifest albor-accessibility albor-language-server albor-preview albor-alloc-probe albor-render-blend2d GTest::gtest_main)
+#
+# albor-resources is not named here, because every render and text module that builds on it hands it to the final
+# link already. Naming it again would put the same archive on the link line twice, which the linker ignores (§3.2)
+target_link_libraries(albor-tests PRIVATE albor-render-software albor-platform-headless albor-text-harfbuzz albor-manifest albor-accessibility albor-language-server albor-preview albor-alloc-probe albor-render-blend2d albor-render-albor GTest::gtest_main)
 
 # the suite that draws through the skia render context reaches that backend directly, which is the one module the
 # other suites never link because it reaches a platform surface (§3.2, AD-16). the backend is apple only, so the
@@ -95,6 +101,17 @@ if(APPLE)
     endif()
 endif()
 
+# the popup suite drives the win32 window adapter directly, because the popup shape is a native win32 surface
+# (§5.1, AD-16). the adapter is linked plain rather than through its -auto interface, because only the whole-archive
+# form pulls both platform_install units and collides on albor_platform_marker; the plain link pulls the window
+# unit on demand and installs nothing, which the suite does not need because it calls the create factory directly
+if(WIN32)
+    target_sources(albor-tests PRIVATE "./conditional/platform_window_popup.test.win32.c++")
+    target_link_libraries(albor-tests PRIVATE albor-platform-windows)
+    # the platform font suite drives the vendored engine's directwrite halves, which are native win32 surfaces (§9.1, AD-28)
+    target_sources(albor-tests PRIVATE "./conditional/text_platform_font.test.win32.c++")
+endif()
+
 
 # the automation suite reaches the automation core, which exists only when it is enabled, so the suite is gathered
 # under the same condition. a release configure has no such target, and referencing it would fail the link (AD-10)
@@ -102,6 +119,7 @@ if(ALBOR_AUTOMATION)
     target_sources(albor-tests PRIVATE "./conditional/automation.test.cpp" "./conditional/mcp_server.test.cpp")
     target_sources(albor-tests PRIVATE "./conditional/semantic_commands.test.cpp")
     target_sources(albor-tests PRIVATE "./conditional/command_commands.test.cpp")
+    target_sources(albor-tests PRIVATE "./conditional/capture_commands.test.cpp" "./conditional/png_writer.test.cpp")
     if(APPLE)
         target_sources(albor-tests PRIVATE "./conditional/automation_transport.test.cpp")
     endif()
@@ -126,19 +144,55 @@ gtest_discover_tests(albor-tests DISCOVERY_TIMEOUT 60)
 # above control the factory hooks themselves. this second binary links the archive whole, which runs both
 # installers at load, and asserts that a plain link of the backend leaves a process that renders (§5.3)
 add_executable(albor-blend2d-auto-checks "./conditional/blend2d_auto.test.cpp")
-target_include_directories(albor-blend2d-auto-checks PRIVATE ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-blend2d-auto-checks PRIVATE ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-blend2d-auto-checks PRIVATE cxx_std_23)
 target_link_libraries(albor-blend2d-auto-checks PRIVATE GTest::gtest_main albor-render-blend2d-auto)
 gtest_discover_tests(albor-blend2d-auto-checks DISCOVERY_TIMEOUT 60)
 
-# the window half of the install only exists where the macos presenter does, so its suite joins under apple (§5.3, AD-16)
+# the apple window half of the install only exists where the macos presenter does, so its suite joins under apple (§5.3, AD-16)
 #
-# the suite builds a real foreign object for the handle, which the presenter refuses by kind, so it is an
-# objective c++ source and carries arc like the other conditional platform suites (§5.3, AD-16)
+# the suite builds a real foreign object for the handle, which the presenter refuses by kind, and then presents a
+# real stream of frames through a layer, so it is an objective c++ source and carries arc like the other
+# conditional platform suites. the stream is what measures the footprint, which only quartzcore and metal allocate
+# into, so both frameworks are named here rather than through the backend's private link (§5.3, §6.3, AD-16)
 if(APPLE)
     target_sources(albor-blend2d-auto-checks PRIVATE "./conditional/blend2d_window_auto.test.macos.mm")
     set_source_files_properties("./conditional/blend2d_window_auto.test.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
-    target_link_libraries(albor-blend2d-auto-checks PRIVATE "-framework Foundation")
+    target_link_libraries(albor-blend2d-auto-checks PRIVATE "-framework Foundation" "-framework Metal" "-framework QuartzCore")
+endif()
+
+# the win32 window half builds a swapchain on a hidden window, which the suite drives through the real factory (§5.3, AD-16)
+if(WIN32)
+    target_sources(albor-blend2d-auto-checks PRIVATE "./conditional/blend2d_window_auto.test.win32.c++")
+endif()
+
+# the albor load time install checks need the whole archive link, which the main test binary cannot take (§6.3, AD-26)
+#
+# the backend is the metal one, which only exists where metal does, so the checks join under apple (AD-16). the
+# main binary links albor-render-albor lazily, so the load time installer stays out of it and the suites above
+# control the factory hook themselves. this second binary links the archive whole, which runs the installer at
+# load, and asserts the marker the in-repo backend carries (§6.3)
+if(APPLE)
+    add_executable(albor-render-albor-auto-checks "./conditional/albor_auto.test.cpp")
+    target_include_directories(albor-render-albor-auto-checks PRIVATE ${ALBOR_SOURCE_DIR})
+    target_compile_features(albor-render-albor-auto-checks PRIVATE cxx_std_23)
+    target_link_libraries(albor-render-albor-auto-checks PRIVATE GTest::gtest_main albor-render-albor-auto)
+    gtest_discover_tests(albor-render-albor-auto-checks DISCOVERY_TIMEOUT 60)
+
+    # the backend suite drives the metal device directly, which is the one module the portable suites never reach
+    target_sources(albor-tests PRIVATE "./conditional/render_albor_metal.test.macos.mm")
+    set_source_files_properties("./conditional/render_albor_metal.test.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    # the frameworks are what this suite's own sources reach, so naming the backend again would link it twice (§3.2)
+    target_link_libraries(albor-tests PRIVATE "-framework Foundation" "-framework Metal" "-framework QuartzCore")
+endif()
+
+# the automation host integration test verifies the transparent host lifecycle (§10.3, AD-10, AD-20)
+if(ALBOR_AUTOMATION AND APPLE)
+    add_executable(albor-automation-host-tests "./conditional/automation_host.test.cpp")
+    target_include_directories(albor-automation-host-tests PRIVATE ${ALBOR_SOURCE_DIR})
+    target_compile_features(albor-automation-host-tests PRIVATE cxx_std_23)
+    target_link_libraries(albor-automation-host-tests PRIVATE GTest::gtest_main albor-automation-auto albor-render-software)
+    gtest_discover_tests(albor-automation-host-tests DISCOVERY_TIMEOUT 60)
 endif()
 
 # the build-scope fixture is its own product, which the §14.3 check compiles and observes (AGENTS.md, §14.3)

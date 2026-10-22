@@ -5,7 +5,6 @@
 #include <gtest/gtest.h>
 
 #include "application/application.h"
-#include "application/timer.h"
 #include "core/dev_hook.h"
 #include "layout/column_layout.h"
 #include "platform/headless/headless_event_loop.h"
@@ -74,6 +73,13 @@ namespace
         // the tree the runtime offered, which is what a reload would patch (§12.1)
         void* bound_root = nullptr;
 
+        // the surface and the executor a capture reads, which every wired window lends (§6.3, §10.3)
+        void* bound_surface = nullptr;
+        void* bound_executor = nullptr;
+
+        // whether the offered window carried a tree a reload could patch (§6.1, §12.1)
+        bool bound_has_tree = false;
+
         // how many releases arrived, because that is what proves the binding was withdrawn (§5.2)
         int releases = 0;
 
@@ -85,10 +91,14 @@ namespace
     BinderRecorder* g_recorder = nullptr;
 
     // the entry point the runtime calls when a stage is wired, which records the offer (§12.1)
-    void record_bind(void* root, void*, void*) {
+    void record_bind(const albor::dev::WindowBinding& binding) {
         // the offer is recorded whole, because that is the whole contract (§12.1)
-        if (g_recorder != nullptr)
-            g_recorder->bound_root = root;
+        if (g_recorder == nullptr)
+            return;
+        g_recorder->bound_root = binding.root;
+        g_recorder->bound_surface = binding.surface;
+        g_recorder->bound_executor = binding.executor;
+        g_recorder->bound_has_tree = binding.has_tree;
     }
 
     // the entry point the runtime calls when a stage dies, which records the withdrawal (§5.2)
@@ -98,6 +108,9 @@ namespace
             return;
         g_recorder->releases++;
         g_recorder->released_root = root;
+        // the capture handles go with the tree, because a closed window's surface is gone (§5.2, §6.3)
+        g_recorder->bound_surface = nullptr;
+        g_recorder->bound_executor = nullptr;
     }
 
     // the scope that stands in for a linked dev extension, which is what the runtime hands its tree to (§12.1)
@@ -430,6 +443,51 @@ TEST(MainWindow, AWindowThatDrawsByHandPresentsItsOwnScene) {
     EXPECT_EQ(hooks, 2);
     // cleanup the application is a singleton, so this window is torn down before the next test (§4.1)
     EXPECT_TRUE(application.destroy_window(handle));
+}
+
+TEST(MainWindow, AWindowThatDrawsByHandStillOffersItsRoot) {
+    // arrange a scene source with no builder, which is the shape hello-world uses (§6.1, §10.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    BinderRecorder recorder;
+    InstalledRecorder installed(recorder);
+    albor::MainWindowConfig config;
+    config.scene_source = [](const albor::WindowMetrics&, std::uint64_t) { return std::shared_ptr<const albor::FrameScene>{}; };
+    // act create the window, which owns a pipeline root even without a tree (§6.1)
+    const albor::WindowHandle handle = application.create_window(albor::WindowOptions{}, albor::RootBuilder{}, config);
+    ASSERT_TRUE(handle.valid());
+    // assert the root was offered without a reloadable tree, because the automation host observes every window (§10.3)
+    ASSERT_NE(application.stage(handle), nullptr);
+    EXPECT_FALSE(application.stage(handle)->has_tree());
+    EXPECT_NE(recorder.bound_root, nullptr);
+    EXPECT_FALSE(recorder.bound_has_tree);
+    // act close the window, which withdraws the same root (§5.2)
+    EXPECT_TRUE(application.destroy_window(handle));
+    // assert the release named the offered root once (§5.2)
+    EXPECT_EQ(recorder.releases, 1);
+    EXPECT_EQ(recorder.released_root, recorder.bound_root);
+}
+
+TEST(MainWindow, AWindowOffersTheCaptureHandlesItsSurfaceNeeds) {
+    // arrange the factories and a recording extension, which is what linking the dev runtime installs (§12.1, AD-02)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    BinderRecorder recorder;
+    InstalledRecorder installed(recorder);
+    // act create a main window, whose stage lends its surface the moment it is wired (§6.3, §10.3)
+    const albor::WindowHandle handle = application.create_window(albor::WindowOptions{}, empty_form());
+    ASSERT_TRUE(handle.valid());
+    // assert the capture handles arrived with the tree, because a capture flushes the executor first (§6.3)
+    EXPECT_NE(recorder.bound_root, nullptr);
+    EXPECT_NE(recorder.bound_surface, nullptr);
+    EXPECT_NE(recorder.bound_executor, nullptr);
+    EXPECT_TRUE(recorder.bound_has_tree);
+    // act close the window, which withdraws the handles with the tree it owned (§5.2)
+    EXPECT_TRUE(application.destroy_window(handle));
+    // assert no handle outlives the window, which keeps a later capture off a dead surface (§5.2)
+    EXPECT_EQ(recorder.releases, 1);
+    EXPECT_EQ(recorder.bound_surface, nullptr);
+    EXPECT_EQ(recorder.bound_executor, nullptr);
 }
 
 TEST(MainWindow, ASceneSourceThatProducesNothingPresentsNothing) {

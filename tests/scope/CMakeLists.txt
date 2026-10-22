@@ -7,5 +7,5 @@ add_library(albor-scope-fixture STATIC scope_fixture.cpp)
 albor_build_ui_component(albor-scope-fixture "${CMAKE_CURRENT_SOURCE_DIR}/scope_widget.ui")
 
 # the fixture includes through the project root, which is where the module includes point (§3.5, §11.3)
-target_include_directories(albor-scope-fixture PRIVATE ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-scope-fixture PRIVATE ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-scope-fixture PRIVATE cxx_std_23)

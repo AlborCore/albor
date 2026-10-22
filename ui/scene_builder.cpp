@@ -43,17 +43,17 @@ namespace albor
 
     void SceneRecorder::clip_rect(const Rect& rect) {
         // the clip narrows rather than replaces, because a nested clip may only ever cut more away (§6.2)
-        m_clip = m_clip.intersect(rect);
+        clip_to_rect(m_clip, rect);
     }
 
-    void SceneRecorder::clip_rounded_rect(const Rect& rect, float) {
-        // a rounded clip reduces to its rectangle, which is what the replay scissors to (§6.2)
-        m_clip = m_clip.intersect(rect);
+    void SceneRecorder::clip_rounded_rect(const Rect& rect, float radius) {
+        // a rounded clip keeps its radius, which the replay scissors by (§6.2)
+        clip_to_rounded_rect(m_clip, rect, radius);
     }
 
     const Rect& SceneRecorder::clip() const {
         // the clip is read back by a node that tests visibility against it (§6.2)
-        return m_clip;
+        return m_clip.rect;
     }
 
     void SceneRecorder::set_opacity(float opacity) {
@@ -64,6 +64,27 @@ namespace albor
     float SceneRecorder::opacity() const {
         // the opacity is read back by a node that composes its own on top of it (§6.1)
         return m_opacity;
+    }
+
+    void SceneRecorder::push_layer(float opacity) {
+        // the layer begins at the state the recorder stands at, which its pop returns to (§6.2)
+        save();
+        // the marker carries the clamped group opacity, which the replay composites once (§6.2)
+        record(DrawCommand::layer_push(opacity));
+        // the open count tells a later pop that a layer is waiting for it (§6.2)
+        m_layers++;
+    }
+
+    void SceneRecorder::pop_layer() {
+        // a pop with no layer open is a no operation, because the pair is the caller's contract (§6.2)
+        if (m_layers == 0)
+            return;
+        // the layer is no longer open, which the next pop reads (§6.2)
+        m_layers--;
+        // the state the push saved becomes current again, which balances its save (§6.2)
+        restore();
+        // the marker closes the group under the clip the push recorded, so the pair carries one clip (§6.2)
+        record(DrawCommand::layer_pop());
     }
 
     void SceneRecorder::draw_rect(const Rect& rect, const Paint& paint) {
@@ -117,8 +138,8 @@ namespace albor
             for (const ShapedGlyph& glyph : line.glyphs) {
                 // the key is everything that changes the shape, so a cache hit is provably the same outline (§6.4)
                 const GlyphOutlineKey key{.font_hash = layout.run->font_hash(), .glyph_id = glyph.id, .font_size = layout.run->font_size()};
-                // the outline comes from the cache or from the resolver, and a miss builds it once (§6.4)
-                const std::shared_ptr<const GlyphOutline> outline = m_outline_cache.lookup(key, m_outline_resolver);
+                // the outline comes from the borrowed cache, or straight from the resolver without one (§6.4, AD-06)
+                const std::shared_ptr<const GlyphOutline> outline = m_outline_cache != nullptr ? m_outline_cache->lookup(key, m_outline_resolver) : m_outline_resolver(key);
                 // a glyph the build cannot outline draws nothing, which is a refusal rather than a blank (§6.4)
                 if (outline == nullptr || outline->empty())
                     continue;
@@ -135,6 +156,11 @@ namespace albor
     void SceneRecorder::set_outline_resolver(GlyphOutlineResolver resolver) {
         // the resolver belongs to the recorder, which is what a composition root installs (§6.4, §11.3)
         m_outline_resolver = std::move(resolver);
+    }
+
+    void SceneRecorder::set_outline_cache(GlyphOutlineCache* cache) {
+        // the caller keeps the cache alive for this recorder's life, which the builder's own member does (§6.4, AD-06)
+        m_outline_cache = cache;
     }
 
     std::size_t SceneRecorder::outline_command_count() const {
@@ -163,8 +189,8 @@ namespace albor
     }
 
     void SceneRecorder::glyph_outline(const std::shared_ptr<const GlyphOutline>& outline, Point position, const Paint& paint) {
-        // the position is mapped into scene space now, like every recorded geometry (§6.4, AD-34)
-        record(DrawCommand::glyph_outline(outline, to_scene(position), paint));
+        // the pen and the transform travel with the outline, so a scaled subtree scales its glyphs (§6.4, §6.1)
+        record(DrawCommand::glyph_outline(outline, position, paint, m_transform));
     }
 
     void SceneRecorder::set_background(Color background) {
@@ -190,12 +216,22 @@ namespace albor
         // the commands travel into the scene in paint order, because stage two replays them as recorded (§6.1, AD-18)
         for (const DrawCommand& command : m_commands)
             scene->append_command(command);
+        // a layer the caller left open is closed at the seal, so a malformed tree still composites once (§6.2)
+        for (std::size_t open = m_layers; open > 0; --open) {
+            // the synthesized pop carries the clip the recorder ended under, which the replay ignores for markers (§6.2)
+            DrawCommand close = DrawCommand::layer_pop();
+            close.set_clip(m_clip.rect);
+            close.set_clip_radius(m_clip.radius);
+            scene->append_command(std::move(close));
+        }
         return scene;
     }
 
     void SceneRecorder::record(DrawCommand command) {
         // the clip is stamped first, because a command carries the clip it was recorded under (§6.2)
-        command.set_clip(m_clip);
+        command.set_clip(m_clip.rect);
+        // the radius rides with the clip, which a rounded clip scissors by (§6.2)
+        command.set_clip_radius(m_clip.radius);
         // the cull is decided on the authored paint, because a draw the author made is a draw even at no opacity (§6.1)
         if (command.draws_nothing())
             return;
@@ -252,6 +288,8 @@ namespace albor
         SceneRecorder recorder(metrics);
         // the resolver is handed on, because an embedded run expands into outlines during this recording (§6.4, AD-34)
         recorder.set_outline_resolver(m_outline_resolver);
+        // the outline cache is handed on as well, because the recorder itself is built per frame (§6.4, AD-06)
+        recorder.set_outline_cache(&m_outline_cache);
         recorder.set_background(background);
         recorder.save();
         // an invisible tree draws nothing, so the scene carries only the background (§6.1)

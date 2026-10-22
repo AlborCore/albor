@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 
+#include "automation/automation_connection.h"
 #include "automation/automation_registry.h"
 
 namespace albor::automation
@@ -28,6 +29,9 @@ namespace albor::automation
 
         // hand out the token this server publishes, which the host writes wherever its client will read it (§10.3, AD-10)
         [[nodiscard]] virtual const std::string& session_token() const = 0;
+
+        // replace connection protocol, leaving current conversation alone (§10.3, AD-20)
+        virtual void set_connection_factory(ConnectionFactory factory) = 0;
 
         // serve one connection to completion, which returns false once the listener is stopped (§10.3)
         [[nodiscard]] virtual bool serve_one() = 0;

@@ -45,6 +45,9 @@ namespace albor::blend2d
         // read the pixels as packed bytes, which is the screenshot a conformance check compares (§6.3, AD-26)
         [[nodiscard]] std::vector<std::uint8_t> read_pixels() const override;
 
+        // copy the finished frame in native premultiplied bgra rows, which a present path hands to its display (§6.3)
+        [[nodiscard]] bool copy_native_pixels(void* destination, std::size_t row_bytes) const;
+
         // report how many frames this surface finished, which is what a headless test counts (§4.3)
         [[nodiscard]] std::size_t frame_count() const;
 

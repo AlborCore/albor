@@ -7,5 +7,5 @@ file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 add_library(albor-resources STATIC ${CPP_SOURCES})
 
 # the registry is header visible, because generated code registers into it (§3.5, §11.3)
-target_include_directories(albor-resources PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-resources PUBLIC ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-resources PUBLIC cxx_std_23)

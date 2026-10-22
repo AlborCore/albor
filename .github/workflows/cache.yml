@@ -38,7 +38,7 @@ jobs:
               # the preset is c++23, so take the newest xcode the image carries rather than its default
               sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
           - name: macos-coverage
-            os: macos-latest
+            os: macos-15
             enable: true
             preset: coverage
             vcpkg-root: /usr/local/share/vcpkg
@@ -64,12 +64,12 @@ jobs:
             setup: sudo apt-get update && sudo apt-get install -y ccache
     env:
       VCPKG_ROOT: ${{ matrix.vcpkg-root }}
+      MACOSX_DEPLOYMENT_TARGET: 13.3
       VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
       CCACHE_DIR: ${{ github.workspace }}/.ccache
     steps:
       - uses: actions/checkout@v7
         if: matrix.enable
-        persist-credentials: false
 
       - name: platform setup
         if: matrix.enable
@@ -80,7 +80,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-${{ runner.os }}-${{ matrix.preset }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          key: vcpkg-${{ runner.os }}-${{ matrix.preset }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
           restore-keys: |
             vcpkg-${{ runner.os }}-${{ matrix.preset }}-
 

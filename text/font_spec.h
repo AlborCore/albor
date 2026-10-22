@@ -34,6 +34,6 @@ namespace albor
         FontWeight weight = FontWeight::Regular;
 
         // the families to try in order when the named one is absent, which must stay deterministic (§15, AD-34)
-        std::vector<std::string> fallback;
+        std::vector<std::string> fallback{};
     };
 } // namespace albor

@@ -7,7 +7,7 @@ add_library(albor-vector-fixture STATIC vector_fixture.cpp)
 albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/task_list.ui" --manifest "${CMAKE_CURRENT_SOURCE_DIR}/task.manifest")
 
 # the fixture includes through the project root, which is where the module includes point (§3.5, §11.3)
-target_include_directories(albor-vector-fixture PRIVATE ${CMAKE_SOURCE_DIR})
+target_include_directories(albor-vector-fixture PRIVATE ${ALBOR_SOURCE_DIR})
 # the generated directory is on the include path from the start, because the fixture includes its facades (§11.3, §14.2)
 target_include_directories(albor-vector-fixture PRIVATE "${CMAKE_BINARY_DIR}/generated/albor-vector-fixture")
 target_compile_features(albor-vector-fixture PRIVATE cxx_std_23)

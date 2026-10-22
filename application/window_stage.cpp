@@ -10,8 +10,6 @@
 #include "ui/ui_node.h"
 #include "window/window.h"
 
-#include <algorithm>
-
 namespace albor
 {
     WindowStage::WindowStage(Window& window, RendererBackend& renderer, TextEngine& text, RootBuilder builder, const MainWindowConfig& config) :
@@ -44,14 +42,14 @@ namespace albor
         // the controller routes the normalized events into the tree (§8.3)
         m_input = std::make_unique<InputController>();
         m_input->attach(m_pipeline->root());
-        // the tree is offered to the dev extension, which a build that linked it patches in place (§12.1, AD-02)
-        if (m_has_tree)
-            dev::bind_root(&m_pipeline->root(), &m_engine, m_text);
+        // every window offers its root, because automation observes the process even when the scene is hand drawn (§10.3)
+        const dev::WindowBinding binding{.root = &m_pipeline->root(), .engine = &m_engine, .text = m_text, .surface = m_surface.get(), .executor = m_executor.get(), .has_tree = m_has_tree};
+        dev::bind_root(binding);
     }
 
     WindowStage::~WindowStage() {
         // the dev extension is told the tree went away, because it must never patch a destroyed window (§12.1, §5.2)
-        if (m_has_tree && m_pipeline)
+        if (m_surface && m_pipeline)
             dev::unbind_root(&m_pipeline->root());
     }
 

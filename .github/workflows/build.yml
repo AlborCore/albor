@@ -32,6 +32,28 @@ jobs:
           count=$(echo "$response" | grep -c '"number"' || true)
           echo "has_pr=$( [ "$count" -gt 0 ] && echo true || echo false )" >> "$GITHUB_OUTPUT"
 
+  # the shader artifact is committed, so this job is the only place the metal toolchain runs
+  shaders:
+    name: shaders (macos)
+    needs: [check-pr]
+    if: |-
+      !cancelled() &&
+      (github.event_name != 'push' || github.ref == 'refs/heads/main' || needs.check-pr.outputs.has_pr != 'true')
+    runs-on: macos-15
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - name: metal toolchain
+        run: |
+          # the image's newest xcode is selected, and xcode 26 ships the compiler as a component that may be absent
+          sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
+          xcrun -sdk macosx metal --version > /dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
+      - name: committed shader artifact
+        run: bash build/shaders.sh
+
   build:
     name: build (${{ matrix.name }})
     needs: [check-pr]
@@ -43,7 +65,7 @@ jobs:
       contents: read
       pull-requests: read
       code-quality: write
-    timeout-minutes: 60
+    timeout-minutes: 120
     defaults:
       run:
         shell: bash
@@ -65,7 +87,7 @@ jobs:
               # the preset is c++23, so take the newest xcode the image carries rather than its default
               sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
           - name: macos-coverage
-            os: macos-latest
+            os: macos-15
             enable: ${{ github.repository == 'AlborCore/albor' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
             preset: coverage
             vcpkg-root: /usr/local/share/vcpkg
@@ -76,13 +98,17 @@ jobs:
               HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
               ccache --max-size 2G
               # the preset is c++23, so take the newest xcode the image carries rather than its default
-              sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"              
+              sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
           - name: windows-release
             os: windows-latest
-            enable: false
+            enable: true
             preset: release
             vcpkg-root: C:\vcpkg
-            setup: choco install ccache
+            setup: |
+              # the vcpkg binary cache root must exist before vcpkg runs
+              mkdir -p .vcpkg-cache
+              # the preset launches the compiler through ccache, which the runner image does not ship
+              choco install ccache --no-progress -y
           - name: linux-release
             os: ubuntu-latest
             enable: false
@@ -91,6 +117,7 @@ jobs:
             setup: sudo apt-get update && sudo apt-get install -y ccache
     env:
       VCPKG_ROOT: ${{ matrix.vcpkg-root }}
+      MACOSX_DEPLOYMENT_TARGET: 13.3
       VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       LLVM_PROFILE_FILE: ${{ github.workspace }}/coverage.profraw
@@ -102,18 +129,22 @@ jobs:
         if: matrix.enable
         run: ${{ matrix.setup }}
 
+      - name: msvc environment
+        if: matrix.enable && runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: restore the vcpkg binary cache
         if: matrix.enable
-        uses: actions/cache@v5
+        uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-${{ runner.os }}-${{ matrix.preset }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          key: vcpkg-${{ runner.os }}-${{ matrix.preset }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
           restore-keys: |
             vcpkg-${{ runner.os }}-${{ matrix.preset }}-
 
       - name: restore the ccache directory
         if: matrix.enable
-        uses: actions/cache@v5
+        uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.ccache
           key: ccache-${{ runner.os }}-${{ matrix.preset }}-${{ github.sha }}
@@ -152,3 +183,20 @@ jobs:
           file: cobertura.xml
           language: C++
           label: code-coverage/c++
+
+      # the caches are saved by their own steps at the end, because the all in one cache action only
+      # saves when the job succeeded, and a job that failed at the tests is exactly the one whose next
+      # rerun must not rebuild every port from scratch for an hour (§5.3)
+      - name: save the vcpkg binary cache
+        if: matrix.enable && !cancelled()
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ github.workspace }}/.vcpkg-cache
+          key: vcpkg-${{ runner.os }}-${{ matrix.preset }}-macos13.3-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+
+      - name: save the ccache directory
+        if: matrix.enable && !cancelled()
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-${{ runner.os }}-${{ matrix.preset }}-${{ github.sha }}

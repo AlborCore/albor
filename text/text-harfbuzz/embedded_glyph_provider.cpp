@@ -10,7 +10,7 @@ namespace albor::harfbuzz
         if (found != m_engines.end())
             return found->second;
         // a hash the build does not carry has no font, and falling back would break identity (§15, AD-34)
-        const resources::EmbeddedFont* font = resources::FontRegistry::find_hash(font_hash);
+        const std::shared_ptr<const resources::EmbeddedFont> font = resources::FontRegistry::find_hash(font_hash);
         if (font == nullptr)
             return nullptr;
         // the engine is built over the carried bytes, so nothing on the file system is consulted (§15, AD-34)

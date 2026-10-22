@@ -2,6 +2,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -37,15 +38,6 @@ namespace
     // the logical height every scene is drawn into, which is deep enough for a small canvas of shapes (§6.3)
     constexpr float SCENE_HEIGHT = 48.0f;
 
-    // the channel distance antialiased edges are allowed, warmed past the 52 coverage gamma keeps apart (§6.3, AD-26)
-    constexpr int SHAPE_PARITY_TOLERANCE = 64;
-
-    // the channel distance the two shadow blurs are allowed, over the measured 43 a box and a gaussian keep apart (§6.2)
-    constexpr int SHADOW_PARITY_TOLERANCE = 64;
-
-    // the channel distance two glyph rasterizers may differ, measured at 161 with the vendored platform face (§9.1, §16)
-    constexpr int TEXT_PARITY_TOLERANCE = 192;
-
     // the metrics every scene presents and every surface creates against, at whole pixels (§6.1, AD-27)
     WindowMetrics scene_metrics(float scale_factor) {
         // the logical size is the extent the scene spans, which the scale maps onto whole pixels (§6.3, AD-27)
@@ -68,38 +60,6 @@ namespace
         record(scene, metrics, DrawCommand::rectangle(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{20.0f, 12.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)}));
         // the white rectangle sits inside the extent at a distance, so a second fill is pinned too (§6.3, AD-26)
         record(scene, metrics, DrawCommand::rectangle(Rect::from_origin_size(Point{32.0f, 24.0f}, Size{16.0f, 8.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)}));
-        return scene;
-    }
-
-    // the shape parity scene, where antialiased edges decide how close two rasterizers can be (§6.3, AD-26)
-    FrameScene shape_scene(const WindowMetrics& metrics, const ResourceFactory& factory) {
-        // the scene is cleared to black, which both engines fill with whole pixels (§6.1)
-        FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
-        // the rounded rectangle carries the corners one engine may soften more than the other (§6.2)
-        record(scene, metrics, DrawCommand::rounded_rectangle(Rect::from_origin_size(Point{24.0f, 4.0f}, Size{16.0f, 10.0f}), 4.0f, Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f)}));
-        // the polyline carries a diagonal, which is the stroke both engines soften (§6.2)
-        const std::array<Point, 3> bend{Point{4.0f, 16.0f}, Point{28.0f, 28.0f}, Point{48.0f, 12.0f}};
-        record(scene, metrics, DrawCommand::polyline(std::span<const Point>(bend), StrokeStyle{.color = Color::rgb(0.0f, 0.0f, 1.0f), .width = 2.0f}));
-        // the triangle path carries three diagonal contours, which is the retained draw both engines replay (§6.4)
-        const std::array<Point, 3> tri{Point{6.0f, 34.0f}, Point{22.0f, 42.0f}, Point{6.0f, 44.0f}};
-        const std::array<PathVerb, 4> verbs{PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
-        const std::shared_ptr<const PathResource> path = factory.create_path(std::span<const PathVerb>(verbs), std::span<const Point>(tri));
-        record(scene, metrics, DrawCommand::path(path, Transform{}, Paint{.fill = Color::rgb(1.0f, 0.5f, 0.0f)}));
-        // the image is opaque and whole, so its interior must agree byte for byte (§6.4, AD-26)
-        const std::vector<std::uint8_t> pixels(8 * 8 * 4, 0xff);
-        const std::shared_ptr<const ImageResource> image = factory.create_image(8, 8, ImageFormat::RGBA8, pixels);
-        record(scene, metrics, DrawCommand::image(image, Rect::from_origin_size(Point{40.0f, 32.0f}, Size{8.0f, 8.0f}), Paint{}));
-        // the cast is hard and axis aligned, skipping the soft edge both blurs disagree on (§6.2)
-        record(scene, metrics, DrawCommand::shadow(Rect::from_origin_size(Point{26.0f, 26.0f}, Size{10.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgba(1.0f, 1.0f, 1.0f, 0.5f), .offset = Point{2.0f, 2.0f}, .blur = 0.0f}));
-        return scene;
-    }
-
-    // the soft shadow parity scene, whose falloff is where the box and the gaussian differ most (§6.2, §12)
-    FrameScene shadow_scene(const WindowMetrics& metrics) {
-        // the scene is cleared to black, so the cast falls onto a whole pixel background (§6.1)
-        FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
-        // the soft cast keeps a reach inside the extent, so its blur never clips the surface (§6.2)
-        record(scene, metrics, DrawCommand::shadow(Rect::from_origin_size(Point{16.0f, 12.0f}, Size{16.0f, 12.0f}), 0.0f, Shadow{.color = Color::rgba(1.0f, 1.0f, 1.0f, 0.8f), .offset = Point{4.0f, 4.0f}, .blur = 3.0f}));
         return scene;
     }
 
@@ -176,6 +136,44 @@ TEST(Blend2DRenderSurfaceChecks, AFinishedFrameReadsBackInCanonicalOrder) {
     EXPECT_EQ(pixels[red + 3u], 255u);
 }
 
+TEST(Blend2DRenderSurfaceChecks, ANativeCopyMatchesTheCanonicalReadBack) {
+    // arrange a finished frame with one red rectangle, which both copies walk (§6.3)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    context.draw_rect(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{20.0f, 12.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    surface->end_frame();
+    // act the native copy honours a padded row, which is what a present path allocates (§6.3)
+    const std::size_t row = 64u * 4u + 16u;
+    std::vector<std::uint8_t> native(row * 48u, 0xaa);
+    const bool copied = surface->copy_native_pixels(native.data(), row);
+    const std::vector<std::uint8_t> canonical = surface->read_pixels();
+    // assert the native bytes are bgra in the canonical picture's red order (§6.3, AD-26)
+    ASSERT_TRUE(copied);
+    ASSERT_EQ(canonical.size(), 64u * 48u * 4u);
+    const std::size_t pixel = (12u * 64u + 14u) * 4u;
+    const std::size_t native_pixel = 12u * row + 14u * 4u;
+    EXPECT_EQ(native[native_pixel + 0u], canonical[pixel + 2u]);
+    EXPECT_EQ(native[native_pixel + 1u], canonical[pixel + 1u]);
+    EXPECT_EQ(native[native_pixel + 2u], canonical[pixel + 0u]);
+    EXPECT_EQ(native[native_pixel + 3u], canonical[pixel + 3u]);
+    // assert the row padding stayed untouched, because a copy must not write into the gap (§6.3)
+    EXPECT_EQ(native[64u * 4u], 0xaa);
+}
+
+TEST(Blend2DRenderSurfaceChecks, ANativeCopyRefusesARowNarrowerThanTheFrame) {
+    // arrange a finished frame and a destination too narrow for one row (§6.3)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    (void)surface->begin_frame();
+    surface->end_frame();
+    std::vector<std::uint8_t> narrow(4u, 0);
+    // act
+    const bool copied = surface->copy_native_pixels(narrow.data(), narrow.size());
+    // assert a narrow row would corrupt the frame, so it refuses instead (§6.3)
+    EXPECT_FALSE(copied);
+}
+
 TEST(Blend2DRenderSurfaceChecks, FramesCountOnlyTheBalancedEnds) {
     // arrange
     const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
@@ -244,18 +242,166 @@ TEST(Blend2DRenderContextChecks, AClipIntersectsTheOneThatWasStanding) {
     EXPECT_FLOAT_EQ(narrowed.height, 6.0f);
 }
 
-TEST(Blend2DRenderContextChecks, ARoundedClipLeavesItsBoundingRectangleStanding) {
-    // arrange
+TEST(Blend2DRenderContextChecks, ARoundedClipCutsItsCornersAway) {
+    // arrange a white plate and a black fill cut by a rounded clip, which blend2d cannot express as a rectangle (§6.2)
     const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
     ASSERT_NE(surface, nullptr);
     RenderContext& context = surface->begin_frame();
     // act
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
     context.clip_rounded_rect(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{20.0f, 12.0f}), 4.0f);
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
     surface->end_frame();
-    // assert blend2d clips to rectangles only, so the recorded clip is the bounding one (§6.2, AD-26)
-    const Rect narrowed = context.clip();
-    EXPECT_FLOAT_EQ(narrowed.x, 4.0f);
-    EXPECT_FLOAT_EQ(narrowed.width, 20.0f);
+    // assert the corner outside the arc keeps the plate while the centre takes the fill (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    const std::size_t corner = (4u * 64u + 4u) * 4u;
+    const std::size_t centre = (10u * 64u + 14u) * 4u;
+    EXPECT_GT(shot.pixels[corner], 230u);
+    EXPECT_EQ(shot.pixels[centre], 0u);
+}
+
+TEST(Blend2DRenderContextChecks, TwoRoundedClipsKeepOnlyTheirIntersection) {
+    // arrange a white plate and two rounded clips that overlap, which the group mask must intersect (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // act
+    context.clip_rounded_rect(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{20.0f, 12.0f}), 4.0f);
+    context.clip_rounded_rect(Rect::from_origin_size(Point{12.0f, 8.0f}, Size{20.0f, 12.0f}), 4.0f);
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    surface->end_frame();
+    // assert the shared centre takes the fill while a point in one clip alone keeps the plate (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    const std::size_t shared = (10u * 64u + 16u) * 4u;
+    const std::size_t single = (6u * 64u + 6u) * 4u;
+    EXPECT_EQ(shot.pixels[shared], 0u);
+    EXPECT_GT(shot.pixels[single], 230u);
+}
+
+TEST(Blend2DRenderContextChecks, ARoundedClipAfterInkKeepsTheInk) {
+    // arrange a plate inside a rounded group, with black ink painted before a collapsed clip (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.clip_rounded_rect(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{20.0f, 12.0f}), 4.0f);
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    // act a singular rounded clip covers rather than vanishes, so the ink before it must survive (§6.2)
+    context.set_transform(Transform{.scale_x = 0.0f, .scale_y = 0.0f});
+    context.clip_rounded_rect(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{20.0f, 12.0f}), 4.0f);
+    context.set_transform(Transform{});
+    surface->end_frame();
+    // assert the centre stays black, because a zero coverage there would erase the ink already drawn (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    const std::size_t centre = (10u * 64u + 10u) * 4u;
+    EXPECT_EQ(shot.pixels[centre], 0u);
+    EXPECT_EQ(shot.pixels[centre + 3u], 255u);
+}
+
+TEST(Blend2DRenderContextChecks, ARoundedClipEndsAtItsRestore) {
+    // arrange a plate, a clipped fill and a fill after the restore, which the clip must not touch (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // act
+    context.save();
+    context.clip_rounded_rect(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{20.0f, 12.0f}), 4.0f);
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    context.restore();
+    context.draw_rect(Rect::from_origin_size(Point{30.0f, 4.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    surface->end_frame();
+    // assert the fill after the restore paints where the clip would have cut it, and the corner stays the plate (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    const std::size_t corner = (4u * 64u + 4u) * 4u;
+    const std::size_t after = (8u * 64u + 34u) * 4u;
+    EXPECT_GT(shot.pixels[corner], 230u);
+    EXPECT_EQ(shot.pixels[after], 255u);
+    EXPECT_EQ(shot.pixels[after + 1u], 0u);
+}
+
+TEST(Blend2DRenderContextChecks, ARoundedClipWithNoRadiusClipsItsRectangle) {
+    // arrange a plate and a black fill cut by a rounded clip whose radius is zero (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // act
+    context.clip_rounded_rect(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{20.0f, 12.0f}), 0.0f);
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    surface->end_frame();
+    // assert the clip keeps the rectangle whole, because a zero radius rounds no corner (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    const std::size_t inside = (5u * 64u + 5u) * 4u;
+    const std::size_t outside = (3u * 64u + 3u) * 4u;
+    EXPECT_EQ(shot.pixels[inside], 0u);
+    EXPECT_GT(shot.pixels[outside], 230u);
+}
+
+TEST(Blend2DRenderContextChecks, ARotatedClipIsAppliedExactly) {
+    // arrange a plate and a clip turned a quarter turn about the centre, which is a diamond in device space (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    const Transform turn = Transform::translation(-16.0f, -16.0f).then(Transform{.scale_x = 0.70710678f, .skew_x = -0.70710678f, .skew_y = 0.70710678f, .scale_y = 0.70710678f}).then(Transform::translation(16.0f, 16.0f));
+    context.set_transform(turn);
+    // act
+    context.clip_rect(Rect::from_origin_size(Point{8.0f, 8.0f}, Size{16.0f, 16.0f}));
+    context.set_transform(Transform{});
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    surface->end_frame();
+    // assert the diamond reaches above the square it was recorded in, which an axis aligned fallback misses (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    const std::size_t above = (6u * 64u + 16u) * 4u;
+    const std::size_t corner = (1u * 64u + 16u) * 4u;
+    EXPECT_EQ(shot.pixels[above], 0u);
+    EXPECT_GT(shot.pixels[corner], 230u);
+}
+
+TEST(Blend2DRenderContextChecks, ASingularTransformClipCutsEverything) {
+    // arrange a plate and a clip pushed under a collapsed transform, which spans no device area (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.set_transform(Transform{.scale_x = 0.0f, .scale_y = 0.0f});
+    // act
+    context.clip_rect(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{20.0f, 12.0f}));
+    context.set_transform(Transform{});
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    surface->end_frame();
+    // assert the collapsed clip culled the fill, which keeps the plate whole (§6.2)
+    EXPECT_TRUE(context.clip().empty());
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    EXPECT_GT(shot.pixels[(10u * 64u + 10u) * 4u], 230u);
+}
+
+TEST(Blend2DRenderContextChecks, ARoundedClipUnderASingularTransformCutsEverything) {
+    // arrange a plate and a rounded clip pushed under a collapsed transform, which spans no device area (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.set_transform(Transform{.scale_x = 0.0f, .scale_y = 0.0f});
+    // act
+    context.clip_rounded_rect(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{20.0f, 12.0f}), 4.0f);
+    context.set_transform(Transform{});
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    surface->end_frame();
+    // assert the collapsed clip culled the fill, which keeps the plate whole (§6.2)
+    EXPECT_TRUE(context.clip().empty());
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    EXPECT_GT(shot.pixels[(10u * 64u + 10u) * 4u], 230u);
 }
 
 TEST(Blend2DRenderContextChecks, TheOpacityIsClampedIntoTheUnitRange) {
@@ -290,6 +436,7 @@ TEST(Blend2DRenderContextChecks, AContextWithNoRasterSurvivesEveryDraw) {
     context.save();
     context.set_transform(Transform::translation(2.0f, 2.0f));
     context.clip_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}));
+    context.clip_rounded_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), 2.0f);
     context.set_opacity(0.5f);
     context.draw_shadow(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), 2.0f, Shadow{.color = Color::rgb(0.0f, 0.0f, 0.0f), .blur = 2.0f});
     context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
@@ -359,149 +506,62 @@ TEST(Blend2DRendererBackendChecks, AResizeIsFollowedByFramesAtTheNewMetrics) {
     EXPECT_EQ(screenshot.height, 96);
 }
 
-TEST(Blend2DParityChecks, AnAlignedRectangleSceneMatchesTheReferenceBytewise) {
-    // arrange the scene is drawn once through each engine, what a parity check does (§6.3, AD-26)
-    software::SoftwareRendererBackend reference_backend;
-    Blend2DRendererBackend measured_backend;
-    const WindowMetrics metrics = scene_metrics(1.0f);
-    const FrameScene scene = rectangle_scene(metrics);
-    const std::unique_ptr<RenderSurface> reference = reference_backend.create_surface(NativeWindowHandle{}, metrics);
-    const std::unique_ptr<RenderSurface> measured = measured_backend.create_surface(NativeWindowHandle{}, metrics);
-    ASSERT_NE(reference, nullptr);
-    ASSERT_NE(measured, nullptr);
-    // act
-    reference_backend.execute_frame(*reference, scene);
-    measured_backend.execute_frame(*measured, scene);
-    const Screenshot reference_read = capture_surface(*reference);
-    const Screenshot measured_read = capture_surface(*measured);
-    // assert both engines read a picture back, because an empty read would agree trivially (§6.3, AD-26)
-    ASSERT_FALSE(reference_read.empty());
-    ASSERT_FALSE(measured_read.empty());
-    // assert whole pixels must agree byte for byte, which the aligned edges of the scene make possible (§6.3, AD-26)
-    EXPECT_EQ(reference_read.max_channel_difference(measured_read), 0) << "engines diverged by more than whole pixels allow";
+TEST(Blend2DRenderContextChecks, ANonFiniteShadowCastsNothing) {
+    // arrange a context and the non finite values a data driven shadow can carry (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    const Rect caster = Rect::from_origin_size(Point{4.0f, 4.0f}, Size{8.0f, 8.0f});
+    const Color color = Color::rgba(0.0f, 0.0f, 0.0f, 0.5f);
+    const float infinity = std::numeric_limits<float>::infinity();
+    const float maximum = std::numeric_limits<float>::max();
+    // act each non finite or oversized bound is refused before it can size a raster (§6.2)
+    context.draw_shadow(caster, 0.0f, Shadow{.color = color, .offset = Point{infinity, 0.0f}, .blur = 2.0f});
+    context.draw_shadow(caster, 0.0f, Shadow{.color = color, .offset = Point{0.0f, 0.0f}, .blur = infinity});
+    context.draw_shadow(Rect{.x = 4.0f, .y = 4.0f, .width = maximum, .height = 8.0f}, 0.0f, Shadow{.color = color, .offset = Point{0.0f, 0.0f}, .blur = 2.0f});
+    surface->end_frame();
+    // assert no cast reached the raster, because none of them has a finite device extent (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    std::size_t ink = 0;
+    for (std::size_t index = 0; index < shot.pixels.size(); index += 4) {
+        if (shot.pixels[index + 3u] > 0u)
+            ink++;
+    }
+    EXPECT_EQ(ink, 0u);
 }
 
-TEST(Blend2DParityChecks, AnAlignedRectangleSceneMatchesTheReferenceAtDoubleScale) {
-    // arrange the scene is drawn at a non unit scale, which is what pins the meta matrix (§12, AD-27)
-    software::SoftwareRendererBackend reference_backend;
-    Blend2DRendererBackend measured_backend;
-    const WindowMetrics metrics = scene_metrics(2.0f);
-    const FrameScene scene = rectangle_scene(metrics);
-    const std::unique_ptr<RenderSurface> reference = reference_backend.create_surface(NativeWindowHandle{}, metrics);
-    const std::unique_ptr<RenderSurface> measured = measured_backend.create_surface(NativeWindowHandle{}, metrics);
-    ASSERT_NE(reference, nullptr);
-    ASSERT_NE(measured, nullptr);
+TEST(Blend2DRenderContextChecks, ABlurredShadowRoundsItsEdgeUp) {
+    // arrange a half transparent cast at a whole pixel edge, whose blur corner is a known rounding case (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
     // act
-    reference_backend.execute_frame(*reference, scene);
-    measured_backend.execute_frame(*measured, scene);
-    const Screenshot reference_read = capture_surface(*reference);
-    const Screenshot measured_read = capture_surface(*measured);
-    // assert
-    ASSERT_FALSE(reference_read.empty());
-    ASSERT_FALSE(measured_read.empty());
-    // assert a logical rectangle at that scale maps onto whole pixels, which the matrix composition does (§12, AD-27)
-    EXPECT_EQ(reference_read.max_channel_difference(measured_read), 0) << "the meta matrix composition disagrees with the reference";
+    context.draw_shadow(Rect::from_origin_size(Point{8.0f, 8.0f}, Size{8.0f, 8.0f}), 0.0f, Shadow{.color = Color::rgba(1.0f, 1.0f, 1.0f, 0.5f), .offset = Point{0.0f, 0.0f}, .blur = 1.0f});
+    surface->end_frame();
+    // assert the corner rounds each box pass upward, which a truncating pass would leave at 56 (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    const std::size_t corner = (8u * 64u + 8u) * 4u;
+    EXPECT_EQ(shot.pixels[corner + 3u], 57u);
 }
 
-TEST(Blend2DParityChecks, AShapeCorpusStaysWithinTheAntialiasedTolerance) {
-    // arrange
-    software::SoftwareRendererBackend reference_backend;
-    Blend2DRendererBackend measured_backend;
-    ResourceFactory factory;
-    const WindowMetrics metrics = scene_metrics(1.0f);
-    const FrameScene scene = shape_scene(metrics, factory);
-    const std::unique_ptr<RenderSurface> reference = reference_backend.create_surface(NativeWindowHandle{}, metrics);
-    const std::unique_ptr<RenderSurface> measured = measured_backend.create_surface(NativeWindowHandle{}, metrics);
-    ASSERT_NE(reference, nullptr);
-    ASSERT_NE(measured, nullptr);
-    // act
-    reference_backend.execute_frame(*reference, scene);
-    measured_backend.execute_frame(*measured, scene);
-    const Screenshot reference_read = capture_surface(*reference);
-    const Screenshot measured_read = capture_surface(*measured);
-    // assert
-    ASSERT_FALSE(reference_read.empty());
-    ASSERT_FALSE(measured_read.empty());
-    // assert the antialiased edges stay in tolerance, which the shared draw contract narrows them to (§6.3, AD-26)
-    const int difference = reference_read.max_channel_difference(measured_read);
-    EXPECT_LE(difference, SHAPE_PARITY_TOLERANCE) << "shapes diverged by " << difference << " per channel";
-}
-
-TEST(Blend2DParityChecks, ASoftShadowStaysWithinTheBlurTolerance) {
-    // arrange
-    software::SoftwareRendererBackend reference_backend;
-    Blend2DRendererBackend measured_backend;
-    const WindowMetrics metrics = scene_metrics(1.0f);
-    const FrameScene scene = shadow_scene(metrics);
-    const std::unique_ptr<RenderSurface> reference = reference_backend.create_surface(NativeWindowHandle{}, metrics);
-    const std::unique_ptr<RenderSurface> measured = measured_backend.create_surface(NativeWindowHandle{}, metrics);
-    ASSERT_NE(reference, nullptr);
-    ASSERT_NE(measured, nullptr);
-    // act
-    reference_backend.execute_frame(*reference, scene);
-    measured_backend.execute_frame(*measured, scene);
-    const Screenshot reference_read = capture_surface(*reference);
-    const Screenshot measured_read = capture_surface(*measured);
-    // assert
-    ASSERT_FALSE(reference_read.empty());
-    ASSERT_FALSE(measured_read.empty());
-    // assert the falloffs stay in tolerance, since a box and a gaussian agree in the middle and at the reach (§6.2)
-    const int difference = reference_read.max_channel_difference(measured_read);
-    EXPECT_LE(difference, SHADOW_PARITY_TOLERANCE) << "the blurs diverged by " << difference << " per channel";
-}
-
-TEST(Blend2DParityChecks, ATranslucentImageMatchesTheReference) {
-    // arrange both engines composite a premultiplied half covered white image over red (§6.4, AD-26)
-    software::SoftwareRendererBackend reference_backend;
-    Blend2DRendererBackend measured_backend;
-    ResourceFactory factory;
-    const std::vector<std::uint8_t> pixels(16 * 16 * 4, 128);
-    const std::shared_ptr<const ImageResource> image = factory.create_image(16, 16, ImageFormat::RGBA8, pixels);
-    const WindowMetrics metrics = scene_metrics(1.0f);
-    FrameScene scene(metrics, Color::rgb(1.0f, 0.0f, 0.0f));
-    record(scene, metrics, DrawCommand::image(image, Rect::from_origin_size(Point{24.0f, 16.0f}, Size{16.0f, 16.0f}), Paint{}));
-    const std::unique_ptr<RenderSurface> reference = reference_backend.create_surface(NativeWindowHandle{}, metrics);
-    const std::unique_ptr<RenderSurface> measured = measured_backend.create_surface(NativeWindowHandle{}, metrics);
-    ASSERT_NE(reference, nullptr);
-    ASSERT_NE(measured, nullptr);
-    // act
-    reference_backend.execute_frame(*reference, scene);
-    measured_backend.execute_frame(*measured, scene);
-    const Screenshot reference_read = capture_surface(*reference);
-    const Screenshot measured_read = capture_surface(*measured);
-    // assert
-    ASSERT_FALSE(reference_read.empty());
-    ASSERT_FALSE(measured_read.empty());
-    // assert the premultiplied bytes composite the same, because both uploads assume one alpha contract (§6.4, AD-26)
-    const int difference = reference_read.max_channel_difference(measured_read);
-    EXPECT_LE(difference, 2) << "the translucent image diverged by " << difference << " per channel";
-}
-
-TEST(Blend2DParityChecks, AnImageUnderADimmedPaintMatchesTheReference) {
-    // arrange an opaque white image drawn with a half opaque fill, which the alpha modulation dims (§6.4, §6.1)
-    software::SoftwareRendererBackend reference_backend;
-    Blend2DRendererBackend measured_backend;
-    ResourceFactory factory;
-    const std::vector<std::uint8_t> pixels(16 * 16 * 4, 0xff);
-    const std::shared_ptr<const ImageResource> image = factory.create_image(16, 16, ImageFormat::RGBA8, pixels);
-    const WindowMetrics metrics = scene_metrics(1.0f);
-    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
-    record(scene, metrics, DrawCommand::image(image, Rect::from_origin_size(Point{24.0f, 16.0f}, Size{16.0f, 16.0f}), Paint{.fill = Color::rgba(1.0f, 1.0f, 1.0f, 0.5f)}));
-    const std::unique_ptr<RenderSurface> reference = reference_backend.create_surface(NativeWindowHandle{}, metrics);
-    const std::unique_ptr<RenderSurface> measured = measured_backend.create_surface(NativeWindowHandle{}, metrics);
-    ASSERT_NE(reference, nullptr);
-    ASSERT_NE(measured, nullptr);
-    // act
-    reference_backend.execute_frame(*reference, scene);
-    measured_backend.execute_frame(*measured, scene);
-    const Screenshot reference_read = capture_surface(*reference);
-    const Screenshot measured_read = capture_surface(*measured);
-    // assert
-    ASSERT_FALSE(reference_read.empty());
-    ASSERT_FALSE(measured_read.empty());
-    // assert the paint alpha modulates the upload once, which is what the reference draw does (§6.4, §6.1)
-    const int difference = reference_read.max_channel_difference(measured_read);
-    EXPECT_LE(difference, 2) << "the dimmed image diverged by " << difference << " per channel";
+TEST(Blend2DRenderContextChecks, ABlurredShadowStaysSymmetric) {
+    // arrange a wide blur around a centred caster, which exercises the sliding window beyond one pixel (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    context.draw_shadow(Rect::from_origin_size(Point{24.0f, 16.0f}, Size{16.0f, 16.0f}), 0.0f, Shadow{.color = Color::rgba(1.0f, 1.0f, 1.0f, 0.5f), .offset = Point{0.0f, 0.0f}, .blur = 3.0f});
+    surface->end_frame();
+    // act the frame reads back after both sliding passes have run (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    // assert the mirrored alpha stays equal across the horizontal centre (§6.2)
+    for (int x = 24; x < 40; x++)
+        EXPECT_EQ(shot.pixels[(24u * 64u + static_cast<std::size_t>(x)) * 4u + 3u], shot.pixels[(24u * 64u + static_cast<std::size_t>(63 - x)) * 4u + 3u]);
+    // assert the mirrored alpha stays equal across the vertical centre (§6.2)
+    for (int y = 16; y < 32; y++)
+        EXPECT_EQ(shot.pixels[(static_cast<std::size_t>(y) * 64u + 32u) * 4u + 3u], shot.pixels[(static_cast<std::size_t>(47 - y) * 64u + 32u) * 4u + 3u]);
 }
 
 TEST(Blend2DRenderContextChecks, AnOpacityDimsTheReadbackBytes) {
@@ -638,7 +698,7 @@ TEST(Blend2DTextChecks, APlatformShapedRunCarriesARegisteredFontIdentity) {
     ASSERT_NE(layout.run, nullptr);
     EXPECT_FALSE(layout.run->empty());
     EXPECT_NE(layout.run->font_hash(), 0u);
-    EXPECT_NE(resources::FontRegistry::find_hash(layout.run->font_hash()), nullptr);
+    EXPECT_TRUE(resources::FontRegistry::find_hash(layout.run->font_hash()) != nullptr);
 }
 
 TEST(Blend2DTextChecks, APlatformShapedRunDrawsInkThroughTheBackend) {
@@ -650,7 +710,7 @@ TEST(Blend2DTextChecks, APlatformShapedRunDrawsInkThroughTheBackend) {
     ASSERT_NE(layout.run, nullptr);
     ASSERT_FALSE(layout.run->empty());
     // the run resolved its font in the registry, which is what a replaying backend loads from (§15, AD-34)
-    const resources::EmbeddedFont* embedded = resources::FontRegistry::find_hash(layout.run->font_hash());
+    const std::shared_ptr<const resources::EmbeddedFont> embedded = resources::FontRegistry::find_hash(layout.run->font_hash());
     ASSERT_NE(embedded, nullptr);
     ASSERT_FALSE(embedded->bytes.empty());
     const WindowMetrics metrics = scene_metrics(1.0f);
@@ -671,53 +731,6 @@ TEST(Blend2DTextChecks, APlatformShapedRunDrawsInkThroughTheBackend) {
             ink++;
     }
     EXPECT_GT(ink, 0u) << "the shaped text drew no ink at all";
-}
-
-TEST(Blend2DTextChecks, AShapedRunRendersLikeTheReference) {
-    // arrange the same shaped layout through both engines, which is what text parity checks (§16, AD-26)
-    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_platform("");
-    ASSERT_NE(engine, nullptr);
-    ASSERT_TRUE(engine->ready());
-    const TextLayout layout = engine->measure("Hello", TextEngine::UNBOUNDED_WIDTH, 16.0f);
-    ASSERT_NE(layout.run, nullptr);
-    ASSERT_FALSE(layout.run->empty());
-    const WindowMetrics metrics = scene_metrics(1.0f);
-    FrameScene scene(metrics, Color::rgb(1.0f, 1.0f, 1.0f));
-    record(scene, metrics, DrawCommand::text(layout, Point{8.0f, 16.0f}, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)}));
-    software::SoftwareRendererBackend reference_backend;
-    Blend2DRendererBackend measured_backend;
-    const std::unique_ptr<RenderSurface> reference = reference_backend.create_surface(NativeWindowHandle{}, metrics);
-    const std::unique_ptr<RenderSurface> measured = measured_backend.create_surface(NativeWindowHandle{}, metrics);
-    ASSERT_NE(reference, nullptr);
-    ASSERT_NE(measured, nullptr);
-    // act
-    reference_backend.execute_frame(*reference, scene);
-    measured_backend.execute_frame(*measured, scene);
-    const Screenshot reference_read = capture_surface(*reference);
-    const Screenshot measured_read = capture_surface(*measured);
-    // assert
-    ASSERT_FALSE(reference_read.empty());
-    ASSERT_FALSE(measured_read.empty());
-    // assert each engine put ink down, because vanishing glyphs are exactly the failure this guards (§16, §9.1)
-    std::size_t reference_ink = 0;
-    std::size_t measured_ink = 0;
-    for (std::size_t index = 0; index < reference_read.pixels.size(); index += 4) {
-        if (reference_read.pixels[index] < 200u)
-            reference_ink++;
-    }
-    for (std::size_t index = 0; index < measured_read.pixels.size(); index += 4) {
-        if (measured_read.pixels[index] < 200u)
-            measured_ink++;
-    }
-    EXPECT_GT(reference_ink, 0u) << "the reference drew no ink";
-    EXPECT_GT(measured_ink, 0u) << "the measured backend drew no ink";
-    // assert the two silhouettes cover about the same area, which a misplaced or wrong glyph set would break (§16)
-    const std::size_t larger_ink = std::max(reference_ink, measured_ink);
-    const std::size_t smaller_ink = std::min(reference_ink, measured_ink);
-    EXPECT_GE(smaller_ink * 4u, larger_ink * 3u) << "the two glyph silhouettes cover different areas";
-    // assert the glyph rasterizations stay in tolerance, which the shared shaped input narrows them to (§16, AD-26)
-    const int difference = reference_read.max_channel_difference(measured_read);
-    EXPECT_LE(difference, TEXT_PARITY_TOLERANCE) << "the shaped text diverged by " << difference << " per channel";
 }
 
 TEST(Blend2DTextChecks, APlatformRunBuiltIntoASceneDrawsInkThroughTheBackend) {
@@ -793,6 +806,174 @@ TEST(Blend2DRenderContextChecks, AStrokedPathDrawsInk) {
     EXPECT_GT(ink, 0u);
 }
 
+TEST(Blend2DRenderContextChecks, AnEvenOddPathCutsASameWoundHole) {
+    // arrange two nested squares of one winding, whose hole only the even odd rule cuts (§6.2)
+    ResourceFactory factory;
+    const std::array<Point, 8> points{Point{8.0f, 8.0f}, Point{8.0f, 32.0f}, Point{32.0f, 32.0f}, Point{32.0f, 8.0f}, Point{16.0f, 16.0f}, Point{16.0f, 24.0f}, Point{24.0f, 24.0f}, Point{24.0f, 16.0f}};
+    const std::array<PathVerb, 10> verbs{PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close, PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    const std::shared_ptr<const PathResource> path = factory.create_path(std::span<const PathVerb>(verbs), std::span<const Point>(points));
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    // act the even odd fill paints the band and leaves the nested ring open
+    context.draw_path(path, Transform{}, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f), .fill_rule = FillRule::EvenOdd});
+    surface->end_frame();
+    // assert the band carries ink while the hole stays clear, which is the parity the rule decides
+    const Screenshot covered = capture_surface(*surface);
+    ASSERT_FALSE(covered.empty());
+    const std::size_t band = (12u * 64u + 12u) * 4u;
+    const std::size_t hole = (20u * 64u + 20u) * 4u;
+    EXPECT_EQ(covered.pixels[band + 3u], 255u);
+    EXPECT_EQ(covered.pixels[hole + 3u], 0u);
+    RenderContext& solid = surface->begin_frame();
+    // act the default non zero rule fills the same winding solid, which the rule alone decides
+    solid.draw_path(path, Transform{}, Paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)});
+    surface->end_frame();
+    // assert the hole fills under the default rule, which proves the even odd paint carried the rule
+    const Screenshot filled = capture_surface(*surface);
+    ASSERT_FALSE(filled.empty());
+    EXPECT_EQ(filled.pixels[hole + 3u], 255u);
+}
+
+TEST(Blend2DRenderContextChecks, EveryCompositionModeLeavesTheOverlapItsOperatorDefines) {
+    // arrange one red base and one blue overlay per composition mode, whose overlap the operator alone decides (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    const CompositionMode modes[11] = {CompositionMode::SourceOver, CompositionMode::SourceIn, CompositionMode::SourceOut, CompositionMode::Atop, CompositionMode::DestinationOver, CompositionMode::DestinationIn, CompositionMode::DestinationOut, CompositionMode::DestinationAtop, CompositionMode::Lighter, CompositionMode::Copy, CompositionMode::Xor};
+    const std::uint8_t expected[11][4] = {{51, 51, 204, 255}, {51, 51, 204, 255}, {0, 0, 0, 0}, {51, 51, 204, 255}, {204, 51, 51, 255}, {204, 51, 51, 255}, {0, 0, 0, 0}, {204, 51, 51, 255}, {255, 102, 255, 255}, {51, 51, 204, 255}, {0, 0, 0, 0}};
+    for (std::size_t index = 0; index < 11; index++) {
+        // the trace names the mode a mismatch belongs to, which a loop otherwise hides
+        SCOPED_TRACE(static_cast<int>(modes[index]));
+        RenderContext& context = surface->begin_frame();
+        // act the base paints first and the overlay blends over it under the mode
+        context.draw_rect(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{16.0f, 16.0f}), Paint{.fill = Color{.red = 0.8f, .green = 0.2f, .blue = 0.2f}});
+        context.draw_rect(Rect::from_origin_size(Point{12.0f, 12.0f}, Size{16.0f, 16.0f}), Paint{.fill = Color{.red = 0.2f, .green = 0.2f, .blue = 0.8f}, .composition = modes[index]});
+        surface->end_frame();
+        // assert the overlap reads back the bytes the operator defines, which the blender must match
+        const Screenshot overlap = capture_surface(*surface);
+        ASSERT_FALSE(overlap.empty());
+        const std::size_t pixel = (16u * 64u + 16u) * 4u;
+        for (std::size_t channel = 0; channel < 4; channel++)
+            EXPECT_NEAR(overlap.pixels[pixel + channel], expected[index][channel], 2) << "channel " << channel;
+    }
+}
+
+TEST(Blend2DRenderContextChecks, ALayerDimsOverlappingChildrenOnce) {
+    // arrange a white plate and a half opaque group whose two red children overlap by design (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    const Paint red{.fill = Color::rgb(0.8f, 0.2f, 0.2f)};
+    // act the group paints both children opaque, then composites once at half opacity
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.push_layer(0.5f);
+    context.draw_rect(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{24.0f, 24.0f}), red);
+    context.draw_rect(Rect::from_origin_size(Point{12.0f, 12.0f}, Size{24.0f, 24.0f}), red);
+    context.pop_layer();
+    surface->end_frame();
+    // assert the overlap matches the single covered region, because the group dims once rather than per child (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    const std::size_t single = (8u * 64u + 8u) * 4u;
+    const std::size_t overlap = (16u * 64u + 16u) * 4u;
+    for (std::size_t channel = 0; channel < 4; channel++)
+        EXPECT_NEAR(shot.pixels[overlap + channel], shot.pixels[single + channel], 2) << "channel " << channel;
+    EXPECT_NEAR(shot.pixels[single], 230u, 2);
+    EXPECT_NEAR(shot.pixels[single + 1u], 153u, 2);
+}
+
+TEST(Blend2DRenderContextChecks, ANestedLayerCompositesIntoItsParentGroup) {
+    // arrange a group that holds only a second group, whose red passes through both halves (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    const Rect whole = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT});
+    // act the inner group paints inside the outer one, which composites the pair onto the plate
+    context.draw_rect(whole, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.push_layer(0.5f);
+    context.push_layer(0.5f);
+    context.draw_rect(whole, Paint{.fill = Color::rgb(0.8f, 0.2f, 0.2f)});
+    context.pop_layer();
+    context.pop_layer();
+    surface->end_frame();
+    // assert a quarter of the red reaches the plate, because each group dims the one it carries (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    const std::size_t centre = (32u * 64u + 32u) * 4u;
+    EXPECT_NEAR(shot.pixels[centre], 242u, 2);
+    EXPECT_NEAR(shot.pixels[centre + 1u], 204u, 2);
+}
+
+TEST(Blend2DRenderContextChecks, AnEmptyLayerLeavesTheTargetUntouched) {
+    // arrange a white plate and a group that paints nothing (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    // act
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.push_layer(0.5f);
+    context.pop_layer();
+    surface->end_frame();
+    // assert the plate stays whole, because an empty group has nothing to composite (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    const std::size_t centre = (32u * 64u + 32u) * 4u;
+    EXPECT_EQ(shot.pixels[centre], 255u);
+    EXPECT_EQ(shot.pixels[centre + 3u], 255u);
+}
+
+TEST(Blend2DRenderContextChecks, AContextWithNoRasterKeepsTheLayerStackOnly) {
+    // arrange a context over no raster, which a refused surface produces (§6.2)
+    Blend2DRenderContext context(nullptr, 1.0f, Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}));
+    // act a mismatched pop and a real pair, which every step has to survive without pixels (§6.2)
+    context.pop_layer();
+    context.push_layer(0.5f);
+    context.pop_layer();
+    // assert the pair balanced the stack even though no raster could carry it (§6.2)
+    EXPECT_FLOAT_EQ(context.opacity(), 1.0f);
+    SUCCEED();
+}
+
+TEST(Blend2DRenderContextChecks, AStrokedPolylineCarriesItsComposition) {
+    // arrange a white plate and a blue line under copy, which replaces the pixels it covers (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    const Point points[2] = {Point{4.0f, 24.0f}, Point{60.0f, 24.0f}};
+    // act
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.draw_polyline(std::span<const Point>(points), StrokeStyle{.color = Color::rgb(0.0f, 0.0f, 1.0f), .width = 8.0f, .composition = CompositionMode::Copy});
+    surface->end_frame();
+    // assert the line replaced the plate with blue rather than blending over it (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    const std::size_t centre = (24u * 64u + 32u) * 4u;
+    EXPECT_EQ(shot.pixels[centre], 0u);
+    EXPECT_EQ(shot.pixels[centre + 2u], 255u);
+    EXPECT_EQ(shot.pixels[centre + 3u], 255u);
+}
+
+TEST(Blend2DRenderContextChecks, AStrokedLineBatchCarriesItsComposition) {
+    // arrange a white plate and a retained line batch stroked under copy, which replaces what it covers (§6.2)
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    ResourceFactory factory;
+    const std::array<Point, 2> points{Point{4.0f, 24.0f}, Point{60.0f, 24.0f}};
+    const std::shared_ptr<const LineBatch> batch = factory.create_line_batch(std::span<const Point>(points));
+    RenderContext& context = surface->begin_frame();
+    // act
+    context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{SCENE_WIDTH, SCENE_HEIGHT}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    context.draw_line_batch(batch, Transform{}, StrokeStyle{.color = Color::rgb(0.0f, 0.0f, 1.0f), .width = 8.0f, .composition = CompositionMode::Copy});
+    surface->end_frame();
+    // assert the stroke replaced the plate with blue rather than blending over it (§6.2)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    const std::size_t centre = (24u * 64u + 32u) * 4u;
+    EXPECT_EQ(shot.pixels[centre], 0u);
+    EXPECT_EQ(shot.pixels[centre + 2u], 255u);
+    EXPECT_EQ(shot.pixels[centre + 3u], 255u);
+}
+
 TEST(Blend2DRenderContextChecks, AStrokedRectangleDrawsInk) {
     // arrange a rectangle drawn with a stroke and no fill, which an outline control is (§6.2)
     const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
@@ -806,6 +987,30 @@ TEST(Blend2DRenderContextChecks, AStrokedRectangleDrawsInk) {
     ASSERT_FALSE(screenshot.empty());
     const std::size_t edge = (6u * 64u + 6u) * 4u;
     EXPECT_GT(screenshot.pixels[edge], 0u);
+}
+
+TEST(Blend2DRenderContextChecks, AnImageModulationRoundsItsChannels) {
+    // arrange a translucent image whose low red byte is a known rounding case (§6.4, AD-26)
+    ResourceFactory factory;
+    std::vector<std::uint8_t> premultiplied(4u * 4u * 4u, 0u);
+    for (std::size_t index = 0; index < premultiplied.size(); index += 4) {
+        // the source pixel is premultiplied red with a full alpha, which the paint then halves (§6.4)
+        premultiplied[index] = 3u;
+        premultiplied[index + 3u] = 255u;
+    }
+    const std::shared_ptr<const ImageResource> image = factory.create_image(4, 4, ImageFormat::RGBA8, premultiplied);
+    const std::unique_ptr<Blend2DRenderSurface> surface = Blend2DRenderSurface::create(scene_metrics(1.0f));
+    ASSERT_NE(surface, nullptr);
+    RenderContext& context = surface->begin_frame();
+    // act a half opaque fill modulates the image by 128, which rounds the three upward to two (§6.4)
+    context.draw_image(image, Rect::from_origin_size(Point{4.0f, 4.0f}, Size{4.0f, 4.0f}), Paint{.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.5f)});
+    surface->end_frame();
+    // assert the low channel rounded rather than truncating, while the alpha took the modulation (§6.4)
+    const Screenshot shot = capture_surface(*surface);
+    ASSERT_FALSE(shot.empty());
+    const std::size_t pixel = (5u * 64u + 5u) * 4u;
+    EXPECT_EQ(shot.pixels[pixel], 2u);
+    EXPECT_EQ(shot.pixels[pixel + 3u], 128u);
 }
 
 TEST(Blend2DRenderContextChecks, AnImageWithNoDestinationDrawsNothing) {

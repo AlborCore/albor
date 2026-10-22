@@ -48,6 +48,9 @@ namespace
     // how many rows the counting updater has rewritten, which proves a match is updated in place (§18.1, AD-13)
     std::size_t writes = 0;
 
+    // how many rows the replacement updater rewrote, which a distinct counter keeps observable under a linker fold (§18.1)
+    std::size_t replacement_writes = 0;
+
     // build a row and count it, because a rebuild is what recycling avoids (§8.2, AD-13)
     std::unique_ptr<UiNode> counting_row(void*, const Recorded&, std::size_t) {
         // the count rises before the node is handed back, so a test reads what the scroll allocated (§8.2, AD-13)
@@ -57,8 +60,8 @@ namespace
 
     // a second updater, which exists so a view change is observable (§18.1, AD-13)
     void counting_update_2(void*, UiNode&, const Recorded&, std::size_t) {
-        // the count rises once per row the replacement updater rewrote (§18.1, AD-13)
-        writes++;
+        // the count rises once per row it rewrote, which is a body a linker cannot fold into the first updater (§18.1)
+        replacement_writes++;
     }
 
     // rewrite a row and count it, because a matched item is updated rather than rebuilt (§18.1, AD-13)
@@ -313,18 +316,19 @@ TEST(ScrollableRowsChecks, AChangedBuilderDropsTheRowsItCannotRead) {
     rows.set_items(items);
     rows.set_view(&counting_row, &counting_update, &key_of, nullptr);
     rows.set_scroll_viewport(ScrollViewport{.viewport = Size{200.0f, 200.0f}, .content = Size{200.0f, 2000.0f}, .offset = 0.0f, .overscan = 0.0f});
-    UiNode* before = rows.child_at(0);
     builds = 0;
     writes = 0;
+    replacement_writes = 0;
     // act the view is swapped for a different updater, which cannot read rows the old one made (§18.1, AD-13)
     rows.set_view(&counting_row, &counting_update_2, &key_of, nullptr);
-    (void)before;
     // assert the rows are rebuilt rather than reused, because a new updater would cast them wrongly (§18.1, AD-13)
     EXPECT_EQ(rows.materialized(), 10u);
-    // assert all ten were rebuilt, which is what proves the rows are new rather than pooled (§18.1, AD-13)
+    // assert no replaced row was held back, because a pooled row carries the old updater's expectations (§18.1, AD-13)
+    EXPECT_EQ(rows.recycled(), 0u);
+    // assert all ten were rebuilt, because a pooled row carries the old updater's expectations (§18.1, AD-13)
     EXPECT_EQ(builds, 10u);
     // assert the replacement updater rewrote every one of them, because a stale row would skip it (§18.1, AD-13)
-    EXPECT_EQ(writes, 10u);
+    EXPECT_EQ(replacement_writes, 10u);
 }
 
 TEST(ScrollableRowsChecks, AnUnchangedBuilderKeepsTheRowsItCanRead) {
