@@ -151,12 +151,14 @@ gtest_discover_tests(albor-blend2d-auto-checks DISCOVERY_TIMEOUT 60)
 
 # the apple window half of the install only exists where the macos presenter does, so its suite joins under apple (§5.3, AD-16)
 #
-# the suite builds a real foreign object for the handle, which the presenter refuses by kind, so it is an
-# objective c++ source and carries arc like the other conditional platform suites (§5.3, AD-16)
+# the suite builds a real foreign object for the handle, which the presenter refuses by kind, and then presents a
+# real stream of frames through a layer, so it is an objective c++ source and carries arc like the other
+# conditional platform suites. the stream is what measures the footprint, which only quartzcore and metal allocate
+# into, so both frameworks are named here rather than through the backend's private link (§5.3, §6.3, AD-16)
 if(APPLE)
     target_sources(albor-blend2d-auto-checks PRIVATE "./conditional/blend2d_window_auto.test.macos.mm")
     set_source_files_properties("./conditional/blend2d_window_auto.test.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
-    target_link_libraries(albor-blend2d-auto-checks PRIVATE "-framework Foundation")
+    target_link_libraries(albor-blend2d-auto-checks PRIVATE "-framework Foundation" "-framework Metal" "-framework QuartzCore")
 endif()
 
 # the win32 window half builds a swapchain on a hidden window, which the suite drives through the real factory (§5.3, AD-16)

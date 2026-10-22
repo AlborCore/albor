@@ -127,38 +127,41 @@ namespace albor::blend2d
         private:
             // copy the finished raster into the drawable, which the layer presents (§6.3)
             void present() {
-                // the extent is the physical size the metrics shaped the raster into (§6.3, AD-27)
-                const std::size_t width = static_cast<std::size_t>(m_metrics.pixel_size.width);
-                const std::size_t height = static_cast<std::size_t>(m_metrics.pixel_size.height);
-                const std::size_t row = width * 4u;
-                // a host without a device has no drawable to land on, so the present refuses (§6.3)
-                id<MTLDevice> device = process_device();
-                if (device == nil)
-                    return;
-                // the staging buffer lives in shared memory, which the copier reads from directly (§6.3)
-                const std::size_t bytes = row * height;
-                id<MTLBuffer> stage = [device newBufferWithLength:bytes options:MTLResourceStorageModeShared];
-                if (stage == nil || stage.contents == nullptr)
-                    return;
-                // the native raster is already premultiplied bgra, so it lands without a read back or a swap (§6.3, AD-26)
-                if (!m_raster->copy_native_pixels(stage.contents, row))
-                    return;
-                // the buffer is exercised once it lands, so the copier sees the flushed contents (§6.3)
-                [stage didModifyRange:NSMakeRange(0, bytes)];
-                // the drawable is the back buffer, which may be vacant when the queue is under pressure (§6.3)
-                id<CAMetalDrawable> drawable = [m_layer nextDrawable];
-                if (drawable == nil || drawable.texture == nil)
-                    return;
-                // the copier writes one full frame, with the source rows tightly packed (§6.3)
-                id<MTLCommandBuffer> buffer = [process_queue() commandBuffer];
-                id<MTLBlitCommandEncoder> blit = buffer == nil ? nil : [buffer blitCommandEncoder];
-                if (blit == nil)
-                    return;
-                [blit copyFromBuffer:stage sourceOffset:0 sourceBytesPerRow:static_cast<NSUInteger>(row) sourceBytesPerImage:static_cast<NSUInteger>(bytes) sourceSize:MTLSizeMake(width, height, 1) toTexture:drawable.texture destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
-                [blit endEncoding];
-                // the layer presents the drawable when the copier lands, which is the whole presentation (§6.3)
-                [buffer presentDrawable:drawable];
-                [buffer commit];
+                // the frame runs inside a pool, because a render thread has none of its own (§6.3, AD-18)
+                @autoreleasepool {
+                    // the extent is the physical size the metrics shaped the raster into (§6.3, AD-27)
+                    const std::size_t width = static_cast<std::size_t>(m_metrics.pixel_size.width);
+                    const std::size_t height = static_cast<std::size_t>(m_metrics.pixel_size.height);
+                    const std::size_t row = width * 4u;
+                    // a host without a device has no drawable to land on, so the present refuses (§6.3)
+                    id<MTLDevice> device = process_device();
+                    if (device == nil)
+                        return;
+                    // the staging buffer lives in shared memory, which the copier reads from directly (§6.3)
+                    const std::size_t bytes = row * height;
+                    id<MTLBuffer> stage = [device newBufferWithLength:bytes options:MTLResourceStorageModeShared];
+                    if (stage == nil || stage.contents == nullptr)
+                        return;
+                    // the native raster is already premultiplied bgra, so it lands without a swap (§6.3, AD-26)
+                    if (!m_raster->copy_native_pixels(stage.contents, row))
+                        return;
+                    // the buffer is exercised once it lands, so the copier sees the flushed contents (§6.3)
+                    [stage didModifyRange:NSMakeRange(0, bytes)];
+                    // the drawable is the back buffer, which may be vacant when the queue is under pressure (§6.3)
+                    id<CAMetalDrawable> drawable = [m_layer nextDrawable];
+                    if (drawable == nil || drawable.texture == nil)
+                        return;
+                    // the copier writes one full frame, with the source rows tightly packed (§6.3)
+                    id<MTLCommandBuffer> buffer = [process_queue() commandBuffer];
+                    id<MTLBlitCommandEncoder> blit = buffer == nil ? nil : [buffer blitCommandEncoder];
+                    if (blit == nil)
+                        return;
+                    [blit copyFromBuffer:stage sourceOffset:0 sourceBytesPerRow:static_cast<NSUInteger>(row) sourceBytesPerImage:static_cast<NSUInteger>(bytes) sourceSize:MTLSizeMake(width, height, 1) toTexture:drawable.texture destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
+                    [blit endEncoding];
+                    // the layer presents the drawable when the copier lands, which is the whole presentation (§6.3)
+                    [buffer presentDrawable:drawable];
+                    [buffer commit];
+                }
             }
 
             // the native layer the window attached, which is borrowed and never owned (§5.3)
