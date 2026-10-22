@@ -13,8 +13,8 @@ namespace albor::harfbuzz
         const std::shared_ptr<const resources::EmbeddedFont> font = resources::FontRegistry::find_hash(font_hash);
         if (font == nullptr)
             return nullptr;
-        // the engine is built over the carried bytes, so nothing on the file system is consulted (§15, AD-34)
-        std::shared_ptr<HarfbuzzTextEngine> engine = HarfbuzzTextEngine::create_embedded(font->family);
+        // the engine is built over the exact face, so a bold run walks the bold outlines (§15, AD-34)
+        std::shared_ptr<HarfbuzzTextEngine> engine = HarfbuzzTextEngine::create_embedded(font->family, font->weight);
         // an engine that could not shape the bytes is not cached, because a later call may succeed (§9.1)
         if (engine == nullptr)
             return nullptr;

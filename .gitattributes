@@ -2,3 +2,6 @@
 *.metallib binary
 *.metal text eol=lf
 *.sha256 text eol=lf
+
+# the build scripts run under bash on every runner, including windows, so they keep lf endings
+*.sh text eol=lf

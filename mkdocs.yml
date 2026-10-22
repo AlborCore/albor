@@ -39,6 +39,7 @@ nav:
       - Properties: ui-language/properties.md
       - Expressions and bindings: ui-language/expressions.md
       - Types: ui-language/types.md
+      - Fonts: ui-language/fonts.md
       - Signals and handlers: ui-language/handlers.md
       - Control flow: ui-language/control-flow.md
   - Concepts:

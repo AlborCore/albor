@@ -79,6 +79,7 @@ the `.cpp`.
 | property and signal declarations, directions, defaults | [Properties](properties.md) |
 | literals, operators, conversions, functions, globals | [Expressions and bindings](expressions.md) |
 | `struct`, `enum`, records, `vector<T>`, value sets | [Types](types.md) |
+| font family, weight, fallback, embedded registration | [Fonts](fonts.md) |
 | signals, `on_` blocks, the four handler statements | [Signals and handlers](handlers.md) |
 | `if`, `visible`, `Repeat` | [Control flow](control-flow.md) |
 

@@ -1,0 +1,10 @@
+component FontPanel {
+    Column {
+        Label {
+            id: bold_label;
+            text: "Bold";
+            font_family: "Lato";
+            font_weight: Weight.bold;
+        }
+    }
+}

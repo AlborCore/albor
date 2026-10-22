@@ -56,8 +56,8 @@ namespace albor::resources
         // a family with no name cannot be asked for, so the font is refused (§9.1)
         if (font.family.empty())
             return;
-        // an existing font of that family is dropped first, because the newest bytes are the truth (§15)
-        registry().erase(std::remove_if(registry().begin(), registry().end(), [&font](const std::shared_ptr<const EmbeddedFont>& existing) { return existing->family == font.family; }), registry().end());
+        // an existing face of that family and weight is dropped first, because the newest bytes are the truth (§15)
+        registry().erase(std::remove_if(registry().begin(), registry().end(), [&font](const std::shared_ptr<const EmbeddedFont>& existing) { return existing->family == font.family && existing->weight == font.weight; }), registry().end());
         // the font joins the registry as one shared object, so a reader keeps it alive past the lock (§11.3, AD-18)
         registry().push_back(std::make_shared<const EmbeddedFont>(std::move(font)));
     }
@@ -65,13 +65,26 @@ namespace albor::resources
     std::shared_ptr<const EmbeddedFont> FontRegistry::find_family(std::string_view family) {
         // the lock is held over the search, because a registration may land mid walk (§10.5, AD-18)
         const std::lock_guard<std::mutex> lock(registry_mutex());
-        // the families are searched in registration order, because the newest of a family replaced the oldest (§15)
+        // the regular face is the default a family name resolves to, which a bare selection expects (§9.1)
         for (const std::shared_ptr<const EmbeddedFont>& font : registry()) {
-            // an exact match is the only one that counts, because a prefix would resolve differently per platform (§15)
-            if (font->family == family)
+            // an exact family and regular weight answers before any other face of the family (§9.1, AD-34)
+            if (font->family == family && font->weight == FontWeight::Regular)
                 return font;
         }
-        // no family of that name is registered, which is a refusal rather than a fallback (§9.1, AD-34)
+        // a family with no regular face has no default, which is a refusal rather than another weight (§9.1, AD-34)
+        return nullptr;
+    }
+
+    std::shared_ptr<const EmbeddedFont> FontRegistry::find_face(std::string_view family, FontWeight weight) {
+        // the lock is held over the search, because a registration may land mid walk (§10.5, AD-18)
+        const std::lock_guard<std::mutex> lock(registry_mutex());
+        // the pairing is searched exactly, because substituting a weight would draw another face (§9.1)
+        for (const std::shared_ptr<const EmbeddedFont>& font : registry()) {
+            // the family and weight both decide, which is what makes a selection exact (§9.1, AD-34)
+            if (font->family == family && font->weight == weight)
+                return font;
+        }
+        // the pairing is not carried, which is a refusal rather than a nearest weight (§9.1, AD-34)
         return nullptr;
     }
 

@@ -6,6 +6,9 @@ add_subdirectory(albor-codegen)
 # the manifest glue driver, which compiles a native manifest into facade classes the application subclasses (§11.2, AD-17)
 add_subdirectory(albor-manifest-glue)
 
+# the font embedding driver, which turns declared font faces into generated registration units (§11.3, AD-34)
+add_subdirectory(albor-font-embed)
+
 # the allocation probe the test binary links, which a shipping build never carries (§2.3, AD-04)
 add_subdirectory(alloc-probe)
 
