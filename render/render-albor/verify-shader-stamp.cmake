@@ -1,7 +1,3 @@
-# prove the committed metal artifact is the one the committed shader produced
-# a consumer build never runs the toolchain, so the stamp is what keeps the pair from drifting (14.2)
-# invoked as: cmake -DSOURCE=<metal> -DARTIFACT=<metallib> -DSTAMP=<sha256 file> -P verify-shader-stamp.cmake
-
 # the pair is hashed the way the regeneration script hashes it
 file(SHA256 "${SOURCE}" ACTUAL_SOURCE)
 file(SHA256 "${ARTIFACT}" ACTUAL_ARTIFACT)
@@ -21,5 +17,5 @@ list(GET LINES 1 EXPECTED_ARTIFACT)
 
 # either digest changing means the pair no longer matches, which must not ship
 if(NOT ACTUAL_SOURCE STREQUAL EXPECTED_SOURCE OR NOT ACTUAL_ARTIFACT STREQUAL EXPECTED_ARTIFACT)
-    message(FATAL_ERROR "render-albor: albor_shaders.metallib does not match albor_shaders.metal, regenerate it with: bash build/shaders.sh --write")
+    message(FATAL_ERROR "render-albor: ${ARTIFACT} is stale against ${SOURCE}, regenerate it with: bash build/shaders.sh --write")
 endif()

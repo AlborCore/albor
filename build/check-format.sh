@@ -58,6 +58,7 @@ EXCLUDED=()
 #   *.mm    (e.g. *.macos.mm)   — Objective-C++
 #   *.c++   (e.g. *.linux.c++, *.win32.c++) — platform C++ extensions
 #   *.metal — a shader the metal toolchain compiles, which only the comment sweep below covers
+#   *.hlsl  — a shader the d3d toolchain compiles, which only the comment sweep below covers
 # adding a new extension family requires updating this list, the grep below and the comment sweep
 
 # collect the tracked and the not yet committed C++ sources, dropping the generated files
@@ -91,7 +92,7 @@ check_comment_rules() {
     while IFS= read -r file; do
         [ -z "$file" ] && continue
         [ -f "$file" ] && changed+=("$file")
-    done < <({ git diff --name-only --diff-filter=ACMR "$base" -- '*.cpp' '*.h' '*.c++' '*.mm' '*.metal'; git ls-files --others --exclude-standard -- '*.cpp' '*.h' '*.c++' '*.mm' '*.metal'; } | sort -u)
+    done < <({ git diff --name-only --diff-filter=ACMR "$base" -- '*.cpp' '*.h' '*.c++' '*.mm' '*.metal' '*.hlsl'; git ls-files --others --exclude-standard -- '*.cpp' '*.h' '*.c++' '*.mm' '*.metal' '*.hlsl'; } | sort -u)
 
     if [ ${#changed[@]} -eq 0 ]; then
         # nothing changed, so there is nothing to hold to the rules
