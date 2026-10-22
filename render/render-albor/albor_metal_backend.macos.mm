@@ -867,8 +867,11 @@ namespace albor::render
             m_begun = false;
             // a resize that waited for this frame applies now, so the next frame uses one extent (§6.2)
             if (m_resize_pending) {
-                m_resize_pending = false;
-                resize(m_pending_metrics);
+                // the resize runs inside a pool too, because it allocates descriptors on a thread that owns none (§6.3)
+                @autoreleasepool {
+                    m_resize_pending = false;
+                    resize(m_pending_metrics);
+                }
             }
         }
 
