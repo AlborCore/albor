@@ -27,10 +27,18 @@ namespace albor::automation
         else
             identity.process = "albor";
         // the local application data is per user, which is what a private endpoint needs (§10.3, AD-10)
-        if (const char* local = std::getenv("LOCALAPPDATA"); local != nullptr && *local != '\0')
+        char* local = nullptr;
+        // the buffer length is written by the read, which the release below does not need (§10.3)
+        std::size_t local_size = 0;
+        // a private endpoint prefers the per user directory, which windows publishes in the environment (§10.3, AD-10)
+        const bool found = ::_dupenv_s(&local, &local_size, "LOCALAPPDATA") == 0 && local != nullptr && *local != '\0';
+        // the value is copied before the allocation is released, because the identity owns its path (§10.3)
+        if (found)
             identity.base = local;
         else
             identity.base = std::filesystem::temp_directory_path();
+        // the environment block is released on both paths, because the copy no longer needs it (§10.3)
+        std::free(local);
         // the identity is returned whole, because the portable side owns the layout (§10.3)
         return identity;
     }

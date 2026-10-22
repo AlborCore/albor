@@ -3,11 +3,17 @@
 # gather cpp sources, which reach no platform api and therefore build on every platform (§5.3, AD-05)
 file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 
-# the portable seam stands in for the platform device, which a platform with its own replaces (§5.3, AD-16)
+# gather win32 sources, which are the ones that reach direct3d, dxgi and direct composition (AD-16)
+file(GLOB_RECURSE WIN32_SOURCES "./*.win32.c++")
+
+# the portable seam stands in for the platform device, which apple and windows replace (§5.3, AD-16)
 if(APPLE)
     list(FILTER CPP_SOURCES EXCLUDE REGEX "/albor_backend_support\\.cpp$")
     # the metal backend embeds the committed shader library, which the portable stand-in stands in for elsewhere (§5.3, AD-16)
     list(FILTER CPP_SOURCES EXCLUDE REGEX "/albor_shaders\\.cpp$")
+elseif(WIN32)
+    # the direct3d backend supplies the seam, which the portable stand-in would otherwise answer (§5.3, AD-16)
+    list(FILTER CPP_SOURCES EXCLUDE REGEX "/albor_backend_support\\.cpp$")
 endif()
 
 # create the static library from the gathered sources
@@ -43,6 +49,12 @@ if(APPLE)
     set_source_files_properties(${MACOS_SOURCES} PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_sources(albor-render-albor PRIVATE ${MACOS_SOURCES} "${METAL_EMBEDDED}")
     target_link_libraries(albor-render-albor PRIVATE "-framework Metal" "-framework QuartzCore" "-framework CoreText" "-framework CoreGraphics" "-framework Foundation")
+endif()
+
+# the direct3d backend only exists where direct3d, dxgi and direct composition do, which is the windows half (AD-16)
+if(WIN32)
+    target_sources(albor-render-albor PRIVATE ${WIN32_SOURCES})
+    target_link_libraries(albor-render-albor PRIVATE d3d11 dxgi dcomp)
 endif()
 
 # the auto target links the archive whole, so the backend installs itself at load without a call (§6.3, AD-26)

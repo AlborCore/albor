@@ -123,7 +123,7 @@ int main(int argc, char** argv) {
         std::ifstream manifest_stream(manifest, std::ios::binary);
         // a manifest that cannot be read is reported, because the compiler cannot resolve records without it (§11.2)
         if (!manifest_stream) {
-            std::fprintf(stderr, "albor-codegen: cannot open '%s'\n", manifest.c_str());
+            std::fprintf(stderr, "albor-codegen: cannot open '%s'\n", utf8_path(manifest).c_str());
             return 1;
         }
         // the module name is the file stem, which is what the glue generator names the directory after (§11.2)
