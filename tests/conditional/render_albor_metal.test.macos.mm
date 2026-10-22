@@ -2,6 +2,8 @@
 #include <cstdint>
 #include <fstream>
 #include <iterator>
+#include <mach/mach.h>
+#include <mach/task_info.h>
 #include <memory>
 #include <vector>
 
@@ -19,6 +21,7 @@
 #include "render/render-albor/albor_shaders.h"
 #include "render/render-software/software_renderer_backend.h"
 #include "render/render_context.h"
+#include "render/render_executor.h"
 #include "render/renderer_backend.h"
 #include "render/screenshot.h"
 #include "render/text_layout.h"
@@ -233,6 +236,51 @@ TEST(AlborRendererBackendChecks, PresentsThroughAMetalLayer) {
     EXPECT_EQ(pixels[1], 255u);
     EXPECT_EQ(pixels[2], 0u);
     EXPECT_EQ(pixels[3], 255u);
+}
+
+// the suite presents a real stream, because a present that forgets its pool leaks what no header check sees (§6.3)
+TEST(AlborRendererBackendChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) {
+    // arrange the layer a composition root hands over, which is what a windowed frame presents into (§5.3, AD-16)
+    albor::render::AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{800.0f, 600.0f}, 2.0f);
+    CAMetalLayer* layer = [CAMetalLayer layer];
+    const NativeWindowHandle handle = NativeWindowHandle::from_object((__bridge const void*)layer);
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(handle, metrics);
+    // assert the surface came up, because a refused surface presents nothing and would measure nothing (§6.2)
+    ASSERT_NE(surface, nullptr);
+    ASSERT_TRUE(surface->valid());
+    // arrange a scene with one composited layer, so every frame allocates an offscreen target of its own (§6.2)
+    FrameScene built(metrics, Color::rgb(0.06f, 0.07f, 0.09f));
+    built.add_command(DrawCommand::layer_push(0.5f));
+    built.add_command(DrawCommand::rectangle(AlborRect::from_origin_size(AlborPoint{100.0f, 100.0f}, AlborSize{400.0f, 200.0f}), Paint{.fill = Color::rgb(0.36f, 0.62f, 0.86f)}));
+    built.add_command(DrawCommand::layer_pop());
+    // the scene is handed over immutable, because that is the pointer the render thread consumes (§6.1, AD-18)
+    const std::shared_ptr<const FrameScene> scene = std::make_shared<const FrameScene>(std::move(built));
+    // arrange the executor, because stage two runs on its own thread, which owns no autorelease pool (§6.1, AD-18)
+    RenderExecutor executor(&backend);
+    // act a warmup, so the measurement pays neither the target allocation nor the driver's first pipelines (§2.2)
+    for (int frame = 0; frame < 20; frame++) {
+        ASSERT_TRUE(executor.submit(*surface, scene));
+        executor.flush();
+    }
+    // arrange the footprint the stream settles at, which is the baseline the bound is judged against (§2.2)
+    task_vm_info_data_t before{};
+    mach_msg_type_number_t before_count = TASK_VM_INFO_COUNT;
+    ASSERT_EQ(task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&before), &before_count), KERN_SUCCESS);
+    // act the stream itself, which is a window that keeps presenting one unchanged scene (§6.1)
+    for (int frame = 0; frame < 200; frame++) {
+        ASSERT_TRUE(executor.submit(*surface, scene));
+        executor.flush();
+    }
+    // arrange the footprint the stream left behind, which one leaked command buffer per frame lifts by 93 KB (§2.2)
+    task_vm_info_data_t after{};
+    mach_msg_type_number_t after_count = TASK_VM_INFO_COUNT;
+    ASSERT_EQ(task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&after), &after_count), KERN_SUCCESS);
+    // assert every frame ran, because a stream that dropped them would hold the bound by drawing nothing (§6.1)
+    EXPECT_EQ(executor.executed_count(), 220u);
+    // assert a per frame leak cannot hide here, because the pool costs 93 KB per frame when it is missing (§6.3)
+    const std::int64_t growth = static_cast<std::int64_t>(after.phys_footprint) - static_cast<std::int64_t>(before.phys_footprint);
+    EXPECT_LT(growth, 6 * 1024 * 1024);
 }
 
 TEST(AlborRendererBackendChecks, ResizesTheOffscreenTarget) {

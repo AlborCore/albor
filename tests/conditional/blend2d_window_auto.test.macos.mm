@@ -69,7 +69,7 @@ TEST(Blend2DWindowSurfaceChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) 
     ASSERT_EQ(task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&after), &after_count), KERN_SUCCESS);
     // assert every frame ran, because a stream that dropped them would hold the bound by drawing nothing (§6.1)
     EXPECT_EQ(executor.executed_count(), 140u);
-    // assert a leak of one staging buffer per frame cannot pass, because 120 frames of it is 900 MB (§6.3)
+    // assert a per frame leak cannot hide here, because the pool costs 7.33 MiB per frame when it is missing (§6.3)
     const std::int64_t growth = static_cast<std::int64_t>(after.phys_footprint) - static_cast<std::int64_t>(before.phys_footprint);
-    EXPECT_LT(growth, 96 * 1024 * 1024);
+    EXPECT_LT(growth, 8 * 1024 * 1024);
 }
