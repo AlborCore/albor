@@ -42,7 +42,7 @@ TEST(PngWriter, AFrameRoundTripsThroughItsChunks) {
     ASSERT_FALSE(compressed.empty());
     // act the stream is inflated, which is the inverse of what the encoder wrote (§6.3)
     std::vector<std::uint8_t> raw((2U * 4U + 1U) * 2U);
-    uLongf raw_size = raw.size();
+    uLongf raw_size = static_cast<uLongf>(raw.size());
     ASSERT_EQ(uncompress(raw.data(), &raw_size, reinterpret_cast<const Bytef*>(compressed.data()), static_cast<uLong>(compressed.size())), Z_OK);
     // assert the first row carries none and the second carries up, which is what the encoder writes (ISO 15948)
     ASSERT_EQ(raw_size, raw.size());
@@ -72,7 +72,7 @@ TEST(PngWriter, ATranslucentPixelIsUnpremultiplied) {
         at += 12 + length;
     }
     std::vector<std::uint8_t> raw(5);
-    uLongf raw_size = raw.size();
+    uLongf raw_size = static_cast<uLongf>(raw.size());
     ASSERT_EQ(uncompress(raw.data(), &raw_size, reinterpret_cast<const Bytef*>(compressed.data()), static_cast<uLong>(compressed.size())), Z_OK);
     // assert each channel is divided back by the alpha, which is the lossy step raw exists for (§6.3)
     EXPECT_EQ(raw[0], 0U);
@@ -98,7 +98,7 @@ TEST(PngWriter, ATransparentPixelCarriesNoColour) {
         at += 12 + length;
     }
     std::vector<std::uint8_t> raw(5);
-    uLongf raw_size = raw.size();
+    uLongf raw_size = static_cast<uLongf>(raw.size());
     ASSERT_EQ(uncompress(raw.data(), &raw_size, reinterpret_cast<const Bytef*>(compressed.data()), static_cast<uLong>(compressed.size())), Z_OK);
     // assert the zero alpha is not divided by, which would leave an undefined colour (§6.3)
     EXPECT_EQ(raw[1], 0U);
@@ -202,7 +202,7 @@ TEST(PngWriter, ALargeFrameSplitsItsStreamWithoutDroppingTheTail) {
     EXPECT_GT(idats, 1U);
     // assert the chunks form one zlib stream that inflates to the whole frame, which a lost tail would fail (ISO 15948)
     std::vector<std::uint8_t> raw((static_cast<std::size_t>(width) * 4U + 1U) * static_cast<std::size_t>(height));
-    uLongf raw_size = raw.size();
+    uLongf raw_size = static_cast<uLongf>(raw.size());
     ASSERT_EQ(uncompress(raw.data(), &raw_size, reinterpret_cast<const Bytef*>(compressed.data()), static_cast<uLong>(compressed.size())), Z_OK);
     EXPECT_EQ(raw_size, raw.size());
 }
@@ -223,7 +223,7 @@ TEST(PngWriter, TheAlphaConversionsRoundAndClamp) {
         at += 12 + length;
     }
     std::vector<std::uint8_t> raw(13);
-    uLongf raw_size = raw.size();
+    uLongf raw_size = static_cast<uLongf>(raw.size());
     ASSERT_EQ(uncompress(raw.data(), &raw_size, reinterpret_cast<const Bytef*>(compressed.data()), static_cast<uLong>(compressed.size())), Z_OK);
     // assert a channel above its alpha clamps, and the two rounding edges land on 255 and 254 (§6.3)
     EXPECT_EQ(raw[1], 255U);

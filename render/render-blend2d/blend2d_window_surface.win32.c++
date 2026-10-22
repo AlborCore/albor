@@ -9,7 +9,6 @@
 #include <windows.h>
 #include <wrl/client.h>
 
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <mutex>
