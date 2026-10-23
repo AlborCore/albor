@@ -59,6 +59,19 @@ namespace albor::compiler
         std::vector<std::filesystem::path> m_asset_paths;
     };
 
+    // what a write-if-changed attempt did, which tells a caller a failure apart from an unchanged file (§14.2)
+    enum class WriteResult
+    {
+        // the file already carried the content, so nothing was written (§14.2)
+        Unchanged,
+
+        // the content was written, so the file now carries it (§14.2)
+        Written,
+
+        // the write failed, which a caller reports rather than treating as unchanged (§14.2)
+        Failed,
+    };
+
     // rewrite the file only when its content changed, which is what keeps incremental builds quiet (§14.2, AD-03a)
-    [[nodiscard]] bool write_if_changed(const std::filesystem::path& path, std::string_view content);
+    [[nodiscard]] WriteResult write_if_changed(const std::filesystem::path& path, std::string_view content);
 } // namespace albor::compiler

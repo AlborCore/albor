@@ -110,6 +110,7 @@ jobs:
               # the preset launches the compiler through ccache, which the runner image does not ship
               choco install ccache --no-progress -y
           - name: linux-release
+            # disabled until the linux platform (#41) and its text resolver land; every step is gated on matrix.enable
             os: ubuntu-latest
             enable: false
             preset: release
@@ -120,7 +121,7 @@ jobs:
       MACOSX_DEPLOYMENT_TARGET: 13.3
       VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
       CCACHE_DIR: ${{ github.workspace }}/.ccache
-      LLVM_PROFILE_FILE: ${{ github.workspace }}/coverage.profraw
+      LLVM_PROFILE_FILE: ${{ github.workspace }}/coverage-%p.profraw
     steps:
       - uses: actions/checkout@v7
         if: matrix.enable
@@ -162,12 +163,18 @@ jobs:
       - name: unit tests
         if: matrix.enable
         working-directory: .build-${{ matrix.preset }}/tests
-        run: ./albor-tests
+        run: ./albor-tests && ./albor-generated-font-checks
+
+      - name: font selection check
+        if: matrix.enable
+        env:
+          ALBOR_BUILD_DIR: .build-${{ matrix.preset }}
+        run: bash build/check-font-selection.sh
 
       - name: cobertura report
         if: matrix.enable && matrix.preset == 'coverage'
         run: |
-          xcrun llvm-profdata merge -sparse coverage.profraw -o coverage.profdata
+          xcrun llvm-profdata merge -sparse coverage-*.profraw -o coverage.profdata
           xcrun llvm-cov export --format=lcov -instr-profile=coverage.profdata -ignore-filename-regex='(^|/)tests/' ./.build-coverage/tests/albor-tests > coverage.lcov
           # the export carries absolute source paths, and the coverage api matches on repository relative ones
           sed -i '' "s|^SF:$PWD/|SF:|" coverage.lcov

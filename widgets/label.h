@@ -57,11 +57,20 @@ namespace albor
         // replace the family the run is measured with, which remeasures because the face may change (§9.1, AD-34)
         void set_font_family(std::string family);
 
+        // hand out the family the run is measured with, which the generated facade sets (§9.1, AD-34)
+        [[nodiscard]] const std::string& font_family() const;
+
         // replace the weight the run is measured with, which remeasures because the face may change (§9.1, AD-34)
         void set_font_weight(FontWeight weight);
 
+        // hand out the weight the run is measured with, which the generated facade sets (§9.1, AD-34)
+        [[nodiscard]] FontWeight font_weight() const;
+
         // replace the fallback families the run resolves when the named one is absent (§9.1, AD-34)
         void set_font_fallback(std::vector<std::string> fallback);
+
+        // hand out the fallback chain the run resolves, which the generated facade sets (§9.1, AD-34)
+        [[nodiscard]] const std::vector<std::string>& font_fallback() const;
 
         // hand out the measured run, which the render pass draws and the tests read (§9.1)
         [[nodiscard]] const TextLayout& layout() const;

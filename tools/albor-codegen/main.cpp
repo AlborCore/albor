@@ -4,38 +4,51 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #include "compiler/codegen/codegen.h"
 #include "compiler/diagnostic.h"
+#include "compiler/font_catalog.h"
+#include "compiler/font_usage.h"
 #include "compiler/lexer.h"
 #include "compiler/parser.h"
 #include "compiler/type_checker.h"
 #include "compiler/value_type.h"
+#include "manifest/font_embed.h"
 #include "manifest/manifest.h"
 #include "tools/albor-codegen/depfile.h"
 
 namespace
 {
     // write every generated file under the output directory, which is the compile step of a ui file (§14.2)
-    void write_files(const std::vector<albor::compiler::GeneratedFile>& files, const std::filesystem::path& output) {
+    bool write_files(const std::vector<albor::compiler::GeneratedFile>& files, const std::filesystem::path& output) {
         // the directory must exist before a file lands in it, which is what the driver arranges (§14.2)
         std::error_code error;
         std::filesystem::create_directories(output, error);
         if (error) {
             std::fprintf(stderr, "albor-codegen: cannot create '%s'\n", albor::codegen::utf8_path(output).c_str());
-            return;
+            return false;
         }
         // each file is written only when its content changed, which keeps incremental builds quiet (§14.2, AD-03a)
         for (const albor::compiler::GeneratedFile& file : files) {
             // the write happens under the output directory, which prefixes the generated path (§14.2)
-            const bool changed = albor::compiler::write_if_changed(output / file.path, file.content);
+            const albor::compiler::WriteResult result = albor::compiler::write_if_changed(output / file.path, file.content);
+            // a failed write stops the compile, because a stale unit must not read as a success (§14.2)
+            if (result == albor::compiler::WriteResult::Failed) {
+                // the failure names the file, which is what a build log needs to fix it (§14.2)
+                std::fprintf(stderr, "albor-codegen: cannot write '%s'\n", albor::codegen::utf8_path(output / file.path).c_str());
+                return false;
+            }
             // the outcome is reported per file, which is what the build log shows (§14.2)
-            std::fprintf(stdout, "albor-codegen: %s %s\n", file.path.c_str(), changed ? "written" : "unchanged");
+            std::fprintf(stdout, "albor-codegen: %s %s\n", file.path.c_str(), result == albor::compiler::WriteResult::Written ? "written" : "unchanged");
         }
+        // every file landed, which is what the driver reports as success (§14.2)
+        return true;
     }
 
     // read a stream whole, because the scanner takes the whole unit and both inputs are text (§11.1)
@@ -64,6 +77,8 @@ int main(int argc, char** argv) {
     std::filesystem::path depfile;
     // the catalog starts with the builtin widgets, which every ui file may instantiate (§11.1, §8)
     albor::compiler::ElementCatalog catalog = albor::compiler::ElementCatalog::with_builtins();
+    // the fonts the target carries are empty until a build declares them, which keeps the platform path (§9.1, AD-34)
+    albor::compiler::FontCatalog fonts;
     // the flags are consumed in order, because each names its following value (§11.3)
     for (int i = 1; i < argc; ++i) {
         // the input flag takes the file to compile (§11.3)
@@ -98,14 +113,56 @@ int main(int argc, char** argv) {
             depfile = argv[++i];
             continue;
         }
+        // the default font flag names the family a bare selection resolves (§9.1, AD-34)
+        if (std::string_view(argv[i]) == "--default-font-family") {
+            // a flag without its value is a misuse, which the build that wired it up got wrong (§9.1)
+            if (i + 1 >= argc) {
+                // the missing value is named, because the build log should say what to fix (§9.1)
+                std::fprintf(stderr, "albor-codegen: --default-font-family needs a family\n");
+                return 2;
+            }
+            // the family is captured after the flag, which the composition root will name (§9.1)
+            fonts.set_default_family(argv[++i]);
+            continue;
+        }
+        // the font flag names one face the target carries, which a selection is checked against (§9.1, AD-34)
+        if (std::string_view(argv[i]) == "--font") {
+            // a face needs three values, and a shorter tail is a misuse (§11.3)
+            if (i + 3 >= argc) {
+                // the missing values are named, because the build log should say what to fix (§11.3)
+                std::fprintf(stderr, "albor-codegen: --font needs a family, a weight and a file\n");
+                return 2;
+            }
+            // the family is read first, because the weight and path follow it (§9.1)
+            std::string family = argv[++i];
+            // the weight is read next, and an unknown spelling is a misuse (§9.1)
+            const std::optional<albor::FontWeight> weight = albor::manifest::parse_font_weight(argv[++i]);
+            // an unknown weight stops the run before anything is generated (§9.1)
+            if (!weight) {
+                std::fprintf(stderr, "albor-codegen: '%s' is not a font weight\n", argv[i]);
+                return 2;
+            }
+            // the file is read last, because it is the path the face was declared from (§11.3)
+            const std::filesystem::path file = argv[++i];
+            // a file the build cannot read is a misuse, because the catalog would name a face nothing carries (§11.3)
+            std::error_code error;
+            if (!std::filesystem::is_regular_file(file, error)) {
+                // the missing file is named, because the build log should say what to fix (§11.3)
+                std::fprintf(stderr, "albor-codegen: cannot read font file '%s'\n", albor::codegen::utf8_path(file).c_str());
+                return 2;
+            }
+            // the face joins the catalog, which the compiler checks the ui selection against (§11.1, AD-34)
+            fonts.add(std::move(family), *weight);
+            continue;
+        }
         // an unknown flag is a misuse, which the build that wired it up got wrong (§11.3)
         std::fprintf(stderr, "albor-codegen: unknown flag '%s'\n", argv[i]);
-        std::fprintf(stderr, "albor-codegen: usage: albor-codegen --input <file.ui> --output <dir> [--tu-chunk-size <n>] [--manifest <file>] [--depfile <file>]\n");
+        std::fprintf(stderr, "albor-codegen: usage: albor-codegen --input <file.ui> --output <dir> [--tu-chunk-size <n>] [--manifest <file>] [--depfile <file>] [--default-font-family <family>] [--font <family> <weight> <file> ...]\n");
         return 2;
     }
     // both flags are mandatory, because a driver without a source or a target has nothing to do (§11.3)
     if (input.empty() || output.empty()) {
-        std::fprintf(stderr, "albor-codegen: usage: albor-codegen --input <file.ui> --output <dir> [--tu-chunk-size <n>] [--manifest <file>] [--depfile <file>]\n");
+        std::fprintf(stderr, "albor-codegen: usage: albor-codegen --input <file.ui> --output <dir> [--tu-chunk-size <n>] [--manifest <file>] [--depfile <file>] [--default-font-family <family>] [--font <family> <weight> <file> ...]\n");
         return 2;
     }
     // the file is read whole, because the scanner takes the complete unit (§11.1)
@@ -147,6 +204,9 @@ int main(int argc, char** argv) {
     albor::compiler::register_ui_enums(file, catalog);
     // the checker resolves the tree against the catalog, which holds the builtins and records (§11.2, §8)
     const albor::compiler::CheckedFile checked = albor::compiler::TypeChecker(catalog, diagnostics).check(file);
+    // a clean tree is checked against the carried faces, because an uncarried selection is an error (§9.1)
+    if (!diagnostics.has_errors())
+        albor::compiler::check_font_usage(checked, fonts, diagnostics);
     // a blocking problem stops the driver before any generation, which is what a console compile reports (§11.1)
     if (diagnostics.has_errors()) {
         print_diagnostics(diagnostics, albor::codegen::utf8_path(input));
@@ -170,7 +230,8 @@ int main(int argc, char** argv) {
     if (diagnostics.count() != 0U)
         print_diagnostics(diagnostics, albor::codegen::utf8_path(input));
     // the generated files land under the output directory, which is the compile result of the ui unit (§14.2)
-    write_files(files, output);
+    if (!write_files(files, output))
+        return 1;
     // the depfile is written after the units, so a build only reads dependencies for a successful run (§14.2)
     if (!depfile.empty() && !albor::codegen::write_depfile(depfile, files, output, input, generator.asset_paths())) {
         // a depfile that cannot be written leaves the build unable to track assets, which is a failed run (§14.2)

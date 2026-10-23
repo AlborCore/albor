@@ -6,6 +6,7 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -226,11 +227,14 @@ namespace albor::harfbuzz
         // the face the engine was built over, which is the one a run that names no family uses (§9.1)
         ResolvedFace face;
 
-        // the additional families resolved on demand, keyed by the family a run names (§15, AD-34)
-        std::unordered_map<std::string, ResolvedFace> families;
+        // the additional faces resolved on demand, keyed by the family and weight a run names (§15, AD-34)
+        std::map<std::pair<std::string, FontWeight>, ResolvedFace> families;
 
         // the family the default face carries, which decides whether a named family needs resolving (§9.1)
         std::string family;
+
+        // the weight the default face carries, which a selection of another weight must resolve (§9.1, AD-34)
+        FontWeight weight = FontWeight::Regular;
 
         // the resolver holding the drawing typeface, which only the platform can supply (§9.1, AD-28)
         std::unique_ptr<HarfbuzzTypefaceResolver> resolver;
@@ -248,19 +252,19 @@ namespace albor::harfbuzz
     namespace
     {
         // register the bytes a face was resolved from, so a backend draws the run by content (§15, AD-34)
-        void register_platform_bytes(const ResolvedFace& face, std::string_view family_name) {
+        void register_platform_bytes(const ResolvedFace& face, std::string_view family_name, FontWeight weight) {
             // a face with no identity, or one the registry already holds, needs no second registration (§15)
             if (face.font_hash == 0 || face.bytes == nullptr || resources::FontRegistry::find_hash(face.font_hash) != nullptr)
                 return;
             // the label is unique per hash, because two faces of one family must both survive (§15)
             const std::string base = family_name.empty() ? std::string("Platform") : std::string(family_name);
             const std::string label = base + "-" + std::to_string(face.font_hash);
-            // the bytes travel into the registry, which is what makes the run drawable everywhere (§11.3, AD-34)
-            resources::FontRegistry::register_font(resources::EmbeddedFont{.family = label, .content_hash = face.font_hash, .bytes = *face.bytes});
+            // the bytes travel into the registry with their weight, which makes the run drawable (§11.3, AD-34)
+            resources::FontRegistry::register_font(resources::EmbeddedFont{.family = label, .weight = weight, .content_hash = face.font_hash, .bytes = *face.bytes});
         }
     } // namespace
 
-    std::unique_ptr<HarfbuzzTextEngine> HarfbuzzTextEngine::create(const std::string& font_path, const std::string& family_name) {
+    std::unique_ptr<HarfbuzzTextEngine> HarfbuzzTextEngine::create(const std::string& font_path, const std::string& family_name, FontWeight weight) {
         // an empty path names no font, so the engine is refused rather than built empty (§9.1)
         if (font_path.empty())
             return nullptr;
@@ -268,27 +272,27 @@ namespace albor::harfbuzz
         if (family_name.empty())
             return nullptr;
         // the engine is built through its constructor, which loads the face and the typeface (§9.1)
-        std::unique_ptr<HarfbuzzTextEngine> engine(new HarfbuzzTextEngine(font_path, family_name));
+        std::unique_ptr<HarfbuzzTextEngine> engine(new HarfbuzzTextEngine(font_path, family_name, weight));
         // a face that did not load leaves an engine that is not ready, which a caller checks (§9.1)
         if (!engine->ready())
             return nullptr;
         // the bytes join the registry, so a backend resolves the run by content without the platform family (§15, AD-34)
-        register_platform_bytes(engine->m_state->face, family_name);
+        register_platform_bytes(engine->m_state->face, family_name, weight);
         // the engine is returned only when it can actually shape (§9.1)
         return engine;
     }
 
-    std::unique_ptr<HarfbuzzTextEngine> HarfbuzzTextEngine::create_embedded(std::string_view family) {
+    std::unique_ptr<HarfbuzzTextEngine> HarfbuzzTextEngine::create_embedded(std::string_view family, FontWeight weight) {
         // an empty family names nothing the build carries, so the engine is refused (§9.1)
         if (family.empty())
             return nullptr;
-        // the font comes from the registry the generated code filled, which is where AD-34's bytes live (§11.3, AD-34)
-        const std::shared_ptr<const resources::EmbeddedFont> font = resources::FontRegistry::find_family(family);
+        // the default face is the requested weight, which a family name and weight resolve to (§9.1, AD-34)
+        const std::shared_ptr<const resources::EmbeddedFont> font = resources::FontRegistry::find_face(family, weight);
         // a family the build does not carry has no font, and falling back would break identity (§15, AD-34)
         if (font == nullptr)
             return nullptr;
         // the engine is built over the bytes themselves, so no file system is consulted (§15, AD-34)
-        std::unique_ptr<HarfbuzzTextEngine> engine(new HarfbuzzTextEngine(font->bytes.data(), font->bytes.size(), family));
+        std::unique_ptr<HarfbuzzTextEngine> engine(new HarfbuzzTextEngine(font->bytes.data(), font->bytes.size(), family, weight));
         // an engine that could not shape the carried bytes is refused rather than half built (§9.1)
         if (!engine->ready())
             return nullptr;
@@ -296,7 +300,7 @@ namespace albor::harfbuzz
         return engine;
     }
 
-    std::unique_ptr<HarfbuzzTextEngine> HarfbuzzTextEngine::create_platform(std::string_view family) {
+    std::unique_ptr<HarfbuzzTextEngine> HarfbuzzTextEngine::create_platform(std::string_view family, FontWeight weight) {
         // the resolver names the platform face, which is the only source before a build embeds a font (§9.1, AD-28)
         std::unique_ptr<HarfbuzzTypefaceResolver> resolver = family.empty() ? HarfbuzzTypefaceResolver::create_default() : HarfbuzzTypefaceResolver::create(std::string(family));
         // a platform with no face has nothing to shape or draw, so the engine is refused (§9.1)
@@ -308,7 +312,7 @@ namespace albor::harfbuzz
         if (bytes.empty())
             return nullptr;
         // the engine is built over those bytes, which is the same path an embedded font takes (§15, AD-34)
-        std::unique_ptr<HarfbuzzTextEngine> engine(new HarfbuzzTextEngine(bytes.data(), bytes.size(), family));
+        std::unique_ptr<HarfbuzzTextEngine> engine(new HarfbuzzTextEngine(bytes.data(), bytes.size(), family, weight));
         // a face that did not load leaves an engine that cannot shape (§9.1)
         if (!engine->ready())
             return nullptr;
@@ -317,7 +321,7 @@ namespace albor::harfbuzz
         // the resolved typeface is what the run carries for the renderer (§9.1, AD-28)
         engine->m_state->resolver = std::move(resolver);
         // the bytes join the registry, so a backend draws the run by content without a platform typeface (§15, AD-34)
-        register_platform_bytes(engine->m_state->face, family);
+        register_platform_bytes(engine->m_state->face, family, weight);
         // the engine is returned only when it can actually shape (§9.1)
         return engine;
     }
@@ -327,10 +331,11 @@ namespace albor::harfbuzz
         return m_state->face.font_hash;
     }
 
-    HarfbuzzTextEngine::HarfbuzzTextEngine(const std::string& font_path, const std::string& family_name) :
+    HarfbuzzTextEngine::HarfbuzzTextEngine(const std::string& font_path, const std::string& family_name, FontWeight weight) :
         m_state(std::make_unique<HarfbuzzEngineState>()) {
-        // the family is stored, because a named run compares against it to skip resolving (§9.1)
+        // the family and weight are stored, because a named run compares against them to skip resolving (§9.1)
         m_state->family = family_name;
+        m_state->weight = weight;
         // the face is built over the file's bytes, which is the whole of the shaper's input (§15, AD-34)
         m_state->face = build_face(read_font_bytes(font_path));
         // the bytes are enough to draw, so a platform typeface is resolved only when the platform offers one (§9.1, AD-34)
@@ -339,12 +344,13 @@ namespace albor::harfbuzz
         resolve_typeface(family_name);
     }
 
-    HarfbuzzTextEngine::HarfbuzzTextEngine(const std::uint8_t* font_bytes, std::size_t byte_count, std::string_view family_name) :
+    HarfbuzzTextEngine::HarfbuzzTextEngine(const std::uint8_t* font_bytes, std::size_t byte_count, std::string_view family_name, FontWeight weight) :
         m_state(std::make_unique<HarfbuzzEngineState>()) {
         // an embedded engine draws as outlines, so it needs no platform typeface to be usable (§15, AD-34)
         m_state->require_typeface = false;
-        // the family is stored, because a named run compares against it to skip resolving (§9.1)
+        // the family and weight are stored, because a named run compares against them to skip resolving (§9.1)
         m_state->family = std::string(family_name);
+        m_state->weight = weight;
         // the face is built over the carried bytes, so no file system is consulted (§15, AD-34)
         m_state->face = build_face(std::vector<std::uint8_t>(font_bytes, font_bytes + byte_count));
     }
@@ -520,10 +526,8 @@ namespace albor::harfbuzz
     }
 
     TextLayout HarfbuzzTextEngine::measure(std::string_view text, float max_width, float font_size) const {
-        // the empty spec is built once, because a temporary would pay a proxy per call on the debug runtimes (§9.1)
-        static const FontSpec default_selection;
-        // the size only overload measures with the engine's default face, which is the family it was built over (§9.1)
-        return measure(text, max_width, font_size, default_selection);
+        // the size only overload names the weight the engine was built with, which selects its default face (§9.1)
+        return measure(text, max_width, font_size, FontSpec{.weight = m_state->weight});
     }
 
     TextLayout HarfbuzzTextEngine::measure(std::string_view text, float max_width, float font_size, const FontSpec& spec) const {
@@ -541,21 +545,28 @@ namespace albor::harfbuzz
         // a size of no pixels cannot be shaped at, so the run measures nothing (§9.1)
         if (font_size <= 0.0f)
             return TextLayout{};
-        // the face a selection resolves to, which is the engine's own when no family is named (§9.1, AD-34)
+        // the face a selection resolves to, which is the engine's own when no family or weight is named (§9.1, AD-34)
         auto resolve_face = [this](const FontSpec& selection) -> const ResolvedFace* {
-            // a run that names no family, or the engine's own family, uses the default face (§9.1)
-            if (selection.family.empty() || selection.family == m_state->family)
+            // the default face answers a run that names no family and the weight the engine was built with (§9.1)
+            if (selection.family.empty() && selection.weight == m_state->weight)
+                return &m_state->face;
+            // a run that names the engine's family at its weight uses the default face without a registry lookup (§9.1)
+            if (selection.family == m_state->family && selection.weight == m_state->weight)
                 return &m_state->face;
             // the families to try in order are the named family and then the fallback chain (§9.1, AD-34)
             std::vector<std::string_view> candidates;
+            // a run that names no family but asks for another weight resolves the engine's own family first (§9.1)
+            if (selection.family.empty())
+                candidates.push_back(m_state->family);
             // the named family is tried first, because it is what the author asked for (§9.1)
-            candidates.push_back(selection.family);
+            else
+                candidates.push_back(selection.family);
             // each fallback follows, because a named family may be absent on a platform (§15, AD-34)
             for (const std::string& fallback : selection.fallback)
                 candidates.push_back(fallback);
             for (std::string_view candidate : candidates) {
                 // a family already resolved answers from the cache, so the bytes are parsed once (§9.1)
-                const auto found = m_state->families.find(std::string(candidate));
+                const auto found = m_state->families.find({std::string(candidate), selection.weight});
                 if (found != m_state->families.end()) {
                     // a cached face that shapes answers, and one that failed falls through to the next family (§9.1)
                     if (found->second.font != nullptr)
@@ -563,19 +574,19 @@ namespace albor::harfbuzz
                     // the failed family is skipped, because a later family may still shape (§15, AD-34)
                     continue;
                 }
-                // the registry is consulted, because a carried font is what a family resolves to (§15, AD-34)
-                const std::shared_ptr<const resources::EmbeddedFont> font = resources::FontRegistry::find_family(candidate);
+                // the registry is consulted, because a carried face is what a family and weight resolve to (§15, AD-34)
+                const std::shared_ptr<const resources::EmbeddedFont> font = resources::FontRegistry::find_face(candidate, selection.weight);
                 if (font == nullptr)
                     continue;
-                // the face is built over the carried bytes and cached under the family it resolved (§11.3, AD-34)
-                const auto inserted = m_state->families.emplace(std::string(candidate), build_face(font->bytes));
+                // the face is built over the carried bytes and cached under the family and weight (§11.3, AD-34)
+                const auto inserted = m_state->families.emplace(std::make_pair(std::string(candidate), selection.weight), build_face(font->bytes));
                 // a face that shapes answers, and one a corrupt font left empty falls through (§9.1)
                 if (inserted.first->second.font != nullptr)
                     return &inserted.first->second;
                 // the family is skipped, because the next one may carry a usable face (§15, AD-34)
                 continue;
             }
-            // no family in the chain is carried, so the run is refused rather than drawn with the wrong face (§15, AD-34)
+            // no family in the chain carries the weight, so the run is refused rather than drawn with another face (§15)
             return nullptr;
         };
         // the resolved face is what the run shapes and is measured with, and its absence refuses the run (§15, AD-34)
@@ -712,7 +723,7 @@ namespace albor::harfbuzz
     }
 
     bool HarfbuzzTextEngine::resolves_font_selection() const {
-        // the engine resolves a family through the registry, so a selection beyond its default face is honored (§9.1)
+        // the engine resolves a family and weight, so a selection beyond its default face is honored (§9.1)
         return true;
     }
 

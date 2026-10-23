@@ -31,7 +31,7 @@ engine are selected by linking ([Getting started](getting-started.md#the-pieces-
 | Semantic tree, explicit/implicit keys | `semantics/` | shipped |
 | Input normalization, coalescing, focus | `input/`, `focus/` | shipped |
 | Layout: measure & arrange, containers | `layout/` | shipped |
-| Text, measurement, shaping | `text/` | baseline — HarfBuzz through Skia |
+| Text, measurement, shaping | `text/` | baseline — HarfBuzz, embedded font registration and weight selection |
 | Standard widgets | `widgets/` | shipped — thirteen elements |
 | Animation core | `animation/` | baseline |
 | Compiler frontend, `.ui` parser, typed IR | `compiler/` | shipped |

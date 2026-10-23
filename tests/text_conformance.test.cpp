@@ -49,16 +49,16 @@ namespace
     }
 
     // build a registered font over a font file, which is what generated code will emit for an embedded one (§11.3, AD-34)
-    resources::EmbeddedFont make_embedded_font(std::string family, const char* path) {
+    resources::EmbeddedFont make_embedded_font(std::string family, const char* path, FontWeight weight = FontWeight::Regular) {
         // the bytes are read whole, because a face is built from a complete font (§9.1)
         std::ifstream file(path, std::ios::binary);
         // a file that is not there carries no font, so the caller sees an empty registration (§9.1)
         if (!file)
-            return resources::EmbeddedFont{.family = std::move(family)};
+            return resources::EmbeddedFont{.family = std::move(family), .weight = weight};
         // the bytes travel with the registration, which is what a generated font does (§11.3, AD-34)
         std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
         // the hash is computed by the registry, so a caller cannot register a wrong identity (§15)
-        return resources::EmbeddedFont{.family = std::move(family), .content_hash = 0, .bytes = std::move(bytes)};
+        return resources::EmbeddedFont{.family = std::move(family), .weight = weight, .content_hash = 0, .bytes = std::move(bytes)};
     }
 } // namespace
 
@@ -249,6 +249,106 @@ TEST(DualEngineConformanceChecks, ASelectionFallsBackToACarriedFamily) {
     resources::FontRegistry::clear();
 }
 
+TEST(DualEngineConformanceChecks, ASelectionResolvesTheRequestedWeight) {
+    // arrange the carried family at two real weights, so a selection has two faces to choose (§9.1, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_WEIGHT_FONT_FAMILY, ALBOR_TEST_WEIGHT_FONT_PATH, FontWeight::Regular));
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_WEIGHT_FONT_FAMILY, ALBOR_TEST_BOLD_FONT_PATH, FontWeight::Bold));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_WEIGHT_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act the same text is shaped at the default weight and at the bold one (§9.1, AD-34)
+    const TextLayout regular = engine->measure("Albor", 0.0f, 20.0f);
+    const TextLayout bold = engine->measure("Albor", 0.0f, 20.0f, FontSpec{.family = ALBOR_TEST_WEIGHT_FONT_FAMILY, .weight = FontWeight::Bold});
+    // assert each weight resolved a face, and the two faces are different fonts (§9.1, AD-34)
+    ASSERT_NE(regular.run, nullptr);
+    ASSERT_NE(bold.run, nullptr);
+    EXPECT_NE(regular.run->font_hash(), bold.run->font_hash());
+    EXPECT_NE(*regular.run, *bold.run);
+    // exit the registry is emptied, so the next test starts from nothing (§2.2)
+    resources::FontRegistry::clear();
+}
+
+TEST(DualEngineConformanceChecks, AWeightSelectionResolvesTheEngineFamilyWhenNoFamilyIsNamed) {
+    // arrange the carried family at two weights, with the engine built over its regular face (§9.1, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_WEIGHT_FONT_FAMILY, ALBOR_TEST_WEIGHT_FONT_PATH, FontWeight::Regular));
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_WEIGHT_FONT_FAMILY, ALBOR_TEST_BOLD_FONT_PATH, FontWeight::Bold));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_WEIGHT_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act the selection names no family but asks for the bold weight (§9.1, AD-34)
+    const TextLayout plain = engine->measure("Albor", 0.0f, 20.0f);
+    const TextLayout bold = engine->measure("Albor", 0.0f, 20.0f, FontSpec{.weight = FontWeight::Bold});
+    // assert the engine family resolved at the requested weight rather than the default face (§9.1, AD-34)
+    ASSERT_NE(plain.run, nullptr);
+    ASSERT_NE(bold.run, nullptr);
+    EXPECT_NE(plain.run->font_hash(), bold.run->font_hash());
+    // exit the registry is emptied, so the next test starts from nothing (§2.2)
+    resources::FontRegistry::clear();
+}
+
+TEST(DualEngineConformanceChecks, AWeightSelectionFallsBackToACarriedFamily) {
+    // arrange a named family that carries no bold face, and a fallback family that does (§9.1, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_WEIGHT_FONT_FAMILY, ALBOR_TEST_WEIGHT_FONT_PATH, FontWeight::Regular));
+    resources::FontRegistry::register_font(make_embedded_font("AlborBoldFallback", ALBOR_TEST_BOLD_FONT_PATH, FontWeight::Bold));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_WEIGHT_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act the named family is carried but has no bold face, so the chain must reach the fallback (§9.1, AD-34)
+    const TextLayout layout = engine->measure("Albor", 0.0f, 20.0f, FontSpec{.family = ALBOR_TEST_WEIGHT_FONT_FAMILY, .weight = FontWeight::Bold, .fallback = {"AlborBoldFallback"}});
+    // assert the fallback family supplied the bold face rather than another weight of the named family (§9.1, AD-34)
+    ASSERT_NE(layout.run, nullptr);
+    const std::shared_ptr<const resources::EmbeddedFont> fallback = resources::FontRegistry::find_face("AlborBoldFallback", FontWeight::Bold);
+    ASSERT_NE(fallback, nullptr);
+    EXPECT_EQ(layout.run->font_hash(), fallback->content_hash);
+    // exit the registry is emptied, so the next test starts from nothing (§2.2)
+    resources::FontRegistry::clear();
+}
+
+TEST(DualEngineConformanceChecks, AWeightTheCarriedFamilyLacksIsRefused) {
+    // arrange a family that carries only its regular face (§9.1, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_WEIGHT_FONT_FAMILY, ALBOR_TEST_WEIGHT_FONT_PATH, FontWeight::Regular));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_WEIGHT_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act a selection asks for a weight the family does not carry (§9.1, AD-34)
+    const TextLayout layout = engine->measure("Albor", 0.0f, 20.0f, FontSpec{.family = ALBOR_TEST_WEIGHT_FONT_FAMILY, .weight = FontWeight::Bold});
+    // assert the run is refused rather than measured with the regular face (§9.1, AD-34)
+    EXPECT_EQ(layout.run, nullptr);
+    // exit the registry is emptied, so the next test starts from nothing (§2.2)
+    resources::FontRegistry::clear();
+}
+
+TEST(DualEngineConformanceChecks, ACorruptWeightedFaceIsSkippedAfterTheFirstLookup) {
+    // arrange a usable default family and a corrupt face under another family and weight (§9.1, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_WEIGHT_FONT_FAMILY, ALBOR_TEST_WEIGHT_FONT_PATH, FontWeight::Regular));
+    resources::FontRegistry::register_font(resources::EmbeddedFont{.family = "AlborCorruptWeight", .weight = FontWeight::Bold, .bytes = {1, 2, 3, 4, 5, 6, 7, 8}});
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_WEIGHT_FONT_FAMILY);
+    ASSERT_NE(engine, nullptr);
+    // act the corrupt face is resolved once and then answered from the failed cache entry (§9.1)
+    const TextLayout first = engine->measure("Albor", 0.0f, 20.0f, FontSpec{.family = "AlborCorruptWeight", .weight = FontWeight::Bold});
+    const TextLayout second = engine->measure("Albor", 0.0f, 20.0f, FontSpec{.family = "AlborCorruptWeight", .weight = FontWeight::Bold});
+    // assert both lookups refuse, because a corrupt font cannot shape either time (§9.1)
+    EXPECT_EQ(first.run, nullptr);
+    EXPECT_EQ(second.run, nullptr);
+    // exit the registry is emptied, so the next test starts from nothing (§2.2)
+    resources::FontRegistry::clear();
+}
+
+TEST(DualEngineConformanceChecks, AWeightedFamilyWithoutARegularFaceIsNotADefault) {
+    // arrange a family that carries only a bold face (§9.1, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_WEIGHT_FONT_FAMILY, ALBOR_TEST_BOLD_FONT_PATH, FontWeight::Bold));
+    // the bold face is carried, so the refusal below comes from the missing regular default (§9.1)
+    ASSERT_NE(resources::FontRegistry::find_face(ALBOR_TEST_WEIGHT_FONT_FAMILY, FontWeight::Bold), nullptr);
+    // act the engine is built over the family's default regular face (§9.1, AD-34)
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_WEIGHT_FONT_FAMILY);
+    // assert the default is refused, because a family name without a weight is the regular face (§9.1, AD-34)
+    EXPECT_EQ(engine, nullptr);
+    // exit the registry is emptied, so the next test starts from nothing (§2.2)
+    resources::FontRegistry::clear();
+}
+
 TEST(DualEngineConformanceChecks, ASelectionNamingTheEnginesOwnFamilyMeasuresPlainly) {
     // arrange the carried fixture, whose family the engine was built over (§15, AD-34)
     resources::FontRegistry::clear();
@@ -320,6 +420,67 @@ TEST(EmbeddedFontChecks, ARegisteredFontIsFoundByFamilyAndByHash) {
     const std::shared_ptr<const resources::EmbeddedFont> found = resources::FontRegistry::find_family("AlborTest");
     EXPECT_TRUE(resources::FontRegistry::find_hash(found->content_hash) != nullptr);
     EXPECT_EQ(resources::FontRegistry::count(), 1u);
+    // exit the registry is emptied, so the next test starts from nothing (§2.2)
+    resources::FontRegistry::clear();
+}
+
+TEST(EmbeddedFontChecks, ARegisteredFaceIsFoundByFamilyAndWeight) {
+    // arrange a family registered at two real weights (§9.1, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_WEIGHT_FONT_FAMILY, ALBOR_TEST_WEIGHT_FONT_PATH, FontWeight::Regular));
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_WEIGHT_FONT_FAMILY, ALBOR_TEST_BOLD_FONT_PATH, FontWeight::Bold));
+    // act each pairing is looked up, and a third weight is asked for (§9.1, AD-34)
+    const std::shared_ptr<const resources::EmbeddedFont> regular = resources::FontRegistry::find_face(ALBOR_TEST_WEIGHT_FONT_FAMILY, FontWeight::Regular);
+    const std::shared_ptr<const resources::EmbeddedFont> bold = resources::FontRegistry::find_face(ALBOR_TEST_WEIGHT_FONT_FAMILY, FontWeight::Bold);
+    const std::shared_ptr<const resources::EmbeddedFont> black = resources::FontRegistry::find_face(ALBOR_TEST_WEIGHT_FONT_FAMILY, FontWeight::Black);
+    // assert the exact pairings answer and the absent weight is refused (§9.1, AD-34)
+    ASSERT_NE(regular, nullptr);
+    ASSERT_NE(bold, nullptr);
+    EXPECT_EQ(regular->weight, FontWeight::Regular);
+    EXPECT_EQ(bold->weight, FontWeight::Bold);
+    EXPECT_EQ(black, nullptr);
+    // the bold bytes answer their own weight, which the outline resolver reads by hash (§15, AD-34)
+    const std::shared_ptr<const resources::EmbeddedFont> by_hash = resources::FontRegistry::find_hash(bold->content_hash);
+    ASSERT_NE(by_hash, nullptr);
+    EXPECT_EQ(by_hash->weight, FontWeight::Bold);
+    // exit the registry is emptied, so the next test starts from nothing (§2.2)
+    resources::FontRegistry::clear();
+}
+
+TEST(EmbeddedFontChecks, AFamilyNameResolvesToItsRegularFace) {
+    // arrange a family whose bold face precedes its regular one, and a second family with no regular face (§9.1)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_WEIGHT_FONT_FAMILY, ALBOR_TEST_BOLD_FONT_PATH, FontWeight::Bold));
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_WEIGHT_FONT_FAMILY, ALBOR_TEST_WEIGHT_FONT_PATH, FontWeight::Regular));
+    resources::FontRegistry::register_font(make_embedded_font("AlborBoldOnly", ALBOR_TEST_BOLD_FONT_PATH, FontWeight::Bold));
+    // act the family name is resolved, which has no weight to disambiguate it (§9.1)
+    const std::shared_ptr<const resources::EmbeddedFont> preferred = resources::FontRegistry::find_family(ALBOR_TEST_WEIGHT_FONT_FAMILY);
+    const std::shared_ptr<const resources::EmbeddedFont> only = resources::FontRegistry::find_family("AlborBoldOnly");
+    // assert the regular face answers, and a family without one is refused rather than substituted (§9.1, AD-34)
+    ASSERT_NE(preferred, nullptr);
+    EXPECT_EQ(preferred->weight, FontWeight::Regular);
+    EXPECT_EQ(only, nullptr);
+    // exit the registry is emptied, so the next test starts from nothing (§2.2)
+    resources::FontRegistry::clear();
+}
+
+TEST(EmbeddedFontChecks, ARegisteredWeightReplacesOnlyItsOwnFace) {
+    // arrange a family at two weights, with the regular face carrying the lato bytes (§9.1, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_WEIGHT_FONT_FAMILY, ALBOR_TEST_WEIGHT_FONT_PATH, FontWeight::Regular));
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_WEIGHT_FONT_FAMILY, ALBOR_TEST_BOLD_FONT_PATH, FontWeight::Bold));
+    const std::shared_ptr<const resources::EmbeddedFont> bold_before = resources::FontRegistry::find_face(ALBOR_TEST_WEIGHT_FONT_FAMILY, FontWeight::Bold);
+    ASSERT_NE(bold_before, nullptr);
+    // act the regular face is re-registered over different bytes (§15)
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_WEIGHT_FONT_FAMILY, FONT_PATH, FontWeight::Regular));
+    // assert the regular face changed and the bold face survived the replacement (§15, AD-34)
+    const std::shared_ptr<const resources::EmbeddedFont> regular_after = resources::FontRegistry::find_face(ALBOR_TEST_WEIGHT_FONT_FAMILY, FontWeight::Regular);
+    const std::shared_ptr<const resources::EmbeddedFont> bold_after = resources::FontRegistry::find_face(ALBOR_TEST_WEIGHT_FONT_FAMILY, FontWeight::Bold);
+    ASSERT_NE(regular_after, nullptr);
+    ASSERT_NE(bold_after, nullptr);
+    EXPECT_EQ(resources::FontRegistry::count(), 2u);
+    EXPECT_EQ(bold_after->content_hash, bold_before->content_hash);
+    EXPECT_NE(regular_after->content_hash, bold_after->content_hash);
     // exit the registry is emptied, so the next test starts from nothing (§2.2)
     resources::FontRegistry::clear();
 }
@@ -1479,6 +1640,67 @@ TEST(EmbeddedTextDrawChecks, TheEngineProvidesTheOutlineResolver) {
     // exit
     resources::FontRegistry::clear();
 }
+
+TEST(EmbeddedTextDrawChecks, AWeightedRunDrawsTheWeightedOutline) {
+    // arrange the carried family at two weights, whose shapes differ (§9.1, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_WEIGHT_FONT_FAMILY, ALBOR_TEST_WEIGHT_FONT_PATH, FontWeight::Regular));
+    resources::FontRegistry::register_font(make_embedded_font(ALBOR_TEST_WEIGHT_FONT_FAMILY, ALBOR_TEST_BOLD_FONT_PATH, FontWeight::Bold));
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> regular = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_WEIGHT_FONT_FAMILY, FontWeight::Regular);
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> bold = harfbuzz::HarfbuzzTextEngine::create_embedded(ALBOR_TEST_WEIGHT_FONT_FAMILY, FontWeight::Bold);
+    ASSERT_NE(regular, nullptr);
+    ASSERT_NE(bold, nullptr);
+    const TextLayout layout = bold->measure("A", 0.0f, 20.0f, FontSpec{.family = ALBOR_TEST_WEIGHT_FONT_FAMILY, .weight = FontWeight::Bold});
+    ASSERT_NE(layout.run, nullptr);
+    const std::uint32_t glyph = layout.run->lines().front().glyphs.front().id;
+    // act the resolver the bold engine hands out is asked for the glyph the bold run carries (§6.4, AD-34)
+    const GlyphOutlineResolver resolver = bold->glyph_outline_resolver();
+    const std::shared_ptr<const GlyphOutline> outline = resolver(GlyphOutlineKey{.font_hash = layout.run->font_hash(), .glyph_id = glyph, .font_size = 20.0f});
+    // assert the resolver walked the bold face rather than the regular default (§15, AD-34)
+    ASSERT_NE(outline, nullptr);
+    ASSERT_FALSE(outline->empty());
+    const GlyphOutlineData bold_outline = bold->glyph_outline(glyph, 20.0f);
+    const GlyphOutlineData regular_outline = regular->glyph_outline(glyph, 20.0f);
+    EXPECT_EQ(outline->points(), bold_outline.points);
+    EXPECT_NE(outline->points(), regular_outline.points);
+    // exit the registry is emptied, so the next test starts from nothing (§2.2)
+    resources::FontRegistry::clear();
+}
+
+TEST(EmbeddedTextDrawChecks, ABoldOnlyFamilyDrawsWhenTheWeightIsNamed) {
+    // arrange a family that carries only a bold face (§9.1, AD-34)
+    resources::FontRegistry::clear();
+    resources::FontRegistry::register_font(make_embedded_font("AlborBoldOnly", ALBOR_TEST_BOLD_FONT_PATH, FontWeight::Bold));
+    // act the engine and its resolver are built over the bold face explicitly (§9.1, AD-34)
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create_embedded("AlborBoldOnly", FontWeight::Bold);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout layout = engine->measure("A", 0.0f, 20.0f);
+    ASSERT_NE(layout.run, nullptr);
+    const GlyphOutlineResolver resolver = engine->glyph_outline_resolver();
+    const std::shared_ptr<const GlyphOutline> outline = resolver(GlyphOutlineKey{.font_hash = layout.run->font_hash(), .glyph_id = layout.run->lines().front().glyphs.front().id, .font_size = 20.0f});
+    // assert the resolver walked the only face the family carries, so a bold-only family is drawable (§9.1)
+    ASSERT_NE(outline, nullptr);
+    EXPECT_FALSE(outline->empty());
+    // exit the registry is emptied, so the next test starts from nothing (§2.2)
+    resources::FontRegistry::clear();
+}
+
+TEST(EmbeddedTextDrawChecks, ANonRegularDefaultFaceCarriesItsWeight) {
+    // arrange a bold file built as a bold default, with the registry empty so no family answers the regular weight (§9.1)
+    resources::FontRegistry::clear();
+    // act the engine is built over the bold file at the bold weight (§9.1, AD-34)
+    const std::unique_ptr<harfbuzz::HarfbuzzTextEngine> engine = harfbuzz::HarfbuzzTextEngine::create(ALBOR_TEST_BOLD_FONT_PATH, ALBOR_TEST_WEIGHT_FONT_FAMILY, FontWeight::Bold);
+    ASSERT_NE(engine, nullptr);
+    const TextLayout plain = engine->measure("Albor", 0.0f, 20.0f);
+    const TextLayout regular = engine->measure("Albor", 0.0f, 20.0f, FontSpec{.family = ALBOR_TEST_WEIGHT_FONT_FAMILY, .weight = FontWeight::Regular});
+    // assert the plain run uses the bold default, while a regular selection is refused (§9.1, AD-34)
+    ASSERT_NE(plain.run, nullptr);
+    EXPECT_EQ(plain.run->font_hash(), engine->font_hash());
+    EXPECT_EQ(regular.run, nullptr);
+    // exit the registry is emptied, so the next test starts from nothing (§2.2)
+    resources::FontRegistry::clear();
+}
+
 TEST(GlyphOutlineChecks, TheOutlinePairsItsVerbsWithThePointsOfEveryContour) {
     // arrange the carried fixture, whose glyph is walked into closed contours of points (§6.4, AD-34)
     if (!has_font())

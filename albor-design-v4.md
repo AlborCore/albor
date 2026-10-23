@@ -957,6 +957,12 @@ Text rendering and measurement are foundational to UI layout:
   vendored baseline issue.
 - Text measurement is computed during the layout measure phase so containers accurately adapt to localized text lengths.
 - Fonts are managed as immutable resources through the `ResourceManager`.
+- **A build registers each font face under its family and weight (§9.1, AD-34).** The target
+  declares the files once, the generated registration unit carries their bytes into the
+  binary, and a run resolves the exact `(family, weight)` pairing. There is no nearest-weight
+  substitution and no synthetic bold: an uncarried family or weight is a compile error when
+  written as a literal and a refused run when computed. The registration is the first half of
+  compile-time glyph embedding; the outline path draws from the same bytes on every backend.
 
 **The Shaped Run Is the Replayable Unit (AD-14, settled during implementation):**
 

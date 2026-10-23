@@ -4031,7 +4031,7 @@ namespace albor::compiler
         return files;
     }
 
-    bool write_if_changed(const std::filesystem::path& path, std::string_view content) {
+    WriteResult write_if_changed(const std::filesystem::path& path, std::string_view content) {
         // the existing content is compared first, so an up to date file is left untouched (§14.2)
         std::ifstream existing(path, std::ios::binary);
         // a file that exists is read whole, which is what the comparison needs (§14.2)
@@ -4040,7 +4040,7 @@ namespace albor::compiler
             const std::string previous((std::istreambuf_iterator<char>(existing)), std::istreambuf_iterator<char>());
             // a file that already matches is not rewritten, which is what keeps the build quiet (§14.2)
             if (previous == content)
-                return false;
+                return WriteResult::Unchanged;
         }
         // a changed file is truncated and rewritten, which makes the output canonical (§14.2)
         std::ofstream out(path, std::ios::binary | std::ios::trunc);
@@ -4048,7 +4048,7 @@ namespace albor::compiler
         out.write(content.data(), static_cast<std::streamsize>(content.size()));
         // the stream is closed before the state is judged, because the flush is the write (§14.2)
         out.close();
-        // the stream state decides the result, because a failed flush is a lost write (§14.2)
-        return out.good();
+        // a failed flush is a lost write, which the caller must report rather than read as unchanged (§14.2)
+        return out.good() ? WriteResult::Written : WriteResult::Failed;
     }
 } // namespace albor::compiler

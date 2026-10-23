@@ -19,13 +19,13 @@ namespace albor::harfbuzz
     {
     public:
         // build over a font file and the family the renderer draws from, refusing when either is absent (§9.1)
-        [[nodiscard]] static std::unique_ptr<HarfbuzzTextEngine> create(const std::string& font_path, const std::string& family_name);
+        [[nodiscard]] static std::unique_ptr<HarfbuzzTextEngine> create(const std::string& font_path, const std::string& family_name, FontWeight weight = FontWeight::Regular);
 
         // build over a font the build carries, which is how AD-34 removes font discovery (§15, AD-34)
-        [[nodiscard]] static std::unique_ptr<HarfbuzzTextEngine> create_embedded(std::string_view family);
+        [[nodiscard]] static std::unique_ptr<HarfbuzzTextEngine> create_embedded(std::string_view family, FontWeight weight = FontWeight::Regular);
 
         // build over the platform default face, which keeps text available before a build embeds a font (§9.1, AD-28)
-        [[nodiscard]] static std::unique_ptr<HarfbuzzTextEngine> create_platform(std::string_view family);
+        [[nodiscard]] static std::unique_ptr<HarfbuzzTextEngine> create_platform(std::string_view family, FontWeight weight = FontWeight::Regular);
 
         // the content hash of the font this engine shapes with, which is its identity in a layout (§15, AD-34)
         [[nodiscard]] std::uint64_t font_hash() const;
@@ -70,7 +70,7 @@ namespace albor::harfbuzz
         // report whether a run draws: the path engine needs a typeface, the embedded engine its outlines (§9.1, AD-34)
         [[nodiscard]] bool drawable() const;
 
-        // override: the engine resolves a family, though a weight is still pending (#96) (§9.1)
+        // override: the engine resolves a family and a weight through the registry (§9.1, AD-34)
         [[nodiscard]] bool resolves_font_selection() const override;
 
         // override: hand out the resolver embedded runs draw through, which walks the carried font (§6.4, AD-34)
@@ -78,10 +78,10 @@ namespace albor::harfbuzz
 
     private:
         // load the face, the shaper and the drawing typeface, which is the whole of construction (§9.1)
-        HarfbuzzTextEngine(const std::string& font_path, const std::string& family_name);
+        HarfbuzzTextEngine(const std::string& font_path, const std::string& family_name, FontWeight weight);
 
         // load the face from bytes the build carries, which is how the engine avoids a file system (§15, AD-34)
-        HarfbuzzTextEngine(const std::uint8_t* font_bytes, std::size_t byte_count, std::string_view family_name);
+        HarfbuzzTextEngine(const std::uint8_t* font_bytes, std::size_t byte_count, std::string_view family_name, FontWeight weight);
 
         // resolve the platform typeface when the platform offers one, which a run uses if it can (§9.1)
         void resolve_typeface(std::string_view family_name);

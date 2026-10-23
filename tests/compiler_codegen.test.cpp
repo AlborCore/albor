@@ -30,6 +30,7 @@ namespace
         CodeGenerator generator(diagnostics);
         // the catalog is what tells the generator a native type is generatable (§11.2, AD-17)
         generator.set_catalog(&catalog);
+        // invoke generator
         return generator.generate(checked);
     }
 
@@ -253,17 +254,32 @@ TEST(Codegen, WriteIfChangedLeavesAnIdenticalFileUntouched) {
     // a leftover from a failed run would skew the outcome, so it is removed first (§14.2)
     std::filesystem::remove(path);
     // act
-    const bool first = write_if_changed(path, "one");
+    const WriteResult first = write_if_changed(path, "one");
     // the same content is written again, which must be detected as unchanged (§14.2)
-    const bool second = write_if_changed(path, "one");
+    const WriteResult second = write_if_changed(path, "one");
     // the different content is written, which must be detected as a change (§14.2)
-    const bool third = write_if_changed(path, "two");
+    const WriteResult third = write_if_changed(path, "two");
     // the probe is removed, so the test leaves nothing behind (§14.2)
     std::filesystem::remove(path);
     // assert
-    EXPECT_TRUE(first);
-    EXPECT_FALSE(second);
-    EXPECT_TRUE(third);
+    EXPECT_EQ(first, WriteResult::Written);
+    EXPECT_EQ(second, WriteResult::Unchanged);
+    EXPECT_EQ(third, WriteResult::Written);
+}
+
+TEST(Codegen, WriteIfChangedReportsAFailedWrite) {
+    // arrange a directory in place of the output file, which no stream can truncate (§14.2)
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "albor-codegen-write-if-changed-dir";
+    // a leftover from a failed run would skew the outcome, so it is removed first (§14.2)
+    std::filesystem::remove_all(path);
+    // the directory stands where the file would be written (§14.2)
+    std::filesystem::create_directories(path);
+    // act the write is attempted against the directory (§14.2)
+    const WriteResult result = write_if_changed(path, "one");
+    // the probe is removed, so the test leaves nothing behind (§14.2)
+    std::filesystem::remove_all(path);
+    // assert the failed write is reported rather than read as unchanged (§14.2)
+    EXPECT_EQ(result, WriteResult::Failed);
 }
 
 TEST(Codegen, ARepeatOverAScalarNeedsAnIdentityToKeyBy) {

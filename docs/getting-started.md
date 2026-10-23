@@ -46,6 +46,13 @@ at load, so the libraries a target links decide what ships inside it.
 | `albor-accessibility`, `albor-i18n` | semantic/accessibility adapters, translation catalogs |
 | `albor-devrt-auto` | dev runtime: hot swap of `.ui` structure (optional, see [Tooling](tooling.md)) |
 
+## Embedding fonts
+
+A `.ui` file names a family and a weight; the build carries the bytes. Declare the faces
+once per target with `albor_build_font_assets` before `albor_build_ui_component`, then name
+the generated default family before the first window is created. The full shape, the weight
+rules and the diagnostics are on [Fonts](ui-language/fonts.md).
+
 ## Use it from another project
 
 `FetchContent` — or `add_subdirectory` of a vendored copy — brings the framework in as a

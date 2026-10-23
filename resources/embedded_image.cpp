@@ -74,11 +74,9 @@ namespace albor::resources
         // the factory validates the extent and stamps the process wide image identifier (§6.4, AD-06)
         const std::shared_ptr<const ImageResource> resource = registry().factory.create_image(decoded->width, decoded->height, ImageFormat::RGBA8, decoded->rgba);
         // a refused resource is not cached, so a later registration retries instead of returning null forever (§6.4)
-        if (!resource)
-            return nullptr;
-        // the decoded image joins the cache under its encoded hash, so a later registration shares it (§6.4)
-        registry().images.emplace(image.content_hash, resource);
-        // the retained handle is what the caller uses and what every later lookup returns (§6.4, AD-18)
+        if (resource)
+            registry().images.emplace(image.content_hash, resource);
+        // the retained handle is what the caller uses, or null when the factory refused it (§6.4, AD-18)
         return resource;
     }
 

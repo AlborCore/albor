@@ -22,7 +22,7 @@ namespace
     }
 
     // write every generated file under the output directory, which is the compile step of a manifest (§11.2)
-    void write_files(const std::vector<albor::compiler::GeneratedFile>& files, const std::filesystem::path& output) {
+    bool write_files(const std::vector<albor::compiler::GeneratedFile>& files, const std::filesystem::path& output) {
         // each file needs its parent directory, which is the module directory of its facade (§11.1, §11.2)
         std::error_code error;
         for (const albor::compiler::GeneratedFile& file : files) {
@@ -31,17 +31,25 @@ namespace
             std::filesystem::create_directories(output / relative.parent_path(), error);
             if (error) {
                 std::fprintf(stderr, "albor-manifest-glue: cannot create '%s'\n", utf8_path(output / relative.parent_path()).c_str());
-                return;
+                return false;
             }
             error.clear();
         }
         // each file is written only when its content changed, which keeps incremental builds quiet (§14.2, AD-03a)
         for (const albor::compiler::GeneratedFile& file : files) {
             // the write happens under the output directory, which prefixes the generated path (§11.2)
-            const bool changed = albor::compiler::write_if_changed(output / file.path, file.content);
+            const albor::compiler::WriteResult result = albor::compiler::write_if_changed(output / file.path, file.content);
+            // a failed write stops the manifest compile, because a stale unit must not read as a success (§14.2)
+            if (result == albor::compiler::WriteResult::Failed) {
+                // the failure names the file, which is what a build log needs to fix it (§14.2)
+                std::fprintf(stderr, "albor-manifest-glue: cannot write '%s'\n", utf8_path(output / file.path).c_str());
+                return false;
+            }
             // the outcome is reported per file, which is what the build log shows (§11.2)
-            std::fprintf(stdout, "albor-manifest-glue: %s %s\n", file.path.c_str(), changed ? "written" : "unchanged");
+            std::fprintf(stdout, "albor-manifest-glue: %s %s\n", file.path.c_str(), result == albor::compiler::WriteResult::Written ? "written" : "unchanged");
         }
+        // every file landed, which is what the driver reports as success (§11.2)
+        return true;
     }
 
     // print every problem with its file, which is what a console compilation shows (§11.1)
@@ -109,6 +117,5 @@ int main(int argc, char** argv) {
     if (diagnostics.count() != 0U)
         print_diagnostics(diagnostics, utf8_path(input));
     // the generated files land under the output directory, which is the compile result of the manifest (§11.2)
-    write_files(files, output);
-    return 0;
+    return write_files(files, output) ? 0 : 1;
 }
