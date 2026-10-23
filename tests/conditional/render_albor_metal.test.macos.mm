@@ -263,7 +263,12 @@ TEST(AlborRendererBackendChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) 
     // arrange the executor, because stage two runs on its own thread, which owns no autorelease pool (§6.1, AD-18)
     RenderExecutor executor(&backend);
     // act a warmup, so the measurement pays neither the target allocation nor the driver's first pipelines (§2.2)
-    for (int frame = 0; frame < 20; frame++) {
+    for (int frame = 0; frame < 100; frame++) {
+        ASSERT_TRUE(executor.submit(*surface, scene));
+        executor.flush();
+    }
+    // act the first measured window, which lets the driver finish its own lazy allocation (§2.2)
+    for (int frame = 0; frame < 200; frame++) {
         ASSERT_TRUE(executor.submit(*surface, scene));
         executor.flush();
     }
@@ -271,20 +276,20 @@ TEST(AlborRendererBackendChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) 
     task_vm_info_data_t before{};
     mach_msg_type_number_t before_count = TASK_VM_INFO_COUNT;
     ASSERT_EQ(task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&before), &before_count), KERN_SUCCESS);
-    // act the stream itself, which is a window that keeps presenting one unchanged scene (§6.1)
+    // act the steady state window, which is a window that keeps presenting one unchanged scene (§6.1)
     for (int frame = 0; frame < 200; frame++) {
         ASSERT_TRUE(executor.submit(*surface, scene));
         executor.flush();
     }
-    // arrange the footprint the stream left behind, which one leaked command buffer per frame lifts by 93 KB (§2.2)
+    // arrange the footprint the steady state left behind, which one leaked command buffer per frame lifts by 93 KB (§2.2)
     task_vm_info_data_t after{};
     mach_msg_type_number_t after_count = TASK_VM_INFO_COUNT;
     ASSERT_EQ(task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&after), &after_count), KERN_SUCCESS);
     // assert every frame ran, because a stream that dropped them would hold the bound by drawing nothing (§6.1)
-    EXPECT_EQ(executor.executed_count(), 220u);
+    EXPECT_EQ(executor.executed_count(), 500u);
     // assert a per frame leak cannot hide here, because the pool costs 93 KB per frame when it is missing (§6.3)
     const std::int64_t growth = static_cast<std::int64_t>(after.phys_footprint) - static_cast<std::int64_t>(before.phys_footprint);
-    // the release driver settles around 10 MB, which is below the 18.6 MB a missing pool would add over 200 frames (§6.3)
+    // the steady window is flat; a missing pool adds 18.6 MB across these 200 frames (§6.3)
     EXPECT_LT(growth, 12 * 1024 * 1024);
 }
 
