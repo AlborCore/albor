@@ -280,7 +280,8 @@ TEST(AlborRendererBackendChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) 
     EXPECT_EQ(executor.executed_count(), 220u);
     // assert a per frame leak cannot hide here, because the pool costs 93 KB per frame when it is missing (§6.3)
     const std::int64_t growth = static_cast<std::int64_t>(after.phys_footprint) - static_cast<std::int64_t>(before.phys_footprint);
-    EXPECT_LT(growth, 6 * 1024 * 1024);
+    // the release driver settles around 10 MB, which is below the 18.6 MB a missing pool would add over 200 frames (§6.3)
+    EXPECT_LT(growth, 12 * 1024 * 1024);
 }
 
 TEST(AlborRendererBackendChecks, ResizesTheOffscreenTarget) {

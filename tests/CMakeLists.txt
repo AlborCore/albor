@@ -157,6 +157,10 @@ albor_build_font_assets(albor-generated-font-checks
 # the panel declares the generated family at its bold weight, which the compiler checks against the same asset list (§11.1, AD-34)
 albor_build_ui_component(albor-generated-font-checks "${CMAKE_CURRENT_SOURCE_DIR}/vectors/font_panel.ui")
 target_link_libraries(albor-generated-font-checks PRIVATE GTest::gtest_main albor-text-harfbuzz albor-widgets albor-layout)
+# the win32 text resolver calls the platform text encoding, which the platform adapter publishes (§5.3, AD-16)
+if(WIN32)
+    target_link_libraries(albor-generated-font-checks PRIVATE albor-platform-windows)
+endif()
 gtest_discover_tests(albor-generated-font-checks DISCOVERY_TIMEOUT 60)
 
 # the blend2d load time install checks need the whole archive link, which the main test binary cannot take (§6.3, AD-26)
