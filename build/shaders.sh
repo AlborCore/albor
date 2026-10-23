@@ -18,10 +18,11 @@ OUT="$(mktemp -d)"
 trap 'rm -rf "$OUT"' EXIT
 
 # the modes the caller named, which default to the metal check the script always ran
+# the loop reads "$@" whole, because an empty argument list must yield no loop runs at all
 WRITE=no
 D3D=no
 METAL=no
-for argument in "${@:-}"; do
+for argument in "$@"; do
     case "$argument" in
     --write) WRITE=yes ;;
     --d3d) D3D=yes ;;

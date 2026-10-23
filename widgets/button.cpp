@@ -199,7 +199,7 @@ namespace albor
     void Button::activate(InvocationSource source) {
         // a bound command is invoked through the shared object, so both routes record one entry (§18.4)
         if (command() != nullptr) {
-            (void)command()->invoke(CommandInvocation{.command = command()->id(), .source = source});
+            (void)command()->invoke(CommandInvocation{.command = command()->id(), .argument = {}, .selection = {}, .source = source});
             return;
         }
         // a button with no handler swallows the event without doing anything, because there is no work (§10.1)

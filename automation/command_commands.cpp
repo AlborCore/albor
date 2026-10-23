@@ -116,7 +116,7 @@ namespace albor::automation
                 return AutomationResult::refused("no command with id: " + *id);
             // the argument is optional, because most actions take nothing (§18.3)
             const std::optional<std::string> argument = argument_at(request, 1);
-            CommandInvocation invocation{.command = command->id(), .source = InvocationSource::Automation};
+            CommandInvocation invocation{.command = command->id(), .argument = {}, .selection = {}, .source = InvocationSource::Automation};
             // an argument the client supplied travels with the invocation, so the action reads it (§18.3)
             if (argument)
                 invocation.argument = *argument;

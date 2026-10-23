@@ -1230,7 +1230,7 @@ namespace albor::compiler
                 // the repeat takes the next index, which names its view member (§18.1)
                 const std::size_t index = m_repeats.size();
                 // the slot collects the repeat and the body it materializes (§18.1)
-                RepeatSlot slot{.index = index, .node = &node, .parent = parent, .parent_conditional = conditional};
+                RepeatSlot slot{.index = index, .node = &node, .parent = parent, .body = {}, .offset = {}, .parent_conditional = conditional, .offset_expression = ""};
                 // a repeat whose container is a viewport builds only the window, which is virtualization (§8.2, AD-13)
                 if (parent != NO_PARENT && m_nodes.at(parent).node->element_type == "ScrollView")
                     slot.virtualized = true;
@@ -1251,7 +1251,7 @@ namespace albor::compiler
                 // the conditional takes the next index, which names its condition member (§11.1)
                 const std::size_t index = m_conditionals.size();
                 // the slot records the container and the conditional that guards this one (§11.1)
-                ConditionalSlot slot{.index = index, .node = &node, .parent = parent, .parent_conditional = conditional};
+                ConditionalSlot slot{.index = index, .node = &node, .parent = parent, .body = {}, .index_expression = "", .parent_conditional = conditional};
                 // the slot is appended first, so a nested conditional finds its index during the body walk (§11.1)
                 m_conditionals.push_back(std::move(slot));
                 // the body is walked into the node list with no parent, because the conditional adopts it (§11.1)
@@ -1265,7 +1265,7 @@ namespace albor::compiler
             // the node takes the next index, which is its slot in the build order (§8.1)
             const std::size_t index = m_nodes.size();
             // the node is appended, so its children can reference its index (§8.1)
-            m_nodes.push_back({.index = index, .node = &node, .parent = parent, .conditional = conditional});
+            m_nodes.push_back({.index = index, .node = &node, .parent = parent, .row_path = {}, .conditional = conditional});
             // a body node also joins its conditional slot, because the build and the update walk that list (§11.1)
             if (conditional != NO_CONDITIONAL)
                 m_conditionals.at(conditional).body.push_back(m_nodes.back());

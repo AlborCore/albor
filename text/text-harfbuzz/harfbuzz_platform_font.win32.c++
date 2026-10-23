@@ -1,5 +1,9 @@
 #include "text/text-harfbuzz/harfbuzz_platform_font.h"
 
+// the exchange macros the windows sdk expands carry the language extension tokens clang flags on every use
+// the uuid expansion is the sdk's own, so the diagnostic is silenced from here on
+#pragma clang diagnostic ignored "-Wlanguage-extension-token"
+
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <dwrite.h>

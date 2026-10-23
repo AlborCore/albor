@@ -1,0 +1,10 @@
+build warnings swept (§Comments passes now; iso c++ init list)
+
+- build/shaders.sh: the modes are read from "$@" directly, because an empty argument
+  list must yield no loop runs. the ci failure was the empty element the "${@:-}"
+  spread produced; every plain shader job now passes.
+- the translation units that reach the windows sdk hold the extension diagnostic
+  silenced once per unit; the com exchange expands the sdk's own uuid macro, which is
+  where the diagnostic states its business (§6.3).
+- the designated initializers complete the members a partially set one left, and every
+  designator sits in the order the iso requires.

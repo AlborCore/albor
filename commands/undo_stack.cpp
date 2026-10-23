@@ -123,7 +123,8 @@ namespace albor
         // recording is suspended for the body, because a reversal must not push a step of its own (§18.4)
         m_applying = true;
         // the body receives a reversal invocation, which a command recorded entry rebinds to what actually ran (§18.4)
-        const CommandInvocation carried{.command = invalid_command_id(), .source = InvocationSource::UndoRedo};
+        // the argument is value initialized, because most actions leave the row identity or the index empty (§18.3)
+        const CommandInvocation carried{.command = invalid_command_id(), .argument = {}, .selection = {}, .source = InvocationSource::UndoRedo};
         // a step with no reversal body runs nothing, and the count stays as it was (§18.4)
         if (entry.undo) {
             entry.undo(carried);
@@ -151,7 +152,7 @@ namespace albor
         // recording is suspended for the body, because a replay must not push a step of its own (§18.4)
         m_applying = true;
         // the body receives a replay invocation, which a command recorded entry rebinds to what actually ran (§18.4)
-        const CommandInvocation carried{.command = invalid_command_id(), .source = InvocationSource::UndoRedo};
+        const CommandInvocation carried{.command = invalid_command_id(), .argument = {}, .selection = {}, .source = InvocationSource::UndoRedo};
         // a step with no replay body runs nothing, and the count stays as it was (§18.4)
         if (entry.redo) {
             entry.redo(carried);
