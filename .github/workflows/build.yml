@@ -101,6 +101,19 @@ jobs:
               ccache --max-size 2G
               # the preset is c++23, so take the newest xcode the image carries rather than its default
               sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
+          - name: macos-debug
+            os: macos-15
+            enable: true
+            preset: debug
+            vcpkg-root: /usr/local/share/vcpkg
+            setup: |
+              # the vcpkg binary cache root must exist before vcpkg runs
+              mkdir -p .vcpkg-cache
+              # the preset launches the compiler through ccache, which the runner image does not ship
+              HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
+              ccache --max-size 2G
+              # the preset is c++23, so take the newest xcode the image carries rather than its default
+              sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
           - name: macos-coverage
             os: macos-15
             enable: ${{ github.repository == 'AlborCore/albor' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
@@ -135,10 +148,15 @@ jobs:
               # the preset launches the compiler through ccache, which the runner image does not ship
               choco install ccache --no-progress -y
           - name: linux-release
-            # disabled until the linux platform (#41) and its text resolver land; every step is gated on matrix.enable
             os: ubuntu-latest
             enable: false
             preset: release
+            vcpkg-root: /usr/local/share/vcpkg
+            setup: sudo apt-get update && sudo apt-get install -y ccache
+          - name: linux-debug
+            os: ubuntu-latest
+            enable: false
+            preset: debug
             vcpkg-root: /usr/local/share/vcpkg
             setup: sudo apt-get update && sudo apt-get install -y ccache
     env:
