@@ -1,4 +1,5 @@
 #include "render/render-albor/albor_backend_support.h"
+#include "render/render-albor/albor_d3d_diagnostics.win32.h"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -37,8 +38,7 @@ namespace albor::render
 {
     namespace
     {
-// the sdk's exchange macros and uuid expansion carry the extension tokens clang flags on every use (§5.3)
-#pragma clang diagnostic push
+// the sdk's uuid macro expands at every use in this unit, so the suppression spans it and no other (§5.3)
 #pragma clang diagnostic ignored "-Wlanguage-extension-token"
 
         // com pointers release their interface on every exit, so no early return leaves a device behind (§6.3)
@@ -325,6 +325,13 @@ namespace albor::render
             device_state().lost.store(true);
         }
 
+        // count the frames the process submitted, which a test reads to prove a windowed frame passed the present (§6.3)
+        std::atomic<std::uint64_t>& presented_frames() {
+            // the counter lives for the process, because one present is one frame whichever surface submitted it (§6.3)
+            static std::atomic<std::uint64_t> frames{0};
+            return frames;
+        }
+
         // one composition target per window and the visuals its surfaces bound (§5.3)
         struct WindowTarget
         {
@@ -513,7 +520,7 @@ namespace albor::render
 
         private:
             // the implementation map begins with the colour target, which a resize replaces (§6.2, §6.3)
-            void allocate();
+            void allocate(const WindowMetrics& extent);
 
             // copy every image the frame carries into the texture cache, which a later frame reuses (AD-06)
             void upload_textures();
@@ -539,8 +546,11 @@ namespace albor::render
             // bind a target and cover it with its viewport, clearing it when the pass begins a surface (§6.2)
             void bind_target(const RenderTarget& target, bool clear);
 
-            // copy the finished frame into the swapchain, which the caller presents outside the process lock (§6.3)
-            bool copy_to_back_buffer();
+            // copy the finished frame into the swapchain and submit it, which the caller runs under the lock (§6.3)
+            void present(ID3D11Texture2D* back_buffer);
+
+            // report validity to a caller that already holds the present mutex (§6.3)
+            [[nodiscard]] bool valid_locked() const;
 
             // the borrowed window the composition target binds, which the surface never owns (§5.3)
             HWND m_window = nullptr;
@@ -591,10 +601,10 @@ namespace albor::render
             WindowMetrics m_pending_metrics;
 
             // whether a resize is waiting for the frame in flight to finish (§6.2)
-            bool m_resize_pending = false;
+            std::atomic<bool> m_resize_pending{false};
 
             // whether a frame began and has not ended yet (§6.1)
-            bool m_begun = false;
+            std::atomic<bool> m_begun{false};
         };
 
         // create the composition swapchain a window's visual presents, at the physical extent (§5.3, AD-16)
@@ -662,8 +672,15 @@ namespace albor::render
             if (visual->SetContent(swap_chain) != S_OK)
                 return false;
             // the visual becomes the root of the window's tree, which the last surface bound to it owns (§5.3)
-            if (target->SetRoot(visual.Get()) != S_OK || state.composition->Commit() != S_OK)
+            IDCompositionVisual* previous_root = found != targets.end() && !found->second.visuals.empty() ? found->second.visuals.back() : nullptr;
+            if (target->SetRoot(visual.Get()) != S_OK)
                 return false;
+            // a refused commit leaves the window on the root it showed, rather than on a visual nothing recorded (§5.3)
+            if (state.composition->Commit() != S_OK) {
+                (void)target->SetRoot(previous_root);
+                (void)state.composition->Commit();
+                return false;
+            }
             // the window holds the target for every visual its surfaces bound, in the order they attached (§5.3)
             if (found != targets.end()) {
                 found->second.visuals.push_back(visual.Get());
@@ -707,7 +724,7 @@ namespace albor::render
             // the handle that names a window is the borrowed window the composition target binds to (§5.3)
             m_window = handle.valid() ? static_cast<HWND>(const_cast<void*>(handle.object())) : nullptr;
             // the colour target is allocated at the physical extent the metrics name (§6.3, AD-27)
-            allocate();
+            allocate(m_metrics);
             // a windowed surface joins the composition device the build supplied (§5.3)
             if (m_window != nullptr && (m_swap_chain = create_window_swap_chain(m_metrics)) != nullptr) {
                 // a composition tree the device refused resets the surface, so it reports invalid rather than blank (§6.2)
@@ -726,6 +743,12 @@ namespace albor::render
         }
 
         bool AlborRenderSurface::valid() const {
+            // a caller outside the frame path reads the target under the lock its resize also takes (§10.5, D9.1)
+            const std::lock_guard<std::mutex> guard(process_present_mutex());
+            return valid_locked();
+        }
+
+        bool AlborRenderSurface::valid_locked() const {
             // the device and the colour target are both required before a frame can draw (§6.2)
             if (m_target == nullptr || m_target_view == nullptr || !device_state().built || device_state().lost.load())
                 return false;
@@ -740,10 +763,10 @@ namespace albor::render
             return m_metrics;
         }
 
-        void AlborRenderSurface::allocate() {
+        void AlborRenderSurface::allocate(const WindowMetrics& extent) {
             // the extent is the physical pixel size the device scale already applied (AD-27)
-            const UINT width = std::max<UINT>(1u, static_cast<UINT>(m_metrics.pixel_size.width));
-            const UINT height = std::max<UINT>(1u, static_cast<UINT>(m_metrics.pixel_size.height));
+            const UINT width = std::max<UINT>(1u, static_cast<UINT>(extent.pixel_size.width));
+            const UINT height = std::max<UINT>(1u, static_cast<UINT>(extent.pixel_size.height));
             ID3D11Device* device = device_state().device.Get();
             // a target is allocated at the physical pixel extent, and the read back copies out of it (§6.3)
             D3D11_TEXTURE2D_DESC description{};
@@ -788,37 +811,36 @@ namespace albor::render
             // metrics with no area cannot be presented, so the previous target is kept (§6.2)
             if (!metrics.valid())
                 return;
+            // the target and the metrics are only ever swapped under the lock every reader holds (§10.5, D9.1)
+            const std::lock_guard<std::mutex> guard(process_present_mutex());
             // a resize while a frame is in flight waits for the frame, so no frame mixes two extents (§6.2, D9.1)
-            if (m_begun) {
+            if (m_begun.load()) {
                 m_pending_metrics = metrics;
-                m_resize_pending = true;
+                m_resize_pending.store(true);
                 return;
             }
             // the previous target is kept aside, so a refused resize leaves the surface on the extent it presented (§6.3)
             ComPtr<ID3D11Texture2D> previous_target = m_target;
             ComPtr<ID3D11RenderTargetView> previous_view = m_target_view;
-            const WindowMetrics previous_metrics = m_metrics;
             const std::size_t previous_finished = m_finished;
             // the target is reallocated first, because a refused allocation leaves the swapchain untouched (§6.2)
-            m_metrics = metrics;
-            allocate();
+            allocate(metrics);
             if (m_target != nullptr && m_window != nullptr && m_swap_chain != nullptr) {
                 // a windowed surface resizes its buffers alongside the target, which keeps the compositor in step (§6.3)
-                const std::lock_guard<std::mutex> lock(process_present_mutex());
                 const HRESULT resized = m_swap_chain->ResizeBuffers(0, std::max<UINT>(1u, static_cast<UINT>(metrics.pixel_size.width)), std::max<UINT>(1u, static_cast<UINT>(metrics.pixel_size.height)), DXGI_FORMAT_UNKNOWN, 0);
-                if (FAILED(resized)) {
-                    // a lost device cannot present the new extent, which the surface reports rather than hides (§6.3)
-                    note_device_result(resized);
-                }
-                else {
+                if (SUCCEEDED(resized)) {
+                    // the metrics are published last, so no reader sees an extent the target does not carry (§6.3)
+                    m_metrics = metrics;
                     return;
                 }
+                // a lost device cannot present the new extent, which the surface reports rather than hides (§6.3)
+                note_device_result(resized);
             }
             else if (m_target != nullptr) {
+                m_metrics = metrics;
                 return;
             }
-            // the new extent did not take, so the extent the window already showed is restored whole (§6.3)
-            m_metrics = previous_metrics;
+            // the new extent did not take, so the extent the window already showed is restored with its target (§6.3)
             m_target = std::move(previous_target);
             m_target_view = std::move(previous_view);
             m_finished = previous_finished;
@@ -832,71 +854,78 @@ namespace albor::render
             m_batch.layers.clear();
             m_batch.uploads.clear();
             m_batch.shadows.clear();
+            // the metrics the frame records against are read on the lock, so a resize cannot land between them (§10.5)
+            WindowMetrics metrics;
+            {
+                const std::lock_guard<std::mutex> lock(process_present_mutex());
+                metrics = m_metrics;
+                // the frame is in flight before the lock is released, which the matching end presents (§6.1)
+                m_begun.store(true);
+            }
             // the context records logical points onto the physical target, so the device scale is handed to it (AD-27)
-            m_context = std::make_unique<AlborRenderContext>(m_batch, Rect::from_origin_size(Point{0.0f, 0.0f}, m_metrics.logical_size), m_metrics.scale_factor, &m_glyph_paths);
+            m_context = std::make_unique<AlborRenderContext>(m_batch, Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size), metrics.scale_factor, &m_glyph_paths);
             // the frame counter advances once per frame, which the textures record and the glyph paths age against (AD-06)
             m_frame_counter++;
             // the textures age against the same counter, which drops the images no draw reached (AD-06)
             m_textures.begin_frame(m_frame_counter);
             // the glyph paths age against the same counter, which drops the ones no draw reached (§6.4)
             m_glyph_paths.begin_frame(m_frame_counter);
-            // the frame is now in flight, which the matching end presents (§6.1)
-            m_begun = true;
             return *m_context;
         }
 
         void AlborRenderSurface::end_frame() {
             // an end without a begun frame is a no operation rather than an error (§6.1)
-            if (!m_begun)
+            if (!m_begun.load())
                 return;
-            bool copied = false;
-            // the encode and the copy record on the process wide context, so one lock covers both (§6.3, §10.2)
+            // the back buffer is acquired outside the lock, because its pacing wait is per window (§6.3)
+            ComPtr<ID3D11Texture2D> back_buffer;
+            if (m_window != nullptr && m_swap_chain != nullptr) {
+                const HRESULT acquired = m_swap_chain->GetBuffer(0, IID_PPV_ARGS(back_buffer.GetAddressOf()));
+                if (FAILED(acquired))
+                    note_device_result(acquired);
+            }
+            bool pending = false;
+            WindowMetrics pending_metrics;
+            // the encode and the submit record on the process wide context, so one lock covers both (§6.3, §10.2)
             {
                 const std::lock_guard<std::mutex> lock(process_present_mutex());
                 // the images the frame carries become textures once, which a later frame reuses (AD-06)
                 upload_textures();
                 // the encode replays every recorded draw, which the clear begins (§6.3)
                 encode();
-                // a windowed frame copies the target onto its back buffer, which the present then shows (§6.3)
-                copied = copy_to_back_buffer();
+                // a windowed frame copies the target onto its back buffer, which the submit shows (§6.3)
+                present(back_buffer.Get());
+                // the frame counts once it is submitted, which a read back then waits on (§4.3)
+                m_finished++;
+                // the frame is no longer in flight, and a resize that waited for it is taken together (§6.2)
+                m_begun.store(false);
+                pending = m_resize_pending.exchange(false);
+                pending_metrics = m_pending_metrics;
             }
-            // the wait for the display runs outside the process lock, so one window's refresh never stalls another (§6.3)
-            if (copied) {
-                const HRESULT presented = m_swap_chain->Present(1, 0);
-                note_device_result(presented);
-            }
-            // the frame is no longer in flight, so a read back accepts one (§6.1)
-            m_begun = false;
-            // the frame counts once it is submitted, which a read back then waits on (§4.3)
-            m_finished++;
             // a resize that waited for this frame applies now, so the next frame uses one extent (§6.2)
-            if (m_resize_pending) {
-                m_resize_pending = false;
-                resize(m_pending_metrics);
-            }
+            if (pending)
+                resize(pending_metrics);
         }
 
-        bool AlborRenderSurface::copy_to_back_buffer() {
+        void AlborRenderSurface::present(ID3D11Texture2D* back_buffer) {
             // an offscreen surface presents nothing, because its target is what a renderer reads back (§6.2)
-            if (m_window == nullptr || m_swap_chain == nullptr)
-                return false;
-            // the caller holds the present mutex, so the back buffer reference is released inside it (§6.3)
-            ComPtr<ID3D11Texture2D> back_buffer;
-            const HRESULT acquired = m_swap_chain->GetBuffer(0, IID_PPV_ARGS(back_buffer.GetAddressOf()));
-            if (FAILED(acquired)) {
-                note_device_result(acquired);
-                return false;
-            }
-            // the copy is issued on the immediate context, which a lost device reports on the present (§6.3)
-            device_state().context->CopyResource(back_buffer.Get(), m_target.Get());
-            return true;
+            if (back_buffer == nullptr || m_swap_chain == nullptr)
+                return;
+            // the copy and the submit both reach the process wide context, so the caller holds the present mutex (§6.3)
+            device_state().context->CopyResource(back_buffer, m_target.Get());
+            // the submit never waits for the display, so the lock never covers a refresh (§6.3)
+            const HRESULT presented = m_swap_chain->Present(0, 0);
+            // a submit the driver accepted is a frame the window shows, which the counter reports (§6.3)
+            if (SUCCEEDED(presented))
+                presented_frames().fetch_add(1);
+            note_device_result(presented);
         }
 
         std::vector<std::uint8_t> AlborRenderSurface::read_pixels() const {
             // the read copies on the process wide context, so the lock serializes it with the frames (§6.3)
             const std::lock_guard<std::mutex> lock(process_present_mutex());
             // a read before the first finished frame reports nothing (§6.3)
-            if (!valid() || m_finished == 0 || m_begun)
+            if (!valid_locked() || m_finished == 0 || m_begun.load())
                 return {};
             const UINT width = std::max<UINT>(1u, static_cast<UINT>(m_metrics.pixel_size.width));
             const UINT height = std::max<UINT>(1u, static_cast<UINT>(m_metrics.pixel_size.height));
@@ -1210,6 +1239,9 @@ namespace albor::render
             draw.has_texture = 1;
             // the cast composites into the target it covers, which its own pass binds and loads (§6.2)
             draw_quad(quad, draw, silhouette.shader_view.Get(), state.blend_states[0].Get());
+            // the offscreen the cast sampled is released before the pass ends, so no retired target stays bound (AD-06)
+            ID3D11ShaderResourceView* no_texture[2] = {nullptr, nullptr};
+            context->PSSetShaderResources(0, 2, no_texture);
         }
 
         void AlborRenderSurface::blur_pass(const RenderTarget& source, const RenderTarget& target, ShadowUniforms uniforms, float dx, float dy, float step, float width, float height) {
@@ -1475,6 +1507,11 @@ namespace albor::render
         return ensure_device_state() && !device_state().lost.load();
     }
 
+    std::uint64_t d3d_presented_frames() {
+        // the count is the one the present path rose, which an offscreen frame never reaches (§6.3)
+        return presented_frames().load();
+    }
+
     std::unique_ptr<RenderSurface> backend_create_surface(NativeWindowHandle handle, const WindowMetrics& metrics) {
         // a host without the shared device state builds no surface, which readiness reports (§6.2)
         if (!ensure_device_state())
@@ -1485,6 +1522,4 @@ namespace albor::render
             return nullptr;
         return surface;
     }
-// the suppression above covers the sdk's macros only, so the rest of the unit keeps the diagnostic (§5.3)
-#pragma clang diagnostic pop
 } // namespace albor::render

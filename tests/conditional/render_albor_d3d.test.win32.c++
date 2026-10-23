@@ -24,6 +24,7 @@
 #include "render/frame_scene.h"
 #include "render/image_resource.h"
 #include "render/picture_resource.h"
+#include "render/render-albor/albor_d3d_diagnostics.win32.h"
 #include "render/render-albor/albor_glyph_path.h"
 #include "render/render-albor/albor_render_context.h"
 #include "render/render-albor/albor_renderer_backend.h"
@@ -105,9 +106,12 @@ TEST(AlborRendererBackendChecks, ClearsAnEmptyOffscreenFrameToTransparent) {
     const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
     ASSERT_NE(surface, nullptr);
     // act
+    const std::uint64_t before = d3d_presented_frames();
     surface->begin_frame();
     surface->end_frame();
     const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    // assert an offscreen frame presents nothing, which the process counter shows (§6.3)
+    EXPECT_EQ(d3d_presented_frames(), before);
     // assert every pixel is the transparent clear a frame with no command leaves (§6.1)
     ASSERT_EQ(pixels.size(), 4u * 4u * 4u);
     for (std::size_t pixel = 0; pixel < 16u; pixel++) {
@@ -347,7 +351,7 @@ TEST(AlborParityChecks, AnAlignedRectangleMatchesTheReference) {
     backend.execute_frame(*actual_surface, scene);
     const Screenshot expected = capture_surface(*expected_surface);
     const Screenshot actual = capture_surface(*actual_surface);
-    // assert an aligned rectangle has no feathered edge to disagree on, so its interior agrees exactly
+    // assert an aligned rectangle has no feathered edge to disagree on, so it agrees exactly at its interior
     ASSERT_FALSE(expected.empty());
     ASSERT_FALSE(actual.empty());
     ASSERT_EQ(expected.pixels.size(), actual.pixels.size());
@@ -355,8 +359,7 @@ TEST(AlborParityChecks, AnAlignedRectangleMatchesTheReference) {
     EXPECT_EQ(expected.pixels[interior + 0u], actual.pixels[interior + 0u]);
     EXPECT_EQ(expected.pixels[interior + 1u], actual.pixels[interior + 1u]);
     EXPECT_EQ(expected.pixels[interior + 2u], actual.pixels[interior + 2u]);
-    // the frame as a whole stays within the one step a unorm target may round differently from the reference (§11.7)
-    EXPECT_LE(expected.max_channel_difference(actual), 1);
+    EXPECT_EQ(expected.max_channel_difference(actual), 0);
 }
 
 TEST(AlborParityChecks, AFeatheredEdgeMatchesTheReferenceWithinTolerance) {
@@ -580,7 +583,7 @@ TEST(AlborParityChecks, AScissorUnderATranslatedTransformMatchesTheReference) {
     EXPECT_EQ(expected_shot.max_channel_difference(actual_shot), 0);
 }
 
-TEST(AlborParityChecks, AFrameRenderedAtAnotherScaleDoesNotMatch) {
+TEST(AlborParityChecks, AFrameRenderedAtAnotherScaleDoublesTheGeometry) {
     // arrange the same logical square at two densities, which the device scale must carry into the geometry (AD-27)
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{16.0f, 16.0f}, 1.0f);
     const WindowMetrics denser = WindowMetrics::from_logical(Size{16.0f, 16.0f}, 2.0f);
@@ -1095,10 +1098,10 @@ TEST(AlborParityChecks, KeepsAFrameThatUploadsMoreImagesThanTheCacheHolds) {
     second.add_command(std::move(trigger));
     reference.execute_frame(*expected_surface, second);
     backend.execute_frame(*actual_surface, second);
-    // arrange the third frame, which redraws the eight coldest images the eviction may have dropped (AD-06)
+    // arrange the third frame, which redraws every image so the evicted slice is uploaded again in any order (AD-06)
     FrameScene third(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
-    for (std::size_t index = 0u; index < 8u; index++) {
-        const Point origin{.x = 4.0f + static_cast<float>(index) * 9.0f, .y = 4.0f};
+    for (std::size_t index = 0u; index < images.size(); index++) {
+        const Point origin{.x = 4.0f + static_cast<float>(index % 10u) * 9.0f, .y = 4.0f + (static_cast<float>(index) / 10u) * 9.0f};
         DrawCommand command = DrawCommand::image(images[index], Rect::from_origin_size(origin, Size{8.0f, 8.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
         command.set_clip(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size));
         third.add_command(std::move(command));
@@ -2132,67 +2135,104 @@ TEST(AlborRendererBackendChecks, RefusesAStaleSceneRatherThanRepairingIt) {
 
 TEST(AlborRendererBackendChecks, PresentsThroughAHiddenWindow) {
     // arrange a hidden window, which is the handle a composition root hands over (§5.3)
-    WNDCLASSEXW window_class{};
-    window_class.cbSize = sizeof(window_class);
-    window_class.lpfnWndProc = DefWindowProcW;
-    window_class.hInstance = GetModuleHandleW(nullptr);
-    window_class.lpszClassName = L"albor-d3d-present";
-    if (RegisterClassExW(&window_class) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
-        GTEST_SKIP() << "no window class";
-    HWND window = CreateWindowExW(0, window_class.lpszClassName, L"albor", WS_POPUP, 0, 0, 16, 16, nullptr, nullptr, window_class.hInstance, nullptr);
-    if (window == nullptr)
+    struct HiddenWindow
+    {
+        HWND window = nullptr;
+
+        explicit HiddenWindow(const wchar_t* name) {
+            // the class outlives the test, so a second run in one process accepts the one already registered (§5.3)
+            WNDCLASSEXW window_class{};
+            window_class.cbSize = sizeof(window_class);
+            window_class.lpfnWndProc = DefWindowProcW;
+            window_class.hInstance = GetModuleHandleW(nullptr);
+            window_class.lpszClassName = name;
+            if (RegisterClassExW(&window_class) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS)
+                window = CreateWindowExW(0, name, L"albor", WS_POPUP, 0, 0, 64, 64, nullptr, nullptr, window_class.hInstance, nullptr);
+        }
+
+        ~HiddenWindow() {
+            // the window is released after the surface that presents into it, which the declaration order gives (§5.3)
+            if (window != nullptr)
+                DestroyWindow(window);
+        }
+    };
+    HiddenWindow host(L"albor-d3d-present");
+    if (host.window == nullptr)
         GTEST_SKIP() << "no hidden window";
     AlborRendererBackend backend;
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{16.0f, 16.0f}, 1.0f);
-    std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle::from_object(reinterpret_cast<const void*>(window)), metrics);
-    // assert a host without a compositor is skipped, because it has no windowed path to present (§5.3)
-    if (surface == nullptr) {
-        DestroyWindow(window);
+    std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle::from_object(reinterpret_cast<const void*>(host.window)), metrics);
+    // assert a host without a compositor skips, because it has no windowed path to present (§5.3)
+    if (surface == nullptr)
         GTEST_SKIP() << "no composited window surface on this host";
-    }
     ASSERT_TRUE(surface->valid());
-    // act a frame that copies the target into the swapchain and presents it (§6.3)
+    // act a frame that copies the target into the swapchain and submits it (§6.3)
+    const std::uint64_t before = d3d_presented_frames();
     const FrameScene scene(metrics, Color::rgb(0.0f, 1.0f, 0.0f));
     backend.execute_frame(*surface, scene);
+    // assert the frame reached the swapchain as exactly one submit, which a skipped copy or submit would not (§6.3)
+    EXPECT_EQ(d3d_presented_frames(), before + 1);
     const std::vector<std::uint8_t> pixels = surface->read_pixels();
-    // assert the frame the window presented is the frame the target holds (§6.3)
+    // assert the frame drew at the window's extent while the present path ran, which a refused surface never reaches (§6.3)
     ASSERT_EQ(pixels.size(), 16u * 16u * 4u);
     EXPECT_EQ(pixels[0], 0u);
     EXPECT_EQ(pixels[1], 255u);
     EXPECT_EQ(pixels[2], 0u);
     EXPECT_EQ(pixels[3], 255u);
-    // act an empty frame, which presents its transparent clear rather than skipping the copy (§6.1)
+    // act an empty frame, which still copies and submits rather than skipping both (§6.1)
     surface->begin_frame();
     surface->end_frame();
+    // assert the frame with no draw at all still reached the window, which a skipped submit would not (§6.1)
+    EXPECT_EQ(d3d_presented_frames(), before + 2);
     const std::vector<std::uint8_t> empty = surface->read_pixels();
-    // assert the copy ran for a frame with no draw at all (§6.1)
+    // assert the frame with no draw at all left the transparent clear, which the copy carried (§6.1)
     ASSERT_EQ(empty.size(), 16u * 16u * 4u);
     EXPECT_EQ(empty[3], 0u);
-    // the surface is released before the window it presents into, which the last statements order (§5.3)
-    surface.reset();
-    DestroyWindow(window);
+    // act a resize after the presents, which only succeeds once no back buffer reference outlives a frame (§6.3)
+    const WindowMetrics resized = WindowMetrics::from_logical(Size{20.0f, 16.0f}, 1.0f);
+    backend.resize_surface(*surface, resized);
+    // assert the buffers moved, because a leaked GetBuffer reference would make ResizeBuffers refuse (§6.3)
+    EXPECT_TRUE(surface->valid());
+    EXPECT_EQ(surface->metrics(), resized);
+    backend.execute_frame(*surface, FrameScene(resized, Color::rgb(0.0f, 0.0f, 1.0f)));
+    EXPECT_EQ(surface->read_pixels().size(), 20u * 16u * 4u);
+    // assert the resized window presents too, so the submit follows the buffers rather than the old extent (§6.3)
+    EXPECT_EQ(d3d_presented_frames(), before + 3);
 }
 
 TEST(AlborRendererBackendChecks, ASurfaceKeepsItsWindowWhenAnotherBindsIt) {
     // arrange a hidden window, which two surfaces bind in turn (§5.3)
-    WNDCLASSEXW window_class{};
-    window_class.cbSize = sizeof(window_class);
-    window_class.lpfnWndProc = DefWindowProcW;
-    window_class.hInstance = GetModuleHandleW(nullptr);
-    window_class.lpszClassName = L"albor-d3d-shared";
-    if (RegisterClassExW(&window_class) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
-        GTEST_SKIP() << "no window class";
-    HWND window = CreateWindowExW(0, window_class.lpszClassName, L"albor", WS_POPUP, 0, 0, 8, 8, nullptr, nullptr, window_class.hInstance, nullptr);
-    if (window == nullptr)
+    struct HiddenWindow
+    {
+        HWND window = nullptr;
+
+        explicit HiddenWindow(const wchar_t* name) {
+            // the class outlives the test, so a second run in one process accepts the one already registered (§5.3)
+            WNDCLASSEXW window_class{};
+            window_class.cbSize = sizeof(window_class);
+            window_class.lpfnWndProc = DefWindowProcW;
+            window_class.hInstance = GetModuleHandleW(nullptr);
+            window_class.lpszClassName = name;
+            if (RegisterClassExW(&window_class) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS)
+                window = CreateWindowExW(0, name, L"albor", WS_POPUP, 0, 0, 64, 64, nullptr, nullptr, window_class.hInstance, nullptr);
+        }
+
+        ~HiddenWindow() {
+            // the window is released after the surfaces that bind it, which the declaration order gives (§5.3)
+            if (window != nullptr)
+                DestroyWindow(window);
+        }
+    };
+    HiddenWindow host(L"albor-d3d-shared");
+    if (host.window == nullptr)
         GTEST_SKIP() << "no hidden window";
     AlborRendererBackend backend;
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{8.0f, 8.0f}, 1.0f);
-    const NativeWindowHandle handle = NativeWindowHandle::from_object(reinterpret_cast<const void*>(window));
+    const NativeWindowHandle handle = NativeWindowHandle::from_object(reinterpret_cast<const void*>(host.window));
     std::unique_ptr<RenderSurface> first = backend.create_surface(handle, metrics);
-    if (first == nullptr) {
-        DestroyWindow(window);
+    // assert a host without a compositor skips, because it has no windowed path to bind (§5.3)
+    if (first == nullptr)
         GTEST_SKIP() << "no composited window surface on this host";
-    }
     ASSERT_TRUE(first->valid());
     // act a second surface on the same window, which re-roots the visual tree (§5.3)
     std::unique_ptr<RenderSurface> second = backend.create_surface(handle, metrics);
@@ -2217,30 +2257,40 @@ TEST(AlborRendererBackendChecks, ASurfaceKeepsItsWindowWhenAnotherBindsIt) {
     ASSERT_TRUE(third->valid());
     backend.execute_frame(*third, red);
     EXPECT_EQ(third->read_pixels().size(), 8u * 8u * 4u);
-    third.reset();
-    DestroyWindow(window);
 }
 
 TEST(AlborRendererBackendChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) {
     // arrange a hidden window, which presents a real stream without showing anything (§5.3)
-    WNDCLASSEXW window_class{};
-    window_class.cbSize = sizeof(window_class);
-    window_class.lpfnWndProc = DefWindowProcW;
-    window_class.hInstance = GetModuleHandleW(nullptr);
-    window_class.lpszClassName = L"albor-d3d-stream";
-    if (RegisterClassExW(&window_class) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
-        GTEST_SKIP() << "no window class";
-    HWND window = CreateWindowExW(0, window_class.lpszClassName, L"albor", WS_POPUP, 0, 0, 800, 600, nullptr, nullptr, window_class.hInstance, nullptr);
-    if (window == nullptr)
+    struct HiddenWindow
+    {
+        HWND window = nullptr;
+
+        explicit HiddenWindow(const wchar_t* name) {
+            // the class outlives the test, so a second run in one process accepts the one already registered (§5.3)
+            WNDCLASSEXW window_class{};
+            window_class.cbSize = sizeof(window_class);
+            window_class.lpfnWndProc = DefWindowProcW;
+            window_class.hInstance = GetModuleHandleW(nullptr);
+            window_class.lpszClassName = name;
+            if (RegisterClassExW(&window_class) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS)
+                window = CreateWindowExW(0, name, L"albor", WS_POPUP, 0, 0, 800, 600, nullptr, nullptr, window_class.hInstance, nullptr);
+        }
+
+        ~HiddenWindow() {
+            // the window is released after the surface that presents into it, which the declaration order gives (§5.3)
+            if (window != nullptr)
+                DestroyWindow(window);
+        }
+    };
+    HiddenWindow host(L"albor-d3d-stream");
+    if (host.window == nullptr)
         GTEST_SKIP() << "no hidden window";
     AlborRendererBackend backend;
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 2.0f);
-    std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle::from_object(reinterpret_cast<const void*>(window)), metrics);
-    // assert a host without a compositor is skipped, because it presents nothing to measure (§6.2)
-    if (surface == nullptr) {
-        DestroyWindow(window);
+    std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle::from_object(reinterpret_cast<const void*>(host.window)), metrics);
+    // assert a host without a compositor skips, because it presents nothing to measure (§6.2)
+    if (surface == nullptr)
         GTEST_SKIP() << "no composited window surface on this host";
-    }
     ASSERT_TRUE(surface->valid());
     // arrange a scene with one layer and one image, so every frame allocates an offscreen target and uploads (§6.2)
     FrameScene built(metrics, Color::rgb(0.06f, 0.07f, 0.09f));
@@ -2253,6 +2303,8 @@ TEST(AlborRendererBackendChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) 
     built.add_command(DrawCommand::layer_pop());
     const std::shared_ptr<const FrameScene> scene = std::make_shared<const FrameScene>(std::move(built));
     RenderExecutor executor(&backend);
+    // arrange the submit count the process starts from, which the stream has to raise once per frame (§6.1)
+    const std::uint64_t presented = d3d_presented_frames();
     // act a warmup, so the measurement pays neither the target allocation nor the first swapchain buffers (§2.2)
     for (int frame = 0; frame < 20; frame++) {
         ASSERT_TRUE(executor.submit(*surface, scene));
@@ -2273,20 +2325,20 @@ TEST(AlborRendererBackendChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) 
     ASSERT_NE(GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&after), sizeof(after)), 0);
     // assert every frame ran, because a stream that dropped them would hold the bound by drawing nothing (§6.1)
     EXPECT_EQ(executor.executed_count(), 140u);
-    // assert a per frame leak cannot hide here, because 120 targets of this extent are gigabytes (§6.3)
+    // assert every frame reached the window too, which a submit that stopped presenting would fail (§6.3)
+    EXPECT_EQ(d3d_presented_frames(), presented + 140u);
+    // assert the growth stays under two frames of this extent, which one retired target clears and a leak does not (§6.3)
+    const std::int64_t frame_bytes = static_cast<std::int64_t>(metrics.pixel_size.width) * static_cast<std::int64_t>(metrics.pixel_size.height) * 4;
     const std::int64_t growth = static_cast<std::int64_t>(after.PrivateUsage) - static_cast<std::int64_t>(before.PrivateUsage);
-    EXPECT_LT(growth, 8 * 1024 * 1024);
+    EXPECT_LT(growth, 2 * frame_bytes);
     // act a resize after the stream, which only succeeds once no back buffer reference is outstanding (§6.3)
     backend.resize_surface(*surface, WindowMetrics::from_logical(Size{640.0f, 480.0f}, 2.0f));
     // assert the buffers moved, because an outstanding GetBuffer reference makes ResizeBuffers fail (§6.3)
     EXPECT_TRUE(surface->valid());
     EXPECT_EQ(surface->metrics(), WindowMetrics::from_logical(Size{640.0f, 480.0f}, 2.0f));
-    surface.reset();
-    DestroyWindow(window);
 }
-
 TEST(AlborRendererBackendChecks, ReadsTheSameFinishedFrameTwice) {
-    // arrange a frame whose read back allocates a staging texture on every call (Â§6.3)
+    // arrange a frame whose read back allocates a staging texture on every call (§6.3)
     AlborRendererBackend backend;
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{4.0f, 4.0f}, 1.0f);
     const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
