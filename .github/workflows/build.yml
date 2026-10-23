@@ -33,7 +33,7 @@ jobs:
           echo "has_pr=$( [ "$count" -gt 0 ] && echo true || echo false )" >> "$GITHUB_OUTPUT"
 
   # the shader artifact is committed, so this job is the only place the metal toolchain runs
-  shaders:
+  shaders-macos:
     name: shaders (macos)
     needs: [check-pr]
     if: |-
@@ -53,6 +53,23 @@ jobs:
           xcrun -sdk macosx metal --version > /dev/null 2>&1 || xcodebuild -downloadComponent MetalToolchain
       - name: committed shader artifact
         run: bash build/shaders.sh
+
+  # the direct3d artifact is committed too, so this job is the only place fxc runs
+  shaders-windows:
+    name: shaders (windows)
+    needs: [check-pr]
+    if: |-
+      !cancelled() &&
+      (github.event_name != 'push' || github.ref == 'refs/heads/main' || needs.check-pr.outputs.has_pr != 'true')
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - name: committed shader artifact
+        run: bash build/shaders.sh --d3d
 
   build:
     name: build (${{ matrix.name }})

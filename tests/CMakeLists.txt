@@ -110,6 +110,9 @@ if(WIN32)
     target_link_libraries(albor-tests PRIVATE albor-platform-windows)
     # the platform font suite drives the vendored engine's directwrite halves, which are native win32 surfaces (§9.1, AD-28)
     target_sources(albor-tests PRIVATE "./conditional/text_platform_font.test.win32.c++")
+    # the backend suite drives the direct3d device directly, which is the one module the portable suites never reach
+    # (AD-16). the binary already names the backend, so the suite adds no second link of it (§3.2)
+    target_sources(albor-tests PRIVATE "./conditional/render_albor_d3d.test.win32.c++")
 endif()
 
 

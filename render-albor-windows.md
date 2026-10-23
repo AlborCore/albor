@@ -20,14 +20,29 @@ core the two platforms share byte for byte, and a thin platform seam.
   platform supplies the real pair (§5.3, AD-16)
 - the macOS reference is `albor_metal_backend.macos.mm` (62 kb) over the committed and
   stamp verified `albor_shaders.metallib` (31 kb, six shader functions)
-- the Windows half is `albor_d3d_backend.win32.c++` (10 kb of scaffolding):
-  `ensure_device_state()` returns false before it builds anything, so `valid()` is always
-  false, `backend_create_surface` is always null, `resize` no operations,
-  `end_frame` never encodes, `read_pixels` always reports empty
-
-`begin_frame()` is the one part already real: it hands the portable `AlborRenderContext`
-over the batch the same way the metal half does, so the whole recording half of the
-backend already runs and is testable on Windows. only the execute half is missing.
+- the Windows half is `albor_d3d_backend.win32.c++` over the committed and stamp verified
+  `albor_shaders.dxbc` (six entry points). It stands at milestones 0 through 3:
+  - milestone 0: `fxc` compiles the six HLSL entry points into the container the `WIN32`
+    CMake arm verifies and embeds, and `bash build/shaders.sh --d3d` is the only place the
+    toolchain runs
+  - milestone 1: the device comes up on hardware with the warp fallback, and both the
+    offscreen and the composited windowed surface allocate a real target, present under
+    the process present mutex, and read back through a staging texture
+  - milestone 2: the container parses into the six stages, and readiness builds the eleven
+    fixed factor blend states, the three dual source ones, the two shadow passes and the
+    rasterizer, all or nothing
+  - milestone 3: the encode streams the batch, uploads and ages textures, and composites
+    layers and soft shadows through bounded offscreen targets
+- milestone 4 is implemented: a present copies the target on the process lock and releases
+  the back buffer inside it, a resize that arrives mid frame is deferred to the end, an
+  empty extent is refused and keeps the previous target, and the read back stages through
+  a staging texture
+- milestone 5 is in place: `tests/conditional/render_albor_d3d.test.win32.c++` carries 66
+  checks, the whole portable ledger the apple suite reports (the shader container, the
+  device, the offscreen lifecycle, the encode paths, and every parity check against the
+  software reference), and `tests/CMakeLists.txt` wires it under `WIN32`. The one apple
+  check without a windows twin is the stream footprint measurement, because its bound is
+  a host measurement (`mach_task_basic_info` on apple) rather than a portable rule
 
 ## Milestone 0 — shader artifact conventions (the first-in-the-repo step)
 

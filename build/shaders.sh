@@ -18,11 +18,12 @@ OUT="$(mktemp -d)"
 trap 'rm -rf "$OUT"' EXIT
 
 # the modes the caller named, which default to the metal check the script always ran
-# the loop reads "$@" whole, because an empty argument list must yield no loop runs at all
+# the loop reads the arguments through the portable expansion, because an empty list under set -u is an
+# unbound variable on the bash 3.2 a macos runner ships, while the quoted form yields no runs anywhere
 WRITE=no
 D3D=no
 METAL=no
-for argument in "$@"; do
+for argument in ${1+"$@"}; do
     case "$argument" in
     --write) WRITE=yes ;;
     --d3d) D3D=yes ;;
@@ -33,6 +34,15 @@ done
 if [ "$D3D" = no ] && [ "$METAL" = no ]; then
     METAL=yes
 fi
+
+# the digest tool differs by host: coreutils ships sha256sum, while the macos runner only ships shasum
+sha256_of() {
+    if command -v sha256sum > /dev/null 2>&1; then
+        sha256sum "$1" | cut -d' ' -f1
+    else
+        shasum -a 256 "$1" | cut -d' ' -f1
+    fi
+}
 
 check_metal() {
     local SOURCE=render/render-albor/albor_shaders.metal ARTIFACT=render/render-albor/albor_shaders.metallib STAMP=render/render-albor/albor_shaders.metal.sha256
@@ -104,8 +114,8 @@ check_metal() {
 
     # the stamp names the source and the artifact, so a partial restore of either is caught rather than shipped
     local SOURCE_HASH ARTIFACT_HASH
-    SOURCE_HASH="$(shasum -a 256 "$SOURCE" | cut -d' ' -f1)"
-    ARTIFACT_HASH="$(shasum -a 256 "$ARTIFACT" | cut -d' ' -f1)"
+    SOURCE_HASH="$(sha256_of "$SOURCE")"
+    ARTIFACT_HASH="$(sha256_of "$ARTIFACT")"
 
     # a rewrite records both digests, because the pair is what the build compares against
     if [ "$WRITE" = yes ]; then
@@ -151,7 +161,9 @@ check_d3d() {
     for pair in $ENTRY_PAIRS; do
         ENTRY=${pair%%:*}
         PROFILE=${pair##*:}
-        "$FXC" /nologo /T "$PROFILE" /E "$ENTRY" /Fo "$(cygpath -w "$SECTIONS/$ENTRY.dxbc")" "$(cygpath -w "$SOURCE")"
+        # the msys runtime a windows runner ships rewrites a slash argument into a drive path, which
+        # would hand fxc a '/' profile as 'X:/', so the conversion is switched off for this invocation
+        MSYS2_ARG_CONV_EXCL='*' "$FXC" /nologo /T "$PROFILE" /E "$ENTRY" /Fo "$(cygpath -w "$SECTIONS/$ENTRY.dxbc")" "$(cygpath -w "$SOURCE")"
     done
 
     # the container is the header, then one length prefixed blob per entry point in the declared order
@@ -178,8 +190,8 @@ check_d3d() {
     fi
 
     # the stamp names the source and the artifact, so a partial restore of either is caught rather than shipped
-    SOURCE_HASH="$(shasum -a 256 "$SOURCE" | cut -d' ' -f1)"
-    ARTIFACT_HASH="$(shasum -a 256 "$ARTIFACT" | cut -d' ' -f1)"
+    SOURCE_HASH="$(sha256_of "$SOURCE")"
+    ARTIFACT_HASH="$(sha256_of "$ARTIFACT")"
 
     # a rewrite records both digests, because the pair is what the build compares against
     if [ "$WRITE" = yes ]; then

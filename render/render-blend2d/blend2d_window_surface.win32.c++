@@ -21,9 +21,8 @@ namespace albor::blend2d
 {
     namespace
     {
-        // the exchange macros the windows sdk expands carry the language extension tokens clang flags on every use
-        // the com pointers are ours and the uuid expansion is the sdk's, so the diagnostic is silenced from here on
-        #pragma clang diagnostic ignored "-Wlanguage-extension-token"
+// the sdk's exchange macros and uuid expansion carry the extension tokens clang flags on every use (§5.3)
+#pragma clang diagnostic ignored "-Wlanguage-extension-token"
 
         // com pointers release their object on every exit, so no early return leaves a surface behind (§5.3)
         using Microsoft::WRL::ComPtr;

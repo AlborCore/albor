@@ -7,6 +7,14 @@ file(READ "${INPUT}" HEX_CONTENT HEX)
 
 # the byte count is the half of the hex length, which names the span the artifact hands out
 string(LENGTH "${HEX_CONTENT}" HEX_LENGTH)
+
+# the reader carries two hex digits per byte, so an odd length would mean the read stopped mid byte
+# the build refuses that rather than counting a partial byte, which no compiler could have written
+math(EXPR PARTIAL_BYTE "${HEX_LENGTH} % 2")
+if(NOT PARTIAL_BYTE EQUAL 0)
+    message(FATAL_ERROR "embed-d3dshader: '${INPUT}' did not read as whole bytes, so the artifact is unusable")
+endif()
+
 math(EXPR BYTE_COUNT "${HEX_LENGTH} / 2")
 
 # an empty artifact carries no shader, so the build stops rather than embedding nothing

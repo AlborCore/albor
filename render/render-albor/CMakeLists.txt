@@ -61,7 +61,7 @@ if(WIN32)
     # every build proves the artifact came from the shader it ships with, which the stamp records (§14.2)
     add_custom_command(
         OUTPUT "${D3D_EMBEDDED}"
-        COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/albor_shaders.hlsl -DARTIFACT=${D3D_ARTIFACT} -DSTAMP=${CMAKE_CURRENT_SOURCE_DIR}/albor_shaders.hlsl.sha256 -P "${CMAKE_CURRENT_SOURCE_DIR}/verify-shader-stamp.cmake"
+        COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/albor_shaders.hlsl -DARTIFACT=${D3D_ARTIFACT} -DSTAMP=${CMAKE_CURRENT_SOURCE_DIR}/albor_shaders.hlsl.sha256 "-DREGENERATE=--d3d --write" -P "${CMAKE_CURRENT_SOURCE_DIR}/verify-shader-stamp.cmake"
         COMMAND ${CMAKE_COMMAND} -DINPUT=${D3D_ARTIFACT} -DOUTPUT=${D3D_EMBEDDED} -P "${CMAKE_CURRENT_SOURCE_DIR}/embed-d3dshader.cmake"
         DEPENDS "${D3D_ARTIFACT}" "${CMAKE_CURRENT_SOURCE_DIR}/albor_shaders.hlsl" "${CMAKE_CURRENT_SOURCE_DIR}/albor_shaders.hlsl.sha256" "${CMAKE_CURRENT_SOURCE_DIR}/embed-d3dshader.cmake" "${CMAKE_CURRENT_SOURCE_DIR}/verify-shader-stamp.cmake"
         COMMENT "embedding the committed albor_shaders.dxbc"

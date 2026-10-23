@@ -1,6 +1,4 @@
-// the direct3d twin of albor_shaders.metal, which the fxc toolchain compiles one entry point per invocation into
-// the uniform shapes, the varying layout and the math follow the metal source field for field, because the
-// portable geometry core emits the same batch for both backends (§6.3, AD-16)
+// the direct3d twin of albor_shaders.metal, whose uniform shapes and math follow it field for field (§6.3, AD-16)
 
 // one vertex of a frame batch, which the portable geometry core emits
 struct BatchVertex
@@ -217,10 +215,3 @@ float4 shadow_blur(Varyings pixel) : SV_Target0 {
     }
     return sum;
 }
-
-
-
-
-
-
-

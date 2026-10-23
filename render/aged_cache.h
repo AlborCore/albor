@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <iterator>
+#include <memory>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -31,16 +32,16 @@ namespace albor
                 return nullptr;
             // the hit ages its entry to this frame, which is what keeps it from the sweep (§6.4, AD-06)
             found->second.last_used = m_frame;
-            // the value is handed back in place, so it stays valid until that entry is erased (§6.4)
-            return &found->second.value;
+            // the value is handed back through std::addressof, since a smart pointer overloads operator& (§6.4)
+            return std::addressof(found->second.value);
         }
 
         // hand out the value a key was stored under without aging it, or null when nothing was (§6.4)
         [[nodiscard]] const Value* peek(const Key& key) const {
             // the entry is looked up by the same identity a find reads, and a miss answers nothing (§6.4)
             const auto found = m_values.find(key);
-            // the value is handed back untouched, which is what a read that is not a use needs (§6.4)
-            return found == m_values.end() ? nullptr : &found->second.value;
+            // the value is handed back through std::addressof, because a smart pointer overloads its own operator& (§6.4)
+            return found == m_values.end() ? nullptr : std::addressof(found->second.value);
         }
 
         // age the entry a key is stored under without reading it, which is what a use with no lookup is (§6.4)
