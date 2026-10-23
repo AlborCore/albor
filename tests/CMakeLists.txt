@@ -26,6 +26,11 @@ target_compile_features(albor-tests PRIVATE cxx_std_23)
 # the ofl test font ships in the tree, so a suite that uses it has a carried font no host must supply (§15, AD-34, #92)
 target_compile_definitions(albor-tests PRIVATE ALBOR_TEST_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/fonts/Inter-Regular.ttf" ALBOR_TEST_FONT_FAMILY="Inter")
 
+# the footprint probe measures the instrumented build, whose coverage counters dominate the signal (§2.2, §6.3)
+if(ALBOR_COVERAGE)
+    target_compile_definitions(albor-tests PRIVATE ALBOR_COVERAGE=1)
+endif()
+
 # the ofl hebrew test font ships beside it, so the rtl checks reach a real face on every host (§9.2, AD-34)
 target_compile_definitions(albor-tests PRIVATE ALBOR_TEST_RTL_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansHebrew-Regular.ttf" ALBOR_TEST_RTL_FONT_FAMILY="Noto Sans Hebrew")
 

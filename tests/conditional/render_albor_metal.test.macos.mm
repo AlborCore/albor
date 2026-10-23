@@ -240,6 +240,10 @@ TEST(AlborRendererBackendChecks, PresentsThroughAMetalLayer) {
 
 // the suite presents a real stream, because a present that forgets its pool leaks what no header check sees (§6.3)
 TEST(AlborRendererBackendChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) {
+#if defined(ALBOR_COVERAGE)
+    // coverage counters dominate the footprint, so the probe is skipped in the instrumented build (§2.2, §6.3)
+    GTEST_SKIP() << "coverage instrumentation changes the footprint measurement";
+#endif
     // arrange the layer a composition root hands over, which is what a windowed frame presents into (§5.3, AD-16)
     albor::render::AlborRendererBackend backend;
     const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{800.0f, 600.0f}, 2.0f);
