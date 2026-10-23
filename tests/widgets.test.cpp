@@ -4325,6 +4325,11 @@ TEST(LabelChecks, AFontSelectionRemeasuresAndInvalidates) {
     ASSERT_EQ(text_engine.last_font_spec.fallback.size(), 2u);
     // the first fallback family reached the engine in the order it was written (§9.1, AD-34)
     EXPECT_EQ(text_engine.last_font_spec.fallback.front(), "Fallback One");
+    // the widget reports the selection it stores, which the generated facade's test reads (§9.1, AD-34)
+    EXPECT_EQ(label.font_family(), "Inter");
+    EXPECT_EQ(label.font_weight(), FontWeight::Bold);
+    ASSERT_EQ(label.font_fallback().size(), 2u);
+    EXPECT_EQ(label.font_fallback().front(), "Fallback One");
 }
 
 TEST(TextFieldFontChecks, AFontSelectionRemeasuresAndInvalidates) {

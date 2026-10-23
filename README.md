@@ -186,7 +186,7 @@ counter, a manifest-driven chart with custom line-batch rendering, the compiled
 | widgets: Button, Label, CheckBox, Slider, Canvas, TextField, ListBox, ScrollView | done (§8) |
 | semantic tree, explicit keys, semantic provider | done (§10.1) |
 | `.ui` compiler, manifest, glue generator, codegen | done (phase 4, §11) |
-| text shaping (HarfBuzz), embedded font outlines, i18n catalog | done (§9.1) |
+| text shaping (HarfBuzz), embedded font registration and weights, i18n catalog | done (§9.1, AD-34) |
 | animation engine, theme system and widget states | done (§7.3) |
 | inspector, LSP, preview host, automation core, MCP adapter | done (Dev/Test only, phase 5) |
 | accessibility: macOS bridge, Win32 adapter layer | done; AT-SPI adapter planned (§10.2) |

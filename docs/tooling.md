@@ -8,14 +8,18 @@ an automation layer. This page is the map; each tool names the module it lives i
 `albor-codegen` is the standalone compiler driver — the same frontend the CMake helpers run:
 
 ```text
-albor-codegen --input greeting.ui --output build/generated/greeting
+albor-codegen --input greeting.ui --output build/generated/greeting \
+    --default-font-family Inter \
+    --font Inter regular assets/Inter-Regular.ttf \
+    --font Inter bold assets/Inter-Bold.ttf
 ```
 
-It parses the `.ui`, type-checks it, and emits the concrete facade — a header and a
-translation unit per component. The generator writes a file **only when its content
-changes**, so a body edit rebuilds just that component's `.cpp`, while a declared interface
-change rebuilds the header and its includers
-([Build scope](concepts/native-components.md)).
+It parses the `.ui`, type-checks it, checks the font selection against the carried faces,
+and emits the concrete facade — a header and a translation unit per component. The
+generator writes a file **only when its content changes**, so a body edit rebuilds just that
+component's `.cpp`, while a declared interface change rebuilds the header and its includers
+([Build scope](concepts/native-components.md)). The CMake helpers pass the font flags from
+the target's `albor_build_font_assets` declaration; see [Fonts](ui-language/fonts.md).
 
 ## The Metal shader
 

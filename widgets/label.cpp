@@ -144,6 +144,11 @@ namespace albor
         invalidate_layout();
     }
 
+    const std::string& Label::font_family() const {
+        // the family is what the next measure resolves the face through (§9.1, AD-34)
+        return m_font_spec.family;
+    }
+
     void Label::set_font_weight(FontWeight weight) {
         // the weight is stored, because the next measure resolves the face through it (§9.1, AD-34)
         m_font_spec.weight = weight;
@@ -154,6 +159,11 @@ namespace albor
         invalidate_layout();
     }
 
+    FontWeight Label::font_weight() const {
+        // the weight is what the next measure resolves the face through (§9.1, AD-34)
+        return m_font_spec.weight;
+    }
+
     void Label::set_font_fallback(std::vector<std::string> fallback) {
         // the fallback chain is stored, because the next measure resolves the face through it (§9.1, AD-34)
         m_font_spec.fallback = std::move(fallback);
@@ -162,6 +172,11 @@ namespace albor
             m_layout = m_text_engine->measure(m_text, 0.0f, m_font_size, m_font_spec);
         // a fallback change may resize the label, so the layout passes must run again (§8.2)
         invalidate_layout();
+    }
+
+    const std::vector<std::string>& Label::font_fallback() const {
+        // the fallback chain is what the next measure resolves after the named family (§9.1, AD-34)
+        return m_font_spec.fallback;
     }
 
     float Label::font_size() const {

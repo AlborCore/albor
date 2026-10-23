@@ -1,0 +1,9 @@
+component FontMissing {
+    Column {
+        Label {
+            id: missing_label;
+            text: "Missing";
+            font_family: "Missing";
+        }
+    }
+}

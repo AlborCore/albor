@@ -26,8 +26,16 @@ target_compile_features(albor-tests PRIVATE cxx_std_23)
 # the ofl test font ships in the tree, so a suite that uses it has a carried font no host must supply (§15, AD-34, #92)
 target_compile_definitions(albor-tests PRIVATE ALBOR_TEST_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/fonts/Inter-Regular.ttf" ALBOR_TEST_FONT_FAMILY="Inter")
 
+# the footprint probe measures the instrumented build, whose coverage counters dominate the signal (§2.2, §6.3)
+if(ALBOR_COVERAGE)
+    target_compile_definitions(albor-tests PRIVATE ALBOR_COVERAGE=1)
+endif()
+
 # the ofl hebrew test font ships beside it, so the rtl checks reach a real face on every host (§9.2, AD-34)
 target_compile_definitions(albor-tests PRIVATE ALBOR_TEST_RTL_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/fonts/NotoSansHebrew-Regular.ttf" ALBOR_TEST_RTL_FONT_FAMILY="Noto Sans Hebrew")
+
+# the ofl lato faces ship as one family at two weights, so a weight selection has two real faces to choose (§9.1, AD-34)
+target_compile_definitions(albor-tests PRIVATE ALBOR_TEST_WEIGHT_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/fonts/Lato-Regular.ttf" ALBOR_TEST_BOLD_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/fonts/Lato-Bold.ttf" ALBOR_TEST_WEIGHT_FONT_FAMILY="Lato")
 
 # the dual-engine corpus source is compiled into a facade and serialized at test time, so the path is named here (§16)
 target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_UI="${CMAKE_CURRENT_SOURCE_DIR}/vectors/dual_engine_panel.ui")
@@ -138,16 +146,38 @@ endif()
 include(GoogleTest)
 gtest_discover_tests(albor-tests DISCOVERY_TIMEOUT 60)
 
+# the generated font checks link a unit the embedding tool produced, which proves registration before main (§11.3, AD-34)
+#
+# the main test binary cannot carry the unit, because its suites clear the registry and one static registration
+# would then answer a later test from a face that suite removed. this second binary owns the generated unit and
+# asserts the load time installer and the weighted engine selection against real bytes (§2.2, §9.1)
+add_executable(albor-generated-font-checks "./conditional/generated_fonts.test.cpp")
+target_include_directories(albor-generated-font-checks PRIVATE ${ALBOR_SOURCE_DIR})
+target_compile_features(albor-generated-font-checks PRIVATE cxx_std_23)
+albor_build_font_assets(albor-generated-font-checks
+    DEFAULT Lato
+    FONTS
+        Lato regular "${CMAKE_CURRENT_SOURCE_DIR}/fonts/Lato-Regular.ttf"
+        Lato bold "${CMAKE_CURRENT_SOURCE_DIR}/fonts/Lato-Bold.ttf")
+# the panel declares the generated family at its bold weight, which the compiler checks against the same asset list (§11.1, AD-34)
+albor_build_ui_component(albor-generated-font-checks "${CMAKE_CURRENT_SOURCE_DIR}/vectors/font_panel.ui")
+target_link_libraries(albor-generated-font-checks PRIVATE GTest::gtest_main albor-text-harfbuzz albor-widgets albor-layout)
+# the win32 text resolver calls the platform text encoding, which the platform adapter publishes (§5.3, AD-16)
+if(WIN32)
+    target_link_libraries(albor-generated-font-checks PRIVATE albor-platform-windows)
+endif()
+gtest_discover_tests(albor-generated-font-checks DISCOVERY_TIMEOUT 60)
+
 # the blend2d load time install checks need the whole archive link, which the main test binary cannot take (§6.3, AD-26)
 #
 # the main binary links albor-render-blend2d lazily, so the load time installers stay out of it and the suites
 # above control the factory hooks themselves. this second binary links the archive whole, which runs both
 # installers at load, and asserts that a plain link of the backend leaves a process that renders (§5.3)
-add_executable(albor-blend2d-auto-checks "./conditional/blend2d_auto.test.cpp")
-target_include_directories(albor-blend2d-auto-checks PRIVATE ${ALBOR_SOURCE_DIR})
-target_compile_features(albor-blend2d-auto-checks PRIVATE cxx_std_23)
-target_link_libraries(albor-blend2d-auto-checks PRIVATE GTest::gtest_main albor-render-blend2d-auto)
-gtest_discover_tests(albor-blend2d-auto-checks DISCOVERY_TIMEOUT 60)
+add_executable(albor-render-blend2d-auto-checks "./conditional/blend2d_auto.test.cpp")
+target_include_directories(albor-render-blend2d-auto-checks PRIVATE ${ALBOR_SOURCE_DIR})
+target_compile_features(albor-render-blend2d-auto-checks PRIVATE cxx_std_23)
+target_link_libraries(albor-render-blend2d-auto-checks PRIVATE GTest::gtest_main albor-render-blend2d-auto)
+gtest_discover_tests(albor-render-blend2d-auto-checks DISCOVERY_TIMEOUT 60)
 
 # the apple window half of the install only exists where the macos presenter does, so its suite joins under apple (§5.3, AD-16)
 #
@@ -156,14 +186,14 @@ gtest_discover_tests(albor-blend2d-auto-checks DISCOVERY_TIMEOUT 60)
 # conditional platform suites. the stream is what measures the footprint, which only quartzcore and metal allocate
 # into, so both frameworks are named here rather than through the backend's private link (§5.3, §6.3, AD-16)
 if(APPLE)
-    target_sources(albor-blend2d-auto-checks PRIVATE "./conditional/blend2d_window_auto.test.macos.mm")
+    target_sources(albor-render-blend2d-auto-checks PRIVATE "./conditional/blend2d_window_auto.test.macos.mm")
     set_source_files_properties("./conditional/blend2d_window_auto.test.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
-    target_link_libraries(albor-blend2d-auto-checks PRIVATE "-framework Foundation" "-framework Metal" "-framework QuartzCore")
+    target_link_libraries(albor-render-blend2d-auto-checks PRIVATE "-framework Foundation" "-framework Metal" "-framework QuartzCore")
 endif()
 
 # the win32 window half builds a swapchain on a hidden window, which the suite drives through the real factory (§5.3, AD-16)
 if(WIN32)
-    target_sources(albor-blend2d-auto-checks PRIVATE "./conditional/blend2d_window_auto.test.win32.c++")
+    target_sources(albor-render-blend2d-auto-checks PRIVATE "./conditional/blend2d_window_auto.test.win32.c++")
 endif()
 
 # the albor load time install checks need the whole archive link, which the main test binary cannot take (§6.3, AD-26)

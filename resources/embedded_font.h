@@ -6,13 +6,18 @@
 #include <string_view>
 #include <vector>
 
+#include "core/font_weight.h"
+
 namespace albor::resources
 {
     // the immutable font a build carries, identified by content hash because a name resolves per platform (§15, AD-34)
     struct EmbeddedFont
     {
-        // the family name an application asks for, which is a label rather than a lookup key (§9.1)
+        // the family name an application asks for, which the registry resolves without a platform lookup (§9.1)
         std::string family;
+
+        // the weight this face carries within its family, which a selection resolves (§9.1, AD-34)
+        FontWeight weight = FontWeight::Regular;
 
         // the hash of the bytes below, which is the font's real identity (§15, AD-34)
         std::uint64_t content_hash = 0;
@@ -28,8 +33,11 @@ namespace albor::resources
         // register a font, which the generated code of a component calls once (§11.3, AD-34)
         static void register_font(EmbeddedFont font);
 
-        // the font a family asks for, which is null when nothing carries it (§9.1)
+        // the regular face a family asks for, which is null when the family or its regular face is absent (§9.1)
         [[nodiscard]] static std::shared_ptr<const EmbeddedFont> find_family(std::string_view family);
+
+        // the face a family and weight name, which is null when that pairing is not carried (§9.1, AD-34)
+        [[nodiscard]] static std::shared_ptr<const EmbeddedFont> find_face(std::string_view family, FontWeight weight);
 
         // the font a content hash names, which no reader can outlive because the registry shares it (§15, AD-18)
         [[nodiscard]] static std::shared_ptr<const EmbeddedFont> find_hash(std::uint64_t content_hash);
