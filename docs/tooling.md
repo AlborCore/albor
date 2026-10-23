@@ -21,26 +21,34 @@ component's `.cpp`, while a declared interface change rebuilds the header and it
 ([Build scope](concepts/native-components.md)). The CMake helpers pass the font flags from
 the target's `albor_build_font_assets` declaration; see [Fonts](ui-language/fonts.md).
 
-## The Metal shader
+## The shaders
 
-The Metal shader is `render/render-albor/albor_shaders.metal`. It is **not** compiled by a
-consumer's build: the compiled library `albor_shaders.metallib` is committed beside it, and
-every macOS build embeds those bytes, so no machine needs the Metal toolchain to use the
-framework. The committed artifact targets the same floor the build declares (macOS 13.3) and
-one library serves Intel and Apple silicon alike, because a `.metallib` is GPU code rather
-than a CPU object.
+The GPU backend has two platform shader sources and two committed artifacts:
 
-Changing the shader is therefore a deliberate act:
+| source | artifact | platform |
+| --- | --- | --- |
+| `render/render-albor/albor_shaders.metal` | `albor_shaders.metallib` | macOS / Metal |
+| `render/render-albor/albor_shaders.hlsl` | `albor_shaders.dxbc` | Windows / Direct3D |
+
+Neither shader is compiled by a consumer's build: the compiled artifacts are committed
+beside their sources, and every platform build embeds those bytes. No machine needs the
+Metal toolchain or the Direct3D shader compiler to use the framework. The Metal artifact
+targets the same floor the build declares (macOS 13.3) and serves Intel and Apple silicon
+alike.
+
+Changing a shader is therefore a deliberate act:
 
 ```sh
-bash build/shaders.sh --write   # recompile the artifact with the Metal toolchain
-bash build/shaders.sh           # check the committed artifact without touching the tree
+bash build/shaders.sh --write        # recompile the Metal artifact
+bash build/shaders.sh --d3d --write  # recompile the Direct3D artifact
+bash build/shaders.sh --all          # check both committed artifacts
 ```
 
-`albor_shaders.metal.sha256` records the source and the artifact that were built together. Every build
-compares the two and fails when the shader changed without the artifact being regenerated, so
-a stale library cannot be shipped by accident. The regeneration needs the Metal toolchain
-that Xcode 26 unbundled; `xcodebuild -downloadComponent MetalToolchain` installs it.
+The `.sha256` files record the source and artifact that were built together. Every build
+compares the pair and fails when a shader changed without the artifact being regenerated, so
+a stale library cannot be shipped by accident. The Metal regeneration needs the toolchain
+that Xcode 26 unbundled; `xcodebuild -downloadComponent MetalToolchain` installs it. The
+Direct3D regeneration needs `fxc` or the matching Windows SDK toolchain.
 
 ## Manifest glue
 
@@ -60,11 +68,13 @@ albor_build_native_component(my-app "${CMAKE_CURRENT_SOURCE_DIR}/chart.ui-manife
 
 All three run the appropriate driver as a build step, write under the build directory, and
 join the target's sources and include path — an application never names a generated file.
+The target still links one public framework target, `albor` or `albor-blend2d`; see
+[Consuming Albor](consuming.md).
 
 ## Hot reload
 
 `devrt/` — the dev runtime extension — loads a compiled IR at startup and swaps it when the
-`.ui` changes, without rebuilding the host. It is linked in Dev and Test configurations only,
+`.ui` changes, without rebuilding the host. It is built in the Dev configuration only,
 through a registration hook that exists in every build, and is excluded from Release at
 link time, not by a runtime flag (AD-04, AD-10). A Release reference to a devrt symbol fails
 the link.

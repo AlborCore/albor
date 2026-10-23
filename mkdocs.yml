@@ -33,6 +33,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Getting started: getting-started.md
+  - Consuming Albor: consuming.md
   - The .ui language:
       - ui-language/index.md
       - Components: ui-language/components.md

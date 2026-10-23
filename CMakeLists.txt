@@ -232,6 +232,43 @@ add_subdirectory(manifest)
 # the developer tools, which build against the compiler and never ship in the runtime (§2.1)
 add_subdirectory(tools)
 
+# the text engine is the one implementation the framework recommends, so a consumer never chooses it (§3.3, AD-19)
+add_library(albor-text-auto INTERFACE)
+target_link_libraries(albor-text-auto INTERFACE albor-text-harfbuzz-auto)
+target_compile_features(albor-text-auto INTERFACE cxx_std_23)
+
+# the desktop platform is selected by the host, not by the consumer, and only exists where an adapter is built (§3.3, AD-16)
+if(APPLE OR WIN32)
+    # define the platform library interface
+    add_library(albor-platform-auto INTERFACE)
+    if(APPLE)
+        target_link_libraries(albor-platform-auto INTERFACE albor-platform-macos-auto)
+    else()
+        target_link_libraries(albor-platform-auto INTERFACE albor-platform-windows-auto)
+    endif()
+    target_compile_features(albor-platform-auto INTERFACE cxx_std_23)
+
+    # the runtime every public renderer choice shares, so the non-render modules are named once (§3.3, AD-19)
+    function(_albor_link_default_runtime target)
+        # everything that is needed to run the target application
+        target_link_libraries(${target} INTERFACE albor-platform-auto albor-text-auto albor-layout albor-widgets albor-accessibility albor-i18n)
+        target_compile_features(${target} INTERFACE cxx_std_23)
+    endfunction()
+
+    # the recommended application target: the platform, text and renderer are the framework's choice (§4.1, AD-19)
+    add_library(albor INTERFACE)
+    _albor_link_default_runtime(albor)
+    target_link_libraries(albor INTERFACE albor-render-albor-auto)
+
+    # the portable renderer choice: everything else is the same runtime (§6.3, AD-19)
+    add_library(albor-blend2d INTERFACE)
+    _albor_link_default_runtime(albor-blend2d)
+    target_link_libraries(albor-blend2d INTERFACE albor-render-blend2d-auto)
+else()
+    # a desktop umbrella without a desktop platform would silently create no window, so it is not offered (§3.3, AD-16)
+    message(STATUS "albor: the desktop umbrella is unavailable until this platform has a platform adapter")
+endif()
+
 if(ALBOR_EXAMPLES)
     add_subdirectory(examples)
 endif()

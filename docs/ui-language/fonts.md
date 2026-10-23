@@ -45,9 +45,10 @@ albor_build_ui_component(my_app "main.ui")
 
 `albor_build_font_assets` must be called before `albor_build_ui_component`, because the
 generated facade is checked against the same list. The helper generates one registration
-unit per target, so two components never embed the same font twice. The target must link a
-text engine (`albor-text-harfbuzz-auto`), which publishes the font registry the generated
-unit calls.
+unit per target, so two components never embed the same font twice. The `albor` target
+already carries the text engine (`albor-text-harfbuzz-auto`), which publishes the font
+registry the generated unit calls. An advanced composition links `albor-text-auto` or
+`albor-text-harfbuzz-auto` explicitly.
 
 The generated header names the default family and exposes the installer:
 

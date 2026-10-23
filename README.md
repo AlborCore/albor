@@ -8,14 +8,13 @@ conventional desktop controls with first-class support for high-throughput custo
 rendering (schematics, CAD views, waveforms, plots), real multi-window behavior with
 modality, and a two-stage render pipeline that never blocks the UI thread on drawing.
 
-> **Status: under heavy development.** macOS (AppKit + Metal) is the first platform
-> backend; Windows (Win32) is compiled on every push and its windowing layer is in
-> place, while the Direct3D renderer and the Linux (Wayland/X11/Vulkan) port follow.
-> `render-albor`, the in-repo GPU 2D renderer, now draws shapes, retained resources,
-> outlined text, shadows, composited layers and all Porter-Duff composition modes, and
-> is gated against a software reference by a parity suite. Skia remains the
-> transitional backend until Windows and Linux reach the same output. The architecture
-> is settled and specified in [`albor-design-v4.md`](albor-design-v4.md).
+> **Status: under heavy development.** macOS (AppKit + Metal) and Windows
+> (Win32 + Direct3D) are implemented and built in CI; the Linux (Wayland/X11/Vulkan)
+> port follows. `render-albor`, the in-repo GPU 2D renderer, draws shapes, retained
+> resources, outlined text, shadows, composited layers and all Porter-Duff composition
+> modes, and is gated against a software reference by a parity suite. Skia remains the
+> transitional/reference backend. The architecture is settled and specified in
+> [`albor-design-v4.md`](albor-design-v4.md).
 
 ## Why Albor exists
 
@@ -115,7 +114,16 @@ that actually changed when a `.ui` body is edited (§14.3).
 
 An application names a window and the component it shows. It does not name a renderer, a
 platform adapter or a text engine: each backend installs itself at load, so **linking is the
-selection** (§5.3, §6.3, §9.1).
+selection** (§5.3, §6.3, §9.1). A normal consumer links the framework's default target:
+
+```cmake
+target_link_libraries(my_app PRIVATE albor)
+```
+
+`albor` carries the platform adapter, text engine, widgets, accessibility, i18n and the
+recommended GPU renderer. Link `albor-blend2d` instead for the portable CPU renderer. The
+target map and the advanced composition escape hatch are on
+[Consuming Albor](docs/consuming.md).
 
 ```cpp
 #include "application/application.h"
@@ -176,8 +184,8 @@ counter, a manifest-driven chart with custom line-batch rendering, the compiled
 | startup facade: one call wires window, surface, pipeline, executor and input | done (§4.1, §6.1) |
 | dev runtime extension: self-installing, patches a live tree in place | done (§12.1) |
 | macOS platform: AppKit window, display-link pacing, input | done (§5) |
-| `render-albor` GPU backend: fills, strokes, outlined text, retained resources, images, shadows, layers, fill rules, 11 composition modes | done on macOS (§6.2–§6.4, AD-26) |
-| Skia renderer backend (Metal/Ganesh) | transitional reference until Windows/Linux parity (§6, #102) |
+| `render-albor` GPU backend: fills, strokes, outlined text, retained resources, images, shadows, layers, fill rules, 11 composition modes | done on macOS and Windows (§6.2–§6.4, AD-26) |
+| Skia renderer backend (Metal/Ganesh) | transitional/reference, not the default consumer backend (§6, #102) |
 | software reference (Blend2D + HarfBuzz glyph atlas) and Blend2D windowed backend | done (§6.3, AD-26) |
 | GPU/software parity suite, headless CI | done (AD-26, §16) |
 | reactive properties, eager-push binding engine, snapshots | done (§7) |
@@ -190,13 +198,13 @@ counter, a manifest-driven chart with custom line-batch rendering, the compiled
 | animation engine, theme system and widget states | done (§7.3) |
 | inspector, LSP, preview host, automation core, MCP adapter | done (Dev/Test only, phase 5) |
 | accessibility: macOS bridge, Win32 adapter layer | done; AT-SPI adapter planned (§10.2) |
-| Win32 platform: window, clipboard, event loop, text encoding | compiles in CI; Direct3D renderer pending (§5.3) |
+| Win32 platform: window, clipboard, event loop, text encoding | implemented and built in CI; Direct3D backend ships (§5.3) |
 | Wayland / X11 / Vulkan platform and renderer | planned (phase 1 follow-up) |
 | out-of-process dev service that delivers definitions to the extension | planned (§12.1, AD-12) |
 
 ## Building
 
-Requirements: C++23, CMake ≥ 3.24, [vcpkg](https://vcpkg.io) (manifest mode;
+Requirements: C++23, CMake ≥ 3.28 with Ninja, [vcpkg](https://vcpkg.io) (manifest mode;
 dependencies are pinned in [`vcpkg.json`](vcpkg.json)).
 
 ```sh
@@ -209,6 +217,8 @@ directly.
 
 ## Documentation
 
+- [`docs/`](docs/index.md) — the user guide, including
+  [Consuming Albor](docs/consuming.md) for third-party applications.
 - [`albor-design-v4.md`](albor-design-v4.md) — the architecture specification; the
   single source of truth for module layout and decisions (`AD-NN`, `§N` are cited
   throughout the code and reviews).
