@@ -1,8 +1,8 @@
 # the hello-world example, which demonstrates the usage of the framework with different backends (§6.3, AD-26)
 
 # the example drives the macos platform directly, so it only builds on apple platforms (AD-16)
-if(NOT APPLE)
-    message(STATUS "hello-world: skipped, the example needs the macos platform adapter")
+if(NOT APPLE AND NOT WIN32)
+    message(STATUS "hello-world: skipped, the example needs the macos/windows platform adapter")
     return()
 endif()
 
@@ -19,9 +19,18 @@ target_include_directories(hello-world-blend2d PRIVATE ${ALBOR_SOURCE_DIR})
 target_compile_features(hello-world-albor PRIVATE cxx_std_23)
 target_compile_features(hello-world-blend2d PRIVATE cxx_std_23)
 
+# platform specific libraries
+IF(APPLE)
+    target_link_libraries(hello-world-albor PRIVATE albor-platform-macos-auto)
+    target_link_libraries(hello-world-blend2d PRIVATE albor-platform-macos-auto)
+elseif(WIN32)
+    target_link_libraries(hello-world-albor PRIVATE albor-platform-windows-auto)
+    target_link_libraries(hello-world-blend2d PRIVATE albor-platform-windows-auto)
+endif()
+
 # the framework modules arrive transitively through the backends (§6.2)
-target_link_libraries(hello-world-albor PRIVATE albor-platform-macos-auto albor-render-albor-auto albor-text-harfbuzz-auto)
-target_link_libraries(hello-world-blend2d PRIVATE albor-platform-macos-auto albor-render-blend2d-auto albor-text-harfbuzz-auto)
+target_link_libraries(hello-world-albor PRIVATE albor-render-albor-auto albor-text-harfbuzz-auto)
+target_link_libraries(hello-world-blend2d PRIVATE albor-render-blend2d-auto albor-text-harfbuzz-auto)
 
 # when automation is enabled, link the whole-archive umbrella which installs the host at load (§10.3, AD-10)
 if(ALBOR_AUTOMATION)
