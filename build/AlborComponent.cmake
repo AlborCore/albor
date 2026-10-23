@@ -140,8 +140,6 @@ function(albor_build_ui_component target ui_source)
     target_sources(${target} PRIVATE ${units})
     # the generated directory joins the include path, which is where the facade header lives (§3.5, §11.3)
     target_include_directories(${target} PRIVATE "${generated_dir}")
-    # the generated asset unit reaches the image registry, which the target links whether or not a source embeds one (§6.4)
-    target_link_libraries(${target} PRIVATE albor-resources)
 endfunction()
 
 # generate the record structs a manifest declares for a target, because a repeat names them as element types (§11.2, AD-17, AD-13)
