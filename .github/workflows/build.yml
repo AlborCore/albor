@@ -126,6 +126,16 @@ jobs:
               mkdir -p .vcpkg-cache
               # the preset launches the compiler through ccache, which the runner image does not ship
               choco install ccache --no-progress -y
+          - name: windows-debug
+            os: windows-latest
+            enable: true
+            preset: debug
+            vcpkg-root: C:\vcpkg
+            setup: |
+              # the vcpkg binary cache root must exist before vcpkg runs
+              mkdir -p .vcpkg-cache
+              # the preset launches the compiler through ccache, which the runner image does not ship
+              choco install ccache --no-progress -y
           - name: linux-release
             os: ubuntu-latest
             enable: false

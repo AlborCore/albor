@@ -33,16 +33,22 @@ core the two platforms share byte for byte, and a thin platform seam.
     rasterizer, all or nothing
   - milestone 3: the encode streams the batch, uploads and ages textures, and composites
     layers and soft shadows through bounded offscreen targets
-- milestone 4 is implemented: a present copies the target on the process lock and releases
-  the back buffer inside it, a resize that arrives mid frame is deferred to the end, an
-  empty extent is refused and keeps the previous target, and the read back stages through
+- milestone 4 is implemented: a present copies the target on the process lock and presents
+  outside it, so one window's refresh never stalls another; a resize that arrives mid frame
+  is deferred to the end and is all or nothing, so a refused extent keeps the target the
+  window already showed; the composition target re-roots on the newest visual and blanks the
+  tree when the last surface leaves; the composition device is created on the first windowed
+  attach, so an offscreen host never needs a compositor; a driver removal is reported
+  through `valid()` rather than presenting a frozen frame; and the read back stages through
   a staging texture
-- milestone 5 is in place: `tests/conditional/render_albor_d3d.test.win32.c++` carries 66
+- milestone 5 is in place: `tests/conditional/render_albor_d3d.test.win32.c++` carries 71
   checks, the whole portable ledger the apple suite reports (the shader container, the
   device, the offscreen lifecycle, the encode paths, and every parity check against the
-  software reference), and `tests/CMakeLists.txt` wires it under `WIN32`. The one apple
-  check without a windows twin is the stream footprint measurement, because its bound is
-  a host measurement (`mach_task_basic_info` on apple) rather than a portable rule
+  software reference) plus the win32 window checks the apple suite covers with a layer: a
+  hidden window presents, two surfaces share one window and re-root, a stream of 140 frames
+  holds an 8 MiB footprint, and a scene at stale metrics is refused. `tests/CMakeLists.txt`
+  wires the suite under `WIN32`, and the whole archive install check (`albor_auto`) now runs
+  on both backends
 
 ## Milestone 0 — shader artifact conventions (the first-in-the-repo step)
 

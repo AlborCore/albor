@@ -1,3 +1,11 @@
+// the direct3d backend, which the device, the encoders and a real window drive (§6.2, §6.3, AD-16)
+
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+
+#include <psapi.h>
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -10,6 +18,7 @@
 #include <gtest/gtest.h>
 
 #include "core/geometry.h"
+#include "core/native_window_handle.h"
 #include "core/paint.h"
 #include "render/draw_command.h"
 #include "render/frame_scene.h"
@@ -21,6 +30,7 @@
 #include "render/render-albor/albor_shaders.h"
 #include "render/render-software/software_renderer_backend.h"
 #include "render/render_context.h"
+#include "render/render_executor.h"
 #include "render/renderer_backend.h"
 #include "render/screenshot.h"
 #include "render/text_layout.h"
@@ -66,8 +76,12 @@ TEST(AlborShaderLibraryChecks, CarriesTheCompiledDirect3DContainer) {
 TEST(AlborRendererBackendChecks, BringsUpTheDirect3DDevice) {
     // arrange
     AlborRendererBackend backend;
-    // act, assert
-    EXPECT_TRUE(backend.ready());
+    // act
+    const bool ready = backend.ready();
+    // assert a host with no direct3d device skips, so a platform gap is not read as a product defect (§6.2)
+    if (!ready)
+        GTEST_SKIP() << "no direct3d device on this host";
+    EXPECT_TRUE(ready);
 }
 
 TEST(AlborRendererBackendChecks, BuildsAnOffscreenSurfaceWithoutAWindow) {
@@ -79,10 +93,12 @@ TEST(AlborRendererBackendChecks, BuildsAnOffscreenSurfaceWithoutAWindow) {
     // assert
     ASSERT_NE(surface, nullptr);
     EXPECT_TRUE(surface->valid());
+    // the surface and the backend agree on readiness, so a half built device cannot hand out a surface (§6.2)
+    EXPECT_EQ(backend.ready(), surface->valid());
     EXPECT_EQ(surface->metrics(), metrics);
 }
 
-TEST(AlborRendererBackendChecks, PresentsAnEmptyFrameWithoutDrawing) {
+TEST(AlborRendererBackendChecks, ClearsAnEmptyOffscreenFrameToTransparent) {
     // arrange
     AlborRendererBackend backend;
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{4.0f, 4.0f}, 1.0f);
@@ -92,31 +108,37 @@ TEST(AlborRendererBackendChecks, PresentsAnEmptyFrameWithoutDrawing) {
     surface->begin_frame();
     surface->end_frame();
     const std::vector<std::uint8_t> pixels = surface->read_pixels();
-    // assert
+    // assert every pixel is the transparent clear a frame with no command leaves (§6.1)
     ASSERT_EQ(pixels.size(), 4u * 4u * 4u);
-    EXPECT_EQ(pixels[0], 0u);
-    EXPECT_EQ(pixels[3], 0u);
+    for (std::size_t pixel = 0; pixel < 16u; pixel++) {
+        EXPECT_EQ(pixels[pixel * 4u + 0u], 0u);
+        EXPECT_EQ(pixels[pixel * 4u + 1u], 0u);
+        EXPECT_EQ(pixels[pixel * 4u + 2u], 0u);
+        EXPECT_EQ(pixels[pixel * 4u + 3u], 0u);
+    }
 }
 
 TEST(AlborRendererBackendChecks, ReadsBackInCanonicalRgbaOrder) {
-    // arrange
+    // arrange a colour with three distinct channels, which a rotation or a lost channel would expose (AD-26)
     AlborRendererBackend backend;
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{8.0f, 8.0f}, 1.0f);
     const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
     ASSERT_NE(surface, nullptr);
-    const FrameScene scene(metrics, Color::rgb(1.0f, 0.0f, 0.0f));
+    const FrameScene scene(metrics, Color::rgb(0.25f, 0.5f, 0.75f));
     // act
     backend.execute_frame(*surface, scene);
     const std::vector<std::uint8_t> pixels = surface->read_pixels();
-    // assert the compositor red lands in the red byte, which is the order the metal target reads back (AD-26)
+    // assert each channel lands in its own byte, which a swap or a rotation would misplace (AD-26)
     ASSERT_EQ(pixels.size(), 8u * 8u * 4u);
-    EXPECT_EQ(pixels[0], 255u);
-    EXPECT_EQ(pixels[1], 0u);
-    EXPECT_EQ(pixels[2], 0u);
+    EXPECT_NEAR(pixels[0], 64u, 1u);
+    EXPECT_NEAR(pixels[1], 128u, 1u);
+    EXPECT_NEAR(pixels[2], 191u, 1u);
     EXPECT_EQ(pixels[3], 255u);
     const std::size_t last = pixels.size() - 4u;
-    // the last pixel of the last row carries the same colour, so the whole target was covered
-    EXPECT_EQ(pixels[last], 255u);
+    // the last pixel of the last row carries the same channels, so the whole target was covered
+    EXPECT_NEAR(pixels[last + 0u], 64u, 1u);
+    EXPECT_NEAR(pixels[last + 1u], 128u, 1u);
+    EXPECT_NEAR(pixels[last + 2u], 191u, 1u);
     EXPECT_EQ(pixels[last + 3u], 255u);
 }
 
@@ -275,8 +297,13 @@ TEST(AlborRendererBackendChecks, RefusesAResizeToAnEmptyExtent) {
     ASSERT_NE(surface, nullptr);
     // act
     backend.resize_surface(*surface, WindowMetrics{});
-    // assert
+    // assert the refusal kept the extent and the target, which a dropped target would read back short (§6.2)
     EXPECT_EQ(surface->metrics(), metrics);
+    const FrameScene scene(metrics, Color::rgb(1.0f, 0.0f, 0.0f));
+    backend.execute_frame(*surface, scene);
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    ASSERT_EQ(pixels.size(), 4u * 4u * 4u);
+    EXPECT_EQ(pixels[0], 255u);
 }
 
 TEST(AlborRendererBackendChecks, KeepsTheTargetWhenResizedToAnEmptyExtent) {
@@ -287,8 +314,19 @@ TEST(AlborRendererBackendChecks, KeepsTheTargetWhenResizedToAnEmptyExtent) {
     ASSERT_NE(surface, nullptr);
     // act
     surface->resize(WindowMetrics{});
-    // assert
+    // assert the target the refusal kept still draws and reads back at the extent it had (§6.2)
     EXPECT_EQ(surface->metrics(), metrics);
+    const FrameScene scene(metrics, Color::rgb(1.0f, 0.0f, 0.0f));
+    backend.execute_frame(*surface, scene);
+    std::vector<std::uint8_t> pixels = surface->read_pixels();
+    ASSERT_EQ(pixels.size(), 4u * 4u * 4u);
+    EXPECT_EQ(pixels[0], 255u);
+    // a later resize to the same extent takes the target path again, which a lost target would refuse (§6.2)
+    surface->resize(metrics);
+    backend.execute_frame(*surface, scene);
+    pixels = surface->read_pixels();
+    ASSERT_EQ(pixels.size(), 4u * 4u * 4u);
+    EXPECT_EQ(pixels[0], 255u);
 }
 
 TEST(AlborParityChecks, AnAlignedRectangleMatchesTheReference) {
@@ -309,12 +347,16 @@ TEST(AlborParityChecks, AnAlignedRectangleMatchesTheReference) {
     backend.execute_frame(*actual_surface, scene);
     const Screenshot expected = capture_surface(*expected_surface);
     const Screenshot actual = capture_surface(*actual_surface);
-    // assert
+    // assert an aligned rectangle has no feathered edge to disagree on, so its interior agrees exactly
     ASSERT_FALSE(expected.empty());
     ASSERT_FALSE(actual.empty());
     ASSERT_EQ(expected.pixels.size(), actual.pixels.size());
-    // an aligned rectangle has no feathered edge to disagree on, so the two agree exactly
-    EXPECT_EQ(expected.max_channel_difference(actual), 0);
+    const std::size_t interior = (16u * 32u + 16u) * 4u;
+    EXPECT_EQ(expected.pixels[interior + 0u], actual.pixels[interior + 0u]);
+    EXPECT_EQ(expected.pixels[interior + 1u], actual.pixels[interior + 1u]);
+    EXPECT_EQ(expected.pixels[interior + 2u], actual.pixels[interior + 2u]);
+    // the frame as a whole stays within the one step a unorm target may round differently from the reference (§11.7)
+    EXPECT_LE(expected.max_channel_difference(actual), 1);
 }
 
 TEST(AlborParityChecks, AFeatheredEdgeMatchesTheReferenceWithinTolerance) {
@@ -425,8 +467,8 @@ TEST(AlborParityChecks, ARoundedClipMatchesTheReferenceAtItsCorners) {
     ASSERT_FALSE(actual_shot.empty());
     ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
     const std::size_t corner = (5u * 32u + 5u) * 4u;
-    EXPECT_GT(actual_shot.pixels[corner], 200u);
-    EXPECT_GT(expected_shot.pixels[corner], 200u);
+    EXPECT_EQ(actual_shot.pixels[corner], 255u);
+    EXPECT_EQ(expected_shot.pixels[corner], 255u);
     // the centre of the clip is covered by the black rectangle in both
     const std::size_t centre = (16u * 32u + 16u) * 4u;
     EXPECT_EQ(actual_shot.pixels[centre], 0u);
@@ -539,7 +581,7 @@ TEST(AlborParityChecks, AScissorUnderATranslatedTransformMatchesTheReference) {
 }
 
 TEST(AlborParityChecks, AFrameRenderedAtAnotherScaleDoesNotMatch) {
-    // arrange a scene at one density and a surface at another, which the comparison must reject
+    // arrange the same logical square at two densities, which the device scale must carry into the geometry (AD-27)
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{16.0f, 16.0f}, 1.0f);
     const WindowMetrics denser = WindowMetrics::from_logical(Size{16.0f, 16.0f}, 2.0f);
     albor::render::AlborRendererBackend backend;
@@ -547,18 +589,29 @@ TEST(AlborParityChecks, AFrameRenderedAtAnotherScaleDoesNotMatch) {
     const std::unique_ptr<RenderSurface> large = backend.create_surface(NativeWindowHandle{}, denser);
     ASSERT_NE(small, nullptr);
     ASSERT_NE(large, nullptr);
-    const FrameScene small_scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
-    const FrameScene large_scene(denser, Color::rgb(0.0f, 0.0f, 0.0f));
+    FrameScene small_scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand small_square = DrawCommand::rectangle(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{4.0f, 4.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    small_square.set_clip(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size));
+    small_scene.add_command(std::move(small_square));
+    FrameScene large_scene(denser, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand large_square = DrawCommand::rectangle(Rect::from_origin_size(Point{4.0f, 4.0f}, Size{4.0f, 4.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    large_square.set_clip(Rect::from_origin_size(Point{0.0f, 0.0f}, denser.logical_size));
+    large_scene.add_command(std::move(large_square));
     // act
     backend.execute_frame(*small, small_scene);
     backend.execute_frame(*large, large_scene);
     const Screenshot first = capture_surface(*small);
     const Screenshot second = capture_surface(*large);
-    // assert
+    // assert the target doubled, which a comparison of two densities has to see (AD-27)
     ASSERT_FALSE(first.empty());
     ASSERT_FALSE(second.empty());
-    EXPECT_NE(first.pixels.size(), second.pixels.size());
-    EXPECT_FALSE(first.pixels.empty());
+    ASSERT_EQ(first.pixels.size(), 16u * 16u * 4u);
+    ASSERT_EQ(second.pixels.size(), 32u * 32u * 4u);
+    // the logical square covers its logical pixels once and its device pixels twice, so the scale reached the geometry
+    EXPECT_EQ(first.pixels[(6u * 16u + 6u) * 4u], 255u);
+    EXPECT_EQ(second.pixels[(12u * 32u + 12u) * 4u], 255u);
+    // device (6,6) is outside the doubled square, which a surface that ignored the scale would have painted (AD-27)
+    EXPECT_EQ(second.pixels[(6u * 32u + 6u) * 4u], 0u);
 }
 
 TEST(AlborParityChecks, ASoftShadowMatchesTheReference) {
@@ -593,7 +646,7 @@ TEST(AlborParityChecks, ASoftShadowMatchesTheReference) {
     EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 64);
 }
 
-TEST(AlborParityChecks, AHardShadowMatchesTheReferenceExactly) {
+TEST(AlborParityChecks, AHardShadowMatchesTheReferenceWithinTolerance) {
     // arrange a zero blur shadow, which is a hard offset copy of the caster
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{32.0f, 32.0f}, 1.0f);
     albor::software::SoftwareRendererBackend reference;
@@ -617,8 +670,8 @@ TEST(AlborParityChecks, AHardShadowMatchesTheReferenceExactly) {
     ASSERT_FALSE(expected_shot.empty());
     ASSERT_FALSE(actual_shot.empty());
     ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
-    // the offset copy lands on the same pixels, which the two agree on within the feathered edge band
-    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 32);
+    // the offset copy lands on the same pixels, which the two agree on within the silhouette edge band
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 8);
     // the cast is black where it falls, which a missing shadow would leave white
     const std::size_t cast = (18u * 32u + 18u) * 4u;
     EXPECT_EQ(actual_shot.pixels[cast], 0u);
@@ -994,15 +1047,20 @@ TEST(AlborRendererBackendChecks, CompositesACastOnAFrameWithNoGeometry) {
     context.draw_shadow(Rect::from_origin_size(Point{8.0f, 8.0f}, Size{16.0f, 16.0f}), 4.0f, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 0.8f), .offset = Point{0.0f, 0.0f}, .blur = 4.0f});
     surface->end_frame();
     const Screenshot shot = capture_surface(*surface);
-    // assert
+    // assert the cast lands even though the frame carried no geometry at all
     ASSERT_FALSE(shot.empty());
-    // the cast lands even though the frame carried no geometry at all
     const std::size_t centre = (16u * 32u + 16u) * 4u;
-    EXPECT_GT(shot.pixels[centre + 3], 0u);
+    const std::size_t inside = (20u * 32u + 20u) * 4u;
+    const std::size_t outside = (2u * 32u + 2u) * 4u;
+    // the cast centre and a second point inside it carry the shadow alpha, which a stray pixel could not do
+    EXPECT_GT(shot.pixels[centre + 3u], 100u);
+    EXPECT_GT(shot.pixels[inside + 3u], 100u);
+    // a corner four pixels outside the cast stays untouched, so the pass did not smear the frame (§6.2)
+    EXPECT_EQ(shot.pixels[outside + 3u], 0u);
 }
 
 TEST(AlborParityChecks, KeepsAFrameThatUploadsMoreImagesThanTheCacheHolds) {
-    // arrange a frame of seventy solid images, which is more than the texture cache is sized for (§6.4, AD-06)
+    // arrange a surface pair and seventy images, which is more than the texture cache is sized for (§6.4, AD-06)
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{96.0f, 96.0f}, 1.0f);
     albor::software::SoftwareRendererBackend reference;
     albor::render::AlborRendererBackend backend;
@@ -1010,31 +1068,52 @@ TEST(AlborParityChecks, KeepsAFrameThatUploadsMoreImagesThanTheCacheHolds) {
     const std::unique_ptr<RenderSurface> actual_surface = backend.create_surface(NativeWindowHandle{}, metrics);
     ASSERT_NE(expected_surface, nullptr);
     ASSERT_NE(actual_surface, nullptr);
-    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    std::vector<std::shared_ptr<const ImageResource>> images;
     for (std::uint64_t index = 0u; index < 70u; index++) {
         // every image is its own identifier and its own colour, so none of them is answered by another (AD-06)
         const std::vector<std::uint8_t> source{static_cast<std::uint8_t>(index * 3u), 60u, 120u, 255u};
-        const std::shared_ptr<const ImageResource> image = std::make_shared<const ImageResource>(300u + index, 1u, 1u, ImageFormat::RGBA8, source);
+        images.push_back(std::make_shared<const ImageResource>(300u + index, 1u, 1u, ImageFormat::RGBA8, source));
+    }
+    // arrange the first frame, whose seventy uploads all come from the same frame (AD-06)
+    FrameScene first(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    for (std::size_t index = 0u; index < images.size(); index++) {
         // the images tile a ten column grid, whose row is the floating quotient rather than the integer one (§6.4)
         const Point origin{.x = 4.0f + static_cast<float>(index % 10u) * 9.0f, .y = 4.0f + (static_cast<float>(index) / 10u) * 9.0f};
-        DrawCommand command = DrawCommand::image(image, Rect::from_origin_size(origin, Size{8.0f, 8.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
-        // the clip is the whole surface, which is what an unclipped frame carries (§6.2)
+        DrawCommand command = DrawCommand::image(images[index], Rect::from_origin_size(origin, Size{8.0f, 8.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
         command.set_clip(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size));
-        scene.add_command(std::move(command));
+        first.add_command(std::move(command));
     }
-    // act
-    reference.execute_frame(*expected_surface, scene);
-    backend.execute_frame(*actual_surface, scene);
+    // act the first frame, which fills the cache past its capacity but evicts nothing of its own (AD-06)
+    reference.execute_frame(*expected_surface, first);
+    backend.execute_frame(*actual_surface, first);
+    // act a second frame with one new image, whose store drops the coldest slice the first frame left (AD-06)
+    const std::vector<std::uint8_t> fresh{255u, 0u, 255u, 255u};
+    const std::shared_ptr<const ImageResource> newer = std::make_shared<const ImageResource>(400u, 1u, 1u, ImageFormat::RGBA8, fresh);
+    FrameScene second(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand trigger = DrawCommand::image(newer, Rect::from_origin_size(Point{0.0f, 0.0f}, Size{4.0f, 4.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    trigger.set_clip(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size));
+    second.add_command(std::move(trigger));
+    reference.execute_frame(*expected_surface, second);
+    backend.execute_frame(*actual_surface, second);
+    // arrange the third frame, which redraws the eight coldest images the eviction may have dropped (AD-06)
+    FrameScene third(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    for (std::size_t index = 0u; index < 8u; index++) {
+        const Point origin{.x = 4.0f + static_cast<float>(index) * 9.0f, .y = 4.0f};
+        DrawCommand command = DrawCommand::image(images[index], Rect::from_origin_size(origin, Size{8.0f, 8.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+        command.set_clip(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size));
+        third.add_command(std::move(command));
+    }
+    // act the third frame, which a dropped texture answers by uploading it again (AD-06)
+    reference.execute_frame(*expected_surface, third);
+    backend.execute_frame(*actual_surface, third);
     const Screenshot expected_shot = capture_surface(*expected_surface);
     const Screenshot actual_shot = capture_surface(*actual_surface);
-    // assert
+    // assert every re-uploaded tile keeps its own colour, which a stale or missing texture would not (§6.4, AD-06)
     ASSERT_FALSE(expected_shot.empty());
     ASSERT_FALSE(actual_shot.empty());
     ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
-    // every image draws as its own colour, which a texture dropped before the frame encoded would not (§6.4, AD-06)
     EXPECT_LE(actual_shot.max_channel_difference(expected_shot), 2);
 }
-
 TEST(AlborParityChecks, ADownscaledImageMatchesTheReference) {
     // arrange a checkerboard downscaled eight times, which a mip map keeps from aliasing
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{16.0f, 16.0f}, 1.0f);
@@ -2027,7 +2106,198 @@ TEST(AlborRendererBackendChecks, DefersAResizeThatArrivesMidFrame) {
     surface->resize(large);
     const WindowMetrics during = surface->metrics();
     surface->end_frame();
-    // assert
+    // assert the deferred resize reached the target, which the next frame draws into (§6.2)
     EXPECT_EQ(during, small);
     EXPECT_EQ(surface->metrics(), large);
+    const FrameScene scene(large, Color::rgb(0.0f, 0.0f, 1.0f));
+    backend.execute_frame(*surface, scene);
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    ASSERT_EQ(pixels.size(), 8u * 6u * 4u);
+    EXPECT_EQ(pixels[2], 255u);
+}
+
+TEST(AlborRendererBackendChecks, RefusesAStaleSceneRatherThanRepairingIt) {
+    // arrange an offscreen surface at one extent and a scene recorded at another (§6.1, D9.1)
+    AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{32.0f, 24.0f}, 1.0f);
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(surface, nullptr);
+    const FrameScene stale(WindowMetrics::from_logical(Size{64.0f, 48.0f}, 1.0f), Color::rgb(1.0f, 0.0f, 0.0f));
+    // act
+    backend.execute_frame(*surface, stale);
+    // assert the frame was refused rather than repaired, so no frame finished at the stale extent (§6.1, D9.1)
+    EXPECT_TRUE(surface->read_pixels().empty());
+    EXPECT_EQ(surface->metrics(), metrics);
+}
+
+TEST(AlborRendererBackendChecks, PresentsThroughAHiddenWindow) {
+    // arrange a hidden window, which is the handle a composition root hands over (§5.3)
+    WNDCLASSEXW window_class{};
+    window_class.cbSize = sizeof(window_class);
+    window_class.lpfnWndProc = DefWindowProcW;
+    window_class.hInstance = GetModuleHandleW(nullptr);
+    window_class.lpszClassName = L"albor-d3d-present";
+    if (RegisterClassExW(&window_class) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+        GTEST_SKIP() << "no window class";
+    HWND window = CreateWindowExW(0, window_class.lpszClassName, L"albor", WS_POPUP, 0, 0, 16, 16, nullptr, nullptr, window_class.hInstance, nullptr);
+    if (window == nullptr)
+        GTEST_SKIP() << "no hidden window";
+    AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{16.0f, 16.0f}, 1.0f);
+    std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle::from_object(reinterpret_cast<const void*>(window)), metrics);
+    // assert a host without a compositor is skipped, because it has no windowed path to present (§5.3)
+    if (surface == nullptr) {
+        DestroyWindow(window);
+        GTEST_SKIP() << "no composited window surface on this host";
+    }
+    ASSERT_TRUE(surface->valid());
+    // act a frame that copies the target into the swapchain and presents it (§6.3)
+    const FrameScene scene(metrics, Color::rgb(0.0f, 1.0f, 0.0f));
+    backend.execute_frame(*surface, scene);
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    // assert the frame the window presented is the frame the target holds (§6.3)
+    ASSERT_EQ(pixels.size(), 16u * 16u * 4u);
+    EXPECT_EQ(pixels[0], 0u);
+    EXPECT_EQ(pixels[1], 255u);
+    EXPECT_EQ(pixels[2], 0u);
+    EXPECT_EQ(pixels[3], 255u);
+    // act an empty frame, which presents its transparent clear rather than skipping the copy (§6.1)
+    surface->begin_frame();
+    surface->end_frame();
+    const std::vector<std::uint8_t> empty = surface->read_pixels();
+    // assert the copy ran for a frame with no draw at all (§6.1)
+    ASSERT_EQ(empty.size(), 16u * 16u * 4u);
+    EXPECT_EQ(empty[3], 0u);
+    // the surface is released before the window it presents into, which the last statements order (§5.3)
+    surface.reset();
+    DestroyWindow(window);
+}
+
+TEST(AlborRendererBackendChecks, ASurfaceKeepsItsWindowWhenAnotherBindsIt) {
+    // arrange a hidden window, which two surfaces bind in turn (§5.3)
+    WNDCLASSEXW window_class{};
+    window_class.cbSize = sizeof(window_class);
+    window_class.lpfnWndProc = DefWindowProcW;
+    window_class.hInstance = GetModuleHandleW(nullptr);
+    window_class.lpszClassName = L"albor-d3d-shared";
+    if (RegisterClassExW(&window_class) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+        GTEST_SKIP() << "no window class";
+    HWND window = CreateWindowExW(0, window_class.lpszClassName, L"albor", WS_POPUP, 0, 0, 8, 8, nullptr, nullptr, window_class.hInstance, nullptr);
+    if (window == nullptr)
+        GTEST_SKIP() << "no hidden window";
+    AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{8.0f, 8.0f}, 1.0f);
+    const NativeWindowHandle handle = NativeWindowHandle::from_object(reinterpret_cast<const void*>(window));
+    std::unique_ptr<RenderSurface> first = backend.create_surface(handle, metrics);
+    if (first == nullptr) {
+        DestroyWindow(window);
+        GTEST_SKIP() << "no composited window surface on this host";
+    }
+    ASSERT_TRUE(first->valid());
+    // act a second surface on the same window, which re-roots the visual tree (§5.3)
+    std::unique_ptr<RenderSurface> second = backend.create_surface(handle, metrics);
+    ASSERT_NE(second, nullptr);
+    ASSERT_TRUE(second->valid());
+    // assert the first surface still draws and reads back while the second owns the window (§5.3)
+    const FrameScene red(metrics, Color::rgb(1.0f, 0.0f, 0.0f));
+    backend.execute_frame(*first, red);
+    const std::vector<std::uint8_t> pixels = first->read_pixels();
+    ASSERT_EQ(pixels.size(), 8u * 8u * 4u);
+    EXPECT_EQ(pixels[0], 255u);
+    EXPECT_EQ(pixels[2], 0u);
+    // act the second surface leaving, which re-roots the window on the first (§5.3)
+    second.reset();
+    EXPECT_TRUE(first->valid());
+    backend.execute_frame(*first, red);
+    EXPECT_FALSE(first->read_pixels().empty());
+    // act both leaving and a third surface taking the same handle, which a stale target would poison (§6.2)
+    first.reset();
+    std::unique_ptr<RenderSurface> third = backend.create_surface(handle, metrics);
+    ASSERT_NE(third, nullptr);
+    ASSERT_TRUE(third->valid());
+    backend.execute_frame(*third, red);
+    EXPECT_EQ(third->read_pixels().size(), 8u * 8u * 4u);
+    third.reset();
+    DestroyWindow(window);
+}
+
+TEST(AlborRendererBackendChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) {
+    // arrange a hidden window, which presents a real stream without showing anything (§5.3)
+    WNDCLASSEXW window_class{};
+    window_class.cbSize = sizeof(window_class);
+    window_class.lpfnWndProc = DefWindowProcW;
+    window_class.hInstance = GetModuleHandleW(nullptr);
+    window_class.lpszClassName = L"albor-d3d-stream";
+    if (RegisterClassExW(&window_class) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+        GTEST_SKIP() << "no window class";
+    HWND window = CreateWindowExW(0, window_class.lpszClassName, L"albor", WS_POPUP, 0, 0, 800, 600, nullptr, nullptr, window_class.hInstance, nullptr);
+    if (window == nullptr)
+        GTEST_SKIP() << "no hidden window";
+    AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 2.0f);
+    std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle::from_object(reinterpret_cast<const void*>(window)), metrics);
+    // assert a host without a compositor is skipped, because it presents nothing to measure (§6.2)
+    if (surface == nullptr) {
+        DestroyWindow(window);
+        GTEST_SKIP() << "no composited window surface on this host";
+    }
+    ASSERT_TRUE(surface->valid());
+    // arrange a scene with one layer and one image, so every frame allocates an offscreen target and uploads (§6.2)
+    FrameScene built(metrics, Color::rgb(0.06f, 0.07f, 0.09f));
+    built.add_command(DrawCommand::layer_push(0.5f));
+    const std::vector<std::uint8_t> source{200u, 120u, 60u, 255u};
+    const std::shared_ptr<const ImageResource> image = std::make_shared<const ImageResource>(77u, 1u, 1u, ImageFormat::RGBA8, source);
+    DrawCommand upload = DrawCommand::image(image, Rect::from_origin_size(Point{100.0f, 100.0f}, Size{64.0f, 64.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    upload.set_clip(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size));
+    built.add_command(std::move(upload));
+    built.add_command(DrawCommand::layer_pop());
+    const std::shared_ptr<const FrameScene> scene = std::make_shared<const FrameScene>(std::move(built));
+    RenderExecutor executor(&backend);
+    // act a warmup, so the measurement pays neither the target allocation nor the first swapchain buffers (§2.2)
+    for (int frame = 0; frame < 20; frame++) {
+        ASSERT_TRUE(executor.submit(*surface, scene));
+        executor.flush();
+    }
+    // arrange the private commit the stream settles at, which is the baseline the bound is judged against (§2.2)
+    PROCESS_MEMORY_COUNTERS_EX before{};
+    before.cb = sizeof(before);
+    ASSERT_NE(GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&before), sizeof(before)), 0);
+    // act the stream itself, which is a window that keeps presenting one unchanged scene (§6.1)
+    for (int frame = 0; frame < 120; frame++) {
+        ASSERT_TRUE(executor.submit(*surface, scene));
+        executor.flush();
+    }
+    // arrange the private commit the stream left behind, which one leaked target per frame lifts by a gigabyte (§2.2)
+    PROCESS_MEMORY_COUNTERS_EX after{};
+    after.cb = sizeof(after);
+    ASSERT_NE(GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&after), sizeof(after)), 0);
+    // assert every frame ran, because a stream that dropped them would hold the bound by drawing nothing (§6.1)
+    EXPECT_EQ(executor.executed_count(), 140u);
+    // assert a per frame leak cannot hide here, because 120 targets of this extent are gigabytes (§6.3)
+    const std::int64_t growth = static_cast<std::int64_t>(after.PrivateUsage) - static_cast<std::int64_t>(before.PrivateUsage);
+    EXPECT_LT(growth, 8 * 1024 * 1024);
+    // act a resize after the stream, which only succeeds once no back buffer reference is outstanding (§6.3)
+    backend.resize_surface(*surface, WindowMetrics::from_logical(Size{640.0f, 480.0f}, 2.0f));
+    // assert the buffers moved, because an outstanding GetBuffer reference makes ResizeBuffers fail (§6.3)
+    EXPECT_TRUE(surface->valid());
+    EXPECT_EQ(surface->metrics(), WindowMetrics::from_logical(Size{640.0f, 480.0f}, 2.0f));
+    surface.reset();
+    DestroyWindow(window);
+}
+
+TEST(AlborRendererBackendChecks, ReadsTheSameFinishedFrameTwice) {
+    // arrange a frame whose read back allocates a staging texture on every call (Â§6.3)
+    AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{4.0f, 4.0f}, 1.0f);
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(surface, nullptr);
+    backend.execute_frame(*surface, FrameScene(metrics, Color::rgb(1.0f, 0.0f, 0.0f)));
+    // act
+    const std::vector<std::uint8_t> first = surface->read_pixels();
+    const std::vector<std::uint8_t> second = surface->read_pixels();
+    // assert the second read sees the same finished frame, which a consumed frame or a reused mapping would not
+    ASSERT_EQ(first.size(), 4u * 4u * 4u);
+    ASSERT_EQ(second.size(), first.size());
+    EXPECT_EQ(first, second);
+    EXPECT_EQ(second[0], 255u);
 }

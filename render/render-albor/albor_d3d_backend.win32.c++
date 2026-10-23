@@ -10,8 +10,10 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -36,6 +38,7 @@ namespace albor::render
     namespace
     {
 // the sdk's exchange macros and uuid expansion carry the extension tokens clang flags on every use (§5.3)
+#pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wlanguage-extension-token"
 
         // com pointers release their interface on every exit, so no early return leaves a device behind (§6.3)
@@ -288,6 +291,9 @@ namespace albor::render
 
             // whether the build was already tried, so a failed host never retries it (§6.3)
             bool attempted = false;
+
+            // whether the driver removed the device mid session, which no later call can draw through (§6.3)
+            std::atomic<bool> lost{false};
         };
 
         // the process wide device state, which the first surface builds and every later one reuses (§6.3)
@@ -311,14 +317,22 @@ namespace albor::render
             return mutex;
         }
 
-        // one composition target per window and the surfaces that share it, which the compositor allows one of (§5.3)
+        // record a driver loss, which every surface reads as invalid rather than presenting a frozen frame (§6.3)
+        void note_device_result(HRESULT result) {
+            // only a removed or reset device ends the session, which every other failure leaves recoverable (§6.3)
+            if (result != DXGI_ERROR_DEVICE_REMOVED && result != DXGI_ERROR_DEVICE_RESET)
+                return;
+            device_state().lost.store(true);
+        }
+
+        // one composition target per window and the visuals its surfaces bound (§5.3)
         struct WindowTarget
         {
             // the target the compositor bound to the window
             ComPtr<IDCompositionTarget> target;
 
-            // how many surfaces hold the target, which the last one releases
-            std::size_t users = 0;
+            // the visuals in attach order, whose last one the window shows
+            std::vector<IDCompositionVisual*> visuals;
         };
 
         // the targets this process bound, which a second surface for the same window reuses (§5.3)
@@ -525,8 +539,8 @@ namespace albor::render
             // bind a target and cover it with its viewport, clearing it when the pass begins a surface (§6.2)
             void bind_target(const RenderTarget& target, bool clear);
 
-            // copy the finished frame into the swapchain and present it (§6.3)
-            void present();
+            // copy the finished frame into the swapchain, which the caller presents outside the process lock (§6.3)
+            bool copy_to_back_buffer();
 
             // the borrowed window the composition target binds, which the surface never owns (§5.3)
             HWND m_window = nullptr;
@@ -616,12 +630,20 @@ namespace albor::render
 
         // bind the swapchain to the window through the shared composition device, reusing a target it holds (§5.3)
         bool attach_composition(HWND window, IDXGISwapChain1* swap_chain, ComPtr<IDCompositionTarget>& target_out, ComPtr<IDCompositionVisual>& visual_out) {
-            // the composition device is the one the build supplied, whose targets are created per window on it (§5.3)
+            // the composition device is the one the shared device answers on, whose targets are created per window (§5.3)
             DeviceState& state = device_state();
-            if (state.composition == nullptr || swap_chain == nullptr)
+            if (swap_chain == nullptr)
                 return false;
             // the composition device is process wide, so the whole attach runs inside the presentation lock (§6.3)
             const std::lock_guard<std::mutex> lock(process_present_mutex());
+            // the device is created on the first windowed attach, so an offscreen host never needs a compositor (§5.3)
+            if (state.composition == nullptr) {
+                ComPtr<IDXGIDevice> dxgi_device;
+                if (state.device == nullptr || state.device->QueryInterface(IID_PPV_ARGS(dxgi_device.GetAddressOf())) != S_OK)
+                    return false;
+                if (DCompositionCreateDevice(dxgi_device.Get(), IID_PPV_ARGS(state.composition.GetAddressOf())) != S_OK)
+                    return false;
+            }
             auto& targets = window_targets();
             const auto found = targets.find(window);
             ComPtr<IDCompositionTarget> target;
@@ -642,20 +664,20 @@ namespace albor::render
             // the visual becomes the root of the window's tree, which the last surface bound to it owns (§5.3)
             if (target->SetRoot(visual.Get()) != S_OK || state.composition->Commit() != S_OK)
                 return false;
-            // the window now holds the target under the count its surfaces share (§5.3)
+            // the window holds the target for every visual its surfaces bound, in the order they attached (§5.3)
             if (found != targets.end()) {
-                found->second.users++;
+                found->second.visuals.push_back(visual.Get());
             }
             else {
-                targets.emplace(window, WindowTarget{.target = target, .users = 1});
+                targets.emplace(window, WindowTarget{.target = target, .visuals = {visual.Get()}});
             }
             target_out = target;
             visual_out = std::move(visual);
             return true;
         }
 
-        // drop the target a surface held, which the last surface for the window destroys (§5.3)
-        void detach_composition(HWND window) {
+        // drop the visual a surface held, which re-roots the window on the newest one still alive (§5.3)
+        void detach_composition(HWND window, IDCompositionVisual* visual) {
             // a surface with no window bound no target, so nothing is released (§5.3)
             if (window == nullptr)
                 return;
@@ -665,9 +687,18 @@ namespace albor::render
             const auto found = targets.find(window);
             if (found == targets.end())
                 return;
-            // the last surface releases the target, which leaves no entry for a reused window handle (§6.2)
-            if (--found->second.users == 0)
-                targets.erase(found);
+            // the surface that goes away is no longer a candidate root, which the next newest replaces (§5.3)
+            std::vector<IDCompositionVisual*>& visuals = found->second.visuals;
+            visuals.erase(std::remove(visuals.begin(), visuals.end(), visual), visuals.end());
+            if (!visuals.empty()) {
+                (void)found->second.target->SetRoot(visuals.back());
+                (void)device_state().composition->Commit();
+                return;
+            }
+            // the last visual blanks the tree before the target is released, so no window keeps a dead frame (§5.3)
+            (void)found->second.target->SetRoot(nullptr);
+            (void)device_state().composition->Commit();
+            targets.erase(found);
         }
 
         // a windowed surface attaches the tree once the target allocated, so the first frame presents (§5.3, AD-16)
@@ -689,14 +720,14 @@ namespace albor::render
         }
 
         AlborRenderSurface::~AlborRenderSurface() {
-            // only a surface whose tree took the window holds a count, which the attach recorded (§5.3)
+            // only a surface whose tree took the window holds a visual, which the attach recorded (§5.3)
             if (m_composition_target != nullptr)
-                detach_composition(m_window);
+                detach_composition(m_window, m_composition_visual.Get());
         }
 
         bool AlborRenderSurface::valid() const {
             // the device and the colour target are both required before a frame can draw (§6.2)
-            if (m_target == nullptr || m_target_view == nullptr || !device_state().built)
+            if (m_target == nullptr || m_target_view == nullptr || !device_state().built || device_state().lost.load())
                 return false;
             // a windowed surface is valid only when the composition tree took it (§6.2)
             if (m_window != nullptr && (m_swap_chain == nullptr || m_composition_target == nullptr || m_composition_visual == nullptr))
@@ -763,14 +794,34 @@ namespace albor::render
                 m_resize_pending = true;
                 return;
             }
-            // the extent is replaced on the thread that owns the surface (§5.3, D9.1)
+            // the previous target is kept aside, so a refused resize leaves the surface on the extent it presented (§6.3)
+            ComPtr<ID3D11Texture2D> previous_target = m_target;
+            ComPtr<ID3D11RenderTargetView> previous_view = m_target_view;
+            const WindowMetrics previous_metrics = m_metrics;
+            const std::size_t previous_finished = m_finished;
+            // the target is reallocated first, because a refused allocation leaves the swapchain untouched (§6.2)
             m_metrics = metrics;
             allocate();
-            // a windowed surface resizes its buffers alongside the target, which keeps the compositor in step (§6.3)
-            if (m_window != nullptr && m_swap_chain != nullptr) {
+            if (m_target != nullptr && m_window != nullptr && m_swap_chain != nullptr) {
+                // a windowed surface resizes its buffers alongside the target, which keeps the compositor in step (§6.3)
                 const std::lock_guard<std::mutex> lock(process_present_mutex());
-                (void)m_swap_chain->ResizeBuffers(0, std::max<UINT>(1u, static_cast<UINT>(metrics.pixel_size.width)), std::max<UINT>(1u, static_cast<UINT>(metrics.pixel_size.height)), DXGI_FORMAT_UNKNOWN, 0);
+                const HRESULT resized = m_swap_chain->ResizeBuffers(0, std::max<UINT>(1u, static_cast<UINT>(metrics.pixel_size.width)), std::max<UINT>(1u, static_cast<UINT>(metrics.pixel_size.height)), DXGI_FORMAT_UNKNOWN, 0);
+                if (FAILED(resized)) {
+                    // a lost device cannot present the new extent, which the surface reports rather than hides (§6.3)
+                    note_device_result(resized);
+                }
+                else {
+                    return;
+                }
             }
+            else if (m_target != nullptr) {
+                return;
+            }
+            // the new extent did not take, so the extent the window already showed is restored whole (§6.3)
+            m_metrics = previous_metrics;
+            m_target = std::move(previous_target);
+            m_target_view = std::move(previous_view);
+            m_finished = previous_finished;
         }
 
         RenderContext& AlborRenderSurface::begin_frame() {
@@ -798,15 +849,21 @@ namespace albor::render
             // an end without a begun frame is a no operation rather than an error (§6.1)
             if (!m_begun)
                 return;
-            // the encode and the present record on the process wide context, so one lock covers both (§6.3, §10.2)
+            bool copied = false;
+            // the encode and the copy record on the process wide context, so one lock covers both (§6.3, §10.2)
             {
                 const std::lock_guard<std::mutex> lock(process_present_mutex());
                 // the images the frame carries become textures once, which a later frame reuses (AD-06)
                 upload_textures();
                 // the encode replays every recorded draw, which the clear begins (§6.3)
                 encode();
-                // a windowed frame copies the target onto its back buffer, which presents it (§6.3)
-                present();
+                // a windowed frame copies the target onto its back buffer, which the present then shows (§6.3)
+                copied = copy_to_back_buffer();
+            }
+            // the wait for the display runs outside the process lock, so one window's refresh never stalls another (§6.3)
+            if (copied) {
+                const HRESULT presented = m_swap_chain->Present(1, 0);
+                note_device_result(presented);
             }
             // the frame is no longer in flight, so a read back accepts one (§6.1)
             m_begun = false;
@@ -819,16 +876,20 @@ namespace albor::render
             }
         }
 
-        void AlborRenderSurface::present() {
+        bool AlborRenderSurface::copy_to_back_buffer() {
             // an offscreen surface presents nothing, because its target is what a renderer reads back (§6.2)
             if (m_window == nullptr || m_swap_chain == nullptr)
-                return;
+                return false;
             // the caller holds the present mutex, so the back buffer reference is released inside it (§6.3)
             ComPtr<ID3D11Texture2D> back_buffer;
-            if (m_swap_chain->GetBuffer(0, IID_PPV_ARGS(back_buffer.GetAddressOf())) != S_OK)
-                return;
+            const HRESULT acquired = m_swap_chain->GetBuffer(0, IID_PPV_ARGS(back_buffer.GetAddressOf()));
+            if (FAILED(acquired)) {
+                note_device_result(acquired);
+                return false;
+            }
+            // the copy is issued on the immediate context, which a lost device reports on the present (§6.3)
             device_state().context->CopyResource(back_buffer.Get(), m_target.Get());
-            (void)m_swap_chain->Present(1, 0);
+            return true;
         }
 
         std::vector<std::uint8_t> AlborRenderSurface::read_pixels() const {
@@ -1287,6 +1348,10 @@ namespace albor::render
             }
             // the frame closes on the frame target, which the present copies (§6.3)
             bind_target(frame, false);
+            // the frame leaves no surface texture bound, so a popped layer does not outlive the pass that made it (§6.3)
+            ID3D11ShaderResourceView* no_textures[2] = {nullptr, nullptr};
+            context->PSSetShaderResources(0, 2, no_textures);
+            context->VSSetShaderResources(0, 1, no_textures);
         }
 
         // build the device, its compiled stages and the pipeline table once, which every surface shares (§6.3)
@@ -1311,13 +1376,13 @@ namespace albor::render
                 return false;
             if (adapter->GetParent(IID_PPV_ARGS(state.factory.GetAddressOf())) != S_OK)
                 return false;
-            // the composition device is the one the shared device answers on, whose targets are per window (§5.3)
-            if (DCompositionCreateDevice(dxgi_device.Get(), IID_PPV_ARGS(state.composition.GetAddressOf())) != S_OK)
-                return false;
             // the committed container carries every stage, which a corrupt artifact answers as empty (§6.3)
             const ShaderData shaders = parse_shader_data(d3d_shader_data());
-            if (shaders.vertex.empty() || shaders.fragment.empty() || shaders.fragment_exact.empty() || shaders.shadow_vertex.empty() || shaders.shadow_shape.empty() || shaders.shadow_blur.empty())
+            if (shaders.vertex.empty() || shaders.fragment.empty() || shaders.fragment_exact.empty() || shaders.shadow_vertex.empty() || shaders.shadow_shape.empty() || shaders.shadow_blur.empty()) {
+                // the reason is named, so a missing or corrupt artifact is not reported as a missing adapter (§6.3)
+                std::fprintf(stderr, "albor-render-albor: the direct3d shader container could not be used\n");
                 return false;
+            }
             // the compiled stages join the device, which every pipeline binds (§6.3)
             if (state.device->CreateVertexShader(shaders.vertex.data(), shaders.vertex.size(), nullptr, state.vertex_shader.GetAddressOf()) != S_OK)
                 return false;
@@ -1400,14 +1465,14 @@ namespace albor::render
             const bool composed = std::all_of(state.blend_states.begin(), state.blend_states.end(), [](const ComPtr<ID3D11BlendState>& blend) { return blend != nullptr; });
             // the exact states are required, because the three modes would otherwise silently fall back (§6.2)
             const bool exact = state.exact_blend_states[static_cast<std::size_t>(CompositionMode::SourceIn)] != nullptr && state.exact_blend_states[static_cast<std::size_t>(CompositionMode::Copy)] != nullptr && state.exact_blend_states[static_cast<std::size_t>(CompositionMode::DestinationAtop)] != nullptr;
-            state.built = state.device != nullptr && state.context != nullptr && state.factory != nullptr && state.composition != nullptr && state.vertex_shader != nullptr && state.fragment_shader != nullptr && state.fragment_exact != nullptr && state.shadow_vertex != nullptr && state.shadow_shape != nullptr && state.shadow_blur != nullptr && composed && exact && state.shadow_blend != nullptr && state.rasterizer != nullptr && state.white != nullptr && state.white_view != nullptr && state.sampler != nullptr && state.draw_uniforms != nullptr && state.shadow_uniforms != nullptr;
+            state.built = state.device != nullptr && state.context != nullptr && state.factory != nullptr && state.vertex_shader != nullptr && state.fragment_shader != nullptr && state.fragment_exact != nullptr && state.shadow_vertex != nullptr && state.shadow_shape != nullptr && state.shadow_blur != nullptr && composed && exact && state.shadow_blend != nullptr && state.rasterizer != nullptr && state.white != nullptr && state.white_view != nullptr && state.sampler != nullptr && state.draw_uniforms != nullptr && state.shadow_uniforms != nullptr;
             return state.built;
         }
     } // namespace
 
     bool backend_device_available() {
-        // readiness is whether the direct3d device and its pipelines all came up (§6.2)
-        return ensure_device_state();
+        // readiness is the device and its pipelines, which the driver has not removed since (§6.2)
+        return ensure_device_state() && !device_state().lost.load();
     }
 
     std::unique_ptr<RenderSurface> backend_create_surface(NativeWindowHandle handle, const WindowMetrics& metrics) {
@@ -1420,4 +1485,6 @@ namespace albor::render
             return nullptr;
         return surface;
     }
+// the suppression above covers the sdk's macros only, so the rest of the unit keeps the diagnostic (§5.3)
+#pragma clang diagnostic pop
 } // namespace albor::render
