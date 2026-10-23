@@ -14,8 +14,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # a push to a branch that already has an open pull request would run the same
-  # build twice (once for the push, once for the pull_request event)
   check-pr:
     if: github.event_name == 'push' && github.ref != 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -166,9 +164,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-${{ runner.os }}-${{ matrix.preset }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
           restore-keys: |
-            vcpkg-${{ runner.os }}-${{ matrix.preset }}-
+            vcpkg-${{ runner.os }}-
 
       - name: restore the ccache directory
         if: matrix.enable
@@ -218,15 +216,12 @@ jobs:
           language: C++
           label: code-coverage/c++
 
-      # the caches are saved by their own steps at the end, because the all in one cache action only
-      # saves when the job succeeded, and a job that failed at the tests is exactly the one whose next
-      # rerun must not rebuild every port from scratch for an hour (§5.3)
       - name: save the vcpkg binary cache
         if: matrix.enable && !cancelled()
         uses: actions/cache/save@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-${{ runner.os }}-${{ matrix.preset }}-macos13.3-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
 
       - name: save the ccache directory
         if: matrix.enable && !cancelled()
