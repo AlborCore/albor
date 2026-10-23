@@ -1915,7 +1915,7 @@ namespace albor::compiler
         // the enums are walked in declaration order, which is the order a member may be read (§11.1)
         for (const EnumDeclaration& declaration : file.enums) {
             // the set starts with its name, marked as file declared so it resolves as a property type (§11.1)
-            NamedValueSet set{.name = declaration.name, .kind = TypeKind::Error, .user = true};
+            NamedValueSet set{.name = declaration.name, .kind = TypeKind::Error, .user = true, .cpp_name = declaration.name, .members = {}};
             // each member is walked, because a member read resolves by written name against the declaration (§11.1)
             for (const std::string& member : declaration.members) {
                 // a file declared enum spells its member the same in ui and in C++, so both forms match (§11.1, §11.3)

@@ -53,7 +53,20 @@ endif()
 
 # the direct3d backend only exists where direct3d, dxgi and direct composition do, which is the windows half (AD-16)
 if(WIN32)
-    target_sources(albor-render-albor PRIVATE ${WIN32_SOURCES})
+    # the compiled artifact is a build input too, so a consumer build needs no shader toolchain (§6.3, AD-16)
+    set(D3D_ARTIFACT "${CMAKE_CURRENT_SOURCE_DIR}/albor_shaders.dxbc")
+    # the generated source lives beside the metal one, which the same rules cover (§14.2)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    set(D3D_EMBEDDED "${CMAKE_CURRENT_BINARY_DIR}/generated/albor_shaders_d3d.cpp")
+    # every build proves the artifact came from the shader it ships with, which the stamp records (§14.2)
+    add_custom_command(
+        OUTPUT "${D3D_EMBEDDED}"
+        COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/albor_shaders.hlsl -DARTIFACT=${D3D_ARTIFACT} -DSTAMP=${CMAKE_CURRENT_SOURCE_DIR}/albor_shaders.hlsl.sha256 "-DREGENERATE=--d3d --write" -P "${CMAKE_CURRENT_SOURCE_DIR}/verify-shader-stamp.cmake"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${D3D_ARTIFACT} -DOUTPUT=${D3D_EMBEDDED} -P "${CMAKE_CURRENT_SOURCE_DIR}/embed-d3dshader.cmake"
+        DEPENDS "${D3D_ARTIFACT}" "${CMAKE_CURRENT_SOURCE_DIR}/albor_shaders.hlsl" "${CMAKE_CURRENT_SOURCE_DIR}/albor_shaders.hlsl.sha256" "${CMAKE_CURRENT_SOURCE_DIR}/embed-d3dshader.cmake" "${CMAKE_CURRENT_SOURCE_DIR}/verify-shader-stamp.cmake"
+        COMMENT "embedding the committed albor_shaders.dxbc"
+        VERBATIM)
+    target_sources(albor-render-albor PRIVATE ${WIN32_SOURCES} "${D3D_EMBEDDED}")
     target_link_libraries(albor-render-albor PRIVATE d3d11 dxgi dcomp)
 endif()
 

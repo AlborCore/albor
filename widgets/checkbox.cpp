@@ -258,7 +258,7 @@ namespace albor
         invalidate();
         // a bound command is invoked with the new truth, which is what an action that carries a value receives (§18.3)
         if (command() != nullptr) {
-            (void)command()->invoke(CommandInvocation{.command = command()->id(), .argument = m_checked, .source = InvocationSource::Pointer});
+            (void)command()->invoke(CommandInvocation{.command = command()->id(), .argument = m_checked, .selection = {}, .source = InvocationSource::Pointer});
             return;
         }
         // a box with no handler still toggles, because the state is the control (§8.3)

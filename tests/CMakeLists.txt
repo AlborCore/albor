@@ -124,6 +124,9 @@ if(WIN32)
     target_link_libraries(albor-tests PRIVATE albor-platform-windows)
     # the platform font suite drives the vendored engine's directwrite halves, which are native win32 surfaces (§9.1, AD-28)
     target_sources(albor-tests PRIVATE "./conditional/text_platform_font.test.win32.c++")
+    # the backend suite drives the direct3d device directly, which is the one module the portable suites never reach
+    # (AD-16). the binary already names the backend, so the suite adds no second link of it (§3.2)
+    target_sources(albor-tests PRIVATE "./conditional/render_albor_d3d.test.win32.c++")
 endif()
 
 
@@ -150,7 +153,8 @@ endif()
 
 # the test binary is executed directly rather than through ctest, so it never needs a display (§2.2)
 include(GoogleTest)
-gtest_discover_tests(albor-tests DISCOVERY_TIMEOUT 60)
+# a test that presents into a window is bounded, so a compositor that stops draining fails the run instead of hanging it (§6.3)
+gtest_discover_tests(albor-tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 900)
 
 # the generated font checks link a unit the embedding tool produced, which proves registration before main (§11.3, AD-34)
 #
@@ -204,17 +208,19 @@ endif()
 
 # the albor load time install checks need the whole archive link, which the main test binary cannot take (§6.3, AD-26)
 #
-# the backend is the metal one, which only exists where metal does, so the checks join under apple (AD-16). the
-# main binary links albor-render-albor lazily, so the load time installer stays out of it and the suites above
+# the main binary links albor-render-albor lazily, so the load time installer stays out of it and the suites above
 # control the factory hook themselves. this second binary links the archive whole, which runs the installer at
-# load, and asserts the marker the in-repo backend carries (§6.3)
-if(APPLE)
+# load, and asserts the marker the in-repo backend carries (§6.3). a backend exists on apple and windows, so the
+# check joins under both (AD-16)
+if(APPLE OR WIN32)
     add_executable(albor-render-albor-auto-checks "./conditional/albor_auto.test.cpp")
     target_include_directories(albor-render-albor-auto-checks PRIVATE ${ALBOR_SOURCE_DIR})
     target_compile_features(albor-render-albor-auto-checks PRIVATE cxx_std_23)
     target_link_libraries(albor-render-albor-auto-checks PRIVATE GTest::gtest_main albor-render-albor-auto)
     gtest_discover_tests(albor-render-albor-auto-checks DISCOVERY_TIMEOUT 60)
+endif()
 
+if(APPLE)
     # the backend suite drives the metal device directly, which is the one module the portable suites never reach
     target_sources(albor-tests PRIVATE "./conditional/render_albor_metal.test.macos.mm")
     set_source_files_properties("./conditional/render_albor_metal.test.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
