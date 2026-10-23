@@ -139,7 +139,8 @@ endif()
 
 # the test binary is executed directly rather than through ctest, so it never needs a display (§2.2)
 include(GoogleTest)
-gtest_discover_tests(albor-tests DISCOVERY_TIMEOUT 60)
+# a test that presents into a window is bounded, so a compositor that stops draining fails the run instead of hanging it (§6.3)
+gtest_discover_tests(albor-tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 900)
 
 # the blend2d load time install checks need the whole archive link, which the main test binary cannot take (§6.3, AD-26)
 #

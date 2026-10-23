@@ -24,7 +24,7 @@
 #include "render/frame_scene.h"
 #include "render/image_resource.h"
 #include "render/picture_resource.h"
-#include "render/render-albor/albor_d3d_diagnostics.win32.h"
+#include "render/render-albor/albor_d3d_diagnostics.h"
 #include "render/render-albor/albor_glyph_path.h"
 #include "render/render-albor/albor_render_context.h"
 #include "render/render-albor/albor_renderer_backend.h"
@@ -2133,8 +2133,8 @@ TEST(AlborRendererBackendChecks, RefusesAStaleSceneRatherThanRepairingIt) {
     EXPECT_EQ(surface->metrics(), metrics);
 }
 
-TEST(AlborRendererBackendChecks, PresentsThroughAHiddenWindow) {
-    // arrange a hidden window, which is the handle a composition root hands over (§5.3)
+TEST(AlborRendererBackendChecks, PresentsThroughAnOffScreenWindow) {
+    // arrange an off screen window, which is the handle a composition root hands over (§5.3)
     struct HiddenWindow
     {
         HWND window = nullptr;
@@ -2146,8 +2146,12 @@ TEST(AlborRendererBackendChecks, PresentsThroughAHiddenWindow) {
             window_class.lpfnWndProc = DefWindowProcW;
             window_class.hInstance = GetModuleHandleW(nullptr);
             window_class.lpszClassName = name;
-            if (RegisterClassExW(&window_class) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS)
-                window = CreateWindowExW(0, name, L"albor", WS_POPUP, 0, 0, 64, 64, nullptr, nullptr, window_class.hInstance, nullptr);
+            // the window is shown off screen, because a window the desktop composes keeps draining the swapchain (§6.3)
+            if (RegisterClassExW(&window_class) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS) {
+                window = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, name, L"albor", WS_POPUP, -30000, -30000, 64, 64, nullptr, nullptr, window_class.hInstance, nullptr);
+                if (window != nullptr)
+                    ShowWindow(window, SW_SHOWNOACTIVATE);
+            }
         }
 
         ~HiddenWindow() {
@@ -2158,7 +2162,7 @@ TEST(AlborRendererBackendChecks, PresentsThroughAHiddenWindow) {
     };
     HiddenWindow host(L"albor-d3d-present");
     if (host.window == nullptr)
-        GTEST_SKIP() << "no hidden window";
+        GTEST_SKIP() << "no window";
     AlborRendererBackend backend;
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{16.0f, 16.0f}, 1.0f);
     std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle::from_object(reinterpret_cast<const void*>(host.window)), metrics);
@@ -2173,7 +2177,7 @@ TEST(AlborRendererBackendChecks, PresentsThroughAHiddenWindow) {
     // assert the frame reached the swapchain as exactly one submit, which a skipped copy or submit would not (§6.3)
     EXPECT_EQ(d3d_presented_frames(), before + 1);
     const std::vector<std::uint8_t> pixels = surface->read_pixels();
-    // assert the frame drew at the window's extent while the present path ran, which a refused surface never reaches (§6.3)
+    // assert the frame drew at the window's extent, which a refused surface never reaches (§6.3)
     ASSERT_EQ(pixels.size(), 16u * 16u * 4u);
     EXPECT_EQ(pixels[0], 0u);
     EXPECT_EQ(pixels[1], 255u);
@@ -2201,7 +2205,7 @@ TEST(AlborRendererBackendChecks, PresentsThroughAHiddenWindow) {
 }
 
 TEST(AlborRendererBackendChecks, ASurfaceKeepsItsWindowWhenAnotherBindsIt) {
-    // arrange a hidden window, which two surfaces bind in turn (§5.3)
+    // arrange an off screen window, which two surfaces bind in turn (§5.3)
     struct HiddenWindow
     {
         HWND window = nullptr;
@@ -2213,8 +2217,12 @@ TEST(AlborRendererBackendChecks, ASurfaceKeepsItsWindowWhenAnotherBindsIt) {
             window_class.lpfnWndProc = DefWindowProcW;
             window_class.hInstance = GetModuleHandleW(nullptr);
             window_class.lpszClassName = name;
-            if (RegisterClassExW(&window_class) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS)
-                window = CreateWindowExW(0, name, L"albor", WS_POPUP, 0, 0, 64, 64, nullptr, nullptr, window_class.hInstance, nullptr);
+            // the window is shown off screen, because a window the desktop composes keeps draining the swapchain (§6.3)
+            if (RegisterClassExW(&window_class) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS) {
+                window = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, name, L"albor", WS_POPUP, -30000, -30000, 64, 64, nullptr, nullptr, window_class.hInstance, nullptr);
+                if (window != nullptr)
+                    ShowWindow(window, SW_SHOWNOACTIVATE);
+            }
         }
 
         ~HiddenWindow() {
@@ -2225,7 +2233,7 @@ TEST(AlborRendererBackendChecks, ASurfaceKeepsItsWindowWhenAnotherBindsIt) {
     };
     HiddenWindow host(L"albor-d3d-shared");
     if (host.window == nullptr)
-        GTEST_SKIP() << "no hidden window";
+        GTEST_SKIP() << "no window";
     AlborRendererBackend backend;
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{8.0f, 8.0f}, 1.0f);
     const NativeWindowHandle handle = NativeWindowHandle::from_object(reinterpret_cast<const void*>(host.window));
@@ -2260,7 +2268,7 @@ TEST(AlborRendererBackendChecks, ASurfaceKeepsItsWindowWhenAnotherBindsIt) {
 }
 
 TEST(AlborRendererBackendChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) {
-    // arrange a hidden window, which presents a real stream without showing anything (§5.3)
+    // arrange an off screen window, which presents a real stream without showing it (§5.3)
     struct HiddenWindow
     {
         HWND window = nullptr;
@@ -2272,8 +2280,12 @@ TEST(AlborRendererBackendChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) 
             window_class.lpfnWndProc = DefWindowProcW;
             window_class.hInstance = GetModuleHandleW(nullptr);
             window_class.lpszClassName = name;
-            if (RegisterClassExW(&window_class) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS)
-                window = CreateWindowExW(0, name, L"albor", WS_POPUP, 0, 0, 800, 600, nullptr, nullptr, window_class.hInstance, nullptr);
+            // the window is shown off screen, because a window the desktop composes keeps draining the swapchain (§6.3)
+            if (RegisterClassExW(&window_class) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS) {
+                window = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, name, L"albor", WS_POPUP, -30000, -30000, 800, 600, nullptr, nullptr, window_class.hInstance, nullptr);
+                if (window != nullptr)
+                    ShowWindow(window, SW_SHOWNOACTIVATE);
+            }
         }
 
         ~HiddenWindow() {
@@ -2284,7 +2296,7 @@ TEST(AlborRendererBackendChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) 
     };
     HiddenWindow host(L"albor-d3d-stream");
     if (host.window == nullptr)
-        GTEST_SKIP() << "no hidden window";
+        GTEST_SKIP() << "no window";
     AlborRendererBackend backend;
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 2.0f);
     std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle::from_object(reinterpret_cast<const void*>(host.window)), metrics);
@@ -2327,7 +2339,7 @@ TEST(AlborRendererBackendChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) 
     EXPECT_EQ(executor.executed_count(), 140u);
     // assert every frame reached the window too, which a submit that stopped presenting would fail (§6.3)
     EXPECT_EQ(d3d_presented_frames(), presented + 140u);
-    // assert the growth stays under two frames of this extent, which one retired target clears and a leak does not (§6.3)
+    // assert the growth stays under two frame targets, which tolerates one target the driver retires late (§6.3)
     const std::int64_t frame_bytes = static_cast<std::int64_t>(metrics.pixel_size.width) * static_cast<std::int64_t>(metrics.pixel_size.height) * 4;
     const std::int64_t growth = static_cast<std::int64_t>(after.PrivateUsage) - static_cast<std::int64_t>(before.PrivateUsage);
     EXPECT_LT(growth, 2 * frame_bytes);
@@ -2337,6 +2349,7 @@ TEST(AlborRendererBackendChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) 
     EXPECT_TRUE(surface->valid());
     EXPECT_EQ(surface->metrics(), WindowMetrics::from_logical(Size{640.0f, 480.0f}, 2.0f));
 }
+
 TEST(AlborRendererBackendChecks, ReadsTheSameFinishedFrameTwice) {
     // arrange a frame whose read back allocates a staging texture on every call (§6.3)
     AlborRendererBackend backend;
@@ -2352,4 +2365,58 @@ TEST(AlborRendererBackendChecks, ReadsTheSameFinishedFrameTwice) {
     ASSERT_EQ(second.size(), first.size());
     EXPECT_EQ(first, second);
     EXPECT_EQ(second[0], 255u);
+}
+
+TEST(AlborRendererBackendChecks, AppliesAResizeThatArrivedMidFrame) {
+    // arrange an off screen window and a frame that is in flight (Â§5.3, D9.1)
+    struct HiddenWindow
+    {
+        HWND window = nullptr;
+
+        explicit HiddenWindow(const wchar_t* name) {
+            // the class outlives the test, so a second run in one process accepts the one already registered (Â§5.3)
+            WNDCLASSEXW window_class{};
+            window_class.cbSize = sizeof(window_class);
+            window_class.lpfnWndProc = DefWindowProcW;
+            window_class.hInstance = GetModuleHandleW(nullptr);
+            window_class.lpszClassName = name;
+            // the window is shown off screen, because a window the desktop composes keeps draining the swapchain (Â§6.3)
+            if (RegisterClassExW(&window_class) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS) {
+                window = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, name, L"albor", WS_POPUP, -30000, -30000, 64, 64, nullptr, nullptr, window_class.hInstance, nullptr);
+                if (window != nullptr)
+                    ShowWindow(window, SW_SHOWNOACTIVATE);
+            }
+        }
+
+        ~HiddenWindow() {
+            // the window is released after the surface that presents into it, which the declaration order gives (Â§5.3)
+            if (window != nullptr)
+                DestroyWindow(window);
+        }
+    };
+    HiddenWindow host(L"albor-d3d-deferred");
+    if (host.window == nullptr)
+        GTEST_SKIP() << "no window";
+    AlborRendererBackend backend;
+    const WindowMetrics small = WindowMetrics::from_logical(Size{16.0f, 12.0f}, 1.0f);
+    const WindowMetrics large = WindowMetrics::from_logical(Size{32.0f, 24.0f}, 1.0f);
+    std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle::from_object(reinterpret_cast<const void*>(host.window)), small);
+    if (surface == nullptr)
+        GTEST_SKIP() << "no composited window surface on this host";
+    ASSERT_TRUE(surface->valid());
+    // act a resize that arrives while the frame is in flight, which the surface defers to the end (Â§6.2)
+    surface->begin_frame();
+    backend.resize_surface(*surface, large);
+    // assert the frame kept the extent it began at, because a mid frame resize must not split one frame (Â§6.2)
+    EXPECT_EQ(surface->metrics(), small);
+    surface->end_frame();
+    // assert the deferred extent took, which a back buffer reference held across the resize would refuse (Â§6.3)
+    EXPECT_EQ(surface->metrics(), large);
+    EXPECT_TRUE(surface->valid());
+    // act one frame at the deferred extent, which the swapchain buffers follow (Â§6.3)
+    backend.execute_frame(*surface, FrameScene(large, Color::rgb(0.0f, 0.0f, 1.0f)));
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    // assert the frame drew at the new extent, so the resize reached the buffers and not only the metrics (Â§6.3)
+    ASSERT_EQ(pixels.size(), 32u * 24u * 4u);
+    EXPECT_EQ(pixels[2], 255u);
 }

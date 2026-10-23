@@ -1,5 +1,5 @@
 #include "render/render-albor/albor_backend_support.h"
-#include "render/render-albor/albor_d3d_diagnostics.win32.h"
+#include "render/render-albor/albor_d3d_diagnostics.h"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -38,7 +38,8 @@ namespace albor::render
 {
     namespace
     {
-// the sdk's uuid macro expands at every use in this unit, so the suppression spans it and no other (§5.3)
+// the sdk's uuid macro expands at every use in this unit, so the suppression spans the unit (§5.3)
+#pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wlanguage-extension-token"
 
         // com pointers release their interface on every exit, so no early return leaves a device behind (§6.3)
@@ -286,11 +287,11 @@ namespace albor::render
             // the shadow uniform buffer the offscreen passes write (§6.2)
             ComPtr<ID3D11Buffer> shadow_uniforms;
 
-            // whether the shared state finished building, which every later call reads (§6.3)
-            bool built = false;
+            // whether the shared state finished building, which every later call reads without the device lock (§6.3)
+            std::atomic<bool> built{false};
 
             // whether the build was already tried, so a failed host never retries it (§6.3)
-            bool attempted = false;
+            std::atomic<bool> attempted{false};
 
             // whether the driver removed the device mid session, which no later call can draw through (§6.3)
             std::atomic<bool> lost{false};
@@ -635,6 +636,10 @@ namespace albor::render
             ComPtr<IDXGISwapChain1> swap_chain;
             if (state.factory->CreateSwapChainForComposition(state.device.Get(), &description, nullptr, swap_chain.GetAddressOf()) != S_OK)
                 return nullptr;
+            // the submit waits for one frame at most, which bounds the pacing a hidden or occluded window can add (§6.3)
+            ComPtr<IDXGISwapChain2> latency;
+            if (swap_chain.As(&latency) == S_OK)
+                (void)latency->SetMaximumFrameLatency(1);
             return swap_chain;
         }
 
@@ -677,8 +682,11 @@ namespace albor::render
                 return false;
             // a refused commit leaves the window on the root it showed, rather than on a visual nothing recorded (§5.3)
             if (state.composition->Commit() != S_OK) {
-                (void)target->SetRoot(previous_root);
-                (void)state.composition->Commit();
+                // a rollback that also fails blanks the tree, so no later commit can show a released visual (§5.3)
+                if (target->SetRoot(previous_root) != S_OK || state.composition->Commit() != S_OK) {
+                    (void)target->SetRoot(nullptr);
+                    (void)state.composition->Commit();
+                }
                 return false;
             }
             // the window holds the target for every visual its surfaces bound, in the order they attached (§5.3)
@@ -877,17 +885,19 @@ namespace albor::render
             // an end without a begun frame is a no operation rather than an error (§6.1)
             if (!m_begun.load())
                 return;
-            // the back buffer is acquired outside the lock, because its pacing wait is per window (§6.3)
-            ComPtr<ID3D11Texture2D> back_buffer;
-            if (m_window != nullptr && m_swap_chain != nullptr) {
-                const HRESULT acquired = m_swap_chain->GetBuffer(0, IID_PPV_ARGS(back_buffer.GetAddressOf()));
-                if (FAILED(acquired))
-                    note_device_result(acquired);
-            }
+            bool finished = false;
             bool pending = false;
             WindowMetrics pending_metrics;
-            // the encode and the submit record on the process wide context, so one lock covers both (§6.3, §10.2)
             {
+                // the back buffer lives only inside this block, so a resize applied after it holds no reference (§6.3)
+                ComPtr<ID3D11Texture2D> back_buffer;
+                if (m_window != nullptr && m_swap_chain != nullptr) {
+                    // the pacing wait is per window, so the acquisition runs outside the process lock (§6.3)
+                    const HRESULT acquired = m_swap_chain->GetBuffer(0, IID_PPV_ARGS(back_buffer.GetAddressOf()));
+                    if (FAILED(acquired))
+                        note_device_result(acquired);
+                }
+                // the encode and the submit record on the process wide context, so one lock covers both (§6.3, §10.2)
                 const std::lock_guard<std::mutex> lock(process_present_mutex());
                 // the images the frame carries become textures once, which a later frame reuses (AD-06)
                 upload_textures();
@@ -895,8 +905,10 @@ namespace albor::render
                 encode();
                 // a windowed frame copies the target onto its back buffer, which the submit shows (§6.3)
                 present(back_buffer.Get());
-                // the frame counts once it is submitted, which a read back then waits on (§4.3)
-                m_finished++;
+                // a frame that never reached a back buffer is not finished, so a read back does not answer with it (§6.3)
+                finished = m_window == nullptr || back_buffer != nullptr;
+                if (finished)
+                    m_finished++;
                 // the frame is no longer in flight, and a resize that waited for it is taken together (§6.2)
                 m_begun.store(false);
                 pending = m_resize_pending.exchange(false);
@@ -915,8 +927,8 @@ namespace albor::render
             device_state().context->CopyResource(back_buffer, m_target.Get());
             // the submit never waits for the display, so the lock never covers a refresh (§6.3)
             const HRESULT presented = m_swap_chain->Present(0, 0);
-            // a submit the driver accepted is a frame the window shows, which the counter reports (§6.3)
-            if (SUCCEEDED(presented))
+            // only a submit that returned success is a frame the window composes, not an occluded status (§6.3)
+            if (presented == S_OK)
                 presented_frames().fetch_add(1);
             note_device_result(presented);
         }
@@ -1522,4 +1534,6 @@ namespace albor::render
             return nullptr;
         return surface;
     }
+// the diagnostic state returns to what this translation unit had before the suppression (§5.3)
+#pragma clang diagnostic pop
 } // namespace albor::render

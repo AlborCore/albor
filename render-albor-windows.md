@@ -42,14 +42,15 @@ core the two platforms share byte for byte, and a thin platform seam.
   composition device is created on the first windowed attach, so an offscreen host never
   needs a compositor; a driver removal is reported through `valid()` rather than presenting
   a frozen frame; and the read back stages through a staging texture
-- milestone 5 is in place: `tests/conditional/render_albor_d3d.test.win32.c++` carries 71
+- milestone 5 is in place: `tests/conditional/render_albor_d3d.test.win32.c++` carries 72
   checks, the whole portable ledger the apple suite reports (the shader container, the
   device, the offscreen lifecycle, the encode paths, and every parity check against the
-  software reference) plus the win32 window checks the apple suite covers with a layer: a
-  hidden window presents and counts every submit, two surfaces share one window and re-root,
-  a stream of 140 frames holds a footprint bound of two frame targets, and a scene at stale
-  metrics is refused. `tests/CMakeLists.txt` wires the suite under `WIN32`, and the whole
-  archive install check (`albor_auto`) now runs on both backends
+  software reference) plus the win32 window checks the apple suite covers with a layer: an
+  off screen window presents and counts every submit, a resize that arrives mid frame takes
+  effect at the frame's end, two surfaces share one window and re-root, a stream of 140
+  frames holds a footprint bound of two frame targets, and a scene at stale metrics is
+  refused. `tests/CMakeLists.txt` wires the suite under `WIN32` with a per test timeout, and
+  the whole archive install check (`albor_auto`) now runs on both backends
 
 ## Milestone 0 — shader artifact conventions (the first-in-the-repo step)
 
