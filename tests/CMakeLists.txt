@@ -124,6 +124,9 @@ if(APPLE)
     set_source_files_properties("./conditional/platform_window_popup.test.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(albor-tests PRIVATE albor-platform-macos)
 
+    # the platform font suite drives the core text resolver and the sfnt it hands over, which is the apple half (§9.1, AD-28)
+    target_sources(albor-tests PRIVATE "./conditional/text_platform_font.test.macos.mm")
+
     # the backend lifecycle suite destroys a second gpu context in one process, which the metal driver traps on
     # after ganesh has used it. the trap kills the process, so no release run could finish while the suite is in,
     # and issue 29 tracks the driver defect rather than this repository. the suite is held out of the release
@@ -217,7 +220,7 @@ gtest_discover_tests(albor-render-blend2d-auto-checks DISCOVERY_TIMEOUT 60)
 if(APPLE)
     target_sources(albor-render-blend2d-auto-checks PRIVATE "./conditional/blend2d_window_auto.test.macos.mm")
     set_source_files_properties("./conditional/blend2d_window_auto.test.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
-    target_link_libraries(albor-render-blend2d-auto-checks PRIVATE "-framework Foundation" "-framework Metal" "-framework QuartzCore")
+    target_link_libraries(albor-render-blend2d-auto-checks PRIVATE "-framework AppKit" "-framework Foundation" "-framework Metal" "-framework QuartzCore")
 endif()
 
 # the win32 window half builds a swapchain on a hidden window, which the suite drives through the real factory (§5.3, AD-16)

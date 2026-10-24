@@ -1,3 +1,4 @@
+#import <AppKit/AppKit.h>
 #import <Foundation/NSObject.h>
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
@@ -30,6 +31,50 @@ TEST(Blend2DAutoInstallChecks, TheWindowSurfaceFactoryInstallsItselfAtLoad) {
 }
 
 // the suite presents a real stream, because a present that forgets its pool leaks what no header check sees (§6.3)
+TEST(Blend2DAutoInstallChecks, ARealWindowGetsAPresentingSurface) {
+    // arrange a window and the layer its content view hands to the presenter (§5.3, AD-16)
+    NSWindow* window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0.0, 0.0, 64.0, 48.0) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+    NSView* content = [[NSView alloc] initWithFrame:NSMakeRect(0.0, 0.0, 64.0, 48.0)];
+    content.wantsLayer = YES;
+    CAMetalLayer* layer = [CAMetalLayer layer];
+    layer.device = MTLCreateSystemDefaultDevice();
+    content.layer = layer;
+    window.contentView = content;
+    // assert a host without a metal device has no drawable to present, so it is reported rather than passed (§6.3)
+    ASSERT_NE(layer.device, nil);
+    // arrange the physical extent the scene is built for (§5.3, AD-27)
+    const albor::WindowMetrics metrics = albor::WindowMetrics::from_logical(albor::Size{64.0f, 48.0f}, 1.0f);
+    // act the factory the whole archive link installed builds the surface over the layer (§5.3, AD-16)
+    std::unique_ptr<albor::RenderSurface> surface = albor::blend2d::create_window_surface(albor::NativeWindowHandle::from_object((__bridge const void*)layer), metrics);
+    // assert the surface attached to the window at the metrics the scene is built for (§5.3, §6.2)
+    ASSERT_NE(surface, nullptr);
+    EXPECT_TRUE(surface->valid());
+    EXPECT_EQ(surface->metrics(), metrics);
+    // act
+    surface->begin_frame();
+    surface->end_frame();
+    // assert the finished frame reads back at the physical extent, which is what the layer presents (§6.3, AD-27)
+    EXPECT_TRUE(surface->valid());
+    EXPECT_EQ(surface->read_pixels().size(), 64u * 48u * 4u);
+    // act
+    const albor::WindowMetrics resized = albor::WindowMetrics::from_logical(albor::Size{40.0f, 30.0f}, 2.0f);
+    surface->resize(resized);
+    // assert the surface stayed presentable, which a refused layer resize would betray (§6.3)
+    EXPECT_TRUE(surface->valid());
+    surface->begin_frame();
+    surface->end_frame();
+    // assert the presentation moved to the new metrics, whose physical extent the layer took (§6.2, AD-27)
+    EXPECT_EQ(surface->metrics(), resized);
+    EXPECT_EQ(surface->read_pixels().size(), 80u * 60u * 4u);
+    // act a resize to metrics with no area, which the platform reports before a window is sized (§6.2)
+    surface->resize(albor::WindowMetrics{});
+    // assert the refused resize kept the last presentable metrics rather than half resizing the layer (§6.2)
+    EXPECT_TRUE(surface->valid());
+    EXPECT_EQ(surface->metrics(), resized);
+    // the surface is released before the window it presents into, which the local declaration order gives (§5.3)
+    surface.reset();
+}
+
 TEST(Blend2DWindowSurfaceChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) {
     // arrange the layer a window hands over, which is what the present path blits into (§5.3, AD-16)
     CAMetalLayer* layer = [[CAMetalLayer alloc] init];
