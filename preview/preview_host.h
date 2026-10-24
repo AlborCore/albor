@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <memory>
 #include <string>
 
@@ -19,5 +20,5 @@ namespace albor::preview
     };
 
     // build a ui tree from a .ui source, using the compiler front end and the real runtime widgets (§12.2)
-    [[nodiscard]] PreviewResult build(const std::string& source, BindingEngine& engine);
+    [[nodiscard]] PreviewResult build(const std::string& source, BindingEngine& engine, const std::filesystem::path& source_path = {});
 } // namespace albor::preview

@@ -101,6 +101,18 @@ namespace albor::compiler
             return nullptr;
         }
 
+        // find the image a value is written as, unwrapping a transparent grouping (§11.1)
+        const ImageExpression* find_image(const Expression& expression) {
+            // an image is the value itself (§6.4)
+            if (const auto* image = dynamic_cast<const ImageExpression*>(&expression))
+                return image;
+            // a grouping is transparent, because the parentheses do not change the value (§11.1)
+            if (const auto* grouping = dynamic_cast<const GroupingExpression*>(&expression))
+                return find_image(*grouping->inner);
+            // any other expression is a computation the IR cannot carry (§12.1)
+            return nullptr;
+        }
+
         // report whether every node of a tree is an element the IR can represent (§12.1)
         bool representable(const TreeNode& node) {
             // a repeat, a condition or a slot has no IR form, so a tree carrying one cannot be serialized (§12.1)
@@ -126,6 +138,15 @@ namespace albor::compiler
             ir.id = node.explicit_id;
             // every static assignment becomes a property, and a binding is dropped, which the IR cannot carry (§12.1)
             for (const PropertyAssignment& assignment : node.assignments) {
+                // an embedded image is a static value, which the marked spelling preserves (§12.1)
+                if (const ImageExpression* image = find_image(*assignment.value)) {
+                    // a path with a line break cannot survive the line oriented format, so it is dropped (§12.1)
+                    if (image->path.find_first_of("\r\n") != std::string::npos)
+                        continue;
+                    // the marker keeps the image apart from a plain string, which a reader applies differently (§12.1)
+                    ir.properties.push_back(devrt::IrProperty{.name = assignment.name, .value = std::string(devrt::IMAGE_VALUE_PREFIX) + image->path});
+                    continue;
+                }
                 // the sign and the literal are read together, because a written negation is part of the value (§11.1)
                 bool negative = false;
                 // the literal is the value, when the assignment is a static one (§12.1)

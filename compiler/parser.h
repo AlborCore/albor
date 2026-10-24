@@ -172,6 +172,9 @@ namespace albor::compiler
         // read a translatable string macro, which the catalog extractor finds in this one place (§11.1, §9.2)
         [[nodiscard]] ExpressionPtr parse_translation();
 
+        // read an embedded image macro, whose path the generator resolves against the source file (§6.4, §11.1)
+        [[nodiscard]] ExpressionPtr parse_image();
+
         // read a builtin conversion such as string(value), which the checker resolves by name (§11.1)
         [[nodiscard]] ExpressionPtr parse_conversion();
 

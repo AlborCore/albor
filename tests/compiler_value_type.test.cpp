@@ -107,7 +107,17 @@ TEST(ValueType, RendersEveryKindTheWayTheAuthorWritesIt) {
     EXPECT_EQ(scalar(TypeKind::Float).to_string(), "float");
     EXPECT_EQ(scalar(TypeKind::String).to_string(), "string");
     EXPECT_EQ(scalar(TypeKind::Color).to_string(), "color");
+    EXPECT_EQ(scalar(TypeKind::Image).to_string(), "image");
     EXPECT_EQ(scalar(TypeKind::Length).to_string(), "length");
+}
+
+TEST(ValueType, ResolvesTheImageSpelling) {
+    // arrange the builtin catalog, which names the closed scalar set the language spells (§11.1)
+    const ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act
+    const ValueType type = resolve_type_name("image", catalog);
+    // assert the spelling is the scalar kind an embedded asset produces (§6.4)
+    EXPECT_TRUE(type.is(TypeKind::Image));
 }
 
 TEST(ValueType, ExplicitConstructorBuildsAScalar) {

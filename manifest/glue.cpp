@@ -53,6 +53,9 @@ namespace albor::manifest
             // the colour maps onto the framework colour, which carries no platform type with it (AD-05)
             if (type == "color")
                 return std::string("Color");
+            // the image maps onto the immutable handle the render path takes (§6.4, AD-05)
+            if (type == "image")
+                return std::string("std::shared_ptr<const ImageResource>");
             // a type outside the scalars carries no spelling, which blocks the output (§11.2)
             return std::nullopt;
         }
@@ -129,6 +132,9 @@ namespace albor::manifest
 
             // whether any field is a colour, which pulls the paint header the struct needs (AD-05)
             bool needs_paint = false;
+
+            // whether any field is an image, which pulls the memory and image headers (AD-05)
+            bool needs_image = false;
         };
 
         // one property ready to emit, which the generated accessors are built from (§11.2)
@@ -182,6 +188,9 @@ namespace albor::manifest
 
             // whether a colour needs the paint include, which the framework type lives in (§11.2)
             bool needs_paint = false;
+
+            // whether an image needs the memory and image includes, which the handle type names (§6.4)
+            bool needs_image = false;
         };
 
         // append one line to the text being emitted, which pads by four spaces per level (§14.1)
@@ -212,6 +221,9 @@ namespace albor::manifest
             emit_line(out, 0, "");
             // the string members need the string header, which a text field pulls (§11.2)
             const bool has_text = std::any_of(record.fields.begin(), record.fields.end(), [](const GluedField& field) { return field.cpp_type == "std::string"; });
+            // an image member pulls the owning pointer, which its declaration names (§6.4)
+            if (record.needs_image)
+                emit_line(out, 0, "#include <memory>");
             // a text field pulls the header, which its member is declared against (§11.2)
             if (has_text)
                 emit_line(out, 0, "#include <string>");
@@ -220,6 +232,9 @@ namespace albor::manifest
             // a colour member pulls the paint header, which the framework type lives in (AD-05)
             if (record.needs_paint)
                 emit_line(out, 0, "#include \"core/paint.h\"");
+            // an image member pulls its handle header, which the type lives in (AD-05, §6.4)
+            if (record.needs_image)
+                emit_line(out, 0, "#include \"render/image_resource.h\"");
             // the blank opens the namespace, which separates the includes (§14.1)
             emit_line(out, 0, "");
             // the record lives in the framework namespace, which is what the generated properties name (§14.1)
@@ -235,8 +250,10 @@ namespace albor::manifest
                 // the key field is named because a row is keyed by it (§18.1, AD-11, AD-13)
                 const std::string role = field.is_key ? ", which carries the identity a row is keyed by (§18.1, AD-11)" : ", which the manifest declares (§11.2)";
                 emit_line(out, 2, "// the " + field.name + " field" + role);
+                // an image default has no path form in a manifest, so the handle starts empty (§11.2, §6.4)
+                const bool image_handle = field.cpp_type == "std::shared_ptr<const ImageResource>";
                 // a default the manifest wrote is re-emitted, which is what makes the aggregate usable (§11.2)
-                const std::string initializer = field.default_value.empty() ? "" : " = " + field.default_value;
+                const std::string initializer = field.default_value.empty() || image_handle ? "" : " = " + field.default_value;
                 // the member is the declaration, which is the whole of a record field (§14.1)
                 emit_line(out, 2, field.cpp_type + " " + field.name + initializer + ";");
             }
@@ -262,8 +279,8 @@ namespace albor::manifest
             // the slot type needs the functional header, which a signal component reaches (§8.3)
             if (component.needs_functional)
                 emit_line(out, 0, "#include <functional>");
-            // the snapshot signature needs the memory header, which a data component reaches (§13.2)
-            if (component.needs_memory)
+            // the snapshot or image signature needs the memory header, which a data component reaches (§13.2, §6.4)
+            if (component.needs_memory || component.needs_image)
                 emit_line(out, 0, "#include <memory>");
             // the string signatures need the string header, which every facade uses (§14.1)
             emit_line(out, 0, "#include <string>");
@@ -275,6 +292,9 @@ namespace albor::manifest
             // a colour signature pulls the paint header, which only a colour component needs (§11.2)
             if (component.needs_paint)
                 emit_line(out, 0, "#include \"core/paint.h\"");
+            // an image signature pulls its handle header, which the facade type names (§6.4)
+            if (component.needs_image)
+                emit_line(out, 0, "#include \"render/image_resource.h\"");
             // the base class pulls the component header, which every facade inherits (§8.1)
             emit_line(out, 0, "#include \"ui/component.h\"");
             // the widget base pulls its header, which every facade inherits beside the component (§8.1)
@@ -532,6 +552,9 @@ namespace albor::manifest
 
         // the re-emitted value behind one stub member, which the override text or the default text carries (§11.2)
         std::string preview_member_value(const NativeProperty& property, std::string_view text) {
+            // an image has no path form in a manifest, so the stub starts with an empty handle (§11.2, §6.4)
+            if (property.type == "image")
+                return {};
             // a colour re-emits as a constructor call, which the framework type needs (§11.2)
             if (property.type == "color")
                 return preview_color(text);
@@ -678,6 +701,9 @@ namespace albor::manifest
                 // a colour field pulls the paint header, which the framework type lives in (AD-05)
                 if (field.type == "color")
                     record.needs_paint = true;
+                // an image field pulls the handle header and the owning pointer (AD-05, §6.4)
+                if (field.type == "image")
+                    record.needs_image = true;
                 // the translated field joins the record, which the struct is emitted from (§11.2)
                 record.fields.push_back(GluedField{.name = field.name, .cpp_type = *cpp, .default_value = field.default_value, .is_key = field.is_key});
             }
@@ -715,6 +741,9 @@ namespace albor::manifest
                 // a colour property pulls the paint header, which the framework type lives in (AD-05)
                 if (property.type == "color")
                     component.needs_paint = true;
+                // an image property pulls the handle header and the owning pointer (§6.4, AD-05)
+                if (property.type == "image")
+                    component.needs_image = true;
                 // a snapshot property pulls the memory header and a forward declaration, which the signature needs (§13.2, AD-17)
                 if (property.type.starts_with("Snapshot<")) {
                     // the header is forced, which the shared pointer type requires (§13.2)
@@ -771,6 +800,9 @@ namespace albor::manifest
                     // a colour parameter pulls the paint header, which the framework type lives in (AD-05)
                     if (parameter.type == "color")
                         component.needs_paint = true;
+                    // an image parameter pulls the handle header and the owning pointer (§6.4, AD-05)
+                    if (parameter.type == "image")
+                        component.needs_image = true;
                 }
                 // a signal that translated wholly is admitted, which emits its setter and its raiser (§11.2)
                 if (acceptable) {

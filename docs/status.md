@@ -9,12 +9,14 @@ the architecture specification `albor-design-v4.md`.
 | platform | state |
 | --- | --- |
 | macOS 13.3+ (AppKit, Metal), Intel and Apple silicon | implemented — the primary platform |
+| Windows 10/11 (Win32, Direct3D) | implemented and built in CI |
 | headless | implemented — the test and CI surface |
-| Windows (Win32) | planned — the HAL interface is fixed |
 | Linux (Wayland, X11) | planned — the HAL interface is fixed |
 
-An application names a window and a component; the platform, the renderer and the text
-engine are selected by linking ([Getting started](getting-started.md#the-pieces-you-link)).
+An application names a window and a component. A normal application links `albor`
+(GPU renderer) or `albor-blend2d` (portable CPU renderer); the platform and text engine
+are the framework's choice. The target map and advanced composition are on
+[Consuming Albor](consuming.md).
 
 ## Subsystems
 
@@ -22,7 +24,7 @@ engine are selected by linking ([Getting started](getting-started.md#the-pieces-
 | --- | --- | --- |
 | Application, event loop, tasks, timers | `application/` | shipped |
 | Window roles, modality, close request | `window/` | shipped |
-| Platform abstraction (macOS, headless) | `platform/` | shipped |
+| Platform abstraction (macOS, Windows, headless) | `platform/` | shipped |
 | Render surface, metrics, scale factor | `render/` | shipped |
 | Frame pipeline, two-stage frame | `render/` | shipped |
 | Custom rendering (`CustomRenderNode`) | `render/` | shipped |
@@ -37,7 +39,7 @@ engine are selected by linking ([Getting started](getting-started.md#the-pieces-
 | Compiler frontend, `.ui` parser, typed IR | `compiler/` | shipped |
 | Manifest parser, validator, glue generator | `manifest/` | shipped |
 | C++ code generator, facade emission | `compiler/` | shipped |
-| Dev runtime extension, IR loader, hot swap | `devrt/` | Dev/Test only |
+| Dev runtime extension, IR loader, hot swap | `devrt/` | Dev only |
 | LSP, preview host, inspector | `language-server/`, `preview/`, `inspector/` | Dev/Test only |
 | Automation core, MCP server | `automation/`, `inspector/` | Dev/Test only |
 | Platform accessibility adapters | `accessibility/` | planned — the semantic tree is shipped |

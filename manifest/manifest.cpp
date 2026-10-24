@@ -609,6 +609,9 @@ namespace albor::manifest
             // a colour field carries the framework colour, which names no platform type (§11.2, AD-05)
             if (written == "color")
                 return compiler::scalar(compiler::TypeKind::Color);
+            // an image field carries an immutable handle, which names no platform type either (§6.4, AD-05)
+            if (written == "image")
+                return compiler::scalar(compiler::TypeKind::Image);
             // a snapshot field carries an immutable shared value, which is how data crosses a thread (§11.2, §13.2)
             if (written.starts_with("Snapshot<") && written.ends_with(">")) {
                 // the element name sits between the brackets, which is the type argument (§11.2, §13.2)

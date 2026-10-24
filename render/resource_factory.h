@@ -1,6 +1,5 @@
 #pragma once
 
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -18,7 +17,7 @@ namespace albor
     class ResourceFactory
     {
     public:
-        // build a factory whose next identifier is one (§6.4)
+        // build a factory that stamps resources from the process wide source (§6.4, AD-06)
         ResourceFactory();
 
         ResourceFactory(const ResourceFactory&) = delete;
@@ -33,14 +32,14 @@ namespace albor
         // build a validated immutable path, or nothing for an empty or point-mismatched command stream (§6.4, AD-06)
         [[nodiscard]] std::shared_ptr<const PathResource> create_path(std::span<const PathVerb> verbs, std::span<const Point> points) const;
 
-        // build a validated immutable image, or nothing for an empty extent or a mismatched pixel buffer (§6.4, AD-06)
+        // build a validated immutable image, or nothing for a bad extent or pixel buffer (§6.4, AD-06)
         [[nodiscard]] std::shared_ptr<const ImageResource> create_image(std::size_t width, std::size_t height, ImageFormat format, std::span<const std::uint8_t> pixels) const;
 
         // freeze a recorder's commands into an immutable picture, or nothing for an empty recording (§6.4, AD-06)
         [[nodiscard]] std::shared_ptr<const PictureResource> create_picture(const PictureRecorder& recorder) const;
 
     private:
-        // the identifier the next resource receives, which no resource ever repeats (§6.4, AD-06)
-        mutable std::atomic<std::uint64_t> m_next_id{1};
+        // hand out the next process wide identifier, which every factory and the registry share (§6.4, AD-06)
+        [[nodiscard]] static std::uint64_t next_id();
     };
 } // namespace albor

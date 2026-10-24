@@ -57,6 +57,18 @@ component Panel {
     // the newline case, which a line oriented format cannot carry (§12.1)
     constexpr std::string_view NEWLINE = "component Panel { Label { text: \"a\\nb\"; } }";
 
+    // the image case, whose marked spelling tells a reader to register the path as an asset (§12.1, §6.4)
+    constexpr std::string_view IMAGE = "component Panel { Label { icon: @image(\"icons/icon.png\"); } }";
+
+    // the grouped image case, whose parentheses do not change the value (§11.1)
+    constexpr std::string_view GROUPED_IMAGE = "component Panel { Label { icon: (@image(\"icon.png\")); } }";
+
+    // an image path with a newline cannot survive the line oriented format (§12.1)
+    constexpr std::string_view NEWLINE_IMAGE = "component Panel { Label { icon: @image(\"a\\nb\"); } }";
+
+    // an image path with a carriage return cannot survive it either (§12.1)
+    constexpr std::string_view CARRIAGE_IMAGE = "component Panel { Label { icon: @image(\"a\rb\"); } }";
+
     // the conditional case, which has no IR form, so the component must be refused (§12.1)
     constexpr std::string_view CONDITIONAL = "component Panel { in property<bool> show: true; Column { if show { Label {} } } }";
 
@@ -246,6 +258,55 @@ TEST(IrSerializerChecks, AStringWithANewlineIsRefused) {
     const SourceFile file = parse(NEWLINE, diagnostics);
     ASSERT_TRUE(diagnostics.diagnostics().empty());
     // act, assert the property is dropped rather than emitting a malformed line (§12.1)
+    const std::optional<devrt::IrNode> ir = serialize_component(file.components.front());
+    ASSERT_TRUE(ir.has_value());
+    EXPECT_TRUE(ir->properties.empty());
+}
+
+TEST(IrSerializerChecks, AnEmbeddedImageKeepsItsAssetMarker) {
+    // arrange an image path, which the dev runtime must not mistake for a plain string (§12.1, §6.4)
+    DiagnosticList diagnostics;
+    const SourceFile file = parse(IMAGE, diagnostics);
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    // act
+    const std::optional<devrt::IrNode> ir = serialize_component(file.components.front());
+    // assert the marker and the path survive, so a reader can register the asset (§12.1, §6.4)
+    ASSERT_TRUE(ir.has_value());
+    ASSERT_EQ(ir->properties.size(), 1u);
+    EXPECT_EQ(ir->properties.front().name, "icon");
+    EXPECT_EQ(ir->properties.front().value, std::string(devrt::IMAGE_VALUE_PREFIX) + "icons/icon.png");
+}
+
+TEST(IrSerializerChecks, AGroupedEmbeddedImageKeepsItsAssetMarker) {
+    // arrange an image wrapped in parentheses, which does not change the value (§11.1)
+    DiagnosticList diagnostics;
+    const SourceFile file = parse(GROUPED_IMAGE, diagnostics);
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    // act
+    const std::optional<devrt::IrNode> ir = serialize_component(file.components.front());
+    // assert the grouping is transparent and the marker survives (§11.1, §6.4)
+    ASSERT_TRUE(ir.has_value());
+    ASSERT_EQ(ir->properties.size(), 1u);
+    EXPECT_EQ(ir->properties.front().value, std::string(devrt::IMAGE_VALUE_PREFIX) + "icon.png");
+}
+
+TEST(IrSerializerChecks, AnImagePathWithANewlineIsRefused) {
+    // arrange an image path whose decoded value carries a newline, which the format cannot hold (§12.1)
+    DiagnosticList diagnostics;
+    const SourceFile file = parse(NEWLINE_IMAGE, diagnostics);
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    // act, assert the property is dropped rather than emitting a malformed line (§12.1)
+    const std::optional<devrt::IrNode> ir = serialize_component(file.components.front());
+    ASSERT_TRUE(ir.has_value());
+    EXPECT_TRUE(ir->properties.empty());
+}
+
+TEST(IrSerializerChecks, AnImagePathWithACarriageReturnIsRefused) {
+    // arrange an image path whose decoded value carries a carriage return, which the format cannot hold (§12.1)
+    DiagnosticList diagnostics;
+    const SourceFile file = parse(CARRIAGE_IMAGE, diagnostics);
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    // act, assert the property is dropped rather than splitting the record (§12.1)
     const std::optional<devrt::IrNode> ir = serialize_component(file.components.front());
     ASSERT_TRUE(ir.has_value());
     EXPECT_TRUE(ir->properties.empty());

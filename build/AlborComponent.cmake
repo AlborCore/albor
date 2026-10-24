@@ -107,8 +107,10 @@ function(albor_build_ui_component target ui_source)
     get_filename_component(stem "${ui_source}" NAME_WE)
     # the target records that a facade was generated, which the font helper uses to enforce its order (§11.1)
     set_target_properties(${target} PROPERTIES ALBOR_UI_COMPONENT_GENERATED TRUE)
-    # the facade header and its implementation unit are the outputs, which the build orders on (§14.2)
-    set(units "${generated_dir}/${stem}.h" "${generated_dir}/${stem}.cpp")
+    # the facade and its per-source asset pair are the outputs, which the build orders on (§14.2)
+    set(units "${generated_dir}/${stem}.h" "${generated_dir}/${stem}.cpp" "${generated_dir}/${stem}_assets.h" "${generated_dir}/${stem}_assets.cpp")
+    # the depfile records the png bytes the generator embedded, which an edit must rebuild (§6.4, §14.2)
+    set(depfile "${generated_dir}/${stem}.d")
     # the font assets the target declared are passed to the compiler, which validates the ui selection (§11.1, AD-34)
     get_target_property(font_args ${target} ALBOR_FONT_ASSETS)
     get_target_property(default_family ${target} ALBOR_DEFAULT_FONT_FAMILY)
@@ -128,7 +130,8 @@ function(albor_build_ui_component target ui_source)
     # the driver compiles the ui file into the units, which write only when their content changed (§14.2, AD-03a)
     add_custom_command(
         OUTPUT ${units}
-        COMMAND $<TARGET_FILE:albor-codegen> --input "${ui_source}" --output "${generated_dir}" ${ARGN} ${font_flags}
+        COMMAND $<TARGET_FILE:albor-codegen> --input "${ui_source}" --output "${generated_dir}" --depfile "${depfile}" ${ARGN} ${font_flags}
+        DEPFILE "${depfile}"
         DEPENDS "${ui_source}" albor-codegen
         COMMENT "${target}: generating ${stem} from ${ui_source}"
         VERBATIM

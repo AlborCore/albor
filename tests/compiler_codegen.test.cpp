@@ -39,6 +39,55 @@ namespace
         return generate(source, diagnostics, ElementCatalog::with_builtins());
     }
 
+    // the output of one generator run, including the embedded assets it read (§6.4, §14.2)
+    struct AssetGeneration
+    {
+        // the generated units, in the order the driver writes them (§14.2)
+        std::vector<GeneratedFile> files;
+
+        // the resolved asset paths, which the driver writes into its depfile (§6.4, §14.2)
+        std::vector<std::filesystem::path> paths;
+    };
+
+    // generate a source with a known path, which is what makes an embedded image resolvable (§6.4)
+    AssetGeneration generate_assets(std::string_view source, DiagnosticList& diagnostics, const std::filesystem::path& source_path, ElementCatalog catalog) {
+        // the scanner runs first, because the parser takes units (§11.1)
+        const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
+        // the parser builds the untyped tree (§11.1)
+        const SourceFile file = Parser(tokens, diagnostics).parse();
+        // the structs the file declares join the catalog, which is what makes a property of one resolve (§11.1)
+        register_ui_structs(file, catalog, diagnostics);
+        // the enums the file declares join the catalog, which is what makes a property of one hold a member (§11.1)
+        register_ui_enums(file, catalog);
+        // the checker resolves it against the catalog, which is where the native types come from (§11.1, AD-17)
+        const CheckedFile checked = TypeChecker(catalog, diagnostics).check(file);
+        // the generator turns the checked file into the facade files, which is what the driver writes (§11.3)
+        CodeGenerator generator(diagnostics);
+        // the catalog is what tells the generator a native type is generatable (§11.2, AD-17)
+        generator.set_catalog(&catalog);
+        // the source path is what a relative embedded path resolves against (§6.4)
+        generator.set_source_path(source_path);
+        // the run's files and asset dependencies are returned together (§14.2)
+        AssetGeneration generation;
+        // the files are generated first, which is where the assets are read (§6.4)
+        generation.files = generator.generate(checked);
+        // the dependency list is read after the run, because it is filled by it (§14.2)
+        generation.paths = generator.asset_paths();
+        return generation;
+    }
+
+    // generate a source with a known path against the builtin catalog, which needs no manifest (§11.3, §8)
+    AssetGeneration generate_assets(std::string_view source, DiagnosticList& diagnostics, const std::filesystem::path& source_path) {
+        // the builtin catalog is what a ui file may use without a manifest (§11.3, §8)
+        return generate_assets(source, diagnostics, source_path, ElementCatalog::with_builtins());
+    }
+
+    // the carried vector directory, which holds the png fixtures the asset suites read (§6.4)
+    std::filesystem::path vector_path(std::string_view name) {
+        // the directory is supplied by the build, because a test process runs from any directory (§6.4)
+        return std::filesystem::path(ALBOR_TEST_VECTORS_DIR) / name;
+    }
+
     std::vector<GeneratedFile> generate(std::string_view source) {
         // the diagnostics are collected so a stray problem fails the test instead of disappearing (§11.3)
         DiagnosticList diagnostics;
@@ -2055,4 +2104,358 @@ component Entry {
     // assert the field resolves the weight through its own setter, which the catalog declared (§11.3, §9.1)
     const GeneratedFile& unit = file_named(files, "entry.cpp");
     EXPECT_TRUE(contains(unit.content, "set_font_weight(albor::FontWeight::Semibold);"));
+}
+
+TEST(Codegen, AnEmbeddedAssetIsReadAndRegistered) {
+    // arrange a source whose property default embeds a carried png (§6.4)
+    const std::string_view source = R"(
+component C {
+    in property<image> icon: @image("icon.png");
+    signal picked(image chosen);
+    Column {}
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path("image_panel.ui"));
+    // assert the whole file generates, including the per-source asset pair (§6.4, §14.2)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    ASSERT_EQ(generation.files.size(), 4U);
+    ASSERT_EQ(generation.paths.size(), 1U);
+    EXPECT_EQ(generation.paths.front(), vector_path("icon.png"));
+    // the facade names the handle and includes its complete type (§6.4, AD-05)
+    const GeneratedFile& header = file_named(generation.files, "c.h");
+    EXPECT_TRUE(contains(header.content, "#include <memory>"));
+    EXPECT_TRUE(contains(header.content, "#include \"render/image_resource.h\""));
+    EXPECT_TRUE(contains(header.content, "[[nodiscard]] std::shared_ptr<const ImageResource> icon() const;"));
+    EXPECT_TRUE(contains(header.content, "void set_on_picked(std::function<void(std::shared_ptr<const ImageResource>)> handler);"));
+    // the source includes the accessors and calls the first one for the default (§6.4)
+    const GeneratedFile& cpp = file_named(generation.files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "#include \"image_panel_assets.h\""));
+    EXPECT_TRUE(contains(cpp.content, "image_panel_assets::image_0()"));
+    // the header declares one accessor, which the component source calls (§6.4)
+    const GeneratedFile& asset_header = file_named(generation.files, "image_panel_assets.h");
+    EXPECT_TRUE(contains(asset_header.content, "namespace image_panel_assets"));
+    EXPECT_TRUE(contains(asset_header.content, "[[nodiscard]] std::shared_ptr<const ImageResource> image_0();"));
+    // the unit carries the encoded bytes and registers them once, on first use (§6.4)
+    const GeneratedFile& asset_source = file_named(generation.files, "image_panel_assets.cpp");
+    EXPECT_TRUE(contains(asset_source.content, "constexpr std::uint8_t IMAGE_0[] = {"));
+    EXPECT_TRUE(contains(asset_source.content, "resources::ImageRegistry::register_image"));
+    EXPECT_TRUE(contains(asset_source.content, "0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,"));
+}
+
+TEST(Codegen, AnImageSignalParameterPullsTheHandleHeader) {
+    // arrange a component whose only image is a signal parameter, which the facade signature names (§6.4)
+    const std::string_view source = "component C { signal picked(image chosen); Column {} }";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the handle header is included and the handler takes the handle (§6.4, AD-05)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const GeneratedFile& header = file_named(files, "c.h");
+    EXPECT_TRUE(contains(header.content, "#include \"render/image_resource.h\""));
+    EXPECT_TRUE(contains(header.content, "void set_on_picked(std::function<void(std::shared_ptr<const ImageResource>)> handler);"));
+}
+
+TEST(Codegen, ASourceWithoutEmbeddedAssetsStillEmitsThePair) {
+    // arrange a source path, which makes the build expect both asset outputs (§14.2)
+    const std::string_view source = "component C { Column {} }";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path("image_panel.ui"));
+    // assert the pair exists even though no image was named, because the build names it as an output (§14.2)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    ASSERT_EQ(generation.files.size(), 4U);
+    EXPECT_TRUE(generation.paths.empty());
+    const GeneratedFile& asset_header = file_named(generation.files, "image_panel_assets.h");
+    EXPECT_TRUE(contains(asset_header.content, "#pragma once"));
+    EXPECT_FALSE(contains(asset_header.content, "#include <memory>"));
+    const GeneratedFile& asset_source = file_named(generation.files, "image_panel_assets.cpp");
+    EXPECT_FALSE(contains(asset_source.content, "IMAGE_0"));
+    // the component source still includes the header, which the build compiles beside it (§14.2)
+    const GeneratedFile& cpp = file_named(generation.files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "#include \"image_panel_assets.h\""));
+}
+
+TEST(Codegen, TwoSpellingsOfOneAssetShareOneAccessor) {
+    // arrange two properties naming the same file through different relative spellings (§6.4)
+    const std::string_view source = R"(
+component C {
+    in property<image> first: @image("icon.png");
+    in property<image> second: @image("./icon.png");
+    Column {}
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path("image_panel.ui"));
+    // assert the normalized path is the identity, so the bytes are embedded once (§6.4)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    ASSERT_EQ(generation.paths.size(), 1U);
+    EXPECT_EQ(generation.paths.front(), vector_path("icon.png"));
+    const GeneratedFile& cpp = file_named(generation.files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "image_panel_assets::image_0()"));
+    EXPECT_FALSE(contains(cpp.content, "image_panel_assets::image_1()"));
+    const GeneratedFile& asset_source = file_named(generation.files, "image_panel_assets.cpp");
+    EXPECT_FALSE(contains(asset_source.content, "IMAGE_1"));
+}
+
+TEST(Codegen, AnAssetPathIsResolvedAgainstTheSourceFile) {
+    // arrange a nested source and a parent-relative image path, which only lexical resolution can find (§6.4)
+    const std::string_view source = "component C { in property<image> icon: @image(\"../icon.png\"); Column {} }";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path("sub/image.ui"));
+    // assert the authored path resolved against the .ui directory rather than the process directory (§6.4)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    ASSERT_EQ(generation.paths.size(), 1U);
+    EXPECT_EQ(generation.paths.front(), vector_path("icon.png"));
+}
+
+TEST(Codegen, AnEmbeddedAssetWithoutASourcePathBlocksTheOutput) {
+    // arrange two references, which must share one missing-source complaint (§6.4)
+    const std::string_view source = R"(
+component C {
+    in property<image> first: @image("icon.png");
+    in property<image> second: @image("other.png");
+    Column {}
+}
+)";
+    DiagnosticList diagnostics;
+    // act the generator was given no source path, so no relative asset resolves (§6.4)
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the output is empty and the cause is reported once (§6.4, §11.3)
+    EXPECT_TRUE(files.empty());
+    EXPECT_EQ(diagnostics.count(), 1U);
+    EXPECT_TRUE(has_code(diagnostics, "E0505"));
+}
+
+TEST(Codegen, AMissingAssetBlocksTheOutputAndIsReportedOnce) {
+    // arrange two references to one absent file, which must not repeat the complaint (§6.4)
+    const std::string_view source = R"(
+component C {
+    in property<image> first: @image("missing.png");
+    in property<image> second: @image("missing.png");
+    Column {}
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path("image_panel.ui"));
+    // assert the output is empty and the path is reported once (§6.4, §11.3)
+    EXPECT_TRUE(generation.files.empty());
+    EXPECT_TRUE(generation.paths.empty());
+    EXPECT_EQ(diagnostics.count(), 1U);
+    EXPECT_TRUE(has_code(diagnostics, "E0506"));
+}
+
+TEST(Codegen, AnEmptyAssetFileBlocksTheOutput) {
+    // arrange a carried file with no bytes, which has no image to embed (§6.4)
+    const std::string_view source = "component C { in property<image> icon: @image(\"empty.png\"); Column {} }";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path("image_panel.ui"));
+    // assert the empty file is refused rather than registered as a broken image (§6.4)
+    EXPECT_TRUE(generation.files.empty());
+    EXPECT_TRUE(has_code(diagnostics, "E0506"));
+}
+
+TEST(Codegen, AShortAssetFileIsNotAPng) {
+    // arrange a file shorter than the eight byte signature, which cannot be a png (§6.4)
+    const std::string_view source = "component C { in property<image> icon: @image(\"short.png\"); Column {} }";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path("image_panel.ui"));
+    // assert the signature check refuses the file before any bytes are embedded (§6.4)
+    EXPECT_TRUE(generation.files.empty());
+    EXPECT_TRUE(has_code(diagnostics, "E0507"));
+}
+
+TEST(Codegen, AForeignFileIsNotAPng) {
+    // arrange a text file with enough bytes for the signature comparison (§6.4)
+    const std::string_view source = "component C { in property<image> icon: @image(\"image_panel.ui\"); Column {} }";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path("image_panel.ui"));
+    // assert the mismatch is reported, because only png bytes can be embedded (§6.4)
+    EXPECT_TRUE(generation.files.empty());
+    EXPECT_TRUE(has_code(diagnostics, "E0507"));
+}
+
+TEST(Codegen, AnEmptyImagePathIsRefusedOnce) {
+    // arrange two empty paths, which name no file and share one complaint (§6.4)
+    const std::string_view source = R"(
+component C {
+    in property<image> first: @image("");
+    in property<image> second: @image("");
+    Column {}
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path("image_panel.ui"));
+    // assert the path is refused before the filesystem is read and the spelling is reported once (§6.4)
+    EXPECT_TRUE(generation.files.empty());
+    ASSERT_EQ(diagnostics.count(), 1U);
+    EXPECT_TRUE(has_code(diagnostics, "E0508"));
+}
+
+TEST(Codegen, AnImagePathWithANewlineIsRefused) {
+    // arrange a path whose decoded bytes contain a line break, which a generated comment cannot carry (§6.4)
+    const std::string_view source = "component C { in property<image> icon: @image(\"a\\nb\"); Column {} }";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path("image_panel.ui"));
+    // assert the path is refused rather than splitting the generated file (§6.4)
+    EXPECT_TRUE(generation.files.empty());
+    ASSERT_EQ(diagnostics.count(), 1U);
+    EXPECT_TRUE(has_code(diagnostics, "E0508"));
+}
+
+TEST(Codegen, AnImagePathWithACarriageReturnIsRefused) {
+    // arrange a path whose decoded bytes contain a carriage return, which a generated comment cannot carry (§6.4)
+    const std::string_view source = "component C { in property<image> icon: @image(\"a\rb\"); Column {} }";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path("image_panel.ui"));
+    // assert the path is refused rather than splitting the generated file (§6.4)
+    EXPECT_TRUE(generation.files.empty());
+    ASSERT_EQ(diagnostics.count(), 1U);
+    EXPECT_TRUE(has_code(diagnostics, "E0508"));
+}
+
+TEST(Codegen, AnImageReturnedByAFunctionEmbedsItsAsset) {
+    // arrange a function whose body names an image, which the file scan must still read (§6.4)
+    const std::string_view source = R"(
+fn make_icon(): image { return @image("icon.png"); }
+component C {
+    Column {}
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path("image_panel.ui"));
+    // assert the body generated and its asset joined the per-source pair (§6.4)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    ASSERT_EQ(generation.paths.size(), 1U);
+    const GeneratedFile& cpp = file_named(generation.files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "image_panel_assets::image_0()"));
+    EXPECT_TRUE(contains(cpp.content, "make_icon()"));
+    const GeneratedFile& header = file_named(generation.files, "c.h");
+    EXPECT_TRUE(contains(header.content, "#include \"render/image_resource.h\""));
+}
+
+TEST(Codegen, AnImageParameterPullsTheHandleHeader) {
+    // arrange a function whose parameter is an image, which the signature names (§6.4)
+    const std::string_view source = "fn paint(source: image): string { return \"x\"; } component C { Column {} }";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the facade includes the handle and spells the parameter with it (§6.4, AD-05)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const GeneratedFile& header = file_named(files, "c.h");
+    EXPECT_TRUE(contains(header.content, "#include \"render/image_resource.h\""));
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "std::shared_ptr<const ImageResource> source"));
+}
+
+TEST(Codegen, AGlobalImageEmbedsItsAsset) {
+    // arrange a module value typed as an image, which the header and source both spell (§6.4)
+    const std::string_view source = "global app_icon: image = @image(\"icon.png\"); component C { Column {} }";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path("image_panel.ui"));
+    // assert the global type is generated and the asset is registered once (§6.4, §11.3)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    ASSERT_EQ(generation.paths.size(), 1U);
+    const GeneratedFile& cpp = file_named(generation.files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "std::shared_ptr<const ImageResource> app_icon"));
+    EXPECT_TRUE(contains(cpp.content, "image_panel_assets::image_0()"));
+}
+
+TEST(Codegen, AnImageAssignmentPullsTheHandleHeader) {
+    // arrange a component that assigns an image to a nested component without declaring one itself (§6.4)
+    const std::string_view source = R"(
+component Icon {
+    in property<image> source;
+    Column {}
+}
+
+component C {
+    Icon {
+        source: @image("icon.png");
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path("image_panel.ui"));
+    // assert the assignment type pulls the handle header and the asset is embedded once (§6.4)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    ASSERT_EQ(generation.paths.size(), 1U);
+    const GeneratedFile& header = file_named(generation.files, "c.h");
+    EXPECT_TRUE(contains(header.content, "#include \"render/image_resource.h\""));
+    const GeneratedFile& cpp = file_named(generation.files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "image_panel_assets::image_0()"));
+}
+
+TEST(Codegen, ImageRecordsCollectionsAndAssignmentsShareTheAsset) {
+    // arrange an image record field, a vector of images and a component assignment, all naming one asset (§6.4)
+    const std::string_view source = R"(
+struct Shot {
+    image icon;
+}
+
+component Icon {
+    in property<image> source;
+    Column {}
+}
+
+component C {
+    in property<Shot> shot;
+    in property<vector<image>> gallery: [@image("icon.png")];
+    Icon {
+        source: @image("icon.png");
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path("image_panel.ui"));
+    // assert the whole file generates and the normalized asset is embedded once (§6.4)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    ASSERT_EQ(generation.paths.size(), 1U);
+    const GeneratedFile& header = file_named(generation.files, "c.h");
+    EXPECT_TRUE(contains(header.content, "std::shared_ptr<const ImageResource> icon;"));
+    EXPECT_TRUE(contains(header.content, "std::vector<std::shared_ptr<const ImageResource>>"));
+    const GeneratedFile& cpp = file_named(generation.files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "image_panel_assets::image_0()"));
+    EXPECT_FALSE(contains(cpp.content, "image_panel_assets::image_1()"));
+}
+
+TEST(Codegen, AnAssetNamespaceAvoidsAReservedSpelling) {
+    // arrange a stem with leading, repeated and trailing separators before a leading digit (§6.4)
+    const std::string_view source = "component C { in property<image> icon: @image(\"icon.png\"); Column {} }";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path("-9--panel-.ui"));
+    // assert separators collapse and the digit takes a neutral prefix rather than a reserved underscore (§6.4)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    EXPECT_TRUE(has_file(generation.files, "-9--panel-_assets.h"));
+    const GeneratedFile& asset_header = file_named(generation.files, "-9--panel-_assets.h");
+    EXPECT_TRUE(contains(asset_header.content, "namespace assets_9_panel_assets"));
+    EXPECT_FALSE(contains(asset_header.content, "__"));
+}
+
+TEST(Codegen, AnAssetNamespaceFallsBackWhenTheStemIsEmpty) {
+    // arrange a source path ending at a directory, whose stem is empty (§6.4)
+    const std::string_view source = "component C { in property<image> icon: @image(\"icon.png\"); Column {} }";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path(""));
+    // assert the fallback name keeps the generated namespace valid (§6.4)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    EXPECT_TRUE(has_file(generation.files, "_assets.h"));
+    const GeneratedFile& asset_header = file_named(generation.files, "_assets.h");
+    EXPECT_TRUE(contains(asset_header.content, "namespace image_assets"));
 }

@@ -238,6 +238,87 @@ TEST(AlborRendererBackendChecks, PresentsThroughAMetalLayer) {
     EXPECT_EQ(pixels[3], 255u);
 }
 
+TEST(AlborRendererBackendChecks, ReadsBackInCanonicalRgbaOrder) {
+    // arrange a two pixel scene, whose colours prove the channel order the target promises (§6.3, AD-26)
+    albor::render::AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{2.0f, 1.0f}, 1.0f);
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(surface, nullptr);
+    FrameScene scene(metrics, Color::rgb(1.0f, 0.0f, 0.0f));
+    DrawCommand command = DrawCommand::rectangle(AlborRect::from_origin_size(AlborPoint{1.0f, 0.0f}, AlborSize{1.0f, 1.0f}), Paint{.fill = Color::rgb(0.0f, 0.0f, 1.0f)});
+    command.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size));
+    scene.add_command(std::move(command));
+    // act
+    backend.execute_frame(*surface, scene);
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    // assert the first pixel is red and the second is blue, in rgba byte order (§6.3, AD-26)
+    ASSERT_EQ(pixels.size(), 8u);
+    EXPECT_EQ(pixels[0], 255u);
+    EXPECT_EQ(pixels[1], 0u);
+    EXPECT_EQ(pixels[2], 0u);
+    EXPECT_EQ(pixels[3], 255u);
+    EXPECT_EQ(pixels[4], 0u);
+    EXPECT_EQ(pixels[5], 0u);
+    EXPECT_EQ(pixels[6], 255u);
+    EXPECT_EQ(pixels[7], 255u);
+}
+
+TEST(AlborRendererBackendChecks, ReadsTheSameFinishedFrameTwice) {
+    // arrange a finished frame whose target is retained after the read (§6.3)
+    albor::render::AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{4.0f, 4.0f}, 1.0f);
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(surface, nullptr);
+    backend.execute_frame(*surface, FrameScene(metrics, Color::rgb(0.2f, 0.4f, 0.6f)));
+    // act
+    const std::vector<std::uint8_t> first = surface->read_pixels();
+    const std::vector<std::uint8_t> second = surface->read_pixels();
+    // assert the second read is the same picture, because reading must not consume the finished frame (§6.3)
+    ASSERT_FALSE(first.empty());
+    EXPECT_EQ(first, second);
+}
+
+TEST(AlborRendererBackendChecks, RefusesAReadWhileAFrameIsInFlight) {
+    // arrange a surface whose frame has begun but has not ended (§6.1)
+    albor::render::AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{4.0f, 4.0f}, 1.0f);
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(surface, nullptr);
+    // act
+    surface->begin_frame();
+    const std::vector<std::uint8_t> during = surface->read_pixels();
+    surface->end_frame();
+    // assert the in-flight frame is refused and the finished one reads back (§6.1, §6.3)
+    EXPECT_TRUE(during.empty());
+    EXPECT_FALSE(surface->read_pixels().empty());
+}
+
+TEST(AlborRendererBackendChecks, ASecondSurfaceCanShareTheLayer) {
+    // arrange a layer the composition root hands to two surfaces in turn (§5.3, AD-16)
+    albor::render::AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{8.0f, 8.0f}, 1.0f);
+    CAMetalLayer* layer = [CAMetalLayer layer];
+    const NativeWindowHandle handle = NativeWindowHandle::from_object((__bridge const void*)layer);
+    std::unique_ptr<RenderSurface> first = backend.create_surface(handle, metrics);
+    ASSERT_NE(first, nullptr);
+    ASSERT_TRUE(first->valid());
+    // act a second surface on the same layer, which keeps its own target and cache (§6.2)
+    std::unique_ptr<RenderSurface> second = backend.create_surface(handle, metrics);
+    ASSERT_NE(second, nullptr);
+    ASSERT_TRUE(second->valid());
+    const FrameScene red(metrics, Color::rgb(1.0f, 0.0f, 0.0f));
+    backend.execute_frame(*first, red);
+    backend.execute_frame(*second, red);
+    // assert both surfaces present and read back while they share the layer (§5.3)
+    EXPECT_EQ(first->read_pixels().size(), 8u * 8u * 4u);
+    EXPECT_EQ(second->read_pixels().size(), 8u * 8u * 4u);
+    // act the second leaves, which returns the layer to the first (§5.3)
+    second.reset();
+    backend.execute_frame(*first, red);
+    // assert the first still presents after the second left (§5.3)
+    EXPECT_FALSE(first->read_pixels().empty());
+}
+
 // the suite presents a real stream, because a present that forgets its pool leaks what no header check sees (§6.3)
 TEST(AlborRendererBackendChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) {
 #if defined(ALBOR_COVERAGE)
@@ -471,9 +552,13 @@ TEST(AlborRendererBackendChecks, DefersAResizeThatArrivesMidFrame) {
     surface->resize(large);
     const WindowMetrics during = surface->metrics();
     surface->end_frame();
-    // assert
+    // assert the frame kept its extent and the resize applied after it (§6.2)
     EXPECT_EQ(during, small);
     EXPECT_EQ(surface->metrics(), large);
+    // act a frame at the applied extent, which proves the pending resize reached the target (§6.2)
+    backend.execute_frame(*surface, FrameScene(large, Color::rgb(0.0f, 0.0f, 1.0f)));
+    // assert the target moved to the new physical extent (§6.2, AD-27)
+    EXPECT_EQ(surface->read_pixels().size(), 8u * 6u * 4u);
 }
 
 TEST(AlborParityChecks, AnAlignedRectangleMatchesTheReference) {
@@ -723,8 +808,8 @@ TEST(AlborParityChecks, AScissorUnderATranslatedTransformMatchesTheReference) {
     EXPECT_EQ(expected_shot.max_channel_difference(actual_shot), 0);
 }
 
-TEST(AlborParityChecks, AFrameRenderedAtAnotherScaleDoesNotMatch) {
-    // arrange a scene at one density and a surface at another, which the comparison must reject
+TEST(AlborParityChecks, ATwoScaleSceneDoublesTheGeometry) {
+    // arrange the same logical square at two densities, which the device scale must carry into the geometry (AD-27)
     const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{16.0f, 16.0f}, 1.0f);
     const WindowMetrics denser = WindowMetrics::from_logical(AlborSize{16.0f, 16.0f}, 2.0f);
     albor::render::AlborRendererBackend backend;
@@ -732,18 +817,29 @@ TEST(AlborParityChecks, AFrameRenderedAtAnotherScaleDoesNotMatch) {
     const std::unique_ptr<RenderSurface> large = backend.create_surface(NativeWindowHandle{}, denser);
     ASSERT_NE(small, nullptr);
     ASSERT_NE(large, nullptr);
-    const FrameScene small_scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
-    const FrameScene large_scene(denser, Color::rgb(0.0f, 0.0f, 0.0f));
+    FrameScene small_scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand small_square = DrawCommand::rectangle(AlborRect::from_origin_size(AlborPoint{4.0f, 4.0f}, AlborSize{4.0f, 4.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    small_square.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, metrics.logical_size));
+    small_scene.add_command(std::move(small_square));
+    FrameScene large_scene(denser, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand large_square = DrawCommand::rectangle(AlborRect::from_origin_size(AlborPoint{4.0f, 4.0f}, AlborSize{4.0f, 4.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    large_square.set_clip(AlborRect::from_origin_size(AlborPoint{0.0f, 0.0f}, denser.logical_size));
+    large_scene.add_command(std::move(large_square));
     // act
     backend.execute_frame(*small, small_scene);
     backend.execute_frame(*large, large_scene);
     const Screenshot first = capture_surface(*small);
     const Screenshot second = capture_surface(*large);
-    // assert
+    // assert the target doubled, which a comparison of two densities has to see (AD-27)
     ASSERT_FALSE(first.empty());
     ASSERT_FALSE(second.empty());
-    EXPECT_NE(first.pixels.size(), second.pixels.size());
-    EXPECT_FALSE(first.pixels.empty());
+    ASSERT_EQ(first.pixels.size(), 16u * 16u * 4u);
+    ASSERT_EQ(second.pixels.size(), 32u * 32u * 4u);
+    // the logical square covers its logical pixels once and its device pixels twice, so the scale reached the geometry
+    EXPECT_EQ(first.pixels[(6u * 16u + 6u) * 4u], 255u);
+    EXPECT_EQ(second.pixels[(12u * 32u + 12u) * 4u], 255u);
+    // device (6,6) is outside the doubled square, which a surface that ignored the scale would have painted (AD-27)
+    EXPECT_EQ(second.pixels[(6u * 32u + 6u) * 4u], 0u);
 }
 
 TEST(AlborParityChecks, ASoftShadowMatchesTheReference) {

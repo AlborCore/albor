@@ -7,12 +7,15 @@
 #include "conditional_panel.h"
 #include "guarded_flat_repeat_panel.h"
 #include "guarded_repeat_panel.h"
+#include "image_panel.h"
 #include "nested_direct_panel.h"
 #include "nested_panel.h"
 #include "ordered_panel.h"
 #include "record_panel.h"
+#include "resources/embedded_image.h"
 #include "runtime/binding_engine.h"
 #include "scroll_log.h"
+#include "task/image_record.h"
 #include "task_list.h"
 #include "text/text_engine.h"
 #include "ui/scene_builder.h"
@@ -21,6 +24,30 @@
 #include "window/window_metrics.h"
 
 using namespace albor;
+
+TEST(VectorCodegen, AnEmbeddedImageDecodesWhenTheComponentIsBuilt) {
+    // arrange a panel whose image default is an asset the compiler embedded (§6.4)
+    BindingEngine engine;
+    // act
+    const ImagePanel panel(&engine, nullptr);
+    const std::shared_ptr<const ImageResource> icon = panel.icon();
+    // assert the generated accessor reached the registry and decoded the carried png (§6.4)
+    ASSERT_NE(icon, nullptr);
+    EXPECT_EQ(icon->width(), 1U);
+    EXPECT_EQ(icon->height(), 1U);
+    EXPECT_EQ(icon->format(), ImageFormat::RGBA8);
+    EXPECT_EQ(icon->pixels().size(), 4U);
+    // the cache is left empty, because a suite that counts its entries must not inherit this fixture (§6.4)
+    albor::resources::ImageRegistry::clear();
+}
+
+TEST(VectorCodegen, AManifestRecordCarriesAnImageHandle) {
+    // arrange a record the manifest generated with an image field (§11.2, §6.4)
+    const ImageRecord record{.key = "icon", .icon = nullptr};
+    // assert the generated aggregate keeps both fields, which is what the compiler names (§11.2)
+    EXPECT_EQ(record.key, "icon");
+    EXPECT_EQ(record.icon, nullptr);
+}
 
 TEST(VectorCodegen, ADecimalListBecomesTheDeclaredCollection) {
     // arrange a panel over the engines its body reads, which is what an application constructs (§11.3)

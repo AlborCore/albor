@@ -55,6 +55,12 @@ namespace
         return static_cast<TranslationExpression&>(*expression);
     }
 
+    // reach an embedded image without naming its concrete type (§6.4)
+    ImageExpression& as_image(const ExpressionPtr& expression) {
+        // the cast is safe because every suite in this file builds the expression itself (§6.4)
+        return static_cast<ImageExpression&>(*expression);
+    }
+
     // reach a conversion without naming its concrete type (§11.1)
     ConversionExpression& as_conversion(const ExpressionPtr& expression) {
         // the cast is safe because every suite in this file builds the expression itself (§11.1)
@@ -78,6 +84,9 @@ namespace
         // a translation renders as the macro applied to its text (§11.1, §9.2)
         if (const auto* translation = dynamic_cast<const TranslationExpression*>(expression.get()))
             return "@tr(" + translation->text + ")";
+        // an image renders as the macro applied to its path (§6.4)
+        if (const auto* image = dynamic_cast<const ImageExpression*>(expression.get()))
+            return "@image(" + image->path + ")";
         // a conversion renders as its target applied to its value (§11.1)
         if (const auto* conversion = dynamic_cast<const ConversionExpression*>(expression.get()))
             return conversion->target_type + "(" + shape(conversion->value) + ")";
@@ -659,6 +668,25 @@ TEST(Parser, ReportsATranslationOfAComputedValue) {
     // assert
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0202");
+}
+
+TEST(Parser, ReadsAnEmbeddedImageAsItsOwnForm) {
+    // arrange, act
+    const SourceFile file = parse("component C { B { icon: @image(\"icons/icon.png\"); } }");
+    // assert
+    const PropertyAssignment& assignment = file.components.at(0).root->assignments.at(0);
+    // the path is decoded, because the generator resolves it against the source file (§6.4)
+    EXPECT_EQ(as_image(assignment.value).path, "icons/icon.png");
+}
+
+TEST(Parser, ReportsAnEmbeddedImageOfAComputedValue) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    parse("component C { B { icon: @image(path); } }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0205");
 }
 
 TEST(Parser, ReportsAnUnknownMacroAsACallThatIsNotAConversion) {

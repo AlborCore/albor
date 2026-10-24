@@ -575,6 +575,33 @@ TEST(TypeChecker, TypesEveryLiteralKind) {
     EXPECT_TRUE(component.root->assignments.at(0).type.is(TypeKind::Length));
 }
 
+TEST(TypeChecker, TypesAnEmbeddedImageAsTheImageKind) {
+    // arrange, act
+    const CheckedFile file = check("component C { in property<image> icon: @image(\"icon.png\"); Column {} }");
+    // assert the declared image property accepts the asset handle the macro produces (§6.4)
+    EXPECT_TRUE(only(file).properties.at(0).type.is(TypeKind::Image));
+}
+
+TEST(TypeChecker, RefusesAnEmbeddedImageIntoAStringProperty) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("component C { in property<string> name: @image(\"icon.png\"); Column {} }", diagnostics);
+    // assert an image is a separate scalar, which a string property cannot hold (§6.4)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0410");
+}
+
+TEST(TypeChecker, RefusesAStringIntoAnImageProperty) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("component C { in property<image> icon: \"icon.png\"; Column {} }", diagnostics);
+    // assert a path string is not an asset handle, which only @image produces (§6.4)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0410");
+}
+
 TEST(TypeChecker, RefusesAnIntegerIntoAFloatProperty) {
     // arrange
     DiagnosticList diagnostics;

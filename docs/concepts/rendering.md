@@ -20,11 +20,17 @@ presented, and no lock protects a drawing structure: ownership simply moves.
 
 Rendering sits behind a stable interface; the backend is **selected by linking**:
 
-- **Skia** (`albor-render-skia-auto`) — the shipping backend, Metal on macOS. Link it and it
-  installs itself; no application code names it.
-- **Software** — a CPU rasterizer built for the Test configuration. It is the reference the
-  GPU/software parity suite compares against, so a drawing rule that only holds on one
-  backend is a defect rather than a platform quirk.
+- **`albor`** is the normal application target. It carries the recommended GPU backend,
+  `render-albor` (Metal on macOS, Direct3D on Windows), and installs it at load.
+- **`albor-blend2d`** carries the portable Blend2D CPU backend instead. It is the renderer
+  choice for an application that does not want the GPU path.
+- **Advanced targets** are available for a deliberate composition:
+  `albor-render-albor-auto`, `albor-render-blend2d-auto`, `albor-render-skia-auto`, and
+  `albor-render-software-auto`. Skia is the transitional/reference backend; software is
+  built for the Test configuration and is the parity reference.
+
+A normal application links one of the two public targets and never adds a second platform,
+text or renderer target. The complete target map is on [Consuming Albor](../consuming.md).
 
 Application headers never see a backend type. The `RenderContext` a custom node receives is
 the portable surface.
@@ -88,4 +94,4 @@ application.set_window_background(handle, controller.theme().surface());
 
 The frame pipeline, the surface and the executor are wired by the one
 `create_window` call — a host names a window and a component, never a renderer
-([Getting started](../getting-started.md#the-pieces-you-link)).
+([Consuming Albor](../consuming.md)).

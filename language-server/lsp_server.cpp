@@ -1,5 +1,9 @@
 #include "language-server/lsp_server.h"
 
+#include <cctype>
+#include <filesystem>
+#include <string_view>
+
 #include "compiler/codegen/codegen.h"
 #include "compiler/diagnostic.h"
 #include "compiler/lexer.h"
@@ -67,8 +71,63 @@ namespace albor::language_server
             return value->as_string();
         }
 
+        // build a path from the utf-8 bytes a file uri carries, which a windows code page does not decode (§12.2)
+        std::filesystem::path path_from_utf8(const std::string& text) {
+            // the u8 spelling is what makes the conversion locale independent (§12.2)
+            return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(text.data()), text.size()));
+        }
+
+        // read one hexadecimal digit, which a percent escape needs (§12.2)
+        int hex_digit(char digit) {
+            // a decimal digit is its own value, because the escape writes one byte in base sixteen (§12.2)
+            if (digit >= '0' && digit <= '9')
+                return digit - '0';
+            // an upper case letter follows the nine digits (§12.2)
+            if (digit >= 'A' && digit <= 'F')
+                return digit - 'A' + 10;
+            // a lower case letter is the same value as the upper one (§12.2)
+            return digit - 'a' + 10;
+        }
+
+        // resolve a file uri to the source path, which is what lets an embedded asset resolve beside it (§12.2, §6.4)
+        std::filesystem::path document_path(std::string_view uri) {
+            // a uri that is not a file has no path the build could resolve against (§12.2)
+            if (!uri.starts_with("file://"))
+                return {};
+            // the scheme is removed, which leaves the authority and the path (§12.2)
+            std::string_view encoded = uri.substr(7);
+            // a host before the first slash is not a local path, except for localhost (§12.2)
+            if (const std::size_t slash = encoded.find('/'); slash != std::string_view::npos && slash != 0) {
+                // a remote host has no local document path the compiler can read (§12.2)
+                if (encoded.substr(0, slash) != "localhost")
+                    return {};
+                // the local host is dropped, because its path is the local file path (§12.2)
+                encoded.remove_prefix(slash);
+            }
+            // the escaped bytes accumulate into the path the filesystem takes (§12.2)
+            std::string decoded;
+            // each escape is decoded, because an editor writes a space as a percent triplet (§12.2)
+            for (std::size_t index = 0; index < encoded.size(); ++index) {
+                // a triplet is decoded only when it is complete and hexadecimal (§12.2)
+                if (encoded[index] == '%' && index + 2 < encoded.size() && std::isxdigit(static_cast<unsigned char>(encoded[index + 1])) != 0 && std::isxdigit(static_cast<unsigned char>(encoded[index + 2])) != 0) {
+                    // the high nibble and the low nibble form the byte the editor meant (§12.2)
+                    decoded.push_back(static_cast<char>(hex_digit(encoded[index + 1]) * 16 + hex_digit(encoded[index + 2])));
+                    // the two digits are consumed with the percent sign (§12.2)
+                    index += 2;
+                    continue;
+                }
+                // a byte that is not an escape is already the path (§12.2)
+                decoded.push_back(encoded[index]);
+            }
+            // a windows file uri carries a slash before the drive letter, which is not part of the path (§12.2)
+            if (std::filesystem::path::preferred_separator == '\\' && decoded.size() >= 3 && decoded.front() == '/' && std::isalpha(static_cast<unsigned char>(decoded[1])) != 0 && decoded[2] == ':')
+                decoded.erase(decoded.begin());
+            // the utf-8 bytes become the native path the generator opens (§12.2)
+            return path_from_utf8(decoded);
+        }
+
         // run the compiler over one document's text, which is what produces the diagnostics (§16)
-        compiler::DiagnosticList compile_text(const std::string& text) {
+        compiler::DiagnosticList compile_text(const std::string& text, const std::filesystem::path& source_path) {
             // the diagnostics accumulate, because the server publishes what the compiler found (§16)
             compiler::DiagnosticList diagnostics;
             // the builtin catalog is what a ui file may use without a manifest (§11.1, §8)
@@ -80,7 +139,12 @@ namespace albor::language_server
             // the checker resolves it against the catalog, which is where the types come from (§11.1, AD-17)
             const compiler::CheckedFile checked = compiler::TypeChecker(catalog, diagnostics).check(file);
             // the generator runs too, because a diagnostic may come only from codegen (§11.3)
-            (void)compiler::CodeGenerator(diagnostics).generate(checked);
+            compiler::CodeGenerator generator(diagnostics);
+            // a document with a file path resolves its assets beside itself, which is what the build does (§12.2, §6.4)
+            if (!source_path.empty())
+                generator.set_source_path(source_path);
+            // the generated output is discarded, because the editor is told the diagnostics (§11.3)
+            (void)generator.generate(checked);
             // the diagnostics are returned, which is what the editor is told (§16)
             return diagnostics;
         }
@@ -219,7 +283,7 @@ namespace albor::language_server
                 return Exchange{.reply = {}, .notifications = {}};
             // the compile runs over what was stored, which is the same text an editor is showing (§16)
             const Document& document = *m_documents.find(*uri);
-            const compiler::DiagnosticList diagnostics = compile_text(document.text());
+            const compiler::DiagnosticList diagnostics = compile_text(document.text(), document_path(document.uri()));
             // the count is kept, which is what an agreement test reads (§16)
             m_last_diagnostics = diagnostics.count();
             // the publication is a notification, because an editor expects diagnostics unprompted (§12.2, §16)

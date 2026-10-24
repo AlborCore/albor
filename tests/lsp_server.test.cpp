@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <cstddef>
+#include <filesystem>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -45,9 +47,9 @@ namespace
     }
 
     // open a document and hand back the exchange, which is what an editor does (§12.2)
-    Exchange did_open(LspServer& server, const std::string& text) {
+    Exchange did_open(LspServer& server, const std::string& text, const std::string& uri = "file:///panel.ui") {
         // the notification carries the text inline, which is the open form (§12.2)
-        const std::string line = std::string(R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///panel.ui","languageId":"albor","version":1,"text":)") + core::Json(text).to_string() + "}}}";
+        const std::string line = std::string(R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":)") + core::Json(uri).to_string() + R"(,"languageId":"albor","version":1,"text":)" + core::Json(text).to_string() + "}}}";
         // the line is handled, which is the whole of the loop (§12.2)
         return server.handle_line(line);
     }
@@ -72,6 +74,49 @@ TEST(LspServerChecks, InitializeAnswersWithoutNeedingADocument) {
     // assert the handshake answered as a reply, because an editor waits for it (§12.2)
     ASSERT_TRUE(exchange.reply.has_value());
     EXPECT_EQ(server.document_count(), 0U);
+}
+
+TEST(LspServerChecks, AnEmbeddedImageResolvesBesideTheDocument) {
+    // arrange a document whose asset sits beside it, which is what a saved editor buffer has (§12.2, §6.4)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-image";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    std::filesystem::copy_file(std::filesystem::path(ALBOR_TEST_VECTORS_DIR) / "icon.png", root / "icon.png", std::filesystem::copy_options::overwrite_existing);
+    const std::string root_text = root.generic_string();
+    const std::string root_uri = "file://" + std::string(root_text.starts_with('/') ? "" : "/") + root_text;
+    // act
+    LspServer server;
+    const Exchange exchange = did_open(server, R"(component Panel { in property<image> icon: @image("icon.png"); Column {} })", root_uri + "/panel.ui");
+    // assert the reference is not refused, because the editor supplied the document path (§16, §6.4)
+    ASSERT_EQ(exchange.notifications.size(), 1U);
+    EXPECT_EQ(server.last_diagnostic_count(), 0U);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(LspServerChecks, AFileUriIsDecodedAndAnUnsavedDocumentIsRefused) {
+    // arrange a document named with percent escapes, which an editor writes for a space and two letters (§12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-lsp-uri";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    std::filesystem::copy_file(std::filesystem::path(ALBOR_TEST_VECTORS_DIR) / "icon.png", root / "icon.png", std::filesystem::copy_options::overwrite_existing);
+    const std::string root_text = root.generic_string();
+    const std::string root_uri = "file://" + std::string(root_text.starts_with('/') ? "" : "/") + root_text;
+    // act and assert a complete triplet, an upper case digit and a lower case digit all decode beside the document (§12.2)
+    LspServer server;
+    const std::string source = R"(component Panel { in property<image> icon: @image("icon.png"); Column {} })";
+    (void)did_open(server, source, root_uri + "/panel%20%4A%6a.ui");
+    EXPECT_EQ(server.last_diagnostic_count(), 0U);
+    // assert a localhost authority is the local path, because it names this machine (§12.2)
+    (void)did_open(server, source, "file://localhost" + std::string(root_text.starts_with('/') ? "" : "/") + root_text + "/panel.ui");
+    EXPECT_EQ(server.last_diagnostic_count(), 0U);
+    // assert a remote authority and a document that is not a file have no local path to resolve against (§12.2, §6.4)
+    (void)did_open(server, source, "file://example.com/panel.ui");
+    EXPECT_GT(server.last_diagnostic_count(), 0U);
+    (void)did_open(server, source, "untitled:panel.ui");
+    EXPECT_GT(server.last_diagnostic_count(), 0U);
+    std::filesystem::remove_all(root, ignored);
 }
 
 TEST(LspServerChecks, OpeningADocumentPublishesItsDiagnostics) {

@@ -323,7 +323,7 @@ namespace albor
             return;
         // a bound command is invoked with the new value, which is what an action that carries a value receives (§18.3)
         if (command() != nullptr) {
-            (void)command()->invoke(CommandInvocation{.command = command()->id(), .argument = static_cast<double>(m_value), .source = InvocationSource::Pointer});
+            (void)command()->invoke(CommandInvocation{.command = command()->id(), .argument = static_cast<double>(m_value), .selection = {}, .source = InvocationSource::Pointer});
             return;
         }
         // the handler receives the new value, which is what a change reports (§8.3)

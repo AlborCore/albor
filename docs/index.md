@@ -20,6 +20,8 @@ every new feature lands here alongside its code.
 
 - **[Getting started](getting-started.md)** — build the repository, wire a `.ui` file into a
   CMake target, open the first window.
+- **[Consuming Albor](consuming.md)** — link the framework from another project, choose a
+  renderer, and use the advanced composition targets.
 - **[The .ui language](ui-language/index.md)** — the complete language: components,
   properties, expressions, types, handlers, control flow.
 - **Concepts** — the cross-cutting machinery:

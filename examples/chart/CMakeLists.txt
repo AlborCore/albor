@@ -16,5 +16,5 @@ albor_build_native_component(albor-chart "${CMAKE_CURRENT_SOURCE_DIR}/chart.ui-m
 target_include_directories(albor-chart PRIVATE ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-chart PRIVATE cxx_std_23)
 
-# the example reaches the platform, the renderers, the layout and the widgets, so they link explicitly (§3.2)
-target_link_libraries(albor-chart PRIVATE albor-platform-macos-auto albor-render-skia-auto albor-text-harfbuzz-auto albor-widgets albor-layout)
+# the public target carries the platform, text engine, widgets and recommended renderer (§3.3, AD-19)
+target_link_libraries(albor-chart PRIVATE albor)

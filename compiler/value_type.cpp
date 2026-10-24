@@ -62,7 +62,7 @@ namespace albor::compiler
 
     std::string ValueType::to_string() const {
         // the spellings are a table indexed by kind, so a new kind cannot leave a path unhandled (§11.1)
-        static const char* const SPELLINGS[] = {"<error>", "void", "bool", "int", "float", "string", "color", "align", "scrollbar", "font_weight", "length", "Snapshot<", "vector<", "", "command"};
+        static const char* const SPELLINGS[] = {"<error>", "void", "bool", "int", "float", "string", "color", "image", "align", "scrollbar", "font_weight", "length", "Snapshot<", "vector<", "", "command"};
         // the two parameter forms append their element, so only their prefix comes from the table (§11.1)
         if (m_kind == TypeKind::Snapshot)
             return std::string(SPELLINGS[static_cast<std::size_t>(m_kind)]) + element().to_string() + ">";
@@ -188,6 +188,7 @@ namespace albor::compiler
                 // the alignment set is what a layout property resolves a written member against (§8.2)
                 NamedValueSet{.name = "Align",
                               .kind = TypeKind::Align,
+                              .cpp_name = "",
                               .members =
                                   {
                                       // the written form is lower case and the enumerator capitalised (§11.3, §8.2)
@@ -337,7 +338,7 @@ namespace albor::compiler
                                               // the viewport, the selection and the bar are the surface (§8)
                                               .properties = {ElementProperty{.name = "viewport_width", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "viewport_height", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "overscan", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "selected", .type = scalar(TypeKind::Int), .assignable = true}, ElementProperty{.name = "row_height", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "scrollbar", .type = scalar(TypeKind::Scrollbar), .assignable = true}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true}},
                                               // a list raises on selection and on activation (§18.1, §18.3)
-                                              .signals = {ElementSignal{.name = "selection_changed", .parameter_types = {}}, ElementSignal{.name = "activated", .parameter_types = {scalar(TypeKind::String)}, .parameter_names = {"key"}}},
+                                              .signals = {ElementSignal{.name = "selection_changed", .parameter_types = {}, .parameter_names = {}}, ElementSignal{.name = "activated", .parameter_types = {scalar(TypeKind::String)}, .parameter_names = {"key"}}},
                                               // a list hosts the row content it repeats, so it accepts children (§8.2)
                                               .accepts_children = true});
         // a leaf draws a run of text, which is a caption or a value readout (§8)
@@ -363,7 +364,7 @@ namespace albor::compiler
                                               .name = "Button", // the label and the plate and the disabled state are what a button exposes (§8)
                                               .properties = {ElementProperty{.name = "text", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "background", .type = scalar(TypeKind::Color), .assignable = true}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "action", .type = scalar(TypeKind::Command), .assignable = true}},
                                               // a button raises a click when it is pressed (§8)
-                                              .signals = {ElementSignal{.name = "clicked", .parameter_types = {}}},
+                                              .signals = {ElementSignal{.name = "clicked", .parameter_types = {}, .parameter_names = {}}},
                                               // a button is a leaf, so it takes no children (§8)
                                               .accepts_children = false});
         // a leaf carries a continuous value the user drags (§8)
@@ -534,6 +535,9 @@ namespace albor::compiler
         // a colour is spelled color (§11.1)
         if (written == "color")
             return scalar(TypeKind::Color);
+        // an image handle is spelled image, which an embedded asset produces (§6.4, §11.1)
+        if (written == "image")
+            return scalar(TypeKind::Image);
         // a length is spelled length, so a declared length and a literal length agree (§11.1, AD-27)
         if (written == "length")
             return scalar(TypeKind::Length);

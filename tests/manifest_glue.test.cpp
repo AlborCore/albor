@@ -433,6 +433,64 @@ record Task {
     EXPECT_NE(files.at(0).content.find("Color tint;"), std::string::npos);
 }
 
+TEST(ManifestGlue, AnImagePropertyAndSignalPullTheHandleHeader) {
+    // arrange a native component whose surface carries an embedded image (§6.4, §11.2)
+    constexpr std::string_view manifest = R"(
+native component Picture {
+    in property<image> source;
+    signal picked(image chosen);
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(manifest);
+    // assert the facade names the handle and includes its complete type (§6.4, AD-05)
+    const GeneratedFile& header = file_named(files, "chart/picture.h");
+    EXPECT_TRUE(contains(header.content, "#include <memory>"));
+    EXPECT_TRUE(contains(header.content, "#include \"render/image_resource.h\""));
+    EXPECT_TRUE(contains(header.content, "virtual void set_source(std::shared_ptr<const ImageResource> value) = 0;"));
+    EXPECT_TRUE(contains(header.content, "[[nodiscard]] virtual std::shared_ptr<const ImageResource> source() const = 0;"));
+    EXPECT_TRUE(contains(header.content, "void set_on_picked(std::function<void(std::shared_ptr<const ImageResource>)> handler);"));
+    EXPECT_TRUE(contains(header.content, "void emit_picked(std::shared_ptr<const ImageResource> chosen);"));
+}
+
+TEST(ManifestGlue, AnImagePreviewMemberStartsEmpty) {
+    // arrange image properties with a preview override and a declared default, neither of which names an asset (§11.2)
+    constexpr std::string_view manifest = R"(
+native component Picture {
+    in property<image> chosen;
+    in property<image> fallback: "ignored.png";
+    preview {
+        chosen: "other.png";
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(manifest);
+    // assert the stub starts with empty handles, because a manifest path is not an embedded asset (§11.2, §6.4)
+    const GeneratedFile& header = file_named(files, "chart/picture_preview.h");
+    EXPECT_TRUE(contains(header.content, "std::shared_ptr<const ImageResource> m_chosen{};"));
+    EXPECT_TRUE(contains(header.content, "std::shared_ptr<const ImageResource> m_fallback{};"));
+    EXPECT_FALSE(contains(header.content, "ignored.png"));
+}
+
+TEST(RecordGlue, AnImageFieldPullsTheHandleHeader) {
+    // arrange a record whose field carries an embedded image (§6.4, §11.2)
+    const std::string_view source = R"(
+record Picture {
+    key: string;
+    icon: image = "ignored.png";
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the member names the handle and includes its complete type, while the path default is dropped (§6.4, AD-05)
+    EXPECT_NE(files.at(0).content.find("#include <memory>"), std::string::npos);
+    EXPECT_LT(files.at(0).content.find("#include <memory>"), files.at(0).content.find("#include <string>"));
+    EXPECT_NE(files.at(0).content.find("#include \"render/image_resource.h\""), std::string::npos);
+    EXPECT_NE(files.at(0).content.find("std::shared_ptr<const ImageResource> icon;"), std::string::npos);
+    EXPECT_EQ(files.at(0).content.find("ignored.png"), std::string::npos);
+}
+
 TEST(RecordGlue, TheKeyFieldIsNamedAsCarryingIdentity) {
     // arrange
     const std::string_view source = R"(
@@ -527,6 +585,25 @@ record Task {
     EXPECT_TRUE(record->find_field("retries")->type.is(TypeKind::Int));
     EXPECT_TRUE(record->find_field("ratio")->type.is(TypeKind::Float));
     EXPECT_TRUE(record->find_field("done")->type.is(TypeKind::Bool));
+}
+
+TEST(RecordRegistration, AnImageFieldResolvesToTheImageKind) {
+    // arrange a record whose field names the image scalar the language spells (§6.4, §11.1)
+    const std::string_view source = R"(
+record Picture {
+    key: string;
+    icon: image;
+}
+)";
+    DiagnosticList diagnostics;
+    const ManifestFile file = ManifestParser(Lexer(source, diagnostics).tokenize(), diagnostics).parse("chart");
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act
+    register_records(file, catalog);
+    // assert the field type is the handle an embedded asset produces (§6.4, §11.2)
+    const RecordType* record = catalog.find_record("Picture");
+    ASSERT_NE(record, nullptr);
+    EXPECT_TRUE(record->find_field("icon")->type.is(TypeKind::Image));
 }
 
 TEST(RecordRegistration, TheKeyFieldCarriesTheIdentity) {

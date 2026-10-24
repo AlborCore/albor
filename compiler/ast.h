@@ -108,6 +108,23 @@ namespace albor::compiler
         static ExpressionPtr make(std::string text, SourceSpan span);
     };
 
+    // an embedded image macro, which names the source-relative asset the generator registers (§6.4, §11.1)
+    class ImageExpression : public Expression
+    {
+    public:
+        // the source-relative path as decoded, which the generator resolves against the .ui file (§6.4, §11.3)
+        std::string path;
+
+        // where the macro was written (§11.1)
+        SourceSpan span;
+
+        // hand out where the macro was written (§11.1)
+        [[nodiscard]] const SourceSpan& location() const override { return span; }
+
+        // build an embedded image, which the parser makes from an @image unit (§6.4, §11.1)
+        static ExpressionPtr make(std::string path, SourceSpan span);
+    };
+
     // a conversion such as string(value), which the checker resolves against the declared type of the target (§11.1)
     class ConversionExpression : public Expression
     {

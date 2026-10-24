@@ -9,12 +9,12 @@
   and are fetched on the first configure. The build declares the floor to the install itself,
   so the ports are stamped with the same 13.3 the framework is tested at; a port built for a
   newer floor links with a warning and may call an API the minimum system lacks
-- **macOS 13.3 or later** on Intel or Apple silicon to build and run the macOS targets (the
-  example applications drive the AppKit platform adapter directly; see
-  [Status and platforms](status.md))
-- **No Metal toolchain is needed to build** — the shader ships as a compiled artifact. Only a
-  change to the shader itself needs `xcodebuild -downloadComponent MetalToolchain`; see
-  [Tooling](tooling.md#the-metal-shader)
+- **macOS 13.3 or later** on Intel or Apple silicon for the macOS targets, or a supported
+  Windows 10/11 MSVC toolchain and SDK for the Windows targets. See
+  [Status and platforms](status.md)
+- **No shader toolchain is needed to build** — the Metal and Direct3D shaders ship as
+  compiled artifacts. Only a change to a shader source needs the matching compiler; see
+  [Tooling](tooling.md#the-shaders)
 
 ## Build the repository
 
@@ -30,21 +30,22 @@ directly rather than through `ctest`:
 ./.build-debug/tests/albor-tests
 ```
 
-## The pieces you link
+## The target you link
 
 An application names a window and the component it shows. It does not name a renderer, a
-platform adapter or a text engine: **linking is the selection**. Each backend installs itself
-at load, so the libraries a target links decide what ships inside it.
+platform adapter or a text engine; the framework target carries the recommended selection.
+All of those implementations install themselves at load, so **linking is still the
+selection**, but a normal application makes that choice once.
 
 | target | what it carries |
 | --- | --- |
-| `albor-application` | event loop, tasks, timers, window registry |
-| `albor-platform-macos-auto` | the AppKit window and input adapter |
-| `albor-render-skia-auto` | the Skia renderer backend (Metal) |
-| `albor-text-harfbuzz-auto` | HarfBuzz text shaping |
-| `albor-widgets`, `albor-layout` | the widget and container set |
-| `albor-accessibility`, `albor-i18n` | semantic/accessibility adapters, translation catalogs |
+| `albor` | the platform adapter, HarfBuzz, widgets, layout, accessibility, i18n and the recommended GPU renderer |
+| `albor-blend2d` | the same runtime with the portable Blend2D renderer |
 | `albor-devrt-auto` | dev runtime: hot swap of `.ui` structure (optional, see [Tooling](tooling.md)) |
+
+`albor` is available on the desktop platforms with an adapter (macOS and Windows today).
+On a platform without a desktop adapter, use the headless or granular targets; see
+[Consuming Albor](consuming.md#advanced-composition).
 
 ## Embedding fonts
 
@@ -57,21 +58,24 @@ rules and the diagnostics are on [Fonts](ui-language/fonts.md).
 
 `FetchContent` — or `add_subdirectory` of a vendored copy — brings the framework in as a
 subtree. Its tests and examples stay off, because they belong to developing the framework,
-and every `albor-*` target publishes the framework's own include root, so `#include
+and every framework target publishes the framework's own include root, so `#include
 "application/application.h"` resolves from the consumer's sources.
 
 ```cmake
 include(FetchContent)
 FetchContent_Declare(albor
     GIT_REPOSITORY https://github.com/AlborCore/albor.git
-    GIT_TAG        main)          # a tag or a commit, never a moving branch
+    GIT_TAG        <tag-or-commit>)   # never a moving branch
 FetchContent_MakeAvailable(albor)
 
 add_executable(my_app main.cpp)
-target_link_libraries(my_app PRIVATE
-    albor-application albor-platform-macos-auto
-    albor-render-albor-auto albor-text-harfbuzz-auto)
+target_link_libraries(my_app PRIVATE albor)
 ```
+
+The default target carries the platform, text engine, widgets, layout, accessibility, i18n
+and the recommended GPU renderer. Link `albor-blend2d` instead for the portable CPU
+renderer. The detailed target map, advanced composition and troubleshooting are on
+[Consuming Albor](consuming.md).
 
 The dependencies come from vcpkg. A consumer in manifest mode lists the same packages in
 its own `vcpkg.json`, or points `VCPKG_MANIFEST_DIR` at the fetched sources so the pinned
@@ -86,7 +90,7 @@ configure, because the install runs inside `project()` and inherits it from the 
 export `MACOSX_DEPLOYMENT_TARGET` with the application's floor — 13.3 at the lowest, higher
 when the application requires a newer system — and give `CMAKE_OSX_DEPLOYMENT_TARGET` the
 same value when naming it explicitly. A floor below 13.3 is rejected while the framework
-configures: the shipped shader and the test suites do not cover it.
+configures: the shipped shaders and the test suites do not cover it.
 
 ## A component from a `.ui` file
 
@@ -133,12 +137,7 @@ add_executable(my-app main.cpp)
 # runs albor-codegen at build time; output lands in build/generated/my-app/
 albor_build_ui_component(my-app "${CMAKE_CURRENT_SOURCE_DIR}/greeting_panel.ui")
 
-target_include_directories(my-app PRIVATE ${CMAKE_SOURCE_DIR})
-target_compile_features(my-app PRIVATE cxx_std_23)
-
-target_link_libraries(my-app PRIVATE
-    albor-platform-macos-auto albor-render-skia-auto albor-text-harfbuzz-auto
-    albor-widgets albor-layout albor-accessibility albor-i18n)
+target_link_libraries(my-app PRIVATE albor)
 ```
 
 !!! note
@@ -193,6 +192,7 @@ Complete, buildable applications live in the repository's `examples/` directory:
 | example | what it demonstrates |
 | --- | --- |
 | `hello-window` | an empty window with no generated component |
+| `hello-world` | the same window through the default GPU target and through `albor-blend2d` |
 | `greeting` | a compiled `.ui` component with signals, labels and a timer |
 | `form` | every shipped widget, plus the alignment patterns of `align_panel.ui` |
 | `reactive-counter` | hand-written C++ components on the reactive property engine |
@@ -208,6 +208,7 @@ build directory, for example:
 
 ## Where to go next
 
+- [Consuming Albor](consuming.md) — the public targets and advanced composition.
 - [The .ui language](ui-language/index.md) — the language, form by form.
 - [Properties and bindings](concepts/bindings.md) — how state moves.
 - [Components](components/index.md) — the element catalogue.

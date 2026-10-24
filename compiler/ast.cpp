@@ -36,6 +36,16 @@ namespace albor::compiler
         return node;
     }
 
+    ExpressionPtr ImageExpression::make(std::string path, SourceSpan span) {
+        // the node is allocated before it is filled, because the caller only holds the owning pointer (§11.1)
+        auto node = std::make_unique<ImageExpression>();
+        // the source-relative path is moved in rather than copied, because the scanner already built it (§6.4)
+        node->path = std::move(path);
+        // the span is what a diagnostic about the asset points at (§11.1)
+        node->span = span;
+        return node;
+    }
+
     ExpressionPtr CallExpression::make(std::string function, std::vector<ExpressionPtr> arguments, SourceSpan span) {
         // the node is allocated before it is filled, because the caller only holds the owning pointer (§11.1)
         auto node = std::make_unique<CallExpression>();

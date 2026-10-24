@@ -37,25 +37,16 @@ jobs:
               ccache --max-size 2G
               # the preset is c++23, so take the newest xcode the image carries rather than its default
               sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
-          - name: macos-coverage
-            os: macos-15
+          - name: windows-release
+            os: windows-latest
             enable: true
-            preset: coverage
-            vcpkg-root: /usr/local/share/vcpkg
+            preset: release
+            vcpkg-root: C:\vcpkg
             setup: |
               # the vcpkg binary cache root must exist before vcpkg runs
               mkdir -p .vcpkg-cache
               # the preset launches the compiler through ccache, which the runner image does not ship
-              HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
-              ccache --max-size 2G
-              # the preset is c++23, so take the newest xcode the image carries rather than its default
-              sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"              
-          - name: windows-release
-            os: windows-latest
-            enable: false
-            preset: release
-            vcpkg-root: C:\vcpkg
-            setup: choco install ccache
+              choco install ccache --no-progress -y
           - name: linux-release
             os: ubuntu-latest
             enable: false
@@ -80,9 +71,9 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-${{ runner.os }}-${{ matrix.preset }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
           restore-keys: |
-            vcpkg-${{ runner.os }}-${{ matrix.preset }}-
+            vcpkg-${{ runner.os }}-
 
       - name: restore the ccache directory
         if: matrix.enable

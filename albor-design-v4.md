@@ -3,12 +3,24 @@
 ## Architecture and Design Specification — Version 4
 
 **Status:** Implementation Specification  
-**Version:** 4.3  
-**Date:** 2026-10-05 (4.0) / 2026-10-08 (4.1, 4.2, 4.3)  
-**Project:** AlborCore / Albor  
+**Version:** 4.4
+
+**Date:** 2026-10-05 (4.0) / 2026-10-08 (4.1, 4.2, 4.3) / 2026-10-23 (4.4)
+
+**Project:** AlborCore / Albor
+
 **Supersedes:** v3.0 (and closes Phase 0 exploratory prototyping)
 
 ### Revision Log
+
+**4.4 — the public consumer build surface.** The framework now publishes `albor` and
+`albor-blend2d` as the only normal application targets. The platform adapter and text
+engine are selected at configure time inside the framework; only the renderer is a
+consumer choice. §3.3 records the target contract, §4.1 distinguishes build-time
+composition from the runtime composition root, §6.3 records `render-albor` as the default
+GPU backend and Skia as the transitional reference, and AD-05, AD-16 and AD-19 carry the
+implementation status. The granular `-auto` targets remain supported for expert
+composition and tests.
 
 **4.3 — the product objective, added to the specification.** An application must render the same
 pixels on macOS, Windows and Linux, text included. That requirement was not stated anywhere in this
@@ -79,10 +91,10 @@ The load-bearing architectural principle of Version 4 is **Decisive Abstraction 
 
 | Subsystem | Decision in v4 | Rationale & Swappability |
 | :--- | :--- | :--- |
-| **Rendering Backend** (AD-05, AD-28) | **Skia is the baseline rendering backend for Phase 1.** | Skia provides mature HarfBuzz text shaping, font fallbacks, complex 2D vector path rasterization, GPU acceleration (Metal/DirectX/Vulkan), and software rasterization out of the box. Google Dawn/WebGPU is preserved as a future pluggable backend candidate (`render-dawn`) behind `RendererBackend`, avoiding the multi-year task of rebuilding a 2D path/text engine from scratch. |
+| **Rendering Backend** (AD-05, AD-28) | **`render-albor` is the public default GPU backend; Skia is the transitional reference.** | The HAL keeps rendering swappable; `render-albor` draws through Metal and Direct3D, Blend2D provides the portable CPU path, and Skia remains available as an advanced/reference target. Google Dawn/WebGPU stays a future pluggable candidate (`render-dawn`) behind `RendererBackend`. |
 | **Custom Rendering** (AD-06) | **Level 2 retained & batched immediate primitives via `RenderContext`.** | Retained immutable GPU-managed geometry (`LineBatch`, `PathResource`, `Picture`) plus batch immediate calls. Level 3 (custom app shaders/compute) remains deferred to future iterations behind the same abstraction. |
 | **Property Storage & Evaluation** (AD-04a/b/c/d) | **Typed per-component storage with Eager-Push topological evaluation.** | Public properties use `Property<T>`. Components store properties as typed member fields with component-local offsets. Evaluation uses Eager-Push with topological/dirty propagation, which guarantees sub-millisecond settle times and completely avoids the stale-reconvergence correctness defects measured in hybrid pull. Internal index representation is an engine implementation detail. |
-| **Windowing & Platform** (AD-08, AD-16, AD-21) | **Abstract `PlatformWindow` and `PlatformEventLoop`. Initial platform backend: macOS (AppKit + Metal + `CVDisplayLink`).** | Public APIs (`Application`, `Window`, `WindowHandle`) know zero platform details. macOS is implemented first using AppKit with CoreVideo display-link pacing (proven at 60 Hz in A2-macOS), followed by Win32 and Linux Wayland/X11. |
+| **Windowing & Platform** (AD-08, AD-16, AD-21) | **Abstract `PlatformWindow` and `PlatformEventLoop`. macOS and Windows adapters are implemented; Linux Wayland/X11 follows.** | Public APIs (`Application`, `Window`, `WindowHandle`) know zero platform details. macOS uses AppKit with CoreVideo display-link pacing; Windows uses Win32 with its waitable-timer pacing and Direct3D. Linux remains planned behind the same HAL. |
 | **Production Execution Model** (AD-01, AD-03) | **No interpreter in Release. Concrete facade headers, write-if-changed code generation.** | Production compiles `.ui` directly to native C++. Public headers expose clean, non-virtual facades. Component translation unit batching is a configurable compiler option. |
 | **Layout Invariance & Dev Extension** (AD-02, AD-04) | **Memory layout is byte-identical across Release, Dev, and Test.** | Dev/Test features (`albor-devrt`, automation core) attach solely via link-time symbol inclusion and null-checked extension points, strictly enforced without `#ifdef` in runtime class layouts. |
 | **Identity & Semantics** (AD-09, AD-11, AD-20) | **Explicit `id:` is identity; one unified semantic tree.** | Automation and accessibility consume the same semantic model. Automation is excluded from Release at link time. MCP routes exclusively through the automation layer. |
@@ -172,8 +184,8 @@ The following architectural invariants are mandatory. Any violation is considere
 |               +---------------------+---------------------+             |
 |               |                                           |             |
 |               v                                           v             |
-|      [ Skia GPU Backend ]                        [ Software Backend ]   |
-|   (Metal / Vulkan / DirectX)                     (CPU Fallback / CI)    |
+|   [ render-albor GPU Backend ]                   [ blend2d / Software ]  |
+|   (Metal / Direct3D)                              (CPU Fallback / CI)    |
 +-------------------------------------------------------------------------+
                                       | (Dev / Test Configurations Only)
                                       v
@@ -201,7 +213,9 @@ albor/
 │   │   └── x11/         # X11 fallback (Tier 2)
 │   └── headless/        # Headless platform for CI and automation testing
 ├── render/              # Core rendering HAL: RenderContext, RenderSurface, FrameScene
-│   ├── render-skia/     # Skia GPU and text rendering implementation
+│   ├── render-albor/    # In-repo GPU backend: Metal on macOS, Direct3D on Windows
+│   ├── render-blend2d/  # Blend2D CPU backend and windowed surface
+│   ├── render-skia/     # Transitional Skia reference backend
 │   └── render-software/ # CPU rasterizer reference implementation
 ├── ui/                  # UI tree, node lifecycle, components, event routing
 ├── runtime/             # Reactive property storage, eager-push binding engine
@@ -209,6 +223,7 @@ albor/
 ├── input/               # Pointer, keyboard, gestures, and event coalescing
 ├── focus/               # Focus traversal, scopes, focus restoration
 ├── text/                # Font management, text layout, shaping, bidi
+│   └── text-harfbuzz/   # Vendored HarfBuzz/ICU text engine
 ├── semantics/           # Semantic tree and node descriptors
 ├── accessibility/       # Native accessibility adapters (NSAccessibility, UI Automation, AT-SPI)
 ├── widgets/             # Standard widget library (Button, Label, Slider, ScrollView, etc.)
@@ -228,6 +243,32 @@ albor/
 
 *Note: Phase 0 exploratory prototype code lives exclusively on the `prototypes` git branch for historical reference. The implementation branch contains only clean production modules and tests.*
 
+### 3.3 Public Build Surface (settled during implementation)
+
+The framework publishes one recommended application target per renderer choice. The
+platform and text implementations are selected by the framework at configure time, not by
+the consumer.
+
+| target | carries |
+| --- | --- |
+| `albor` | the platform adapter, HarfBuzz, layout, widgets, accessibility, i18n, resources, and the recommended GPU backend (`render-albor`) |
+| `albor-blend2d` | the same runtime with the Blend2D CPU backend |
+| `albor-platform-auto` | the selected desktop platform adapter, for expert composition |
+| `albor-text-auto` | the selected text engine, for expert composition |
+| `albor-*-auto` | the underlying platform, text and renderer implementations |
+
+The umbrella targets are `INTERFACE` targets: a consumer sees one link name while CMake
+places the selected archives on the linker line. A physical aggregate archive or shared
+library can replace the implementation behind the same target names without changing a
+consumer. `albor` and `albor-blend2d` exist only where a desktop platform adapter exists;
+the headless and test targets remain available as explicit choices.
+
+The granular targets stay public for tests, custom backends and deliberate replacement of
+a recommended implementation. Exactly one platform, one text engine and one renderer may
+be linked; the `-auto` targets use whole-archive registration, so combining them duplicates
+the registration rather than selecting a winner. The consumer-facing details are in
+[`docs/consuming.md`](docs/consuming.md).
+
 ---
 
 ## 4. Application, Event Loop, and Threading
@@ -242,6 +283,13 @@ text engine, because each backend installs itself at load and linking is the sel
 §6.3, §9.1). `create_window(options, Root)` builds the component over the engines that window
 owns and hands the caller the concrete facade, so a host drives properties and signals without a
 downcast (§8.1, §7.3, AD-24).
+
+The build-time composition is separate from the runtime composition root. A normal consumer
+links the public `albor` target, or `albor-blend2d` when it wants the portable renderer; both
+targets carry the platform, text engine and every other recommended module (§3.3, AD-19). Only
+the renderer is a consumer choice. An expert consumer may link the granular
+`albor-*-auto` targets directly, on the rule that exactly one platform, text engine and renderer
+is present in one binary.
 
 One call wires everything a main window needs: the native layer, the `RenderSurface`, the
 `FramePipeline`, the `RenderExecutor` and its render thread, the `InputController`, and the
@@ -410,8 +458,8 @@ that knew both the surface and the incoming metrics and was therefore given auth
 **Platform Implementation Strategy (AD-16 Decided):**
 - **macOS:** Implemented via direct Objective-C++/AppKit integration. Presentation attaches via `CAMetalLayer`. Pacing is driven by `CVDisplayLink` running on a CoreVideo callback thread and marshaling frame scheduling safely to the UI thread.
 - **Windows:** Implemented via direct Win32 APIs, using DirectComposition, DXGI swapchains, and Windows Text Services Framework (TSF) for IME.
-- **Linux Wayland:** Implemented via Wayland client libraries, `libdecor` for client-side window decorations, `xkbcommon` for key mapping, and `xdg_positioner` for popup surfaces.
-- **Linux X11:** Tier 2 fallback implementation using `xcb` and `xkbcommon`.
+- **Linux Wayland:** Planned, via Wayland client libraries, `libdecor` for client-side window decorations, `xkbcommon` for key mapping, and `xdg_positioner` for popup surfaces.
+- **Linux X11:** Planned Tier 2 fallback using `xcb` and `xkbcommon`.
 - **Headless:** No native window, synthetic metrics, and an event loop that pumps once per call
   rather than on a display link. It exists for CI testing and automation screenshots (§3.2, AD-26).
 
@@ -584,9 +632,14 @@ skip a command that is not visibly empty, because all three change the picture a
 `resize_surface` is subject to the surface ownership rule in §5.3: the caller must be the thread
 that owns the layer, which in the shipped architecture means the UI thread.
 
-### 6.3 Baseline Backend: Skia (AD-05, AD-28 Decided)
+### 6.3 Backends: render-albor default, Skia reference (AD-05, AD-28)
 
-**Skia is the baseline primary rendering backend for Phase 1.**
+**`render-albor` is the recommended GPU backend of the public `albor` target on macOS and
+Windows; Skia remains the transitional reference and an advanced target.** The original Phase 1
+baseline decision named Skia as the first implementation. The HAL contract is unchanged, and
+the public consumer default follows the shipped backend; `albor-blend2d` selects the portable
+CPU backend instead (§3.3).
+
 - Skia provides battle-tested Metal, Vulkan, and DirectX GPU backends.
 - It includes native integration with HarfBuzz for Unicode text shaping, bidi layout, font fallback, and complex path rasterization.
 - **The software reference is no longer Skia** (AD-26 revision). It rasterizes through the in-tree Blend2D backend and a HarfBuzz glyph-coverage atlas, so the reference is independent of the engine it judges and Skia can eventually leave the tree.
@@ -945,16 +998,10 @@ palette is the portable baseline; the native look is a *preset*, not a rewrite:
 
 Text rendering and measurement are foundational to UI layout:
 - `TextEngine` provides font discovery, fallback resolution, HarfBuzz Unicode shaping, and BiDi line breaking.
-- **The shipped engine does not yet do this, and the divergence is recorded.** The running engine
-  shapes through the renderer's bundled paragraph module rather than a vendored HarfBuzz and ICU,
-  so the dependency the specification names is present only transitively. A vendored shaper is now
-  built (`text/text-harfbuzz/`) and agrees with the current engine on glyph positions, but it issues
-  no drawable typeface, because the renderer build exposes no portable way to create one from font
-  bytes, so the drawing typeface is resolved from the platform font manager by family name while the
-  shaping stays vendored. That is the boundary this phase draws: it removes the shaping dependency,
-  and compile time glyph embedding is what removes font discovery. The two engines still disagree on
-  where a line's baseline sits, which is what keeps the current engine in place; see the
-  vendored baseline issue.
+- **The shipped engine is `text/text-harfbuzz`.** It shapes through vendored HarfBuzz and breaks
+  lines through ICU; the public `albor` target carries it as the only text engine. The renderer
+  bundles no paragraph module. Platform font discovery resolves the family, and embedded font
+  registration supplies the exact face bytes (§9.1, AD-34).
 - Text measurement is computed during the layout measure phase so containers accurately adapt to localized text lengths.
 - Fonts are managed as immutable resources through the `ResourceManager`.
 - **A build registers each font face under its family and weight (§9.1, AD-34).** The target
@@ -1317,7 +1364,9 @@ In `Dev` configuration, applications link the `albor-devrt` extension library:
 
 Linking `albor-devrt-auto` is the whole selection, on the same terms as a platform or a renderer
 backend: a self-installing translation unit and a whole-archive target, so an application that
-links it enables the feature and an application that does not is unaffected. Nothing in
+links it enables the feature and an application that does not is unaffected. The public `albor`
+target does not include it: live reload is a development feature with its own transport and
+should be an explicit link, not a side effect of choosing the application umbrella. Nothing in
 `application/`, `ui/` or `window/` names the extension.
 
 **The bind seam (AD-02).** `core/dev_hook.h` carries four free functions, present and
@@ -1368,7 +1417,7 @@ Every architectural decision from Phase 0 is formally settled for production imp
 | **AD-04b**| Property Storage | **Decided** | Typed member layout in component classes with component offsets; dynamic slab allocation. |
 | **AD-04c**| Evaluation Model | **Decided** | Eager-push evaluation with cycle budget protection; avoids hybrid pull reconvergence defects. |
 | **AD-04d**| Animation Shadowing | **Decided** | Animation presence record channels; animations yield cleanly to explicit user overrides. |
-| **AD-05** | Renderer Architecture | **Decided** | Fully decoupled HAL (`RendererBackend`, `RenderContext`). **Skia is the baseline backend.** |
+| **AD-05** | Renderer Architecture | **Decided** | Fully decoupled HAL (`RendererBackend`, `RenderContext`). `render-albor` is the default public GPU backend on macOS and Windows; Skia is the transitional/reference backend; Blend2D is the portable CPU choice. |
 | **AD-06** | Custom Rendering API | **Decided** | Level 2 batched primitives and retained immutable geometry batches (`LineBatch`, `Picture`). |
 | **AD-07** | Render Scene Model | **Decided** | UI thread builds immutable `FrameScene`; render executor processes commands decoupled from UI code. |
 | **AD-08** | Window Roles & Modality | **Decided** | Roles (`Normal`, `Dialog`, `Tool`, `Popup`) are immutable; modality is framework-enforced. |
@@ -1379,11 +1428,11 @@ Every architectural decision from Phase 0 is formally settled for production imp
 | **AD-13** | Virtualization & Keys | **Decided** | Model views virtualize materialized nodes; rows keyed by stable `ItemKey` identifiers. |
 | **AD-14** | Text/Layout Dependency | **Decided** | Text measurement via `TextEngine` is a prerequisite contract for layout calculation. |
 | **AD-15** | Command Abstraction | **Decided** | `Command` objects bind actions across buttons, shortcuts, menus, automation, and a `.ui` control bound through `action:` or fired from a handler's `invoke`. Enablement is observed from one object rather than copied per consumer; enabled and visible are two published states that route differently; the undo stack sits behind the object so one invocation contributes one entry. See §18. |
-| **AD-16** | Platform Strategy | **Decided** | Direct platform adapters behind `PlatformWindow`. macOS AppKit + Metal + `CVDisplayLink` first. |
+| **AD-16** | Platform Strategy | **Decided** | Direct platform adapters behind `PlatformWindow`. macOS AppKit + Metal + `CVDisplayLink` and Windows Win32 + Direct3D are implemented; Linux Wayland/X11 remains planned. |
 | **AD-17** | Native Manifest | **Decided** | Single source of truth for native components; compiler generates C++ glue and never parses C++. |
 | **AD-18a**| Stage Division | **Decided** | UI thread produces `FrameScene`; render thread executes GPU drawing commands. |
 | **AD-18b**| Presentation Isolation| **Decided** | Multi-window pacing decoupled via per-window display-link pacing; UI thread is never blocked. |
-| **AD-19** | ABI & Distribution | **Decided** | Pre-1.0 distributes as source/CMake package with pinned toolchain; public headers expose no backend types. |
+| **AD-19** | ABI & Distribution | **Decided** | Pre-1.0 distributes as source/CMake package with pinned toolchain; public headers expose no backend types. The public consumer targets are `albor` and `albor-blend2d`; granular `-auto` targets are the expert surface (§3.3). |
 | **AD-20** | MCP Routing | **Decided** | MCP routes strictly through the authenticated automation layer; never reaches internals directly. |
 | **AD-21** | Nested Loops | **Decided** | Event sources registered in all run-loop modes; re-entrant pump keeps live resizing smooth. |
 | **AD-22** | Linux X11 Tier | **Decided** | Linux Wayland is Tier 1; X11 is supported as Tier 2 fallback. |
@@ -1392,7 +1441,7 @@ Every architectural decision from Phase 0 is formally settled for production imp
 | **AD-25** | Dual-Engine Equivalence| **Decided** | Compiled C++ and Dev IR evaluator validated against a shared conformance test corpus. |
 | **AD-26** | Software Parity | **Decided, revised** | Blend2D plus the HarfBuzz glyph atlas provides deterministic reference rendering for CI headless testing; Skia is no longer the software reference. |
 | **AD-27** | Units Definition | **Decided** | `px` denotes logical pixels; `phx` denotes physical device pixels. |
-| **AD-28** | Candidate Primary HAL | **Decided** | **Skia is the primary HAL.** WebGPU/Dawn remains an optional future pluggable backend candidate. |
+| **AD-28** | Candidate Primary HAL | **Decided, revised** | The `RendererBackend`/`RenderContext` HAL is primary; `render-albor` is the shipped public GPU backend, Blend2D the portable CPU backend, and Skia the transitional/reference implementation. WebGPU/Dawn remains an optional future pluggable candidate. |
 | **AD-29** | Scene Command Vocabulary | **Decided** | A `FrameScene` is one ordered list of tagged `DrawCommand` values, shared verbatim with `PictureResource`; clips are stamped per command at record time rather than replayed as a stack. |
 | **AD-30** | Style Resolution | **Decided** | Widgets resolve colour by role and state through a `Theme`, never carrying literals; palettes are derived from a few accents; a null theme preserves existing values exactly. |
 | **AD-31** | Composite Contract Enforcement | **Decided** | `Component::render` is not overridable: it runs background, content, then children, and subclasses override `paint_content`, so a missing phase is a compile error rather than a silently absent subtree. |
@@ -1647,7 +1696,7 @@ deterministic: the same metrics and the same immutable scene produce the same by
 
 ## 17. Conclusion
 
-Albor Design Version 4 closes the era of speculative prototyping and equips the project with a clean, decoupled, and actionable blueprint. By relying on strict modular abstractions and pragmatic, battle-tested defaults—starting with Skia for rendering and Eager-Push for reactive bindings—Albor is now ready for immediate production implementation.
+Albor Design Version 4 closes the era of speculative prototyping and equips the project with a clean, decoupled, and actionable blueprint. By relying on strict modular abstractions and pragmatic, battle-tested defaults—starting with the in-repo GPU renderer and Eager-Push for reactive bindings—Albor is now ready for immediate production implementation.
 
 ---
 

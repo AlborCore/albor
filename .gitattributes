@@ -1,6 +1,8 @@
 # the shader artifact is a committed binary, and its source is hashed byte for byte
 *.metallib binary
 *.metal text eol=lf
+*.hlsl text eol=lf
+*.dxbc binary
 *.sha256 text eol=lf
 
 # the build scripts run under bash on every runner, including windows, so they keep lf endings

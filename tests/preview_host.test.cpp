@@ -1,5 +1,7 @@
+#include <filesystem>
 #include <memory>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -85,6 +87,22 @@ TEST(PreviewHostChecks, ACleanSourceBuildsItsTree) {
     EXPECT_NE(find_first(*result.root, [](UiNode& node) { return dynamic_cast<Button*>(&node) != nullptr; }), nullptr);
     // assert the tree is the column and its two children, because the component root is the column (§12.2)
     EXPECT_EQ(count_nodes(*result.root), 3U);
+}
+
+TEST(PreviewHostChecks, AnEmbeddedImageResolvesBesideTheSourcePath) {
+    // arrange a source whose asset sits beside it, which is what a saved preview file has (§12.2, §6.4)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-preview-image";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    std::filesystem::copy_file(std::filesystem::path(ALBOR_TEST_VECTORS_DIR) / "icon.png", root / "icon.png", std::filesystem::copy_options::overwrite_existing);
+    // act
+    BindingEngine engine;
+    const preview::PreviewResult result = preview::build(R"(component Panel { in property<image> icon: @image("icon.png"); Column {} })", engine, root / "panel.ui");
+    // assert the carried asset was found, because the preview was told where the source lives (§16, §6.4)
+    EXPECT_EQ(result.diagnostics, 0U);
+    EXPECT_NE(result.root, nullptr);
+    std::filesystem::remove_all(root, ignored);
 }
 
 TEST(PreviewHostChecks, TheAuthorIdIsAppliedBecauseAutomationAndPreviewShareIt) {
