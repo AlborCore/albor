@@ -38,6 +38,17 @@ component WidgetForm {
             text: "value " + string(level);
         }
 
+        Label {
+            id: form_progress_label;
+            text: "progress";
+        }
+
+        ProgressBar {
+            id: form_progress;
+            value: level;
+            disabled: armed;
+        }
+
         Slider {
             id: form_level;
             value: level;

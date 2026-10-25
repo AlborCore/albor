@@ -23,6 +23,7 @@
 #include "widgets/checkbox.h"
 #include "widgets/label.h"
 #include "widgets/list_box.h"
+#include "widgets/progress_bar.h"
 #include "widgets/scroll_view.h"
 #include "widgets/slider.h"
 #include "widgets/text_field.h"
@@ -89,6 +90,8 @@ namespace albor::preview
                 built = std::make_unique<Button>(&engine, text_engine);
             else if (node.element_type == "Slider")
                 built = std::make_unique<Slider>(&engine);
+            else if (node.element_type == "ProgressBar")
+                built = std::make_unique<ProgressBar>(&engine);
             else if (node.element_type == "CheckBox")
                 built = std::make_unique<CheckBox>(&engine);
             else if (node.element_type == "Canvas")
@@ -157,6 +160,12 @@ namespace albor::preview
                     // the field that edits text takes the same size, because one number names one widget (§9.1)
                     else if (auto* field = dynamic_cast<TextField*>(built.get()))
                         field->set_font_size(static_cast<float>(number_of(*numeric)));
+                }
+                // a progress fraction, which a preview shows as the author wrote it (§8)
+                else if (assignment.name == "value" && numeric != nullptr) {
+                    // the progress bar is the read only widget that carries the fraction (§8)
+                    if (auto* progress = dynamic_cast<ProgressBar*>(built.get()))
+                        progress->set_value(static_cast<float>(number_of(*numeric)));
                 }
                 // a checked state, which a preview shows as the author wrote it (§8)
                 else if (assignment.name == "checked" && numeric != nullptr) {

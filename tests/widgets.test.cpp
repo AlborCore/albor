@@ -19,6 +19,7 @@
 #include "widgets/canvas.h"
 #include "widgets/checkbox.h"
 #include "widgets/label.h"
+#include "widgets/progress_bar.h"
 #include "widgets/slider.h"
 #include "widgets/text_field.h"
 #include "widgets/theme_controller.h"
@@ -4330,6 +4331,187 @@ TEST(LabelChecks, AFontSelectionRemeasuresAndInvalidates) {
     EXPECT_EQ(label.font_weight(), FontWeight::Bold);
     ASSERT_EQ(label.font_fallback().size(), 2u);
     EXPECT_EQ(label.font_fallback().front(), "Fallback One");
+}
+
+TEST(ProgressBarChecks, MeasuresTheDefaultExtent) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    Size measured{};
+    // act
+    bar.measure(SizeConstraints::unconstrained(), measured);
+    // assert the bar measures to the themed default extent, because it has no content (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 160.0f);
+    EXPECT_FLOAT_EQ(measured.height, 8.0f);
+}
+
+TEST(ProgressBarChecks, ClampsTheValueIntoTheUnitRange) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    // act
+    bar.set_value(-0.25f);
+    // assert
+    EXPECT_FLOAT_EQ(bar.value(), 0.0f);
+    bar.set_value(1.25f);
+    EXPECT_FLOAT_EQ(bar.value(), 1.0f);
+}
+
+TEST(ProgressBarChecks, SetValueRedraws) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    bar.clear_dirty();
+    // act
+    bar.set_value(0.5f);
+    // assert
+    EXPECT_TRUE(bar.render_dirty());
+}
+
+TEST(ProgressBarChecks, AnUnchangedValueRedrawsNothing) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    bar.set_value(0.5f);
+    bar.clear_dirty();
+    // act
+    bar.set_value(0.5f);
+    // assert
+    EXPECT_FALSE(bar.render_dirty());
+}
+
+TEST(ProgressBarChecks, PaintsATrackAndAFillForTheFraction) {
+    // arrange a half full bar arranged over the default extent (§8)
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    Size measured{};
+    bar.measure(SizeConstraints::unconstrained(), measured);
+    bar.arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, measured));
+    bar.set_value(0.5f);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    bar.render(recorder);
+    // assert one track and one fill are recorded in paint order (§6.1)
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_EQ(rects.size(), 2u);
+    EXPECT_FLOAT_EQ(rects[0].width, 160.0f);
+    EXPECT_FLOAT_EQ(rects[0].height, 8.0f);
+    EXPECT_FLOAT_EQ(rects[1].width, 80.0f);
+    EXPECT_FLOAT_EQ(rects[1].height, 8.0f);
+    // the fill starts at the track's left edge, which is what makes the fraction read from the start (§8)
+    EXPECT_FLOAT_EQ(rects[1].x, 10.0f);
+}
+
+TEST(ProgressBarChecks, AnEmptyBarDrawsOnlyItsTrack) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    bar.render(recorder);
+    // assert
+    EXPECT_EQ(rect_commands(*recorder.scene()).size(), 1u);
+}
+
+TEST(ProgressBarChecks, AFullBarFillsTheWholeTrack) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    bar.set_value(1.0f);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    bar.render(recorder);
+    // assert
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_EQ(rects.size(), 2u);
+    EXPECT_FLOAT_EQ(rects[1].width, rects[0].width);
+}
+
+TEST(ProgressBarChecks, TheThemeResolvesTheTrackAndFill) {
+    // arrange a themed bar whose two colours are explicit, so the palette decides what is drawn (§6.1)
+    BindingEngine engine;
+    Theme theme;
+    theme.set_progress_bar_track(Color::rgb(0.1f, 0.2f, 0.3f));
+    theme.set_progress_bar_fill(Color::rgb(0.8f, 0.9f, 1.0f));
+    theme.set_progress_bar_radius(4.0f);
+    ProgressBar bar(&engine);
+    bar.set_theme(&theme);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    bar.set_value(0.5f);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    bar.render(recorder);
+    // assert the two commands carry the themed colours and the themed capsule radius (§6.1, §8.4)
+    ASSERT_EQ(recorder.scene()->commands().size(), 2u);
+    EXPECT_EQ(recorder.scene()->commands()[0].paint().fill, Color::rgb(0.1f, 0.2f, 0.3f));
+    EXPECT_EQ(recorder.scene()->commands()[1].paint().fill, Color::rgb(0.8f, 0.9f, 1.0f));
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].rect_geometry().radius, 4.0f);
+}
+
+TEST(ProgressBarChecks, SetTrackColorRedraws) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    bar.clear_dirty();
+    // act
+    bar.set_track_color(Color::rgb(0.1f, 0.1f, 0.1f));
+    // assert
+    EXPECT_TRUE(bar.render_dirty());
+}
+
+TEST(ProgressBarChecks, SetFillColorRedraws) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    bar.clear_dirty();
+    // act
+    bar.set_fill_color(Color::rgb(0.1f, 0.1f, 0.1f));
+    // assert
+    EXPECT_TRUE(bar.render_dirty());
+}
+
+TEST(ProgressBarChecks, AnnouncesTheProgressRoleAndItsFraction) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine, "download");
+    bar.arrange(Rect::from_origin_size(Point{1.0f, 2.0f}, Size{160.0f, 8.0f}));
+    bar.set_value(0.5f);
+    // act
+    const SemanticNode node = bar.semantic_node();
+    // assert
+    EXPECT_EQ(node.role(), SemanticRole::ProgressBar);
+    EXPECT_EQ(node.name(), "download 0.500000");
+    EXPECT_EQ(node.check(), CheckState::NotCheckable);
+    EXPECT_EQ(node.bounds(), (Rect::from_origin_size(Point{1.0f, 2.0f}, Size{160.0f, 8.0f})));
+    EXPECT_FALSE(node.disabled());
+    // a progress bar takes no action, because the user only reads it (§10.1)
+    EXPECT_EQ(node.action_count(), 0u);
+}
+
+TEST(ProgressBarChecks, ADisabledBarAnnouncesTheState) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine, "download");
+    bar.set_disabled(true);
+    // act
+    const SemanticNode node = bar.semantic_node();
+    // assert
+    EXPECT_TRUE(node.disabled());
+    EXPECT_TRUE(bar.disabled());
+}
+
+TEST(ProgressBarChecks, AnUnchangedDisabledStateRedrawsNothing) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    bar.set_disabled(true);
+    bar.clear_dirty();
+    // act
+    bar.set_disabled(true);
+    // assert
+    EXPECT_FALSE(bar.render_dirty());
 }
 
 TEST(TextFieldFontChecks, AFontSelectionRemeasuresAndInvalidates) {

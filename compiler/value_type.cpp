@@ -376,6 +376,15 @@ namespace albor::compiler
                                               .signals = {ElementSignal{.name = "changed", .parameter_types = {scalar(TypeKind::Float)}, .parameter_names = {"value"}}},
                                               // a slider is a leaf, so it takes no children (§8)
                                               .accepts_children = false});
+        // a leaf shows progress, which is a read only value control (§8)
+        catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
+                                              .name = "ProgressBar",
+                                              // the fraction and the states and the colours are what a bar exposes (§8)
+                                              .properties = {ElementProperty{.name = "value", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "track_color", .type = scalar(TypeKind::Color), .assignable = true}, ElementProperty{.name = "fill_color", .type = scalar(TypeKind::Color), .assignable = true}},
+                                              // a bar raises no signal, because the user does not drive it (§8)
+                                              .signals = {},
+                                              // a bar is a leaf, so it takes no children (§8)
+                                              .accepts_children = false});
         // a leaf carries a truth value the user toggles (§8)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "CheckBox",

@@ -78,6 +78,10 @@ namespace albor
             // the track rounds into a capsule and the thumb rounds into a circle (§8.4)
             theme.set_slider_track_radius(2.0f);
             theme.set_slider_thumb_radius(11.0f);
+            // a macos progress bar is a six point capsule, which is the system indicator (§8.4)
+            theme.set_progress_bar_extent(Size{220.0f, 6.0f});
+            theme.set_progress_bar_track_thickness(6.0f);
+            theme.set_progress_bar_radius(3.0f);
             // the ring stands one away and rounds with the plate it surrounds (§6.1, §6.2)
             theme.set_focus_ring_offset(1.0f);
             theme.set_focus_ring_radius(6.0f);
@@ -116,6 +120,10 @@ namespace albor
             // discrete steps on a fluent slider show their ticks (§8.4)
             theme.set_slider_tick_length(4.0f);
             theme.set_slider_tick_width(1.5f);
+            // a fluent progress bar is a four point capsule, which is the language indicator (§8.4)
+            theme.set_progress_bar_extent(Size{220.0f, 4.0f});
+            theme.set_progress_bar_track_thickness(4.0f);
+            theme.set_progress_bar_radius(2.0f);
             theme.set_focus_ring_offset(1.0f);
             theme.set_focus_ring_radius(5.0f);
             // the hierarchy resolves at the sizes the system font is set at (§8.4)
@@ -146,6 +154,10 @@ namespace albor
             theme.set_slider_track_radius(1.5f);
             theme.set_slider_thumb_radius(7.0f);
             theme.set_slider_thumb_shadow(0.14f);
+            // a tool progress bar is a four point capsule, which is the compact indicator (§8.4)
+            theme.set_progress_bar_extent(Size{220.0f, 4.0f});
+            theme.set_progress_bar_track_thickness(4.0f);
+            theme.set_progress_bar_radius(2.0f);
             theme.set_focus_ring_offset(1.0f);
             theme.set_focus_ring_radius(5.0f);
             // the hierarchy resolves at the reading sizes a tool screen carries (§8.4)
@@ -516,6 +528,21 @@ namespace albor
         m_metrics.slider_step = value;
     }
 
+    void Theme::set_progress_bar_extent(Size value) {
+        // the extent is stored whole, because the control measures to one box (§8.2)
+        m_metrics.progress_bar_extent = value;
+    }
+
+    void Theme::set_progress_bar_track_thickness(float value) {
+        // the thickness is one value because the track is drawn as a single band (§6.1)
+        m_metrics.progress_bar_track_thickness = value;
+    }
+
+    void Theme::set_progress_bar_radius(float value) {
+        // the radius is one value because a bar rounds every end the same (§8.4)
+        m_metrics.progress_bar_radius = value;
+    }
+
     Color Theme::surface() const {
         // the surface is stored by value, so a frame background reads the installed one (§6.1)
         return m_surface;
@@ -584,6 +611,26 @@ namespace albor
     void Theme::set_slider_fill(Color value) {
         // the normal state is the common case, which is the shorthand (§8.4)
         m_palette.slider_fill[state_index(ControlState::Normal)] = value;
+    }
+
+    void Theme::set_progress_bar_track(Color value) {
+        // the normal state is the common case, which is the shorthand (§6.1)
+        m_palette.progress_bar_track[state_index(ControlState::Normal)] = value;
+    }
+
+    void Theme::set_progress_bar_track(ControlState state, Color value) {
+        // the entry is written by its state index, which is what the resolver reads (§6.1)
+        m_palette.progress_bar_track[state_index(state)] = value;
+    }
+
+    void Theme::set_progress_bar_fill(Color value) {
+        // the normal state is the common case, which is the shorthand (§6.1)
+        m_palette.progress_bar_fill[state_index(ControlState::Normal)] = value;
+    }
+
+    void Theme::set_progress_bar_fill(ControlState state, Color value) {
+        // the entry is written by its state index, which is what the resolver reads (§6.1)
+        m_palette.progress_bar_fill[state_index(state)] = value;
     }
 
     void Theme::set_canvas_background(Color value) {

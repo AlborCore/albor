@@ -1314,6 +1314,41 @@ TEST(Codegen, ADrawPrimitiveWithTheWrongArityIsRefused) {
     EXPECT_TRUE(has_code(diagnostics, "E0603"));
 }
 
+TEST(Codegen, AProgressBarIsConstructedAndWired) {
+    // arrange a progress bar with its fraction and its colours (§11.1)
+    const std::string source = R"(component C {
+        ProgressBar {
+            value: 0.5;
+            track_color: #101010;
+            fill_color: #3366ff;
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert the bar is constructed over the engine and uses the setters (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<ProgressBar>(engine);"));
+    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/progress_bar.h\""));
+    EXPECT_TRUE(contains(cpp.content, "set_value("));
+    EXPECT_TRUE(contains(cpp.content, "set_track_color("));
+    EXPECT_TRUE(contains(cpp.content, "set_fill_color("));
+}
+
+TEST(Codegen, AProgressBarCatalogEntryExists) {
+    // arrange
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act
+    const ElementType* progress = catalog.find("ProgressBar");
+    // assert the catalog exposes the leaf with its properties and no signals (§11.1)
+    ASSERT_NE(progress, nullptr);
+    EXPECT_FALSE(progress->accepts_children);
+    EXPECT_TRUE(progress->find_property("value") != nullptr);
+    EXPECT_TRUE(progress->find_property("disabled") != nullptr);
+    EXPECT_TRUE(progress->find_property("track_color") != nullptr);
+    EXPECT_TRUE(progress->find_property("fill_color") != nullptr);
+    EXPECT_TRUE(progress->signals.empty());
+}
+
 TEST(Codegen, ASliderRangeBecomesOneSetterOverBothBounds) {
     // arrange a slider whose bounds the author wrote, which the widget takes together (§8)
     const std::string source = R"(component C {

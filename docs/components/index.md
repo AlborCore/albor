@@ -1,6 +1,6 @@
 # Components
 
-The `.ui` language ships thirteen elements: seven containers that arrange children, and six
+The `.ui` language ships fourteen elements: seven containers that arrange children, and seven
 leaves that draw or edit. Every element also carries the three common properties below, and
 every element may carry an `id`.
 
@@ -19,6 +19,7 @@ every element may carry an `id`.
 | [Button](button.md) | leaf | a push control with a click signal |
 | [TextField](text-field.md) | leaf | an editable text field |
 | [Slider](slider.md) | leaf | a continuous value the user drags |
+| [ProgressBar](progress-bar.md) | leaf | a read-only fraction of task progress |
 | [CheckBox](checkbox.md) | leaf | a truth value the user toggles |
 | [Canvas](canvas.md) | leaf | a drawing surface with a closed primitive vocabulary |
 

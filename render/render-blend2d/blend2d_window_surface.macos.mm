@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "render/frame_profile.h"
 #include "window/window_metrics.h"
 
 namespace albor::blend2d
@@ -109,11 +110,15 @@ namespace albor::blend2d
                 // an unbalanced end would present a frame that never began, so it is ignored (§6.1)
                 if (!m_began)
                     return;
+                // the present is the raster flush and the layer copy, which the profile reports (§6.3)
+                const FrameProfileScope present_scope;
                 // the frame is marked finished before the present, so a losing drawable skips it (§6.1, §6.3)
                 m_began = false;
                 // the raster is flushed first, because the blit copies pixels that must be complete (§6.3)
                 m_raster->end_frame();
                 present();
+                // the whole present is what the render thread spends after the replay, which the profile reports (§6.3)
+                profile_present(present_scope.elapsed_ms());
             }
 
             // override: read the last finished frame back
@@ -148,7 +153,10 @@ namespace albor::blend2d
                     // the buffer is exercised once it lands, so the copier sees the flushed contents (§6.3)
                     [stage didModifyRange:NSMakeRange(0, bytes)];
                     // the drawable is the back buffer, which may be vacant when the queue is under pressure (§6.3)
+                    const FrameProfileScope wait_scope;
                     id<CAMetalDrawable> drawable = [m_layer nextDrawable];
+                    // the wait is the compositor pacing, which a slow present shows before the blit (§6.3)
+                    profile_drawable_wait(wait_scope.elapsed_ms());
                     if (drawable == nil || drawable.texture == nil)
                         return;
                     // the copier writes one full frame, with the source rows tightly packed (§6.3)

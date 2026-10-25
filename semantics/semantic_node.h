@@ -32,6 +32,9 @@ namespace albor
         // a continuous value the user drags
         Slider,
 
+        // a read only value that shows how far a task has advanced
+        ProgressBar,
+
         // a drawing surface, which the user may interact with directly
         Canvas,
 

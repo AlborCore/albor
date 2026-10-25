@@ -25,6 +25,7 @@
 #include "widgets/checkbox.h"
 #include "widgets/label.h"
 #include "widgets/list_box.h"
+#include "widgets/progress_bar.h"
 #include "widgets/scroll_view.h"
 #include "widgets/slider.h"
 #include "widgets/text_field.h"
@@ -177,6 +178,7 @@ namespace albor::devrt
                 {"Button", [](std::string_view, BindingEngine& engine, TextEngine& text) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<Button>(&engine, &text)); }},
                 // a node outside the closed set has no element, which a caller treats as unnameable (§8)
                 {"Slider", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<Slider>(&engine)); }},
+                {"ProgressBar", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<ProgressBar>(&engine)); }},
                 {"CheckBox", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<CheckBox>(&engine)); }},
                 {"Canvas", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<Canvas>(&engine)); }},
                 {"ScrollView", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<ScrollView>(&engine)); }},
@@ -293,6 +295,35 @@ namespace albor::devrt
                      if (!read_color(value, color))
                          return false;
                      node.set_thumb_color(color);
+                     return true;
+                 })},
+                // a progress bar shows a fraction against two fills (§8)
+                {"ProgressBar.value", setter<ProgressBar>([](ProgressBar& node, std::string_view value) {
+                     float next = 0.0f;
+                     if (!read_float(value, next))
+                         return false;
+                     node.set_value(next);
+                     return true;
+                 })},
+                {"ProgressBar.disabled", setter<ProgressBar>([](ProgressBar& node, std::string_view value) {
+                     bool disabled = false;
+                     if (!read_bool(value, disabled))
+                         return false;
+                     node.set_disabled(disabled);
+                     return true;
+                 })},
+                {"ProgressBar.track_color", setter<ProgressBar>([](ProgressBar& node, std::string_view value) {
+                     Color color;
+                     if (!read_color(value, color))
+                         return false;
+                     node.set_track_color(color);
+                     return true;
+                 })},
+                {"ProgressBar.fill_color", setter<ProgressBar>([](ProgressBar& node, std::string_view value) {
+                     Color color;
+                     if (!read_color(value, color))
+                         return false;
+                     node.set_fill_color(color);
                      return true;
                  })},
                 // a checkbox presents its state and two fills, which is what §8.4 styles (§8)
