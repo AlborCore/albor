@@ -162,10 +162,9 @@ namespace albor::preview
                         field->set_font_size(static_cast<float>(number_of(*numeric)));
                 }
                 // a progress fraction, which a preview shows as the author wrote it (§8)
-                else if (assignment.name == "value" && numeric != nullptr) {
+                else if (auto* progress = dynamic_cast<ProgressBar*>(built.get()); progress != nullptr && assignment.name == "value" && numeric != nullptr) {
                     // the progress bar is the read only widget that carries the fraction (§8)
-                    if (auto* progress = dynamic_cast<ProgressBar*>(built.get()))
-                        progress->set_value(static_cast<float>(number_of(*numeric)));
+                    progress->set_value(static_cast<float>(number_of(*numeric)));
                 }
                 // a checked state, which a preview shows as the author wrote it (§8)
                 else if (assignment.name == "checked" && numeric != nullptr) {

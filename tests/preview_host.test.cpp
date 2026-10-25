@@ -19,6 +19,7 @@
 #include "widgets/canvas.h"
 #include "widgets/checkbox.h"
 #include "widgets/label.h"
+#include "widgets/progress_bar.h"
 #include "widgets/scroll_view.h"
 #include "widgets/slider.h"
 #include "widgets/text_field.h"
@@ -393,4 +394,24 @@ TEST(PreviewHostChecks, AFieldShowsTheValueAndHintTheAuthorWrote) {
     EXPECT_EQ(field->value(), "Albor");
     // assert the hint reaches it too, because an empty field draws what the author wrote (§8)
     EXPECT_EQ(field->placeholder(), "type here");
+}
+
+TEST(PreviewHostChecks, AProgressBarShowsTheFractionTheAuthorWrote) {
+    // arrange a bar writing its fraction, which a preview shows as the author wrote it (§8)
+    const std::string source = R"UI(component WrittenProgress {
+    ProgressBar {
+        id: download;
+        value: 0.75;
+    }
+})UI";
+    BindingEngine engine;
+    // act
+    preview::PreviewResult result = preview::build(source, engine);
+    // assert nothing was reported, because every property here is one the catalog declares (§11.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    ProgressBar* progress = dynamic_cast<ProgressBar*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<ProgressBar*>(&node) != nullptr; }));
+    ASSERT_NE(progress, nullptr);
+    // assert the fraction reached the widget, because a preview shows the value the app will show (§8)
+    EXPECT_FLOAT_EQ(progress->value(), 0.75f);
 }
