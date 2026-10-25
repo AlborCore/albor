@@ -61,6 +61,7 @@ Violating any of these is a defect, not a style issue.
 - **Immutable snapshots cross threads** (§10.5, §13.2): application data reaches custom nodes and bindings as `std::shared_ptr<const T>` in an observable `Snapshot<T>`. `Observable<T>::post_set` is the thread-safe path; `set` is UI-thread only.
 - **The manifest is the single source of truth for native components** (AD-17, §11.2): C++ glue is generated from the manifest, and the compiler never parses C++ headers.
 - **No platform or Skia types in public headers** (§3.5, AD-05, AD-19).
+- **Native backend parity** (§6.3, AD-05): `render-albor` ships two native GPU backends, Metal on macOS and Direct3D 11 on Windows, and they stay at the same level. Every capability, fix and optimization is applied to both in the same change: the same retained resources, cache policy, base-vertex handling, profiling coverage and tests. A change carried by one backend only is a defect, not a follow-up, and the backend that cannot be built on the host is verified in CI before the change is done.
 - **The compiler is not the runtime, and development tooling is not the production application** (§2).
 
 ## Recovery Points
@@ -162,6 +163,7 @@ C++ uses Google Test; Python uses `unittest` (see `STYLE-GUIDE.md`). Beyond per-
 
 - **Dual-engine conformance**: one `.ui` corpus through compiled output and the dev IR evaluator, same observable behavior (AD-25). This is what makes §2.4 true.
 - **GPU/software parity**: every Level 2 resource kind and primitive behaves the same in both renderers within tolerance (§11.7, AD-26). The software renderer is the screenshot reference.
+- **Native backend parity**: every behavior or performance guarantee proven in the Metal suite is proven in the Direct3D suite, and vice versa; the two suites stay mirrored, so a backend-only test gap is a defect (§6.3, AD-05).
 - **LSP/compiler agreement**: same corpus, same diagnostics (§16).
 - **Manifest consistency**: generated glue, descriptor tables and preview stubs agree with the manifest.
 - **Semantic tree tests**: role, name, states and actions of every widget; a widget is not done without them.

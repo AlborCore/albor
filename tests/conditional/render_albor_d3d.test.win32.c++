@@ -99,6 +99,29 @@ TEST(AlborRendererBackendChecks, BuildsAnOffscreenSurfaceWithoutAWindow) {
     EXPECT_EQ(surface->metrics(), metrics);
 }
 
+TEST(AlborRendererBackendChecks, ReusesTheBatchBuffersAcrossSteadyFrames) {
+    // arrange a backend and an offscreen surface, which needs no window to draw a frame (§6.2)
+    AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{320.0f, 200.0f}, 1.0f);
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(surface, nullptr);
+    ASSERT_TRUE(surface->valid());
+    // arrange one immutable scene, which every frame replays unchanged (§6.1)
+    FrameScene scene(metrics, Color::rgb(1.0f, 1.0f, 1.0f));
+    scene.add_command(DrawCommand::rectangle(Rect::from_origin_size(Point{20.0f, 20.0f}, Size{120.0f, 80.0f}), Paint{.fill = Color::rgb(0.2f, 0.4f, 0.8f)}));
+    // act a warmup that fills every retained buffer, which a steady frame then reuses (AD-06)
+    for (int frame = 0; frame < 8; frame++)
+        backend.execute_frame(*surface, scene);
+    // arrange the allocations the warmup made, which the steady frames must not raise (AD-06)
+    const std::uint64_t allocations = backend.batch_buffer_allocations();
+    ASSERT_GT(allocations, 0u);
+    // act a steady stream of the same scene, which is the shape a manual drag has every frame (§6.1)
+    for (int frame = 0; frame < 120; frame++)
+        backend.execute_frame(*surface, scene);
+    // assert every steady frame reused the buffers the warmup allocated, which a per frame allocation would raise (AD-06)
+    EXPECT_EQ(backend.batch_buffer_allocations(), allocations);
+}
+
 TEST(AlborRendererBackendChecks, ClearsAnEmptyOffscreenFrameToTransparent) {
     // arrange
     AlborRendererBackend backend;

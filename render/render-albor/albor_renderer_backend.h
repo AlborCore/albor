@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+#include <cstdint>
 #include <memory>
 
 #include "render/renderer_backend.h"
@@ -31,6 +33,13 @@ namespace albor::render
 
         // override: execute an immutable frame scene, which the shell refuses without a device (§6.1, AD-18)
         void execute_frame(RenderSurface& surface, const FrameScene& scene) override;
+
+        // report how many gpu batch buffers the backend allocated, which a steady frame must not raise (§6.3, AD-06)
+        [[nodiscard]] std::uint64_t batch_buffer_allocations() const;
+
+    private:
+        // the gpu batch buffers this backend's surfaces allocated, which each surface raises on creation (§6.3, AD-06)
+        std::shared_ptr<std::atomic<std::uint64_t>> m_batch_buffer_allocations;
     };
 
     // install the in-repo backend as the composition root's backend (§6.2)

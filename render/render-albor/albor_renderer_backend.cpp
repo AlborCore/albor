@@ -6,7 +6,8 @@
 
 namespace albor::render
 {
-    AlborRendererBackend::AlborRendererBackend() = default;
+    AlborRendererBackend::AlborRendererBackend() :
+        m_batch_buffer_allocations(std::make_shared<std::atomic<std::uint64_t>>(0)) {}
 
     AlborRendererBackend::~AlborRendererBackend() = default;
 
@@ -19,7 +20,7 @@ namespace albor::render
         // a surface is refused while the device is not ready or the extent has no area, which one test covers (§6.2)
         const bool acceptable = ready() && metrics.valid();
         // the platform builds the surface over the handle, which a null handle leaves offscreen (§6.2)
-        return acceptable ? backend_create_surface(handle, metrics) : nullptr;
+        return acceptable ? backend_create_surface(handle, metrics, m_batch_buffer_allocations) : nullptr;
     }
 
     void AlborRendererBackend::resize_surface(RenderSurface& surface, const WindowMetrics& metrics) {
@@ -49,6 +50,11 @@ namespace albor::render
         replay_commands(scene.commands(), context, full);
         // the frame finishes once the immutable scene is fully recorded (§6.1)
         surface.end_frame();
+    }
+
+    std::uint64_t AlborRendererBackend::batch_buffer_allocations() const {
+        // the counter is always present, because every surface reports into it (§6.3, AD-06)
+        return m_batch_buffer_allocations->load(std::memory_order_relaxed);
     }
 
     void install_albor_renderer_backend() {

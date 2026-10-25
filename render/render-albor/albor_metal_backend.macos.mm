@@ -2,11 +2,14 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <mutex>
+#include <utility>
 #include <vector>
 
 #import <Metal/Metal.h>
@@ -324,7 +327,7 @@ namespace albor::render
         {
         public:
             // build an offscreen surface, or a windowed one when the handle names a layer (§6.2)
-            AlborRenderSurface(NativeWindowHandle handle, const WindowMetrics& metrics);
+            AlborRenderSurface(NativeWindowHandle handle, const WindowMetrics& metrics, std::shared_ptr<std::atomic<std::uint64_t>> batch_buffer_allocations);
             ~AlborRenderSurface() override;
 
             AlborRenderSurface(const AlborRenderSurface&) = delete;
@@ -354,6 +357,9 @@ namespace albor::render
 
             // composite a layer onto the target beneath it at the opacity its group names (§6.2)
             void composite_layer(id<MTLCommandBuffer> command, id<MTLTexture> layer, id<MTLTexture> target, float opacity) const;
+
+            // count one retained batch buffer, which the backend reports and a steady frame must not raise (§6.3, AD-06)
+            void note_batch_buffer_allocation();
 
             // the layer the surface presents into, which is nil for an offscreen surface (§6.2)
             CAMetalLayer* __strong m_layer = nil;
@@ -389,6 +395,9 @@ namespace albor::render
             // the slot the next frame writes, which advances once per frame (§6.3)
             std::size_t m_batch_slot = 0;
 
+            // the counter the backend reports, which each retained batch buffer raises once (§6.3, AD-06)
+            std::shared_ptr<std::atomic<std::uint64_t>> m_batch_buffer_allocations;
+
             // how many frames an unreferenced texture survives, which bounds the memory a long run holds (AD-06)
             static constexpr std::uint64_t TEXTURE_IDLE_FRAMES = 120;
 
@@ -423,8 +432,8 @@ namespace albor::render
             bool m_begun = false;
         };
 
-        AlborRenderSurface::AlborRenderSurface(NativeWindowHandle handle, const WindowMetrics& metrics) :
-            m_layer(handle.valid() ? (__bridge CAMetalLayer*)handle.object() : nil), m_metrics(metrics) {
+        AlborRenderSurface::AlborRenderSurface(NativeWindowHandle handle, const WindowMetrics& metrics, std::shared_ptr<std::atomic<std::uint64_t>> batch_buffer_allocations) :
+            m_layer(handle.valid() ? (__bridge CAMetalLayer*)handle.object() : nil), m_metrics(metrics), m_batch_buffer_allocations(std::move(batch_buffer_allocations)) {
             // a windowed surface presents through the layer, which is configured for the target format (§6.3)
             if (m_layer != nil) {
                 m_layer.device = device_state().device;
@@ -436,6 +445,12 @@ namespace albor::render
         }
 
         AlborRenderSurface::~AlborRenderSurface() = default;
+
+        void AlborRenderSurface::note_batch_buffer_allocation() {
+            // a surface built without a counter still draws, which the portable shell does (§6.2)
+            if (m_batch_buffer_allocations != nullptr)
+                m_batch_buffer_allocations->fetch_add(1u, std::memory_order_relaxed);
+        }
 
         bool AlborRenderSurface::valid() const {
             // a surface draws only once its target allocated and the shared state built (§6.2)
@@ -730,10 +745,16 @@ namespace albor::render
                 // a slot grows to the batch size once, so a later frame copies into it instead of allocating (AD-06)
                 const NSUInteger vertex_bytes = static_cast<NSUInteger>(m_batch.vertices.size() * sizeof(BatchVertex));
                 const NSUInteger index_bytes = static_cast<NSUInteger>(m_batch.indices.size() * sizeof(std::uint32_t));
-                if (slot.vertices == nil || slot.vertices.length < vertex_bytes)
+                if (slot.vertices == nil || slot.vertices.length < vertex_bytes) {
                     slot.vertices = [device_state().device newBufferWithLength:vertex_bytes options:MTLResourceStorageModeShared];
-                if (slot.indices == nil || slot.indices.length < index_bytes)
+                    if (slot.vertices != nil)
+                        note_batch_buffer_allocation();
+                }
+                if (slot.indices == nil || slot.indices.length < index_bytes) {
                     slot.indices = [device_state().device newBufferWithLength:index_bytes options:MTLResourceStorageModeShared];
+                    if (slot.indices != nil)
+                        note_batch_buffer_allocation();
+                }
                 // a slot the device refused carries no geometry, which the frame draws without rather than nil (§6.3)
                 if (slot.vertices != nil && slot.indices != nil) {
                     std::memcpy(slot.vertices.contents, m_batch.vertices.data(), vertex_bytes);
@@ -983,8 +1004,8 @@ namespace albor::render
         return ensure_device_state();
     }
 
-    std::unique_ptr<RenderSurface> backend_create_surface(NativeWindowHandle handle, const WindowMetrics& metrics) {
+    std::unique_ptr<RenderSurface> backend_create_surface(NativeWindowHandle handle, const WindowMetrics& metrics, std::shared_ptr<std::atomic<std::uint64_t>> batch_buffer_allocations) {
         // a surface without the shared state cannot draw, so none is built, and a null handle stays offscreen (§6.2)
-        return ensure_device_state() ? std::make_unique<AlborRenderSurface>(handle, metrics) : nullptr;
+        return ensure_device_state() ? std::make_unique<AlborRenderSurface>(handle, metrics, std::move(batch_buffer_allocations)) : nullptr;
     }
 } // namespace albor::render
