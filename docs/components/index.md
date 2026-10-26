@@ -1,6 +1,6 @@
 # Components
 
-The `.ui` language ships seventeen elements: ten containers that arrange children, and seven
+The `.ui` language ships twenty elements: eleven containers that arrange children, and nine
 leaves that draw or edit. Every element also carries the three common properties below, and
 every element may carry an `id`.
 
@@ -18,12 +18,15 @@ every element may carry an `id`.
 | [TabView](tab-view.md) | container | one page at a time under a tab strip |
 | [Tab](tab-view.md#tab) | container | one page inside a TabView, labelled by the strip |
 | [TabTitle](tab-view.md#tabtitle) | container | the icon or composed run a tab draws in the strip |
+| [RadioGroup](radio-group.md) | container | one choice among radio buttons in a row or column |
 | [Label](label.md) | leaf | a run of text |
 | [Button](button.md) | leaf | a push control with a click signal |
 | [TextField](text-field.md) | leaf | an editable text field |
 | [Slider](slider.md) | leaf | a continuous value the user drags |
 | [ProgressBar](progress-bar.md) | leaf | a read-only fraction of task progress |
 | [CheckBox](checkbox.md) | leaf | a truth value the user toggles |
+| [RadioButton](radio-group.md#radiobutton) | leaf | one choice inside a RadioGroup |
+| [NumericStepper](numeric-stepper.md) | leaf | a bounded number with increment and decrement |
 | [Canvas](canvas.md) | leaf | a drawing surface with a closed primitive vocabulary |
 
 ## Common properties

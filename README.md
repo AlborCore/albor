@@ -152,9 +152,10 @@ int main() {
 `run()` returns when the last main window closes (§4.1). A window may also be added while
 the loop is running, from a task or a timer; the run still ends with the last one.
 
-`albor::MainWindowConfig` carries the per-window choices: the clear `background`, whether a
-tick that changed nothing is skipped (`build_only_when_dirty`), and a `scene_source` for an
-application that owns its `FrameScene` and brings no tree at all. `application.set_frame_hook`
+`albor::MainWindowConfig` carries the per-window choices: the clear `background`, an
+`always_render` escape hatch for a tree that draws non-reactive state, and a `scene_source` for
+an application that owns its `FrameScene` and brings no tree at all. A retained tree renders on
+invalidation by default; `always_render` is the exception, not the setup step. `application.set_frame_hook`
 installs work that runs between a window's build and its submit; `application.set_input_handler`
 observes the event **after** the tree has answered it, `event.handled` included (§8.3).
 
@@ -191,7 +192,7 @@ counter, a manifest-driven chart with custom line-batch rendering, the compiled
 | reactive properties, eager-push binding engine, snapshots | done (§7) |
 | ui tree, components, event routing, focus | done (§8) |
 | measure/arrange layout, row/column/stack/grid/padding | done (§8.2) |
-| widgets: Button, Label, CheckBox, Slider, Canvas, TextField, ListBox, ScrollView, ProgressBar, TabView, Tab, TabTitle | done (§8) |
+| widgets: Button, Label, CheckBox, RadioButton, RadioGroup, Slider, NumericStepper, Canvas, TextField, ListBox, ScrollView, ProgressBar, TabView, Tab, TabTitle | done (§8) |
 | semantic tree, explicit keys, semantic provider | done (§10.1) |
 | `.ui` compiler, manifest, glue generator, codegen | done (phase 4, §11) |
 | text shaping (HarfBuzz), embedded font registration and weights, i18n catalog | done (§9.1, AD-34) |

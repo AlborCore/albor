@@ -61,14 +61,14 @@ those configurations (AD-10); **Not supported** means there is no Windows implem
 | Reactive properties and bindings | Full | shared eager-push runtime |
 | UI tree, components, event routing | Full | shared UI module |
 | Semantic tree and semantic provider | Full | shared semantics module |
-| Standard widgets | Full | seventeen elements, including TextField, ListBox, ScrollView, TabView and TabTitle |
+| Standard widgets | Full | twenty elements, including TextField, ListBox, ScrollView, TabView, RadioGroup and NumericStepper |
 | Text measurement and shaping | Full | HarfBuzz with DirectWrite resolution; 8 font tests and 4 shaped-run parity tests |
 | `.ui` compiler, parser and typed IR | Full | platform-neutral compiler, built and tested on Windows |
 | Manifest, glue generator and C++ codegen | Full | generated facades build on Windows |
 | Dev runtime and hot swap | Dev/Test | excluded from Release at link time |
 | LSP, preview host and inspector | Dev/Test | excluded from Release at link time |
 | Automation core and MCP server | Dev/Test | named-pipe transport; 10 transport tests and a host MCP exchange test |
-| Accessibility | Full with one gap | UI Automation; 11 role tests and 1 client test; value writing is read-only |
+| Accessibility | Full with gaps | UI Automation; 13 role tests and 1 client test; value writing is read-only; stepper stepping and radio-group selection are not exposed |
 | Examples (`hello-world`, `form`) | Full | both build; the `form` example was launched against Win32/Direct3D |
 
 Windows has no code-coverage job comparable to `macos-coverage`; the existing
@@ -90,7 +90,7 @@ Windows has no code-coverage job comparable to `macos-coverage`; the existing
 | Input normalization, coalescing, focus | `input/`, `focus/` | shipped |
 | Layout: measure & arrange, containers | `layout/` | shipped |
 | Text, measurement, shaping | `text/` | baseline — HarfBuzz, embedded font registration and weight selection |
-| Standard widgets | `widgets/` | shipped — seventeen elements |
+| Standard widgets | `widgets/` | shipped — twenty elements |
 | Animation core | `animation/` | baseline |
 | Compiler frontend, `.ui` parser, typed IR | `compiler/` | shipped |
 | Manifest parser, validator, glue generator | `manifest/` | shipped |
@@ -102,7 +102,7 @@ Windows has no code-coverage job comparable to `macos-coverage`; the existing
 
 ## Language coverage
 
-The [`.ui` language](ui-language/index.md) is complete for the thirteen shipped elements:
+The [`.ui` language](ui-language/index.md) is complete for every shipped element:
 components, typed properties, signals and handlers, expressions and bindings, control flow
 (`if`, `Repeat`, virtualized `Repeat`), native components through manifests, and
 internationalization through `@tr`. Two forms are settled in the grammar and ship today:

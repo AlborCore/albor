@@ -68,6 +68,12 @@ namespace albor::accessibility::platform
                 return UIA_TabControlTypeId;
             case SemanticRole::TabItem:
                 return UIA_TabItemControlTypeId;
+            case SemanticRole::RadioGroup:
+                return UIA_GroupControlTypeId;
+            case SemanticRole::RadioButton:
+                return UIA_RadioButtonControlTypeId;
+            case SemanticRole::NumericStepper:
+                return UIA_SpinnerControlTypeId;
             case SemanticRole::Canvas:
                 return UIA_PaneControlTypeId;
             case SemanticRole::TextField:
@@ -99,6 +105,8 @@ namespace albor::accessibility::platform
             case SemanticRole::TextField:
             case SemanticRole::ListItem:
             case SemanticRole::TabItem:
+            case SemanticRole::RadioButton:
+            case SemanticRole::NumericStepper:
                 return true;
             default:
                 return false;
@@ -636,9 +644,9 @@ namespace albor::accessibility::platform
                     *result = static_cast<IInvokeProvider*>(this);
                 else if (interface_id == __uuidof(IToggleProvider) && node() != nullptr && node()->role() == SemanticRole::Checkbox)
                     *result = static_cast<IToggleProvider*>(this);
-                else if (interface_id == __uuidof(IValueProvider) && node() != nullptr && node()->role() == SemanticRole::TextField)
+                else if (interface_id == __uuidof(IValueProvider) && node() != nullptr && (node()->role() == SemanticRole::TextField || node()->role() == SemanticRole::NumericStepper))
                     *result = static_cast<IValueProvider*>(this);
-                else if (interface_id == __uuidof(ISelectionItemProvider) && node() != nullptr && (node()->role() == SemanticRole::ListItem || node()->role() == SemanticRole::TabItem))
+                else if (interface_id == __uuidof(ISelectionItemProvider) && node() != nullptr && (node()->role() == SemanticRole::ListItem || node()->role() == SemanticRole::TabItem || node()->role() == SemanticRole::RadioButton))
                     *result = static_cast<ISelectionItemProvider*>(this);
                 else
                     return E_NOINTERFACE;
@@ -678,13 +686,13 @@ namespace albor::accessibility::platform
                         *result = static_cast<IUnknown*>(static_cast<IToggleProvider*>(this));
                     break;
                 case UIA_ValuePatternId:
-                    // an editable field is the only role that carries a text value (§10.1)
-                    if (published->role() == SemanticRole::TextField)
+                    // an editable field and a stepper carry a value, which the role checks agree on (§10.1)
+                    if (published->role() == SemanticRole::TextField || published->role() == SemanticRole::NumericStepper)
                         *result = static_cast<IUnknown*>(static_cast<IValueProvider*>(this));
                     break;
                 case UIA_SelectionItemPatternId:
-                    // a list row and a tab item carry a selection, which the pattern mapping fixes (§10.1)
-                    if (published->role() == SemanticRole::ListItem || published->role() == SemanticRole::TabItem)
+                    // a list row, a tab item and a radio button carry a selection, which the pattern mapping fixes (§10.1)
+                    if (published->role() == SemanticRole::ListItem || published->role() == SemanticRole::TabItem || published->role() == SemanticRole::RadioButton)
                         *result = static_cast<IUnknown*>(static_cast<ISelectionItemProvider*>(this));
                     break;
                 default:
@@ -740,13 +748,13 @@ namespace albor::accessibility::platform
                     set_variant_bstr(result, SysAllocString(L"Albor"));
                     return S_OK;
                 case UIA_ValueValuePropertyId:
-                    // only an editable field reports a text value, which the role scoped branch enforces (§10.1)
-                    if (published->role() == SemanticRole::TextField)
+                    // a text field and a stepper carry a value, which the role branch enforces (§10.1)
+                    if (published->role() == SemanticRole::TextField || published->role() == SemanticRole::NumericStepper)
                         set_variant_bstr(result, bstr_from_utf8(published->value()));
                     return S_OK;
                 case UIA_ValueIsReadOnlyPropertyId:
                     // the bridge cannot carry an edit, so the value is read only for now (§10.2)
-                    if (published->role() == SemanticRole::TextField)
+                    if (published->role() == SemanticRole::TextField || published->role() == SemanticRole::NumericStepper)
                         set_variant_bool(result, true);
                     return S_OK;
                 case UIA_ToggleToggleStatePropertyId:
@@ -755,8 +763,8 @@ namespace albor::accessibility::platform
                         set_variant_int(result, static_cast<LONG>(toggle_state_for(published->check())));
                     return S_OK;
                 case UIA_SelectionItemIsSelectedPropertyId:
-                    // the selected state belongs to a list row or a tab item, which the role branch agrees with (§10.1)
-                    if (published->role() == SemanticRole::ListItem || published->role() == SemanticRole::TabItem)
+                    // the selected state belongs to a list row, tab item or radio, which the role branch enforces (§10.1)
+                    if (published->role() == SemanticRole::ListItem || published->role() == SemanticRole::TabItem || published->role() == SemanticRole::RadioButton)
                         set_variant_bool(result, published->selected());
                     return S_OK;
                 case UIA_IsInvokePatternAvailablePropertyId:
@@ -766,10 +774,10 @@ namespace albor::accessibility::platform
                     set_variant_bool(result, published->role() == SemanticRole::Checkbox);
                     return S_OK;
                 case UIA_IsValuePatternAvailablePropertyId:
-                    set_variant_bool(result, published->role() == SemanticRole::TextField);
+                    set_variant_bool(result, published->role() == SemanticRole::TextField || published->role() == SemanticRole::NumericStepper);
                     return S_OK;
                 case UIA_IsSelectionItemPatternAvailablePropertyId:
-                    set_variant_bool(result, published->role() == SemanticRole::ListItem || published->role() == SemanticRole::TabItem);
+                    set_variant_bool(result, published->role() == SemanticRole::ListItem || published->role() == SemanticRole::TabItem || published->role() == SemanticRole::RadioButton);
                     return S_OK;
                 case UIA_BoundingRectanglePropertyId: {
                     // the property carries the four rectangle doubles, which the array helper builds (§10.2)
@@ -981,8 +989,8 @@ namespace albor::accessibility::platform
                 if (published->selected())
                     return S_OK;
                 // a tab item selects by activating the page it names, while a row invokes its own select (§10.1)
-                const bool selected = published->role() == SemanticRole::TabItem ? published->invoke("activate") : published->invoke("select");
-                return selected ? S_OK : UIA_E_ELEMENTNOTAVAILABLE;
+                const bool activated = published->role() == SemanticRole::TabItem || published->role() == SemanticRole::RadioButton ? published->invoke("activate") : published->invoke("select");
+                return activated ? S_OK : UIA_E_ELEMENTNOTAVAILABLE;
             }
 
             // add the row to its list's selection, which the selection item pattern asks (§10.1, §10.2)
@@ -994,8 +1002,8 @@ namespace albor::accessibility::platform
                 const SemanticNode* published = node();
                 if (published == nullptr)
                     return UIA_E_ELEMENTNOTAVAILABLE;
-                // a tab item is always selected as one page of its group, so it has no unselected state (§10)
-                if (published->role() == SemanticRole::TabItem)
+                // a tab item and a radio button are always selected as one member of their group (§10)
+                if (published->role() == SemanticRole::TabItem || published->role() == SemanticRole::RadioButton)
                     return S_OK;
                 // an unselected row needs no work, which the idempotent operation states (§10.2)
                 if (!published->selected())

@@ -1,14 +1,14 @@
 # Windows vs. macOS parity analysis
 
 **Scope:** comparison of the Windows platform and rendering work with the macOS reference, including test coverage.
-**Date:** 2026-10-25, after the Windows parity, UI Automation and automation-transport pass.
+**Date:** 2026-10-26, after the radio-group and numeric-stepper pass.
 
 ## Verdict
 
 Windows is now at functional parity with macOS for windowing, input, clipboard, IME, DPI, event-loop pacing,
 Blend2D, shaped text, the `render-albor` D3D backend, the named-pipe automation transport, and the accessibility
 bridge. The Windows accessibility bridge is a real UI Automation provider, not a stub; both accessibility role
-suites carry **11 tests**, and Windows adds a real UI Automation client test.
+suites carry **13 tests**, and Windows adds a real UI Automation client test.
 
 The per-abstraction support table is maintained in [`docs/status.md`](docs/status.md#windows-support).
 
@@ -18,6 +18,9 @@ The remaining differences are shared or process gaps rather than Windows impleme
 - macOS has no equivalent of the Windows clipboard/IME/DPI/event-loop integration suite yet.
 - Windows has no code-coverage job comparable to `macos-coverage`.
 - `IValueProvider::SetValue` is read-only because a `SemanticAction` carries no value argument yet.
+- Windows UI Automation exposes the numeric stepper value read-only and does not yet expose its increment and
+  decrement actions; it also maps a radio group to a group without a selection provider. macOS exposes both.
+  These are the remaining accessibility capability gaps in this pass.
 
 ## 1. Platform adapter
 
@@ -35,7 +38,7 @@ Both adapters implement the same `PlatformWindow` and `PlatformEventLoop` interf
 | Event loop pacing | CVDisplayLink | Waitable timer thread, tested | Different mechanism, same contract |
 | System appearance | AppKit appearance | Registry-based appearance | Parity |
 | Automation local transport | Unix domain socket | Named pipe, tested | Parity |
-| Accessibility | 348-line NSAccessibility bridge, 11 tests | 1,199-line UI Automation bridge, 11 role tests + 1 client test | Parity |
+| Accessibility | 382-line NSAccessibility bridge, 13 tests | 1,216-line UI Automation bridge, 13 role tests + 1 client test | Parity |
 
 The popup test sets remain asymmetric by design: **10 macOS tests vs. 9 Windows tests**. The missing macOS test
 is `ThePopupLayerIsNonopaque`, which is AppKit-specific and has no direct Win32 equivalent.
@@ -128,26 +131,28 @@ tree:
   `IRawElementProviderFragmentRoot`; every node implements the simple and fragment interfaces plus the patterns
   its role supports.
 - Role mapping covers every `SemanticRole`: Button, CheckBox, Text, Slider, ProgressBar, TabView, TabItem,
-  Pane (Canvas and ScrollView), Edit, Image, ListItem, List, Group, Window and Custom.
+  RadioGroup (Group), RadioButton, NumericStepper (Spinner), Pane (Canvas and ScrollView), Edit, Image, ListItem,
+  List, Group, Window and Custom.
 - Properties include name, automation id, control type, enabled, keyboard focus, focusability, control/content
   element flags, offscreen, process id, framework id, bounding rectangle, value and read-only, toggle state, and
   selection-item state.
-- Patterns include Invoke for buttons, Toggle for checkboxes, Value for text fields, and SelectionItem for list
-  rows and tab items. Invoke, toggle, select and deselect run the semantic actions the application registered;
-  selecting a tab item invokes its page's `activate` action, and a tab item stays selected because the group
-  carries one selection.
+- Patterns include Invoke for buttons, Toggle for checkboxes, Value for text fields and numeric steppers, and
+  SelectionItem for list rows, tab items and radio buttons. Invoke, toggle, select and deselect run the semantic
+  actions the application registered; selecting a tab item or radio button invokes its `activate` action, and
+  both stay selected because their group carries one selection.
 - The provider reads an immutable publication snapshot, so a rebuild cannot invalidate an element a reader holds.
   Structure changes are raised with `UiaRaiseStructureChangedEvent`.
 - `IValueProvider::SetValue` returns `UIA_E_ELEMENTNOTAVAILABLE`; the bridge has no channel to carry the new text
   into the application, because `SemanticAction` takes no arguments. Reading the value is supported.
 
-The **11 Windows role tests** mirror the macOS role suite: root role, child hierarchy, empty publication, detach,
-text-field value, checkbox toggle state, list role, tab group and tab selection, selected row, unselected row,
-and a plain label with no value. The suite also sends `WM_GETOBJECT` and asserts the window returns a provider key.
-A twelfth test drives a real `IUIAutomation` client through `ElementFromHandle` and `FindFirst`, which proves UI
-Automation reaches the published root rather than only the direct provider interfaces. The providers are reached
-through the platform-only `accessibility/accessibility_platform.win32.h` accessor, which is the Windows analogue
-of reading the AppKit hierarchy directly.
+The **13 Windows role tests** mirror the macOS role suite: root role, child hierarchy, empty publication, detach,
+text-field value, checkbox toggle state, list role, tab group and tab selection, radio group and choice selection,
+numeric-stepper value, selected row, unselected row, and a plain label with no value. The suite also sends
+`WM_GETOBJECT` and asserts the window returns a provider key. A fourteenth test drives a real `IUIAutomation`
+client through `ElementFromHandle` and `FindFirst`, which proves UI Automation reaches the published root rather
+than only the direct provider interfaces. The providers are reached through the platform-only
+`accessibility/accessibility_platform.win32.h` accessor, which is the Windows analogue of reading the AppKit
+hierarchy directly.
 
 `README.md` and `docs/status.md` now describe both bridges accurately.
 
@@ -170,12 +175,12 @@ the host with `albor automation: serving <descriptor>` instead of the previous n
 
 ## 6. CI and verification
 
-Local Windows results from this working tree:
+The last full Windows run, before the radio and stepper suite, recorded:
 
 | configuration | suite | result |
 | --- | --- | ---: |
-| debug | `albor-tests.exe` | 3,335 tests: 3,333 passed, 2 skipped, 0 failed |
-| release | `albor-tests.exe` | 3,166 tests: 3,164 passed, 2 skipped, 0 failed |
+| debug | `albor-tests.exe` | 3,371 tests: 3,369 passed, 2 skipped, 0 failed |
+| release | `albor-tests.exe` | 3,201 tests: 3,199 passed, 2 skipped, 0 failed |
 | debug | `albor-generated-font-checks.exe` | 4 passed |
 | release | `albor-generated-font-checks.exe` | 4 passed |
 | debug | `albor-render-albor-auto-checks.exe` | 1 passed |
@@ -184,8 +189,9 @@ Local Windows results from this working tree:
 | release | `albor-render-blend2d-auto-checks.exe` | 4 passed |
 
 `bash build/check-format.sh` passes, and `bash build/shaders.sh --d3d` reports that the committed DXBC artifact
-matches the six HLSL entry points. The macOS suite was not run here because no macOS host is available; the only
-macOS source change is the two added `ASSERT_GT(actual_ink, 0u)` assertions.
+matches the six HLSL entry points. The Windows host cannot build the macOS bridge, so the macOS half of this
+pass was verified locally instead: the macOS debug suite ran 3,452 tests with 0 failures. The Windows counts
+above predate the new widget suite, and the pushed CI run is the authority for both platforms.
 
 The complete Windows suite has exactly **2 skips**:
 
@@ -201,8 +207,9 @@ The macOS configuration still excludes `metal_teardown.test.cpp` from Release at
 Metal footprint test skips when coverage instrumentation is active. Those are macOS-specific, intentional, and
 unrelated to Windows.
 
-The local results above were measured before the commit that carries this document. CI runs on the pushed commit,
-and the workflow run is the authoritative result.
+The radio-group, radio-button, numeric-stepper and dual-engine suites are included in the working tree but are
+not in the Windows counts above, because this host cannot build Windows and the change is not yet committed for
+CI. The pushed CI run is the authoritative result for both configurations.
 
 A Windows coverage job was evaluated and not added. It would need a Windows-native instrumentation toolchain
 (`clang-cl` plus `llvm-cov`, or OpenCppCoverage), and the footprint/allocation probes are sensitive to
@@ -217,7 +224,7 @@ job remains a tracked enhancement rather than a parity requirement.
 | Window popup | 10 | 9 |
 | Blend2D windowed | 3 | 3 |
 | Platform font resolver | 8 dedicated | 8 |
-| Accessibility roles | 11 | 12 (11 parity + 1 UI Automation client) |
+| Accessibility roles | 13 | 14 (13 parity + 1 UI Automation client) |
 | Windows platform services | not present | 8 |
 | Skia backend | 30 macOS-only | replaced by D3D |
 | Metal teardown | 2 macOS-only | not applicable |
@@ -238,6 +245,8 @@ job remains a tracked enhancement rather than a parity requirement.
 - Added the Windows named-pipe automation transport, 10 transport tests and a host MCP exchange test.
 - Enabled the `form` example on Windows, which builds and runs against the Win32/Direct3D adapter.
 - Added the per-abstraction Windows support table to `docs/status.md`.
+- Added the radio-group, radio-button and numeric-stepper roles to both accessibility bridges, with 2 parity
+  tests on each platform.
 - Updated `README.md` and `docs/status.md` to describe both accessibility bridges.
 
 ## 9. Remaining priorities

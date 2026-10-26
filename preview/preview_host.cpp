@@ -23,7 +23,10 @@
 #include "widgets/checkbox.h"
 #include "widgets/label.h"
 #include "widgets/list_box.h"
+#include "widgets/numeric_stepper.h"
 #include "widgets/progress_bar.h"
+#include "widgets/radio_button.h"
+#include "widgets/radio_group.h"
 #include "widgets/scroll_view.h"
 #include "widgets/slider.h"
 #include "widgets/tab_page.h"
@@ -44,6 +47,24 @@ namespace albor::preview
                 text.remove_suffix(2);
             // the remainder is the number, which is what a length resolves to (§11.3, AD-27)
             return std::strtod(std::string(text).c_str(), nullptr);
+        }
+
+        // the number an expression spells, including a written negation or grouping, which a preview can resolve (§12.2)
+        bool number_of_expression(const compiler::Expression& expression, double& result) {
+            // a literal is the common case, because a preview shows the author's static values (§12.2)
+            if (const auto* literal = dynamic_cast<const compiler::LiteralExpression*>(&expression); literal != nullptr) {
+                // the literal text is the number, with any length suffix removed by the shared reader (§12.2)
+                result = number_of(*literal);
+                return true;
+            }
+            // a negation flips the operand, because the parser keeps the sign outside the literal (§11.1)
+            if (const auto* unary = dynamic_cast<const compiler::UnaryExpression*>(&expression); unary != nullptr && unary->op == compiler::UnaryOperator::Negate)
+                return number_of_expression(*unary->value, result) ? (result = -result, true) : false;
+            // a grouping is transparent to the number, because the parentheses change no value (§11.1)
+            if (const auto* grouping = dynamic_cast<const compiler::GroupingExpression*>(&expression); grouping != nullptr)
+                return number_of_expression(*grouping->inner, result);
+            // anything else is a binding, which the preview does not evaluate (§12.2)
+            return false;
         }
 
         // report whether a written length used the physical suffix, which the framework refuses (§8.2, AD-27)
@@ -111,6 +132,12 @@ namespace albor::preview
                 built = std::make_unique<TabPage>(&engine, text_engine);
             else if (node.element_type == "TabTitle")
                 built = std::make_unique<TabTitle>(&engine);
+            else if (node.element_type == "RadioGroup")
+                built = std::make_unique<RadioGroup>(&engine);
+            else if (node.element_type == "RadioButton")
+                built = std::make_unique<RadioButton>(&engine, text_engine);
+            else if (node.element_type == "NumericStepper")
+                built = std::make_unique<NumericStepper>(&engine, text_engine);
             else {
                 // an element this build does not know produces nothing, which the diagnostics already reported (§12.2)
                 return nullptr;
@@ -118,6 +145,22 @@ namespace albor::preview
             // the author identity is applied, because a preview addresses by it the way automation does (§18.1, AD-11)
             if (!node.explicit_id.empty())
                 built->set_explicit_id(node.explicit_id);
+            // a stepper takes its bounds before its value, because a clamp against defaults would lose it (§8)
+            if (auto* stepper = dynamic_cast<NumericStepper*>(built.get()); stepper != nullptr) {
+                for (const compiler::CheckedAssignment& assignment : node.assignments) {
+                    // only a static bound can be applied here, because a preview evaluates no binding (§12.2)
+                    double number = 0.0;
+                    if (!number_of_expression(*assignment.value, number) || (assignment.name != "min" && assignment.name != "max" && assignment.name != "step"))
+                        continue;
+                    // the authored range and step land before the value they contain (§8)
+                    if (assignment.name == "min")
+                        stepper->set_minimum(static_cast<float>(number));
+                    else if (assignment.name == "max")
+                        stepper->set_maximum(static_cast<float>(number));
+                    else
+                        stepper->set_step(static_cast<float>(number));
+                }
+            }
             // each written assignment is applied, which is what makes the preview show the author's values (§12.2)
             for (const compiler::CheckedAssignment& assignment : node.assignments) {
                 // a physical length is skipped, because the checker refuses one (§8.2, AD-27)
@@ -139,6 +182,9 @@ namespace albor::preview
                     // a grid takes the same gap between its cells (§8.2)
                     else if (auto* grid = dynamic_cast<GridLayout*>(built.get()))
                         grid->set_gap(static_cast<float>(number_of(*numeric)));
+                    // a radio group takes its gap between choices (§8.2)
+                    else if (auto* group = dynamic_cast<RadioGroup*>(built.get()))
+                        group->set_spacing(static_cast<float>(number_of(*numeric)));
                 }
                 // the padding a container was written with, which wraps its children (§8.2)
                 else if (assignment.name == "padding") {
@@ -175,23 +221,64 @@ namespace albor::preview
                     // the progress bar is the read only widget that carries the fraction (§8)
                     progress->set_value(static_cast<float>(number_of(*numeric)));
                 }
-                // a selected tab, which a preview shows as the author wrote it (§8)
-                else if (assignment.name == "selected" && numeric != nullptr) {
-                    // the tab view is the only widget that carries a page selection (§8)
-                    if (auto* tabs = dynamic_cast<TabView*>(built.get()))
-                        tabs->set_selected(static_cast<int>(number_of(*numeric)));
+                // a numeric value, which a stepper or a radio choice carries (§8)
+                else if (auto* value_stepper = dynamic_cast<NumericStepper*>(built.get()); value_stepper != nullptr && assignment.name == "value") {
+                    // a static value, including a written negation, reaches the stepper (§8, §12.2)
+                    double number = 0.0;
+                    if (number_of_expression(*assignment.value, number))
+                        value_stepper->set_value(static_cast<float>(number));
                 }
-                // a vertical strip, which a preview shows as the author wrote it (§8)
+                else if (auto* value_radio = dynamic_cast<RadioButton*>(built.get()); value_radio != nullptr && assignment.name == "value") {
+                    // a static value, including a written negation, reaches the choice (§8, §12.2)
+                    double number = 0.0;
+                    if (number_of_expression(*assignment.value, number))
+                        value_radio->set_value(static_cast<int>(number));
+                }
+                // a numeric range, which only a stepper carries (§8)
+                else if (auto* range_stepper = dynamic_cast<NumericStepper*>(built.get()); range_stepper != nullptr && numeric != nullptr && (assignment.name == "min" || assignment.name == "max" || assignment.name == "step")) {
+                    // the lower bound, the upper bound and the step are each one number (§8)
+                    if (assignment.name == "min")
+                        range_stepper->set_minimum(static_cast<float>(number_of(*numeric)));
+                    else if (assignment.name == "max")
+                        range_stepper->set_maximum(static_cast<float>(number_of(*numeric)));
+                    else if (assignment.name == "step")
+                        range_stepper->set_step(static_cast<float>(number_of(*numeric)));
+                }
+                // a selected tab or radio choice, which a preview shows as the author wrote it (§8)
+                else if (assignment.name == "selected") {
+                    // the static number is resolved through grouping and negation, as the checker accepted it (§12.2)
+                    double number = 0.0;
+                    if (!number_of_expression(*assignment.value, number))
+                        continue;
+                    // the tab view and the radio group are the two widgets that carry a single selection (§8)
+                    if (auto* tabs = dynamic_cast<TabView*>(built.get()))
+                        tabs->set_selected(static_cast<int>(number));
+                    else if (auto* group = dynamic_cast<RadioGroup*>(built.get()))
+                        group->set_selected(static_cast<int>(number));
+                }
+                // a vertical strip or group, which a preview shows as the author wrote it (§8)
                 else if (assignment.name == "vertical" && numeric != nullptr) {
-                    // the tab view is the only widget that carries a strip orientation (§8)
+                    // the tab view and the radio group are the two widgets that carry an orientation (§8)
                     if (auto* tabs = dynamic_cast<TabView*>(built.get()))
                         tabs->set_vertical(numeric->text == "true");
+                    else if (auto* group = dynamic_cast<RadioGroup*>(built.get()))
+                        group->set_vertical(numeric->text == "true");
                 }
-                // a tab title, which the strip draws for the page (§8)
+                // a tab title or a radio label, which the strip or the choice draws (§8)
                 else if (assignment.name == "label") {
-                    // the page is the only widget that carries a strip label (§8)
+                    // the page carries the strip title, and the choice carries its row label (§8)
                     if (auto* tab = dynamic_cast<TabPage*>(built.get()))
                         tab->set_label(text_of(*assignment.value));
+                    else if (auto* label_radio = dynamic_cast<RadioButton*>(built.get()))
+                        label_radio->set_label(text_of(*assignment.value));
+                }
+                // a disabled state, which a radio choice or a stepper carries (§8)
+                else if (assignment.name == "disabled" && numeric != nullptr) {
+                    // the choice and the stepper refuse input when the author disables them (§8)
+                    if (auto* disabled_radio = dynamic_cast<RadioButton*>(built.get()))
+                        disabled_radio->set_disabled(numeric->text == "true");
+                    else if (auto* disabled_stepper = dynamic_cast<NumericStepper*>(built.get()))
+                        disabled_stepper->set_disabled(numeric->text == "true");
                 }
                 // a checked state, which a preview shows as the author wrote it (§8)
                 else if (assignment.name == "checked" && numeric != nullptr) {
@@ -230,6 +317,11 @@ namespace albor::preview
                 // a child that could not be built is skipped, which the diagnostics already reported (§12.2)
                 if (built_child == nullptr)
                     continue;
+                // a radio group reapplies its selection when a choice is added, because a preview does no layout (§8)
+                if (auto* group = dynamic_cast<RadioGroup*>(built.get())) {
+                    group->add_child(std::move(built_child));
+                    continue;
+                }
                 // the child is adopted, which takes ownership (§8.1)
                 built->add_child(std::move(built_child));
             }

@@ -19,7 +19,10 @@
 #include "widgets/canvas.h"
 #include "widgets/checkbox.h"
 #include "widgets/label.h"
+#include "widgets/numeric_stepper.h"
 #include "widgets/progress_bar.h"
+#include "widgets/radio_button.h"
+#include "widgets/radio_group.h"
 #include "widgets/scroll_view.h"
 #include "widgets/slider.h"
 #include "widgets/tab_page.h"
@@ -211,6 +214,10 @@ TEST(PreviewHostChecks, EveryElementThisBuildKnowsIsInstantiated) {
                 Slider { id: level; }
                 CheckBox { id: agreed; }
                 Button { id: go; text: "Go"; }
+                RadioGroup {
+                    RadioButton { label: "One"; }
+                }
+                NumericStepper { }
             }
         }
         Grid { }
@@ -232,6 +239,8 @@ TEST(PreviewHostChecks, EveryElementThisBuildKnowsIsInstantiated) {
     EXPECT_NE(find_first(*result.root, [](UiNode& node) { return dynamic_cast<ScrollView*>(&node) != nullptr; }), nullptr);
     EXPECT_NE(find_first(*result.root, [](UiNode& node) { return dynamic_cast<Slider*>(&node) != nullptr; }), nullptr);
     EXPECT_NE(find_first(*result.root, [](UiNode& node) { return dynamic_cast<CheckBox*>(&node) != nullptr; }), nullptr);
+    EXPECT_NE(find_first(*result.root, [](UiNode& node) { return dynamic_cast<RadioGroup*>(&node) != nullptr; }), nullptr);
+    EXPECT_NE(find_first(*result.root, [](UiNode& node) { return dynamic_cast<NumericStepper*>(&node) != nullptr; }), nullptr);
     EXPECT_NE(find_first(*result.root, [](UiNode& node) { return dynamic_cast<Canvas*>(&node) != nullptr; }), nullptr);
     // assert the scroll view built the real viewport, because a preview shows what the app will show (§12.2)
     UiNode* scroller = find_first(*result.root, [](UiNode& node) { return dynamic_cast<ScrollView*>(&node) != nullptr; });
@@ -417,6 +426,124 @@ TEST(PreviewHostChecks, AProgressBarShowsTheFractionTheAuthorWrote) {
     ASSERT_NE(progress, nullptr);
     // assert the fraction reached the widget, because a preview shows the value the app will show (§8)
     EXPECT_FLOAT_EQ(progress->value(), 0.75f);
+}
+
+TEST(PreviewHostChecks, ARadioGroupShowsItsChoicesAndSelection) {
+    // arrange a group writing its selection, orientation, gap and two labelled choices (§8)
+    const std::string source = R"UI(component WrittenRadios {
+    RadioGroup {
+        id: modes;
+        selected: 1;
+        vertical: true;
+        spacing: 3.0;
+
+        RadioButton {
+            id: fast;
+            value: 0;
+            label: "Fast";
+        }
+
+        RadioButton {
+            id: safe;
+            value: 1;
+            label: "Safe";
+        }
+    }
+})UI";
+    BindingEngine engine;
+    // act
+    preview::PreviewResult result = preview::build(source, engine);
+    // assert nothing was reported, because every property here is one the catalog declares (§11.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    RadioGroup* group = dynamic_cast<RadioGroup*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<RadioGroup*>(&node) != nullptr; }));
+    ASSERT_NE(group, nullptr);
+    // assert the group carries the written selection, orientation and gap (§8)
+    EXPECT_EQ(group->selected(), 1);
+    EXPECT_TRUE(group->vertical());
+    EXPECT_FLOAT_EQ(group->spacing(), 3.0f);
+    // assert both choices reached the group with the labels the author wrote (§8)
+    ASSERT_EQ(group->child_count(), 2u);
+    auto* first = dynamic_cast<RadioButton*>(group->child_at(0));
+    auto* second = dynamic_cast<RadioButton*>(group->child_at(1));
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    EXPECT_EQ(first->value(), 0);
+    EXPECT_EQ(first->label(), "Fast");
+    EXPECT_EQ(second->value(), 1);
+    EXPECT_EQ(second->label(), "Safe");
+}
+
+TEST(PreviewHostChecks, ANumericStepperValueOutsideTheDefaultRangeKeepsTheAuthoredValue) {
+    // arrange a stepper whose value only fits once the written bounds are applied (§8)
+    const std::string source = R"UI(component NegativeStepper {
+    NumericStepper {
+        value: -50.0;
+        min: -100.0;
+        max: 100.0;
+    }
+})UI";
+    BindingEngine engine;
+    // act
+    preview::PreviewResult result = preview::build(source, engine);
+    // assert the preview applies the bounds before the value, because the app shows the authored number (§8, §12.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    NumericStepper* stepper = dynamic_cast<NumericStepper*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<NumericStepper*>(&node) != nullptr; }));
+    ASSERT_NE(stepper, nullptr);
+    EXPECT_FLOAT_EQ(stepper->value(), -50.0f);
+    EXPECT_FLOAT_EQ(stepper->minimum(), -100.0f);
+    EXPECT_FLOAT_EQ(stepper->maximum(), 100.0f);
+}
+
+TEST(PreviewHostChecks, ARadioGroupKeepsANegativeStaticSelection) {
+    // arrange a group with a negative selected value and a grouped choice, which the parser keeps as an expression (§8)
+    const std::string source = R"UI(component NegativeRadio {
+    RadioGroup {
+        selected: (-1);
+        RadioButton { value: -1; label: "Low"; }
+        RadioButton { value: 0; label: "Zero"; }
+    }
+})UI";
+    BindingEngine engine;
+    // act
+    preview::PreviewResult result = preview::build(source, engine);
+    // assert the preview resolves the written grouping and negation rather than leaving the default selection (§12.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    RadioGroup* group = dynamic_cast<RadioGroup*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<RadioGroup*>(&node) != nullptr; }));
+    ASSERT_NE(group, nullptr);
+    EXPECT_EQ(group->selected(), -1);
+    ASSERT_EQ(group->child_count(), 2u);
+    EXPECT_TRUE(dynamic_cast<RadioButton*>(group->child_at(0))->checked());
+}
+
+TEST(PreviewHostChecks, ANumericStepperShowsTheWrittenNumberAndRange) {
+    // arrange a stepper writing its value, bounds, step and disabled state (§8)
+    const std::string source = R"UI(component WrittenStepper {
+    NumericStepper {
+        id: effort;
+        value: 4.0;
+        min: 1.0;
+        max: 9.0;
+        step: 2.0;
+        disabled: true;
+    }
+})UI";
+    BindingEngine engine;
+    // act
+    preview::PreviewResult result = preview::build(source, engine);
+    // assert nothing was reported, because every property here is one the catalog declares (§11.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    NumericStepper* stepper = dynamic_cast<NumericStepper*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<NumericStepper*>(&node) != nullptr; }));
+    ASSERT_NE(stepper, nullptr);
+    // assert the written number and range reached the control, because a preview shows the app's values (§8)
+    EXPECT_FLOAT_EQ(stepper->value(), 4.0f);
+    EXPECT_FLOAT_EQ(stepper->minimum(), 1.0f);
+    EXPECT_FLOAT_EQ(stepper->maximum(), 9.0f);
+    EXPECT_FLOAT_EQ(stepper->step(), 2.0f);
+    EXPECT_TRUE(stepper->disabled());
 }
 
 TEST(PreviewHostChecks, ATabViewShowsTheSelectedPageAndItsLabels) {

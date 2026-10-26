@@ -15,6 +15,7 @@
 #include "devrt/element_table.h"
 #include "devrt/ir.h"
 #include "devrt/reload_adapter.h"
+#include "dual_engine_choices.h"
 #include "dual_engine_controls.h"
 #include "dual_engine_panel.h"
 #include "dual_engine_tabs.h"
@@ -26,6 +27,9 @@
 #include "widgets/button.h"
 #include "widgets/checkbox.h"
 #include "widgets/label.h"
+#include "widgets/numeric_stepper.h"
+#include "widgets/radio_button.h"
+#include "widgets/radio_group.h"
 #include "widgets/slider.h"
 #include "widgets/tab_page.h"
 #include "widgets/tab_title.h"
@@ -84,8 +88,8 @@ namespace
         return found;
     }
 
-    // the value one property holds, chosen by the name because the type is what the setter reads (§11.1)
-    std::string value_for(const std::string& property) {
+    // the value one property holds, chosen by the element and name because the type is what the setter reads (§11.1)
+    std::string value_for(const std::string& element, const std::string& property) {
         // a name outside the declared set is a table lie, so the test fails loudly rather than reading a default (§11.1)
         if (property == "text" || property == "placeholder")
             return "hello";
@@ -98,9 +102,15 @@ namespace
         // a scrollbar policy is a named member of §8 (§11.1)
         if (property == "scrollbar")
             return "as_needed";
-        // a slider value is a plain number in the unit range (§11.1)
-        if (property == "value")
-            return "0.5";
+        // a radio value is an integer, which the group matches against its selected value (§8)
+        if (property == "value" && element == "RadioButton")
+            return "1";
+        // a stepper value and its bounds are floats, which the language writes as numbers (§8)
+        if (property == "value" || property == "min" || property == "max" || property == "step")
+            return "1.5";
+        // a selected value is an integer, which the tab and radio groups share (§8)
+        if (property == "selected")
+            return "1";
         // everything left is a flag, which the language writes as one of two words (§11.1)
         return "true";
     }
@@ -178,7 +188,7 @@ TEST(DevElementChecks, EveryBuiltinElementBuildsOverTheEngines) {
     BindingEngine engine;
     TestTextEngine text;
     // assert each closed element of §8 resolves, because the definition language may name any of them
-    for (const char* element : {"Column", "Row", "Padding", "Stack", "Grid", "Label", "Button", "Slider", "CheckBox", "Canvas", "ScrollView", "TextField"}) {
+    for (const char* element : {"Column", "Row", "Padding", "Stack", "Grid", "Label", "Button", "Slider", "CheckBox", "RadioGroup", "RadioButton", "NumericStepper", "Canvas", "ScrollView", "TextField"}) {
         EXPECT_TRUE(known_element(element)) << element;
         EXPECT_NE(create_node(element, engine, text), nullptr) << element;
     }
@@ -226,7 +236,7 @@ TEST(DevElementChecks, EveryDeclaredPropertyLandsOnItsOwnElement) {
     TestTextEngine text;
     // the closed catalogue of §8, paired with a value each property holds, which is what a definition writes (§11.1)
     const std::vector<std::pair<std::string, std::string>> assignments{
-        {"Column", "spacing"}, {"Column", "padding"}, {"Row", "spacing"}, {"Grid", "spacing"}, {"Padding", "padding"}, {"Label", "text"}, {"Label", "foreground"}, {"Label", "font_size"}, {"Button", "text"}, {"Button", "background"}, {"Button", "disabled"}, {"Slider", "value"}, {"Slider", "disabled"}, {"Slider", "track_color"}, {"Slider", "thumb_color"}, {"CheckBox", "checked"}, {"CheckBox", "disabled"}, {"CheckBox", "outline"}, {"CheckBox", "check_fill"}, {"ScrollView", "overscan"}, {"ScrollView", "scrollbar"}, {"ScrollView", "row_height"}, {"TextField", "value"}, {"TextField", "placeholder"}, {"TextField", "read_only"}, {"TextField", "multiline"}, {"TextField", "disabled"}, {"TextField", "font_size"},
+        {"Column", "spacing"}, {"Column", "padding"}, {"Row", "spacing"}, {"Grid", "spacing"}, {"Padding", "padding"}, {"Label", "text"}, {"Label", "foreground"}, {"Label", "font_size"}, {"Button", "text"}, {"Button", "background"}, {"Button", "disabled"}, {"Slider", "value"}, {"Slider", "disabled"}, {"Slider", "track_color"}, {"Slider", "thumb_color"}, {"CheckBox", "checked"}, {"CheckBox", "disabled"}, {"CheckBox", "outline"}, {"CheckBox", "check_fill"}, {"RadioGroup", "selected"}, {"RadioGroup", "vertical"}, {"RadioGroup", "spacing"}, {"RadioButton", "value"}, {"RadioButton", "label"}, {"RadioButton", "disabled"}, {"NumericStepper", "value"}, {"NumericStepper", "min"}, {"NumericStepper", "max"}, {"NumericStepper", "step"}, {"NumericStepper", "disabled"}, {"ScrollView", "overscan"}, {"ScrollView", "scrollbar"}, {"ScrollView", "row_height"}, {"TextField", "value"}, {"TextField", "placeholder"}, {"TextField", "read_only"}, {"TextField", "multiline"}, {"TextField", "disabled"}, {"TextField", "font_size"},
     };
     // assert each assignment lands, because a setter the table names but never runs is a table that lies (§11.1)
     for (const std::pair<std::string, std::string>& assignment : assignments) {
@@ -235,7 +245,7 @@ TEST(DevElementChecks, EveryDeclaredPropertyLandsOnItsOwnElement) {
         std::unique_ptr<UiNode> node = create_node(element, engine, text);
         ASSERT_NE(node, nullptr) << element;
         // the value is the one the property holds, chosen per type so the setter runs rather than refuses (§11.1)
-        const std::string value = value_for(property);
+        const std::string value = value_for(element, property);
         EXPECT_TRUE(apply_property(*node, element, property, value)) << element << "." << property;
     }
 }
@@ -244,7 +254,7 @@ TEST(DevElementChecks, EveryElementTakesBothAlignments) {
     // arrange the engines and one node per element, because both axes are declared by all of them (§8.2)
     BindingEngine engine;
     TestTextEngine text;
-    for (const char* element : {"Column", "Row", "Padding", "Stack", "Grid", "Label", "Button", "Slider", "CheckBox", "Canvas", "ScrollView", "TextField"}) {
+    for (const char* element : {"Column", "Row", "Padding", "Stack", "Grid", "Label", "Button", "Slider", "CheckBox", "RadioGroup", "RadioButton", "NumericStepper", "Canvas", "ScrollView", "TextField"}) {
         std::unique_ptr<UiNode> node = create_node(element, engine, text);
         ASSERT_NE(node, nullptr) << element;
         // act and assert both axes land on every element, because alignment is a property of every node (§8.2)
@@ -836,4 +846,62 @@ TEST(DevReloadChecks, ACompiledTabsFormAndTheDevIrAgreeOnTheSameUi) {
             EXPECT_EQ(compiled_title->child_count(), ir_page->title()->child_count());
         }
     }
+}
+
+TEST(DevReloadChecks, ACompiledChoicesFormAndTheDevIrAgreeOnTheSameUi) {
+    // arrange the same ui source compiled into a facade and serialized into the dev ir (§16, AD-25)
+    std::ifstream file(ALBOR_DUAL_ENGINE_CHOICES_UI, std::ios::binary);
+    ASSERT_TRUE(file.good());
+    const std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    albor::compiler::DiagnosticList diagnostics;
+    const std::vector<albor::compiler::Token> tokens = albor::compiler::Lexer(source, diagnostics).tokenize();
+    const albor::compiler::SourceFile parsed = albor::compiler::Parser(tokens, diagnostics).parse();
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const std::optional<IrNode> definition = albor::compiler::serialize_component(parsed.components.front());
+    ASSERT_TRUE(definition.has_value());
+    // the compiled path builds the facade, which is the production output (§11.3)
+    BindingEngine engine;
+    TestTextEngine text;
+    DualEngineChoices choices(&engine, &text);
+    // the dev path applies the serialized definition onto a matching root (§12.1)
+    RowLayout root;
+    ReloadFixture fixture;
+    const ReloadReport report = apply_reload(root, *definition, fixture.context);
+    EXPECT_EQ(report.added, 4U);
+    // assert both trees carry the same choices and stepper, which is what AD-25 claims (§16)
+    const UiNode& compiled_row = *static_cast<UiNode&>(choices).child_at(0);
+    ASSERT_EQ(compiled_row.child_count(), root.child_count());
+    const auto* compiled_group = dynamic_cast<const RadioGroup*>(compiled_row.child_at(0));
+    const auto* ir_group = dynamic_cast<const RadioGroup*>(root.child_at(0));
+    ASSERT_NE(compiled_group, nullptr);
+    ASSERT_NE(ir_group, nullptr);
+    EXPECT_EQ(compiled_group->selected(), ir_group->selected());
+    EXPECT_EQ(compiled_group->selected(), 1);
+    EXPECT_EQ(compiled_group->vertical(), ir_group->vertical());
+    EXPECT_FALSE(compiled_group->vertical());
+    EXPECT_FLOAT_EQ(compiled_group->spacing(), ir_group->spacing());
+    EXPECT_FLOAT_EQ(compiled_group->spacing(), 4.0f);
+    ASSERT_EQ(compiled_group->child_count(), ir_group->child_count());
+    ASSERT_EQ(compiled_group->child_count(), 2U);
+    for (std::size_t index = 0; index < 2; index++) {
+        const auto* compiled_choice = dynamic_cast<const RadioButton*>(compiled_group->child_at(index));
+        const auto* ir_choice = dynamic_cast<const RadioButton*>(ir_group->child_at(index));
+        ASSERT_NE(compiled_choice, nullptr);
+        ASSERT_NE(ir_choice, nullptr);
+        EXPECT_EQ(compiled_choice->value(), ir_choice->value());
+        EXPECT_EQ(compiled_choice->label(), ir_choice->label());
+        EXPECT_EQ(compiled_choice->checked(), ir_choice->checked());
+        EXPECT_EQ(compiled_choice->disabled(), ir_choice->disabled());
+    }
+    // assert the bounded stepper agrees on the number, the range and the step (§8, §16)
+    const auto* compiled_stepper = dynamic_cast<const NumericStepper*>(compiled_row.child_at(1));
+    const auto* ir_stepper = dynamic_cast<const NumericStepper*>(root.child_at(1));
+    ASSERT_NE(compiled_stepper, nullptr);
+    ASSERT_NE(ir_stepper, nullptr);
+    EXPECT_FLOAT_EQ(compiled_stepper->value(), ir_stepper->value());
+    EXPECT_FLOAT_EQ(compiled_stepper->value(), -50.0f);
+    EXPECT_FLOAT_EQ(compiled_stepper->minimum(), ir_stepper->minimum());
+    EXPECT_FLOAT_EQ(compiled_stepper->maximum(), ir_stepper->maximum());
+    EXPECT_FLOAT_EQ(compiled_stepper->step(), ir_stepper->step());
+    EXPECT_EQ(compiled_stepper->disabled(), ir_stepper->disabled());
 }

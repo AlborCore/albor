@@ -368,6 +368,33 @@ namespace albor::compiler
                                               .signals = {},
                                               // a title holds the icon or run its author composed (§8)
                                               .accepts_children = true});
+        // a container groups radio buttons and owns their single choice (§8)
+        catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
+                                              .name = "RadioGroup",
+                                              // the selected value, orientation and gap are what the group exposes (§8)
+                                              .properties = {ElementProperty{.name = "selected", .type = scalar(TypeKind::Int), .assignable = true}, ElementProperty{.name = "vertical", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "spacing", .type = scalar(TypeKind::Float), .assignable = true}},
+                                              // a group raises the value the user chose (§8.3)
+                                              .signals = {ElementSignal{.name = "selection_changed", .parameter_types = {scalar(TypeKind::Int)}, .parameter_names = {"value"}}},
+                                              // a group holds its choices, so it accepts children (§8)
+                                              .accepts_children = true});
+        // a leaf is one choice inside a radio group (§8)
+        catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
+                                              .name = "RadioButton",
+                                              // the value, label and disabled state are what a choice exposes (§8)
+                                              .properties = {ElementProperty{.name = "value", .type = scalar(TypeKind::Int), .assignable = true}, ElementProperty{.name = "label", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true}},
+                                              // a choice raises no signal, because the group owns the selection (§8)
+                                              .signals = {},
+                                              // a choice is a leaf, so it takes no children (§8)
+                                              .accepts_children = false});
+        // a leaf steps a bounded number, which is a spinner (§8)
+        catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
+                                              .name = "NumericStepper",
+                                              // the value, bounds, step and disabled state are what a stepper exposes (§8)
+                                              .properties = {ElementProperty{.name = "value", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "min", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "max", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "step", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true}},
+                                              // a stepper raises the value it moved to (§8.3)
+                                              .signals = {ElementSignal{.name = "changed", .parameter_types = {scalar(TypeKind::Float)}, .parameter_names = {"value"}}},
+                                              // a stepper is a leaf, so it takes no children (§8)
+                                              .accepts_children = false});
         // a leaf draws a run of text, which is a caption or a value readout (§8)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Label",

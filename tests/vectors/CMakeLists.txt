@@ -74,5 +74,8 @@ albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/dual_
 
 # the tabs facade broadens the corpus to a container that owns a selection, so the page strip agrees too (§16, AD-25)
 albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/dual_engine_tabs.ui")
+
+# the choices facade covers the single-choice group and the bounded stepper, so both new widgets agree (§16, AD-25)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/dual_engine_choices.ui")
 # the generated header reaches the test binary, because the suite includes the facade it exercises (§11.3)
 target_include_directories(albor-tests PRIVATE "${CMAKE_BINARY_DIR}/generated/albor-vector-fixture")

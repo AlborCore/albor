@@ -7,6 +7,8 @@ component WidgetForm {
     inout property<float> level: 0.5;
     inout property<bool> armed: false;
     inout property<string> name: "";
+    inout property<int> mode: 0;
+    inout property<float> effort: 30.0;
     inout property<vector<Todo>> todos: [];
 
     Column {
@@ -67,6 +69,64 @@ component WidgetForm {
             draw: {
                 fill_rect(0, 0, canvas_width, canvas_height, #D4D6DE);
                 fill_rect(0, 0, canvas_width * level, canvas_height, #0A82FF);
+            }
+        }
+
+        Label {
+            id: form_mode_label;
+            text: "pick a mode";
+        }
+
+        RadioGroup {
+            id: form_modes;
+            selected: mode;
+            vertical: false;
+            spacing: 16px;
+            on_selection_changed: {
+                mode = value;
+            }
+
+            RadioButton {
+                id: form_mode_fast;
+                value: 0;
+                label: "Fast";
+                disabled: armed;
+            }
+
+            RadioButton {
+                id: form_mode_balanced;
+                value: 1;
+                label: "Balanced";
+                disabled: armed;
+            }
+
+            RadioButton {
+                id: form_mode_safe;
+                value: 2;
+                label: "Safe";
+                disabled: armed;
+            }
+        }
+
+        Label {
+            id: form_mode_value;
+            text: "mode " + string(mode);
+        }
+
+        Label {
+            id: form_effort_label;
+            text: "effort " + string(effort);
+        }
+
+        NumericStepper {
+            id: form_effort;
+            value: effort;
+            min: 0.0;
+            max: 100.0;
+            step: 5.0;
+            disabled: armed;
+            on_changed: {
+                effort = value;
             }
         }
 

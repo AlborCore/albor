@@ -13,12 +13,9 @@ int main() {
     albor::WindowOptions options;
     options.title = "Albor \xE2\x80\x94 Chart";
     options.size = albor::Size{800.0f, 600.0f};
-    // the content is retained, so a tick that changed nothing skips its frame rather than repainting (§6.4, AD-06)
-    albor::MainWindowConfig config;
-    config.build_only_when_dirty = true;
     // the manifest glue generated the facade, which the hand written widget implements (§11.2, AD-17)
     albor::WaveformWidget* widget = nullptr;
-    const albor::WindowHandle handle = application.create_window(options, widget, config);
+    const albor::WindowHandle handle = application.create_window(options, widget);
     // a window that could not be created leaves nothing to present (§5.1)
     if (!handle.valid() || widget == nullptr) {
         std::fprintf(stderr, "chart: the window could not be created\n");

@@ -1,3 +1,4 @@
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -22,7 +23,10 @@
 #include "widgets/canvas.h"
 #include "widgets/checkbox.h"
 #include "widgets/label.h"
+#include "widgets/numeric_stepper.h"
 #include "widgets/progress_bar.h"
+#include "widgets/radio_button.h"
+#include "widgets/radio_group.h"
 #include "widgets/slider.h"
 #include "widgets/tab_page.h"
 #include "widgets/tab_title.h"
@@ -5302,4 +5306,767 @@ TEST(TabViewChecks, AStructuralSelectionChangeRaisesTheSignal) {
     ASSERT_EQ(changes.size(), 1u);
     EXPECT_EQ(changes[0], 2);
     EXPECT_EQ(tabs.selected(), 2);
+}
+
+TEST(RadioButtonChecks, MeasuresTheCircleAndLabel) {
+    // arrange a choice whose label is measured by the shared text engine (§8.2, §9.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioButton choice(&engine, &text_engine, 0, "One");
+    Size measured{};
+    // act
+    choice.measure(SizeConstraints::unconstrained(), measured);
+    // assert the row is the circle, the gap and the run (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 52.0f);
+    EXPECT_FLOAT_EQ(measured.height, 16.0f);
+}
+
+TEST(RadioButtonChecks, AnEmptyLabelMeasuresOnlyTheCircle) {
+    // arrange a choice with no label, which a caller might use beside a separate label (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioButton choice(&engine, &text_engine);
+    Size measured{};
+    // act
+    choice.measure(SizeConstraints::unconstrained(), measured);
+    // assert the gap is not added when there is no run to separate (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 16.0f);
+    EXPECT_FLOAT_EQ(measured.height, 16.0f);
+}
+
+TEST(RadioButtonChecks, ALongLabelWrapsInsideTheOfferedRow) {
+    // arrange a label wider than the room the parent offers (§8.2, §9.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioButton choice(&engine, &text_engine, 0, "abcdefghij");
+    Size measured{};
+    // act
+    choice.measure(SizeConstraints::at_most(Size{80.0f, 40.0f}), measured);
+    // assert the row stays inside the offered ceiling, because the label is measured against it (§8.2)
+    EXPECT_LE(measured.width, 80.0f);
+    EXPECT_FLOAT_EQ(measured.width, 80.0f);
+    EXPECT_FLOAT_EQ(measured.height, 16.0f);
+}
+
+TEST(RadioButtonChecks, MeasuresFromTheInstalledTheme) {
+    // arrange a theme that sizes the circle and the gap differently from the default (§8.4)
+    Theme theme;
+    theme.set_radio_button_size(Size{20.0f, 20.0f});
+    theme.set_radio_button_gap(5.0f);
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioButton choice(&engine, &text_engine, 0, "A");
+    apply_theme(choice, theme);
+    Size measured{};
+    // act
+    choice.measure(SizeConstraints::unconstrained(), measured);
+    // assert the row follows the theme rather than the builtin literals (§8.2, §8.4)
+    EXPECT_FLOAT_EQ(measured.width, 35.0f);
+    EXPECT_FLOAT_EQ(measured.height, 20.0f);
+}
+
+TEST(RadioButtonChecks, ASquareCircleFitsAShortRow) {
+    // arrange a row shorter than the themed circle, which a shrunken group can produce (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioButton choice(&engine, &text_engine, 0, "");
+    choice.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{52.0f, 6.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{80.0f, 20.0f}, 1.0f));
+    // act
+    choice.render(recorder);
+    // assert the outline is a six by six circle inside the row, not a sixteen high circle hanging out (§8.2)
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_FALSE(rects.empty());
+    EXPECT_FLOAT_EQ(rects.front().width, 6.0f);
+    EXPECT_FLOAT_EQ(rects.front().height, 6.0f);
+    EXPECT_GE(rects.front().y, 0.0f);
+    EXPECT_LE(rects.front().y + rects.front().height, 6.0f);
+}
+
+TEST(RadioButtonChecks, APressRunsTheInstalledSelection) {
+    // arrange a choice with a recorded selection and an arranged row (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioButton choice(&engine, &text_engine, 0, "One");
+    choice.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{52.0f, 16.0f}));
+    std::size_t selections = 0;
+    choice.set_on_select([&selections] { selections++; });
+    Event press{.kind = EventKind::PointerDown, .position = Point{20.0f, 8.0f}};
+    // act
+    choice.dispatch_event(press);
+    // assert the row claims the press and runs the group's selection work (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(selections, 1u);
+}
+
+TEST(RadioButtonChecks, ASpaceRunsTheInstalledSelection) {
+    // arrange a focused choice with a recorded selection (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioButton choice(&engine, &text_engine, 0, "One");
+    choice.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{52.0f, 16.0f}));
+    std::size_t selections = 0;
+    choice.set_on_select([&selections] { selections++; });
+    Event space{.kind = EventKind::KeyDown, .key = Key::Space};
+    // act
+    choice.dispatch_event(space);
+    // assert space is the keyboard selection, which the choice claims (§8.3)
+    EXPECT_TRUE(space.handled);
+    EXPECT_EQ(selections, 1u);
+}
+
+TEST(RadioButtonChecks, ADisabledChoiceRefusesThePress) {
+    // arrange a disabled choice, which draws its state but takes no input (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioButton choice(&engine, &text_engine, 0, "One");
+    choice.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{52.0f, 16.0f}));
+    choice.set_disabled(true);
+    std::size_t selections = 0;
+    choice.set_on_select([&selections] { selections++; });
+    Event press{.kind = EventKind::PointerDown, .position = Point{20.0f, 8.0f}};
+    // act
+    choice.dispatch_event(press);
+    // assert the press was not claimed and the choice was not selected (§8.3)
+    EXPECT_FALSE(press.handled);
+    EXPECT_EQ(selections, 0u);
+}
+
+TEST(RadioButtonChecks, AnnouncesItsLabelAndChosenState) {
+    // arrange a chosen choice with a label and an installed selection (§10.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioButton choice(&engine, &text_engine, 2, "One", "one");
+    choice.arrange(Rect::from_origin_size(Point{1.0f, 2.0f}, Size{52.0f, 16.0f}));
+    choice.set_checked(true);
+    choice.set_on_select([] {});
+    // act
+    const SemanticNode node = choice.semantic_node();
+    // assert the role, name, check state and selection are what a reader announces (§10.1)
+    EXPECT_EQ(node.role(), SemanticRole::RadioButton);
+    EXPECT_EQ(node.name(), "One");
+    EXPECT_EQ(node.check(), CheckState::Checked);
+    EXPECT_TRUE(node.selected());
+    EXPECT_EQ(node.bounds(), (Rect::from_origin_size(Point{1.0f, 2.0f}, Size{52.0f, 16.0f})));
+    EXPECT_EQ(node.action_count(), 1u);
+}
+
+TEST(RadioButtonChecks, PaintsTheOutlineAndADotWhenChosen) {
+    // arrange two rows drawn from the same theme (§6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioButton choice(&engine, &text_engine, 0, "One");
+    choice.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{52.0f, 16.0f}));
+    SceneRecorder unchecked(WindowMetrics::from_logical(Size{80.0f, 40.0f}, 1.0f));
+    choice.render(unchecked);
+    // act
+    choice.set_checked(true);
+    SceneRecorder checked(WindowMetrics::from_logical(Size{80.0f, 40.0f}, 1.0f));
+    choice.render(checked);
+    // assert the unchecked row is one outline and the chosen row adds a fill and a dot (§8.4)
+    EXPECT_EQ(rect_commands(*unchecked.scene()).size(), 1u);
+    EXPECT_EQ(rect_commands(*checked.scene()).size(), 3u);
+    // assert the label is one run in both states (§9.1)
+    EXPECT_EQ(text_commands(*unchecked.scene()).size(), 1u);
+    EXPECT_EQ(text_commands(*checked.scene()).size(), 1u);
+}
+
+TEST(RadioButtonChecks, SetLabelRemeasuresTheRow) {
+    // arrange a measured choice with a short label (§9.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioButton choice(&engine, &text_engine, 0, "A");
+    Size measured{};
+    choice.measure(SizeConstraints::unconstrained(), measured);
+    const float before = measured.width;
+    // act the label grows, which changes the row width (§8.2)
+    choice.set_label("Four");
+    choice.measure(SizeConstraints::unconstrained(), measured);
+    // assert the row follows the new run (§8.2)
+    EXPECT_GT(measured.width, before);
+    EXPECT_TRUE(choice.layout_dirty());
+}
+
+TEST(RadioGroupChecks, MeasuresItsChoicesInARow) {
+    // arrange two choices in a horizontal group, with the default gap (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioGroup group(&engine);
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 0, "One"));
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 1, "Two"));
+    Size measured{};
+    // act
+    group.measure(SizeConstraints::unconstrained(), measured);
+    // assert the row is both choices and the gap between them (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 112.0f);
+    EXPECT_FLOAT_EQ(measured.height, 16.0f);
+}
+
+TEST(RadioGroupChecks, MeasuresItsChoicesInAColumn) {
+    // arrange two choices in a vertical group, with the default gap (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioGroup group(&engine);
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 0, "One"));
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 1, "Two"));
+    group.set_vertical(true);
+    Size measured{};
+    // act
+    group.measure(SizeConstraints::unconstrained(), measured);
+    // assert the column is the widest choice and both rows plus the gap (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 52.0f);
+    EXPECT_FLOAT_EQ(measured.height, 40.0f);
+    EXPECT_TRUE(group.vertical());
+}
+
+TEST(RadioGroupChecks, SelectsTheChoiceWithTheValue) {
+    // arrange a group with two values (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioGroup group(&engine);
+    auto first_owner = std::make_unique<RadioButton>(&engine, &text_engine, 0, "One");
+    RadioButton* first = first_owner.get();
+    group.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<RadioButton>(&engine, &text_engine, 1, "Two");
+    RadioButton* second = second_owner.get();
+    group.add_child(std::move(second_owner));
+    // act
+    group.set_selected(1);
+    group.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    // assert exactly the choice with the value is checked (§8)
+    EXPECT_EQ(group.selected(), 1);
+    EXPECT_FALSE(first->checked());
+    EXPECT_TRUE(second->checked());
+}
+
+TEST(RadioGroupChecks, AShrunkGroupKeepsEveryChoiceMeasured) {
+    // arrange a group of three choices that needs more width than the parent gives it (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioGroup group(&engine);
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 0, "One"));
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 1, "Two"));
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 2, "Six"));
+    // act
+    group.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 20.0f}));
+    // assert every choice keeps a positive width inside the group, because no choice may vanish or fall outside (§8.2)
+    ASSERT_EQ(group.child_count(), 3U);
+    EXPECT_FLOAT_EQ(group.child_at(0)->bounds().width, 28.0f);
+    EXPECT_FLOAT_EQ(group.child_at(1)->bounds().width, 28.0f);
+    EXPECT_FLOAT_EQ(group.child_at(2)->bounds().width, 28.0f);
+    EXPECT_FLOAT_EQ(group.child_at(1)->bounds().x, 36.0f);
+    EXPECT_FLOAT_EQ(group.child_at(2)->bounds().x, 72.0f);
+    EXPECT_LE(group.child_at(2)->bounds().x + group.child_at(2)->bounds().width, 100.0f);
+}
+
+TEST(RadioGroupChecks, UsesTheThemeSpacingWhenNoneIsWritten) {
+    // arrange a theme that spaces choices wider than the builtin default (§8.4)
+    Theme theme;
+    theme.set_radio_group_spacing(20.0f);
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioGroup group(&engine);
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 0, "One"));
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 1, "Two"));
+    apply_theme(group, theme);
+    Size measured{};
+    // act
+    group.measure(SizeConstraints::unconstrained(), measured);
+    // assert an unwritten gap comes from the theme (§8.2, §8.4)
+    EXPECT_FLOAT_EQ(group.spacing(), 20.0f);
+    EXPECT_FLOAT_EQ(measured.width, 124.0f);
+}
+
+TEST(RadioGroupChecks, AChoiceValueChangeReappliesTheSelection) {
+    // arrange a group whose selected value is the second choice (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioGroup group(&engine);
+    auto first_owner = std::make_unique<RadioButton>(&engine, &text_engine, 0, "One");
+    RadioButton* first = first_owner.get();
+    group.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<RadioButton>(&engine, &text_engine, 1, "Two");
+    RadioButton* second = second_owner.get();
+    group.add_child(std::move(second_owner));
+    group.set_selected(1);
+    group.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    // act the first choice takes the selected value, which the group must reapply (§8)
+    first->set_value(1);
+    // assert the new match is the one checked choice, because the first match wins (§8)
+    EXPECT_TRUE(first->checked());
+    EXPECT_FALSE(second->checked());
+}
+
+TEST(RadioGroupChecks, ASelectedValueWrittenBeforeTheChildrenMarksTheChoice) {
+    // arrange a group whose selected value is written before the choices are adopted (§8, §11.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioGroup group(&engine);
+    group.set_selected(1);
+    auto first_owner = std::make_unique<RadioButton>(&engine, &text_engine, 0, "One");
+    RadioButton* first = first_owner.get();
+    group.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<RadioButton>(&engine, &text_engine, 1, "Two");
+    RadioButton* second = second_owner.get();
+    group.add_child(std::move(second_owner));
+    // assert adding the matching choice marks it before any layout or semantic read (§8)
+    EXPECT_TRUE(second->checked());
+    // act the semantic tree is built before the first layout pass (§10.1)
+    const SemanticNode node = group.semantic_node();
+    // assert the group announces its selection and the matching choice carries the check state (§10.1)
+    EXPECT_EQ(node.role(), SemanticRole::RadioGroup);
+    EXPECT_FALSE(first->checked());
+    EXPECT_TRUE(second->checked());
+    std::unique_ptr<SemanticProvider> child = group.semantic_child(1);
+    ASSERT_NE(child, nullptr);
+    EXPECT_EQ(child->semantic_node().check(), CheckState::Checked);
+}
+
+TEST(RadioGroupChecks, AChoicePressSelectsItsValue) {
+    // arrange an arranged group with a recorded selection signal (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioGroup group(&engine);
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 0, "One"));
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 1, "Two"));
+    group.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    std::vector<int> changes;
+    group.set_on_selection_changed([&changes](int value) { changes.push_back(value); });
+    Event press{.kind = EventKind::PointerDown, .position = Point{65.0f, 8.0f}};
+    // act
+    InputDispatcher::dispatch(group, press);
+    // assert the second choice claimed the press and became the selected value (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(group.selected(), 1);
+    ASSERT_EQ(changes.size(), 1u);
+    EXPECT_EQ(changes[0], 1);
+}
+
+TEST(RadioGroupChecks, AChoiceCannotReachADestroyedGroup) {
+    // arrange a choice detached from its group, which keeps the callback the group installed (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    auto group = std::make_unique<RadioGroup>(&engine);
+    auto choice = std::make_unique<RadioButton>(&engine, &text_engine, 0, "One");
+    RadioButton* raw = choice.get();
+    group->add_child(std::move(choice));
+    group->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    std::unique_ptr<UiNode> detached = group->remove_child(raw);
+    ASSERT_NE(detached, nullptr);
+    // act the detached choice is pressed while the group is still alive (§8.3)
+    Event detached_press{.kind = EventKind::PointerDown, .position = Point{10.0f, 8.0f}};
+    raw->dispatch_event(detached_press);
+    // assert the removed choice cannot drive the live group (§8.3)
+    EXPECT_EQ(group->selected(), 0);
+    // act the detached choice is cleared, the group is destroyed, and the choice is pressed afterwards (§8.3, AD-09)
+    raw->set_checked(false);
+    group.reset();
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 8.0f}};
+    raw->dispatch_event(press);
+    // assert the choice is still a valid control and the press is claimed without calling the dead group (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_FALSE(raw->checked());
+}
+
+TEST(RadioGroupChecks, DuplicateValuesSelectTheFirstChoice) {
+    // arrange two choices with the same value, which the group selects by value (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioGroup group(&engine);
+    auto first_owner = std::make_unique<RadioButton>(&engine, &text_engine, 0, "One");
+    RadioButton* first = first_owner.get();
+    group.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<RadioButton>(&engine, &text_engine, 0, "Two");
+    RadioButton* second = second_owner.get();
+    group.add_child(std::move(second_owner));
+    std::vector<int> changes;
+    group.set_on_selection_changed([&changes](int value) { changes.push_back(value); });
+    // act the second duplicate is pressed, which carries the same selected value (§8)
+    group.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    Event press{.kind = EventKind::PointerDown, .position = Point{65.0f, 8.0f}};
+    InputDispatcher::dispatch(group, press);
+    // assert the first matching choice owns the check and no new selection moved (§8)
+    EXPECT_TRUE(first->checked());
+    EXPECT_FALSE(second->checked());
+    EXPECT_TRUE(changes.empty());
+}
+
+TEST(RadioGroupChecks, TheSignalReportsOnlyActualChanges) {
+    // arrange a group with a recorded signal (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioGroup group(&engine);
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 0, "One"));
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 1, "Two"));
+    std::vector<int> changes;
+    group.set_on_selection_changed([&changes](int value) { changes.push_back(value); });
+    // act the same value is written twice, which is one actual move (§8.3)
+    group.set_selected(1);
+    group.set_selected(1);
+    // assert only the move was reported (§8.3)
+    ASSERT_EQ(changes.size(), 1u);
+    EXPECT_EQ(changes[0], 1);
+}
+
+TEST(RadioGroupChecks, ExposesItsChoicesAsRadioButtons) {
+    // arrange a group with one selected choice (§10.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioGroup group(&engine);
+    group.set_explicit_id("modes");
+    auto first_owner = std::make_unique<RadioButton>(&engine, &text_engine, 0, "One");
+    RadioButton* first = first_owner.get();
+    group.add_child(std::move(first_owner));
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 1, "Two"));
+    group.set_selected(0);
+    group.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    // act
+    const SemanticNode node = group.semantic_node();
+    // assert the group and its choice hierarchy are announced (§10.1)
+    EXPECT_EQ(node.role(), SemanticRole::RadioGroup);
+    EXPECT_EQ(node.explicit_id(), "modes");
+    EXPECT_EQ(node.action_count(), 2u);
+    EXPECT_EQ(group.semantic_child_count(), 2u);
+    std::unique_ptr<SemanticProvider> child = group.semantic_child(0);
+    ASSERT_NE(child, nullptr);
+    EXPECT_EQ(child->semantic_node().role(), SemanticRole::RadioButton);
+    EXPECT_EQ(first->semantic_node().check(), CheckState::Checked);
+    EXPECT_FALSE(group.accepts_focus());
+}
+
+TEST(NumericStepperChecks, MeasuresTheDefaultPlate) {
+    // arrange a stepper whose value is a short run (§8.2, §9.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    Size measured{};
+    // act
+    stepper.measure(SizeConstraints::unconstrained(), measured);
+    // assert the themed extent is the floor the run fits inside (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 120.0f);
+    EXPECT_FLOAT_EQ(measured.height, 32.0f);
+}
+
+TEST(NumericStepperChecks, MeasuresFromTheInstalledTheme) {
+    // arrange a theme that sizes the plate and its step zones (§8.4)
+    Theme theme;
+    theme.set_numeric_stepper_extent(Size{200.0f, 40.0f});
+    theme.set_numeric_stepper_button_width(30.0f);
+    theme.set_numeric_stepper_padding(5.0f);
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    apply_theme(stepper, theme);
+    Size measured{};
+    // act
+    stepper.measure(SizeConstraints::unconstrained(), measured);
+    // assert the plate takes the themed extent, because the run fits inside it (§8.2, §8.4)
+    EXPECT_FLOAT_EQ(measured.width, 200.0f);
+    EXPECT_FLOAT_EQ(measured.height, 40.0f);
+}
+
+TEST(NumericStepperChecks, AWidenedRangeRecoversTheAuthoredValue) {
+    // arrange a stepper whose zero default range clamps the authored thirty to zero (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_maximum(0.0f);
+    stepper.set_value(30.0f);
+    // assert the value is clamped while the range is zero wide (§8)
+    EXPECT_FLOAT_EQ(stepper.value(), 0.0f);
+    // act the range widens after the value was requested, which happens when a bound host value settles (§7.3, §8)
+    stepper.set_maximum(100.0f);
+    // assert the request survives the temporary clamp, so the control shows the authored thirty (§8)
+    EXPECT_FLOAT_EQ(stepper.value(), 30.0f);
+    // act a user write replaces the request, which must not jump back when the range moves again (§8)
+    stepper.set_value(0.0f);
+    stepper.set_maximum(50.0f);
+    // assert the later range move keeps the user's value rather than the old authored request (§8)
+    EXPECT_FLOAT_EQ(stepper.value(), 0.0f);
+}
+
+TEST(NumericStepperChecks, ClampsTheValueIntoItsRange) {
+    // arrange a stepper with a ten to twenty range (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_minimum(10.0f);
+    stepper.set_maximum(20.0f);
+    // act the value lands below and above the range (§8)
+    stepper.set_value(5.0f);
+    // assert the lower bound is what the control shows (§8)
+    EXPECT_FLOAT_EQ(stepper.value(), 10.0f);
+    stepper.set_value(25.0f);
+    // assert the upper bound is what the control shows (§8)
+    EXPECT_FLOAT_EQ(stepper.value(), 20.0f);
+}
+
+TEST(NumericStepperChecks, APressOnThePlusZoneStepsUp) {
+    // arrange an arranged stepper with a recorded value signal (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    std::vector<float> changes;
+    stepper.set_on_change([&changes](float value) { changes.push_back(value); });
+    Event press{.kind = EventKind::PointerDown, .position = Point{110.0f, 16.0f}};
+    // act
+    stepper.dispatch_event(press);
+    // assert the increment zone steps one unit and reports it (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 1.0f);
+    ASSERT_EQ(changes.size(), 1u);
+    EXPECT_FLOAT_EQ(changes[0], 1.0f);
+}
+
+TEST(NumericStepperChecks, TheStepAmountMovesTheValue) {
+    // arrange a half-unit step between zero and ten (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_maximum(10.0f);
+    stepper.set_step(0.5f);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    // act
+    Event press{.kind = EventKind::PointerDown, .position = Point{110.0f, 16.0f}};
+    stepper.dispatch_event(press);
+    // assert the stored step is what the zone moves by (§8.3)
+    EXPECT_FLOAT_EQ(stepper.value(), 0.5f);
+    EXPECT_FLOAT_EQ(stepper.step(), 0.5f);
+}
+
+TEST(NumericStepperChecks, TheMinusZoneStepsDown) {
+    // arrange a stepper carrying five in the middle of its range (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_value(5.0f);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    // act a press on the left zone (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{5.0f, 16.0f}};
+    stepper.dispatch_event(press);
+    // assert the decrement zone moves the value back by one step (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 4.0f);
+}
+
+TEST(NumericStepperChecks, ADownWheelNotchStepsTheValueDown) {
+    // arrange a stepper carrying five (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_value(5.0f);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    Event wheel{.kind = EventKind::Wheel, .position = Point{60.0f, 16.0f}, .scroll = -1.0f};
+    // act
+    stepper.dispatch_event(wheel);
+    // assert the notch direction decides the step (§8.3)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 4.0f);
+}
+
+TEST(NumericStepperChecks, ThePageKeysMoveTenSteps) {
+    // arrange a stepper at five with unit steps (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_value(5.0f);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    // act
+    Event up{.kind = EventKind::KeyDown, .key = Key::PageUp};
+    stepper.dispatch_event(up);
+    // assert a page is ten steps forward (§8.3)
+    EXPECT_TRUE(up.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 15.0f);
+    Event down{.kind = EventKind::KeyDown, .key = Key::PageDown};
+    stepper.dispatch_event(down);
+    // assert a page back is ten steps, which mirrors the forward move (§8.3)
+    EXPECT_TRUE(down.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 5.0f);
+}
+
+TEST(NumericStepperChecks, AWheelNotchStepsTheValue) {
+    // arrange a stepper with a recorded value signal (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    std::vector<float> changes;
+    stepper.set_on_change([&changes](float value) { changes.push_back(value); });
+    Event wheel{.kind = EventKind::Wheel, .position = Point{40.0f, 16.0f}, .scroll = 1.0f};
+    // act
+    stepper.dispatch_event(wheel);
+    // assert the notch steps up and claims the event (§8.3)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 1.0f);
+    ASSERT_EQ(changes.size(), 1u);
+}
+
+TEST(NumericStepperChecks, ANarrowPlatePlacesThePlusMarkInThePlusZone) {
+    // arrange a plate narrower than two ideal step zones, where the old left check overlapped the right zone (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{40.0f, 32.0f}));
+    // act the press lands under the plus mark, at twenty six points (§8.3)
+    Event plus{.kind = EventKind::PointerDown, .position = Point{26.0f, 16.0f}};
+    stepper.dispatch_event(plus);
+    // assert the plus mark increments, because the two zones split at the middle (§8.3)
+    EXPECT_TRUE(plus.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 1.0f);
+    // act the left half decrements, because the zones are disjoint (§8.3)
+    Event minus{.kind = EventKind::PointerDown, .position = Point{5.0f, 16.0f}};
+    stepper.dispatch_event(minus);
+    // assert the decrement zone still steps the value back (§8.3)
+    EXPECT_TRUE(minus.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 0.0f);
+}
+
+TEST(NumericStepperChecks, ANonFiniteBindingIsIgnored) {
+    // arrange a stepper carrying a finite value, bound, and step (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_value(5.0f);
+    // act each input is non finite, which no valid range or step can carry (§8)
+    stepper.set_value(std::numeric_limits<float>::quiet_NaN());
+    stepper.set_minimum(std::numeric_limits<float>::quiet_NaN());
+    stepper.set_maximum(std::numeric_limits<float>::infinity());
+    stepper.set_step(std::numeric_limits<float>::infinity());
+    // assert the finite state survives, because a poisoned value would break every later clamp (§8)
+    EXPECT_FLOAT_EQ(stepper.value(), 5.0f);
+    EXPECT_FLOAT_EQ(stepper.minimum(), 0.0f);
+    EXPECT_FLOAT_EQ(stepper.maximum(), 100.0f);
+    EXPECT_FLOAT_EQ(stepper.step(), 1.0f);
+}
+
+TEST(NumericStepperChecks, ANegativeStepUsesItsMagnitude) {
+    // arrange a written negative step, which must not reverse the buttons (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_step(-2.0f);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    // act
+    Event press{.kind = EventKind::PointerDown, .position = Point{110.0f, 16.0f}};
+    stepper.dispatch_event(press);
+    // assert the stored step is the magnitude and the plus zone still increments (§8.3)
+    EXPECT_FLOAT_EQ(stepper.step(), 2.0f);
+    EXPECT_FLOAT_EQ(stepper.value(), 2.0f);
+}
+
+TEST(NumericStepperChecks, TheHomeAndEndKeysReachTheBounds) {
+    // arrange a stepper arranged for key input (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_minimum(2.0f);
+    stepper.set_maximum(12.0f);
+    stepper.set_value(5.0f);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    // act
+    Event end{.kind = EventKind::KeyDown, .key = Key::End};
+    stepper.dispatch_event(end);
+    // assert end names the upper bound (§8.3)
+    EXPECT_TRUE(end.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 12.0f);
+    Event home{.kind = EventKind::KeyDown, .key = Key::Home};
+    stepper.dispatch_event(home);
+    // assert home names the lower bound (§8.3)
+    EXPECT_TRUE(home.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 2.0f);
+}
+
+TEST(NumericStepperChecks, AnnouncesItsValueAndSteppingActions) {
+    // arrange a stepper carrying a formatted fraction (§10.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine, "effort");
+    stepper.set_value(3.5f);
+    // act
+    const SemanticNode node = stepper.semantic_node();
+    // assert the role, id, value and the two actions a reader can drive (§10.1)
+    EXPECT_EQ(node.role(), SemanticRole::NumericStepper);
+    EXPECT_EQ(node.explicit_id(), "effort");
+    EXPECT_EQ(node.value(), "3.5");
+    EXPECT_EQ(node.action_count(), 2u);
+    const bool incremented = node.invoke(1);
+    // assert the increment action is the one the plate's plus zone runs (§10.1)
+    EXPECT_TRUE(incremented);
+    EXPECT_FLOAT_EQ(stepper.value(), 4.5f);
+}
+
+TEST(NumericStepperChecks, AWholeNumberFormatsWithoutTrailingDecimals) {
+    // arrange a stepper with a whole value (§9.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_value(12.0f);
+    // act
+    const SemanticNode node = stepper.semantic_node();
+    // assert the value run is the shortest integer form (§9.1)
+    EXPECT_EQ(node.value(), "12");
+}
+
+TEST(NumericStepperChecks, ATinyNegativeValueDoesNotFormatAsNegativeZero) {
+    // arrange a value that rounds to zero at the displayed precision (§9.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_minimum(-1.0f);
+    stepper.set_value(-0.0000004f);
+    // act
+    const SemanticNode node = stepper.semantic_node();
+    // assert the signed tiny value reads as zero rather than the misleading -0 (§9.1)
+    EXPECT_FLOAT_EQ(stepper.value(), -0.0000004f);
+    EXPECT_EQ(node.value(), "0");
+}
+
+TEST(NumericStepperChecks, ADisabledStepperRefusesThePress) {
+    // arrange a disabled stepper (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_disabled(true);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    Event press{.kind = EventKind::PointerDown, .position = Point{110.0f, 16.0f}};
+    // act
+    stepper.dispatch_event(press);
+    // assert the press is not claimed and the value does not move (§8.3)
+    EXPECT_FALSE(press.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 0.0f);
+    EXPECT_TRUE(stepper.disabled());
+}
+
+TEST(NumericStepperChecks, ADisabledStepperRefusesTheWheelAndTheKey) {
+    // arrange a disabled stepper with a value to protect (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_value(5.0f);
+    stepper.set_disabled(true);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    // act
+    Event wheel{.kind = EventKind::Wheel, .position = Point{60.0f, 16.0f}, .scroll = 1.0f};
+    stepper.dispatch_event(wheel);
+    Event key{.kind = EventKind::KeyDown, .key = Key::ArrowUp};
+    stepper.dispatch_event(key);
+    // assert neither path is claimed and the value stays put (§8.3)
+    EXPECT_FALSE(wheel.handled);
+    EXPECT_FALSE(key.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 5.0f);
+}
+
+TEST(NumericStepperChecks, ThePlateAndTheTwoMarksArePainted) {
+    // arrange an arranged stepper drawn from the theme (§6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{160.0f, 60.0f}, 1.0f));
+    // act
+    stepper.render(recorder);
+    // assert the plate, the minus and the two plus bars are four shapes and the value is one run (§8.4)
+    EXPECT_EQ(rect_commands(*recorder.scene()).size(), 4u);
+    EXPECT_EQ(text_commands(*recorder.scene()).size(), 1u);
 }

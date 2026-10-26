@@ -140,6 +140,27 @@ namespace albor
         // the thickness of the indicator under the selected tab (§6.1)
         float tab_indicator_height = 2.0f;
 
+        // the extent of a radio button, which is a fixed circle (§8.2)
+        Size radio_button_size{16.0f, 16.0f};
+
+        // the width of a radio button outline, which is what makes an unchecked one visible (§6.1)
+        float radio_button_outline = 2.0f;
+
+        // the gap between a radio circle and its label (§8.2)
+        float radio_button_gap = 6.0f;
+
+        // the default gap between radio buttons in a group (§8.2)
+        float radio_group_spacing = 8.0f;
+
+        // the extent a numeric stepper measures to (§8.2)
+        Size numeric_stepper_extent{120.0f, 32.0f};
+
+        // the width of the increment and decrement zones a stepper draws (§8.2)
+        float numeric_stepper_button_width = 28.0f;
+
+        // the inset between the stepper plate and its value run (§8.2)
+        float numeric_stepper_padding = 8.0f;
+
         // the corner radius a plate is drawn with, which is what makes a hover state read as a plate (§6.1)
         float corner_radius = 6.0f;
 
@@ -479,6 +500,27 @@ namespace albor
 
         // replace the thickness of the indicator under the selected tab (§6.1)
         void set_tab_indicator_height(float value);
+
+        // replace the extent of a radio button (§8.2)
+        void set_radio_button_size(Size value);
+
+        // replace the width of a radio button outline (§6.1)
+        void set_radio_button_outline(float value);
+
+        // replace the gap between a radio circle and its label (§8.2)
+        void set_radio_button_gap(float value);
+
+        // replace the gap between radio buttons in a group (§8.2)
+        void set_radio_group_spacing(float value);
+
+        // replace the extent a numeric stepper measures to (§8.2)
+        void set_numeric_stepper_extent(Size value);
+
+        // replace the width of a stepper's increment and decrement zones (§8.2)
+        void set_numeric_stepper_button_width(float value);
+
+        // replace the inset between a stepper plate and its value run (§8.2)
+        void set_numeric_stepper_padding(float value);
 
         // replace the extent a check box measures to, which the control reads instead of a literal (§8.2)
         void set_checkbox_box(Size value);

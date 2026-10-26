@@ -87,6 +87,14 @@ namespace albor
             theme.set_tab_padding_horizontal(12.0f);
             theme.set_tab_minimum_width(72.0f);
             theme.set_tab_indicator_height(2.0f);
+            // a macos radio is sixteen round with a two point ring, and a compact stepper (§8.4)
+            theme.set_radio_button_size(Size{16.0f, 16.0f});
+            theme.set_radio_button_outline(2.0f);
+            theme.set_radio_button_gap(6.0f);
+            theme.set_radio_group_spacing(8.0f);
+            theme.set_numeric_stepper_extent(Size{120.0f, 30.0f});
+            theme.set_numeric_stepper_button_width(28.0f);
+            theme.set_numeric_stepper_padding(8.0f);
             // the ring stands one away and rounds with the plate it surrounds (§6.1, §6.2)
             theme.set_focus_ring_offset(1.0f);
             theme.set_focus_ring_radius(6.0f);
@@ -134,6 +142,14 @@ namespace albor
             theme.set_tab_padding_horizontal(14.0f);
             theme.set_tab_minimum_width(76.0f);
             theme.set_tab_indicator_height(2.0f);
+            // a fluent radio is eighteen round with a one and a half point ring (§8.4)
+            theme.set_radio_button_size(Size{18.0f, 18.0f});
+            theme.set_radio_button_outline(1.5f);
+            theme.set_radio_button_gap(6.0f);
+            theme.set_radio_group_spacing(8.0f);
+            theme.set_numeric_stepper_extent(Size{140.0f, 32.0f});
+            theme.set_numeric_stepper_button_width(32.0f);
+            theme.set_numeric_stepper_padding(8.0f);
             theme.set_focus_ring_offset(1.0f);
             theme.set_focus_ring_radius(5.0f);
             // the hierarchy resolves at the sizes the system font is set at (§8.4)
@@ -173,6 +189,14 @@ namespace albor
             theme.set_tab_padding_horizontal(10.0f);
             theme.set_tab_minimum_width(64.0f);
             theme.set_tab_indicator_height(2.0f);
+            // a tool radio is sixteen round with a one point ring, and a compact stepper (§8.4)
+            theme.set_radio_button_size(Size{16.0f, 16.0f});
+            theme.set_radio_button_outline(1.0f);
+            theme.set_radio_button_gap(5.0f);
+            theme.set_radio_group_spacing(6.0f);
+            theme.set_numeric_stepper_extent(Size{120.0f, 28.0f});
+            theme.set_numeric_stepper_button_width(24.0f);
+            theme.set_numeric_stepper_padding(6.0f);
             theme.set_focus_ring_offset(1.0f);
             theme.set_focus_ring_radius(5.0f);
             // the hierarchy resolves at the reading sizes a tool screen carries (§8.4)
@@ -576,6 +600,41 @@ namespace albor
     void Theme::set_tab_indicator_height(float value) {
         // the thickness is one value because the strip draws one indicator (§6.1)
         m_metrics.tab_indicator_height = value;
+    }
+
+    void Theme::set_radio_button_size(Size value) {
+        // the extent is stored whole, because a radio button is one circle (§8.2)
+        m_metrics.radio_button_size = value;
+    }
+
+    void Theme::set_radio_button_outline(float value) {
+        // the outline is one width because the circle has no per side override (§6.1)
+        m_metrics.radio_button_outline = value;
+    }
+
+    void Theme::set_radio_button_gap(float value) {
+        // the gap is one value because the label sits on one side of the circle (§8.2)
+        m_metrics.radio_button_gap = value;
+    }
+
+    void Theme::set_radio_group_spacing(float value) {
+        // the spacing is the default a group uses when the author writes none (§8.2)
+        m_metrics.radio_group_spacing = value;
+    }
+
+    void Theme::set_numeric_stepper_extent(Size value) {
+        // the extent is stored whole, because the control measures to one box (§8.2)
+        m_metrics.numeric_stepper_extent = value;
+    }
+
+    void Theme::set_numeric_stepper_button_width(float value) {
+        // the zone width is one value because both sides are the same target (§8.2)
+        m_metrics.numeric_stepper_button_width = value;
+    }
+
+    void Theme::set_numeric_stepper_padding(float value) {
+        // the inset is one value because the plate pads both sides the same (§8.2)
+        m_metrics.numeric_stepper_padding = value;
     }
 
     Color Theme::surface() const {

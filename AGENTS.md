@@ -43,6 +43,7 @@ pattern in `build/check-format.sh` in the same change.
 ## Source of Truth
 
 - `albor-design-v4.md` is the architecture specification. It outranks any implementation habit.
+- `macos-windows.md` is the shared macOS/Windows parity ledger; keep it current with every platform change.
 - Architectural decisions are settled (**Decided**, §13) with modular hardware and subsystem abstraction layers. Do not reopen settled decisions without a documented revision.
 - Do not weaken a boundary the spec draws. The load-bearing ones are listed under **Non-negotiable Boundaries** below.
 - Reference sections as `§N` / `AD-NN` in commit messages, code comments and reviews so decisions stay traceable.
@@ -62,6 +63,7 @@ Violating any of these is a defect, not a style issue.
 - **The manifest is the single source of truth for native components** (AD-17, §11.2): C++ glue is generated from the manifest, and the compiler never parses C++ headers.
 - **No platform or Skia types in public headers** (§3.5, AD-05, AD-19).
 - **Native backend parity** (§6.3, AD-05): `render-albor` ships two native GPU backends, Metal on macOS and Direct3D 11 on Windows, and they stay at the same level. Every capability, fix and optimization is applied to both in the same change: the same retained resources, cache policy, base-vertex handling, profiling coverage and tests. A change carried by one backend only is a defect, not a follow-up, and the backend that cannot be built on the host is verified in CI before the change is done.
+- **Platform parity** (§5.3, AD-16): macOS and Windows stay at the same level. Any change to a macOS-specific source (`*.macos.mm`, AppKit, CoreText, CoreVideo, Metal, NSAccessibility) carries its Windows equivalent (`*.win32.c++`, Win32, DirectWrite, Direct3D, UI Automation) in the same change, with the same tests; the reverse holds too. A change carried by one platform only is a defect, not a follow-up. The platform that cannot be built on the host is verified in CI before the change is done, and `macos-windows.md` is updated with the new status.
 - **The compiler is not the runtime, and development tooling is not the production application** (§2).
 
 ## Recovery Points
@@ -91,6 +93,8 @@ Before editing:
 2. Understand ownership and lifetime
 3. Follow conventions in `STYLE-GUIDE.md` and the surrounding code
 4. Make minimal changes
+
+A macOS-specific change is not complete without its Windows counterpart: update both platform sources, both test suites, and `macos-windows.md` in the same change.
 
 After editing:
 
@@ -164,6 +168,7 @@ C++ uses Google Test; Python uses `unittest` (see `STYLE-GUIDE.md`). Beyond per-
 - **Dual-engine conformance**: one `.ui` corpus through compiled output and the dev IR evaluator, same observable behavior (AD-25). This is what makes §2.4 true.
 - **GPU/software parity**: every Level 2 resource kind and primitive behaves the same in both renderers within tolerance (§11.7, AD-26). The software renderer is the screenshot reference.
 - **Native backend parity**: every behavior or performance guarantee proven in the Metal suite is proven in the Direct3D suite, and vice versa; the two suites stay mirrored, so a backend-only test gap is a defect (§6.3, AD-05).
+- **Platform parity**: every macOS-specific behavior is proven in the Windows suite and vice versa; a platform-only test gap is a defect, and `macos-windows.md` records the current parity ledger (§5.3, AD-16).
 - **LSP/compiler agreement**: same corpus, same diagnostics (§16).
 - **Manifest consistency**: generated glue, descriptor tables and preview stubs agree with the manifest.
 - **Semantic tree tests**: role, name, states and actions of every widget; a widget is not done without them.

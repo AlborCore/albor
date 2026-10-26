@@ -51,8 +51,20 @@ namespace albor::devrt
 
         // apply the definition's property assignments to a node, which makes an edited value visible (§12.1)
         void apply_properties(UiNode& node, const IrNode& definition) {
+            // the stepper takes its bounds first, because a value clamped against the default range would be lost (§8)
+            const bool stepper = definition.element == "NumericStepper";
+            if (stepper) {
+                for (const IrProperty& property : definition.properties) {
+                    // only the two bounds wait for this pass, because the value reads them (§8)
+                    if (property.name == "min" || property.name == "max")
+                        static_cast<void>(apply_property(node, definition.element, property.name, property.value));
+                }
+            }
             // the assignments are walked, because a node declares a handful of them (§11.1)
             for (const IrProperty& property : definition.properties) {
+                // a stepper bound was applied above, so it is not applied twice (§8)
+                if (stepper && (property.name == "min" || property.name == "max"))
+                    continue;
                 // the name resolves against the element, so a value only lands on the node that declares it (§11.1)
                 static_cast<void>(apply_property(node, definition.element, property.name, property.value));
             }

@@ -41,6 +41,15 @@ namespace albor
         // one page of a tab view, which the user selects
         TabItem,
 
+        // a container that groups radio buttons and owns their single choice
+        RadioGroup,
+
+        // one choice in a radio group
+        RadioButton,
+
+        // a bounded numeric value with an increment and a decrement
+        NumericStepper,
+
         // a drawing surface, which the user may interact with directly
         Canvas,
 

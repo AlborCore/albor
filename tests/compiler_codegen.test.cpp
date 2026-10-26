@@ -1422,6 +1422,208 @@ TEST(Codegen, ATabViewCatalogEntryExists) {
     EXPECT_TRUE(title->signals.empty());
 }
 
+TEST(Codegen, ARadioGroupIsConstructedAndWired) {
+    // arrange a group with a selection, an orientation, a gap, a handler and two labelled choices (§8, §11.1)
+    const std::string source = R"(component C {
+        inout property<int> mode: 0;
+
+        RadioGroup {
+            selected: 1;
+            vertical: true;
+            spacing: 8px;
+            on_selection_changed: {
+                mode = value;
+            }
+
+            RadioButton {
+                value: 0;
+                label: "One";
+            }
+
+            RadioButton {
+                value: 1;
+                label: "Two";
+                disabled: true;
+            }
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert the group takes the engine and the choices take both engines they measure with (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<RadioGroup>(engine);"));
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<RadioButton>(engine, text_engine);"));
+    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/radio_group.h\""));
+    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/radio_button.h\""));
+    // assert the selection, the orientation, the gap and the signal are wired through their setters (§8, §8.3)
+    EXPECT_TRUE(contains(cpp.content, "set_selected("));
+    EXPECT_TRUE(contains(cpp.content, "set_vertical(true)"));
+    EXPECT_TRUE(contains(cpp.content, "set_spacing("));
+    EXPECT_TRUE(contains(cpp.content, "set_value("));
+    EXPECT_TRUE(contains(cpp.content, "set_label("));
+    EXPECT_TRUE(contains(cpp.content, "set_disabled(true)"));
+    EXPECT_TRUE(contains(cpp.content, "set_on_selection_changed("));
+    EXPECT_TRUE(contains(cpp.content, "int value"));
+}
+
+TEST(Codegen, ARadioGroupCatalogEntryExists) {
+    // arrange
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act
+    const ElementType* group = catalog.find("RadioGroup");
+    const ElementType* choice = catalog.find("RadioButton");
+    // assert the group is a container with one selection property and one selection signal (§8, §11.1)
+    ASSERT_NE(group, nullptr);
+    EXPECT_TRUE(group->accepts_children);
+    EXPECT_TRUE(group->find_property("selected") != nullptr);
+    EXPECT_TRUE(group->find_property("vertical") != nullptr);
+    EXPECT_TRUE(group->find_property("spacing") != nullptr);
+    ASSERT_EQ(group->signals.size(), 1u);
+    EXPECT_EQ(group->signals[0].name, "selection_changed");
+    ASSERT_EQ(group->signals[0].parameter_names.size(), 1u);
+    EXPECT_EQ(group->signals[0].parameter_names[0], "value");
+    // assert the choice is a leaf with a value, a label and a disabled state (§8)
+    ASSERT_NE(choice, nullptr);
+    EXPECT_FALSE(choice->accepts_children);
+    EXPECT_TRUE(choice->find_property("value") != nullptr);
+    EXPECT_TRUE(choice->find_property("label") != nullptr);
+    EXPECT_TRUE(choice->find_property("disabled") != nullptr);
+    EXPECT_TRUE(choice->signals.empty());
+}
+
+TEST(Codegen, ANumericStepperIsConstructedAndWired) {
+    // arrange a stepper with a value, a range, a step, a disabled state and a handler (§8, §11.1)
+    const std::string source = R"(component C {
+        inout property<float> effort: 4.0;
+
+        NumericStepper {
+            value: effort;
+            min: 1.0;
+            max: 9.0;
+            step: 2.0;
+            disabled: true;
+            on_changed: {
+                effort = value;
+            }
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert the stepper is constructed over both engines and uses the setters its catalog entry names (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<NumericStepper>(engine, text_engine);"));
+    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/numeric_stepper.h\""));
+    EXPECT_TRUE(contains(cpp.content, "set_value("));
+    EXPECT_TRUE(contains(cpp.content, "set_minimum("));
+    EXPECT_TRUE(contains(cpp.content, "set_maximum("));
+    EXPECT_TRUE(contains(cpp.content, "set_step("));
+    EXPECT_TRUE(contains(cpp.content, "set_disabled(true)"));
+    EXPECT_TRUE(contains(cpp.content, "set_on_change("));
+    EXPECT_TRUE(contains(cpp.content, "float value"));
+}
+
+TEST(Codegen, ANumericStepperValueUsesTheAuthoredBounds) {
+    // arrange a stepper whose authored value is outside the default range, with its bounds written around it (§8)
+    const std::string source = R"(component C {
+        NumericStepper {
+            value: -50.0;
+            min: -100.0;
+            max: 100.0;
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert both bounds are applied before the value, because the clamp reads the authored range (§8)
+    const std::size_t minimum = cpp.content.find("set_minimum(");
+    const std::size_t maximum = cpp.content.find("set_maximum(");
+    const std::size_t value = cpp.content.find("set_value(");
+    ASSERT_NE(minimum, std::string::npos);
+    ASSERT_NE(maximum, std::string::npos);
+    ASSERT_NE(value, std::string::npos);
+    EXPECT_LT(minimum, value);
+    EXPECT_LT(maximum, value);
+}
+
+TEST(Codegen, ANumericStepperValueUsesBoundBoundsOnTheFirstFrame) {
+    // arrange a stepper whose bounds come from component properties, which settle after binding (§7.3, §8)
+    const std::string source = R"(component C {
+        in property<float> low: -100.0;
+        in property<float> high: 100.0;
+        NumericStepper {
+            value: -50.0;
+            min: low;
+            max: high;
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert the current bounds are applied immediately and still bound, before the deferred value (§8)
+    const std::size_t minimum = cpp.content.find("set_minimum(");
+    const std::size_t maximum = cpp.content.find("set_maximum(");
+    const std::size_t value = cpp.content.find("set_value(");
+    ASSERT_NE(minimum, std::string::npos);
+    ASSERT_NE(maximum, std::string::npos);
+    ASSERT_NE(value, std::string::npos);
+    EXPECT_LT(minimum, value);
+    EXPECT_LT(maximum, value);
+    EXPECT_NE(cpp.content.find("m_sink_0_min"), std::string::npos);
+    EXPECT_NE(cpp.content.find("m_sink_0_max"), std::string::npos);
+}
+
+TEST(Codegen, ANumericStepperRowAppliesBoundsBeforeItsValue) {
+    // arrange a repeated stepper, whose row has no sink and must apply the range before the value (§18.1, §8)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    catalog.add_record(RecordType{.name = "Mode", .fields = {RecordFieldType{.name = "key", .type = scalar(TypeKind::String), .is_key = true}, RecordFieldType{.name = "level", .type = scalar(TypeKind::Float), .is_key = false}}});
+    DiagnosticList diagnostics;
+    const std::string source = R"(component C {
+        in property<vector<Mode>> modes;
+        Column {
+            Repeat(mode in modes) {
+                NumericStepper {
+                    value: mode.level;
+                    min: -100.0;
+                    max: 100.0;
+                }
+            }
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert the row is generated, because a record with a key is a legal repeat source (§18.1, AD-13)
+    EXPECT_FALSE(diagnostics.has_errors());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    const std::size_t minimum = cpp.content.find("set_minimum(");
+    const std::size_t maximum = cpp.content.find("set_maximum(");
+    const std::size_t value = cpp.content.find("set_value(");
+    ASSERT_NE(minimum, std::string::npos);
+    ASSERT_NE(maximum, std::string::npos);
+    ASSERT_NE(value, std::string::npos);
+    // assert both bounds are written before the row value, because the row clamp is immediate (§8)
+    EXPECT_LT(minimum, value);
+    EXPECT_LT(maximum, value);
+}
+
+TEST(Codegen, ANumericStepperCatalogEntryExists) {
+    // arrange
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act
+    const ElementType* stepper = catalog.find("NumericStepper");
+    // assert the stepper is a leaf with a bounded number and one changed signal (§8, §11.1)
+    ASSERT_NE(stepper, nullptr);
+    EXPECT_FALSE(stepper->accepts_children);
+    EXPECT_TRUE(stepper->find_property("value") != nullptr);
+    EXPECT_TRUE(stepper->find_property("min") != nullptr);
+    EXPECT_TRUE(stepper->find_property("max") != nullptr);
+    EXPECT_TRUE(stepper->find_property("step") != nullptr);
+    EXPECT_TRUE(stepper->find_property("disabled") != nullptr);
+    ASSERT_EQ(stepper->signals.size(), 1u);
+    EXPECT_EQ(stepper->signals[0].name, "changed");
+    ASSERT_EQ(stepper->signals[0].parameter_names.size(), 1u);
+    EXPECT_EQ(stepper->signals[0].parameter_names[0], "value");
+}
+
 TEST(Codegen, ASliderRangeBecomesOneSetterOverBothBounds) {
     // arrange a slider whose bounds the author wrote, which the widget takes together (§8)
     const std::string source = R"(component C {

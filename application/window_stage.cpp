@@ -14,7 +14,7 @@
 namespace albor
 {
     WindowStage::WindowStage(Window& window, RendererBackend& renderer, TextEngine& text, RootBuilder builder, const MainWindowConfig& config) :
-        m_renderer(&renderer), m_window(&window), m_text(&text), m_build_only_when_dirty(config.build_only_when_dirty), m_scene_source(std::move(config.scene_source)) {
+        m_renderer(&renderer), m_window(&window), m_text(&text), m_always_render(config.always_render), m_scene_source(std::move(config.scene_source)) {
         // the tree is built once over the engines, because the widgets read them for the whole run (§8.1)
         std::unique_ptr<UiNode> root = builder ? builder(m_engine, text) : nullptr;
         // an application that draws by hand brings no tree, which is what the scene source is for (§6.1)
@@ -98,7 +98,7 @@ namespace albor
         m_last_frame = now;
         // stage one settles the graph and records the scene, stage two executes it (§6.1, AD-18)
         const FrameProfileScope build_scope;
-        const std::shared_ptr<const FrameScene> scene = m_build_only_when_dirty ? m_pipeline->build_if_dirty(window.metrics()) : m_pipeline->build(window.metrics());
+        const std::shared_ptr<const FrameScene> scene = m_always_render ? m_pipeline->build(window.metrics()) : m_pipeline->build_if_dirty(window.metrics());
         // the build time is read before the scene is checked, because a clean tree still pays the settle and the record
         const double build_ms = build_scope.elapsed_ms();
         // a retained tree that found nothing dirty produces no scene, so the tick presents nothing (§6.1)

@@ -161,10 +161,10 @@ and Windows 11 x64 (AMD EPYC) produced the same digests:
 | 64×48 at 1× | `547e508416288d67` | 12288 |
 | 64×48 at 2× | `0a62d4beb95ce121` | 49152 |
 
-Both used Blend2D 2025-03-08 with the JIT feature. The Windows validation of the same
-commit ran 3006 tests with **0 failures** and 41 platform skips (conformance tests that read
-macOS font paths, and accessibility tests without a Win32 adapter); the 17 Windows-only
-tests and the missing 128 macOS-only tests reconcile exactly with the macOS count of 3117.
+Both used Blend2D 2025-03-08 with the JIT feature. At that commit the Windows validation ran 3006
+tests with **0 failures** and 41 platform skips (conformance tests that read macOS font paths, and
+accessibility tests that did not yet have a Win32 adapter); the 17 Windows-only tests and the
+missing 128 macOS-only tests reconcile exactly with the macOS count of 3117 at that commit.
 
 Text is excluded from the cross-platform hash because platform font files differ between
 operating systems; embedded-font runs can be compared separately. A Blend2D upgrade, a JIT

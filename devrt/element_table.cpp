@@ -25,7 +25,10 @@
 #include "widgets/checkbox.h"
 #include "widgets/label.h"
 #include "widgets/list_box.h"
+#include "widgets/numeric_stepper.h"
 #include "widgets/progress_bar.h"
+#include "widgets/radio_button.h"
+#include "widgets/radio_group.h"
 #include "widgets/scroll_view.h"
 #include "widgets/slider.h"
 #include "widgets/tab_page.h"
@@ -195,6 +198,12 @@ namespace albor::devrt
                 {"Tab", [](std::string_view, BindingEngine& engine, TextEngine& text) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<TabPage>(&engine, &text)); }},
                 // a tab title is a container for the strip content, so it takes the engine (§8)
                 {"TabTitle", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<TabTitle>(&engine)); }},
+                // a radio group owns one selected choice and lays out its children (§8)
+                {"RadioGroup", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<RadioGroup>(&engine)); }},
+                // a radio button measures its label, so it takes both engines (§8, §9.1)
+                {"RadioButton", [](std::string_view, BindingEngine& engine, TextEngine& text) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<RadioButton>(&engine, &text)); }},
+                // a numeric stepper measures its value, so it takes both engines (§8, §9.1)
+                {"NumericStepper", [](std::string_view, BindingEngine& engine, TextEngine& text) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<NumericStepper>(&engine, &text)); }},
             };
             return table;
         }
@@ -354,6 +363,83 @@ namespace albor::devrt
                 // a tab page carries the label its strip draws (§8)
                 {"Tab.label", setter<TabPage>([](TabPage& node, std::string_view value) {
                      node.set_label(std::string(value));
+                     return true;
+                 })},
+                // a radio group owns one selected value and lays out its choices (§8)
+                {"RadioGroup.selected", setter<RadioGroup>([](RadioGroup& node, std::string_view value) {
+                     long long selected = 0;
+                     if (!read_int(value, selected))
+                         return false;
+                     node.set_selected(static_cast<int>(selected));
+                     return true;
+                 })},
+                {"RadioGroup.vertical", setter<RadioGroup>([](RadioGroup& node, std::string_view value) {
+                     bool vertical = false;
+                     if (!read_bool(value, vertical))
+                         return false;
+                     node.set_vertical(vertical);
+                     return true;
+                 })},
+                {"RadioGroup.spacing", setter<RadioGroup>([](RadioGroup& node, std::string_view value) {
+                     float spacing = 0.0f;
+                     if (!read_float(value, spacing))
+                         return false;
+                     node.set_spacing(spacing);
+                     return true;
+                 })},
+                // a radio choice carries a value, a label and a disabled state (§8)
+                {"RadioButton.value", setter<RadioButton>([](RadioButton& node, std::string_view value) {
+                     long long choice = 0;
+                     if (!read_int(value, choice))
+                         return false;
+                     node.set_value(static_cast<int>(choice));
+                     return true;
+                 })},
+                {"RadioButton.label", setter<RadioButton>([](RadioButton& node, std::string_view value) {
+                     node.set_label(std::string(value));
+                     return true;
+                 })},
+                {"RadioButton.disabled", setter<RadioButton>([](RadioButton& node, std::string_view value) {
+                     bool disabled = false;
+                     if (!read_bool(value, disabled))
+                         return false;
+                     node.set_disabled(disabled);
+                     return true;
+                 })},
+                // a numeric stepper carries a value, a range and a step (§8)
+                {"NumericStepper.value", setter<NumericStepper>([](NumericStepper& node, std::string_view value) {
+                     float next = 0.0f;
+                     if (!read_float(value, next))
+                         return false;
+                     node.set_value(next);
+                     return true;
+                 })},
+                {"NumericStepper.min", setter<NumericStepper>([](NumericStepper& node, std::string_view value) {
+                     float minimum = 0.0f;
+                     if (!read_float(value, minimum))
+                         return false;
+                     node.set_minimum(minimum);
+                     return true;
+                 })},
+                {"NumericStepper.max", setter<NumericStepper>([](NumericStepper& node, std::string_view value) {
+                     float maximum = 0.0f;
+                     if (!read_float(value, maximum))
+                         return false;
+                     node.set_maximum(maximum);
+                     return true;
+                 })},
+                {"NumericStepper.step", setter<NumericStepper>([](NumericStepper& node, std::string_view value) {
+                     float step = 0.0f;
+                     if (!read_float(value, step))
+                         return false;
+                     node.set_step(step);
+                     return true;
+                 })},
+                {"NumericStepper.disabled", setter<NumericStepper>([](NumericStepper& node, std::string_view value) {
+                     bool disabled = false;
+                     if (!read_bool(value, disabled))
+                         return false;
+                     node.set_disabled(disabled);
                      return true;
                  })},
                 // a checkbox presents its state and two fills, which is what §8.4 styles (§8)
@@ -542,7 +628,7 @@ namespace albor::devrt
     std::string_view element_of(const UiNode& node) {
         // the dynamic type decides, because a node is one element of the closed set and nothing else (§8)
         const std::pair<const UiNode*, std::string_view> elements[] = {
-            {dynamic_cast<const ColumnLayout*>(&node), "Column"}, {dynamic_cast<const RowLayout*>(&node), "Row"}, {dynamic_cast<const PaddingLayout*>(&node), "Padding"}, {dynamic_cast<const StackLayout*>(&node), "Stack"}, {dynamic_cast<const GridLayout*>(&node), "Grid"}, {dynamic_cast<const Label*>(&node), "Label"}, {dynamic_cast<const Button*>(&node), "Button"}, {dynamic_cast<const Slider*>(&node), "Slider"}, {dynamic_cast<const CheckBox*>(&node), "CheckBox"}, {dynamic_cast<const Canvas*>(&node), "Canvas"}, {dynamic_cast<const ScrollView*>(&node), "ScrollView"}, {dynamic_cast<const ListBox*>(&node), "ListBox"}, {dynamic_cast<const TabView*>(&node), "TabView"}, {dynamic_cast<const TabPage*>(&node), "Tab"}, {dynamic_cast<const TabTitle*>(&node), "TabTitle"}, {dynamic_cast<const TextField*>(&node), "TextField"},
+            {dynamic_cast<const ColumnLayout*>(&node), "Column"}, {dynamic_cast<const RowLayout*>(&node), "Row"}, {dynamic_cast<const PaddingLayout*>(&node), "Padding"}, {dynamic_cast<const StackLayout*>(&node), "Stack"}, {dynamic_cast<const GridLayout*>(&node), "Grid"}, {dynamic_cast<const Label*>(&node), "Label"}, {dynamic_cast<const Button*>(&node), "Button"}, {dynamic_cast<const Slider*>(&node), "Slider"}, {dynamic_cast<const CheckBox*>(&node), "CheckBox"}, {dynamic_cast<const Canvas*>(&node), "Canvas"}, {dynamic_cast<const ScrollView*>(&node), "ScrollView"}, {dynamic_cast<const ListBox*>(&node), "ListBox"}, {dynamic_cast<const TabView*>(&node), "TabView"}, {dynamic_cast<const TabPage*>(&node), "Tab"}, {dynamic_cast<const TabTitle*>(&node), "TabTitle"}, {dynamic_cast<const RadioGroup*>(&node), "RadioGroup"}, {dynamic_cast<const RadioButton*>(&node), "RadioButton"}, {dynamic_cast<const NumericStepper*>(&node), "NumericStepper"}, {dynamic_cast<const TextField*>(&node), "TextField"},
         };
         // the first match wins, because the widget types above are disjoint classes (§8)
         for (const std::pair<const UiNode*, std::string_view>& element : elements) {

@@ -1,0 +1,30 @@
+component DualEngineChoices {
+    Row {
+        spacing: 8px;
+
+        RadioGroup {
+            selected: 1;
+            vertical: false;
+            spacing: 4px;
+
+            RadioButton {
+                value: 0;
+                label: "One";
+            }
+
+            RadioButton {
+                value: 1;
+                label: "Two";
+                disabled: true;
+            }
+        }
+
+        NumericStepper {
+            value: -50.0;
+            min: -100.0;
+            max: 100.0;
+            step: 5.0;
+            disabled: false;
+        }
+    }
+}

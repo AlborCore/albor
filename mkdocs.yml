@@ -57,10 +57,14 @@ nav:
       - Button: components/button.md
       - TextField: components/text-field.md
       - Slider: components/slider.md
+      - ProgressBar: components/progress-bar.md
       - CheckBox: components/checkbox.md
+      - RadioGroup and RadioButton: components/radio-group.md
+      - NumericStepper: components/numeric-stepper.md
       - Canvas: components/canvas.md
       - ScrollView: components/scroll-view.md
       - ListBox: components/list-box.md
+      - TabView: components/tab-view.md
       - Column: components/column.md
       - Row: components/row.md
       - Padding: components/padding.md

@@ -477,3 +477,99 @@ TEST(Win32AccessibilityRole, AUiaClientSeesThePublishedRoot) {
     if (SUCCEEDED(initialized))
         CoUninitialize();
 }
+
+TEST(Win32AccessibilityRole, ARadioGroupAnnouncesItsChoicesAndSelection) {
+    // arrange a radio group with two choices, the second selected (§10.1)
+    WindowFixture fixture;
+    ASSERT_NE(fixture.window(), nullptr);
+    SemanticTree tree;
+    std::size_t group = tree.add(SemanticNode{SemanticRole::RadioGroup});
+    std::size_t first = tree.add(SemanticNode{SemanticRole::RadioButton}, group);
+    std::size_t second = tree.add(SemanticNode{SemanticRole::RadioButton}, group);
+    tree.mutable_at(first)->set_name("One");
+    tree.mutable_at(second)->set_name("Two");
+    tree.mutable_at(second)->set_selected(true);
+    // the first choice records the activate action, which the selection pattern presses (§10.1)
+    bool activated = false;
+    (void)tree.mutable_at(first)->add_action("activate", [&activated] { activated = true; });
+    // act
+    fixture.adapter().publish(tree);
+    // assert the group announces as a group, which is the container a reader navigates choices in (§10.2)
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> root = fixture.announced_fragment();
+    ASSERT_NE(root.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> announced_group;
+    ASSERT_HRESULT_SUCCEEDED(root->Navigate(NavigateDirection_FirstChild, announced_group.GetAddressOf()));
+    ASSERT_NE(announced_group.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderSimple> group_simple = WindowFixture::simple_of(announced_group.Get());
+    ASSERT_NE(group_simple.Get(), nullptr);
+    VARIANT control_type{};
+    ASSERT_HRESULT_SUCCEEDED(group_simple->GetPropertyValue(UIA_ControlTypePropertyId, &control_type));
+    ASSERT_EQ(control_type.vt, VT_I4);
+    EXPECT_EQ(control_type.lVal, UIA_GroupControlTypeId);
+    VariantClear(&control_type);
+    // assert the choices announce as radio buttons and expose the selection item pattern (§10.2)
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> announced_first;
+    ASSERT_HRESULT_SUCCEEDED(announced_group->Navigate(NavigateDirection_FirstChild, announced_first.GetAddressOf()));
+    ASSERT_NE(announced_first.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderSimple> first_simple = WindowFixture::simple_of(announced_first.Get());
+    ASSERT_NE(first_simple.Get(), nullptr);
+    ASSERT_HRESULT_SUCCEEDED(first_simple->GetPropertyValue(UIA_ControlTypePropertyId, &control_type));
+    ASSERT_EQ(control_type.vt, VT_I4);
+    EXPECT_EQ(control_type.lVal, UIA_RadioButtonControlTypeId);
+    VariantClear(&control_type);
+    Microsoft::WRL::ComPtr<IUnknown> pattern;
+    ASSERT_HRESULT_SUCCEEDED(first_simple->GetPatternProvider(UIA_SelectionItemPatternId, pattern.GetAddressOf()));
+    ASSERT_NE(pattern.Get(), nullptr);
+    Microsoft::WRL::ComPtr<ISelectionItemProvider> selection;
+    ASSERT_HRESULT_SUCCEEDED(pattern.As(&selection));
+    BOOL selected = TRUE;
+    ASSERT_HRESULT_SUCCEEDED(selection->get_IsSelected(&selected));
+    EXPECT_FALSE(selected);
+    // act the first choice is selected through the pattern (§10.2)
+    ASSERT_HRESULT_SUCCEEDED(selection->Select());
+    // assert the choice's activate action ran, because a radio selection is an activation (§10.1)
+    EXPECT_TRUE(activated);
+    // assert a radio choice cannot be removed from the single selection, which the pattern reports success for (§10.2)
+    EXPECT_HRESULT_SUCCEEDED(selection->RemoveFromSelection());
+}
+
+TEST(Win32AccessibilityRole, ANumericStepperAnnouncesItsValue) {
+    // arrange a stepper carrying a number, which a reader speaks (§10.1)
+    WindowFixture fixture;
+    ASSERT_NE(fixture.window(), nullptr);
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::NumericStepper});
+    tree.mutable_at(0)->set_name("Effort");
+    tree.mutable_at(0)->set_value("3.5");
+    // act
+    fixture.adapter().publish(tree);
+    // assert the stepper announces as a spinner, which is the control type a reader steps in (§10.2)
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> root = fixture.announced_fragment();
+    ASSERT_NE(root.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> announced;
+    ASSERT_HRESULT_SUCCEEDED(root->Navigate(NavigateDirection_FirstChild, announced.GetAddressOf()));
+    ASSERT_NE(announced.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple = WindowFixture::simple_of(announced.Get());
+    ASSERT_NE(simple.Get(), nullptr);
+    VARIANT control_type{};
+    ASSERT_HRESULT_SUCCEEDED(simple->GetPropertyValue(UIA_ControlTypePropertyId, &control_type));
+    ASSERT_EQ(control_type.vt, VT_I4);
+    EXPECT_EQ(control_type.lVal, UIA_SpinnerControlTypeId);
+    VariantClear(&control_type);
+    // assert the number reaches the value pattern, because the bridge carries it read only (§10.2)
+    VARIANT value{};
+    ASSERT_HRESULT_SUCCEEDED(simple->GetPropertyValue(UIA_ValueValuePropertyId, &value));
+    ASSERT_EQ(value.vt, VT_BSTR);
+    EXPECT_STREQ(value.bstrVal, L"3.5");
+    VariantClear(&value);
+    Microsoft::WRL::ComPtr<IUnknown> pattern;
+    ASSERT_HRESULT_SUCCEEDED(simple->GetPatternProvider(UIA_ValuePatternId, pattern.GetAddressOf()));
+    ASSERT_NE(pattern.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IValueProvider> provider;
+    ASSERT_HRESULT_SUCCEEDED(pattern.As(&provider));
+    BSTR read_value = nullptr;
+    ASSERT_HRESULT_SUCCEEDED(provider->get_Value(&read_value));
+    ASSERT_NE(read_value, nullptr);
+    EXPECT_STREQ(read_value, L"3.5");
+    SysFreeString(read_value);
+}
