@@ -1,8 +1,8 @@
 # the widget form example, which is the test bed and the showcase every widget the framework ships (§14)
 
-# the example drives the macos platform directly, so it only builds on apple platforms (AD-16)
-if(NOT APPLE)
-    message(STATUS "form-albor: skipped, the example needs the macos platform adapter")
+# the example drives the desktop platform directly, so it only builds where an adapter exists (AD-16)
+if(NOT APPLE AND NOT WIN32)
+    message(STATUS "form-albor: skipped, the example needs the macos/windows platform adapter")
     return()
 endif()
 

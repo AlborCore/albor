@@ -90,6 +90,9 @@ namespace albor::render
 
             // the composition the draw blends with, which the shader reads its residual alpha from
             std::int32_t blend;
+
+            // the first vertex of the draw, which direct3d omits from SV_VertexID and the shader adds (AD-05)
+            std::int32_t base_vertex;
         };
 
         // the hlsl cbuffer pads to a sixteen byte boundary, so the host side must carry the same size
@@ -1179,6 +1182,8 @@ namespace albor::render
             uniforms.has_texture = draw.texture == 0 ? 0 : 1;
             // the shader reshapes its alpha for the modes that replace the destination (§6.2)
             uniforms.blend = static_cast<int>(draw.composition);
+            // direct3d leaves BaseVertexLocation out of SV_VertexID, so the vertex stage adds it (AD-05)
+            uniforms.base_vertex = static_cast<std::int32_t>(draw.base_vertex);
             upload_uniforms(state.draw_uniforms.Get(), &uniforms, sizeof(uniforms));
             // the draw binds its own texture, or the white texel a solid draw samples (§6.3, §6.4)
             ID3D11ShaderResourceView* paint = state.white_view.Get();

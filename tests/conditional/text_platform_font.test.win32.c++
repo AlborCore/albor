@@ -13,8 +13,7 @@
 
 #include <gtest/gtest.h>
 
-// the exchange macros the windows sdk expands carry the language extension tokens clang flags on every use
-// the uuid expansion is the sdk's own, so the diagnostic is silenced from here on
+// the sdk uuid expansion is the language extension token clang flags, so the diagnostic is silenced
 #pragma clang diagnostic ignored "-Wlanguage-extension-token"
 
 #include "resources/embedded_font.h"
@@ -90,26 +89,26 @@ TEST(Win32PlatformFont, APlatformEngineShapesTheSystemFace) {
 }
 
 TEST(Win32PlatformFont, ACollectionFaceCarriesItsOwnMember) {
-    // arrange the factory the collection face is created over, which the system carries (§15)
+    // arrange the factory the collection face is created over, which every windows host carries (§15)
     IDWriteFactory* factory = nullptr;
-    if (!SUCCEEDED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(&factory))) || factory == nullptr)
-        GTEST_SKIP() << "no directwrite factory on this host";
+    ASSERT_TRUE(SUCCEEDED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(&factory)))) << "no directwrite factory on this host";
+    ASSERT_NE(factory, nullptr);
     // arrange the collection file a windows desktop carries, whose members the index selects (§15)
     IDWriteFontFile* file = nullptr;
     if (factory->CreateFontFileReference(L"C:\\Windows\\Fonts\\cambria.ttc", nullptr, &file) != S_OK || file == nullptr) {
         factory->Release();
-        GTEST_SKIP() << "no collection font on this host";
+        FAIL() << "no collection font on this host";
     }
-    // the members the collection carries are created as faces, and a single member collection skips the case (§15)
+    // arrange the two members the collection carries, which the face factory creates by index (§15)
     IDWriteFontFace* first = nullptr;
     IDWriteFontFace* second = nullptr;
     if (factory->CreateFontFace(DWRITE_FONT_FACE_TYPE_TRUETYPE_COLLECTION, 1, &file, 0, DWRITE_FONT_SIMULATIONS_NONE, &first) != S_OK || first == nullptr || factory->CreateFontFace(DWRITE_FONT_FACE_TYPE_TRUETYPE_COLLECTION, 1, &file, 1, DWRITE_FONT_SIMULATIONS_NONE, &second) != S_OK || second == nullptr) {
-        // the faces that came up are released, because the skip leaves nothing behind (§15)
+        // the faces that came up are released, because the failure leaves nothing behind (§15)
         if (first != nullptr)
             first->Release();
         file->Release();
         factory->Release();
-        GTEST_SKIP() << "no multi member collection on this host";
+        FAIL() << "no multi member collection on this host";
     }
     // act
     const std::vector<std::uint8_t> first_bytes = harfbuzz::platform_font_bytes(first);

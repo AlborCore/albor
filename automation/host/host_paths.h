@@ -42,6 +42,9 @@ namespace albor::automation
     // build the identity of this process, which is platform specific (§10.3, AD-16)
     [[nodiscard]] HostIdentity host_identity();
 
+    // build the endpoint a client connects to, which is a socket path or a named pipe (§10.3, AD-16)
+    [[nodiscard]] std::filesystem::path host_endpoint_path(const HostIdentity& identity, const std::filesystem::path& directory);
+
     // build the primary or short fallback layout, which the transport can bind (§10.3)
     [[nodiscard]] HostPaths make_host_paths(const HostIdentity& identity);
 

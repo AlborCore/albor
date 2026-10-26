@@ -236,6 +236,9 @@ namespace albor::harfbuzz
         // the weight the default face carries, which a selection of another weight must resolve (§9.1, AD-34)
         FontWeight weight = FontWeight::Regular;
 
+        // the selection a measure names no family with, built once so a cached measure allocates nothing (§9.1)
+        FontSpec default_selection;
+
         // the resolver holding the drawing typeface, which only the platform can supply (§9.1, AD-28)
         std::unique_ptr<HarfbuzzTypefaceResolver> resolver;
 
@@ -336,6 +339,8 @@ namespace albor::harfbuzz
         // the family and weight are stored, because a named run compares against them to skip resolving (§9.1)
         m_state->family = family_name;
         m_state->weight = weight;
+        // the default selection carries the weight once, so a measure without a family copies no selection (§9.1)
+        m_state->default_selection.weight = weight;
         // the face is built over the file's bytes, which is the whole of the shaper's input (§15, AD-34)
         m_state->face = build_face(read_font_bytes(font_path));
         // the bytes are enough to draw, so a platform typeface is resolved only when the platform offers one (§9.1, AD-34)
@@ -351,6 +356,8 @@ namespace albor::harfbuzz
         // the family and weight are stored, because a named run compares against them to skip resolving (§9.1)
         m_state->family = std::string(family_name);
         m_state->weight = weight;
+        // the default selection carries the weight once, so a measure without a family copies no selection (§9.1)
+        m_state->default_selection.weight = weight;
         // the face is built over the carried bytes, so no file system is consulted (§15, AD-34)
         m_state->face = build_face(std::vector<std::uint8_t>(font_bytes, font_bytes + byte_count));
     }
@@ -527,7 +534,7 @@ namespace albor::harfbuzz
 
     TextLayout HarfbuzzTextEngine::measure(std::string_view text, float max_width, float font_size) const {
         // the size only overload names the weight the engine was built with, which selects its default face (§9.1)
-        return measure(text, max_width, font_size, FontSpec{.weight = m_state->weight});
+        return measure(text, max_width, font_size, m_state->default_selection);
     }
 
     TextLayout HarfbuzzTextEngine::measure(std::string_view text, float max_width, float font_size, const FontSpec& spec) const {

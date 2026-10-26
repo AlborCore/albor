@@ -23,6 +23,8 @@ struct DrawUniforms
     int scissorEnabled;
     int hasTexture;
     int blend;
+    // the first vertex of the draw, which direct3d leaves out of the system vertex id (AD-05)
+    int baseVertex;
 };
 
 // the varying a rasterized fragment carries, which interpolates the coverage seeds
@@ -50,7 +52,7 @@ float4 project(float2 position, float2 targetSize) {
 
 // rasterize one batch vertex into clip space, carrying the coverage seeds through
 Varyings albor_vertex(uint vertexId : SV_VertexID) {
-    BatchVertex input = vertices[vertexId];
+    BatchVertex input = vertices[vertexId + vertexUniforms.baseVertex];
     Varyings shaded;
     shaded.position = project(input.position, vertexUniforms.targetSize);
     shaded.lateral = input.lateral;

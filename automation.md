@@ -92,14 +92,16 @@ A harness that constructs a private `Application` object is not the transparent 
 
 ### 4.4 Client-side discovery
 
-The host publishes a per-process directory. On macOS and Linux the primary base is `$TMPDIR` (Linux prefers `$XDG_RUNTIME_DIR` when set); on Windows, the directory would be under `%LOCALAPPDATA%` when a transport exists:
+The host publishes a per-process directory. On macOS and Linux the primary base is `$TMPDIR` (Linux prefers `$XDG_RUNTIME_DIR` when set); on Windows, the directory is under `%LOCALAPPDATA%` and the transport endpoint is a named pipe in the pipe namespace:
 
 ```text
 <base>/albor-mcp/<pid>/
-  mcp.sock        # local transport
+  mcp.sock        # local transport on macOS and Linux
   token           # authentication token, 0600
   host.json       # discovery descriptor, 0600
 ```
+
+On Windows `host.json` publishes a `socket` value such as `\\.\pipe\albor-mcp-2-12345`; the token and descriptor still live in the per-process directory.
 
 `host.json` is written after the transport listens:
 
@@ -187,7 +189,7 @@ automation/
     host_paths.h                 # portable host-path contract
     host_paths.macos.mm          # pid, process name, temporary base
     host_paths.linux.c++         # equivalent, for the planned Linux transport
-    host_paths.win32.c++         # equivalent, for the future named-pipe transport
+    host_paths.win32.c++         # equivalent, with a named-pipe endpoint for the win32 transport
 ```
 
 The core `automation/CMakeLists.txt` changes its source glob from recursive to non-recursive, then adds `add_subdirectory(host)`. The host subdirectory mirrors the platform-extension glob for `.macos.mm`, `.linux.c++`, and `.win32.c++`.
@@ -300,7 +302,7 @@ A startup failure does not discard the bindings. The next bind retries the start
 
 The host fails soft and logs to `stderr`:
 
-- `create_transport` returns null on a platform with no transport (currently Windows): log once, serve nothing;
+- `create_transport` returns null only on a platform with no transport; macOS and Windows provide one, and Linux remains planned;
 - directory, permission, path-length, listen, or descriptor failure: log the reason, clean up, leave the application running;
 - a client that disconnects or sends malformed input is dropped without affecting the application;
 - transport accept/serve errors are logged and retried on the next timer tick.
@@ -482,7 +484,7 @@ Consequences accepted by this plan:
 `automation/host/host_paths.macos.mm`
 `automation/host/host_paths.linux.c++`
 `automation/host/host_paths.win32.c++`
-- per-process base directory, pid, process name, socket/token/descriptor paths;
+- per-process base directory, pid, process name, transport/token/descriptor paths;
 - primary `$TMPDIR` / `$XDG_RUNTIME_DIR` layout and the short-path fallback;
 - permission application and cleanup helpers.
 
@@ -738,8 +740,8 @@ Update the issue from "raw automation protocol client" to "MCP client over the l
 
 - **Singleton limitation.** The transparent host uses `Application::instance()`. Applications that construct a private `Application` must keep the manual integration. This is documented rather than hidden.
 - **Default surface includes undo/redo.** The token is the local security boundary, and application actions are still gated by explicit ids. If this is unacceptable for a specific app, a build-level narrowing policy is the follow-up.
-- **Transport availability.** Windows has no named-pipe transport yet, so the host fails soft and serves nothing there. macOS is the reference implementation; Linux remains planned.
-- **Large MCP payloads.** The current transport writes once and can truncate; the output buffer is a required part of this change, not an optional cleanup.
+- **Transport availability.** macOS uses a unix domain socket and Windows uses a named pipe; both publish the endpoint in `host.json` and enforce the per-session token. Linux remains planned.
+- **Large MCP payloads.** The transport retains a partial reply until the client drains it, which is required for screenshot payloads and large semantic trees.
 - **MCP protocol version.** Keeping `2024-11-05` avoids scope creep, but the reference client must accept it. A later version bump is separate.
 - **CMake forward references.** The host target links `albor-application` before it is added. The existing tree already does this for other modules; if a configure check rejects it, the fallback is to move `add_subdirectory(application)` earlier or create the host target after application, not to add an application dependency back into automation.
 - **Examples lose manual automation.** The accessibility bridge remains; the manual Drivable path disappears from the examples. The manual path is still covered by automation tests and documented for strict hosts.

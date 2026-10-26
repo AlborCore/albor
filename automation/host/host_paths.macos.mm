@@ -1,6 +1,7 @@
 #include <unistd.h>
 
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 
 #include "automation/host/host_paths.h"
@@ -23,5 +24,10 @@ namespace albor::automation
             identity.base = "/tmp";
         // the identity is returned whole, because the portable side owns the layout (§10.3)
         return identity;
+    }
+
+    std::filesystem::path host_endpoint_path(const HostIdentity&, const std::filesystem::path& directory) {
+        // the unix domain socket sits beside the token, which is the endpoint a client connects to (§10.3, AD-10)
+        return directory / "mcp.sock";
     }
 } // namespace albor::automation

@@ -1597,6 +1597,8 @@ TEST(AlborParityChecks, AShapedRunMatchesTheReference) {
             actual_ink++;
     }
     ASSERT_GT(expected_ink, 0u);
+    // assert the platform run left ink, which a baseline placed off the surface would not
+    ASSERT_GT(actual_ink, 0u);
     // the atlas and the outline rasterizer cover a comparable area, which a displaced baseline breaks
     EXPECT_LE(actual_ink, expected_ink * 2u);
 }
@@ -1651,6 +1653,8 @@ TEST(AlborParityChecks, ARotatedShapedRunMatchesTheReference) {
         }
     }
     ASSERT_GT(expected_ink, 0u);
+    // assert the turned run left ink, which a baseline placed off the surface would not
+    ASSERT_GT(actual_ink, 0u);
     EXPECT_LE(actual_ink, (expected_ink * 5u) / 4u);
     // the ink spans the same columns, which a transform mapped in the wrong order would displace
     EXPECT_NEAR(static_cast<double>(actual_left), static_cast<double>(expected_left), 2.0);

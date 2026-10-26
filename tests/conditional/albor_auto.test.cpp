@@ -16,7 +16,6 @@ TEST(AlborAutoInstallChecks, TheRendererBackendInstallsItselfAtLoad) {
     const std::unique_ptr<RendererBackend> backend = create_renderer_backend();
     // assert
     ASSERT_NE(backend, nullptr);
-    // assert a host with no device skips, because the install is what this check proves, not the device (§6.2)
-    if (!backend->ready())
-        GTEST_SKIP() << "no render backend device on this host";
+    // assert the installed backend is ready, because a host without a device cannot verify the install it proves (§6.2)
+    ASSERT_TRUE(backend->ready()) << "no render backend device on this host";
 }

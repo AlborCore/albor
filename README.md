@@ -197,8 +197,8 @@ counter, a manifest-driven chart with custom line-batch rendering, the compiled
 | text shaping (HarfBuzz), embedded font registration and weights, i18n catalog | done (§9.1, AD-34) |
 | animation engine, theme system and widget states | done (§7.3) |
 | inspector, LSP, preview host, automation core, MCP adapter | done (Dev/Test only, phase 5) |
-| accessibility: macOS bridge, Win32 adapter layer | done; AT-SPI adapter planned (§10.2) |
-| Win32 platform: window, clipboard, event loop, text encoding | implemented and built in CI; Direct3D backend ships (§5.3) |
+| accessibility: macOS NSAccessibility and Windows UI Automation bridges | done; AT-SPI adapter planned (§10.2) |
+| Win32 platform: window, clipboard, event loop, text encoding, named-pipe automation | implemented and built in CI; Direct3D backend ships (§5.3) |
 | Wayland / X11 / Vulkan platform and renderer | planned (phase 1 follow-up) |
 | out-of-process dev service that delivers definitions to the extension | planned (§12.1, AD-12) |
 

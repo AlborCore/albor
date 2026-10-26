@@ -42,4 +42,13 @@ namespace albor::automation
         // the identity is returned whole, because the portable side owns the layout (§10.3)
         return identity;
     }
+
+    std::filesystem::path host_endpoint_path(const HostIdentity& identity, const std::filesystem::path&) {
+        // the named pipe is a kernel object, so it is addressed by name rather than by a directory entry (§10.3, AD-10)
+        DWORD session = 0;
+        // the session id keeps two processes that reuse a pid in different sessions apart (§10.3)
+        (void)::ProcessIdToSessionId(::GetCurrentProcessId(), &session);
+        // the pipe name carries the session and process, which is unique while the host is alive (§10.3)
+        return std::filesystem::path(L"\\\\.\\pipe\\albor-mcp-" + std::to_wstring(session) + L"-" + std::to_wstring(identity.pid));
+    }
 } // namespace albor::automation
