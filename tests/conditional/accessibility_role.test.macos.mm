@@ -24,23 +24,27 @@ namespace
             SemanticNode node{m_role};
             // the name is what a reader speaks, so it belongs on the node (§10.1)
             node.set_name(m_name);
+            // the selected state is what a tab item announces, which the radio button value reads (§10.1)
+            node.set_selected(m_selected);
             return node;
         }
 
         std::size_t semantic_child_count() const override {
-            // only the viewport holds a child, because a label is a leaf (§10.1)
-            return m_role == SemanticRole::ScrollView ? 1U : 0U;
+            // the container roles hold a child, because a viewport and a tab group both walk into one (§10.1)
+            return m_role == SemanticRole::ScrollView || m_role == SemanticRole::TabView ? 1U : 0U;
         }
 
         std::unique_ptr<SemanticProvider> semantic_child(std::size_t index) const override {
-            // the single child is a label, so the viewport has a hierarchy to announce (§10.2)
+            // the single child is the role the test asked for, so the walk has a hierarchy to announce (§10.2)
             if (index != 0)
                 return nullptr;
             auto label = std::make_unique<ViewportProvider>();
-            // the child is static text, which is what a row inside a viewport is (§10.1)
-            label->m_role = SemanticRole::Label;
+            // the child carries the role the container test asked for, which is a label by default (§10.1)
+            label->m_role = m_child_role;
             // the child carries a name, which a reader speaks (§10.1)
-            label->m_name = "first row";
+            label->m_name = m_child_name;
+            // a tab item also carries its selected state, which the radio button value reads (§10.1)
+            label->m_selected = m_child_selected;
             return label;
         }
 
@@ -49,6 +53,18 @@ namespace
 
         // the name this provider publishes, which a reader speaks (§10.1)
         std::string m_name = "Log";
+
+        // whether this provider reports itself selected, which a tab item test sets (§10.1)
+        bool m_selected = false;
+
+        // the role the single child publishes, which a tab test sets to a tab item (§10.1)
+        SemanticRole m_child_role = SemanticRole::Label;
+
+        // the name the single child publishes, which a reader speaks (§10.1)
+        std::string m_child_name = "first row";
+
+        // whether the single child reports itself selected, which a tab item test sets (§10.1)
+        bool m_child_selected = false;
     };
 
     // a window the bridge publishes into, which the suite owns and releases (§5.2)
@@ -109,6 +125,34 @@ TEST(AccessibilityRole, TheAnnouncedTreeCarriesEveryChild) {
     // assert the child announces as static text and under its own name, which is what the node carries (§10.1)
     EXPECT_EQ([(NSView*)children.firstObject accessibilityRole], NSAccessibilityStaticTextRole);
     EXPECT_STREQ([(NSView*)children.firstObject accessibilityLabel].UTF8String, "first row");
+}
+
+TEST(AccessibilityRole, ATabViewAnnouncesItsGroupAndPage) {
+    // arrange a tree whose root is a tab group with one tab item child (§10.1)
+    WindowFixture fixture;
+    ViewportProvider provider;
+    provider.m_role = SemanticRole::TabView;
+    provider.m_name = "Pages";
+    provider.m_child_role = SemanticRole::TabItem;
+    provider.m_child_name = "One";
+    provider.m_child_selected = true;
+    SemanticTree tree;
+    tree.build_from(provider);
+    // act
+    fixture.adapter->publish(tree);
+    // assert the root announces as a tab group, which is the container a reader navigates pages in (§10.2)
+    NSArray* roots = announced_children(fixture.window);
+    ASSERT_EQ(roots.count, 1U);
+    EXPECT_EQ([(NSView*)roots.firstObject accessibilityRole], NSAccessibilityTabGroupRole);
+    // assert the page announces as the selectable item the group holds (§10.2)
+    NSArray* children = [(NSView*)roots.firstObject accessibilityChildren];
+    ASSERT_EQ(children.count, 1U);
+    EXPECT_EQ([(NSView*)children.firstObject accessibilityRole], NSAccessibilityRadioButtonRole);
+    EXPECT_STREQ([(NSView*)children.firstObject accessibilityLabel].UTF8String, "One");
+    // assert the selected state reaches the radio button value, which is what a reader speaks (§10.2)
+    NSString* value = (NSString*)[(NSView*)children.firstObject accessibilityValue];
+    ASSERT_NE(value, nil);
+    EXPECT_STREQ(value.UTF8String, "1");
 }
 
 TEST(AccessibilityRole, TheWindowCarriesNothingBeforeAnythingIsPublished) {

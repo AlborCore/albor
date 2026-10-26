@@ -87,6 +87,24 @@ namespace albor
         theme.set_progress_bar_fill(ControlState::Disabled, plate_disabled);
         theme.set_progress_bar_fill(ControlState::Focused, lighten(accent, 0.04f));
 
+        // an unselected tab label sits dimmer than the page text, because the chosen tab is what reads (§6.1)
+        theme.set_tab_label(ControlState::Normal, Color::rgba(on_surface.red, on_surface.green, on_surface.blue, 0.70f));
+        theme.set_tab_label(ControlState::Hovered, Color::rgba(on_surface.red, on_surface.green, on_surface.blue, 0.88f));
+        theme.set_tab_label(ControlState::Pressed, Color::rgba(on_surface.red, on_surface.green, on_surface.blue, 0.60f));
+        theme.set_tab_label(ControlState::Disabled, Color::rgba(on_surface.red, on_surface.green, on_surface.blue, 0.35f));
+        theme.set_tab_label(ControlState::Focused, Color::rgba(on_surface.red, on_surface.green, on_surface.blue, 0.70f));
+        // the selected label and indicator carry the accent, which is the page the user is reading (§6.1)
+        theme.set_tab_label_selected(ControlState::Normal, accent);
+        theme.set_tab_label_selected(ControlState::Hovered, plate_hovered);
+        theme.set_tab_label_selected(ControlState::Pressed, plate_pressed);
+        theme.set_tab_label_selected(ControlState::Disabled, plate_disabled);
+        theme.set_tab_label_selected(ControlState::Focused, lighten(accent, 0.04f));
+        theme.set_tab_indicator(ControlState::Normal, accent);
+        theme.set_tab_indicator(ControlState::Hovered, plate_hovered);
+        theme.set_tab_indicator(ControlState::Pressed, plate_pressed);
+        theme.set_tab_indicator(ControlState::Disabled, plate_disabled);
+        theme.set_tab_indicator(ControlState::Focused, lighten(accent, 0.04f));
+
         // a plain label has no press of its own, so only its disabled variant differs (§6.1)
         theme.set_label_foreground(ControlState::Normal, on_surface);
         theme.set_label_foreground(ControlState::Hovered, on_surface);

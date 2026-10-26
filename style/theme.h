@@ -128,6 +128,18 @@ namespace albor
         // the radius a progress bar carries at its ends, which is what rounds it into a capsule (§8.4)
         float progress_bar_radius = 0.0f;
 
+        // the height of the tab strip a tab view draws above its page (§8.2)
+        float tab_strip_height = 32.0f;
+
+        // how deep a tab label sits on either side of its text (§8.2)
+        float tab_padding_horizontal = 12.0f;
+
+        // the smallest width one tab takes, which keeps a short label grabbable (§8.2)
+        float tab_minimum_width = 64.0f;
+
+        // the thickness of the indicator under the selected tab (§6.1)
+        float tab_indicator_height = 2.0f;
+
         // the corner radius a plate is drawn with, which is what makes a hover state read as a plate (§6.1)
         float corner_radius = 6.0f;
 
@@ -194,6 +206,15 @@ namespace albor
 
         // the progress a bar carries, per state, which is the accent from the start to the value (§6.1)
         Color progress_bar_fill[5] = {Color{0.20f, 0.55f, 0.90f, 1.0f}, Color{0.26f, 0.62f, 0.96f, 1.0f}, Color{0.14f, 0.42f, 0.74f, 1.0f}, Color{0.62f, 0.66f, 0.72f, 1.0f}, Color{0.22f, 0.57f, 0.92f, 1.0f}};
+
+        // the label of an unselected tab, per state, which sits dimmer than the chosen page (§6.1)
+        Color tab_label[5] = {Color{0.68f, 0.71f, 0.76f, 1.0f}, Color{0.80f, 0.83f, 0.88f, 1.0f}, Color{0.58f, 0.61f, 0.66f, 1.0f}, Color{0.42f, 0.44f, 0.48f, 1.0f}, Color{0.68f, 0.71f, 0.76f, 1.0f}};
+
+        // the label of the selected tab, per state, which carries the accent (§6.1)
+        Color tab_label_selected[5] = {Color{0.20f, 0.55f, 0.90f, 1.0f}, Color{0.26f, 0.62f, 0.96f, 1.0f}, Color{0.14f, 0.42f, 0.74f, 1.0f}, Color{0.62f, 0.66f, 0.72f, 1.0f}, Color{0.22f, 0.57f, 0.92f, 1.0f}};
+
+        // the indicator under the selected tab, per state, which marks the page that is shown (§6.1)
+        Color tab_indicator[5] = {Color{0.20f, 0.55f, 0.90f, 1.0f}, Color{0.26f, 0.62f, 0.96f, 1.0f}, Color{0.14f, 0.42f, 0.74f, 1.0f}, Color{0.62f, 0.66f, 0.72f, 1.0f}, Color{0.22f, 0.57f, 0.92f, 1.0f}};
 
         // the text colour of a plain label, per state, which a label has no press of its own (§6.1)
         Color label_foreground[5] = {Color{0.92f, 0.94f, 0.96f, 1.0f}, Color{0.96f, 0.97f, 0.99f, 1.0f}, Color{0.92f, 0.94f, 0.96f, 1.0f}, Color{0.58f, 0.60f, 0.64f, 1.0f}, Color{0.92f, 0.94f, 0.96f, 1.0f}};
@@ -333,6 +354,24 @@ namespace albor
         // replace one state of the progress fill, which is what a derived palette writes (§6.1)
         void set_progress_bar_fill(ControlState state, Color value);
 
+        // replace the label of the normal state of an unselected tab (§6.1)
+        void set_tab_label(Color value);
+
+        // replace one state of the unselected tab label (§6.1)
+        void set_tab_label(ControlState state, Color value);
+
+        // replace the label of the normal state of the selected tab (§6.1)
+        void set_tab_label_selected(Color value);
+
+        // replace one state of the selected tab label (§6.1)
+        void set_tab_label_selected(ControlState state, Color value);
+
+        // replace the indicator of the normal state of the selected tab (§6.1)
+        void set_tab_indicator(Color value);
+
+        // replace one state of the selected tab indicator (§6.1)
+        void set_tab_indicator(ControlState state, Color value);
+
         // replace the text colour of the normal state of a label (§6.1)
         void set_label_foreground(Color value);
 
@@ -428,6 +467,18 @@ namespace albor
 
         // replace the radius a progress bar carries at its ends (§8.4)
         void set_progress_bar_radius(float value);
+
+        // replace the height of the tab strip a tab view draws (§8.2)
+        void set_tab_strip_height(float value);
+
+        // replace the inset on either side of a tab label (§8.2)
+        void set_tab_padding_horizontal(float value);
+
+        // replace the smallest width one tab takes (§8.2)
+        void set_tab_minimum_width(float value);
+
+        // replace the thickness of the indicator under the selected tab (§6.1)
+        void set_tab_indicator_height(float value);
 
         // replace the extent a check box measures to, which the control reads instead of a literal (§8.2)
         void set_checkbox_box(Size value);

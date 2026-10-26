@@ -53,9 +53,18 @@ namespace albor
     }
 
     bool FocusManager::focusable(const UiNode& node) {
-        // a hidden node takes no focus, because the user cannot see where the caret is (§8.3)
-        if (!node.visible())
+        // a hidden node or one with a hidden ancestor takes no focus, because the caret must be visible (§8.3)
+        if (!node.visible_in_tree())
             return false;
+        // a node that declines the caret is passed over, which a decorative or composite node may do (§8.3)
+        if (!node.accepts_focus())
+            return false;
+        // a node inside a decorative subtree is passed over too, because the whole title is not focusable (§8.3)
+        for (const UiNode* ancestor = node.parent(); ancestor != nullptr; ancestor = ancestor->parent()) {
+            // a parent that closes the focus walk also closes it for every descendant (§8.3)
+            if (!ancestor->focusable_children())
+                return false;
+        }
         // a disabled node takes no focus, because it refuses every activation (§8.3)
         if (node.disabled())
             return false;
@@ -79,11 +88,24 @@ namespace albor
     std::vector<UiNode*> FocusManager::focusable_nodes(UiNode& root) {
         // the walk is depth first and in insertion order, which is the tab order a user expects (§8.3)
         std::vector<UiNode*> nodes;
-        root.visit([&nodes](UiNode& node) {
+        // a hidden or decorative subtree is skipped as a whole, because no descendant of it can take the caret (§8.3)
+        std::function<void(UiNode&)> walk = [&nodes, &walk](UiNode& node) {
+            // a hidden subtree is out of reach, which keeps a hidden page out of the ring (§8.3)
+            if (!node.visible())
+                return;
             // only a node that can take the focus enters the order, so tab skips containers (§8.3)
             if (focusable(node))
                 nodes.push_back(&node);
-        });
+            // a decorative subtree declines the walk, which keeps a title out of the ring (§8.3)
+            if (!node.focusable_children())
+                return;
+            // the children follow the node, which is the depth first order of §8.3
+            for (const auto& child : node.children())
+                walk(*child);
+        };
+        // the root is walked when it is visible, which is the only entry into the ring (§8.3)
+        if (root.visible())
+            walk(root);
         return nodes;
     }
 

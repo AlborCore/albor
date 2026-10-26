@@ -28,6 +28,10 @@ namespace
             return NSAccessibilitySliderRole;
         case albor::SemanticRole::ProgressBar:
             return NSAccessibilityProgressIndicatorRole;
+        case albor::SemanticRole::TabView:
+            return NSAccessibilityTabGroupRole;
+        case albor::SemanticRole::TabItem:
+            return NSAccessibilityRadioButtonRole;
         case albor::SemanticRole::ScrollView:
             return NSAccessibilityScrollAreaRole;
         case albor::SemanticRole::List:
@@ -160,6 +164,9 @@ typedef NSArray* (^AlborAccessibilityChildren)(std::size_t);
     // an editable node announces its text, because that is the value assistive technology edits (§10.1)
     if (published->node.role() == albor::SemanticRole::TextField)
         return [NSString stringWithUTF8String:published->node.value().c_str()];
+    // a tab item's value is its selected state, because the radio button role reads a value (§10.1)
+    if (published->node.role() == albor::SemanticRole::TabItem)
+        return published->node.selected() ? @"1" : @"0";
     // only a checkable node otherwise carries a value, because nothing else has one to report (§10.1)
     if (published->node.check() == albor::CheckState::NotCheckable)
         return nil;

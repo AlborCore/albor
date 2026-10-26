@@ -28,6 +28,9 @@
 #include "widgets/progress_bar.h"
 #include "widgets/scroll_view.h"
 #include "widgets/slider.h"
+#include "widgets/tab_page.h"
+#include "widgets/tab_title.h"
+#include "widgets/tab_view.h"
 #include "widgets/text_field.h"
 
 namespace albor::devrt
@@ -186,6 +189,12 @@ namespace albor::devrt
                 {"ListBox", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<ListBox>(&engine)); }},
                 // a field measures and edits text, so it takes both engines (§8, §9.1)
                 {"TextField", [](std::string_view, BindingEngine& engine, TextEngine& text) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<TextField>(&engine, &text)); }},
+                // a tab view owns one selected page and draws its labels, so it takes the engine (§8)
+                {"TabView", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<TabView>(&engine)); }},
+                // a tab page measures its label, so it takes both engines (§8, §9.1)
+                {"Tab", [](std::string_view, BindingEngine& engine, TextEngine& text) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<TabPage>(&engine, &text)); }},
+                // a tab title is a container for the strip content, so it takes the engine (§8)
+                {"TabTitle", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<TabTitle>(&engine)); }},
             };
             return table;
         }
@@ -324,6 +333,27 @@ namespace albor::devrt
                      if (!read_color(value, color))
                          return false;
                      node.set_fill_color(color);
+                     return true;
+                 })},
+                // a tab view owns one selected page, which the author may write first (§8)
+                {"TabView.selected", setter<TabView>([](TabView& node, std::string_view value) {
+                     long long index = 0;
+                     if (!read_int(value, index))
+                         return false;
+                     node.set_selected(static_cast<int>(index));
+                     return true;
+                 })},
+                // a tab view runs its strip down the left side when the author asks for it (§8)
+                {"TabView.vertical", setter<TabView>([](TabView& node, std::string_view value) {
+                     bool vertical = false;
+                     if (!read_bool(value, vertical))
+                         return false;
+                     node.set_vertical(vertical);
+                     return true;
+                 })},
+                // a tab page carries the label its strip draws (§8)
+                {"Tab.label", setter<TabPage>([](TabPage& node, std::string_view value) {
+                     node.set_label(std::string(value));
                      return true;
                  })},
                 // a checkbox presents its state and two fills, which is what §8.4 styles (§8)
@@ -512,7 +542,7 @@ namespace albor::devrt
     std::string_view element_of(const UiNode& node) {
         // the dynamic type decides, because a node is one element of the closed set and nothing else (§8)
         const std::pair<const UiNode*, std::string_view> elements[] = {
-            {dynamic_cast<const ColumnLayout*>(&node), "Column"}, {dynamic_cast<const RowLayout*>(&node), "Row"}, {dynamic_cast<const PaddingLayout*>(&node), "Padding"}, {dynamic_cast<const StackLayout*>(&node), "Stack"}, {dynamic_cast<const GridLayout*>(&node), "Grid"}, {dynamic_cast<const Label*>(&node), "Label"}, {dynamic_cast<const Button*>(&node), "Button"}, {dynamic_cast<const Slider*>(&node), "Slider"}, {dynamic_cast<const CheckBox*>(&node), "CheckBox"}, {dynamic_cast<const Canvas*>(&node), "Canvas"}, {dynamic_cast<const ScrollView*>(&node), "ScrollView"}, {dynamic_cast<const ListBox*>(&node), "ListBox"}, {dynamic_cast<const TextField*>(&node), "TextField"},
+            {dynamic_cast<const ColumnLayout*>(&node), "Column"}, {dynamic_cast<const RowLayout*>(&node), "Row"}, {dynamic_cast<const PaddingLayout*>(&node), "Padding"}, {dynamic_cast<const StackLayout*>(&node), "Stack"}, {dynamic_cast<const GridLayout*>(&node), "Grid"}, {dynamic_cast<const Label*>(&node), "Label"}, {dynamic_cast<const Button*>(&node), "Button"}, {dynamic_cast<const Slider*>(&node), "Slider"}, {dynamic_cast<const CheckBox*>(&node), "CheckBox"}, {dynamic_cast<const Canvas*>(&node), "Canvas"}, {dynamic_cast<const ScrollView*>(&node), "ScrollView"}, {dynamic_cast<const ListBox*>(&node), "ListBox"}, {dynamic_cast<const TabView*>(&node), "TabView"}, {dynamic_cast<const TabPage*>(&node), "Tab"}, {dynamic_cast<const TabTitle*>(&node), "TabTitle"}, {dynamic_cast<const TextField*>(&node), "TextField"},
         };
         // the first match wins, because the widget types above are disjoint classes (§8)
         for (const std::pair<const UiNode*, std::string_view>& element : elements) {

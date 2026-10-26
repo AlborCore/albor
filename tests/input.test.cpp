@@ -226,6 +226,8 @@ TEST(InputDispatcherChecks, RoutesToTheDeepestChildFirst) {
     auto child = std::make_unique<RecordingNode>();
     RecordingNode* child_ptr = child.get();
     root.add_child(std::move(child));
+    // the root is arranged, because a pointer event is routed only into the geometry it reaches (§8.3)
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
     Event event{.kind = EventKind::PointerDown};
     // act
     InputDispatcher::dispatch(root, event);
@@ -240,6 +242,8 @@ TEST(InputDispatcherChecks, StopsAtTheChildThatClaims) {
     auto child = std::make_unique<RecordingNode>();
     child->claims = true;
     root.add_child(std::move(child));
+    // the root is arranged, because a pointer event is routed only into the geometry it reaches (§8.3)
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
     Event event{.kind = EventKind::PointerDown};
     // act
     InputDispatcher::dispatch(root, event);
@@ -257,6 +261,8 @@ TEST(InputDispatcherChecks, OffersTheLastChildFirst) {
     RecordingNode* second_ptr = second.get();
     root.add_child(std::move(first));
     root.add_child(std::move(second));
+    // the root is arranged, because a pointer event is routed only into the geometry it reaches (§8.3)
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
     Event event{.kind = EventKind::PointerDown};
     // act
     InputDispatcher::dispatch(root, event);
@@ -290,6 +296,8 @@ TEST(InputDispatcherChecks, DescendsThroughNestedLevels) {
     RecordingNode* branch_ptr = branch.get();
     branch->add_child(std::move(leaf));
     root.add_child(std::move(branch));
+    // the root is arranged, because a pointer event is routed only into the geometry it reaches (§8.3)
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
     Event event{.kind = EventKind::PointerDown};
     // act
     InputDispatcher::dispatch(root, event);
@@ -306,6 +314,8 @@ TEST(InputDispatcherChecks, ALeafIsOfferedOnceThroughContainersThatDoNotWalk) {
     RecordingNode* leaf_ptr = leaf.get();
     middle->add_child(std::move(leaf));
     root.add_child(std::move(middle));
+    // the root is arranged, because a pointer event is routed only into the geometry it reaches (§8.3)
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
     Event event{.kind = EventKind::PointerDown};
     // act
     InputDispatcher::dispatch(root, event);

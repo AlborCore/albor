@@ -64,6 +64,7 @@ target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_UI="${CMAKE_CUR
 
 # the control corpus source widens the same comparison past the panel, so the path is named here too (§16)
 target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_CONTROLS_UI="${CMAKE_CURRENT_SOURCE_DIR}/vectors/dual_engine_controls.ui")
+target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_TABS_UI="${CMAKE_CURRENT_SOURCE_DIR}/vectors/dual_engine_tabs.ui")
 
 # the asset fixtures live together, so a generator suite resolves an embedded image from a carried png (§6.4)
 target_compile_definitions(albor-tests PRIVATE ALBOR_TEST_VECTORS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/vectors")

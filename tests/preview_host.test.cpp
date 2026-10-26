@@ -22,6 +22,9 @@
 #include "widgets/progress_bar.h"
 #include "widgets/scroll_view.h"
 #include "widgets/slider.h"
+#include "widgets/tab_page.h"
+#include "widgets/tab_title.h"
+#include "widgets/tab_view.h"
 #include "widgets/text_field.h"
 
 using namespace albor;
@@ -414,4 +417,50 @@ TEST(PreviewHostChecks, AProgressBarShowsTheFractionTheAuthorWrote) {
     ASSERT_NE(progress, nullptr);
     // assert the fraction reached the widget, because a preview shows the value the app will show (§8)
     EXPECT_FLOAT_EQ(progress->value(), 0.75f);
+}
+
+TEST(PreviewHostChecks, ATabViewShowsTheSelectedPageAndItsLabels) {
+    // arrange a tab view writing a selection and two labelled pages (§8)
+    const std::string source = R"UI(component WrittenTabs {
+    TabView {
+        selected: 1;
+        vertical: true;
+
+        Tab {
+            id: first_tab;
+            label: "One";
+            TabTitle {
+                Label { text: "★"; }
+            }
+            Label { text: "first"; }
+        }
+
+        Tab {
+            id: second_tab;
+            label: "Two";
+            Label { text: "second"; }
+        }
+    }
+})UI";
+    BindingEngine engine;
+    // act
+    preview::PreviewResult result = preview::build(source, engine);
+    // assert nothing was reported, because every property here is one the catalog declares (§11.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    TabView* tabs = dynamic_cast<TabView*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<TabView*>(&node) != nullptr; }));
+    ASSERT_NE(tabs, nullptr);
+    // assert the view holds both pages and the chosen index reached it (§8)
+    ASSERT_EQ(tabs->tab_count(), 2u);
+    EXPECT_EQ(tabs->selected(), 1);
+    EXPECT_TRUE(tabs->vertical());
+    // assert each page carries the label its strip draws (§8)
+    ASSERT_NE(tabs->tab_at(0), nullptr);
+    ASSERT_NE(tabs->tab_at(1), nullptr);
+    EXPECT_EQ(tabs->tab_at(0)->label(), "One");
+    EXPECT_EQ(tabs->tab_at(1)->label(), "Two");
+    // assert the strip content reached the first page, which is what a composed title needs (§8)
+    ASSERT_NE(tabs->tab_at(0)->title(), nullptr);
+    EXPECT_EQ(tabs->tab_at(0)->title()->child_count(), 1u);
+    EXPECT_EQ(tabs->tab_at(1)->title(), nullptr);
 }

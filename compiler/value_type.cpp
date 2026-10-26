@@ -341,6 +341,33 @@ namespace albor::compiler
                                               .signals = {ElementSignal{.name = "selection_changed", .parameter_types = {}, .parameter_names = {}}, ElementSignal{.name = "activated", .parameter_types = {scalar(TypeKind::String)}, .parameter_names = {"key"}}},
                                               // a list hosts the row content it repeats, so it accepts children (§8.2)
                                               .accepts_children = true});
+        // a container shows one page at a time and owns the selection of its tabs (§8)
+        catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
+                                              .name = "TabView",
+                                              // the selected page and the strip orientation are the surface (§8)
+                                              .properties = {ElementProperty{.name = "selected", .type = scalar(TypeKind::Int), .assignable = true}, ElementProperty{.name = "vertical", .type = scalar(TypeKind::Bool), .assignable = true}},
+                                              // a tab view raises the new selection when the user moves it (§8.3)
+                                              .signals = {ElementSignal{.name = "selection_changed", .parameter_types = {scalar(TypeKind::Int)}, .parameter_names = {"index"}}},
+                                              // a tab view holds its pages, so it accepts children (§8)
+                                              .accepts_children = true});
+        // a page is one choice in a tab view, which carries the label the strip draws (§8)
+        catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
+                                              .name = "Tab",
+                                              // the label is the title the strip draws for this page (§8)
+                                              .properties = {ElementProperty{.name = "label", .type = scalar(TypeKind::String), .assignable = true}},
+                                              // a page raises no signal, because the view owns the selection (§8)
+                                              .signals = {},
+                                              // a page holds its content, so it accepts children (§8)
+                                              .accepts_children = true});
+        // a title is the arbitrary content a strip draws for one page, which lets a tab carry an icon (§8)
+        catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
+                                              .name = "TabTitle",
+                                              // a title exposes no property, because its children are the content (§8)
+                                              .properties = {},
+                                              // a title raises no signal, because the tab around it takes the input (§8)
+                                              .signals = {},
+                                              // a title holds the icon or run its author composed (§8)
+                                              .accepts_children = true});
         // a leaf draws a run of text, which is a caption or a value readout (§8)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Label",

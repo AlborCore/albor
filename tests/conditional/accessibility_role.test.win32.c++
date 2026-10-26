@@ -297,6 +297,58 @@ TEST(Win32AccessibilityRole, AListAnnouncesAsAList) {
     VariantClear(&control_type);
 }
 
+TEST(Win32AccessibilityRole, ATabViewAnnouncesItsTabsAndTheirSelection) {
+    // arrange a tab group with two pages, the second selected (§10.1)
+    WindowFixture fixture;
+    ASSERT_NE(fixture.window(), nullptr);
+    SemanticTree tree;
+    std::size_t tabs = tree.add(SemanticNode{SemanticRole::TabView});
+    std::size_t first = tree.add(SemanticNode{SemanticRole::TabItem}, tabs);
+    std::size_t second = tree.add(SemanticNode{SemanticRole::TabItem}, tabs);
+    tree.mutable_at(first)->set_name("One");
+    tree.mutable_at(second)->set_name("Two");
+    tree.mutable_at(second)->set_selected(true);
+    // the first page records the activate action, which the selection pattern presses (§10.1)
+    bool activated = false;
+    (void)tree.mutable_at(first)->add_action("activate", [&activated] { activated = true; });
+    // act
+    fixture.adapter().publish(tree);
+    // assert the group announces as a tab control, which is the container a reader navigates pages in (§10.2)
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> root = fixture.announced_fragment();
+    ASSERT_NE(root.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderSimple> group = WindowFixture::simple_of(root.Get());
+    ASSERT_NE(group.Get(), nullptr);
+    VARIANT control_type{};
+    ASSERT_HRESULT_SUCCEEDED(group->GetPropertyValue(UIA_ControlTypePropertyId, &control_type));
+    ASSERT_EQ(control_type.vt, VT_I4);
+    EXPECT_EQ(control_type.lVal, UIA_TabControlTypeId);
+    VariantClear(&control_type);
+    // assert the first page announces as a tab item and exposes the selection item pattern (§10.2)
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> announced_first;
+    ASSERT_HRESULT_SUCCEEDED(root->Navigate(NavigateDirection_FirstChild, announced_first.GetAddressOf()));
+    ASSERT_NE(announced_first.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderSimple> first_simple = WindowFixture::simple_of(announced_first.Get());
+    ASSERT_NE(first_simple.Get(), nullptr);
+    ASSERT_HRESULT_SUCCEEDED(first_simple->GetPropertyValue(UIA_ControlTypePropertyId, &control_type));
+    ASSERT_EQ(control_type.vt, VT_I4);
+    EXPECT_EQ(control_type.lVal, UIA_TabItemControlTypeId);
+    VariantClear(&control_type);
+    Microsoft::WRL::ComPtr<IUnknown> pattern;
+    ASSERT_HRESULT_SUCCEEDED(first_simple->GetPatternProvider(UIA_SelectionItemPatternId, pattern.GetAddressOf()));
+    ASSERT_NE(pattern.Get(), nullptr);
+    Microsoft::WRL::ComPtr<ISelectionItemProvider> selection;
+    ASSERT_HRESULT_SUCCEEDED(pattern.As(&selection));
+    BOOL selected = TRUE;
+    ASSERT_HRESULT_SUCCEEDED(selection->get_IsSelected(&selected));
+    EXPECT_FALSE(selected);
+    // act the first page is selected through the pattern (§10.2)
+    ASSERT_HRESULT_SUCCEEDED(selection->Select());
+    // assert the page's activate action ran, because a tab selection is an activation (§10.1)
+    EXPECT_TRUE(activated);
+    // assert a tab item cannot be removed from the single selection, which the pattern reports success for (§10.2)
+    EXPECT_HRESULT_SUCCEEDED(selection->RemoveFromSelection());
+}
+
 TEST(Win32AccessibilityRole, ASelectedRowAnnouncesItsSelectedState) {
     // arrange a list whose single row is the chosen one (§10.1)
     WindowFixture fixture;

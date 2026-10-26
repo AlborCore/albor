@@ -1,11 +1,14 @@
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 
 #include "commands/command.h"
 #include "core/constraints.h"
 #include "focus/focus_manager.h"
+#include "input/input_controller.h"
+#include "input/input_dispatcher.h"
 #include "layout/column_layout.h"
 #include "layout/row_layout.h"
 #include "render/frame_scene.h"
@@ -21,6 +24,9 @@
 #include "widgets/label.h"
 #include "widgets/progress_bar.h"
 #include "widgets/slider.h"
+#include "widgets/tab_page.h"
+#include "widgets/tab_title.h"
+#include "widgets/tab_view.h"
 #include "widgets/text_field.h"
 #include "widgets/theme_controller.h"
 #include "window/window_metrics.h"
@@ -4533,4 +4539,767 @@ TEST(TextFieldFontChecks, AFontSelectionRemeasuresAndInvalidates) {
     EXPECT_TRUE(field.layout_dirty());
     EXPECT_EQ(text_engine.last_font_spec.family, "Inter");
     EXPECT_EQ(text_engine.last_font_spec.weight, FontWeight::Semibold);
+}
+
+TEST(TabPageChecks, MeasuresTheLabelForTheStrip) {
+    // arrange a page whose label the strip draws (§9.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabPage page(&engine, &text_engine, "Tab");
+    // act
+    page.measure_header(20.0f);
+    // assert the run measures at the advance the double reports, which is what the strip sizes by (§9.1)
+    EXPECT_FLOAT_EQ(page.label_layout().size.width, 30.0f);
+    EXPECT_FLOAT_EQ(page.label_layout().size.height, 16.0f);
+    // act the label changes, which invalidates the page and measures a new run (§9.1)
+    page.set_label("Four");
+    EXPECT_TRUE(page.layout_dirty());
+    page.measure_header(20.0f);
+    // assert the new run is the one the strip draws (§9.1)
+    EXPECT_FLOAT_EQ(page.label_layout().size.width, 40.0f);
+}
+
+TEST(TabPageChecks, AnEmptyLabelMeasuresAsNothing) {
+    // arrange a page with no label, which a strip uses only its minimum width for (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabPage page(&engine, &text_engine);
+    // act
+    page.measure_header(20.0f);
+    // assert the empty run carries no layout, which the strip reads as no label (§9.1)
+    EXPECT_TRUE(page.label_layout().empty());
+}
+
+TEST(TabPageChecks, ATitleIsMeasuredForTheStripAndKeptOutOfThePage) {
+    // arrange a page with a title and a content child of different sizes (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabPage page(&engine, &text_engine, "Label");
+    auto title_owner = std::make_unique<TabTitle>(&engine);
+    TabTitle* title = title_owner.get();
+    auto icon = std::make_unique<WidgetChildNode>();
+    icon->m_intrinsic = Size{80.0f, 20.0f};
+    title->add_child(std::move(icon));
+    page.add_child(std::move(title_owner));
+    auto body = std::make_unique<WidgetChildNode>();
+    body->m_intrinsic = Size{50.0f, 30.0f};
+    page.add_child(std::move(body));
+    // act the header measures the title, and the page measures only its content (§8.2)
+    page.measure_header(13.0f);
+    Size measured{};
+    page.measure(SizeConstraints::unconstrained(), measured);
+    // assert the title is the header's extent and the content child is the page's extent (§8.2)
+    EXPECT_FLOAT_EQ(page.title_size().width, 80.0f);
+    EXPECT_FLOAT_EQ(page.title_size().height, 20.0f);
+    EXPECT_FLOAT_EQ(measured.width, 50.0f);
+    EXPECT_FLOAT_EQ(measured.height, 30.0f);
+    // act the page body is arranged, which leaves the title for the strip to place (§8.2)
+    page.arrange(Rect::from_origin_size(Point{0.0f, 32.0f}, Size{200.0f, 68.0f}));
+    // assert the page never placed the title, because the strip owns its header geometry (§8.2)
+    EXPECT_TRUE(title->bounds().empty());
+}
+
+TEST(TabPageChecks, ATitleDoesNotEnterThePageSemantics) {
+    // arrange a selected page whose title and body are both children (§10.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabPage page(&engine, &text_engine, "Label");
+    page.add_child(std::make_unique<TabTitle>(&engine));
+    page.add_child(std::make_unique<WidgetChildNode>());
+    page.set_selected(true);
+    // act
+    const std::size_t children = page.semantic_child_count();
+    // assert only the body is a semantic child, because the title is the tab's visual name (§10.1)
+    EXPECT_EQ(children, 1u);
+}
+
+TEST(TabViewChecks, MeasuresTheStripAndTheSelectedPage) {
+    // arrange two pages under a strip, whose selected page carries a child of its own (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto first_owner = std::make_unique<TabPage>(&engine, &text_engine, "One");
+    tabs.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "Two");
+    TabPage* second = second_owner.get();
+    auto content = std::make_unique<WidgetChildNode>();
+    content->m_intrinsic = Size{40.0f, 30.0f};
+    second->add_child(std::move(content));
+    tabs.add_child(std::move(second_owner));
+    tabs.set_selected(1);
+    Size measured{};
+    // act
+    tabs.measure(SizeConstraints::unconstrained(), measured);
+    // assert the strip is two minimum tabs wide and the selected page adds its content height (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 128.0f);
+    EXPECT_FLOAT_EQ(measured.height, 62.0f);
+}
+
+TEST(TabViewChecks, ShowsOnlyTheSelectedPage) {
+    // arrange two pages arranged under a strip (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto first_owner = std::make_unique<TabPage>(&engine, &text_engine, "One");
+    TabPage* first = first_owner.get();
+    tabs.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "Two");
+    TabPage* second = second_owner.get();
+    tabs.add_child(std::move(second_owner));
+    // act
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // assert the first page is shown and the second is hidden beside it (§8)
+    EXPECT_TRUE(first->visible());
+    EXPECT_FALSE(second->visible());
+    EXPECT_TRUE(first->selected());
+    EXPECT_FALSE(second->selected());
+    // assert the headers are one minimum tab wide and sit side by side (§8.2)
+    EXPECT_EQ(first->header_bounds(), (Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 32.0f})));
+    EXPECT_EQ(second->header_bounds(), (Rect::from_origin_size(Point{64.0f, 0.0f}, Size{64.0f, 32.0f})));
+    // assert the page body sits under the whole strip, which is what the reader sees (§8.2)
+    EXPECT_EQ(second->bounds(), (Rect::from_origin_size(Point{0.0f, 32.0f}, Size{200.0f, 68.0f})));
+    // act the second page is selected, which is what a press or a binding does (§8)
+    tabs.set_selected(1);
+    // assert the shown and hidden pages swap, because exactly one page is visible (§8)
+    EXPECT_FALSE(first->visible());
+    EXPECT_TRUE(second->visible());
+    EXPECT_FALSE(first->selected());
+    EXPECT_TRUE(second->selected());
+}
+
+TEST(TabViewChecks, APressOnAHeaderSelectsItsPage) {
+    // arrange a view whose second header sits at x sixty four and whose first page is shown (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "Two"));
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    Event event{.kind = EventKind::PointerDown, .position = Point{74.0f, 10.0f}};
+    // act
+    tabs.dispatch_event(event);
+    // assert the press is claimed and the page it landed on is shown (§8.3)
+    EXPECT_TRUE(event.handled);
+    EXPECT_EQ(tabs.selected(), 1);
+}
+
+TEST(TabViewChecks, TheArrowKeysMoveTheSelection) {
+    // arrange a two page view arranged and focused, whose pages are selected by the strip keys (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "Two"));
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // act the right arrow moves one page forward (§8.3)
+    Event right{.kind = EventKind::KeyDown, .key = Key::ArrowRight};
+    tabs.dispatch_event(right);
+    // assert the next page is shown and the key was claimed (§8.3)
+    EXPECT_TRUE(right.handled);
+    EXPECT_EQ(tabs.selected(), 1);
+    // act the left arrow moves one page back (§8.3)
+    Event left{.kind = EventKind::KeyDown, .key = Key::ArrowLeft};
+    tabs.dispatch_event(left);
+    // assert the previous page is shown again (§8.3)
+    EXPECT_TRUE(left.handled);
+    EXPECT_EQ(tabs.selected(), 0);
+    // act end and home name the two ends of the strip (§8.3)
+    Event end{.kind = EventKind::KeyDown, .key = Key::End};
+    tabs.dispatch_event(end);
+    EXPECT_EQ(tabs.selected(), 1);
+    Event home{.kind = EventKind::KeyDown, .key = Key::Home};
+    tabs.dispatch_event(home);
+    EXPECT_EQ(tabs.selected(), 0);
+}
+
+TEST(TabViewChecks, ClampsTheSelectionToThePagesItHolds) {
+    // arrange two pages in a view whose selection can be written out of range (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "Two"));
+    // act the selection lands past the end, which a binding can compute (§8)
+    tabs.set_selected(99);
+    // assert the last page is the one the view can show (§8)
+    EXPECT_EQ(tabs.selected(), 1);
+    // act the selection lands before the start, which a binding can compute too (§8)
+    tabs.set_selected(-5);
+    // assert the first page is the one the view can show (§8)
+    EXPECT_EQ(tabs.selected(), 0);
+}
+
+TEST(TabViewChecks, RaisesTheSelectionSignal) {
+    // arrange a view whose selection moves are recorded by the installed work (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "Two"));
+    std::vector<int> changes;
+    tabs.set_on_selection_changed([&changes](int index) { changes.push_back(index); });
+    // act the selection moves once, then repeats and clamps without moving (§8.3)
+    tabs.set_selected(1);
+    tabs.set_selected(1);
+    tabs.set_selected(99);
+    tabs.set_selected(0);
+    // assert only the two actual moves were reported, because the signal is a change not a write (§8.3)
+    ASSERT_EQ(changes.size(), 2u);
+    EXPECT_EQ(changes[0], 1);
+    EXPECT_EQ(changes[1], 0);
+}
+
+TEST(TabViewChecks, TheThemeSizesTheStripAndTheIndicator) {
+    // arrange a theme whose strip is taller and whose indicator is thicker than the fallback (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_tab_strip_height(40.0f);
+    theme.set_tab_padding_horizontal(10.0f);
+    theme.set_tab_minimum_width(80.0f);
+    theme.set_tab_indicator_height(3.0f);
+    theme.set_tab_indicator(Color::rgb(0.9f, 0.1f, 0.2f));
+    TabView tabs(&engine);
+    tabs.set_theme(&theme);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "Two"));
+    Size measured{};
+    // act
+    tabs.measure(SizeConstraints::unconstrained(), measured);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    tabs.render(recorder);
+    // assert the strip takes the themed height and the two minimum tabs (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 160.0f);
+    EXPECT_FLOAT_EQ(measured.height, 40.0f);
+    // assert the indicator is the themed height and sits on the strip's bottom edge (§6.1)
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_EQ(rects.size(), 1u);
+    EXPECT_FLOAT_EQ(rects[0].y, 37.0f);
+    EXPECT_FLOAT_EQ(rects[0].height, 3.0f);
+    EXPECT_FLOAT_EQ(rects[0].width, 60.0f);
+    // assert the themed colour reached the one shape command (§6.1)
+    ASSERT_EQ(recorder.scene()->commands().size(), 3u);
+    EXPECT_EQ(recorder.scene()->commands()[0].paint().fill, Color::rgb(0.9f, 0.1f, 0.2f));
+    // assert both labels were drawn, because the strip shows every title it holds (§9.1)
+    EXPECT_EQ(text_commands(*recorder.scene()).size(), 2u);
+}
+
+TEST(TabViewChecks, AnnouncesTheTabGroupAndItsPages) {
+    // arrange a view with two identified pages, whose second page carries content (§10.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    tabs.set_explicit_id("pages");
+    auto first_owner = std::make_unique<TabPage>(&engine, &text_engine, "One", "one");
+    TabPage* first = first_owner.get();
+    tabs.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "Two", "two");
+    TabPage* second = second_owner.get();
+    second->add_child(std::make_unique<WidgetChildNode>());
+    tabs.add_child(std::move(second_owner));
+    tabs.set_selected(1);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    tabs.set_focused(true);
+    // act
+    const SemanticNode group = tabs.semantic_node();
+    const SemanticNode page_one = first->semantic_node();
+    const SemanticNode page_two = second->semantic_node();
+    // assert the group carries the tab view role and the actions that move its selection (§10.1)
+    EXPECT_EQ(group.role(), SemanticRole::TabView);
+    EXPECT_EQ(group.explicit_id(), "pages");
+    EXPECT_TRUE(group.focused());
+    EXPECT_EQ(group.action_count(), 4u);
+    // assert the unselected page is a tab item under its own name and header (§10.1)
+    EXPECT_EQ(page_one.role(), SemanticRole::TabItem);
+    EXPECT_EQ(page_one.name(), "One");
+    EXPECT_EQ(page_one.bounds(), first->header_bounds());
+    EXPECT_FALSE(page_one.selected());
+    EXPECT_EQ(page_one.action_count(), 1u);
+    // assert the selected page repeats the selection and the focus, which the reader needs (§10.1)
+    EXPECT_TRUE(page_two.selected());
+    EXPECT_TRUE(page_two.focused());
+    // assert only the selected page exposes its content to the walk (§10.1)
+    EXPECT_EQ(first->semantic_child_count(), 0u);
+    EXPECT_EQ(second->semantic_child_count(), 1u);
+    // assert the group still exposes both page nodes, because a reader has to reach them (§10.1)
+    ASSERT_EQ(tabs.semantic_child_count(), 2u);
+    std::unique_ptr<SemanticProvider> child = tabs.semantic_child(0);
+    ASSERT_NE(child, nullptr);
+    EXPECT_EQ(child->semantic_node().role(), SemanticRole::TabItem);
+}
+
+TEST(TabViewChecks, ATabActivationSelectsItsPage) {
+    // arrange a view showing the second page, whose first page carries the activate action (§10.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto first_owner = std::make_unique<TabPage>(&engine, &text_engine, "One");
+    TabPage* first = first_owner.get();
+    tabs.add_child(std::move(first_owner));
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "Two"));
+    tabs.set_selected(1);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // act
+    const SemanticNode page = first->semantic_node();
+    const bool activated = page.invoke(1);
+    // assert the action selected the page it belongs to, which is what a reader presses (§10.1)
+    EXPECT_TRUE(activated);
+    EXPECT_EQ(tabs.selected(), 0);
+}
+
+TEST(TabViewChecks, VerticalTabsStackDownTheLeft) {
+    // arrange a two page view whose strip runs down the left side (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto first_owner = std::make_unique<TabPage>(&engine, &text_engine, "One");
+    TabPage* first = first_owner.get();
+    tabs.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "Two");
+    TabPage* second = second_owner.get();
+    tabs.add_child(std::move(second_owner));
+    tabs.set_vertical(true);
+    Size measured{};
+    // act
+    tabs.measure(SizeConstraints::unconstrained(), measured);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // assert the strip is one tab wide and as tall as both rows, while the page takes the rest (§8.2)
+    EXPECT_TRUE(tabs.vertical());
+    EXPECT_FLOAT_EQ(measured.width, 64.0f);
+    EXPECT_FLOAT_EQ(measured.height, 64.0f);
+    EXPECT_EQ(first->header_bounds(), (Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 32.0f})));
+    EXPECT_EQ(second->header_bounds(), (Rect::from_origin_size(Point{0.0f, 32.0f}, Size{64.0f, 32.0f})));
+    EXPECT_EQ(second->bounds(), (Rect::from_origin_size(Point{64.0f, 0.0f}, Size{136.0f, 100.0f})));
+    // assert the indicator runs down the left edge of the selected row (§6.1)
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    tabs.render(recorder);
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_EQ(rects.size(), 1u);
+    EXPECT_EQ(rects[0], (Rect::from_origin_size(Point{0.0f, 12.0f}, Size{2.0f, 8.0f})));
+}
+
+TEST(TabViewChecks, AVerticalStripSelectsByRow) {
+    // arrange a vertical view with two headers stacked down the left side (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "Two"));
+    tabs.set_vertical(true);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 40.0f}};
+    // act
+    tabs.dispatch_event(press);
+    // assert the press landed on the second row and selected its page (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(tabs.selected(), 1);
+    // act the down arrow moves one row forward, which is the vertical reading order (§8.3)
+    Event down{.kind = EventKind::KeyDown, .key = Key::ArrowDown};
+    tabs.dispatch_event(down);
+    // assert the last row stays selected, because the strip has two ends (§8)
+    EXPECT_TRUE(down.handled);
+    EXPECT_EQ(tabs.selected(), 1);
+    // act the up arrow moves one row back (§8.3)
+    Event up{.kind = EventKind::KeyDown, .key = Key::ArrowUp};
+    tabs.dispatch_event(up);
+    // assert the first row is selected again (§8.3)
+    EXPECT_EQ(tabs.selected(), 0);
+}
+
+TEST(TabViewChecks, AComplexTitleSizesAndDrawsItsHeader) {
+    // arrange a second page whose title carries a composed icon rather than a plain run (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "Two");
+    TabPage* second = second_owner.get();
+    auto title_owner = std::make_unique<TabTitle>(&engine);
+    TabTitle* title = title_owner.get();
+    auto icon = std::make_unique<WidgetChildNode>();
+    icon->m_intrinsic = Size{80.0f, 20.0f};
+    title->add_child(std::move(icon));
+    second->add_child(std::move(title_owner));
+    tabs.add_child(std::move(second_owner));
+    Size measured{};
+    // act
+    tabs.measure(SizeConstraints::unconstrained(), measured);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    tabs.render(recorder);
+    // assert the title sets the second header's width, which makes the strip wider than two minimum tabs (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 168.0f);
+    EXPECT_EQ(second->header_bounds(), (Rect::from_origin_size(Point{64.0f, 0.0f}, Size{104.0f, 32.0f})));
+    // assert the title was placed inside the header inset, at the height it measured to (§8.2)
+    EXPECT_EQ(title->bounds(), (Rect::from_origin_size(Point{76.0f, 6.0f}, Size{80.0f, 20.0f})));
+    // assert the title drew even though its page is not selected, because the strip shows every title (§8)
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_EQ(rects.size(), 2u);
+    EXPECT_EQ(rects[1], title->bounds());
+}
+
+TEST(TabViewChecks, AVerticalTitleSizesTheStripWidth) {
+    // arrange a vertical view whose second title is wider than the minimum tab (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "Two");
+    TabPage* second = second_owner.get();
+    auto title_owner = std::make_unique<TabTitle>(&engine);
+    auto icon = std::make_unique<WidgetChildNode>();
+    icon->m_intrinsic = Size{120.0f, 20.0f};
+    title_owner->add_child(std::move(icon));
+    second->add_child(std::move(title_owner));
+    tabs.add_child(std::move(second_owner));
+    tabs.set_vertical(true);
+    Size measured{};
+    // act
+    tabs.measure(SizeConstraints::unconstrained(), measured);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{300.0f, 100.0f}));
+    // assert the widest title sets the strip width, which both rows share (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 144.0f);
+    EXPECT_EQ(second->header_bounds(), (Rect::from_origin_size(Point{0.0f, 32.0f}, Size{144.0f, 32.0f})));
+    // assert the page takes the area to the right of the strip (§8.2)
+    EXPECT_EQ(second->bounds(), (Rect::from_origin_size(Point{144.0f, 0.0f}, Size{156.0f, 100.0f})));
+}
+
+TEST(TabViewChecks, ASameCountReplacementDropsTheRemovedPage) {
+    // arrange two pages whose cache is populated before one page leaves (§8.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto first_owner = std::make_unique<TabPage>(&engine, &text_engine, "One");
+    TabPage* first = first_owner.get();
+    tabs.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "Two");
+    TabPage* second = second_owner.get();
+    tabs.add_child(std::move(second_owner));
+    ASSERT_EQ(tabs.tab_count(), 2u);
+    // act the first page leaves and a non-page child keeps the child count the same (§8.1)
+    std::unique_ptr<UiNode> removed = tabs.remove_child(first);
+    tabs.add_child(std::make_unique<WidgetChildNode>());
+    // assert the strip holds the surviving page, because a count is not a structural identity (§8.1)
+    EXPECT_EQ(removed.get(), first);
+    EXPECT_EQ(tabs.tab_count(), 1u);
+    EXPECT_EQ(tabs.tab_at(0), second);
+}
+
+TEST(TabViewChecks, ReorderingPagesKeepsTheStripInChildOrder) {
+    // arrange two pages and a populated cache (§8.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto first_owner = std::make_unique<TabPage>(&engine, &text_engine, "One");
+    TabPage* first = first_owner.get();
+    tabs.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "Two");
+    TabPage* second = second_owner.get();
+    tabs.add_child(std::move(second_owner));
+    ASSERT_EQ(tabs.tab_count(), 2u);
+    // act the first page moves behind the second, which keeps the child count (§8.1)
+    std::unique_ptr<UiNode> detached = tabs.remove_child(first);
+    tabs.insert_child(1, std::move(detached));
+    // assert the strip follows the new child order, not the cached pointer order (§8.1)
+    EXPECT_EQ(tabs.tab_at(0), second);
+    EXPECT_EQ(tabs.tab_at(1), first);
+    // act the first header is pressed, which now belongs to the page in slot zero (§8.3)
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    tabs.dispatch_event(press);
+    // assert the page in slot zero is the one selected, which proves the strip order followed the tree (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(tabs.selected(), 0);
+    EXPECT_TRUE(second->selected());
+    EXPECT_FALSE(first->selected());
+}
+
+TEST(TabPageChecks, ASameCountReplacementOfTheTitleClearsIt) {
+    // arrange a page whose title cache is populated before the title leaves (§8.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabPage page(&engine, &text_engine, "Page");
+    auto title_owner = std::make_unique<TabTitle>(&engine);
+    TabTitle* title = title_owner.get();
+    page.add_child(std::move(title_owner));
+    page.add_child(std::make_unique<WidgetChildNode>());
+    page.measure_header(13.0f);
+    ASSERT_EQ(page.title(), title);
+    // act the title leaves and a non-title child keeps the child count the same (§8.1)
+    std::unique_ptr<UiNode> removed = page.remove_child(title);
+    page.add_child(std::make_unique<WidgetChildNode>());
+    // assert the page no longer points at the removed title and its extent is gone (§8.1, §8.2)
+    EXPECT_EQ(removed.get(), title);
+    EXPECT_EQ(page.title(), nullptr);
+    EXPECT_EQ(page.title_size(), Size{});
+}
+
+TEST(TabPageChecks, ATitleIsArrangedByTheHeaderNotThePage) {
+    // arrange a page with a title and a body child of different sizes (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabPage page(&engine, &text_engine, "Page");
+    auto title_owner = std::make_unique<TabTitle>(&engine);
+    TabTitle* title = title_owner.get();
+    auto icon = std::make_unique<WidgetChildNode>();
+    icon->m_intrinsic = Size{80.0f, 20.0f};
+    title->add_child(std::move(icon));
+    page.add_child(std::move(title_owner));
+    page.measure_header(13.0f);
+    page.arrange(Rect::from_origin_size(Point{0.0f, 32.0f}, Size{200.0f, 68.0f}));
+    // assert the page did not place the title, because the strip owns the header bounds (§8.2)
+    EXPECT_TRUE(title->bounds().empty());
+}
+
+TEST(TabViewChecks, AnInvisibleTitleFallsBackToTheLabel) {
+    // arrange a page whose title is hidden, so the label is the header again (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto page_owner = std::make_unique<TabPage>(&engine, &text_engine, "One");
+    TabPage* page = page_owner.get();
+    auto title_owner = std::make_unique<TabTitle>(&engine);
+    TabTitle* title = title_owner.get();
+    auto icon = std::make_unique<WidgetChildNode>();
+    WidgetChildNode* icon_ptr = icon.get();
+    title->add_child(std::move(icon));
+    title->set_visible(false);
+    page->add_child(std::move(title_owner));
+    tabs.add_child(std::move(page_owner));
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    tabs.render(recorder);
+    // assert the hidden title's content is not drawn and the label is what the strip shows (§8)
+    EXPECT_EQ(icon_ptr->draws, 0u);
+    EXPECT_EQ(text_commands(*recorder.scene()).size(), 1u);
+}
+
+TEST(TabViewChecks, APressOutsideTheViewSelectsNothing) {
+    // arrange a view with four tabs, whose last header overflows the view (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    for (int index = 0; index < 4; index++)
+        tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "Tab"));
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // act the press lands outside the view but inside the overflow header (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{252.0f, 10.0f}};
+    tabs.dispatch_event(press);
+    // assert the view takes no press outside its bounds, which keeps an overflow header inert (§8.3)
+    EXPECT_FALSE(press.handled);
+    EXPECT_EQ(tabs.selected(), 0);
+}
+
+TEST(TabViewChecks, AVerticalStripStaysInsideTheView) {
+    // arrange a vertical view whose title is wider than the view (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto page_owner = std::make_unique<TabPage>(&engine, &text_engine, "Page");
+    TabPage* page = page_owner.get();
+    auto title_owner = std::make_unique<TabTitle>(&engine);
+    TabTitle* title = title_owner.get();
+    auto icon = std::make_unique<WidgetChildNode>();
+    icon->m_intrinsic = Size{300.0f, 20.0f};
+    title->add_child(std::move(icon));
+    page->add_child(std::move(title_owner));
+    tabs.add_child(std::move(page_owner));
+    tabs.set_vertical(true);
+    Size measured{};
+    tabs.measure(SizeConstraints::unconstrained(), measured);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // assert the strip and its title stay inside the view, so the clip is what hides the overflow (§8.2)
+    EXPECT_LE(page->header_bounds().width, 200.0f);
+    EXPECT_LE(title->bounds().x + title->bounds().width, 200.0f);
+}
+
+TEST(TabViewChecks, TheTitleIsPlacedBeforeTheFirstPaint) {
+    // arrange a page with a composed title, measured and arranged but not yet painted (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto page_owner = std::make_unique<TabPage>(&engine, &text_engine, "Page");
+    TabPage* page = page_owner.get();
+    auto title_owner = std::make_unique<TabTitle>(&engine);
+    TabTitle* title = title_owner.get();
+    auto icon = std::make_unique<WidgetChildNode>();
+    icon->m_intrinsic = Size{80.0f, 20.0f};
+    title->add_child(std::move(icon));
+    page->add_child(std::move(title_owner));
+    tabs.add_child(std::move(page_owner));
+    Size measured{};
+    // act
+    tabs.measure(SizeConstraints::unconstrained(), measured);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // assert the title already has its header geometry, so layout does not depend on a paint pass (§8.2)
+    EXPECT_FALSE(title->bounds().empty());
+    EXPECT_EQ(title->bounds(), (Rect::from_origin_size(Point{12.0f, 6.0f}, Size{80.0f, 20.0f})));
+}
+
+TEST(TabViewChecks, TheHiddenPageTakesNoPointerEvent) {
+    // arrange two pages with a button each, and the first page selected (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto first_owner = std::make_unique<TabPage>(&engine, &text_engine, "One");
+    TabPage* first_page = first_owner.get();
+    auto first_button = std::make_unique<Button>(&engine, &text_engine, "A");
+    Button* first_button_ptr = first_button.get();
+    std::size_t first_clicks = 0;
+    first_button->set_on_click([&first_clicks] { first_clicks++; });
+    first_page->add_child(std::move(first_button));
+    tabs.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "Two");
+    TabPage* second_page = second_owner.get();
+    auto second_button = std::make_unique<Button>(&engine, &text_engine, "B");
+    Button* second_button_ptr = second_button.get();
+    std::size_t second_clicks = 0;
+    second_button->set_on_click([&second_clicks] { second_clicks++; });
+    second_page->add_child(std::move(second_button));
+    tabs.add_child(std::move(second_owner));
+    tabs.set_selected(0);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    InputController controller;
+    controller.attach(tabs);
+    Event press{.kind = EventKind::PointerDown, .position = Point{50.0f, 60.0f}};
+    // act
+    controller.deliver(press);
+    // assert the selected page's button took the press and the hidden page's button did not (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(first_clicks, 1u);
+    EXPECT_EQ(second_clicks, 0u);
+    EXPECT_EQ(controller.focus().focused(), first_button_ptr);
+    // act the second page is selected, which hides the first and clears its caret (§8.3)
+    tabs.set_selected(1);
+    // assert the hidden button loses the focus and cannot take it again until shown (§8.3)
+    EXPECT_NE(controller.focus().focused(), first_button_ptr);
+    EXPECT_FALSE(FocusManager::focusable(*first_button_ptr));
+    EXPECT_TRUE(controller.focus().focused() == nullptr || controller.focus().focused() == second_page || controller.focus().focused() == second_button_ptr);
+    // act a space key arrives after the hidden button lost the caret (§8.3)
+    Event space{.kind = EventKind::KeyDown, .key = Key::Space};
+    controller.deliver(space);
+    // assert the hidden button did not activate, which a hidden page must never do (§8.3)
+    EXPECT_EQ(first_clicks, 1u);
+}
+
+TEST(TabViewChecks, ATitleChildDoesNotTakeTheHeaderPress) {
+    // arrange a selected page whose title holds an interactive child (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto page_owner = std::make_unique<TabPage>(&engine, &text_engine, "One");
+    TabPage* page = page_owner.get();
+    auto title_owner = std::make_unique<TabTitle>(&engine);
+    TabTitle* title = title_owner.get();
+    auto title_button = std::make_unique<Button>(&engine, &text_engine, "T");
+    Button* title_button_ptr = title_button.get();
+    std::size_t title_clicks = 0;
+    title_button->set_on_click([&title_clicks] { title_clicks++; });
+    title->add_child(std::move(title_button));
+    page->add_child(std::move(title_owner));
+    tabs.add_child(std::move(page_owner));
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // act the header is pressed, which is the tab's target rather than the title's (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    tabs.dispatch_event(press);
+    // assert the tab selected and the title's button never ran (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(tabs.selected(), 0);
+    EXPECT_EQ(title_clicks, 0u);
+    // assert the title and its child are not focus stops, because the strip owns the interaction (§8.3)
+    EXPECT_FALSE(title->hit_test(Point{10.0f, 10.0f}));
+    EXPECT_FALSE(FocusManager::focusable(*title));
+    EXPECT_FALSE(FocusManager::focusable(*title_button_ptr));
+}
+
+TEST(TabViewChecks, RemovingAPageBeforeTheSelectionKeepsThePageShown) {
+    // arrange four pages with the third selected (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto first_owner = std::make_unique<TabPage>(&engine, &text_engine, "A");
+    TabPage* first = first_owner.get();
+    tabs.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "B");
+    tabs.add_child(std::move(second_owner));
+    auto third_owner = std::make_unique<TabPage>(&engine, &text_engine, "C");
+    TabPage* third = third_owner.get();
+    tabs.add_child(std::move(third_owner));
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "D"));
+    tabs.set_selected(2);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // act the page before it leaves, which moves the selected index (§8)
+    std::unique_ptr<UiNode> removed = tabs.remove_child(first);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // assert the same page is still shown at its new index (§8)
+    EXPECT_EQ(removed.get(), first);
+    EXPECT_EQ(tabs.selected(), 1);
+    EXPECT_TRUE(third->selected());
+    EXPECT_TRUE(third->visible());
+}
+
+TEST(TabViewChecks, InsertingAPageBeforeTheSelectionKeepsThePageShown) {
+    // arrange two pages with the second selected (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "A"));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "B");
+    TabPage* second = second_owner.get();
+    tabs.add_child(std::move(second_owner));
+    tabs.set_selected(1);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // act a page is inserted before it (§8)
+    tabs.insert_child(0, std::make_unique<TabPage>(&engine, &text_engine, "New"));
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // assert the same page is still shown at its new index (§8)
+    EXPECT_EQ(tabs.selected(), 2);
+    EXPECT_TRUE(second->selected());
+    EXPECT_TRUE(second->visible());
+}
+
+TEST(TabViewChecks, RemovingTheSelectedLastPageDoesNotJumpOnTheNextAdd) {
+    // arrange three pages with the last selected (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "A"));
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "B"));
+    auto third_owner = std::make_unique<TabPage>(&engine, &text_engine, "C");
+    TabPage* third = third_owner.get();
+    tabs.add_child(std::move(third_owner));
+    tabs.set_selected(2);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // act the selected page leaves, which clamps the selection (§8)
+    std::unique_ptr<UiNode> removed = tabs.remove_child(third);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    EXPECT_EQ(removed.get(), third);
+    EXPECT_EQ(tabs.selected(), 1);
+    // act a page is added after the removal (§8)
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "D"));
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // assert the selection stayed at the clamped index instead of jumping to the added page (§8)
+    EXPECT_EQ(tabs.selected(), 1);
+}
+
+TEST(TabViewChecks, AStructuralSelectionChangeRaisesTheSignal) {
+    // arrange two pages with the second selected and a recording handler (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "A"));
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "B"));
+    tabs.set_selected(1);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    std::vector<int> changes;
+    tabs.set_on_selection_changed([&changes](int index) { changes.push_back(index); });
+    // act a page is inserted before the selection, which moves the selected index (§8)
+    tabs.insert_child(0, std::make_unique<TabPage>(&engine, &text_engine, "New"));
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // assert the model was told the new index, because the displayed page moved (§8.3)
+    ASSERT_EQ(changes.size(), 1u);
+    EXPECT_EQ(changes[0], 2);
+    EXPECT_EQ(tabs.selected(), 2);
 }

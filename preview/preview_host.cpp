@@ -26,6 +26,9 @@
 #include "widgets/progress_bar.h"
 #include "widgets/scroll_view.h"
 #include "widgets/slider.h"
+#include "widgets/tab_page.h"
+#include "widgets/tab_title.h"
+#include "widgets/tab_view.h"
 #include "widgets/text_field.h"
 
 namespace albor::preview
@@ -102,6 +105,12 @@ namespace albor::preview
                 built = std::make_unique<ListBox>(&engine);
             else if (node.element_type == "TextField")
                 built = std::make_unique<TextField>(&engine, text_engine);
+            else if (node.element_type == "TabView")
+                built = std::make_unique<TabView>(&engine);
+            else if (node.element_type == "Tab")
+                built = std::make_unique<TabPage>(&engine, text_engine);
+            else if (node.element_type == "TabTitle")
+                built = std::make_unique<TabTitle>(&engine);
             else {
                 // an element this build does not know produces nothing, which the diagnostics already reported (§12.2)
                 return nullptr;
@@ -165,6 +174,24 @@ namespace albor::preview
                 else if (auto* progress = dynamic_cast<ProgressBar*>(built.get()); progress != nullptr && assignment.name == "value" && numeric != nullptr) {
                     // the progress bar is the read only widget that carries the fraction (§8)
                     progress->set_value(static_cast<float>(number_of(*numeric)));
+                }
+                // a selected tab, which a preview shows as the author wrote it (§8)
+                else if (assignment.name == "selected" && numeric != nullptr) {
+                    // the tab view is the only widget that carries a page selection (§8)
+                    if (auto* tabs = dynamic_cast<TabView*>(built.get()))
+                        tabs->set_selected(static_cast<int>(number_of(*numeric)));
+                }
+                // a vertical strip, which a preview shows as the author wrote it (§8)
+                else if (assignment.name == "vertical" && numeric != nullptr) {
+                    // the tab view is the only widget that carries a strip orientation (§8)
+                    if (auto* tabs = dynamic_cast<TabView*>(built.get()))
+                        tabs->set_vertical(numeric->text == "true");
+                }
+                // a tab title, which the strip draws for the page (§8)
+                else if (assignment.name == "label") {
+                    // the page is the only widget that carries a strip label (§8)
+                    if (auto* tab = dynamic_cast<TabPage*>(built.get()))
+                        tab->set_label(text_of(*assignment.value));
                 }
                 // a checked state, which a preview shows as the author wrote it (§8)
                 else if (assignment.name == "checked" && numeric != nullptr) {

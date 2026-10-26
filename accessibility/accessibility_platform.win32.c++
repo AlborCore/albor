@@ -64,6 +64,10 @@ namespace albor::accessibility::platform
                 return UIA_SliderControlTypeId;
             case SemanticRole::ProgressBar:
                 return UIA_ProgressBarControlTypeId;
+            case SemanticRole::TabView:
+                return UIA_TabControlTypeId;
+            case SemanticRole::TabItem:
+                return UIA_TabItemControlTypeId;
             case SemanticRole::Canvas:
                 return UIA_PaneControlTypeId;
             case SemanticRole::TextField:
@@ -94,6 +98,7 @@ namespace albor::accessibility::platform
             case SemanticRole::Slider:
             case SemanticRole::TextField:
             case SemanticRole::ListItem:
+            case SemanticRole::TabItem:
                 return true;
             default:
                 return false;
@@ -633,7 +638,7 @@ namespace albor::accessibility::platform
                     *result = static_cast<IToggleProvider*>(this);
                 else if (interface_id == __uuidof(IValueProvider) && node() != nullptr && node()->role() == SemanticRole::TextField)
                     *result = static_cast<IValueProvider*>(this);
-                else if (interface_id == __uuidof(ISelectionItemProvider) && node() != nullptr && node()->role() == SemanticRole::ListItem)
+                else if (interface_id == __uuidof(ISelectionItemProvider) && node() != nullptr && (node()->role() == SemanticRole::ListItem || node()->role() == SemanticRole::TabItem))
                     *result = static_cast<ISelectionItemProvider*>(this);
                 else
                     return E_NOINTERFACE;
@@ -678,8 +683,8 @@ namespace albor::accessibility::platform
                         *result = static_cast<IUnknown*>(static_cast<IValueProvider*>(this));
                     break;
                 case UIA_SelectionItemPatternId:
-                    // a list row is the only role that carries selection, which the pattern mapping fixes (§10.1)
-                    if (published->role() == SemanticRole::ListItem)
+                    // a list row and a tab item carry a selection, which the pattern mapping fixes (§10.1)
+                    if (published->role() == SemanticRole::ListItem || published->role() == SemanticRole::TabItem)
                         *result = static_cast<IUnknown*>(static_cast<ISelectionItemProvider*>(this));
                     break;
                 default:
@@ -750,8 +755,8 @@ namespace albor::accessibility::platform
                         set_variant_int(result, static_cast<LONG>(toggle_state_for(published->check())));
                     return S_OK;
                 case UIA_SelectionItemIsSelectedPropertyId:
-                    // the selected state belongs to a list row, which the role scoped branch agrees with (§10.1)
-                    if (published->role() == SemanticRole::ListItem)
+                    // the selected state belongs to a list row or a tab item, which the role branch agrees with (§10.1)
+                    if (published->role() == SemanticRole::ListItem || published->role() == SemanticRole::TabItem)
                         set_variant_bool(result, published->selected());
                     return S_OK;
                 case UIA_IsInvokePatternAvailablePropertyId:
@@ -764,7 +769,7 @@ namespace albor::accessibility::platform
                     set_variant_bool(result, published->role() == SemanticRole::TextField);
                     return S_OK;
                 case UIA_IsSelectionItemPatternAvailablePropertyId:
-                    set_variant_bool(result, published->role() == SemanticRole::ListItem);
+                    set_variant_bool(result, published->role() == SemanticRole::ListItem || published->role() == SemanticRole::TabItem);
                     return S_OK;
                 case UIA_BoundingRectanglePropertyId: {
                     // the property carries the four rectangle doubles, which the array helper builds (§10.2)
@@ -975,7 +980,9 @@ namespace albor::accessibility::platform
                 // an already selected row needs no work, which the idempotent operation states (§10.2)
                 if (published->selected())
                     return S_OK;
-                return published->invoke("select") ? S_OK : UIA_E_ELEMENTNOTAVAILABLE;
+                // a tab item selects by activating the page it names, while a row invokes its own select (§10.1)
+                const bool selected = published->role() == SemanticRole::TabItem ? published->invoke("activate") : published->invoke("select");
+                return selected ? S_OK : UIA_E_ELEMENTNOTAVAILABLE;
             }
 
             // add the row to its list's selection, which the selection item pattern asks (§10.1, §10.2)
@@ -987,6 +994,9 @@ namespace albor::accessibility::platform
                 const SemanticNode* published = node();
                 if (published == nullptr)
                     return UIA_E_ELEMENTNOTAVAILABLE;
+                // a tab item is always selected as one page of its group, so it has no unselected state (§10)
+                if (published->role() == SemanticRole::TabItem)
+                    return S_OK;
                 // an unselected row needs no work, which the idempotent operation states (§10.2)
                 if (!published->selected())
                     return S_OK;

@@ -17,6 +17,7 @@
 #include "devrt/reload_adapter.h"
 #include "dual_engine_controls.h"
 #include "dual_engine_panel.h"
+#include "dual_engine_tabs.h"
 #include "layout/column_layout.h"
 #include "layout/row_layout.h"
 #include "runtime/binding_engine.h"
@@ -26,6 +27,9 @@
 #include "widgets/checkbox.h"
 #include "widgets/label.h"
 #include "widgets/slider.h"
+#include "widgets/tab_page.h"
+#include "widgets/tab_title.h"
+#include "widgets/tab_view.h"
 
 using namespace albor;
 using namespace albor::devrt;
@@ -788,4 +792,48 @@ TEST(DevReloadChecks, ACompiledControlsFormAndTheDevIrAgreeOnTheSameUi) {
     ASSERT_NE(ir_slider, nullptr);
     EXPECT_FLOAT_EQ(compiled_slider->value(), ir_slider->value());
     EXPECT_EQ(compiled_slider->disabled(), ir_slider->disabled());
+}
+
+TEST(DevReloadChecks, ACompiledTabsFormAndTheDevIrAgreeOnTheSameUi) {
+    // arrange the same ui source compiled into a facade and serialized into the dev ir (§16, AD-25)
+    std::ifstream file(ALBOR_DUAL_ENGINE_TABS_UI, std::ios::binary);
+    ASSERT_TRUE(file.good());
+    const std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    albor::compiler::DiagnosticList diagnostics;
+    const std::vector<albor::compiler::Token> tokens = albor::compiler::Lexer(source, diagnostics).tokenize();
+    const albor::compiler::SourceFile parsed = albor::compiler::Parser(tokens, diagnostics).parse();
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const std::optional<IrNode> definition = albor::compiler::serialize_component(parsed.components.front());
+    ASSERT_TRUE(definition.has_value());
+    // the compiled path builds the facade, which is the production output (§11.3)
+    BindingEngine engine;
+    TestTextEngine text;
+    DualEngineTabs tabs(&engine, &text);
+    // the dev path applies the serialized definition onto a matching root (§12.1)
+    TabView root(&engine);
+    ReloadFixture fixture;
+    const ReloadReport report = apply_reload(root, *definition, fixture.context);
+    EXPECT_EQ(report.added, 6U);
+    // assert both trees carry the same view, selection and pages, which is what AD-25 claims (§16)
+    const UiNode& compiled = *static_cast<UiNode&>(tabs).child_at(0);
+    const auto* compiled_view = dynamic_cast<const TabView*>(&compiled);
+    ASSERT_NE(compiled_view, nullptr);
+    ASSERT_EQ(compiled_view->tab_count(), root.tab_count());
+    EXPECT_EQ(compiled_view->tab_count(), 2U);
+    EXPECT_EQ(compiled_view->selected(), root.selected());
+    EXPECT_EQ(compiled_view->selected(), 1);
+    EXPECT_TRUE(compiled_view->vertical());
+    EXPECT_TRUE(root.vertical());
+    for (std::size_t index = 0; index < 2; index++) {
+        const auto* compiled_page = dynamic_cast<const TabPage*>(compiled.child_at(index));
+        const auto* ir_page = dynamic_cast<const TabPage*>(root.child_at(index));
+        ASSERT_NE(compiled_page, nullptr);
+        ASSERT_NE(ir_page, nullptr);
+        EXPECT_EQ(compiled_page->label(), ir_page->label());
+        EXPECT_EQ(compiled_page->title() != nullptr, ir_page->title() != nullptr);
+        if (const TabTitle* compiled_title = compiled_page->title()) {
+            ASSERT_NE(ir_page->title(), nullptr);
+            EXPECT_EQ(compiled_title->child_count(), ir_page->title()->child_count());
+        }
+    }
 }

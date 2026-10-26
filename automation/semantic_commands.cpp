@@ -28,6 +28,10 @@ namespace albor::automation
                 return "slider";
             case SemanticRole::ProgressBar:
                 return "progress_bar";
+            case SemanticRole::TabView:
+                return "tab_view";
+            case SemanticRole::TabItem:
+                return "tab_item";
             case SemanticRole::Canvas:
                 return "canvas";
             case SemanticRole::TextField:

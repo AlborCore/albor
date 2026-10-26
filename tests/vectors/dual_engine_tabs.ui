@@ -1,0 +1,17 @@
+component DualEngineTabs {
+    TabView {
+        selected: 1;
+        vertical: true;
+
+        Tab {
+            label: "One";
+            Label { text: "first"; }
+        }
+
+        Tab {
+            label: "Two";
+            TabTitle { Label { text: "★"; } }
+            Label { text: "second"; }
+        }
+    }
+}

@@ -35,6 +35,12 @@ namespace albor
         // a read only value that shows how far a task has advanced
         ProgressBar,
 
+        // a container that groups tab items and owns their single selection
+        TabView,
+
+        // one page of a tab view, which the user selects
+        TabItem,
+
         // a drawing surface, which the user may interact with directly
         Canvas,
 

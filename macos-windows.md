@@ -8,7 +8,7 @@
 Windows is now at functional parity with macOS for windowing, input, clipboard, IME, DPI, event-loop pacing,
 Blend2D, shaped text, the `render-albor` D3D backend, the named-pipe automation transport, and the accessibility
 bridge. The Windows accessibility bridge is a real UI Automation provider, not a stub; both accessibility role
-suites carry **10 tests**, and Windows adds a real UI Automation client test.
+suites carry **11 tests**, and Windows adds a real UI Automation client test.
 
 The per-abstraction support table is maintained in [`docs/status.md`](docs/status.md#windows-support).
 
@@ -35,7 +35,7 @@ Both adapters implement the same `PlatformWindow` and `PlatformEventLoop` interf
 | Event loop pacing | CVDisplayLink | Waitable timer thread, tested | Different mechanism, same contract |
 | System appearance | AppKit appearance | Registry-based appearance | Parity |
 | Automation local transport | Unix domain socket | Named pipe, tested | Parity |
-| Accessibility | 348-line NSAccessibility bridge, 10 tests | 1,199-line UI Automation bridge, 10 role tests + 1 client test | Parity |
+| Accessibility | 348-line NSAccessibility bridge, 11 tests | 1,199-line UI Automation bridge, 11 role tests + 1 client test | Parity |
 
 The popup test sets remain asymmetric by design: **10 macOS tests vs. 9 Windows tests**. The missing macOS test
 is `ThePopupLayerIsNonopaque`, which is AppKit-specific and has no direct Win32 equivalent.
@@ -127,25 +127,27 @@ tree:
 - The fragment root implements `IRawElementProviderSimple`, `IRawElementProviderFragment` and
   `IRawElementProviderFragmentRoot`; every node implements the simple and fragment interfaces plus the patterns
   its role supports.
-- Role mapping covers every `SemanticRole`: Button, CheckBox, Text, Slider, ProgressBar, Pane (Canvas and
-  ScrollView), Edit, Image, ListItem, List, Group, Window and Custom.
+- Role mapping covers every `SemanticRole`: Button, CheckBox, Text, Slider, ProgressBar, TabView, TabItem,
+  Pane (Canvas and ScrollView), Edit, Image, ListItem, List, Group, Window and Custom.
 - Properties include name, automation id, control type, enabled, keyboard focus, focusability, control/content
   element flags, offscreen, process id, framework id, bounding rectangle, value and read-only, toggle state, and
   selection-item state.
 - Patterns include Invoke for buttons, Toggle for checkboxes, Value for text fields, and SelectionItem for list
-  rows. Invoke, toggle, select and deselect run the semantic actions the application registered.
+  rows and tab items. Invoke, toggle, select and deselect run the semantic actions the application registered;
+  selecting a tab item invokes its page's `activate` action, and a tab item stays selected because the group
+  carries one selection.
 - The provider reads an immutable publication snapshot, so a rebuild cannot invalidate an element a reader holds.
   Structure changes are raised with `UiaRaiseStructureChangedEvent`.
 - `IValueProvider::SetValue` returns `UIA_E_ELEMENTNOTAVAILABLE`; the bridge has no channel to carry the new text
   into the application, because `SemanticAction` takes no arguments. Reading the value is supported.
 
-The **10 Windows role tests** mirror the macOS role suite: root role, child hierarchy, empty publication, detach,
-text-field value, checkbox toggle state, list role, selected row, unselected row, and a plain label with no value.
-The suite also sends `WM_GETOBJECT` and asserts the window returns a provider key. An eleventh test drives a real
-`IUIAutomation` client through `ElementFromHandle` and `FindFirst`, which proves UI Automation reaches the published
-root rather than only the direct provider interfaces. The providers are reached through the platform-only
-`accessibility/accessibility_platform.win32.h` accessor, which is the Windows analogue of reading the AppKit
-hierarchy directly.
+The **11 Windows role tests** mirror the macOS role suite: root role, child hierarchy, empty publication, detach,
+text-field value, checkbox toggle state, list role, tab group and tab selection, selected row, unselected row,
+and a plain label with no value. The suite also sends `WM_GETOBJECT` and asserts the window returns a provider key.
+A twelfth test drives a real `IUIAutomation` client through `ElementFromHandle` and `FindFirst`, which proves UI
+Automation reaches the published root rather than only the direct provider interfaces. The providers are reached
+through the platform-only `accessibility/accessibility_platform.win32.h` accessor, which is the Windows analogue
+of reading the AppKit hierarchy directly.
 
 `README.md` and `docs/status.md` now describe both bridges accurately.
 
@@ -215,7 +217,7 @@ job remains a tracked enhancement rather than a parity requirement.
 | Window popup | 10 | 9 |
 | Blend2D windowed | 3 | 3 |
 | Platform font resolver | 8 dedicated | 8 |
-| Accessibility roles | 10 | 11 (10 parity + 1 UI Automation client) |
+| Accessibility roles | 11 | 12 (11 parity + 1 UI Automation client) |
 | Windows platform services | not present | 8 |
 | Skia backend | 30 macOS-only | replaced by D3D |
 | Metal teardown | 2 macOS-only | not applicable |

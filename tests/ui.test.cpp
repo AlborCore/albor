@@ -2164,15 +2164,15 @@ TEST(Component, RenderingAnUnarrangedComponentPaintsNothing) {
     EXPECT_TRUE(recorder.scene()->empty());
 }
 
-TEST(Component, HitTestingAnInvisibleComponentFallsThroughToItsChildren) {
+TEST(Component, HitTestingAnInvisibleComponentDoesNotReachItsChildren) {
     // arrange
     TestComponent component(nullptr, "canvas");
     auto child = std::make_unique<TestNode>();
     component.add_child(std::move(child));
     component.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
     component.set_visible(false);
-    // act, assert the child of a hidden component is still a hit (§8.3)
-    EXPECT_TRUE(component.hit_test(Point{10.0f, 10.0f}));
+    // act, assert a hidden component hides the whole subtree, because a hidden page must not take input (§8.3)
+    EXPECT_FALSE(component.hit_test(Point{10.0f, 10.0f}));
 }
 
 TEST(UiNode, APlainNodeIsNeverDisabled) {

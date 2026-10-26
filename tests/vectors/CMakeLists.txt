@@ -71,5 +71,8 @@ albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/dual_
 
 # the control facade broadens the corpus past the panel, so a checkbox and a slider agree too (§16, AD-25)
 albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/dual_engine_controls.ui")
+
+# the tabs facade broadens the corpus to a container that owns a selection, so the page strip agrees too (§16, AD-25)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/dual_engine_tabs.ui")
 # the generated header reaches the test binary, because the suite includes the facade it exercises (§11.3)
 target_include_directories(albor-tests PRIVATE "${CMAKE_BINARY_DIR}/generated/albor-vector-fixture")

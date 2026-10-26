@@ -82,6 +82,11 @@ namespace albor
             theme.set_progress_bar_extent(Size{220.0f, 6.0f});
             theme.set_progress_bar_track_thickness(6.0f);
             theme.set_progress_bar_radius(3.0f);
+            // a macos tab strip is thirty two tall with a two point indicator (§8.4)
+            theme.set_tab_strip_height(32.0f);
+            theme.set_tab_padding_horizontal(12.0f);
+            theme.set_tab_minimum_width(72.0f);
+            theme.set_tab_indicator_height(2.0f);
             // the ring stands one away and rounds with the plate it surrounds (§6.1, §6.2)
             theme.set_focus_ring_offset(1.0f);
             theme.set_focus_ring_radius(6.0f);
@@ -124,6 +129,11 @@ namespace albor
             theme.set_progress_bar_extent(Size{220.0f, 4.0f});
             theme.set_progress_bar_track_thickness(4.0f);
             theme.set_progress_bar_radius(2.0f);
+            // a fluent tab strip is thirty six tall with a two point indicator (§8.4)
+            theme.set_tab_strip_height(36.0f);
+            theme.set_tab_padding_horizontal(14.0f);
+            theme.set_tab_minimum_width(76.0f);
+            theme.set_tab_indicator_height(2.0f);
             theme.set_focus_ring_offset(1.0f);
             theme.set_focus_ring_radius(5.0f);
             // the hierarchy resolves at the sizes the system font is set at (§8.4)
@@ -158,6 +168,11 @@ namespace albor
             theme.set_progress_bar_extent(Size{220.0f, 4.0f});
             theme.set_progress_bar_track_thickness(4.0f);
             theme.set_progress_bar_radius(2.0f);
+            // a tool tab strip is twenty eight tall with a two point indicator (§8.4)
+            theme.set_tab_strip_height(28.0f);
+            theme.set_tab_padding_horizontal(10.0f);
+            theme.set_tab_minimum_width(64.0f);
+            theme.set_tab_indicator_height(2.0f);
             theme.set_focus_ring_offset(1.0f);
             theme.set_focus_ring_radius(5.0f);
             // the hierarchy resolves at the reading sizes a tool screen carries (§8.4)
@@ -543,6 +558,26 @@ namespace albor
         m_metrics.progress_bar_radius = value;
     }
 
+    void Theme::set_tab_strip_height(float value) {
+        // the height is one value because every tab shares the strip it sits in (§8.2)
+        m_metrics.tab_strip_height = value;
+    }
+
+    void Theme::set_tab_padding_horizontal(float value) {
+        // the inset is one value because every label sits the same depth from its edge (§8.2)
+        m_metrics.tab_padding_horizontal = value;
+    }
+
+    void Theme::set_tab_minimum_width(float value) {
+        // the minimum is one value because every tab takes at least the same width (§8.2)
+        m_metrics.tab_minimum_width = value;
+    }
+
+    void Theme::set_tab_indicator_height(float value) {
+        // the thickness is one value because the strip draws one indicator (§6.1)
+        m_metrics.tab_indicator_height = value;
+    }
+
     Color Theme::surface() const {
         // the surface is stored by value, so a frame background reads the installed one (§6.1)
         return m_surface;
@@ -631,6 +666,36 @@ namespace albor
     void Theme::set_progress_bar_fill(ControlState state, Color value) {
         // the entry is written by its state index, which is what the resolver reads (§6.1)
         m_palette.progress_bar_fill[state_index(state)] = value;
+    }
+
+    void Theme::set_tab_label(Color value) {
+        // the normal state is the common case, which is the shorthand (§6.1)
+        m_palette.tab_label[state_index(ControlState::Normal)] = value;
+    }
+
+    void Theme::set_tab_label(ControlState state, Color value) {
+        // the entry is written by its state index, which is what the resolver reads (§6.1)
+        m_palette.tab_label[state_index(state)] = value;
+    }
+
+    void Theme::set_tab_label_selected(Color value) {
+        // the normal state is the common case, which is the shorthand (§6.1)
+        m_palette.tab_label_selected[state_index(ControlState::Normal)] = value;
+    }
+
+    void Theme::set_tab_label_selected(ControlState state, Color value) {
+        // the entry is written by its state index, which is what the resolver reads (§6.1)
+        m_palette.tab_label_selected[state_index(state)] = value;
+    }
+
+    void Theme::set_tab_indicator(Color value) {
+        // the normal state is the common case, which is the shorthand (§6.1)
+        m_palette.tab_indicator[state_index(ControlState::Normal)] = value;
+    }
+
+    void Theme::set_tab_indicator(ControlState state, Color value) {
+        // the entry is written by its state index, which is what the resolver reads (§6.1)
+        m_palette.tab_indicator[state_index(state)] = value;
     }
 
     void Theme::set_canvas_background(Color value) {
