@@ -50,14 +50,14 @@ namespace albor::devrt
         }
 
         // apply the definition's property assignments to a node, which makes an edited value visible (§12.1)
-        void apply_properties(UiNode& node, const IrNode& definition) {
+        void apply_properties(UiNode& node, const IrNode& definition, const std::filesystem::path& asset_root) {
             // the stepper takes its bounds first, because a value clamped against the default range would be lost (§8)
             const bool stepper = definition.element == "NumericStepper";
             if (stepper) {
                 for (const IrProperty& property : definition.properties) {
                     // only the two bounds wait for this pass, because the value reads them (§8)
                     if (property.name == "min" || property.name == "max")
-                        static_cast<void>(apply_property(node, definition.element, property.name, property.value));
+                        static_cast<void>(apply_property(node, definition.element, property.name, property.value, asset_root));
                 }
             }
             // the assignments are walked, because a node declares a handful of them (§11.1)
@@ -66,7 +66,7 @@ namespace albor::devrt
                 if (stepper && (property.name == "min" || property.name == "max"))
                     continue;
                 // the name resolves against the element, so a value only lands on the node that declares it (§11.1)
-                static_cast<void>(apply_property(node, definition.element, property.name, property.value));
+                static_cast<void>(apply_property(node, definition.element, property.name, property.value, asset_root));
             }
             // a property write repaints the node, which is what makes the new value reach the next frame (§6.1)
             node.invalidate();
@@ -112,7 +112,7 @@ namespace albor::devrt
                     if (!node.id.empty())
                         built->set_explicit_id(node.id);
                     // the properties land before the node is shown, so its first frame already carries them (§12.1)
-                    apply_properties(*built, node);
+                    apply_properties(*built, node, context.asset_root);
                     // the node is adopted, which takes ownership (§8.1)
                     parent.add_child(std::move(built));
                     // add_child hands back the parent, so the appended child is read from the end (§8.1)
@@ -141,7 +141,7 @@ namespace albor::devrt
                         if (!node.id.empty())
                             replacement->set_explicit_id(node.id);
                         // the properties land before the node is shown, so its first frame already carries them (§12.1)
-                        apply_properties(*replacement, node);
+                        apply_properties(*replacement, node, context.asset_root);
                         // the old instance goes, which is the state this rebuild loses (§12.1, §12.2)
                         static_cast<void>(parent.remove_child(match));
                         // the replacement takes that slot, which keeps the order the definition declared (§12.1)
@@ -163,7 +163,7 @@ namespace albor::devrt
                 // the matched node keeps its instance, which is the state a reload preserves (§12.1, §12.2)
                 report.preserved++;
                 // its own properties are re-applied, because an edited value is what this reload is for (§12.1)
-                apply_properties(*match, node);
+                apply_properties(*match, node, context.asset_root);
                 // its own children are reconciled, which is the whole recursion (§12.1)
                 reconcile(*match, node, context, report);
             }
@@ -181,7 +181,7 @@ namespace albor::devrt
         if (!definition.id.empty() && root.identity().explicit_id != definition.id)
             root.set_explicit_id(definition.id);
         // the root's own properties are applied last, because the tree is already the shape the file declares (§12.1)
-        apply_properties(root, definition);
+        apply_properties(root, definition, context.asset_root);
         // the report is returned whole, which is what the hook reports (§12.1)
         return report;
     }

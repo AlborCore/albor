@@ -28,7 +28,7 @@ namespace albor
         std::uint32_t id = 0;
 
         // where the glyph sits relative to the baseline origin of its line, in logical pixels (§9.1)
-        Point position;
+        Point position{};
 
         // the byte offset into the shaped text this glyph carries, which is what maps a glyph to a character (§9.1)
         std::uint32_t cluster = 0;

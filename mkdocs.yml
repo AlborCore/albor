@@ -62,6 +62,7 @@ nav:
       - RadioGroup and RadioButton: components/radio-group.md
       - NumericStepper: components/numeric-stepper.md
       - Canvas: components/canvas.md
+      - Image: components/image.md
       - ScrollView: components/scroll-view.md
       - ListBox: components/list-box.md
       - TabView: components/tab-view.md

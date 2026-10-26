@@ -1,6 +1,6 @@
 # Types
 
-Beyond the scalar set (`bool`, `int`, `float`, `string`, `color`, `length`), a `.ui` file
+Beyond the scalar set (`bool`, `int`, `float`, `string`, `color`, `length`, `image`), a `.ui` file
 declares its own compound types: records and value sets. Both compile to native C++; neither
 needs a manifest entry.
 
@@ -103,6 +103,24 @@ A `command` property is a reference to a shared command object the application o
 object observed by every consumer, carrying label, enablement and the action itself. Bind it
 to a control's `action:` or fire it from a handler with `save.invoke();`. See
 [Commands](../concepts/commands.md).
+
+## Images
+
+```text
+in property<image> logo;
+```
+
+An `image` is a retained handle to decoded pixels, which the renderer uploads once and
+reuses across frames. A written asset must be a PNG; it is embedded at build time, and the
+path is resolved beside the `.ui` file that writes it:
+
+```text
+Image { source: @image("assets/logo.png"); }
+```
+
+A bound `image` property is the form for a picture the application supplies at run time.
+The [Image](../components/image.md) widget is the standard consumer; the handle itself is
+`std::shared_ptr<const ImageResource>` in C++.
 
 ## Native types
 

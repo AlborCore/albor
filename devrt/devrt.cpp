@@ -1,8 +1,10 @@
 #include <cstdio>
+#include <filesystem>
 
 #include "devrt/devrt.h"
 
 #include "core/dev_hook.h"
+#include "resources/utf8_path.h"
 #include "runtime/binding_engine.h"
 #include "text/text_engine.h"
 #include "ui/ui_node.h"
@@ -19,6 +21,9 @@ namespace albor::devrt
 
         // the text engine the bound tree measures with, which a rebuilt node borrows for its whole life (§9.1)
         TextEngine* g_text = nullptr;
+
+        // the source directory an image path resolves against, which the dev service supplies (§6.4, §12.1)
+        std::filesystem::path g_asset_root;
 
         // the report of the last reload, which a developer tool reads while typing (§12.1)
         ReloadReport g_last;
@@ -47,6 +52,8 @@ namespace albor::devrt
                 .factory = [](std::string_view element, BindingEngine& engine, TextEngine& text) { return create_node(element, engine, text); },
                 // the live nodes are named by their dynamic type, which finds an element the author changed (§12.1)
                 .element_of = [](const UiNode& node) { return element_of(node); },
+                // the source root makes a relative image path resolve beside the file the service reads (§6.4, §12.1)
+                .asset_root = g_asset_root,
             };
             // the tree is reconciled in place, which is what preserves the state a reload must keep (§12.1, §12.2)
             g_last = apply_reload(*g_root, *parsed, context);
@@ -80,6 +87,16 @@ namespace albor::devrt
         g_root = static_cast<UiNode*>(binding.root);
         g_engine = static_cast<BindingEngine*>(binding.engine);
         g_text = static_cast<TextEngine*>(binding.text);
+    }
+
+    void set_asset_root(std::string_view utf8_root) {
+        // an empty root clears the setting, which leaves a relative path as the process sees it (§12.1)
+        if (utf8_root.empty()) {
+            g_asset_root.clear();
+            return;
+        }
+        // the bytes are utf-8, so the conversion does not depend on the host code page (§6.4)
+        g_asset_root = resources::path_from_utf8(utf8_root);
     }
 
     void unbind_root(void* root) {

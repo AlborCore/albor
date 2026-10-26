@@ -11,7 +11,7 @@ namespace albor
     struct FontSpec
     {
         // the family an application asked for, which is a label the registry resolves and not a platform lookup (§9.1)
-        std::string family;
+        std::string family{};
 
         // the weight that selects a face within the family, defaulting to the regular face (§9.1)
         FontWeight weight = FontWeight::Regular;

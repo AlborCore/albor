@@ -149,7 +149,7 @@ namespace albor::compiler
         std::vector<ValueType> parameter_types;
 
         // the names a handler body writes to read each parameter, which the author sees as its own scope (§11.1)
-        std::vector<std::string> parameter_names;
+        std::vector<std::string> parameter_names{};
     };
 
     // one field a manifest record declares, which a repeat body reads by name (§11.2, AD-17, AD-13)

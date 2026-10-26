@@ -1,6 +1,7 @@
 #include "preview/preview_host.h"
 
 #include <cstdlib>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -9,6 +10,7 @@
 #include "compiler/codegen/codegen.h"
 #include "compiler/lexer.h"
 #include "compiler/parser.h"
+#include "compiler/static_expression.h"
 #include "compiler/type_checker.h"
 #include "compiler/value_type.h"
 #include "i18n/catalog.h"
@@ -17,10 +19,14 @@
 #include "layout/padding_layout.h"
 #include "layout/row_layout.h"
 #include "layout/stack_layout.h"
+#include "render/image_resource.h"
+#include "resources/embedded_image.h"
+#include "resources/utf8_path.h"
 #include "text/text_engine.h"
 #include "widgets/button.h"
 #include "widgets/canvas.h"
 #include "widgets/checkbox.h"
+#include "widgets/image.h"
 #include "widgets/label.h"
 #include "widgets/list_box.h"
 #include "widgets/numeric_stepper.h"
@@ -92,8 +98,19 @@ namespace albor::preview
             return {};
         }
 
+        // resolve an embedded asset beside the source, which is where a saved ui file keeps its images (§12.2, §6.4)
+        std::filesystem::path asset_path(const compiler::ImageExpression& image, const std::filesystem::path& source_path) {
+            // the literal path is locale independent, because it arrived as utf-8 bytes (§6.4)
+            const std::filesystem::path path = resources::path_from_utf8(image.path);
+            // an unsaved source has no directory, so the path is resolved as written (§12.2)
+            if (source_path.empty())
+                return path;
+            // a saved source resolves the asset relative to itself, which is what the build does (§6.4)
+            return (source_path.parent_path() / path).lexically_normal();
+        }
+
         // build one node from a checked element, which instantiates the real widget (§12.2)
-        std::unique_ptr<UiNode> instantiate(const compiler::CheckedNode& node, BindingEngine& engine, TextEngine* text_engine) {
+        std::unique_ptr<UiNode> instantiate(const compiler::CheckedNode& node, BindingEngine& engine, TextEngine* text_engine, const std::filesystem::path& source_path) {
             // the widget is built by element name, which is the whole of the factory (§12.2)
             std::unique_ptr<UiNode> built;
             // the containers are layouts, which take no engine (§8)
@@ -120,6 +137,8 @@ namespace albor::preview
                 built = std::make_unique<CheckBox>(&engine);
             else if (node.element_type == "Canvas")
                 built = std::make_unique<Canvas>(&engine);
+            else if (node.element_type == "Image")
+                built = std::make_unique<Image>(&engine);
             else if (node.element_type == "ScrollView")
                 built = std::make_unique<ScrollView>(&engine);
             else if (node.element_type == "ListBox")
@@ -221,6 +240,29 @@ namespace albor::preview
                     // the progress bar is the read only widget that carries the fraction (§8)
                     progress->set_value(static_cast<float>(number_of(*numeric)));
                 }
+                // an image source, name or explicit size, which the preview shows as the author wrote it (§6.4, §8)
+                else if (auto* image = dynamic_cast<Image*>(built.get()); image != nullptr && (assignment.name == "source" || assignment.name == "description" || assignment.name == "width" || assignment.name == "height")) {
+                    // a written asset resolves beside its source file, which is where the build finds it (§6.4)
+                    if (assignment.name == "source") {
+                        // only an embedded asset can be resolved, because the preview evaluates no binding (§12.2)
+                        if (const compiler::ImageExpression* embedded = compiler::static_image(*assignment.value); embedded != nullptr)
+                            image->set_source(resources::ImageRegistry::load_file(asset_path(*embedded, source_path)));
+                    }
+                    // a description reaches the widget, because the preview publishes the same tree (§10.1)
+                    else if (assignment.name == "description") {
+                        image->set_description(text_of(*assignment.value));
+                    }
+                    // a written dimension resolves like any number, where zero keeps the natural extent (§8.2)
+                    else {
+                        double number = 0.0;
+                        if (!number_of_expression(*assignment.value, number))
+                            continue;
+                        if (assignment.name == "width")
+                            image->set_width(static_cast<float>(number));
+                        else
+                            image->set_height(static_cast<float>(number));
+                    }
+                }
                 // a numeric value, which a stepper or a radio choice carries (§8)
                 else if (auto* value_stepper = dynamic_cast<NumericStepper*>(built.get()); value_stepper != nullptr && assignment.name == "value") {
                     // a static value, including a written negation, reaches the stepper (§8, §12.2)
@@ -313,7 +355,7 @@ namespace albor::preview
             // each child is built and adopted, which is the preorder a compiled build uses (§11.3)
             for (const std::shared_ptr<compiler::CheckedNode>& child : node.children) {
                 // the child is built by the same rule, which is the whole of the recursion (§12.2)
-                std::unique_ptr<UiNode> built_child = instantiate(*child, engine, text_engine);
+                std::unique_ptr<UiNode> built_child = instantiate(*child, engine, text_engine, source_path);
                 // a child that could not be built is skipped, which the diagnostics already reported (§12.2)
                 if (built_child == nullptr)
                     continue;
@@ -359,7 +401,7 @@ namespace albor::preview
         if (component.root == nullptr)
             return result;
         // the root is built with the real widgets, which is what makes the preview trustworthy (§12.2)
-        result.root = instantiate(*component.root, engine, nullptr);
+        result.root = instantiate(*component.root, engine, nullptr, source_path);
         // the result is returned whole (§12.2)
         return result;
     }

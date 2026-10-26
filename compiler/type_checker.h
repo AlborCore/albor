@@ -104,13 +104,13 @@ namespace albor::compiler
         SharedExpression value;
 
         // the type the value carries, which the property accepted (§11.1)
-        ValueType type;
+        ValueType type{};
 
         // the component properties the value reads, which the binding registers (§7.3, AD-04a)
-        std::vector<std::string> dependencies;
+        std::vector<std::string> dependencies{};
 
         // where the assignment was written (§11.1)
-        SourceSpan span;
+        SourceSpan span{};
     };
 
     // one statement of a checked handler body, which is either an assignment or an invocation (§11.1)

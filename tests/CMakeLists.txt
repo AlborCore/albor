@@ -66,6 +66,7 @@ target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_UI="${CMAKE_CUR
 target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_CONTROLS_UI="${CMAKE_CURRENT_SOURCE_DIR}/vectors/dual_engine_controls.ui")
 target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_TABS_UI="${CMAKE_CURRENT_SOURCE_DIR}/vectors/dual_engine_tabs.ui")
 target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_CHOICES_UI="${CMAKE_CURRENT_SOURCE_DIR}/vectors/dual_engine_choices.ui")
+target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_IMAGE_UI="${CMAKE_CURRENT_SOURCE_DIR}/vectors/dual_engine_image.ui")
 
 # the asset fixtures live together, so a generator suite resolves an embedded image from a carried png (§6.4)
 target_compile_definitions(albor-tests PRIVATE ALBOR_TEST_VECTORS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/vectors")

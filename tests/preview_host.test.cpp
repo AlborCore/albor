@@ -13,11 +13,13 @@
 #include "layout/row_layout.h"
 #include "layout/stack_layout.h"
 #include "preview/preview_host.h"
+#include "render/image_resource.h"
 #include "runtime/binding_engine.h"
 #include "ui/ui_node.h"
 #include "widgets/button.h"
 #include "widgets/canvas.h"
 #include "widgets/checkbox.h"
+#include "widgets/image.h"
 #include "widgets/label.h"
 #include "widgets/numeric_stepper.h"
 #include "widgets/progress_bar.h"
@@ -109,6 +111,39 @@ TEST(PreviewHostChecks, AnEmbeddedImageResolvesBesideTheSourcePath) {
     // assert the carried asset was found, because the preview was told where the source lives (§16, §6.4)
     EXPECT_EQ(result.diagnostics, 0U);
     EXPECT_NE(result.root, nullptr);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(PreviewHostChecks, AnImageWidgetShowsTheAssetAndItsWrittenDescription) {
+    // arrange a source whose image widget names an asset beside it, with a description and an explicit size (§6.4, §8)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-preview-image-widget";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    std::filesystem::copy_file(std::filesystem::path(ALBOR_TEST_VECTORS_DIR) / "icon.png", root / "icon.png", std::filesystem::copy_options::overwrite_existing);
+    const std::string source = R"UI(component Panel {
+    Image {
+        id: logo;
+        source: @image("icon.png");
+        description: "Company logo";
+        width: 32px;
+        height: 16px;
+    }
+})UI";
+    // act
+    BindingEngine engine;
+    const preview::PreviewResult result = preview::build(source, engine, root / "panel.ui");
+    // assert the widget was built and the asset beside the source was decoded (§12.2, §6.4)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    Image* image = dynamic_cast<Image*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<Image*>(&node) != nullptr; }));
+    ASSERT_NE(image, nullptr);
+    ASSERT_NE(image->source(), nullptr);
+    EXPECT_EQ(image->source()->width(), 1U);
+    // assert the written name and dimensions reached the widget, because the preview shows them (§8, §10.1)
+    EXPECT_EQ(image->description(), "Company logo");
+    EXPECT_FLOAT_EQ(image->width(), 32.0f);
+    EXPECT_FLOAT_EQ(image->height(), 16.0f);
     std::filesystem::remove_all(root, ignored);
 }
 
@@ -222,6 +257,7 @@ TEST(PreviewHostChecks, EveryElementThisBuildKnowsIsInstantiated) {
         }
         Grid { }
         Canvas { id: surface; }
+        Image { id: logo; }
     }
 })UI";
     BindingEngine engine;
@@ -242,6 +278,7 @@ TEST(PreviewHostChecks, EveryElementThisBuildKnowsIsInstantiated) {
     EXPECT_NE(find_first(*result.root, [](UiNode& node) { return dynamic_cast<RadioGroup*>(&node) != nullptr; }), nullptr);
     EXPECT_NE(find_first(*result.root, [](UiNode& node) { return dynamic_cast<NumericStepper*>(&node) != nullptr; }), nullptr);
     EXPECT_NE(find_first(*result.root, [](UiNode& node) { return dynamic_cast<Canvas*>(&node) != nullptr; }), nullptr);
+    EXPECT_NE(find_first(*result.root, [](UiNode& node) { return dynamic_cast<Image*>(&node) != nullptr; }), nullptr);
     // assert the scroll view built the real viewport, because a preview shows what the app will show (§12.2)
     UiNode* scroller = find_first(*result.root, [](UiNode& node) { return dynamic_cast<ScrollView*>(&node) != nullptr; });
     ASSERT_NE(scroller, nullptr);

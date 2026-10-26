@@ -573,3 +573,39 @@ TEST(Win32AccessibilityRole, ANumericStepperAnnouncesItsValue) {
     EXPECT_STREQ(read_value, L"3.5");
     SysFreeString(read_value);
 }
+
+TEST(Win32AccessibilityRole, AnImageAnnouncesItsControlTypeNameAndEnabledState) {
+    // arrange an image whose name and disabled state are what a reader announces (§10.1)
+    WindowFixture fixture;
+    ASSERT_NE(fixture.window(), nullptr);
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::Image});
+    tree.mutable_at(0)->set_name("Company logo");
+    tree.mutable_at(0)->set_disabled(true);
+    // act
+    fixture.adapter().publish(tree);
+    // assert the image control type reaches the announced fragment (§10.2, AD-16)
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> root = fixture.announced_fragment();
+    ASSERT_NE(root.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> announced;
+    ASSERT_HRESULT_SUCCEEDED(root->Navigate(NavigateDirection_FirstChild, announced.GetAddressOf()));
+    ASSERT_NE(announced.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple = WindowFixture::simple_of(announced.Get());
+    ASSERT_NE(simple.Get(), nullptr);
+    VARIANT control_type{};
+    ASSERT_HRESULT_SUCCEEDED(simple->GetPropertyValue(UIA_ControlTypePropertyId, &control_type));
+    ASSERT_EQ(control_type.vt, VT_I4);
+    EXPECT_EQ(control_type.lVal, UIA_ImageControlTypeId);
+    VariantClear(&control_type);
+    // assert the name and the disabled flag are what a reader speaks (§10.2)
+    VARIANT name{};
+    ASSERT_HRESULT_SUCCEEDED(simple->GetPropertyValue(UIA_NamePropertyId, &name));
+    ASSERT_EQ(name.vt, VT_BSTR);
+    EXPECT_STREQ(name.bstrVal, L"Company logo");
+    VariantClear(&name);
+    VARIANT enabled{};
+    ASSERT_HRESULT_SUCCEEDED(simple->GetPropertyValue(UIA_IsEnabledPropertyId, &enabled));
+    ASSERT_EQ(enabled.vt, VT_BOOL);
+    EXPECT_EQ(enabled.boolVal, VARIANT_FALSE);
+    VariantClear(&enabled);
+}

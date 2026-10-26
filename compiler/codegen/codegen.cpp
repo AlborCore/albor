@@ -24,6 +24,14 @@ namespace albor::compiler
 {
     namespace
     {
+        // spell a path in generated text as utf-8, because a windows narrow conversion depends on the code page (§14.2)
+        std::string text_of_path(const std::filesystem::path& path) {
+            // the generic spelling is stable across hosts, which is what a generated comment needs (§14.2)
+            const std::u8string utf8 = path.generic_u8string();
+            // the bytes become a narrow string, because a generated file is utf-8 (§14.2)
+            return std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size());
+        }
+
         // a number of bytes into a source file, which is what a span end points at
         bool ends_with(std::string_view text, std::string_view suffix) {
             // a suffix longer than the text cannot match, so the comparison is skipped (§11.3)
@@ -399,7 +407,7 @@ namespace albor::compiler
             // emit the per-source header and unit, which carry every accessor and its bytes (§6.4)
             [[nodiscard]] std::vector<GeneratedFile> files() const {
                 // the provenance names the source file, which is what a reader can locate (§14.2)
-                const std::string provenance = "// generated from " + m_source.filename().string() + ", do not edit (§14, AD-03a)";
+                const std::string provenance = "// generated from " + text_of_path(m_source.filename()) + ", do not edit (§14, AD-03a)";
                 // the header opens with its provenance and guard (§14.1)
                 std::string header = provenance + "\n#pragma once\n";
                 // the source opens with its provenance and includes its own header first (§14.1)
@@ -413,7 +421,7 @@ namespace albor::compiler
                     // each asset declares one accessor, which the component sources call (§6.4)
                     for (std::size_t index = 0; index < m_assets.size(); index++) {
                         // the comment names the file and its index, which is what a reader can locate (§6.4)
-                        header += "        // hand out the embedded image " + m_assets[index].path.filename().string() + ", which is decoded once (§6.4)\n";
+                        header += "        // hand out the embedded image " + text_of_path(m_assets[index].path.filename()) + ", which is decoded once (§6.4)\n";
                         // the accessor returns the immutable handle the render path retains (§6.4, AD-06)
                         header += "        [[nodiscard]] std::shared_ptr<const ImageResource> image_" + std::to_string(index) + "();\n";
                     }
@@ -426,7 +434,7 @@ namespace albor::compiler
                     // each asset emits its bytes and the accessor that registers them (§6.4)
                     for (std::size_t index = 0; index < m_assets.size(); index++) {
                         // the comment names the source file the bytes came from (§6.4)
-                        source += "        // the encoded bytes of " + m_assets[index].path.filename().string() + " (§6.4)\n";
+                        source += "        // the encoded bytes of " + text_of_path(m_assets[index].path.filename()) + " (§6.4)\n";
                         // the array is constant, because the bytes never change after generation (§6.4)
                         source += "        constexpr std::uint8_t IMAGE_" + std::to_string(index) + "[] = {";
                         // each byte is emitted in hex, with a bounded line length for readability (§6.4)
@@ -571,6 +579,7 @@ namespace albor::compiler
                 {"ProgressBar", {.header = "widgets/progress_bar.h", .class_name = "ProgressBar", .needs_engine = true, .needs_text_engine = false}},
                 {"CheckBox", {.header = "widgets/checkbox.h", .class_name = "CheckBox", .needs_engine = true, .needs_text_engine = false}},
                 {"Canvas", {.header = "widgets/canvas.h", .class_name = "Canvas", .needs_engine = true, .needs_text_engine = false}},
+                {"Image", {.header = "widgets/image.h", .class_name = "Image", .needs_engine = true, .needs_text_engine = false}},
                 {"ScrollView", {.header = "widgets/scroll_view.h", .class_name = "ScrollView", .needs_engine = true, .needs_text_engine = false}},
                 {"ListBox", {.header = "widgets/list_box.h", .class_name = "ListBox", .needs_engine = true, .needs_text_engine = false}},
                 {"TabView", {.header = "widgets/tab_view.h", .class_name = "TabView", .needs_engine = true, .needs_text_engine = false}},
@@ -1082,6 +1091,10 @@ namespace albor::compiler
                 {"CheckBox.outline", "set_outline"},
                 {"CheckBox.check_fill", "set_check_fill"},
                 {"CheckBox.action", "set_command"},
+                {"Image.source", "set_source"},
+                {"Image.description", "set_description"},
+                {"Image.width", "set_width"},
+                {"Image.height", "set_height"},
                 {"ScrollView.overscan", "set_overscan"},
                 {"ScrollView.scrollbar", "set_scrollbar_visibility"},
                 {"ScrollView.row_height", "set_row_height"},

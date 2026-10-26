@@ -1,0 +1,11 @@
+component DualEngineImage {
+    Column {
+        Image {
+            id: logo;
+            source: @image("icon.png");
+            description: "Company logo";
+            width: 24px;
+            height: 12px;
+        }
+    }
+}

@@ -16,6 +16,7 @@ true                    // bool
 #0A82FFCC               // colour: eight hex digits, with alpha
 12px                    // length: logical pixels, scale with display density
 12phx                   // length: physical device pixels, do not scale
+@image("logo.png")      // image: an embedded PNG beside the .ui file
 ```
 
 !!! note "Which unit when"

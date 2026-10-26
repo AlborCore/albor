@@ -395,6 +395,15 @@ namespace albor::compiler
                                               .signals = {ElementSignal{.name = "changed", .parameter_types = {scalar(TypeKind::Float)}, .parameter_names = {"value"}}},
                                               // a stepper is a leaf, so it takes no children (§8)
                                               .accepts_children = false});
+        // a leaf draws a retained image, which is the static counterpart of a canvas (§8, §6.4)
+        catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
+                                              .name = "Image",
+                                              // the asset, its name and the size are what an image exposes (§8, §10.1)
+                                              .properties = {ElementProperty{.name = "source", .type = scalar(TypeKind::Image), .assignable = true}, ElementProperty{.name = "description", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "width", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "height", .type = scalar(TypeKind::Float), .assignable = true}},
+                                              // an image raises no signal, because the user does not drive it (§8)
+                                              .signals = {},
+                                              // an image is a leaf, so it takes no children (§8)
+                                              .accepts_children = false});
         // a leaf draws a run of text, which is a caption or a value readout (§8)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Label",

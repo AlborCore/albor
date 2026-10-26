@@ -94,7 +94,7 @@ if(MSVC)
     # ansi code page the host picked and the text the shaper sees is not the text the file wrote (§9.1, §15, AD-25)
     add_compile_options(/utf-8)
 else()
-    add_compile_options(-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Wmissing-field-initializers)
+    add_compile_options(-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Wmissing-field-initializers -Wmissing-designated-field-initializers)
 endif()
 
 # the coverage build instruments every module, because a profile that only covers the test sources

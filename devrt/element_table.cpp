@@ -1,10 +1,10 @@
 #include "devrt/element_table.h"
 
-#include <algorithm>
 #include <cctype>
 #include <cerrno>
 #include <charconv>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -12,17 +12,22 @@
 
 #include "core/align.h"
 #include "core/paint.h"
+#include "devrt/ir.h"
 #include "layout/column_layout.h"
 #include "layout/grid_layout.h"
 #include "layout/padding_layout.h"
 #include "layout/row_layout.h"
 #include "layout/stack_layout.h"
+#include "render/image_resource.h"
+#include "resources/embedded_image.h"
+#include "resources/utf8_path.h"
 #include "runtime/binding_engine.h"
 #include "text/text_engine.h"
 #include "ui/ui_node.h"
 #include "widgets/button.h"
 #include "widgets/canvas.h"
 #include "widgets/checkbox.h"
+#include "widgets/image.h"
 #include "widgets/label.h"
 #include "widgets/list_box.h"
 #include "widgets/numeric_stepper.h"
@@ -94,6 +99,20 @@ namespace albor::devrt
             return parsed.ec == std::errc{} && parsed.ptr == value.data() + value.size();
         }
 
+        // resolve an embedded asset against the root a reload was given, or as written when it has none (§6.4, §12.1)
+        std::filesystem::path asset_path(std::string_view path, const std::filesystem::path& asset_root) {
+            // the literal path is locale independent, because it arrived as utf-8 bytes (§6.4)
+            const std::filesystem::path resolved = resources::path_from_utf8(path);
+            // an empty root leaves a relative path as the process sees it, which is the portable default (§12.1)
+            if (asset_root.empty())
+                return resolved;
+            // an absolute path is already fully resolved, so the root must not be prefixed (§6.4)
+            if (resolved.is_absolute())
+                return resolved;
+            // a relative asset joins the root, because that is the directory the source lives in (§6.4)
+            return (asset_root / resolved).lexically_normal();
+        }
+
         // read a colour out of a serialized assignment, which the language writes as three channel floats (§11.1)
         bool read_color(std::string_view value, Color& out) {
             // the channels are collected first, because a partial triple is not a colour (§11.1)
@@ -158,7 +177,9 @@ namespace albor::devrt
         template <class Widget, class Setter>
         PropertySetter setter(Setter set) {
             // the type decides whether the assignment belongs, which is what keeps one table from aliasing another (§11.1)
-            return [set](UiNode& node, std::string_view value) {
+            return [set](UiNode& node, std::string_view value, const std::filesystem::path& asset_root) {
+                // the root is unused by a value that carries no asset, which only an image source does (§6.4)
+                static_cast<void>(asset_root);
                 // the dynamic type is the element the definition named, and a mismatch is a value for nothing (§11.1)
                 auto* widget = dynamic_cast<Widget*>(&node);
                 if (widget == nullptr)
@@ -187,6 +208,7 @@ namespace albor::devrt
                 {"ProgressBar", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<ProgressBar>(&engine)); }},
                 {"CheckBox", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<CheckBox>(&engine)); }},
                 {"Canvas", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<Canvas>(&engine)); }},
+                {"Image", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<Image>(&engine)); }},
                 {"ScrollView", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<ScrollView>(&engine)); }},
                 // a list hosts its rows and owns one selection, so it takes the engine (§8, §18.3)
                 {"ListBox", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<ListBox>(&engine)); }},
@@ -342,6 +364,47 @@ namespace albor::devrt
                      if (!read_color(value, color))
                          return false;
                      node.set_fill_color(color);
+                     return true;
+                 })},
+                // an image draws a retained asset and names it, which is what §6.4 and §10.1 carry (§8)
+                {"Image.source",
+                 [](UiNode& node, std::string_view value, const std::filesystem::path& asset_root) {
+                     // the dynamic type is the element the definition named, and a mismatch is a value for nothing (§11.1)
+                     auto* image = dynamic_cast<Image*>(&node);
+                     if (image == nullptr)
+                         return false;
+                     // a plain string is not an asset, because the serializer marks every image value (§12.1)
+                     if (value.substr(0, IMAGE_VALUE_PREFIX.size()) != IMAGE_VALUE_PREFIX)
+                         return false;
+                     // the marker is removed so only the path reaches the registry (§12.1)
+                     value.remove_prefix(IMAGE_VALUE_PREFIX.size());
+                     // an empty path names no file, so the property keeps what it had (§6.4)
+                     if (value.empty())
+                         return false;
+                     // the registry decodes once and hands back a retained handle, which the widget keeps alive (§6.4)
+                     std::shared_ptr<const ImageResource> source = resources::ImageRegistry::load_file(asset_path(value, asset_root));
+                     // a file that does not decode is refused, so a later reload may still fix it (§6.4)
+                     if (!source)
+                         return false;
+                     image->set_source(std::move(source));
+                     return true;
+                 }},
+                {"Image.description", setter<Image>([](Image& node, std::string_view value) {
+                     node.set_description(std::string(value));
+                     return true;
+                 })},
+                {"Image.width", setter<Image>([](Image& node, std::string_view value) {
+                     float width = 0.0f;
+                     if (!read_float(value, width))
+                         return false;
+                     node.set_width(width);
+                     return true;
+                 })},
+                {"Image.height", setter<Image>([](Image& node, std::string_view value) {
+                     float height = 0.0f;
+                     if (!read_float(value, height))
+                         return false;
+                     node.set_height(height);
                      return true;
                  })},
                 // a tab view owns one selected page, which the author may write first (§8)
@@ -573,7 +636,8 @@ namespace albor::devrt
                  })},
                 // the two alignments every element declares, so they resolve for any element rather than per one (§8.2)
                 {"*.horizontal_align",
-                 [](UiNode& node, std::string_view value) {
+                 [](UiNode& node, std::string_view value, const std::filesystem::path& asset_root) {
+                     static_cast<void>(asset_root);
                      Align align;
                      if (!read_align(value, align))
                          return false;
@@ -581,7 +645,8 @@ namespace albor::devrt
                      return true;
                  }},
                 {"*.vertical_align",
-                 [](UiNode& node, std::string_view value) {
+                 [](UiNode& node, std::string_view value, const std::filesystem::path& asset_root) {
+                     static_cast<void>(asset_root);
                      Align align;
                      if (!read_align(value, align))
                          return false;
@@ -608,13 +673,13 @@ namespace albor::devrt
         return factories().find(element) != factories().end();
     }
 
-    bool apply_property(UiNode& node, std::string_view element, std::string_view property, std::string_view value) {
+    bool apply_property(UiNode& node, std::string_view element, std::string_view property, std::string_view value, const std::filesystem::path& asset_root) {
         // the per element entry is tried first, because a property belongs to the element that declares it (§11.1)
         const std::string key = std::string(element) + "." + std::string(property);
         const auto found = setters().find(key);
         if (found != setters().end()) {
             // the setter rejects a node whose dynamic type is not the element, so nothing is applied by name alone (§11.1)
-            return found->second(node, value);
+            return found->second(node, value, asset_root);
         }
         // the common entry is a wildcard, because the two alignments resolve for every element of §8.2
         const auto common = setters().find(std::string("*.") + std::string(property));
@@ -622,13 +687,13 @@ namespace albor::devrt
         if (common == setters().end())
             return false;
         // the wildcard setter answers whether the value was one the alignment holds (§11.1)
-        return common->second(node, value);
+        return common->second(node, value, asset_root);
     }
 
     std::string_view element_of(const UiNode& node) {
         // the dynamic type decides, because a node is one element of the closed set and nothing else (§8)
         const std::pair<const UiNode*, std::string_view> elements[] = {
-            {dynamic_cast<const ColumnLayout*>(&node), "Column"}, {dynamic_cast<const RowLayout*>(&node), "Row"}, {dynamic_cast<const PaddingLayout*>(&node), "Padding"}, {dynamic_cast<const StackLayout*>(&node), "Stack"}, {dynamic_cast<const GridLayout*>(&node), "Grid"}, {dynamic_cast<const Label*>(&node), "Label"}, {dynamic_cast<const Button*>(&node), "Button"}, {dynamic_cast<const Slider*>(&node), "Slider"}, {dynamic_cast<const CheckBox*>(&node), "CheckBox"}, {dynamic_cast<const Canvas*>(&node), "Canvas"}, {dynamic_cast<const ScrollView*>(&node), "ScrollView"}, {dynamic_cast<const ListBox*>(&node), "ListBox"}, {dynamic_cast<const TabView*>(&node), "TabView"}, {dynamic_cast<const TabPage*>(&node), "Tab"}, {dynamic_cast<const TabTitle*>(&node), "TabTitle"}, {dynamic_cast<const RadioGroup*>(&node), "RadioGroup"}, {dynamic_cast<const RadioButton*>(&node), "RadioButton"}, {dynamic_cast<const NumericStepper*>(&node), "NumericStepper"}, {dynamic_cast<const TextField*>(&node), "TextField"},
+            {dynamic_cast<const ColumnLayout*>(&node), "Column"}, {dynamic_cast<const RowLayout*>(&node), "Row"}, {dynamic_cast<const PaddingLayout*>(&node), "Padding"}, {dynamic_cast<const StackLayout*>(&node), "Stack"}, {dynamic_cast<const GridLayout*>(&node), "Grid"}, {dynamic_cast<const Label*>(&node), "Label"}, {dynamic_cast<const Button*>(&node), "Button"}, {dynamic_cast<const Slider*>(&node), "Slider"}, {dynamic_cast<const CheckBox*>(&node), "CheckBox"}, {dynamic_cast<const Canvas*>(&node), "Canvas"}, {dynamic_cast<const Image*>(&node), "Image"}, {dynamic_cast<const ScrollView*>(&node), "ScrollView"}, {dynamic_cast<const ListBox*>(&node), "ListBox"}, {dynamic_cast<const TabView*>(&node), "TabView"}, {dynamic_cast<const TabPage*>(&node), "Tab"}, {dynamic_cast<const TabTitle*>(&node), "TabTitle"}, {dynamic_cast<const RadioGroup*>(&node), "RadioGroup"}, {dynamic_cast<const RadioButton*>(&node), "RadioButton"}, {dynamic_cast<const NumericStepper*>(&node), "NumericStepper"}, {dynamic_cast<const TextField*>(&node), "TextField"},
         };
         // the first match wins, because the widget types above are disjoint classes (§8)
         for (const std::pair<const UiNode*, std::string_view>& element : elements) {

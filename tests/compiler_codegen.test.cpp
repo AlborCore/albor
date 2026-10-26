@@ -1349,6 +1349,71 @@ TEST(Codegen, AProgressBarCatalogEntryExists) {
     EXPECT_TRUE(progress->signals.empty());
 }
 
+TEST(Codegen, AnImageIsConstructedAndWired) {
+    // arrange an image bound to a property, with the description and dimensions an author writes (§6.4, §8)
+    const std::string_view source = R"(
+component C {
+    in property<image> logo: @image("icon.png");
+    Image {
+        source: logo;
+        description: "Company logo";
+        width: 24px;
+        height: 12px;
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path("image_panel.ui"));
+    // assert the asset was embedded and the widget was generated (§6.4, §11.3)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    ASSERT_EQ(generation.paths.size(), 1U);
+    const GeneratedFile& cpp = file_named(generation.files, "c.cpp");
+    // assert the widget takes the engine and receives each property through its setter (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<Image>(engine);"));
+    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/image.h\""));
+    EXPECT_TRUE(contains(cpp.content, "m_node_0->set_source(value)"));
+    EXPECT_TRUE(contains(cpp.content, "set_description(std::string(\"Company logo\"));"));
+    EXPECT_TRUE(contains(cpp.content, "set_width(24.0f);"));
+    EXPECT_TRUE(contains(cpp.content, "set_height(12.0f);"));
+}
+
+TEST(Codegen, AnImageWithAWrittenSourceEmbedsTheAsset) {
+    // arrange an image whose source is the asset itself, which is the form a static picture uses (§6.4, §11.3)
+    const std::string_view source = R"(
+component C {
+    Image {
+        source: @image("icon.png");
+        description: "Logo";
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path("image_panel.ui"));
+    // assert the asset was embedded and the widget was handed its accessor (§6.4, §11.3)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    ASSERT_EQ(generation.paths.size(), 1U);
+    const GeneratedFile& cpp = file_named(generation.files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<Image>(engine);"));
+    EXPECT_TRUE(contains(cpp.content, "set_source(image_panel_assets::image_0())"));
+}
+
+TEST(Codegen, AnImageCatalogEntryExists) {
+    // arrange
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act
+    const ElementType* image = catalog.find("Image");
+    // assert the catalog exposes the leaf with its properties and no signals (§11.1)
+    ASSERT_NE(image, nullptr);
+    EXPECT_FALSE(image->accepts_children);
+    EXPECT_TRUE(image->find_property("source") != nullptr);
+    EXPECT_TRUE(image->find_property("description") != nullptr);
+    EXPECT_TRUE(image->find_property("width") != nullptr);
+    EXPECT_TRUE(image->find_property("height") != nullptr);
+    EXPECT_TRUE(image->signals.empty());
+}
+
 TEST(Codegen, ATabViewIsConstructedAndWired) {
     // arrange a tab view with a selection, a handler and two labelled pages (§8, §11.1)
     const std::string source = R"(component C {

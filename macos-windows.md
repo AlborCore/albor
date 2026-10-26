@@ -1,14 +1,14 @@
 # Windows vs. macOS parity analysis
 
 **Scope:** comparison of the Windows platform and rendering work with the macOS reference, including test coverage.
-**Date:** 2026-10-26, after the radio-group and numeric-stepper pass.
+**Date:** 2026-10-26, after the image-widget pass.
 
 ## Verdict
 
 Windows is now at functional parity with macOS for windowing, input, clipboard, IME, DPI, event-loop pacing,
 Blend2D, shaped text, the `render-albor` D3D backend, the named-pipe automation transport, and the accessibility
 bridge. The Windows accessibility bridge is a real UI Automation provider, not a stub; both accessibility role
-suites carry **13 tests**, and Windows adds a real UI Automation client test.
+suites carry **14 tests**, and Windows adds a real UI Automation client test.
 
 The per-abstraction support table is maintained in [`docs/status.md`](docs/status.md#windows-support).
 
@@ -38,7 +38,7 @@ Both adapters implement the same `PlatformWindow` and `PlatformEventLoop` interf
 | Event loop pacing | CVDisplayLink | Waitable timer thread, tested | Different mechanism, same contract |
 | System appearance | AppKit appearance | Registry-based appearance | Parity |
 | Automation local transport | Unix domain socket | Named pipe, tested | Parity |
-| Accessibility | 382-line NSAccessibility bridge, 13 tests | 1,216-line UI Automation bridge, 13 role tests + 1 client test | Parity |
+| Accessibility | 382-line NSAccessibility bridge, 14 tests | 1,216-line UI Automation bridge, 14 role tests + 1 client test | Parity |
 
 The popup test sets remain asymmetric by design: **10 macOS tests vs. 9 Windows tests**. The missing macOS test
 is `ThePopupLayerIsNonopaque`, which is AppKit-specific and has no direct Win32 equivalent.
@@ -145,12 +145,12 @@ tree:
 - `IValueProvider::SetValue` returns `UIA_E_ELEMENTNOTAVAILABLE`; the bridge has no channel to carry the new text
   into the application, because `SemanticAction` takes no arguments. Reading the value is supported.
 
-The **13 Windows role tests** mirror the macOS role suite: root role, child hierarchy, empty publication, detach,
+The **14 Windows role tests** mirror the macOS role suite: root role, child hierarchy, empty publication, detach,
 text-field value, checkbox toggle state, list role, tab group and tab selection, radio group and choice selection,
-numeric-stepper value, selected row, unselected row, and a plain label with no value. The suite also sends
-`WM_GETOBJECT` and asserts the window returns a provider key. A fourteenth test drives a real `IUIAutomation`
-client through `ElementFromHandle` and `FindFirst`, which proves UI Automation reaches the published root rather
-than only the direct provider interfaces. The providers are reached through the platform-only
+numeric-stepper value, image role with its name and disabled state, selected row, unselected row, and a plain label
+with no value. The suite also sends `WM_GETOBJECT` and asserts the window returns a provider key. A fifteenth test
+drives a real `IUIAutomation` client through `ElementFromHandle` and `FindFirst`, which proves UI Automation reaches
+the published root rather than only the direct provider interfaces. The providers are reached through the platform-only
 `accessibility/accessibility_platform.win32.h` accessor, which is the Windows analogue of reading the AppKit
 hierarchy directly.
 
@@ -190,8 +190,8 @@ The last full Windows run, before the radio and stepper suite, recorded:
 
 `bash build/check-format.sh` passes, and `bash build/shaders.sh --d3d` reports that the committed DXBC artifact
 matches the six HLSL entry points. The Windows host cannot build the macOS bridge, so the macOS half of this
-pass was verified locally instead: the macOS debug suite ran 3,452 tests with 0 failures. The Windows counts
-above predate the new widget suite, and the pushed CI run is the authority for both platforms.
+pass was verified locally instead: the macOS debug suite ran 3,476 tests with 0 failures. The Windows counts
+above predate the radio, stepper and Image widget suites, and the pushed CI run is the authority for both platforms.
 
 The complete Windows suite has exactly **2 skips**:
 
@@ -207,9 +207,9 @@ The macOS configuration still excludes `metal_teardown.test.cpp` from Release at
 Metal footprint test skips when coverage instrumentation is active. Those are macOS-specific, intentional, and
 unrelated to Windows.
 
-The radio-group, radio-button, numeric-stepper and dual-engine suites are included in the working tree but are
-not in the Windows counts above, because this host cannot build Windows and the change is not yet committed for
-CI. The pushed CI run is the authoritative result for both configurations.
+The radio-group, radio-button, numeric-stepper, Image and dual-engine suites are included in the macOS count,
+but not in the Windows counts above, because this host cannot build Windows. The pushed CI run is the
+authoritative result for both configurations.
 
 A Windows coverage job was evaluated and not added. It would need a Windows-native instrumentation toolchain
 (`clang-cl` plus `llvm-cov`, or OpenCppCoverage), and the footprint/allocation probes are sensitive to
@@ -224,7 +224,7 @@ job remains a tracked enhancement rather than a parity requirement.
 | Window popup | 10 | 9 |
 | Blend2D windowed | 3 | 3 |
 | Platform font resolver | 8 dedicated | 8 |
-| Accessibility roles | 13 | 14 (13 parity + 1 UI Automation client) |
+| Accessibility roles | 14 | 15 (14 parity + 1 UI Automation client) |
 | Windows platform services | not present | 8 |
 | Skia backend | 30 macOS-only | replaced by D3D |
 | Metal teardown | 2 macOS-only | not applicable |
@@ -247,6 +247,9 @@ job remains a tracked enhancement rather than a parity requirement.
 - Added the per-abstraction Windows support table to `docs/status.md`.
 - Added the radio-group, radio-button and numeric-stepper roles to both accessibility bridges, with 2 parity
   tests on each platform.
+- Added the `Image` widget with natural or explicit sizing, retained pixel painting, semantic name and bounds,
+  preview asset resolution beside the source file and dev-runtime asset-root resolution. Both accessibility
+  bridges already mapped `SemanticRole::Image`, so the parity suites carry the role without a bridge change.
 - Updated `README.md` and `docs/status.md` to describe both accessibility bridges.
 
 ## 9. Remaining priorities

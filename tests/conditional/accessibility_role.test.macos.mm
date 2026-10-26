@@ -344,3 +344,21 @@ TEST(AccessibilityRole, ANumericStepperAnnouncesItsValueAndStepping) {
     EXPECT_EQ(increments, 1u);
     EXPECT_EQ(decrements, 1u);
 }
+
+TEST(AccessibilityRole, AnImageAnnouncesItsRoleNameAndDisabledState) {
+    // arrange an image whose name and disabled state are what a reader announces (§10.1)
+    WindowFixture fixture;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::Image});
+    tree.mutable_at(0)->set_name("Company logo");
+    tree.mutable_at(0)->set_disabled(true);
+    // act
+    fixture.adapter->publish(tree);
+    // assert the image role, its name and its disabled flag reach the native element (§10.2, AD-16)
+    NSArray* children = announced_children(fixture.window);
+    ASSERT_EQ(children.count, 1U);
+    NSView* element = (NSView*)children.firstObject;
+    EXPECT_EQ(element.accessibilityRole, NSAccessibilityImageRole);
+    EXPECT_STREQ(element.accessibilityLabel.UTF8String, "Company logo");
+    EXPECT_FALSE([(id)element isAccessibilityEnabled]);
+}

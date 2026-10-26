@@ -1,5 +1,6 @@
 #include <limits>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -13,7 +14,9 @@
 #include "layout/column_layout.h"
 #include "layout/row_layout.h"
 #include "render/frame_scene.h"
+#include "render/image_resource.h"
 #include "render/render_context.h"
+#include "render/resource_factory.h"
 #include "runtime/binding_engine.h"
 #include "semantics/semantic_node.h"
 #include "semantics/semantic_provider.h"
@@ -22,6 +25,7 @@
 #include "widgets/button.h"
 #include "widgets/canvas.h"
 #include "widgets/checkbox.h"
+#include "widgets/image.h"
 #include "widgets/label.h"
 #include "widgets/numeric_stepper.h"
 #include "widgets/progress_bar.h"
@@ -6069,4 +6073,256 @@ TEST(NumericStepperChecks, ThePlateAndTheTwoMarksArePainted) {
     // assert the plate, the minus and the two plus bars are four shapes and the value is one run (§8.4)
     EXPECT_EQ(rect_commands(*recorder.scene()).size(), 4u);
     EXPECT_EQ(text_commands(*recorder.scene()).size(), 1u);
+}
+
+TEST(ImageChecks, AnImageMeasuresToTheNaturalPixelExtent) {
+    // arrange a three by two image, whose extent is what an unconstrained layout asks for (§6.4, §8.2)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[3 * 2 * 4]{};
+    const std::shared_ptr<const ImageResource> source = factory.create_image(3, 2, ImageFormat::RGBA8, pixels);
+    Image image(&engine);
+    image.set_source(source);
+    Size measured{};
+    // act
+    image.measure(SizeConstraints::unconstrained(), measured);
+    // assert the image offers its pixel extent, because no explicit size was written (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 3.0f);
+    EXPECT_FLOAT_EQ(measured.height, 2.0f);
+}
+
+TEST(ImageChecks, ExplicitDimensionsReplaceTheNaturalExtentIndependently) {
+    // arrange a three by two image with one explicit dimension at a time (§8.2)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[3 * 2 * 4]{};
+    Image image(&engine);
+    image.set_source(factory.create_image(3, 2, ImageFormat::RGBA8, pixels));
+    Size measured{};
+    // act the width alone, then both dimensions, then a zero width
+    image.set_width(30.0f);
+    image.measure(SizeConstraints::unconstrained(), measured);
+    // assert the height keeps the natural extent while the width follows the author (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 30.0f);
+    EXPECT_FLOAT_EQ(measured.height, 2.0f);
+    image.set_height(10.0f);
+    image.measure(SizeConstraints::unconstrained(), measured);
+    // assert both dimensions now follow the author (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 30.0f);
+    EXPECT_FLOAT_EQ(measured.height, 10.0f);
+    image.set_width(0.0f);
+    image.measure(SizeConstraints::unconstrained(), measured);
+    // assert zero restores the natural width while the explicit height stays (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 3.0f);
+    EXPECT_FLOAT_EQ(measured.height, 10.0f);
+}
+
+TEST(ImageChecks, AnExplicitDimensionRequestsLayout) {
+    // arrange an image whose source already settled its natural extent (§8.2)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[2 * 2 * 4]{};
+    Image image(&engine);
+    image.set_source(factory.create_image(2, 2, ImageFormat::RGBA8, pixels));
+    image.clear_dirty();
+    // act set each explicit dimension in turn, because either one changes the offered extent (§8.2)
+    image.set_width(12.0f);
+    // assert a written width invalidates the measure pass, because the offered extent changed (§8.2)
+    EXPECT_TRUE(image.layout_dirty());
+    image.clear_dirty();
+    image.set_height(8.0f);
+    // assert the height does the same, so one axis cannot move without a measure (§8.2)
+    EXPECT_TRUE(image.layout_dirty());
+}
+
+TEST(ImageChecks, ConstraintsClampTheNaturalExtent) {
+    // arrange a four by three image under a parent that offers less room (§8.2)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[4 * 3 * 4]{};
+    Image image(&engine);
+    image.set_source(factory.create_image(4, 3, ImageFormat::RGBA8, pixels));
+    Size measured{};
+    // act
+    image.measure(SizeConstraints::at_most(Size{2.0f, 2.0f}), measured);
+    // assert the parent decision is final, even against the natural extent (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 2.0f);
+    EXPECT_FLOAT_EQ(measured.height, 2.0f);
+}
+
+TEST(ImageChecks, TightConstraintsRaiseTheNaturalExtent) {
+    // arrange a two by two image under a parent that demands a larger rectangle (§8.2)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[2 * 2 * 4]{};
+    Image image(&engine);
+    image.set_source(factory.create_image(2, 2, ImageFormat::RGBA8, pixels));
+    Size measured{};
+    // act
+    image.measure(SizeConstraints::tight(Size{5.0f, 4.0f}), measured);
+    // assert the minimum raises both axes, because a tight parent decides the extent (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 5.0f);
+    EXPECT_FLOAT_EQ(measured.height, 4.0f);
+}
+
+TEST(ImageChecks, ANegativeDimensionMeansTheNaturalExtent) {
+    // arrange an image whose width is written below zero, which is no size at all (§8.2)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[2 * 2 * 4]{};
+    Image image(&engine);
+    image.set_source(factory.create_image(2, 2, ImageFormat::RGBA8, pixels));
+    Size measured{};
+    // act
+    image.set_width(-12.0f);
+    image.measure(SizeConstraints::unconstrained(), measured);
+    // assert the width clamps to zero, which means the natural pixel width (§8.2)
+    EXPECT_FLOAT_EQ(image.width(), 0.0f);
+    EXPECT_FLOAT_EQ(measured.width, 2.0f);
+}
+
+TEST(ImageChecks, ANewSourceRemeasuresTheImage) {
+    // arrange an image measured from one source and then replaced (§6.4)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[4 * 3 * 4]{};
+    std::uint8_t small[4]{};
+    Image image(&engine);
+    image.set_source(factory.create_image(4, 3, ImageFormat::RGBA8, pixels));
+    Size measured{};
+    image.measure(SizeConstraints::unconstrained(), measured);
+    image.clear_dirty();
+    // act
+    image.set_source(factory.create_image(1, 1, ImageFormat::RGBA8, small));
+    // assert a new extent invalidates the layout, because the offered size changed (§6.4, §8.2)
+    EXPECT_TRUE(image.layout_dirty());
+    image.measure(SizeConstraints::unconstrained(), measured);
+    EXPECT_FLOAT_EQ(measured.width, 1.0f);
+    EXPECT_FLOAT_EQ(measured.height, 1.0f);
+}
+
+TEST(ImageChecks, TheSameSourceRequestsNothing) {
+    // arrange an image already showing one retained handle (§6.4)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[4]{};
+    const std::shared_ptr<const ImageResource> source = factory.create_image(1, 1, ImageFormat::RGBA8, pixels);
+    Image image(&engine);
+    image.set_source(source);
+    image.clear_dirty();
+    // act
+    image.set_source(source);
+    // assert the identical handle changes nothing, because the picture is the same (§6.4)
+    EXPECT_FALSE(image.layout_dirty());
+    EXPECT_FALSE(image.render_dirty());
+}
+
+TEST(ImageChecks, ASameExtentSourceRedrawsWithoutRemeasuring) {
+    // arrange an image whose next source has the same extent but different pixels (§6.4)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t first[4]{};
+    std::uint8_t second[4]{255, 0, 0, 255};
+    Image image(&engine);
+    image.set_source(factory.create_image(1, 1, ImageFormat::RGBA8, first));
+    image.clear_dirty();
+    // act
+    image.set_source(factory.create_image(1, 1, ImageFormat::RGBA8, second));
+    // assert the frame redraws without a measure pass, because the offered extent did not change (§6.4, §8.2)
+    EXPECT_TRUE(image.render_dirty());
+    EXPECT_FALSE(image.layout_dirty());
+}
+
+TEST(ImageChecks, TheSourceIsRecordedIntoTheArrangedBounds) {
+    // arrange an image with a source, arranged at a rectangle the parent chose (§6.4, §8.2)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[2 * 2 * 4]{255, 0, 0, 255};
+    const std::shared_ptr<const ImageResource> source = factory.create_image(2, 2, ImageFormat::RGBA8, pixels);
+    Image image(&engine);
+    image.set_source(source);
+    const Rect bounds = Rect::from_origin_size(Point{10.0f, 20.0f}, Size{30.0f, 40.0f});
+    image.arrange(bounds);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    // act
+    image.render(recorder);
+    // assert one image command carries the source into the arranged rectangle (§6.4)
+    std::vector<DrawCommand> commands;
+    for (const DrawCommand& command : recorder.scene()->commands())
+        if (command.kind() == DrawCommandKind::Image)
+            commands.push_back(command);
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_EQ(commands.front().image_geometry().image, source);
+    EXPECT_EQ(commands.front().image_geometry().destination, bounds);
+    // assert the paint is white, which leaves every sampled texel unmodified (§6.4)
+    EXPECT_EQ(commands.front().paint().fill, Color::rgb(1.0f, 1.0f, 1.0f));
+    EXPECT_TRUE(rect_commands(*recorder.scene()).empty());
+}
+
+TEST(ImageChecks, AnEmptySourceRecordsNothing) {
+    // arrange an image with no source, arranged where it would draw (§6.4)
+    BindingEngine engine;
+    Image image(&engine);
+    image.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{40.0f, 40.0f}, 1.0f));
+    // act
+    image.render(recorder);
+    // assert there is no command, because there are no pixels to map (§6.4)
+    for (const DrawCommand& command : recorder.scene()->commands())
+        EXPECT_NE(command.kind(), DrawCommandKind::Image);
+}
+
+TEST(ImageChecks, ASourceWithNoExtentIsAnnouncedDisabled) {
+    // arrange an image whose source exists but carries no pixels, which is what an empty picture is (§6.4, §10.1)
+    BindingEngine engine;
+    Image image(&engine);
+    image.set_source(std::make_shared<ImageResource>(0, 0, 0, ImageFormat::RGBA8, std::span<const std::uint8_t>{}));
+    // act
+    const SemanticNode node = image.semantic_node();
+    // assert a source with no pixels is disabled, because there is nothing to describe (§10.1)
+    EXPECT_TRUE(node.disabled());
+}
+
+TEST(ImageChecks, AnImageAnnouncesItsDescriptionAndBounds) {
+    // arrange an arranged image with an author id and a written description (§10.1, AD-11)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[2 * 2 * 4]{};
+    Image image(&engine, "logo");
+    image.set_source(factory.create_image(2, 2, ImageFormat::RGBA8, pixels));
+    image.set_description("Company logo");
+    image.arrange(Rect::from_origin_size(Point{4.0f, 6.0f}, Size{24.0f, 12.0f}));
+    // act
+    const SemanticNode node = image.semantic_node();
+    // assert the role, identity, name and bounds reach the semantic tree (§10.1)
+    EXPECT_EQ(node.role(), SemanticRole::Image);
+    EXPECT_EQ(node.explicit_id(), "logo");
+    EXPECT_EQ(node.name(), "Company logo");
+    EXPECT_EQ(node.bounds(), image.bounds());
+    EXPECT_FALSE(node.disabled());
+    EXPECT_EQ(node.check(), CheckState::NotCheckable);
+}
+
+TEST(ImageChecks, AnEmptyDescriptionFallsBackToTheAuthorIdentity) {
+    // arrange an image whose description is empty, which leaves the author id as its name (§10.1, AD-11)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[4]{};
+    Image image(&engine, "logo");
+    image.set_source(factory.create_image(1, 1, ImageFormat::RGBA8, pixels));
+    // act
+    const SemanticNode node = image.semantic_node();
+    // assert the identity names the image when the author wrote no description (§10.1)
+    EXPECT_EQ(node.name(), "logo");
+}
+
+TEST(ImageChecks, AnImageWithNoPixelsIsDisabledAndIsNotAFocusStop) {
+    // arrange an image with no source, which has nothing to describe or focus (§6.4, §8.3)
+    BindingEngine engine;
+    Image image(&engine);
+    // act
+    const SemanticNode node = image.semantic_node();
+    // assert the empty image is disabled and the widget declines the caret (§8.3, §10.1)
+    EXPECT_TRUE(node.disabled());
+    EXPECT_FALSE(image.accepts_focus());
 }

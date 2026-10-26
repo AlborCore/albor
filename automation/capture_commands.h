@@ -23,7 +23,7 @@ namespace albor::automation
     struct CapturedFrame
     {
         // the reason the read produced no frame, which is empty when the bytes are usable (§6.3)
-        std::string error;
+        std::string error{};
 
         // the frame width in device pixels, which the header and the image both carry (§6.3, AD-27)
         int width = 0;
@@ -32,7 +32,7 @@ namespace albor::automation
         int height = 0;
 
         // the tightly packed premultiplied rgba8 bytes, which every backend reads in the same order (§6.3, AD-26)
-        std::vector<std::uint8_t> pixels;
+        std::vector<std::uint8_t> pixels{};
     };
 
     // the last frame the most recently bound window presented, which a capture flushes but never rebuilds (§10.3, §6.1)

@@ -1,6 +1,6 @@
 # Components
 
-The `.ui` language ships twenty elements: eleven containers that arrange children, and nine
+The `.ui` language ships twenty-one elements: eleven containers that arrange children, and ten
 leaves that draw or edit. Every element also carries the three common properties below, and
 every element may carry an `id`.
 
@@ -28,6 +28,7 @@ every element may carry an `id`.
 | [RadioButton](radio-group.md#radiobutton) | leaf | one choice inside a RadioGroup |
 | [NumericStepper](numeric-stepper.md) | leaf | a bounded number with increment and decrement |
 | [Canvas](canvas.md) | leaf | a drawing surface with a closed primitive vocabulary |
+| [Image](image.md) | leaf | a retained picture scaled into its arranged bounds |
 
 ## Common properties
 

@@ -61,14 +61,14 @@ those configurations (AD-10); **Not supported** means there is no Windows implem
 | Reactive properties and bindings | Full | shared eager-push runtime |
 | UI tree, components, event routing | Full | shared UI module |
 | Semantic tree and semantic provider | Full | shared semantics module |
-| Standard widgets | Full | twenty elements, including TextField, ListBox, ScrollView, TabView, RadioGroup and NumericStepper |
+| Standard widgets | Full | twenty-one elements, including Image, TextField, ListBox, ScrollView, TabView, RadioGroup and NumericStepper |
 | Text measurement and shaping | Full | HarfBuzz with DirectWrite resolution; 8 font tests and 4 shaped-run parity tests |
 | `.ui` compiler, parser and typed IR | Full | platform-neutral compiler, built and tested on Windows |
 | Manifest, glue generator and C++ codegen | Full | generated facades build on Windows |
 | Dev runtime and hot swap | Dev/Test | excluded from Release at link time |
 | LSP, preview host and inspector | Dev/Test | excluded from Release at link time |
 | Automation core and MCP server | Dev/Test | named-pipe transport; 10 transport tests and a host MCP exchange test |
-| Accessibility | Full with gaps | UI Automation; 13 role tests and 1 client test; value writing is read-only; stepper stepping and radio-group selection are not exposed |
+| Accessibility | Full with gaps | UI Automation; 14 role tests and 1 client test; value writing is read-only; stepper stepping and radio-group selection are not exposed |
 | Examples (`hello-world`, `form`) | Full | both build; the `form` example was launched against Win32/Direct3D |
 
 Windows has no code-coverage job comparable to `macos-coverage`; the existing
@@ -90,7 +90,7 @@ Windows has no code-coverage job comparable to `macos-coverage`; the existing
 | Input normalization, coalescing, focus | `input/`, `focus/` | shipped |
 | Layout: measure & arrange, containers | `layout/` | shipped |
 | Text, measurement, shaping | `text/` | baseline — HarfBuzz, embedded font registration and weight selection |
-| Standard widgets | `widgets/` | shipped — twenty elements |
+| Standard widgets | `widgets/` | shipped — twenty-one elements |
 | Animation core | `animation/` | baseline |
 | Compiler frontend, `.ui` parser, typed IR | `compiler/` | shipped |
 | Manifest parser, validator, glue generator | `manifest/` | shipped |

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <filesystem>
 #include <functional>
 #include <string_view>
 
@@ -30,6 +31,9 @@ namespace albor::devrt
 
         // the resolver that names the element a live node was built from, which finds a changed element (§12.1, AD-01)
         std::function<std::string_view(const UiNode&)> element_of;
+
+        // the directory an embedded image resolves against, or empty to use the path as written (§6.4, §12.1)
+        std::filesystem::path asset_root;
     };
 
     // what one reload changed, which a developer watches while typing and a test asserts on (§12.1)

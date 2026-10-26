@@ -18,7 +18,7 @@ namespace albor
         Key key = Key::None;
 
         // the modifiers the accelerator requires, which distinguishes cmd S from plain S (§18.5)
-        Modifiers modifiers;
+        Modifiers modifiers{};
 
         // report whether the accelerator carries no modifier, which routes it after the focused node (§18.5)
         [[nodiscard]] bool plain() const { return modifiers.none(); }

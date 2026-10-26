@@ -105,7 +105,7 @@ underlying targets directly. The framework's public building blocks are:
 | `albor-text-auto` | the recommended text engine |
 | `albor-text-harfbuzz-auto` | HarfBuzz shaping, line breaking and font resolution |
 | `albor-layout` | the measure/arrange contract and containers |
-| `albor-widgets` | Button, Label, TextField, Slider, CheckBox, RadioButton, RadioGroup, NumericStepper, Canvas, ListBox, ScrollView and the containers |
+| `albor-widgets` | Button, Label, TextField, Slider, CheckBox, RadioButton, RadioGroup, NumericStepper, Canvas, Image, ListBox, ScrollView, ProgressBar, TabView and the containers |
 | `albor-accessibility` | the semantic/accessibility bridge |
 | `albor-i18n` | translation catalogs and RTL helpers |
 | `albor-resources` | image decoding, the image registry and the font registry |
