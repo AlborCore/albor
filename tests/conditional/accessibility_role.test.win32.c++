@@ -316,7 +316,10 @@ TEST(Win32AccessibilityRole, ATabViewAnnouncesItsTabsAndTheirSelection) {
     // assert the group announces as a tab control, which is the container a reader navigates pages in (§10.2)
     Microsoft::WRL::ComPtr<IRawElementProviderFragment> root = fixture.announced_fragment();
     ASSERT_NE(root.Get(), nullptr);
-    Microsoft::WRL::ComPtr<IRawElementProviderSimple> group = WindowFixture::simple_of(root.Get());
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> announced_tabs;
+    ASSERT_HRESULT_SUCCEEDED(root->Navigate(NavigateDirection_FirstChild, announced_tabs.GetAddressOf()));
+    ASSERT_NE(announced_tabs.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderSimple> group = WindowFixture::simple_of(announced_tabs.Get());
     ASSERT_NE(group.Get(), nullptr);
     VARIANT control_type{};
     ASSERT_HRESULT_SUCCEEDED(group->GetPropertyValue(UIA_ControlTypePropertyId, &control_type));
@@ -325,7 +328,7 @@ TEST(Win32AccessibilityRole, ATabViewAnnouncesItsTabsAndTheirSelection) {
     VariantClear(&control_type);
     // assert the first page announces as a tab item and exposes the selection item pattern (§10.2)
     Microsoft::WRL::ComPtr<IRawElementProviderFragment> announced_first;
-    ASSERT_HRESULT_SUCCEEDED(root->Navigate(NavigateDirection_FirstChild, announced_first.GetAddressOf()));
+    ASSERT_HRESULT_SUCCEEDED(announced_tabs->Navigate(NavigateDirection_FirstChild, announced_first.GetAddressOf()));
     ASSERT_NE(announced_first.Get(), nullptr);
     Microsoft::WRL::ComPtr<IRawElementProviderSimple> first_simple = WindowFixture::simple_of(announced_first.Get());
     ASSERT_NE(first_simple.Get(), nullptr);
