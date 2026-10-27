@@ -18,6 +18,7 @@
 #include "compiler/lexer.h"
 #include "compiler/parser.h"
 #include "compiler/type_checker.h"
+#include "compiler/ui_loader.h"
 #include "compiler/value_type.h"
 #include "manifest/font_embed.h"
 #include "manifest/manifest.h"
@@ -165,14 +166,6 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "albor-codegen: usage: albor-codegen --input <file.ui> --output <dir> [--tu-chunk-size <n>] [--manifest <file>] [--depfile <file>] [--default-font-family <family>] [--font <family> <weight> <file> ...]\n");
         return 2;
     }
-    // the file is read whole, because the scanner takes the complete unit (§11.1)
-    std::ifstream stream(input, std::ios::binary);
-    if (!stream) {
-        std::fprintf(stderr, "albor-codegen: cannot open '%s'\n", albor::codegen::utf8_path(input).c_str());
-        return 1;
-    }
-    // the source text is read, because a scanner needs every character before it produces a token (§11.1)
-    std::string source = stream_text(stream);
     // the problems are collected in one list through the whole pipeline (§11.1)
     albor::compiler::DiagnosticList diagnostics;
     // the manifest is read and parsed, because its records are what the catalog resolves (§11.2, AD-17)
@@ -194,19 +187,28 @@ int main(int argc, char** argv) {
         albor::manifest::register_records(parsed, catalog);
     }
 
-    // the scanner turns the unit into tokens, after the records are known (§11.1, §11.2, AD-17)
-    const std::vector<albor::compiler::Token> tokens = albor::compiler::Lexer(source, diagnostics).tokenize();
-    // the parser turns the tokens into an untyped tree (§11.1)
-    const albor::compiler::SourceFile file = albor::compiler::Parser(tokens, diagnostics).parse();
-    // the structs the file declares join the catalog, which is what makes a property of one resolve (§11.1)
-    albor::compiler::register_ui_structs(file, catalog, diagnostics);
-    // the enums the file declares join the catalog, which is what makes a property of one hold a member (§11.1)
-    albor::compiler::register_ui_enums(file, catalog);
-    // the checker resolves the tree against the catalog, which holds the builtins and records (§11.2, §8)
-    const albor::compiler::CheckedFile checked = albor::compiler::TypeChecker(catalog, diagnostics).check(file);
+    // the loader reads the root and every ui file it imports, which is what brings their components into scope (§11.1)
+    const albor::compiler::UiFileReader reader = [](const std::filesystem::path& path) -> std::optional<std::string> {
+        // the file is opened as a binary stream, because the scanner takes every byte it carries (§11.1)
+        std::ifstream stream(path, std::ios::binary);
+        // a file the reader cannot open has no text, which the loader reports against the import (§11.1)
+        if (!stream)
+            return std::nullopt;
+        // the whole text is handed over, because the scanner consumes it whole (§11.1)
+        return stream_text(stream);
+    };
+    // the loader owns the parse trees, so it outlives every stage that reads the checked expressions (§11.1)
+    albor::compiler::UiImportLoader loader(catalog, diagnostics, reader);
+    // the root is checked with its imports, which is where a cross file component resolves (§11.1)
+    std::optional<albor::compiler::CheckedFile> checked = loader.check(input);
+    // a file that could not be loaded has already reported why, so the driver stops before generating (§11.1)
+    if (!checked.has_value()) {
+        print_diagnostics(diagnostics, albor::codegen::utf8_path(input));
+        return 1;
+    }
     // a clean tree is checked against the carried faces, because an uncarried selection is an error (§9.1)
     if (!diagnostics.has_errors())
-        albor::compiler::check_font_usage(checked, fonts, diagnostics);
+        albor::compiler::check_font_usage(*checked, fonts, diagnostics);
     // a blocking problem stops the driver before any generation, which is what a console compile reports (§11.1)
     if (diagnostics.has_errors()) {
         print_diagnostics(diagnostics, albor::codegen::utf8_path(input));
@@ -220,7 +222,7 @@ int main(int argc, char** argv) {
     generator.set_tu_chunk_size(tu_chunk_size);
     // the source path is what embedded assets resolve against, because a build runs from any directory (§6.4)
     generator.set_source_path(input);
-    const std::vector<albor::compiler::GeneratedFile> files = generator.generate(checked);
+    const std::vector<albor::compiler::GeneratedFile> files = generator.generate(*checked);
     // the generator adds its own blocking problems, which are reported the same way (§11.3)
     if (files.empty() || diagnostics.has_errors()) {
         print_diagnostics(diagnostics, albor::codegen::utf8_path(input));
@@ -232,8 +234,12 @@ int main(int argc, char** argv) {
     // the generated files land under the output directory, which is the compile result of the ui unit (§14.2)
     if (!write_files(files, output))
         return 1;
+    // the imported files and embedded assets are what the build must watch, because either can change this unit (§14.2)
+    std::vector<std::filesystem::path> dependencies = loader.dependencies();
+    // the assets are appended after the imports, because both are read by this run (§6.4, §14.2)
+    dependencies.insert(dependencies.end(), generator.asset_paths().begin(), generator.asset_paths().end());
     // the depfile is written after the units, so a build only reads dependencies for a successful run (§14.2)
-    if (!depfile.empty() && !albor::codegen::write_depfile(depfile, files, output, input, generator.asset_paths())) {
+    if (!depfile.empty() && !albor::codegen::write_depfile(depfile, files, output, input, dependencies)) {
         // a depfile that cannot be written leaves the build unable to track assets, which is a failed run (§14.2)
         std::fprintf(stderr, "albor-codegen: cannot write '%s'\n", albor::codegen::utf8_path(depfile).c_str());
         return 1;

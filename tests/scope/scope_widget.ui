@@ -1,5 +1,7 @@
 // the build-scope fixture, which the §14.3 check edits to observe the recompile set (§14.3)
 
+import "scope_panel.ui";
+
 component ScopeWidget {
     in property<string> user_name: "World";
     inout property<int> click_count: 0;
@@ -13,6 +15,10 @@ component ScopeWidget {
         Label {
             text: @tr("Hello, ") + user_name + "!";
             font_size: 17px;
+        }
+
+        ScopePanel {
+            label_text: "Shared";
         }
 
         Row {

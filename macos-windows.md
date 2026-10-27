@@ -250,6 +250,16 @@ job remains a tracked enhancement rather than a parity requirement.
 - Added the `Image` widget with natural or explicit sizing, retained pixel painting, semantic name and bounds,
   preview asset resolution beside the source file and dev-runtime asset-root resolution. Both accessibility
   bridges already mapped `SemanticRole::Image`, so the parity suites carry the role without a bridge change.
+- Carried cross-file `.ui` composition through the portable compiler and CMake helpers: import paths resolve with
+  `std::filesystem`, diagnostics use `generic_string()`, and `IMPORTS` resolves a relative path beside the importer
+  before ordering imported units by absolute source path. `build/check-build-scope.sh` now runs in both debug
+  matrix jobs, uses portable `sed -i.bak`, and normalizes the `.obj` suffix so the imported body and interface
+  rebuild sets are checked on Windows and macOS. The Windows debug and release builds remain the CI authority for
+  separator and depfile behavior.
+- Added the `albor-lsp` stdio executable over the existing language-server library. The portable transport reads
+  and writes `Content-Length` frames and is covered by framing tests; Windows additionally switches stdin and
+  stdout to binary mode so the CRT does not translate frame bytes, while macOS uses the portable no-op shim.
+  Windows CI is the build authority for that platform source.
 - Updated `README.md` and `docs/status.md` to describe both accessibility bridges.
 
 ## 9. Remaining priorities

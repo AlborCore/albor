@@ -1,7 +1,10 @@
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
+#include <system_error>
 #include <tuple>
 
 #include <gtest/gtest.h>
@@ -10,6 +13,7 @@
 #include "compiler/ir_serializer.h"
 #include "compiler/lexer.h"
 #include "compiler/parser.h"
+#include "compiler/ui_loader.h"
 #include "core/dev_hook.h"
 #include "devrt/devrt.h"
 #include "devrt/element_table.h"
@@ -413,6 +417,98 @@ TEST(DevElementChecks, AnImageSourceResolvesAgainstTheReloadAssetRoot) {
     EXPECT_EQ(image->description(), "Logo");
     EXPECT_FLOAT_EQ(image->width(), 32.0f);
     EXPECT_FLOAT_EQ(image->height(), 16.0f);
+}
+
+TEST(DevReloadChecks, AnImportedComponentIsExpandedBeforeTheDefinitionReachesTheRuntime) {
+    // arrange a panel beside a window, because the reload receives one tree and the import is saved (§11.1, §12.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-devrt-import";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the panel reads its property in the label, which is the value the window substitutes (§11.1)
+    std::ofstream(root / "panel.ui") << R"(component Panel { in property<string> label_text: "Panel"; Column { Label { id: greeting; text: label_text; } } })";
+    // the window imports the panel and names the instance, which is the identity a reload preserves (§11.1, AD-11)
+    std::ofstream(root / "window.ui") << R"(import "panel.ui"; component Window { Column { Panel { id: side_panel; label_text: "Shared"; } } })";
+    // the loader reads both files and checks the import, because the IR carries the expanded result (§11.1)
+    compiler::DiagnosticList diagnostics;
+    compiler::ElementCatalog catalog = compiler::ElementCatalog::with_builtins();
+    compiler::UiImportLoader loader(catalog, diagnostics, [](const std::filesystem::path& path) -> std::optional<std::string> {
+        // each file is read from disk, because the loader asks for the root and every import (§11.1)
+        std::ifstream file(path, std::ios::binary);
+        // a missing file is reported by the loader, because the test wrote both (§11.1)
+        if (!file)
+            return std::nullopt;
+        // the bytes are the source the parser takes (§11.1)
+        return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    });
+    // act the import is checked and expanded into the definition the runtime applies (§12.1)
+    const std::optional<compiler::CheckedFile> checked = loader.check(root / "window.ui");
+    ASSERT_TRUE(checked.has_value());
+    EXPECT_EQ(diagnostics.count(), 0U);
+    const std::optional<IrNode> definition = compiler::serialize_component(checked->components.front(), checked->imported_components);
+    ASSERT_TRUE(definition.has_value());
+    // assert the imported instance became its root and the instance id reached that root (§12.1, AD-11)
+    ASSERT_EQ(definition->children.size(), 1U);
+    EXPECT_EQ(definition->children.at(0).element, "Column");
+    EXPECT_EQ(definition->children.at(0).id, "side_panel");
+    // the runtime tree starts empty, because the reload is what populates it (§12.1)
+    ReloadFixture fixture;
+    UiNode tree;
+    const ReloadReport report = apply_reload(tree, *definition, fixture.context);
+    // assert the expanded children were built and the property substitution reached the label (§12.1, §11.1)
+    EXPECT_EQ(report.added, 2U);
+    Label* label = dynamic_cast<Label*>(find_by_id(tree, "greeting"));
+    ASSERT_NE(label, nullptr);
+    EXPECT_EQ(label->text(), "Shared");
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(DevReloadChecks, AnImportedAssetResolvesBesideItsDefiningFile) {
+    // arrange a panel in a subdirectory whose image sits beside the panel, not beside the window (§6.4)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-devrt-import-image";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root / "panels");
+    std::filesystem::copy_file(std::filesystem::path(ALBOR_TEST_VECTORS_DIR) / "icon.png", root / "panels" / "icon.png", std::filesystem::copy_options::overwrite_existing);
+    std::ofstream(root / "panels" / "panel.ui") << R"(component Panel { in property<image> icon: @image("icon.png"); Image { id: logo; source: icon; } })";
+    std::ofstream(root / "window.ui") << R"(import "panels/panel.ui"; component Window { Column { Panel {} } })";
+    compiler::DiagnosticList diagnostics;
+    compiler::ElementCatalog catalog = compiler::ElementCatalog::with_builtins();
+    compiler::UiImportLoader loader(catalog, diagnostics, [](const std::filesystem::path& path) -> std::optional<std::string> {
+        // each file is read from disk, because the loader asks for the root and every import (§11.1)
+        std::ifstream file(path, std::ios::binary);
+        // a missing file is reported by the loader, because the test wrote both (§11.1)
+        if (!file)
+            return std::nullopt;
+        // the bytes are the source the parser takes (§11.1)
+        return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    });
+    // act the window is checked and serialized with its source path, which is what resolves the panel asset (§12.1)
+    const std::optional<compiler::CheckedFile> checked = loader.check(root / "window.ui");
+    ASSERT_TRUE(checked.has_value());
+    EXPECT_EQ(diagnostics.count(), 0U);
+    const std::optional<IrNode> definition = compiler::serialize_component(checked->components.front(), checked->imported_components, root / "window.ui");
+    ASSERT_TRUE(definition.has_value());
+    // assert the imported image carries an absolute path beside the panel, because the window names no asset (§6.4)
+    ASSERT_EQ(definition->children.size(), 1U);
+    EXPECT_EQ(definition->children.at(0).element, "Image");
+    std::string source;
+    for (const IrProperty& property : definition->children.at(0).properties)
+        if (property.name == "source")
+            source = property.value;
+    ASSERT_FALSE(source.empty());
+    EXPECT_EQ(source.rfind(IMAGE_VALUE_PREFIX, 0), 0U);
+    EXPECT_NE(source.find("panels/icon.png"), std::string::npos);
+    // the runtime tree starts empty, because the reload is what populates it (§12.1)
+    ReloadFixture fixture;
+    ColumnLayout tree;
+    const ReloadReport report = apply_reload(tree, *definition, fixture.context);
+    // assert the absolute path loaded the image without an asset root, because it was already resolved (§6.4)
+    EXPECT_EQ(report.added, 1U);
+    Image* image = dynamic_cast<Image*>(find_by_id(tree, "logo"));
+    ASSERT_NE(image, nullptr);
+    EXPECT_NE(image->source(), nullptr);
+    std::filesystem::remove_all(root, ignored);
 }
 
 TEST(DevReloadChecks, AFirstReloadPopulatesAnEmptyTree) {

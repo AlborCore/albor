@@ -72,6 +72,27 @@ TEST(DepfileChecks, WritesOneRulePerGeneratedUnit) {
     std::filesystem::remove_all(root, ignored);
 }
 
+TEST(DepfileChecks, NamesTheRootOnceAndKeepsImports) {
+    // arrange a root that also appears in the dependency list, which is what the loader hands the driver (§11.1, §14.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-depfile-imports";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    const std::vector<albor::compiler::GeneratedFile> files{{.path = "c.h", .content = "header"}};
+    const std::filesystem::path input = root / "source.ui";
+    const std::filesystem::path imported = root / "panel.ui";
+    const std::vector<std::filesystem::path> dependencies{input, imported};
+    const std::filesystem::path depfile = root / "unit.d";
+    // act
+    const bool written = albor::codegen::write_depfile(depfile, files, root / "out", input, dependencies);
+    std::ifstream stream(depfile, std::ios::binary);
+    const std::string content((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+    // assert the root is named once and the import is retained (§14.2)
+    EXPECT_TRUE(written);
+    const std::string prefix = albor::codegen::depfile_path(root);
+    EXPECT_EQ(content, prefix + "/out/c.h: " + prefix + "/source.ui " + prefix + "/panel.ui\n");
+    std::filesystem::remove_all(root, ignored);
+}
+
 TEST(DepfileChecks, RefusesADirectoryThatCannotBeCreated) {
     // arrange
     const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-depfile-blocked";

@@ -60,6 +60,9 @@ namespace albor::compiler
 
         // the stable identifier tooling matches on, which is never prose (§11.1)
         std::string code;
+
+        // the file the problem belongs to, which overrides the driver path for a diagnostic from an import (§11.1)
+        std::string path;
     };
 
     // every problem found in one compilation, which is returned rather than thrown (§2.1, AD-01)

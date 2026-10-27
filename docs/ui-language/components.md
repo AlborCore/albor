@@ -56,19 +56,39 @@ component App {
 The rules:
 
 - **The file's own components resolve first.** If a file declares a component named `Label`,
-  elements named `Label` are *that* component, not the built-in one. The same shadow rule the
-  type resolver follows applies to elements.
-- **Composition is same-file.** A component instantiates only components its own file
-  declares. Native widgets and [manifest components](../concepts/native-components.md) are
-  resolved by the catalog otherwise.
+  elements named `Label` are *that* component, not the built-in one. Imported components resolve
+  next, and the catalog is the last resort. The same shadow rule the type resolver follows
+  applies to elements.
+- **Composition may cross a file boundary.** A file imports another file's component with a
+  quoted path, resolved relative to the importing file. The path uses `/` on every platform,
+  because it names a portable source path:
+  ```text
+  import "panels/side_panel.ui";
+
+  component Inspector {
+      SidePanel {
+          title: "Parameters";
+      }
+  }
+  ```
+- **An imported file declares one component named after itself.** `side_panel.ui` declares
+  `SidePanel`, because that source generates one facade pair. A file that exports several
+  components exports them from several files.
+- **Inheritance stays same-file.** An imported component may be instantiated but not used as a
+  base, because the derived member set is flattened while its own file is checked.
 - **An instance takes no children.** A composed instance builds the component's own tree;
   content written on it is rejected. Content is what
   [inheritance](#inheritance) supplies alone.
 - **A graph may not instantiate itself.** A component that contains a chain back to itself is
-  reported as a cycle.
+  reported as a cycle, and an import cycle is reported at the file graph.
 
-On the C++ side, each instance is a member that constructs the sibling's facade with both
-engines the window owns, and the host binds against that facade's generated accessors.
+On the C++ side, each instance is a member that constructs the imported facade with both engines
+the window owns, and the host binds against that facade's generated accessors. The build helper
+compiles every imported file into the same target and orders its generated headers first; see
+[Wiring the build](../tooling.md#the-cmake-helpers). The preview host and the dev runtime have no
+generated facade, so they expand the imported tree and apply the instance values before building
+it. An asset written in the imported file resolves beside that file, not beside the importing one,
+so a panel can keep its images in its own directory.
 
 ## Identity
 

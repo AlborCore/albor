@@ -1269,23 +1269,48 @@ component App {
 }
 ```
 
-An element name resolves against the file's own components before the catalog, so a declared name
-shadows a manifest-native type of the same spelling — the same precedence a type name follows. An
-instance assigns against the component's own properties and attaches handlers to the signals it
-declares through the ordinary eager-push path: an assignment with a source becomes a binding whose
-dependencies are the source's `PropertyId`s and whose write lands on the instance's setter (§13.3,
-§14.1), and a handler subscribes to the signal the facade raises.
+An element name resolves against the file's own components first, then the components imported
+from other `.ui` files, and only then the catalog. A declared name shadows a manifest-native type
+of the same spelling — the same precedence a type name follows. An instance assigns against the
+component's own properties and attaches handlers to the signals it declares through the ordinary
+eager-push path: an assignment with a source becomes a binding whose dependencies are the source's
+`PropertyId`s and whose write lands on the instance's setter (§13.3, §14.1), and a handler
+subscribes to the signal the facade raises.
 
-Composition is same-file and one direction: a component instantiates only components its own file
-declares, an instance takes no children — content is what a derived component supplies alone, so
-children written on an instance are refused — and a component graph that instantiates itself is
-refused outright.
+A file brings another file's components into scope with a quoted path:
 
-For codegen (§14.1) each instance is a member that constructs the sibling's concrete facade with
+```text
+import "panels/side_panel.ui";
+```
+
+The path resolves relative to the importing file, and the import graph is loaded before checking.
+An imported `.ui` file declares exactly one component, whose name is the file stem in PascalCase,
+because one source generates one facade pair; a file that wants to export several components
+exports them from several files. An imported component may be instantiated but not used as a base,
+because inheritance stays same-file: a derived component's merged member set must be known while
+that file is checked. An import cycle is refused at the file graph level, which also rules out a
+cross-file component cycle. A file that fails checking still publishes the component interface it
+declares, because the importer must not turn one error in the defining file into a cascade of
+unknown-element errors; the defining file's diagnostics remain the blocking problem.
+
+An instance takes no children — content is what a derived component supplies alone, so children
+written on an instance are refused — and a component graph that instantiates itself is refused
+outright.
+
+For codegen (§14.1) each instance is a member that constructs the imported concrete facade with
 both engines and includes its generated header: the opaque-body boundary AD-03 draws around a
-manifest component applies across a file boundary the same way. Nothing beyond the facade itself
+manifest component applies across a file boundary the same way. The importer's generated unit
+depends on the imported facade header, so the build helper (`IMPORTS`) compiles the imported file
+into the same target and orders its generated units first. Nothing beyond the facade itself
 intervenes, and no runtime registry of components exists, because the file's component list exists
-only while the file compiles (AD-01).
+only while the files compile (AD-01).
+
+The design-time paths have no generated facade to construct: the preview host and the dev runtime
+expand an imported instance into the imported checked tree before building it, substituting the
+instance assignments and the component's declared defaults. An imported-body edit therefore reaches
+the next preview or reload without a build, and the compiled path keeps the facade boundary. An
+asset written in an imported file resolves beside that defining file, not beside the importer, so a
+panel can keep its images in its own directory.
 
 #### Inheritance and Slotted Content
 
@@ -1900,12 +1925,16 @@ module's shape has to accommodate it before the widgets are built rather than af
 ```cpp
 namespace albor {
 
+// the lifetime token a widget records into history, which its destruction revokes (§18.4)
+class UndoOwner;
+
 // one reversible step, which the stack owns until it is undone or dropped (§18.5)
 struct UndoEntry
 {
     std::string label;
-    std::function<void()> undo;
-    std::function<void()> redo;
+    std::function<void(const CommandInvocation&)> undo;
+    std::function<void(const CommandInvocation&)> redo;
+    std::shared_ptr<UndoOwner> owner;
 };
 
 // the coalescing scope, which folds consecutive steps into one entry (§18.5)
@@ -1922,13 +1951,15 @@ public:
     [[nodiscard]] bool undo();
     [[nodiscard]] bool redo();
     void clear();
+    void remove_owner(const std::shared_ptr<UndoOwner>& owner);
+    [[nodiscard]] std::shared_ptr<const bool> lifetime() const;
     [[nodiscard]] std::size_t depth() const;
     void set_depth_limit(std::size_t limit);
 };
 }
 ```
 
-Three properties are specified rather than suggested:
+Four properties are specified rather than suggested:
 
 1. **One invocation, one entry.** The entry is pushed from inside `Command::invoke`, never from a
    widget, so the route the invocation arrived by is irrelevant to the history. A pointer press, a
@@ -1941,9 +1972,20 @@ Three properties are specified rather than suggested:
    `can_undo()` and `can_redo()` as their enabled state. They are the smallest complete demonstration
    of AD-15: the enablement of one shared object decides what three consumers do, and no consumer
    holds a copy of the answer.
+4. **A dead recorder contributes no step.** A widget whose entries capture it records one
+   `UndoOwner` token into every entry. The token revokes itself when the owner is destroyed, and
+   the stack's `remove_owner` revokes it too, drops the entries in both directions and notifies its
+   observers; a group that folded a copied step skips it rather than calling a destroyed object.
+   A widget that borrows a stack also holds the stack's lifetime token and checks it before calling
+   back, so a field that outlives its stack neither calls a dead object nor records into it. A
+   direct `revoke()` marks the entries dead without a notification, which is what the lower-level
+   token operation means; `remove_owner` is the pruning form. `can_undo`, `can_redo`, `depth` and
+   `top_label` report only live steps; no stale history is presented to the user.
 
-The stack is bounded. `set_depth_limit` caps the retained history and drops the oldest entry when it
-is reached, because an unbounded stack in a long-lived editor is a leak the user pays for.
+The stack is bounded. `set_depth_limit` caps the retained history, and `trim` removes dead entries
+before it enforces the cap, so revoked history never displaces a live step. Lowering the cap drops
+the oldest live entries and notifies observers, because an unbounded stack in a long-lived editor is
+a leak the user pays for.
 
 ### 18.5 Shortcuts
 

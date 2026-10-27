@@ -145,9 +145,19 @@ target_link_libraries(my-app PRIVATE albor)
     repository's top-level build includes. Editing the `.ui` file rebuilds only that
     component's generated translation unit — not the whole tree.
 
-`greeting_panel.h` and `greeting_panel.cpp` appear under the build directory. The header is a
-**concrete facade**: property accessors, signal slots and construction — no abstract base, no
-virtual dispatch.
+When a `.ui` file imports another one, declare the imported file first and name it in
+`IMPORTS`:
+
+```cmake
+albor_build_ui_component(my-app "${CMAKE_CURRENT_SOURCE_DIR}/side_panel.ui")
+albor_build_ui_component(my-app "${CMAKE_CURRENT_SOURCE_DIR}/main.ui" IMPORTS "${CMAKE_CURRENT_SOURCE_DIR}/side_panel.ui")
+```
+
+A relative `IMPORTS` path resolves beside the importing `.ui` file, which is where the
+language resolves it. The helper compiles both files into the same target and keeps the
+imported header ahead of the unit that includes it. `greeting_panel.h` and `greeting_panel.cpp` appear under the build
+directory. The header is a **concrete facade**: property accessors, signal slots and
+construction — no abstract base, no virtual dispatch.
 
 ## Open the first window
 

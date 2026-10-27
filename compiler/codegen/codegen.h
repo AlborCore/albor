@@ -10,6 +10,9 @@
 
 namespace albor::compiler
 {
+    // the generated header a component facade lives in, which an importer includes by name (§11.1)
+    [[nodiscard]] std::string component_header_name(std::string_view component_name);
+
     // one emitted file, which the caller writes under its output directory (§14.2)
     struct GeneratedFile
     {

@@ -61,6 +61,9 @@ namespace albor::language_server
         // hand out how many documents are open, which a test asserts on (§12.2)
         [[nodiscard]] std::size_t size() const;
 
+        // hand out every open uri, which lets one compile read another file's unsaved buffer (§12.2)
+        [[nodiscard]] std::vector<std::string> uris() const;
+
         // forget a document, which is what didClose means (§12.2)
         void close(std::string_view uri);
 

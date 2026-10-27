@@ -105,6 +105,12 @@ namespace albor
     TextField::~TextField() {
         // the blink is ended before the field dies, because the engine holds a callback that calls into it (§7.3)
         stop_blink();
+        // the live stack drops the entries and tells its observers, because the field no longer restores (§18)
+        if (UndoStack* stack = live_undo_stack(); stack != nullptr && m_undo_owner != nullptr)
+            stack->remove_owner(m_undo_owner);
+        // a field with no live stack still revokes, because a folded group may hold a copied entry (§18)
+        else if (m_undo_owner != nullptr)
+            m_undo_owner->revoke();
     }
 
     bool TextField::shows_caret() const {
@@ -308,8 +314,8 @@ namespace albor
                     select_all();
                     return;
                 }
-                // the undo key reverses one edit, which a field with no stack declines (§18)
-                if (event.key == Key::Z && m_undo_stack != nullptr) {
+                // the undo key reverses one edit, which a field with no live stack declines (§18)
+                if (event.key == Key::Z && live_undo_stack() != nullptr) {
                     event.handled = true;
                     if (event.modifiers.shift)
                         redo();
@@ -1101,28 +1107,54 @@ namespace albor
     }
 
     void TextField::undo() {
-        // a field with no stack has nothing to reverse, because history lives on the stack (§18)
-        if (m_undo_stack == nullptr)
-            return;
+        // a field with no live stack has nothing to reverse, because history lives on the stack (§18)
+        UndoStack* stack = live_undo_stack();
         // the stack reverses the entry it holds, which restores through restore (§18)
-        (void)m_undo_stack->undo();
+        if (stack != nullptr)
+            (void)stack->undo();
     }
 
     void TextField::redo() {
-        // a field with no stack has nothing to reapply, because history lives on the stack (§18)
-        if (m_undo_stack == nullptr)
-            return;
+        // a field with no live stack has nothing to reapply, because history lives on the stack (§18)
+        UndoStack* stack = live_undo_stack();
         // the stack reapplies the entry it holds, which restores through restore (§18)
-        (void)m_undo_stack->redo();
+        if (stack != nullptr)
+            (void)stack->redo();
     }
 
     void TextField::bind_undo_stack(UndoStack* stack) {
+        // an unchanged live binding keeps the history the field already recorded (§18)
+        if (m_undo_stack == stack && (stack == nullptr || (m_undo_lifetime != nullptr && *m_undo_lifetime)))
+            return;
+        // the old stack must still be alive before it is called (§18)
+        UndoStack* previous = live_undo_stack();
+        // the old stack drops the owner and tells its observers, because the field no longer restores through it (§18)
+        if (previous != nullptr && m_undo_owner != nullptr)
+            previous->remove_owner(m_undo_owner);
+        // an old owner with no live stack is still revoked, because a folded group may hold a copied entry (§18)
+        else if (m_undo_owner != nullptr)
+            m_undo_owner->revoke();
+        // the token starts fresh on the new stack, because a revoked one can never publish again (§18)
+        m_undo_owner.reset();
         // the stack is borrowed, which an unbind clears (§18)
         m_undo_stack = stack;
+        // the lifetime token proves the borrowed pointer is still callable while the field edits (§18)
+        m_undo_lifetime = stack != nullptr ? stack->lifetime() : nullptr;
     }
 
     UndoStack* TextField::undo_stack() const {
-        // the stack is the one that was bound, which is null while edits record nothing (§18)
+        // the stack is handed out only while it lives, because a stale pointer is not a stack (§18)
+        return live_undo_stack();
+    }
+
+    UndoStack* TextField::live_undo_stack() const {
+        // a field with no binding records nothing, which is the unbound default (§18)
+        if (m_undo_stack == nullptr || m_undo_lifetime == nullptr)
+            return nullptr;
+        // a revoked token means the borrowed object is gone, so there is no stack to call (§18)
+        if (!*m_undo_lifetime)
+            return nullptr;
+        // the pointer is live, because its token is still set (§18)
         return m_undo_stack;
     }
 
@@ -1295,8 +1327,16 @@ namespace albor
         // the state after the edit is the one the field now holds (§18)
         const std::string after = m_value;
         const std::size_t after_caret = m_caret;
+        // an edit with no live stack records nothing, because its history has nowhere to live (§18)
+        UndoStack* stack = live_undo_stack();
+        // the field still edits, which is what an unbound control does (§18)
+        if (stack == nullptr)
+            return;
+        // the owner token is created once, because every entry the field records shares one lifetime (§18)
+        if (m_undo_owner == nullptr)
+            m_undo_owner = std::make_shared<UndoOwner>();
         // the entry reverses to the before snapshot and reapplies the after one through the field (§18)
-        m_undo_stack->push(UndoEntry{.label = "edit", .undo = [this, value = std::move(before), caret = before_caret](const CommandInvocation&) { restore(value, caret); }, .redo = [this, value = after, caret = after_caret](const CommandInvocation&) { restore(value, caret); }});
+        stack->push(UndoEntry{.label = "edit", .undo = [this, value = std::move(before), caret = before_caret](const CommandInvocation&) { restore(value, caret); }, .redo = [this, value = after, caret = after_caret](const CommandInvocation&) { restore(value, caret); }, .owner = m_undo_owner});
     }
 
     void TextField::restore(std::string value, std::size_t caret) {

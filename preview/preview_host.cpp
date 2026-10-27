@@ -1,17 +1,22 @@
 #include "preview/preview_host.h"
 
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "compiler/ast.h"
 #include "compiler/codegen/codegen.h"
-#include "compiler/lexer.h"
-#include "compiler/parser.h"
+#include "compiler/import_expander.h"
 #include "compiler/static_expression.h"
 #include "compiler/type_checker.h"
+#include "compiler/ui_loader.h"
 #include "compiler/value_type.h"
 #include "i18n/catalog.h"
 #include "layout/column_layout.h"
@@ -69,6 +74,41 @@ namespace albor::preview
             // a grouping is transparent to the number, because the parentheses change no value (§11.1)
             if (const auto* grouping = dynamic_cast<const compiler::GroupingExpression*>(&expression); grouping != nullptr)
                 return number_of_expression(*grouping->inner, result);
+            // an arithmetic application resolves when both operands are static (§12.2)
+            if (const auto* binary = dynamic_cast<const compiler::BinaryExpression*>(&expression); binary != nullptr) {
+                // both operands must resolve, because a binding has no preview value (§12.2)
+                double left = 0.0;
+                double right = 0.0;
+                if (!number_of_expression(*binary->left, left) || !number_of_expression(*binary->right, right))
+                    return false;
+                // the operator decides the result, which mirrors the compiled arithmetic (§11.1)
+                switch (binary->op) {
+                case compiler::BinaryOperator::Add:
+                    result = left + right;
+                    return true;
+                case compiler::BinaryOperator::Subtract:
+                    result = left - right;
+                    return true;
+                case compiler::BinaryOperator::Multiply:
+                    result = left * right;
+                    return true;
+                case compiler::BinaryOperator::Divide:
+                    // a zero divisor has no value, which the preview leaves for the diagnostics (§12.2)
+                    if (right == 0.0)
+                        return false;
+                    result = left / right;
+                    return true;
+                case compiler::BinaryOperator::Modulo:
+                    // a zero divisor has no remainder, which the preview leaves for the diagnostics (§12.2)
+                    if (right == 0.0)
+                        return false;
+                    result = std::fmod(left, right);
+                    return true;
+                default:
+                    // a comparison produces a bool, which is not a numeric preview value (§12.2)
+                    return false;
+                }
+            }
             // anything else is a binding, which the preview does not evaluate (§12.2)
             return false;
         }
@@ -84,18 +124,44 @@ namespace albor::preview
             return literal->text.size() >= 3 && literal->text.substr(literal->text.size() - 3) == "phx";
         }
 
+        // the static text an expression spells, which a preview can resolve without a binding (§12.2)
+        bool static_text(const compiler::Expression& expression, std::string& result) {
+            // a plain literal is the common case in a preview, because no binding drives it here (§12.2)
+            if (const auto* literal = dynamic_cast<const compiler::LiteralExpression*>(&expression); literal != nullptr) {
+                // the spelling is the text, because a string literal is written as it reads (§12.2)
+                result = literal->text;
+                return true;
+            }
+            // a translation resolves through the catalogue, because that is what the macro means (§9.2, §12.2)
+            if (const auto* translation = dynamic_cast<const compiler::TranslationExpression*>(&expression); translation != nullptr) {
+                // the catalogue decides, which is the same lookup the compiled path performs (§9.2)
+                result = i18n::translate(translation->text);
+                return true;
+            }
+            // a grouping is transparent to the text, because the parentheses change no value (§11.1)
+            if (const auto* grouping = dynamic_cast<const compiler::GroupingExpression*>(&expression); grouping != nullptr)
+                return static_text(*grouping->inner, result);
+            // a concatenation joins two static runs, which is the form an imported value takes (§11.1)
+            if (const auto* binary = dynamic_cast<const compiler::BinaryExpression*>(&expression); binary != nullptr && binary->op == compiler::BinaryOperator::Add) {
+                // both halves must resolve, because an empty half is not the author's text (§12.2)
+                std::string left;
+                std::string right;
+                if (!static_text(*binary->left, left) || !static_text(*binary->right, right))
+                    return false;
+                // the joined run is the text the label shows (§12.2)
+                result = std::move(left) + right;
+                return true;
+            }
+            // a binding has no static text, which a preview shows empty rather than guessing (§12.2)
+            return false;
+        }
+
         // the text a written value carries, which is what a label shows (§12.2, §9.1)
         std::string text_of(const compiler::Expression& expression) {
-            // a plain literal is the common case in a preview, because no binding drives it here (§12.2)
-            if (const auto* literal = dynamic_cast<const compiler::LiteralExpression*>(&expression); literal != nullptr)
-                // the spelling is the text, because a string literal is written as it reads (§12.2)
-                return literal->text;
-            // a translation resolves through the catalogue, because that is what the macro means (§9.2, §12.2)
-            if (const auto* translation = dynamic_cast<const compiler::TranslationExpression*>(&expression); translation != nullptr)
-                // the catalogue decides, which is the same lookup the compiled path performs (§9.2)
-                return i18n::translate(translation->text);
-            // anything else has no static text, which a preview shows empty rather than guessing (§12.2)
-            return {};
+            // the resolved run is returned, because a preview shows the author's static text (§12.2)
+            std::string text;
+            // a value with no static form shows empty, which the diagnostics already cover (§12.2)
+            return static_text(expression, text) ? text : std::string{};
         }
 
         // resolve an embedded asset beside the source, which is where a saved ui file keeps its images (§12.2, §6.4)
@@ -354,6 +420,9 @@ namespace albor::preview
             }
             // each child is built and adopted, which is the preorder a compiled build uses (§11.3)
             for (const std::shared_ptr<compiler::CheckedNode>& child : node.children) {
+                // a missing child carries nothing, which the expander may leave when a component has no root (§12.1)
+                if (child == nullptr)
+                    continue;
                 // the child is built by the same rule, which is the whole of the recursion (§12.2)
                 std::unique_ptr<UiNode> built_child = instantiate(*child, engine, text_engine, source_path);
                 // a child that could not be built is skipped, which the diagnostics already reported (§12.2)
@@ -373,35 +442,65 @@ namespace albor::preview
     } // namespace
 
     PreviewResult build(const std::string& source, BindingEngine& engine, const std::filesystem::path& source_path) {
+        // the result is reported even when nothing could be built, because the window shows the count (§12.2)
+        PreviewResult result;
         // the diagnostics accumulate, because a preview window shows them rather than swallowing them (§12.2)
         compiler::DiagnosticList diagnostics;
-        // the front end runs in process, which makes this a design time tool and not a shipped path (§12.2)
-        const std::vector<compiler::Token> tokens = compiler::Lexer(source, diagnostics).tokenize();
-        // the parser builds the untyped tree (§11.1)
-        const compiler::SourceFile file = compiler::Parser(tokens, diagnostics).parse();
-        // the checker resolves it, which is what carries the property types (§11.1)
-        const compiler::CheckedFile checked = compiler::TypeChecker(compiler::ElementCatalog::with_builtins(), diagnostics).check(file);
+        // the root is named even for an unsaved buffer, because an import needs a directory (§11.1)
+        const std::filesystem::path root_path = source_path.empty() ? std::filesystem::path("preview.ui") : source_path;
+        // the keys are normalized once, because the loader normalizes the paths it reads (§11.1)
+        const std::filesystem::path normalized_root = root_path.lexically_normal();
+        // the catalog is mutable, because every imported file registers the records it declares (§11.1)
+        compiler::ElementCatalog catalog = compiler::ElementCatalog::with_builtins();
+        // the reader returns the editor buffer for the root and reads an import from beside it (§12.2)
+        compiler::UiImportLoader loader(catalog, diagnostics, [&source, &normalized_root](const std::filesystem::path& path) -> std::optional<std::string> {
+            // the root buffer is what the editor shows, which may not be saved yet (§12.2)
+            if (path.lexically_normal() == normalized_root)
+                return source;
+            // an imported file is read from disk, because it is a saved source beside the importing file (§11.1)
+            std::ifstream file(path, std::ios::binary);
+            // a missing file is reported by the loader against the import that named it (§11.1)
+            if (!file)
+                return std::nullopt;
+            // the bytes are the source the parser takes (§11.1)
+            return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+        });
+        // the loader checks the root and every file it imports, which is what resolves a cross-file component (§11.1)
+        const std::optional<compiler::CheckedFile> checked = loader.check(root_path);
+        // a file with errors builds nothing, because half a component would mislead a designer (§12.2)
+        if (!checked.has_value()) {
+            // the count is what the preview window shows when the source could not be read (§12.2)
+            result.diagnostics = diagnostics.count();
+            // nothing is built, because the source did not check (§12.2)
+            return result;
+        }
         // the generator runs too, because a diagnostic may come only from codegen (§11.3)
         compiler::CodeGenerator generator(diagnostics);
         // a saved source resolves its assets beside itself, which is what the build does (§12.2, §6.4)
         if (!source_path.empty())
             generator.set_source_path(source_path);
-        // the generated output is discarded, because the preview only needs the diagnostics (§11.3)
-        (void)generator.generate(checked);
-        // the result is reported even when nothing could be built, because the window shows the count (§12.2)
-        PreviewResult result;
+        // a tree with a type error is not generated, because only a clean one reaches the backend (§11.3)
+        if (!diagnostics.has_errors()) {
+            // the generated output is discarded, because the preview only needs the diagnostics (§11.3)
+            (void)generator.generate(*checked);
+        }
         // the count is kept, which is what a designer reads (§12.2)
         result.diagnostics = diagnostics.count();
         // a file with errors builds nothing, because half a component would mislead a designer (§12.2)
-        if (diagnostics.count() != 0 || checked.components.empty())
+        if (diagnostics.count() != 0 || checked->components.empty())
             return result;
         // the first component is built, because a preview shows one component at a time (§12.2)
-        const compiler::CheckedComponent& component = checked.components.front();
+        const compiler::CheckedComponent& component = checked->components.front();
         // a component with no root describes nothing (§12.2)
         if (component.root == nullptr)
             return result;
+        // an imported instance is expanded first, because the preview has no generated facade to construct (§12.1)
+        const std::shared_ptr<compiler::CheckedNode> expanded = compiler::expand_imported_components(component.root, checked->imported_components, source_path);
+        // a root that could not be expanded describes nothing (§12.1)
+        if (expanded == nullptr)
+            return result;
         // the root is built with the real widgets, which is what makes the preview trustworthy (§12.2)
-        result.root = instantiate(*component.root, engine, nullptr, source_path);
+        result.root = instantiate(*expanded, engine, nullptr, source_path);
         // the result is returned whole (§12.2)
         return result;
     }

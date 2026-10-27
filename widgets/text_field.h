@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -134,7 +135,7 @@ namespace albor
         // reapply the last reversed edit, which the bound stack answers when one is bound (§18)
         void redo();
 
-        // bind the stack the edits record into, which is borrowed and outlives the edits it records (§18)
+        // bind the stack the edits record into, which is borrowed and must outlive the field until it is unbound (§18)
         void bind_undo_stack(UndoStack* stack);
 
         // hand out the bound stack, which is null while edits record nothing (§18)
@@ -203,6 +204,9 @@ namespace albor
 
         // strip the line breaks a single line field cannot hold, which every write path goes through (§8.3)
         [[nodiscard]] std::string strip_line_breaks(std::string text) const;
+
+        // hand out the bound stack only while its token is alive, because a destroyed stack cannot be called (§18)
+        [[nodiscard]] UndoStack* live_undo_stack() const;
 
         // record the edit that just ran, which the bound stack reverses by (§18)
         void record_edit(std::string before_value, std::size_t before_caret);
@@ -383,5 +387,11 @@ namespace albor
 
         // the stack the edits record into, which is null while edits record nothing (§18)
         UndoStack* m_undo_stack = nullptr;
+
+        // whether the stack is still alive, which a borrowed pointer alone cannot prove (§18)
+        std::shared_ptr<const bool> m_undo_lifetime;
+
+        // the token the field revokes before it dies, which makes every stored edit unreachable (§18)
+        std::shared_ptr<UndoOwner> m_undo_owner;
     };
 } // namespace albor

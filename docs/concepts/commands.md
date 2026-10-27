@@ -101,6 +101,13 @@ A command may carry an undo entry, so one invocation contributes one entry to th
 stack, and the registry owns the two history commands it stands on. The shortcut table lives
 on the registry too: one table, one resolution order, the same object a menu shows.
 
+An entry whose closure captures a widget carries an `UndoOwner` token. Destroying the widget
+revokes the token and removes its entries, so a document-wide stack cannot undo into a field
+that no longer exists; a folded group skips a step whose owner is gone. A field binds with
+`TextField::bind_undo_stack` and holds the stack's lifetime token too, so a field that outlives
+its stack neither calls it nor records into it. Dead entries are pruned before the depth cap is
+enforced, so revoked history never displaces live history.
+
 !!! note "Why not just a function pointer"
     A function pointer carries no state. The point of a command is precisely the state —
     *is this available now, should it be shown, what is its label* — and publishing that

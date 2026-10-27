@@ -1,4 +1,5 @@
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <system_error>
@@ -96,6 +97,73 @@ TEST(PreviewHostChecks, ACleanSourceBuildsItsTree) {
     EXPECT_NE(find_first(*result.root, [](UiNode& node) { return dynamic_cast<Button*>(&node) != nullptr; }), nullptr);
     // assert the tree is the column and its two children, because the component root is the column (§12.2)
     EXPECT_EQ(count_nodes(*result.root), 3U);
+}
+
+TEST(PreviewHostChecks, AnImportedComponentIsExpandedAndItsPropertyIsAssigned) {
+    // arrange a panel beside a window, because an import reads a saved file from disk (§11.1, §12.2)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-preview-import";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    // the panel reads its property in the label, which is the value the window substitutes (§11.1)
+    std::ofstream(root / "panel.ui") << R"(component Panel { in property<string> label_text: "Panel"; Column { Label { text: label_text; } } })";
+    // the window imports the panel and assigns the property, which is the composition a preview expands (§12.1)
+    const std::string window = R"(import "panel.ui"; component Window { Column { Panel { label_text: "Shared"; } } })";
+    // act
+    BindingEngine engine;
+    const preview::PreviewResult result = preview::build(window, engine, root / "window.ui");
+    // assert the import checked and built, because the preview reads it from beside the window (§12.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    // assert the imported label carries the value the instance assigned, which is what expansion substitutes (§11.1)
+    Label* label = dynamic_cast<Label*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<Label*>(&node) != nullptr; }));
+    ASSERT_NE(label, nullptr);
+    EXPECT_EQ(label->text(), "Shared");
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(PreviewHostChecks, AnImportedComputedTextIsEvaluated) {
+    // arrange a panel whose label joins its property with written text, which an instance supplies (§11.1)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-preview-import-text";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    std::ofstream(root / "panel.ui") << R"(component Panel { in property<string> user_name: "World"; Column { Label { id: greeting; text: "Hello, " + user_name + "!"; } } })";
+    // the window supplies the name, which the imported expression must resolve before the preview builds it (§11.1)
+    const std::string window = R"(import "panel.ui"; component Window { Column { Panel { user_name: "Ada"; } } })";
+    // act
+    BindingEngine engine;
+    const preview::PreviewResult result = preview::build(window, engine, root / "window.ui");
+    // assert the value resolved and the joined text reached the label (§12.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    Label* label = dynamic_cast<Label*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<Label*>(&node) != nullptr; }));
+    ASSERT_NE(label, nullptr);
+    EXPECT_EQ(label->text(), "Hello, Ada!");
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(PreviewHostChecks, AnImportedAssetResolvesBesideItsDefiningFile) {
+    // arrange a panel in a subdirectory whose image sits beside the panel rather than beside the window (§6.4)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-preview-import-image";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root / "panels");
+    std::filesystem::copy_file(std::filesystem::path(ALBOR_TEST_VECTORS_DIR) / "icon.png", root / "panels" / "icon.png", std::filesystem::copy_options::overwrite_existing);
+    // the default image is written in the panel, so the expansion must resolve it against the panel's file (§11.1, §6.4)
+    std::ofstream(root / "panels" / "panel.ui") << R"(component Panel { in property<image> icon: @image("icon.png"); Image { id: logo; source: icon; } })";
+    // the window only imports the panel, so no image path is written beside the window (§12.1)
+    const std::string window = R"(import "panels/panel.ui"; component Window { Column { Panel {} } })";
+    // act
+    BindingEngine engine;
+    const preview::PreviewResult result = preview::build(window, engine, root / "window.ui");
+    // assert the image loaded, because the path was resolved beside the panel rather than the window (§16, §6.4)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    Image* image = dynamic_cast<Image*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<Image*>(&node) != nullptr; }));
+    ASSERT_NE(image, nullptr);
+    EXPECT_NE(image->source(), nullptr);
+    std::filesystem::remove_all(root, ignored);
 }
 
 TEST(PreviewHostChecks, AnEmbeddedImageResolvesBesideTheSourcePath) {

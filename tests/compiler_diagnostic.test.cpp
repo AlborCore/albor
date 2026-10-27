@@ -113,6 +113,20 @@ TEST(Format, NamesTheSeverityCodePositionAndMessage) {
     EXPECT_EQ(text, "error: E0105: views/MainView.ui:12:5: unexpected character");
 }
 
+TEST(Format, AnImportedDiagnosticNamesItsOwnFile) {
+    // arrange a diagnostic the loader produced while reading an imported file (§11.1)
+    Diagnostic error;
+    error.severity = Diagnostic::Severity::Error;
+    error.span = SourceSpan{.start = SourceLocation{.line = 3, .column = 2}, .end = SourceLocation{.line = 3, .column = 5}};
+    error.code = "E0403";
+    error.message = "unknown element";
+    error.path = "panels/side_panel.ui";
+    // act the driver formats it with its root input path (§11.1)
+    const std::string text = format(error, "views/MainView.ui");
+    // assert the diagnostic names the file it came from, not the root the driver opened (§11.1)
+    EXPECT_EQ(text, "error: E0403: panels/side_panel.ui:3:2: unknown element");
+}
+
 TEST(Format, WarningIsNamedAsAWarning) {
     // arrange
     Diagnostic warning;

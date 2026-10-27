@@ -6,6 +6,7 @@
 #include <string_view>
 #include <utility>
 
+#include "compiler/import_expander.h"
 #include "compiler/static_expression.h"
 
 namespace albor::compiler
@@ -158,6 +159,63 @@ namespace albor::compiler
             // the node is the serialized element (§12.1)
             return ir;
         }
+
+        // report whether every node of a checked tree is an element the IR can represent (§12.1)
+        bool representable(const CheckedNode& node) {
+            // a repeat, a condition or a slot has no IR form, so a tree carrying one cannot be serialized (§12.1)
+            if (node.kind != TreeNodeKind::Element || node.element_type.empty())
+                return false;
+            // every child must be representable too, because a partial tree must not be applied (§12.1)
+            for (const std::shared_ptr<CheckedNode>& child : node.children) {
+                // a missing or unrepresentable child refuses the whole component (§12.1)
+                if (child == nullptr || !representable(*child))
+                    return false;
+            }
+            // the node and its subtree are representable (§12.1)
+            return true;
+        }
+
+        // serialize one checked element into the IR (§12.1)
+        devrt::IrNode to_ir(const CheckedNode& node) {
+            // the node carries the element name, which is what the factory builds (§12.1)
+            devrt::IrNode ir;
+            // the expanded element is what the runtime builds, because an imported instance was replaced (§12.1)
+            ir.element = node.element_type;
+            // the author assigned id is the identity a reload matches on (§12.1, AD-11)
+            ir.id = node.explicit_id;
+            // every static assignment becomes a property, and a binding is dropped, which the IR cannot carry (§12.1)
+            for (const CheckedAssignment& assignment : node.assignments) {
+                // an embedded image is a static value, which the marked spelling preserves (§12.1)
+                if (const ImageExpression* image = static_image(*assignment.value)) {
+                    // a path with a line break cannot survive the line oriented format, so it is dropped (§12.1)
+                    if (image->path.find_first_of("\r\n") != std::string::npos)
+                        continue;
+                    // the marker keeps the image apart from a plain string, which a reader applies differently (§12.1)
+                    ir.properties.push_back(devrt::IrProperty{.name = assignment.name, .value = std::string(devrt::IMAGE_VALUE_PREFIX) + image->path});
+                    continue;
+                }
+                // the sign and the literal are read together, because a written negation is part of the value (§11.1)
+                bool negative = false;
+                // the literal is the value, when the assignment is a static one (§12.1)
+                const LiteralExpression* literal = find_literal(*assignment.value, negative);
+                // a binding or a computation is not representable in the IR (§12.1)
+                if (literal == nullptr)
+                    continue;
+                // the literal is converted to the spelling the reader parses (§12.1)
+                std::optional<std::string> value = literal_value(*literal, negative);
+                // a value the reader cannot parse is dropped rather than written wrong (§12.1)
+                if (!value)
+                    continue;
+                // the property joins the node in written order (§12.1)
+                ir.properties.push_back(devrt::IrProperty{.name = assignment.name, .value = std::move(*value)});
+            }
+            // every child joins the node in written order, and each is an element because the tree was checked (§12.1)
+            for (const std::shared_ptr<CheckedNode>& child : node.children)
+                // the child is serialized by the same walk, which is the whole recursion (§12.1)
+                ir.children.push_back(to_ir(*child));
+            // the node is the serialized element (§12.1)
+            return ir;
+        }
     } // namespace
 
     std::optional<devrt::IrNode> serialize_component(const ComponentDeclaration& component) {
@@ -169,5 +227,18 @@ namespace albor::compiler
             return std::nullopt;
         // the root is serialized through the same element walk as every child (§12.1)
         return to_ir(*component.root);
+    }
+
+    std::optional<devrt::IrNode> serialize_component(const CheckedComponent& component, const std::vector<ImportedComponent>& imported_components, const std::filesystem::path& source_path) {
+        // an imported instance is expanded first, because the dev runtime has no facade to construct (§12.1)
+        const std::shared_ptr<CheckedNode> expanded = expand_imported_components(component.root, imported_components, source_path);
+        // a component with no root carries no tree, so it serializes to nothing (§11.1)
+        if (expanded == nullptr)
+            return std::nullopt;
+        // a tree with a repeat, a condition or a slot cannot be half represented, so the component is refused (§12.1)
+        if (!representable(*expanded))
+            return std::nullopt;
+        // the expanded tree is serialized through the same checked element walk (§12.1)
+        return to_ir(*expanded);
     }
 } // namespace albor::compiler
