@@ -49,9 +49,9 @@ edit_fixture() {
 
 # the object units that a build compiles in one run, which the assertions measure
 recompiled() {
-    # the object suffix is normalized, because msvc writes .obj where clang writes .o
+    # msvc writes backslashes and .obj, while clang writes slashes and .o
     cmake --build --preset debug -j8 --target "$FIXTURE_TARGET" 2>&1 \
-        | sed -e 's/\r$//' -e 's/\x1b\[[0-9;]*m//g' -e 's/\.obj$/.o/' \
+        | sed -e 's/\r$//' -e 's/\x1b\[[0-9;]*m//g' -e 's#\\#/#g' -e 's/\.obj$/.o/' \
         | awk '/Building CXX object/{n=split($NF,a,"/"); print a[n]}' \
         | sort -u
 }

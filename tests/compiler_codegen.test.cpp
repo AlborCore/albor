@@ -2862,7 +2862,7 @@ TEST(Codegen, IncludesAndConstructsAnImportedComponent) {
     const GeneratedFile& cpp = file_named(files, "c.cpp");
     EXPECT_TRUE(contains(cpp.content, "#include \"side_panel.h\""));
     EXPECT_TRUE(contains(cpp.content, "std::make_unique<SidePanel>(engine, text_engine)"));
-    EXPECT_TRUE(contains(cpp.content, "->set_title(\"x\")"));
+    EXPECT_TRUE(contains(cpp.content, "->set_title(std::string(\"x\"))"));
     EXPECT_TRUE(contains(cpp.content, "->set_on_dismissed("));
 }
 
