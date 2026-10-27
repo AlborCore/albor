@@ -223,6 +223,8 @@ directly.
 - [`albor-design-v4.md`](albor-design-v4.md) — the architecture specification; the
   single source of truth for module layout and decisions (`AD-NN`, `§N` are cited
   throughout the code and reviews).
+- [`gap-analysis-xyce-studio.md`](gap-analysis-xyce-studio.md) — the application-readiness
+  analysis against the Xyce Studio reference application, with the ordered P0/P1 work list.
 - [`STYLE-GUIDE.md`](STYLE-GUIDE.md) — code style rules enforced by
   `build/check-format.sh`.
 - [`AGENTS.md`](AGENTS.md) — the contract for AI agents working in this repository.
