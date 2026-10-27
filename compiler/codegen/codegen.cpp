@@ -24,6 +24,14 @@ namespace albor::compiler
 {
     namespace
     {
+        // spell a path in generated text as utf-8, because a windows narrow conversion depends on the code page (§14.2)
+        std::string text_of_path(const std::filesystem::path& path) {
+            // the generic spelling is stable across hosts, which is what a generated comment needs (§14.2)
+            const std::u8string utf8 = path.generic_u8string();
+            // the bytes become a narrow string, because a generated file is utf-8 (§14.2)
+            return std::string(reinterpret_cast<const char*>(utf8.data()), utf8.size());
+        }
+
         // a number of bytes into a source file, which is what a span end points at
         bool ends_with(std::string_view text, std::string_view suffix) {
             // a suffix longer than the text cannot match, so the comparison is skipped (§11.3)
@@ -399,7 +407,7 @@ namespace albor::compiler
             // emit the per-source header and unit, which carry every accessor and its bytes (§6.4)
             [[nodiscard]] std::vector<GeneratedFile> files() const {
                 // the provenance names the source file, which is what a reader can locate (§14.2)
-                const std::string provenance = "// generated from " + m_source.filename().string() + ", do not edit (§14, AD-03a)";
+                const std::string provenance = "// generated from " + text_of_path(m_source.filename()) + ", do not edit (§14, AD-03a)";
                 // the header opens with its provenance and guard (§14.1)
                 std::string header = provenance + "\n#pragma once\n";
                 // the source opens with its provenance and includes its own header first (§14.1)
@@ -413,7 +421,7 @@ namespace albor::compiler
                     // each asset declares one accessor, which the component sources call (§6.4)
                     for (std::size_t index = 0; index < m_assets.size(); index++) {
                         // the comment names the file and its index, which is what a reader can locate (§6.4)
-                        header += "        // hand out the embedded image " + m_assets[index].path.filename().string() + ", which is decoded once (§6.4)\n";
+                        header += "        // hand out the embedded image " + text_of_path(m_assets[index].path.filename()) + ", which is decoded once (§6.4)\n";
                         // the accessor returns the immutable handle the render path retains (§6.4, AD-06)
                         header += "        [[nodiscard]] std::shared_ptr<const ImageResource> image_" + std::to_string(index) + "();\n";
                     }
@@ -426,7 +434,7 @@ namespace albor::compiler
                     // each asset emits its bytes and the accessor that registers them (§6.4)
                     for (std::size_t index = 0; index < m_assets.size(); index++) {
                         // the comment names the source file the bytes came from (§6.4)
-                        source += "        // the encoded bytes of " + m_assets[index].path.filename().string() + " (§6.4)\n";
+                        source += "        // the encoded bytes of " + text_of_path(m_assets[index].path.filename()) + " (§6.4)\n";
                         // the array is constant, because the bytes never change after generation (§6.4)
                         source += "        constexpr std::uint8_t IMAGE_" + std::to_string(index) + "[] = {";
                         // each byte is emitted in hex, with a bounded line length for readability (§6.4)
@@ -560,7 +568,27 @@ namespace albor::compiler
         const std::map<std::string_view, WidgetInfo>& widget_info() {
             // the table is built once, because the builtin set is closed (§11.3)
             static const std::map<std::string_view, WidgetInfo> table{
-                {"Column", {.header = "layout/column_layout.h", .class_name = "ColumnLayout", .needs_engine = false, .needs_text_engine = false}}, {"Row", {.header = "layout/row_layout.h", .class_name = "RowLayout", .needs_engine = false, .needs_text_engine = false}}, {"Padding", {.header = "layout/padding_layout.h", .class_name = "PaddingLayout", .needs_engine = false, .needs_text_engine = false}}, {"Stack", {.header = "layout/stack_layout.h", .class_name = "StackLayout", .needs_engine = false, .needs_text_engine = false}}, {"Grid", {.header = "layout/grid_layout.h", .class_name = "GridLayout", .needs_engine = false, .needs_text_engine = false}}, {"Label", {.header = "widgets/label.h", .class_name = "Label", .needs_engine = true, .needs_text_engine = true}}, {"Button", {.header = "widgets/button.h", .class_name = "Button", .needs_engine = true, .needs_text_engine = true}}, {"Slider", {.header = "widgets/slider.h", .class_name = "Slider", .needs_engine = true, .needs_text_engine = false}}, {"CheckBox", {.header = "widgets/checkbox.h", .class_name = "CheckBox", .needs_engine = true, .needs_text_engine = false}}, {"Canvas", {.header = "widgets/canvas.h", .class_name = "Canvas", .needs_engine = true, .needs_text_engine = false}}, {"ScrollView", {.header = "widgets/scroll_view.h", .class_name = "ScrollView", .needs_engine = true, .needs_text_engine = false}}, {"ListBox", {.header = "widgets/list_box.h", .class_name = "ListBox", .needs_engine = true, .needs_text_engine = false}}, {"TextField", {.header = "widgets/text_field.h", .class_name = "TextField", .needs_engine = true, .needs_text_engine = true}},
+                {"Column", {.header = "layout/column_layout.h", .class_name = "ColumnLayout", .needs_engine = false, .needs_text_engine = false}},
+                {"Row", {.header = "layout/row_layout.h", .class_name = "RowLayout", .needs_engine = false, .needs_text_engine = false}},
+                {"Padding", {.header = "layout/padding_layout.h", .class_name = "PaddingLayout", .needs_engine = false, .needs_text_engine = false}},
+                {"Stack", {.header = "layout/stack_layout.h", .class_name = "StackLayout", .needs_engine = false, .needs_text_engine = false}},
+                {"Grid", {.header = "layout/grid_layout.h", .class_name = "GridLayout", .needs_engine = false, .needs_text_engine = false}},
+                {"Label", {.header = "widgets/label.h", .class_name = "Label", .needs_engine = true, .needs_text_engine = true}},
+                {"Button", {.header = "widgets/button.h", .class_name = "Button", .needs_engine = true, .needs_text_engine = true}},
+                {"Slider", {.header = "widgets/slider.h", .class_name = "Slider", .needs_engine = true, .needs_text_engine = false}},
+                {"ProgressBar", {.header = "widgets/progress_bar.h", .class_name = "ProgressBar", .needs_engine = true, .needs_text_engine = false}},
+                {"CheckBox", {.header = "widgets/checkbox.h", .class_name = "CheckBox", .needs_engine = true, .needs_text_engine = false}},
+                {"Canvas", {.header = "widgets/canvas.h", .class_name = "Canvas", .needs_engine = true, .needs_text_engine = false}},
+                {"Image", {.header = "widgets/image.h", .class_name = "Image", .needs_engine = true, .needs_text_engine = false}},
+                {"ScrollView", {.header = "widgets/scroll_view.h", .class_name = "ScrollView", .needs_engine = true, .needs_text_engine = false}},
+                {"ListBox", {.header = "widgets/list_box.h", .class_name = "ListBox", .needs_engine = true, .needs_text_engine = false}},
+                {"TabView", {.header = "widgets/tab_view.h", .class_name = "TabView", .needs_engine = true, .needs_text_engine = false}},
+                {"Tab", {.header = "widgets/tab_page.h", .class_name = "TabPage", .needs_engine = true, .needs_text_engine = true}},
+                {"TabTitle", {.header = "widgets/tab_title.h", .class_name = "TabTitle", .needs_engine = true, .needs_text_engine = false}},
+                {"RadioGroup", {.header = "widgets/radio_group.h", .class_name = "RadioGroup", .needs_engine = true, .needs_text_engine = false}},
+                {"RadioButton", {.header = "widgets/radio_button.h", .class_name = "RadioButton", .needs_engine = true, .needs_text_engine = true}},
+                {"NumericStepper", {.header = "widgets/numeric_stepper.h", .class_name = "NumericStepper", .needs_engine = true, .needs_text_engine = true}},
+                {"TextField", {.header = "widgets/text_field.h", .class_name = "TextField", .needs_engine = true, .needs_text_engine = true}},
             };
             return table;
         }
@@ -1037,7 +1065,70 @@ namespace albor::compiler
             const std::string key = std::string(element) + "." + std::string(property);
             // the property to setter map is the closed catalogue of §8 (§11.3)
             static const std::unordered_map<std::string, std::string_view> setters{
-                {"Column.spacing", "set_gap"}, {"Column.padding", "set_padding"}, {"Row.spacing", "set_gap"}, {"Padding.padding", "set_padding"}, {"Grid.spacing", "set_gap"}, {"Label.text", "set_text"}, {"Label.foreground", "set_foreground"}, {"Label.font_size", "set_font_size"}, {"Button.text", "set_label"}, {"Button.background", "set_background"}, {"Button.disabled", "set_disabled"}, {"Button.action", "set_command"}, {"Slider.value", "set_value"}, {"Slider.disabled", "set_disabled"}, {"Slider.track_color", "set_track_color"}, {"Slider.thumb_color", "set_thumb_color"}, {"Slider.action", "set_command"}, {"CheckBox.checked", "set_checked"}, {"CheckBox.disabled", "set_disabled"}, {"CheckBox.outline", "set_outline"}, {"CheckBox.check_fill", "set_check_fill"}, {"CheckBox.action", "set_command"}, {"ScrollView.overscan", "set_overscan"}, {"ScrollView.scrollbar", "set_scrollbar_visibility"}, {"ScrollView.row_height", "set_row_height"}, {"ListBox.selected", "set_selected_index"}, {"ListBox.row_height", "set_row_height"}, {"ListBox.scrollbar", "set_scrollbar_visibility"}, {"ListBox.overscan", "set_overscan"}, {"ListBox.disabled", "set_disabled"}, {"TextField.value", "set_value"}, {"TextField.placeholder", "set_placeholder"}, {"TextField.read_only", "set_read_only"}, {"TextField.multiline", "set_multiline"}, {"TextField.disabled", "set_disabled"}, {"TextField.font_size", "set_font_size"}, {"Label.font_family", "set_font_family"}, {"Label.font_weight", "set_font_weight"}, {"Label.font_fallback", "set_font_fallback"}, {"TextField.font_family", "set_font_family"}, {"TextField.font_weight", "set_font_weight"}, {"TextField.font_fallback", "set_font_fallback"},
+                {"Column.spacing", "set_gap"},
+                {"Column.padding", "set_padding"},
+                {"Row.spacing", "set_gap"},
+                {"Padding.padding", "set_padding"},
+                {"Grid.spacing", "set_gap"},
+                {"Label.text", "set_text"},
+                {"Label.foreground", "set_foreground"},
+                {"Label.font_size", "set_font_size"},
+                {"Button.text", "set_label"},
+                {"Button.background", "set_background"},
+                {"Button.disabled", "set_disabled"},
+                {"Button.action", "set_command"},
+                {"Slider.value", "set_value"},
+                {"Slider.disabled", "set_disabled"},
+                {"Slider.track_color", "set_track_color"},
+                {"Slider.thumb_color", "set_thumb_color"},
+                {"Slider.action", "set_command"},
+                {"ProgressBar.value", "set_value"},
+                {"ProgressBar.disabled", "set_disabled"},
+                {"ProgressBar.track_color", "set_track_color"},
+                {"ProgressBar.fill_color", "set_fill_color"},
+                {"CheckBox.checked", "set_checked"},
+                {"CheckBox.disabled", "set_disabled"},
+                {"CheckBox.outline", "set_outline"},
+                {"CheckBox.check_fill", "set_check_fill"},
+                {"CheckBox.action", "set_command"},
+                {"Image.source", "set_source"},
+                {"Image.description", "set_description"},
+                {"Image.width", "set_width"},
+                {"Image.height", "set_height"},
+                {"ScrollView.overscan", "set_overscan"},
+                {"ScrollView.scrollbar", "set_scrollbar_visibility"},
+                {"ScrollView.row_height", "set_row_height"},
+                {"ListBox.selected", "set_selected_index"},
+                {"ListBox.row_height", "set_row_height"},
+                {"ListBox.scrollbar", "set_scrollbar_visibility"},
+                {"ListBox.overscan", "set_overscan"},
+                {"ListBox.disabled", "set_disabled"},
+                {"TabView.selected", "set_selected"},
+                {"TabView.vertical", "set_vertical"},
+                {"Tab.label", "set_label"},
+                {"RadioGroup.selected", "set_selected"},
+                {"RadioGroup.vertical", "set_vertical"},
+                {"RadioGroup.spacing", "set_spacing"},
+                {"RadioButton.value", "set_value"},
+                {"RadioButton.label", "set_label"},
+                {"RadioButton.disabled", "set_disabled"},
+                {"NumericStepper.value", "set_value"},
+                {"NumericStepper.min", "set_minimum"},
+                {"NumericStepper.max", "set_maximum"},
+                {"NumericStepper.step", "set_step"},
+                {"NumericStepper.disabled", "set_disabled"},
+                {"TextField.value", "set_value"},
+                {"TextField.placeholder", "set_placeholder"},
+                {"TextField.read_only", "set_read_only"},
+                {"TextField.multiline", "set_multiline"},
+                {"TextField.disabled", "set_disabled"},
+                {"TextField.font_size", "set_font_size"},
+                {"Label.font_family", "set_font_family"},
+                {"Label.font_weight", "set_font_weight"},
+                {"Label.font_fallback", "set_font_fallback"},
+                {"TextField.font_family", "set_font_family"},
+                {"TextField.font_weight", "set_font_weight"},
+                {"TextField.font_fallback", "set_font_fallback"},
             };
             // the lookup is a ready made key, because the pair is the identity (§11.3)
             const auto found = setters.find(key);
@@ -1069,7 +1160,7 @@ namespace albor::compiler
             const std::string key = std::string(element) + "." + std::string(signal);
             // the signal to setter map is the closed catalogue of §8 (§11.3)
             static const std::unordered_map<std::string, std::string_view> setters{
-                {"Button.clicked", "set_on_click"}, {"Slider.changed", "set_on_change"}, {"CheckBox.toggled", "set_on_toggle"}, {"ScrollView.scrolled", "set_on_scroll"}, {"ListBox.selection_changed", "set_on_selection_changed"}, {"ListBox.activated", "set_on_activate"}, {"TextField.changed", "set_on_change"}, {"TextField.committed", "set_on_commit"},
+                {"Button.clicked", "set_on_click"}, {"Slider.changed", "set_on_change"}, {"CheckBox.toggled", "set_on_toggle"}, {"ScrollView.scrolled", "set_on_scroll"}, {"ListBox.selection_changed", "set_on_selection_changed"}, {"ListBox.activated", "set_on_activate"}, {"TabView.selection_changed", "set_on_selection_changed"}, {"RadioGroup.selection_changed", "set_on_selection_changed"}, {"NumericStepper.changed", "set_on_change"}, {"TextField.changed", "set_on_change"}, {"TextField.committed", "set_on_commit"},
             };
             // the lookup is a ready made key, because the pair is the identity (§11.3)
             const auto found = setters.find(key);
@@ -1110,6 +1201,15 @@ namespace albor::compiler
             // a list activation carries the identity text of the activated row, which is what the handler reads (§18.1)
             if (element == "ListBox" && signal == "activated")
                 return {{"std::string", "key"}};
+            // a tab selection carries the index the view moved to, which the handler reads (§8.3)
+            if (element == "TabView" && signal == "selection_changed")
+                return {{"int", "index"}};
+            // a radio group carries the value the user chose, which the handler reads (§8.3)
+            if (element == "RadioGroup" && signal == "selection_changed")
+                return {{"int", "value"}};
+            // a stepper carries the number it moved to, which the handler reads (§8.3)
+            if (element == "NumericStepper" && signal == "changed")
+                return {{"float", "value"}};
             // a field raises the string it changed to, which a validation and a commit both read (§8)
             if (element == "TextField" && (signal == "changed" || signal == "committed"))
                 return {{"std::string", "value"}};
@@ -2489,6 +2589,8 @@ namespace albor::compiler
             bool canvas_written = false;
             // whether a slider range was written, which is applied after both bounds (§8)
             bool range_written = false;
+            // the stepper value is applied after its range, because a clamp before the authored bounds would lose it (§8)
+            const CheckedAssignment* stepper_value = nullptr;
             // whether a viewport extent was written, which is applied after both halves (§8.2)
             bool viewport_written = false;
             // each assignment decides between a direct set and a bound sink (§13.3)
@@ -2537,6 +2639,27 @@ namespace albor::compiler
                     line(2, "n" + std::to_string(slot.index) + "->bind_offset(&Impl::evaluate_" + std::to_string(slot.index) + "_offset, this, deps_" + std::to_string(slot.index) + "_offset);");
                     continue;
                 }
+                // the stepper value waits for its range, because a clamp against the default bounds would lose it (§8)
+                if (slot.node->element_type == "NumericStepper" && assignment.name == "value") {
+                    // the assignment is recorded rather than applied, because the bounds are written around it (§8)
+                    stepper_value = &assignment;
+                    continue;
+                }
+                // the stepper bounds apply current values before sinks settle, so the first clamp sees the range (§8)
+                if (slot.node->element_type == "NumericStepper" && (assignment.name == "min" || assignment.name == "max")) {
+                    // the setter is fetched by the element and the property, which the catalog named (§11.3)
+                    const std::string setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
+                    // the current expression is applied now, because a bound sink settles only on the next pass (§7.3)
+                    line(2, "n" + std::to_string(slot.index) + "->" + std::string(setter) + "(" + emit_expression(*assignment.value) + ");");
+                    // a bound bound keeps following its source, while a static one is already settled (§8)
+                    if (assignment.dependencies.empty())
+                        continue;
+                    // the sink is registered now and settles before the deferred value sink (§13.3)
+                    const std::string sink = "m_sink_" + std::to_string(slot.index) + "_" + sanitize(assignment.name);
+                    line(2, "const PropertyId deps_" + std::to_string(slot.index) + "_" + sanitize(assignment.name) + "[] = {" + dep_list(assignment.dependencies) + "};");
+                    line(2, sink + ".bind_static(&Impl::evaluate_" + std::to_string(slot.index) + "_" + sanitize(assignment.name) + ", this, deps_" + std::to_string(slot.index) + "_" + sanitize(assignment.name) + ");");
+                    continue;
+                }
                 // the slider range is one setter for two properties, because the widget takes both bounds (§8)
                 if (slot.node->element_type == "Slider" && (assignment.name == "min" || assignment.name == "max")) {
                     // the missing bound is the default the widget already carries, so one written bound is enough (§8)
@@ -2573,6 +2696,18 @@ namespace albor::compiler
             // the slider range is applied once, after both bounds were written (§8)
             if (range_written)
                 line(2, "n" + std::to_string(slot.index) + "->set_range(m_slider_min_" + std::to_string(slot.index) + ", m_slider_max_" + std::to_string(slot.index) + ");");
+            // the stepper value is applied after its bounds, because the clamp reads the authored range (§8)
+            if (stepper_value != nullptr) {
+                // a constant lands directly, after the setters that widened the range around it (§8)
+                if (stepper_value->dependencies.empty())
+                    line(2, "n" + std::to_string(slot.index) + "->set_value(" + emit_expression(*stepper_value->value) + ");");
+                // a bound value re-evaluates after the range, so the first read sees the authored bounds (§8)
+                else {
+                    const std::string sink = "m_sink_" + std::to_string(slot.index) + "_value";
+                    line(2, "const PropertyId deps_" + std::to_string(slot.index) + "_value[] = {" + dep_list(stepper_value->dependencies) + "};");
+                    line(2, sink + ".bind_static(&Impl::evaluate_" + std::to_string(slot.index) + "_value, this, deps_" + std::to_string(slot.index) + "_value);");
+                }
+            }
             // a canvas with a draw block installs its body, which the callback runs every frame (§6.4)
             if (!slot.node->draw_calls.empty()) {
                 line(2, "// install the drawn body, which records the canvas content into the context (§6.4)");
@@ -2622,8 +2757,23 @@ namespace albor::compiler
                 line(2, "// assign the author identity, which everything selects by (AD-11)");
                 line(2, "n" + std::to_string(slot.index) + "->set_explicit_id(std::string(\"" + slot.node->explicit_id + "\"));");
             }
+            // the stepper bounds are written before its value, because the row has no sink and the clamp is immediate (§8)
+            const bool stepper = slot.node->element_type == "NumericStepper";
+            if (stepper) {
+                for (const CheckedAssignment& assignment : slot.node->assignments) {
+                    // only the range waits for this pass, because the value reads it (§8)
+                    if (assignment.name != "min" && assignment.name != "max")
+                        continue;
+                    const std::string setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
+                    line(2, "// apply the " + assignment.name + ", which the row stepper must see before its value (§8)");
+                    line(2, "n" + std::to_string(slot.index) + "->" + std::string(setter) + "(" + emit_expression(*assignment.value) + ");");
+                }
+            }
             // every assignment is written straight into the widget, because a row has no sink of its own (§18.1)
             for (const CheckedAssignment& assignment : slot.node->assignments) {
+                // a stepper bound was written above, and its value waits until after both bounds (§8)
+                if (stepper && (assignment.name == "min" || assignment.name == "max" || assignment.name == "value"))
+                    continue;
                 // the canvas tracks are local too, because one row must not overwrite another's (§11.3, §18.1)
                 if (slot.node->element_type == "Canvas" && (assignment.name == "width" || assignment.name == "height")) {
                     const bool width = assignment.name == "width";
@@ -2635,6 +2785,16 @@ namespace albor::compiler
                 const std::string setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
                 line(2, "// apply the " + assignment.name + ", which is what this row shows (§18.1)");
                 line(2, "n" + std::to_string(slot.index) + "->" + std::string(setter) + "(" + emit_expression(*assignment.value) + ");");
+            }
+            // the stepper value follows both bounds, because the row's clamp is immediate (§8)
+            if (stepper) {
+                for (const CheckedAssignment& assignment : slot.node->assignments) {
+                    // only the value waits, because the bounds were written above (§8)
+                    if (assignment.name != "value")
+                        continue;
+                    line(2, "// apply the value after the row stepper bounds, which is the range it is clamped into (§8)");
+                    line(2, "n" + std::to_string(slot.index) + "->set_value(" + emit_expression(*assignment.value) + ");");
+                }
             }
             // a canvas row publishes its declared size once both tracks were written (§11.3, §18.1)
             if (slot.node->element_type == "Canvas")
@@ -2669,8 +2829,23 @@ namespace albor::compiler
                 line(2, "float m_row_canvas_w_" + std::to_string(slot.index) + " = 0.0f;");
                 line(2, "float m_row_canvas_h_" + std::to_string(slot.index) + " = 0.0f;");
             }
+            // the stepper bounds are rewritten before its value, because the row clamp is immediate (§8)
+            const bool stepper = slot.node->element_type == "NumericStepper";
+            if (stepper) {
+                for (const CheckedAssignment& assignment : slot.node->assignments) {
+                    // only the range waits for this pass, because the value reads it (§8)
+                    if (assignment.name != "min" && assignment.name != "max")
+                        continue;
+                    const std::string setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
+                    line(2, "// rewrite the " + assignment.name + ", which the row stepper must see before its value (§8)");
+                    line(2, "n" + std::to_string(slot.index) + "->" + std::string(setter) + "(" + emit_expression(*assignment.value) + ");");
+                }
+            }
             // every assignment is rewritten, because a matched row must show the item it now holds (§18.1, AD-13)
             for (const CheckedAssignment& assignment : slot.node->assignments) {
+                // a stepper bound was rewritten above, and its value waits until after both bounds (§8)
+                if (stepper && (assignment.name == "min" || assignment.name == "max" || assignment.name == "value"))
+                    continue;
                 // the canvas tracks are rewritten first, because one setter combines them (§11.3, §18.1)
                 if (slot.node->element_type == "Canvas" && (assignment.name == "width" || assignment.name == "height")) {
                     const bool width = assignment.name == "width";
@@ -2682,6 +2857,16 @@ namespace albor::compiler
                 const std::string setter = setter_of(std::string_view(slot.node->element_type), assignment.name);
                 line(2, "// rewrite the " + assignment.name + ", because the row now shows another item (§18.1, AD-13)");
                 line(2, "n" + std::to_string(slot.index) + "->" + std::string(setter) + "(" + emit_expression(*assignment.value) + ");");
+            }
+            // the stepper value follows both bounds, because the row's clamp is immediate (§8)
+            if (stepper) {
+                for (const CheckedAssignment& assignment : slot.node->assignments) {
+                    // only the value waits, because the bounds were rewritten above (§8)
+                    if (assignment.name != "value")
+                        continue;
+                    line(2, "// rewrite the value after the row stepper bounds, which is the range it is clamped into (§8)");
+                    line(2, "n" + std::to_string(slot.index) + "->set_value(" + emit_expression(*assignment.value) + ");");
+                }
             }
             // a canvas row publishes its declared size once both tracks were written (§11.3, §18.1)
             if (slot.node->element_type == "Canvas")

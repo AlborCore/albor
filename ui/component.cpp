@@ -66,8 +66,11 @@ namespace albor
     }
 
     bool Component::hit_test(Point logical_point) const {
+        // a hidden component and its children are out of reach, which keeps a hidden page inert (§8.3)
+        if (!visible_in_tree())
+            return false;
         // the component body itself is a hit only where it has area (§8.3)
-        if (visible() && !bounds().empty() && logical_point.x >= bounds().x && logical_point.x < bounds().x + bounds().width && logical_point.y >= bounds().y && logical_point.y < bounds().y + bounds().height)
+        if (!bounds().empty() && logical_point.x >= bounds().x && logical_point.x < bounds().x + bounds().width && logical_point.y >= bounds().y && logical_point.y < bounds().y + bounds().height)
             return true;
         // a child under the point is also a hit, which is what a composite component needs (§8.3)
         return UiNode::hit_test(logical_point);

@@ -1,5 +1,7 @@
 #include "input/input_dispatcher.h"
 
+#include "input/event_filter.h"
+
 namespace albor
 {
     void InputDispatcher::dispatch(UiNode& root, Event& event) {
@@ -16,8 +18,15 @@ namespace albor
             // a claimed event stops the walk, so no sibling reacts to the same event (§8.3)
             if (event.handled)
                 return;
+            // a hidden child is out of reach, which keeps a hidden page from receiving an event (§8.3)
+            UiNode* child = node.child_at(position - 1);
+            if (child == nullptr || !child->visible())
+                continue;
+            // a positioned event enters only the child the point reaches, which keeps a decorative title out (§8.3)
+            if (EventFilter::positioned(event) && !child->hit_test(event.position))
+                continue;
             // the deepest child that claims the event ends the walk, which is what makes the topmost control win (§8.3)
-            route_down(*node.child_at(position - 1), event);
+            route_down(*child, event);
         }
         // no descendant claimed the event, so the node itself gets it as the next candidate (§8.3)
         if (!event.handled)
@@ -28,8 +37,8 @@ namespace albor
         // a claimed event is not offered again, because the walk stops at the handler that took it (§8.3)
         if (event.handled)
             return;
-        // a focus that is not part of the tree cannot be routed to, so the whole tree is walked instead (§8.3)
-        if (focused == nullptr || !descends_from(root, *focused)) {
+        // a focus that is not in the tree or is hidden falls back to the whole tree (§8.3)
+        if (focused == nullptr || !descends_from(root, *focused) || !focused->visible_in_tree()) {
             // the ordinary depth first walk is the fallback, because a key press must reach something (§8.3)
             dispatch(root, event);
             // exit

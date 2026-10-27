@@ -70,7 +70,7 @@ namespace albor
             Task task;
 
             // the guard the task observes, which only post_guarded ever sets (§4.2)
-            LifetimeToken guard;
+            LifetimeToken guard{};
 
             // whether the task carries a guard, because a default token is expired and cannot signal presence (§4.2)
             bool guarded = false;

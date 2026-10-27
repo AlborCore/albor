@@ -341,6 +341,69 @@ namespace albor::compiler
                                               .signals = {ElementSignal{.name = "selection_changed", .parameter_types = {}, .parameter_names = {}}, ElementSignal{.name = "activated", .parameter_types = {scalar(TypeKind::String)}, .parameter_names = {"key"}}},
                                               // a list hosts the row content it repeats, so it accepts children (§8.2)
                                               .accepts_children = true});
+        // a container shows one page at a time and owns the selection of its tabs (§8)
+        catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
+                                              .name = "TabView",
+                                              // the selected page and the strip orientation are the surface (§8)
+                                              .properties = {ElementProperty{.name = "selected", .type = scalar(TypeKind::Int), .assignable = true}, ElementProperty{.name = "vertical", .type = scalar(TypeKind::Bool), .assignable = true}},
+                                              // a tab view raises the new selection when the user moves it (§8.3)
+                                              .signals = {ElementSignal{.name = "selection_changed", .parameter_types = {scalar(TypeKind::Int)}, .parameter_names = {"index"}}},
+                                              // a tab view holds its pages, so it accepts children (§8)
+                                              .accepts_children = true});
+        // a page is one choice in a tab view, which carries the label the strip draws (§8)
+        catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
+                                              .name = "Tab",
+                                              // the label is the title the strip draws for this page (§8)
+                                              .properties = {ElementProperty{.name = "label", .type = scalar(TypeKind::String), .assignable = true}},
+                                              // a page raises no signal, because the view owns the selection (§8)
+                                              .signals = {},
+                                              // a page holds its content, so it accepts children (§8)
+                                              .accepts_children = true});
+        // a title is the arbitrary content a strip draws for one page, which lets a tab carry an icon (§8)
+        catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
+                                              .name = "TabTitle",
+                                              // a title exposes no property, because its children are the content (§8)
+                                              .properties = {},
+                                              // a title raises no signal, because the tab around it takes the input (§8)
+                                              .signals = {},
+                                              // a title holds the icon or run its author composed (§8)
+                                              .accepts_children = true});
+        // a container groups radio buttons and owns their single choice (§8)
+        catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
+                                              .name = "RadioGroup",
+                                              // the selected value, orientation and gap are what the group exposes (§8)
+                                              .properties = {ElementProperty{.name = "selected", .type = scalar(TypeKind::Int), .assignable = true}, ElementProperty{.name = "vertical", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "spacing", .type = scalar(TypeKind::Float), .assignable = true}},
+                                              // a group raises the value the user chose (§8.3)
+                                              .signals = {ElementSignal{.name = "selection_changed", .parameter_types = {scalar(TypeKind::Int)}, .parameter_names = {"value"}}},
+                                              // a group holds its choices, so it accepts children (§8)
+                                              .accepts_children = true});
+        // a leaf is one choice inside a radio group (§8)
+        catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
+                                              .name = "RadioButton",
+                                              // the value, label and disabled state are what a choice exposes (§8)
+                                              .properties = {ElementProperty{.name = "value", .type = scalar(TypeKind::Int), .assignable = true}, ElementProperty{.name = "label", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true}},
+                                              // a choice raises no signal, because the group owns the selection (§8)
+                                              .signals = {},
+                                              // a choice is a leaf, so it takes no children (§8)
+                                              .accepts_children = false});
+        // a leaf steps a bounded number, which is a spinner (§8)
+        catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
+                                              .name = "NumericStepper",
+                                              // the value, bounds, step and disabled state are what a stepper exposes (§8)
+                                              .properties = {ElementProperty{.name = "value", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "min", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "max", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "step", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true}},
+                                              // a stepper raises the value it moved to (§8.3)
+                                              .signals = {ElementSignal{.name = "changed", .parameter_types = {scalar(TypeKind::Float)}, .parameter_names = {"value"}}},
+                                              // a stepper is a leaf, so it takes no children (§8)
+                                              .accepts_children = false});
+        // a leaf draws a retained image, which is the static counterpart of a canvas (§8, §6.4)
+        catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
+                                              .name = "Image",
+                                              // the asset, its name and the size are what an image exposes (§8, §10.1)
+                                              .properties = {ElementProperty{.name = "source", .type = scalar(TypeKind::Image), .assignable = true}, ElementProperty{.name = "description", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "width", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "height", .type = scalar(TypeKind::Float), .assignable = true}},
+                                              // an image raises no signal, because the user does not drive it (§8)
+                                              .signals = {},
+                                              // an image is a leaf, so it takes no children (§8)
+                                              .accepts_children = false});
         // a leaf draws a run of text, which is a caption or a value readout (§8)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Label",
@@ -375,6 +438,15 @@ namespace albor::compiler
                                               // a slider raises a change when the user drags it, and names the value (§8)
                                               .signals = {ElementSignal{.name = "changed", .parameter_types = {scalar(TypeKind::Float)}, .parameter_names = {"value"}}},
                                               // a slider is a leaf, so it takes no children (§8)
+                                              .accepts_children = false});
+        // a leaf shows progress, which is a read only value control (§8)
+        catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
+                                              .name = "ProgressBar",
+                                              // the fraction and the states and the colours are what a bar exposes (§8)
+                                              .properties = {ElementProperty{.name = "value", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "track_color", .type = scalar(TypeKind::Color), .assignable = true}, ElementProperty{.name = "fill_color", .type = scalar(TypeKind::Color), .assignable = true}},
+                                              // a bar raises no signal, because the user does not drive it (§8)
+                                              .signals = {},
+                                              // a bar is a leaf, so it takes no children (§8)
                                               .accepts_children = false});
         // a leaf carries a truth value the user toggles (§8)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)

@@ -64,6 +64,9 @@ target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_UI="${CMAKE_CUR
 
 # the control corpus source widens the same comparison past the panel, so the path is named here too (§16)
 target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_CONTROLS_UI="${CMAKE_CURRENT_SOURCE_DIR}/vectors/dual_engine_controls.ui")
+target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_TABS_UI="${CMAKE_CURRENT_SOURCE_DIR}/vectors/dual_engine_tabs.ui")
+target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_CHOICES_UI="${CMAKE_CURRENT_SOURCE_DIR}/vectors/dual_engine_choices.ui")
+target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_IMAGE_UI="${CMAKE_CURRENT_SOURCE_DIR}/vectors/dual_engine_image.ui")
 
 # the asset fixtures live together, so a generator suite resolves an embedded image from a carried png (§6.4)
 target_compile_definitions(albor-tests PRIVATE ALBOR_TEST_VECTORS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/vectors")
@@ -144,6 +147,13 @@ endif()
 if(WIN32)
     target_sources(albor-tests PRIVATE "./conditional/platform_window_popup.test.win32.c++")
     target_link_libraries(albor-tests PRIVATE albor-platform-windows)
+    # the accessibility suite walks the ui automation hierarchy the win32 bridge publishes into, because the
+    # role mapping is only reachable once the bridge hands its tree to that hierarchy (§10.2, AD-16). the suite
+    # drives the provider directly and through a ui automation client, and asserts the WM_GETOBJECT hook answers
+    target_sources(albor-tests PRIVATE "./conditional/accessibility_role.test.win32.c++")
+    target_link_libraries(albor-tests PRIVATE uiautomationcore oleaut32)
+    # the platform services suite drives the clipboard, the input method, dpi and the frame pacing thread directly (§5.3, §8.3)
+    target_sources(albor-tests PRIVATE "./conditional/platform_services.test.win32.c++")
     # the platform font suite drives the vendored engine's directwrite halves, which are native win32 surfaces (§9.1, AD-28)
     target_sources(albor-tests PRIVATE "./conditional/text_platform_font.test.win32.c++")
     # the backend suite drives the direct3d device directly, which is the one module the portable suites never reach
@@ -161,6 +171,12 @@ if(ALBOR_AUTOMATION)
     target_sources(albor-tests PRIVATE "./conditional/capture_commands.test.cpp" "./conditional/png_writer.test.cpp")
     if(APPLE)
         target_sources(albor-tests PRIVATE "./conditional/automation_transport.test.cpp")
+    endif()
+    if(WIN32)
+        # the windows suites drive the named pipe transport and the embedded host end to end (§10.3, AD-10)
+        target_sources(albor-tests PRIVATE "./conditional/automation_transport.test.win32.c++")
+        target_sources(albor-tests PRIVATE "./conditional/automation_host.test.win32.c++")
+        target_link_libraries(albor-tests PRIVATE albor-automation-host)
     endif()
     target_link_libraries(albor-tests PRIVATE albor-automation)
 endif()

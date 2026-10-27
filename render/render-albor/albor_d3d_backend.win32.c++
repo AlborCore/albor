@@ -25,6 +25,7 @@
 #include "core/geometry.h"
 #include "core/native_window_handle.h"
 #include "render/aged_cache.h"
+#include "render/frame_profile.h"
 #include "render/image_resource.h"
 #include "render/render-albor/albor_batch.h"
 #include "render/render-albor/albor_geometry.h"
@@ -89,6 +90,9 @@ namespace albor::render
 
             // the composition the draw blends with, which the shader reads its residual alpha from
             std::int32_t blend;
+
+            // the first vertex of the draw, which direct3d omits from SV_VertexID and the shader adds (AD-05)
+            std::int32_t base_vertex;
         };
 
         // the hlsl cbuffer pads to a sixteen byte boundary, so the host side must carry the same size
@@ -426,51 +430,6 @@ namespace albor::render
             return target;
         }
 
-        // create the structured vertex view the vertex stage indexes, which one draw or a composite quad reads (§6.3)
-        [[nodiscard]] ComPtr<ID3D11ShaderResourceView> create_vertex_view(ID3D11Device* device, const BatchVertex* vertices, std::size_t count) {
-            // a buffer with no vertex has nothing the stage could index, so no view is created (§6.2)
-            if (device == nullptr || vertices == nullptr || count == 0)
-                return nullptr;
-            D3D11_BUFFER_DESC description{};
-            description.ByteWidth = static_cast<UINT>(count * sizeof(BatchVertex));
-            description.Usage = D3D11_USAGE_IMMUTABLE;
-            description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-            description.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-            description.StructureByteStride = static_cast<UINT>(sizeof(BatchVertex));
-            D3D11_SUBRESOURCE_DATA data{};
-            data.pSysMem = vertices;
-            ComPtr<ID3D11Buffer> buffer;
-            if (device->CreateBuffer(&description, &data, buffer.GetAddressOf()) != S_OK)
-                return nullptr;
-            // the view covers every vertex the buffer carries, which the identifier indexes (§6.3)
-            D3D11_SHADER_RESOURCE_VIEW_DESC view_description{};
-            view_description.Format = DXGI_FORMAT_UNKNOWN;
-            view_description.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-            view_description.Buffer.FirstElement = 0;
-            view_description.Buffer.NumElements = static_cast<UINT>(count);
-            ComPtr<ID3D11ShaderResourceView> view;
-            if (device->CreateShaderResourceView(buffer.Get(), &view_description, view.GetAddressOf()) != S_OK)
-                return nullptr;
-            return view;
-        }
-
-        // create the index buffer one frame consumes, which every draw takes its own range of (§6.3)
-        [[nodiscard]] ComPtr<ID3D11Buffer> create_index_buffer(ID3D11Device* device, const std::vector<std::uint32_t>& indices) {
-            // a frame with no index has nothing to draw, so no buffer is created (§6.2)
-            if (device == nullptr || indices.empty())
-                return nullptr;
-            D3D11_BUFFER_DESC description{};
-            description.ByteWidth = static_cast<UINT>(indices.size() * sizeof(std::uint32_t));
-            description.Usage = D3D11_USAGE_IMMUTABLE;
-            description.BindFlags = D3D11_BIND_INDEX_BUFFER;
-            D3D11_SUBRESOURCE_DATA data{};
-            data.pSysMem = indices.data();
-            ComPtr<ID3D11Buffer> buffer;
-            if (device->CreateBuffer(&description, &data, buffer.GetAddressOf()) != S_OK)
-                return nullptr;
-            return buffer;
-        }
-
         // write one uniform block into the dynamic buffer, which the discard map leaves the previous frame free (§6.3)
         void upload_uniforms(ID3D11Buffer* buffer, const void* block, std::size_t size) {
             ID3D11DeviceContext* context = device_state().context.Get();
@@ -504,7 +463,7 @@ namespace albor::render
         {
         public:
             // build a windowed surface over the native handle, or an offscreen one when it is empty (§6.2)
-            AlborRenderSurface(NativeWindowHandle handle, const WindowMetrics& metrics);
+            AlborRenderSurface(NativeWindowHandle handle, const WindowMetrics& metrics, std::shared_ptr<std::atomic<std::uint64_t>> batch_buffer_allocations);
             ~AlborRenderSurface() override;
 
             AlborRenderSurface(const AlborRenderSurface&) = delete;
@@ -520,11 +479,43 @@ namespace albor::render
             [[nodiscard]] std::vector<std::uint8_t> read_pixels() const override;
 
         private:
+            // a structured vertex buffer the surface keeps, which a steady frame rewrites (§6.3, AD-06)
+            struct RetainedVertices
+            {
+                // the buffer the vertex stage reads as a structured stream (§6.3)
+                ComPtr<ID3D11Buffer> buffer;
+
+                // the view the stage binds, which covers every slot the buffer holds (§6.3)
+                ComPtr<ID3D11ShaderResourceView> view;
+
+                // how many vertices the buffer holds, which a larger batch grows (§6.3)
+                std::size_t capacity = 0;
+            };
+
+            // an index buffer the surface keeps, which a steady frame rewrites instead of allocating (§6.3, AD-06)
+            struct RetainedIndices
+            {
+                // the buffer the input assembler indexes (§6.3)
+                ComPtr<ID3D11Buffer> buffer;
+
+                // how many indices the buffer holds, which a larger batch grows (§6.3)
+                std::size_t capacity = 0;
+            };
+
             // the implementation map begins with the colour target, which a resize replaces (§6.2, §6.3)
             void allocate(const WindowMetrics& extent);
 
             // copy every image the frame carries into the texture cache, which a later frame reuses (AD-06)
             void upload_textures();
+
+            // fill the retained vertex buffer, which grows only when the batch outgrows it (§6.3, AD-06)
+            [[nodiscard]] bool fill_vertices(RetainedVertices& target, ID3D11Device* device, ID3D11DeviceContext* context, const BatchVertex* vertices, std::size_t count);
+
+            // fill the retained index buffer, which grows only when the batch outgrows it (§6.3, AD-06)
+            [[nodiscard]] bool fill_indices(ID3D11Device* device, ID3D11DeviceContext* context, const std::vector<std::uint32_t>& indices);
+
+            // count one retained batch buffer, which the backend reports and a steady frame must not raise (§6.3, AD-06)
+            void note_batch_buffer_allocation();
 
             // encode every recorded draw of the batch into the frame (§6.3)
             void encode();
@@ -577,6 +568,18 @@ namespace albor::render
             // the immutable batch the frame builds, which the encoder consumes once (§6.3)
             FrameBatch m_batch;
 
+            // the retained vertex buffer the batch fills, which a steady frame rewrites (AD-06)
+            RetainedVertices m_batch_vertices;
+
+            // the retained vertex buffer a composite quad fills, which a steady frame rewrites (AD-06)
+            RetainedVertices m_quad_vertices;
+
+            // the retained index buffer the batch fills, which a steady frame rewrites (AD-06)
+            RetainedIndices m_batch_indices;
+
+            // the counter the backend reports, which each retained batch buffer raises once (§6.3, AD-06)
+            std::shared_ptr<std::atomic<std::uint64_t>> m_batch_buffer_allocations;
+
             // how many frames an unreferenced texture survives, which bounds the memory a long run holds (AD-06)
             static constexpr std::uint64_t TEXTURE_IDLE_FRAMES = 120;
 
@@ -588,6 +591,9 @@ namespace albor::render
 
             // the glyph paths this surface already walked, which the context borrows so a glyph walks once (§6.4)
             GlyphPathCache m_glyph_paths;
+
+            // the expanded glyphs this surface already swept, which the context borrows so a glyph sweeps once (§6.4)
+            GlyphMeshCache m_glyph_meshes;
 
             // the context that records the frame into the batch, which is rebuilt with it (§6.2)
             std::unique_ptr<AlborRenderContext> m_context;
@@ -727,8 +733,8 @@ namespace albor::render
         }
 
         // a windowed surface attaches the tree once the target allocated, so the first frame presents (§5.3, AD-16)
-        AlborRenderSurface::AlborRenderSurface(NativeWindowHandle handle, const WindowMetrics& metrics) :
-            m_metrics(metrics) {
+        AlborRenderSurface::AlborRenderSurface(NativeWindowHandle handle, const WindowMetrics& metrics, std::shared_ptr<std::atomic<std::uint64_t>> batch_buffer_allocations) :
+            m_metrics(metrics), m_batch_buffer_allocations(std::move(batch_buffer_allocations)) {
             // the handle that names a window is the borrowed window the composition target binds to (§5.3)
             m_window = handle.valid() ? static_cast<HWND>(const_cast<void*>(handle.object())) : nullptr;
             // the colour target is allocated at the physical extent the metrics name (§6.3, AD-27)
@@ -871,13 +877,15 @@ namespace albor::render
                 m_begun.store(true);
             }
             // the context records logical points onto the physical target, so the device scale is handed to it (AD-27)
-            m_context = std::make_unique<AlborRenderContext>(m_batch, Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size), metrics.scale_factor, &m_glyph_paths);
+            m_context = std::make_unique<AlborRenderContext>(m_batch, Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size), metrics.scale_factor, &m_glyph_paths, &m_glyph_meshes);
             // the frame counter advances once per frame, which the textures record and the glyph paths age against (AD-06)
             m_frame_counter++;
             // the textures age against the same counter, which drops the images no draw reached (AD-06)
             m_textures.begin_frame(m_frame_counter);
             // the glyph paths age against the same counter, which drops the ones no draw reached (§6.4)
             m_glyph_paths.begin_frame(m_frame_counter);
+            // the glyph meshes age against the same counter too, which drops the ones no draw reached (§6.4)
+            m_glyph_meshes.begin_frame(m_frame_counter);
             return *m_context;
         }
 
@@ -885,6 +893,10 @@ namespace albor::render
             // an end without a begun frame is a no operation rather than an error (§6.1)
             if (!m_begun.load())
                 return;
+            // the present is what the frame spends after the scene is recorded, which the profile reports (§6.3)
+            const FrameProfileScope present_scope;
+            // the batch is complete once the scene is recorded, so its size is what the profile reports (§6.3)
+            profile_batch(m_batch.vertices.size(), m_batch.indices.size() / 3u, m_batch.draws.size(), m_batch.shadows.size(), m_glyph_meshes.count());
             bool finished = false;
             bool pending = false;
             WindowMetrics pending_metrics;
@@ -893,18 +905,26 @@ namespace albor::render
                 ComPtr<ID3D11Texture2D> back_buffer;
                 if (m_window != nullptr && m_swap_chain != nullptr) {
                     // the pacing wait is per window, so the acquisition runs outside the process lock (§6.3)
+                    const FrameProfileScope wait_scope;
                     const HRESULT acquired = m_swap_chain->GetBuffer(0, IID_PPV_ARGS(back_buffer.GetAddressOf()));
+                    profile_drawable_wait(wait_scope.elapsed_ms());
                     if (FAILED(acquired))
                         note_device_result(acquired);
                 }
                 // the encode and the submit record on the process wide context, so one lock covers both (§6.3, §10.2)
                 const std::lock_guard<std::mutex> lock(process_present_mutex());
                 // the images the frame carries become textures once, which a later frame reuses (AD-06)
+                const FrameProfileScope upload_scope;
                 upload_textures();
+                profile_upload(upload_scope.elapsed_ms());
                 // the encode replays every recorded draw, which the clear begins (§6.3)
+                const FrameProfileScope encode_scope;
                 encode();
+                profile_encode(encode_scope.elapsed_ms());
                 // a windowed frame copies the target onto its back buffer, which the submit shows (§6.3)
+                const FrameProfileScope commit_scope;
                 present(back_buffer.Get());
+                profile_commit(commit_scope.elapsed_ms());
                 // a frame that never reached a back buffer is not finished, so a read back does not answer with it (§6.3)
                 finished = m_window == nullptr || back_buffer != nullptr;
                 if (finished)
@@ -914,6 +934,8 @@ namespace albor::render
                 pending = m_resize_pending.exchange(false);
                 pending_metrics = m_pending_metrics;
             }
+            // the recorded present includes the upload, the encode and the submit, which the profile reports (§6.3)
+            profile_present(present_scope.elapsed_ms());
             // a resize that waited for this frame applies now, so the next frame uses one extent (§6.2)
             if (pending)
                 resize(pending_metrics);
@@ -1024,6 +1046,82 @@ namespace albor::render
             }
         }
 
+        bool AlborRenderSurface::fill_vertices(RetainedVertices& target, ID3D11Device* device, ID3D11DeviceContext* context, const BatchVertex* vertices, std::size_t count) {
+            // a frame with no vertex has nothing the stage could index, so no buffer is touched (§6.2)
+            if (device == nullptr || context == nullptr || vertices == nullptr || count == 0)
+                return false;
+            // a buffer smaller than the batch grows, which is the only allocation a steady frame avoids (AD-06)
+            if (target.buffer == nullptr || target.capacity < count) {
+                // the buffer doubles, so a stream of growing text does not allocate on every larger frame (AD-06)
+                const std::size_t capacity = std::max(count, target.capacity * 2u);
+                D3D11_BUFFER_DESC description{};
+                description.ByteWidth = static_cast<UINT>(capacity * sizeof(BatchVertex));
+                description.Usage = D3D11_USAGE_DYNAMIC;
+                description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+                description.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+                description.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+                description.StructureByteStride = static_cast<UINT>(sizeof(BatchVertex));
+                ComPtr<ID3D11Buffer> buffer;
+                if (device->CreateBuffer(&description, nullptr, buffer.GetAddressOf()) != S_OK)
+                    return false;
+                // the view covers every slot the buffer holds, which the shader indexes by vertex id (§6.3)
+                D3D11_SHADER_RESOURCE_VIEW_DESC view_description{};
+                view_description.Format = DXGI_FORMAT_UNKNOWN;
+                view_description.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+                view_description.Buffer.FirstElement = 0;
+                view_description.Buffer.NumElements = static_cast<UINT>(capacity);
+                ComPtr<ID3D11ShaderResourceView> view;
+                if (device->CreateShaderResourceView(buffer.Get(), &view_description, view.GetAddressOf()) != S_OK)
+                    return false;
+                target.buffer = std::move(buffer);
+                target.view = std::move(view);
+                target.capacity = capacity;
+                note_batch_buffer_allocation();
+            }
+            // the frame's vertices overwrite the buffer, which discard leaves the previous frame free (§6.3)
+            D3D11_MAPPED_SUBRESOURCE mapped{};
+            if (context->Map(target.buffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped) != S_OK)
+                return false;
+            std::memcpy(mapped.pData, vertices, count * sizeof(BatchVertex));
+            context->Unmap(target.buffer.Get(), 0);
+            return true;
+        }
+
+        bool AlborRenderSurface::fill_indices(ID3D11Device* device, ID3D11DeviceContext* context, const std::vector<std::uint32_t>& indices) {
+            // a frame with no index has nothing to draw, so no buffer is touched (§6.2)
+            if (device == nullptr || context == nullptr || indices.empty())
+                return false;
+            // a buffer smaller than the batch grows, which is the only allocation a steady frame avoids (AD-06)
+            if (m_batch_indices.buffer == nullptr || m_batch_indices.capacity < indices.size()) {
+                // the buffer doubles, so a stream of growing text does not allocate on every larger frame (AD-06)
+                const std::size_t capacity = std::max(indices.size(), m_batch_indices.capacity * 2u);
+                D3D11_BUFFER_DESC description{};
+                description.ByteWidth = static_cast<UINT>(capacity * sizeof(std::uint32_t));
+                description.Usage = D3D11_USAGE_DYNAMIC;
+                description.BindFlags = D3D11_BIND_INDEX_BUFFER;
+                description.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+                ComPtr<ID3D11Buffer> buffer;
+                if (device->CreateBuffer(&description, nullptr, buffer.GetAddressOf()) != S_OK)
+                    return false;
+                m_batch_indices.buffer = std::move(buffer);
+                m_batch_indices.capacity = capacity;
+                note_batch_buffer_allocation();
+            }
+            // the frame's indices overwrite the buffer, which discard leaves the previous frame free (§6.3)
+            D3D11_MAPPED_SUBRESOURCE mapped{};
+            if (context->Map(m_batch_indices.buffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped) != S_OK)
+                return false;
+            std::memcpy(mapped.pData, indices.data(), indices.size() * sizeof(std::uint32_t));
+            context->Unmap(m_batch_indices.buffer.Get(), 0);
+            return true;
+        }
+
+        void AlborRenderSurface::note_batch_buffer_allocation() {
+            // a surface built without a counter still draws, which the portable shell does (§6.2)
+            if (m_batch_buffer_allocations != nullptr)
+                m_batch_buffer_allocations->fetch_add(1u, std::memory_order_relaxed);
+        }
+
         void AlborRenderSurface::bind_target(const RenderTarget& target, bool clear) {
             ID3D11DeviceContext* context = device_state().context.Get();
             if (context == nullptr || target.view == nullptr)
@@ -1084,6 +1182,8 @@ namespace albor::render
             uniforms.has_texture = draw.texture == 0 ? 0 : 1;
             // the shader reshapes its alpha for the modes that replace the destination (§6.2)
             uniforms.blend = static_cast<int>(draw.composition);
+            // direct3d leaves BaseVertexLocation out of SV_VertexID, so the vertex stage adds it (AD-05)
+            uniforms.base_vertex = static_cast<std::int32_t>(draw.base_vertex);
             upload_uniforms(state.draw_uniforms.Get(), &uniforms, sizeof(uniforms));
             // the draw binds its own texture, or the white texel a solid draw samples (§6.3, §6.4)
             ID3D11ShaderResourceView* paint = state.white_view.Get();
@@ -1107,8 +1207,8 @@ namespace albor::render
             context->PSSetSamplers(0, 1, &sampler);
             context->PSSetShaderResources(0, 1, &paint);
             context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-            // the draw consumes its own index range, which the builder recorded (§6.3)
-            context->DrawIndexed(draw.index_count, draw.index_begin, 0);
+            // the draw consumes its own index range, which the builder recorded, based at its own first vertex (§6.3)
+            context->DrawIndexed(draw.index_count, draw.index_begin, static_cast<INT>(draw.base_vertex));
         }
 
         void AlborRenderSurface::composite_layer(float opacity, const RenderTarget& offscreen, const RenderTarget& parent) {
@@ -1288,9 +1388,8 @@ namespace albor::render
             ID3D11DeviceContext* context = state.context.Get();
             if (device == nullptr || context == nullptr || texture == nullptr)
                 return;
-            // the composite quad is a six vertex list, which one structured read serves (§6.2)
-            ComPtr<ID3D11ShaderResourceView> vertices = create_vertex_view(device, quad, 6);
-            if (vertices == nullptr)
+            // the composite quad is a six vertex list, which the retained buffer takes (§6.2)
+            if (!fill_vertices(m_quad_vertices, device, context, quad, 6))
                 return;
             upload_uniforms(state.draw_uniforms.Get(), &uniforms, sizeof(uniforms));
             context->VSSetShader(state.vertex_shader.Get(), nullptr, 0);
@@ -1299,7 +1398,7 @@ namespace albor::render
             ID3D11Buffer* uniform_buffer = state.draw_uniforms.Get();
             context->VSSetConstantBuffers(0, 1, &uniform_buffer);
             context->PSSetConstantBuffers(0, 1, &uniform_buffer);
-            ID3D11ShaderResourceView* vertex_resource = vertices.Get();
+            ID3D11ShaderResourceView* vertex_resource = m_quad_vertices.view.Get();
             context->VSSetShaderResources(0, 1, &vertex_resource);
             ID3D11SamplerState* sampler = state.sampler.Get();
             context->PSSetSamplers(0, 1, &sampler);
@@ -1323,11 +1422,11 @@ namespace albor::render
             // the frame starts from a transparent clear, which an empty frame leaves (§6.1)
             bind_target(frame, true);
             context->RSSetState(state.rasterizer.Get());
-            // the batch vertex buffer is one structured read both the batch draws and the composites index (§6.3)
-            ComPtr<ID3D11ShaderResourceView> vertices = create_vertex_view(device, m_batch.vertices.data(), m_batch.vertices.size());
-            ComPtr<ID3D11Buffer> indices = create_index_buffer(device, m_batch.indices);
-            if (indices != nullptr)
-                context->IASetIndexBuffer(indices.Get(), DXGI_FORMAT_R32_UINT, 0);
+            // the retained vertex and index buffers take the batch, which a steady frame rewrites (§6.3, AD-06)
+            const bool has_vertices = fill_vertices(m_batch_vertices, device, context, m_batch.vertices.data(), m_batch.vertices.size());
+            const bool has_indices = fill_indices(device, context, m_batch.indices);
+            if (has_indices)
+                context->IASetIndexBuffer(m_batch_indices.buffer.Get(), DXGI_FORMAT_R32_UINT, 0);
             // one open layer paints into its offscreen target and composites when its range ends (§6.2)
             struct OpenLayer
             {
@@ -1387,8 +1486,8 @@ namespace albor::render
                     continue;
                 }
                 // a draw with no geometry has nothing to encode, which a cast only frame leaves (§6.2)
-                if (vertices != nullptr && indices != nullptr && draw.index_count > 0)
-                    draw_batch_draw(draw, *target, vertices.Get());
+                if (has_vertices && has_indices && draw.index_count > 0)
+                    draw_batch_draw(draw, *target, m_batch_vertices.view.Get());
             }
             // the frame closes on the frame target, which the present copies (§6.3)
             bind_target(frame, false);
@@ -1524,12 +1623,12 @@ namespace albor::render
         return presented_frames().load();
     }
 
-    std::unique_ptr<RenderSurface> backend_create_surface(NativeWindowHandle handle, const WindowMetrics& metrics) {
+    std::unique_ptr<RenderSurface> backend_create_surface(NativeWindowHandle handle, const WindowMetrics& metrics, std::shared_ptr<std::atomic<std::uint64_t>> batch_buffer_allocations) {
         // a host without the shared device state builds no surface, which readiness reports (§6.2)
         if (!ensure_device_state())
             return nullptr;
         // a surface that could not allocate its target or attach its tree is refused rather than handed out (§6.2)
-        std::unique_ptr<AlborRenderSurface> surface = std::make_unique<AlborRenderSurface>(handle, metrics);
+        std::unique_ptr<AlborRenderSurface> surface = std::make_unique<AlborRenderSurface>(handle, metrics, std::move(batch_buffer_allocations));
         if (!surface->valid())
             return nullptr;
         return surface;

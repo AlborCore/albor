@@ -11,7 +11,7 @@ target_include_directories(albor-devrt PUBLIC ${ALBOR_SOURCE_DIR})
 target_compile_features(albor-devrt PUBLIC cxx_std_23)
 
 # the extension patches a ui tree and answers through the runtime hook (§12.1, AD-02)
-target_link_libraries(albor-devrt PUBLIC albor-ui albor-core)
+target_link_libraries(albor-devrt PUBLIC albor-ui albor-core PRIVATE albor-resources)
 
 # the auto target links the archive whole, so the extension installs itself at load without a call (§12.1, AD-02)
 add_library(albor-devrt-auto INTERFACE)

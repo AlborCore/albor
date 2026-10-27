@@ -1314,6 +1314,381 @@ TEST(Codegen, ADrawPrimitiveWithTheWrongArityIsRefused) {
     EXPECT_TRUE(has_code(diagnostics, "E0603"));
 }
 
+TEST(Codegen, AProgressBarIsConstructedAndWired) {
+    // arrange a progress bar with its fraction and its colours (§11.1)
+    const std::string source = R"(component C {
+        ProgressBar {
+            value: 0.5;
+            track_color: #101010;
+            fill_color: #3366ff;
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert the bar is constructed over the engine and uses the setters (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<ProgressBar>(engine);"));
+    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/progress_bar.h\""));
+    EXPECT_TRUE(contains(cpp.content, "set_value("));
+    EXPECT_TRUE(contains(cpp.content, "set_track_color("));
+    EXPECT_TRUE(contains(cpp.content, "set_fill_color("));
+}
+
+TEST(Codegen, AProgressBarCatalogEntryExists) {
+    // arrange
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act
+    const ElementType* progress = catalog.find("ProgressBar");
+    // assert the catalog exposes the leaf with its properties and no signals (§11.1)
+    ASSERT_NE(progress, nullptr);
+    EXPECT_FALSE(progress->accepts_children);
+    EXPECT_TRUE(progress->find_property("value") != nullptr);
+    EXPECT_TRUE(progress->find_property("disabled") != nullptr);
+    EXPECT_TRUE(progress->find_property("track_color") != nullptr);
+    EXPECT_TRUE(progress->find_property("fill_color") != nullptr);
+    EXPECT_TRUE(progress->signals.empty());
+}
+
+TEST(Codegen, AnImageIsConstructedAndWired) {
+    // arrange an image bound to a property, with the description and dimensions an author writes (§6.4, §8)
+    const std::string_view source = R"(
+component C {
+    in property<image> logo: @image("icon.png");
+    Image {
+        source: logo;
+        description: "Company logo";
+        width: 24px;
+        height: 12px;
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path("image_panel.ui"));
+    // assert the asset was embedded and the widget was generated (§6.4, §11.3)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    ASSERT_EQ(generation.paths.size(), 1U);
+    const GeneratedFile& cpp = file_named(generation.files, "c.cpp");
+    // assert the widget takes the engine and receives each property through its setter (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<Image>(engine);"));
+    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/image.h\""));
+    EXPECT_TRUE(contains(cpp.content, "m_node_0->set_source(value)"));
+    EXPECT_TRUE(contains(cpp.content, "set_description(std::string(\"Company logo\"));"));
+    EXPECT_TRUE(contains(cpp.content, "set_width(24.0f);"));
+    EXPECT_TRUE(contains(cpp.content, "set_height(12.0f);"));
+}
+
+TEST(Codegen, AnImageWithAWrittenSourceEmbedsTheAsset) {
+    // arrange an image whose source is the asset itself, which is the form a static picture uses (§6.4, §11.3)
+    const std::string_view source = R"(
+component C {
+    Image {
+        source: @image("icon.png");
+        description: "Logo";
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path("image_panel.ui"));
+    // assert the asset was embedded and the widget was handed its accessor (§6.4, §11.3)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    ASSERT_EQ(generation.paths.size(), 1U);
+    const GeneratedFile& cpp = file_named(generation.files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<Image>(engine);"));
+    EXPECT_TRUE(contains(cpp.content, "set_source(image_panel_assets::image_0())"));
+}
+
+TEST(Codegen, AnImageCatalogEntryExists) {
+    // arrange
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act
+    const ElementType* image = catalog.find("Image");
+    // assert the catalog exposes the leaf with its properties and no signals (§11.1)
+    ASSERT_NE(image, nullptr);
+    EXPECT_FALSE(image->accepts_children);
+    EXPECT_TRUE(image->find_property("source") != nullptr);
+    EXPECT_TRUE(image->find_property("description") != nullptr);
+    EXPECT_TRUE(image->find_property("width") != nullptr);
+    EXPECT_TRUE(image->find_property("height") != nullptr);
+    EXPECT_TRUE(image->signals.empty());
+}
+
+TEST(Codegen, ATabViewIsConstructedAndWired) {
+    // arrange a tab view with a selection, a handler and two labelled pages (§8, §11.1)
+    const std::string source = R"(component C {
+        inout property<int> current: 0;
+
+        TabView {
+            selected: 1;
+            vertical: true;
+            on_selection_changed: {
+                current = index;
+            }
+
+            Tab {
+                label: "One";
+                TabTitle {
+                    Label { text: "★"; }
+                }
+                Label { text: "first"; }
+            }
+
+            Tab {
+                label: "Two";
+                Label { text: "second"; }
+            }
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert both widgets are constructed and the pages take the text engine they measure their labels with (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<TabView>(engine);"));
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<TabPage>(engine, text_engine);"));
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<TabTitle>(engine);"));
+    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/tab_view.h\""));
+    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/tab_page.h\""));
+    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/tab_title.h\""));
+    // assert the selection, the labels and the signal are wired through their setters (§8, §8.3)
+    EXPECT_TRUE(contains(cpp.content, "set_selected("));
+    EXPECT_TRUE(contains(cpp.content, "set_vertical(true)"));
+    EXPECT_TRUE(contains(cpp.content, "set_label("));
+    EXPECT_TRUE(contains(cpp.content, "set_on_selection_changed("));
+    EXPECT_TRUE(contains(cpp.content, "int index"));
+}
+
+TEST(Codegen, ATabViewCatalogEntryExists) {
+    // arrange
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act
+    const ElementType* tabs = catalog.find("TabView");
+    const ElementType* page = catalog.find("Tab");
+    const ElementType* title = catalog.find("TabTitle");
+    // assert the view is a container with one selection property and one selection signal (§8, §11.1)
+    ASSERT_NE(tabs, nullptr);
+    EXPECT_TRUE(tabs->accepts_children);
+    EXPECT_TRUE(tabs->find_property("selected") != nullptr);
+    EXPECT_TRUE(tabs->find_property("vertical") != nullptr);
+    ASSERT_EQ(tabs->signals.size(), 1u);
+    EXPECT_EQ(tabs->signals[0].name, "selection_changed");
+    ASSERT_EQ(tabs->signals[0].parameter_names.size(), 1u);
+    EXPECT_EQ(tabs->signals[0].parameter_names[0], "index");
+    // assert the page is a container with the label the strip draws (§8)
+    ASSERT_NE(page, nullptr);
+    EXPECT_TRUE(page->accepts_children);
+    EXPECT_TRUE(page->find_property("label") != nullptr);
+    EXPECT_TRUE(page->signals.empty());
+    // assert the title is a container with no property of its own, because its children are the content (§8)
+    ASSERT_NE(title, nullptr);
+    EXPECT_TRUE(title->accepts_children);
+    EXPECT_EQ(title->find_property("label"), nullptr);
+    EXPECT_NE(title->find_property("visible"), nullptr);
+    EXPECT_TRUE(title->signals.empty());
+}
+
+TEST(Codegen, ARadioGroupIsConstructedAndWired) {
+    // arrange a group with a selection, an orientation, a gap, a handler and two labelled choices (§8, §11.1)
+    const std::string source = R"(component C {
+        inout property<int> mode: 0;
+
+        RadioGroup {
+            selected: 1;
+            vertical: true;
+            spacing: 8px;
+            on_selection_changed: {
+                mode = value;
+            }
+
+            RadioButton {
+                value: 0;
+                label: "One";
+            }
+
+            RadioButton {
+                value: 1;
+                label: "Two";
+                disabled: true;
+            }
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert the group takes the engine and the choices take both engines they measure with (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<RadioGroup>(engine);"));
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<RadioButton>(engine, text_engine);"));
+    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/radio_group.h\""));
+    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/radio_button.h\""));
+    // assert the selection, the orientation, the gap and the signal are wired through their setters (§8, §8.3)
+    EXPECT_TRUE(contains(cpp.content, "set_selected("));
+    EXPECT_TRUE(contains(cpp.content, "set_vertical(true)"));
+    EXPECT_TRUE(contains(cpp.content, "set_spacing("));
+    EXPECT_TRUE(contains(cpp.content, "set_value("));
+    EXPECT_TRUE(contains(cpp.content, "set_label("));
+    EXPECT_TRUE(contains(cpp.content, "set_disabled(true)"));
+    EXPECT_TRUE(contains(cpp.content, "set_on_selection_changed("));
+    EXPECT_TRUE(contains(cpp.content, "int value"));
+}
+
+TEST(Codegen, ARadioGroupCatalogEntryExists) {
+    // arrange
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act
+    const ElementType* group = catalog.find("RadioGroup");
+    const ElementType* choice = catalog.find("RadioButton");
+    // assert the group is a container with one selection property and one selection signal (§8, §11.1)
+    ASSERT_NE(group, nullptr);
+    EXPECT_TRUE(group->accepts_children);
+    EXPECT_TRUE(group->find_property("selected") != nullptr);
+    EXPECT_TRUE(group->find_property("vertical") != nullptr);
+    EXPECT_TRUE(group->find_property("spacing") != nullptr);
+    ASSERT_EQ(group->signals.size(), 1u);
+    EXPECT_EQ(group->signals[0].name, "selection_changed");
+    ASSERT_EQ(group->signals[0].parameter_names.size(), 1u);
+    EXPECT_EQ(group->signals[0].parameter_names[0], "value");
+    // assert the choice is a leaf with a value, a label and a disabled state (§8)
+    ASSERT_NE(choice, nullptr);
+    EXPECT_FALSE(choice->accepts_children);
+    EXPECT_TRUE(choice->find_property("value") != nullptr);
+    EXPECT_TRUE(choice->find_property("label") != nullptr);
+    EXPECT_TRUE(choice->find_property("disabled") != nullptr);
+    EXPECT_TRUE(choice->signals.empty());
+}
+
+TEST(Codegen, ANumericStepperIsConstructedAndWired) {
+    // arrange a stepper with a value, a range, a step, a disabled state and a handler (§8, §11.1)
+    const std::string source = R"(component C {
+        inout property<float> effort: 4.0;
+
+        NumericStepper {
+            value: effort;
+            min: 1.0;
+            max: 9.0;
+            step: 2.0;
+            disabled: true;
+            on_changed: {
+                effort = value;
+            }
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert the stepper is constructed over both engines and uses the setters its catalog entry names (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<NumericStepper>(engine, text_engine);"));
+    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/numeric_stepper.h\""));
+    EXPECT_TRUE(contains(cpp.content, "set_value("));
+    EXPECT_TRUE(contains(cpp.content, "set_minimum("));
+    EXPECT_TRUE(contains(cpp.content, "set_maximum("));
+    EXPECT_TRUE(contains(cpp.content, "set_step("));
+    EXPECT_TRUE(contains(cpp.content, "set_disabled(true)"));
+    EXPECT_TRUE(contains(cpp.content, "set_on_change("));
+    EXPECT_TRUE(contains(cpp.content, "float value"));
+}
+
+TEST(Codegen, ANumericStepperValueUsesTheAuthoredBounds) {
+    // arrange a stepper whose authored value is outside the default range, with its bounds written around it (§8)
+    const std::string source = R"(component C {
+        NumericStepper {
+            value: -50.0;
+            min: -100.0;
+            max: 100.0;
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert both bounds are applied before the value, because the clamp reads the authored range (§8)
+    const std::size_t minimum = cpp.content.find("set_minimum(");
+    const std::size_t maximum = cpp.content.find("set_maximum(");
+    const std::size_t value = cpp.content.find("set_value(");
+    ASSERT_NE(minimum, std::string::npos);
+    ASSERT_NE(maximum, std::string::npos);
+    ASSERT_NE(value, std::string::npos);
+    EXPECT_LT(minimum, value);
+    EXPECT_LT(maximum, value);
+}
+
+TEST(Codegen, ANumericStepperValueUsesBoundBoundsOnTheFirstFrame) {
+    // arrange a stepper whose bounds come from component properties, which settle after binding (§7.3, §8)
+    const std::string source = R"(component C {
+        in property<float> low: -100.0;
+        in property<float> high: 100.0;
+        NumericStepper {
+            value: -50.0;
+            min: low;
+            max: high;
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert the current bounds are applied immediately and still bound, before the deferred value (§8)
+    const std::size_t minimum = cpp.content.find("set_minimum(");
+    const std::size_t maximum = cpp.content.find("set_maximum(");
+    const std::size_t value = cpp.content.find("set_value(");
+    ASSERT_NE(minimum, std::string::npos);
+    ASSERT_NE(maximum, std::string::npos);
+    ASSERT_NE(value, std::string::npos);
+    EXPECT_LT(minimum, value);
+    EXPECT_LT(maximum, value);
+    EXPECT_NE(cpp.content.find("m_sink_0_min"), std::string::npos);
+    EXPECT_NE(cpp.content.find("m_sink_0_max"), std::string::npos);
+}
+
+TEST(Codegen, ANumericStepperRowAppliesBoundsBeforeItsValue) {
+    // arrange a repeated stepper, whose row has no sink and must apply the range before the value (§18.1, §8)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    catalog.add_record(RecordType{.name = "Mode", .fields = {RecordFieldType{.name = "key", .type = scalar(TypeKind::String), .is_key = true}, RecordFieldType{.name = "level", .type = scalar(TypeKind::Float), .is_key = false}}});
+    DiagnosticList diagnostics;
+    const std::string source = R"(component C {
+        in property<vector<Mode>> modes;
+        Column {
+            Repeat(mode in modes) {
+                NumericStepper {
+                    value: mode.level;
+                    min: -100.0;
+                    max: 100.0;
+                }
+            }
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert the row is generated, because a record with a key is a legal repeat source (§18.1, AD-13)
+    EXPECT_FALSE(diagnostics.has_errors());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    const std::size_t minimum = cpp.content.find("set_minimum(");
+    const std::size_t maximum = cpp.content.find("set_maximum(");
+    const std::size_t value = cpp.content.find("set_value(");
+    ASSERT_NE(minimum, std::string::npos);
+    ASSERT_NE(maximum, std::string::npos);
+    ASSERT_NE(value, std::string::npos);
+    // assert both bounds are written before the row value, because the row clamp is immediate (§8)
+    EXPECT_LT(minimum, value);
+    EXPECT_LT(maximum, value);
+}
+
+TEST(Codegen, ANumericStepperCatalogEntryExists) {
+    // arrange
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act
+    const ElementType* stepper = catalog.find("NumericStepper");
+    // assert the stepper is a leaf with a bounded number and one changed signal (§8, §11.1)
+    ASSERT_NE(stepper, nullptr);
+    EXPECT_FALSE(stepper->accepts_children);
+    EXPECT_TRUE(stepper->find_property("value") != nullptr);
+    EXPECT_TRUE(stepper->find_property("min") != nullptr);
+    EXPECT_TRUE(stepper->find_property("max") != nullptr);
+    EXPECT_TRUE(stepper->find_property("step") != nullptr);
+    EXPECT_TRUE(stepper->find_property("disabled") != nullptr);
+    ASSERT_EQ(stepper->signals.size(), 1u);
+    EXPECT_EQ(stepper->signals[0].name, "changed");
+    ASSERT_EQ(stepper->signals[0].parameter_names.size(), 1u);
+    EXPECT_EQ(stepper->signals[0].parameter_names[0], "value");
+}
+
 TEST(Codegen, ASliderRangeBecomesOneSetterOverBothBounds) {
     // arrange a slider whose bounds the author wrote, which the widget takes together (§8)
     const std::string source = R"(component C {

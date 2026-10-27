@@ -64,10 +64,10 @@ namespace albor
         CommandId command = invalid_command_id();
 
         // the row identity or index the invocation carried, which most actions leave empty (§18.3)
-        CommandArgument argument;
+        CommandArgument argument{};
 
         // the range the invocation resolved to, which only a selection scoped action reads (§18.3)
-        SelectionSpan selection;
+        SelectionSpan selection{};
 
         // the route the invocation arrived by, which every handler may branch on (§18.3)
         InvocationSource source = InvocationSource::Pointer;

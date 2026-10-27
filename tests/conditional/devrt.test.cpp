@@ -15,17 +15,28 @@
 #include "devrt/element_table.h"
 #include "devrt/ir.h"
 #include "devrt/reload_adapter.h"
+#include "dual_engine_choices.h"
 #include "dual_engine_controls.h"
+#include "dual_engine_image.h"
 #include "dual_engine_panel.h"
+#include "dual_engine_tabs.h"
 #include "layout/column_layout.h"
 #include "layout/row_layout.h"
+#include "render/image_resource.h"
 #include "runtime/binding_engine.h"
 #include "text/text_engine.h"
 #include "ui/ui_node.h"
 #include "widgets/button.h"
 #include "widgets/checkbox.h"
+#include "widgets/image.h"
 #include "widgets/label.h"
+#include "widgets/numeric_stepper.h"
+#include "widgets/radio_button.h"
+#include "widgets/radio_group.h"
 #include "widgets/slider.h"
+#include "widgets/tab_page.h"
+#include "widgets/tab_title.h"
+#include "widgets/tab_view.h"
 
 using namespace albor;
 using namespace albor::devrt;
@@ -80,13 +91,16 @@ namespace
         return found;
     }
 
-    // the value one property holds, chosen by the name because the type is what the setter reads (§11.1)
-    std::string value_for(const std::string& property) {
+    // the value one property holds, chosen by the element and name because the type is what the setter reads (§11.1)
+    std::string value_for(const std::string& element, const std::string& property) {
+        // an image source carries the serializer marker and a path the test vectors own (§6.4, §12.1)
+        if (element == "Image" && property == "source")
+            return std::string(IMAGE_VALUE_PREFIX) + std::string(ALBOR_TEST_VECTORS_DIR) + "/icon.png";
         // a name outside the declared set is a table lie, so the test fails loudly rather than reading a default (§11.1)
-        if (property == "text" || property == "placeholder")
+        if (property == "text" || property == "placeholder" || property == "description")
             return "hello";
         // a float is any number the language writes, and the spacing is trimmed rather than refused (§11.1)
-        if (property == "spacing" || property == "padding" || property == "font_size" || property == "overscan" || property == "row_height")
+        if (property == "spacing" || property == "padding" || property == "font_size" || property == "overscan" || property == "row_height" || property == "width" || property == "height")
             return "12";
         // a colour is three channel floats, which is how the language writes one (§11.1)
         if (property == "foreground" || property == "background" || property == "outline" || property == "check_fill" || property == "track_color" || property == "thumb_color")
@@ -94,9 +108,15 @@ namespace
         // a scrollbar policy is a named member of §8 (§11.1)
         if (property == "scrollbar")
             return "as_needed";
-        // a slider value is a plain number in the unit range (§11.1)
-        if (property == "value")
-            return "0.5";
+        // a radio value is an integer, which the group matches against its selected value (§8)
+        if (property == "value" && element == "RadioButton")
+            return "1";
+        // a stepper value and its bounds are floats, which the language writes as numbers (§8)
+        if (property == "value" || property == "min" || property == "max" || property == "step")
+            return "1.5";
+        // a selected value is an integer, which the tab and radio groups share (§8)
+        if (property == "selected")
+            return "1";
         // everything left is a flag, which the language writes as one of two words (§11.1)
         return "true";
     }
@@ -174,7 +194,7 @@ TEST(DevElementChecks, EveryBuiltinElementBuildsOverTheEngines) {
     BindingEngine engine;
     TestTextEngine text;
     // assert each closed element of §8 resolves, because the definition language may name any of them
-    for (const char* element : {"Column", "Row", "Padding", "Stack", "Grid", "Label", "Button", "Slider", "CheckBox", "Canvas", "ScrollView", "TextField"}) {
+    for (const char* element : {"Column", "Row", "Padding", "Stack", "Grid", "Label", "Button", "Slider", "CheckBox", "RadioGroup", "RadioButton", "NumericStepper", "Canvas", "Image", "ScrollView", "TextField"}) {
         EXPECT_TRUE(known_element(element)) << element;
         EXPECT_NE(create_node(element, engine, text), nullptr) << element;
     }
@@ -222,7 +242,7 @@ TEST(DevElementChecks, EveryDeclaredPropertyLandsOnItsOwnElement) {
     TestTextEngine text;
     // the closed catalogue of §8, paired with a value each property holds, which is what a definition writes (§11.1)
     const std::vector<std::pair<std::string, std::string>> assignments{
-        {"Column", "spacing"}, {"Column", "padding"}, {"Row", "spacing"}, {"Grid", "spacing"}, {"Padding", "padding"}, {"Label", "text"}, {"Label", "foreground"}, {"Label", "font_size"}, {"Button", "text"}, {"Button", "background"}, {"Button", "disabled"}, {"Slider", "value"}, {"Slider", "disabled"}, {"Slider", "track_color"}, {"Slider", "thumb_color"}, {"CheckBox", "checked"}, {"CheckBox", "disabled"}, {"CheckBox", "outline"}, {"CheckBox", "check_fill"}, {"ScrollView", "overscan"}, {"ScrollView", "scrollbar"}, {"ScrollView", "row_height"}, {"TextField", "value"}, {"TextField", "placeholder"}, {"TextField", "read_only"}, {"TextField", "multiline"}, {"TextField", "disabled"}, {"TextField", "font_size"},
+        {"Column", "spacing"}, {"Column", "padding"}, {"Row", "spacing"}, {"Grid", "spacing"}, {"Padding", "padding"}, {"Label", "text"}, {"Label", "foreground"}, {"Label", "font_size"}, {"Button", "text"}, {"Button", "background"}, {"Button", "disabled"}, {"Slider", "value"}, {"Slider", "disabled"}, {"Slider", "track_color"}, {"Slider", "thumb_color"}, {"CheckBox", "checked"}, {"CheckBox", "disabled"}, {"CheckBox", "outline"}, {"CheckBox", "check_fill"}, {"RadioGroup", "selected"}, {"RadioGroup", "vertical"}, {"RadioGroup", "spacing"}, {"RadioButton", "value"}, {"RadioButton", "label"}, {"RadioButton", "disabled"}, {"NumericStepper", "value"}, {"NumericStepper", "min"}, {"NumericStepper", "max"}, {"NumericStepper", "step"}, {"NumericStepper", "disabled"}, {"Image", "source"}, {"Image", "description"}, {"Image", "width"}, {"Image", "height"}, {"ScrollView", "overscan"}, {"ScrollView", "scrollbar"}, {"ScrollView", "row_height"}, {"TextField", "value"}, {"TextField", "placeholder"}, {"TextField", "read_only"}, {"TextField", "multiline"}, {"TextField", "disabled"}, {"TextField", "font_size"},
     };
     // assert each assignment lands, because a setter the table names but never runs is a table that lies (§11.1)
     for (const std::pair<std::string, std::string>& assignment : assignments) {
@@ -231,7 +251,7 @@ TEST(DevElementChecks, EveryDeclaredPropertyLandsOnItsOwnElement) {
         std::unique_ptr<UiNode> node = create_node(element, engine, text);
         ASSERT_NE(node, nullptr) << element;
         // the value is the one the property holds, chosen per type so the setter runs rather than refuses (§11.1)
-        const std::string value = value_for(property);
+        const std::string value = value_for(element, property);
         EXPECT_TRUE(apply_property(*node, element, property, value)) << element << "." << property;
     }
 }
@@ -240,7 +260,7 @@ TEST(DevElementChecks, EveryElementTakesBothAlignments) {
     // arrange the engines and one node per element, because both axes are declared by all of them (§8.2)
     BindingEngine engine;
     TestTextEngine text;
-    for (const char* element : {"Column", "Row", "Padding", "Stack", "Grid", "Label", "Button", "Slider", "CheckBox", "Canvas", "ScrollView", "TextField"}) {
+    for (const char* element : {"Column", "Row", "Padding", "Stack", "Grid", "Label", "Button", "Slider", "CheckBox", "RadioGroup", "RadioButton", "NumericStepper", "Canvas", "Image", "ScrollView", "TextField"}) {
         std::unique_ptr<UiNode> node = create_node(element, engine, text);
         ASSERT_NE(node, nullptr) << element;
         // act and assert both axes land on every element, because alignment is a property of every node (§8.2)
@@ -268,7 +288,7 @@ TEST(DevElementChecks, EveryTypedPropertyRefusesAValueItCannotHold) {
     TestTextEngine text;
     // the closed catalogue of the typed properties, each with a value of the wrong shape (§11.1)
     const std::vector<std::tuple<std::string, std::string, std::string>> refusals{
-        {"Column", "spacing", "wide"}, {"Column", "padding", "wide"}, {"Row", "spacing", "wide"}, {"Grid", "spacing", "wide"}, {"Padding", "padding", "wide"}, {"Label", "foreground", "blue"}, {"Label", "font_size", "big"}, {"Button", "background", "blue"}, {"Button", "disabled", "yes"}, {"Slider", "value", "half"}, {"Slider", "disabled", "yes"}, {"Slider", "track_color", "blue"}, {"Slider", "thumb_color", "blue"}, {"CheckBox", "checked", "yes"}, {"CheckBox", "disabled", "yes"}, {"CheckBox", "outline", "blue"}, {"CheckBox", "check_fill", "blue"}, {"ScrollView", "overscan", "some"}, {"ScrollView", "scrollbar", "sometimes"}, {"ScrollView", "row_height", "tall"}, {"TextField", "read_only", "yes"}, {"TextField", "multiline", "yes"}, {"TextField", "disabled", "yes"}, {"TextField", "font_size", "big"}, {"Label", "horizontal_align", "middle"}, {"Label", "vertical_align", "middle"},
+        {"Column", "spacing", "wide"}, {"Column", "padding", "wide"}, {"Row", "spacing", "wide"}, {"Grid", "spacing", "wide"}, {"Padding", "padding", "wide"}, {"Label", "foreground", "blue"}, {"Label", "font_size", "big"}, {"Button", "background", "blue"}, {"Button", "disabled", "yes"}, {"Slider", "value", "half"}, {"Slider", "disabled", "yes"}, {"Slider", "track_color", "blue"}, {"Slider", "thumb_color", "blue"}, {"CheckBox", "checked", "yes"}, {"CheckBox", "disabled", "yes"}, {"CheckBox", "outline", "blue"}, {"CheckBox", "check_fill", "blue"}, {"Image", "source", "icon.png"}, {"Image", "width", "wide"}, {"Image", "height", "tall"}, {"ScrollView", "overscan", "some"}, {"ScrollView", "scrollbar", "sometimes"}, {"ScrollView", "row_height", "tall"}, {"TextField", "read_only", "yes"}, {"TextField", "multiline", "yes"}, {"TextField", "disabled", "yes"}, {"TextField", "font_size", "big"}, {"Label", "horizontal_align", "middle"}, {"Label", "vertical_align", "middle"},
     };
     // assert each setter refuses rather than half applying, because a refused value leaves the node as it was (§11.1)
     for (const std::tuple<std::string, std::string, std::string>& refusal : refusals) {
@@ -352,16 +372,47 @@ TEST(DevElementChecks, ALiveNodeIsNamedByItsDynamicType) {
     std::unique_ptr<UiNode> label = create_node("Label", engine, text);
     std::unique_ptr<UiNode> button = create_node("Button", engine, text);
     std::unique_ptr<UiNode> column = create_node("Column", engine, text);
+    std::unique_ptr<UiNode> image = create_node("Image", engine, text);
     ASSERT_NE(label, nullptr);
     ASSERT_NE(button, nullptr);
     ASSERT_NE(column, nullptr);
+    ASSERT_NE(image, nullptr);
     // assert the closed set names what it built (§12.1)
     EXPECT_EQ(element_of(*label), "Label");
     EXPECT_EQ(element_of(*button), "Button");
     EXPECT_EQ(element_of(*column), "Column");
+    EXPECT_EQ(element_of(*image), "Image");
     // assert a node outside the closed set has no element, because it is a bare tree node (§8)
     UiNode bare;
     EXPECT_TRUE(element_of(bare).empty());
+}
+
+TEST(DevElementChecks, AnImageSourceResolvesAgainstTheReloadAssetRoot) {
+    // arrange a reload whose source lives beside the assets it embeds (§6.4, §12.1)
+    ReloadFixture fixture;
+    fixture.context.asset_root = ALBOR_TEST_VECTORS_DIR;
+    std::unique_ptr<UiNode> root = create_node("Column", fixture.engine, fixture.text);
+    ASSERT_NE(root, nullptr);
+    root->set_explicit_id("root");
+    const IrNode definition{
+        .element = "Column",
+        .id = "root",
+        .properties = {},
+        .children = {IrNode{.element = "Image", .id = "logo", .properties = {IrProperty{.name = "source", .value = std::string(IMAGE_VALUE_PREFIX) + "icon.png"}, IrProperty{.name = "description", .value = "Logo"}, IrProperty{.name = "width", .value = "32"}, IrProperty{.name = "height", .value = "16"}}, .children = {}}},
+    };
+    // act
+    const ReloadReport report = apply_reload(*root, definition, fixture.context);
+    // assert the subject was added and decoded through the root the context carries (§12.1, §6.4)
+    EXPECT_EQ(report.added, 1U);
+    auto* image = dynamic_cast<Image*>(find_by_id(*root, "logo"));
+    ASSERT_NE(image, nullptr);
+    ASSERT_NE(image->source(), nullptr);
+    EXPECT_EQ(image->source()->width(), 1U);
+    EXPECT_EQ(image->source()->height(), 1U);
+    // assert the written name and dimensions reached the live widget too (§8, §10.1)
+    EXPECT_EQ(image->description(), "Logo");
+    EXPECT_FLOAT_EQ(image->width(), 32.0f);
+    EXPECT_FLOAT_EQ(image->height(), 16.0f);
 }
 
 TEST(DevReloadChecks, AFirstReloadPopulatesAnEmptyTree) {
@@ -638,6 +689,28 @@ TEST(DevHookChecks, AHandDrawnWindowLeavesTheBoundTreeAlone) {
     EXPECT_FALSE(bound());
 }
 
+TEST(DevHookChecks, ARealReloadResolvesAnImageAgainstTheAssetRoot) {
+    // arrange a bound tree and the source directory the dev service supplies (§6.4, §12.1)
+    ReloadFixture fixture;
+    UiNode root;
+    devrt::bind_root(dev::WindowBinding{.root = &root, .engine = &fixture.engine, .text = &fixture.text, .has_tree = true});
+    set_asset_root(ALBOR_TEST_VECTORS_DIR);
+    // act a definition with a relative image arrives, which is what the installed runtime patches (§12.1, AD-12)
+    dev::reload("node Column id=root\n  node Image id=logo\n    prop source @image:icon.png\n");
+    // assert the image resolved against the root rather than the process directory (§6.4, §12.1)
+    EXPECT_EQ(last_report().added, 1U);
+    auto* image = dynamic_cast<Image*>(find_by_id(root, "logo"));
+    EXPECT_NE(image, nullptr);
+    if (image != nullptr) {
+        EXPECT_NE(image->source(), nullptr);
+        if (image->source() != nullptr)
+            EXPECT_EQ(image->source()->width(), 1U);
+    }
+    // the source root is process wide, so the test puts it back even when an assertion above failed (§12.1)
+    set_asset_root({});
+    unbind_root(&root);
+}
+
 TEST(DevHookChecks, ADefinitionTheReaderRefusedIsDropped) {
     // arrange a bound tree, because only a bound tree is patched (§12.1)
     ReloadFixture fixture;
@@ -788,4 +861,151 @@ TEST(DevReloadChecks, ACompiledControlsFormAndTheDevIrAgreeOnTheSameUi) {
     ASSERT_NE(ir_slider, nullptr);
     EXPECT_FLOAT_EQ(compiled_slider->value(), ir_slider->value());
     EXPECT_EQ(compiled_slider->disabled(), ir_slider->disabled());
+}
+
+TEST(DevReloadChecks, ACompiledTabsFormAndTheDevIrAgreeOnTheSameUi) {
+    // arrange the same ui source compiled into a facade and serialized into the dev ir (§16, AD-25)
+    std::ifstream file(ALBOR_DUAL_ENGINE_TABS_UI, std::ios::binary);
+    ASSERT_TRUE(file.good());
+    const std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    albor::compiler::DiagnosticList diagnostics;
+    const std::vector<albor::compiler::Token> tokens = albor::compiler::Lexer(source, diagnostics).tokenize();
+    const albor::compiler::SourceFile parsed = albor::compiler::Parser(tokens, diagnostics).parse();
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const std::optional<IrNode> definition = albor::compiler::serialize_component(parsed.components.front());
+    ASSERT_TRUE(definition.has_value());
+    // the compiled path builds the facade, which is the production output (§11.3)
+    BindingEngine engine;
+    TestTextEngine text;
+    DualEngineTabs tabs(&engine, &text);
+    // the dev path applies the serialized definition onto a matching root (§12.1)
+    TabView root(&engine);
+    ReloadFixture fixture;
+    const ReloadReport report = apply_reload(root, *definition, fixture.context);
+    EXPECT_EQ(report.added, 6U);
+    // assert both trees carry the same view, selection and pages, which is what AD-25 claims (§16)
+    const UiNode& compiled = *static_cast<UiNode&>(tabs).child_at(0);
+    const auto* compiled_view = dynamic_cast<const TabView*>(&compiled);
+    ASSERT_NE(compiled_view, nullptr);
+    ASSERT_EQ(compiled_view->tab_count(), root.tab_count());
+    EXPECT_EQ(compiled_view->tab_count(), 2U);
+    EXPECT_EQ(compiled_view->selected(), root.selected());
+    EXPECT_EQ(compiled_view->selected(), 1);
+    EXPECT_TRUE(compiled_view->vertical());
+    EXPECT_TRUE(root.vertical());
+    for (std::size_t index = 0; index < 2; index++) {
+        const auto* compiled_page = dynamic_cast<const TabPage*>(compiled.child_at(index));
+        const auto* ir_page = dynamic_cast<const TabPage*>(root.child_at(index));
+        ASSERT_NE(compiled_page, nullptr);
+        ASSERT_NE(ir_page, nullptr);
+        EXPECT_EQ(compiled_page->label(), ir_page->label());
+        EXPECT_EQ(compiled_page->title() != nullptr, ir_page->title() != nullptr);
+        if (const TabTitle* compiled_title = compiled_page->title()) {
+            ASSERT_NE(ir_page->title(), nullptr);
+            EXPECT_EQ(compiled_title->child_count(), ir_page->title()->child_count());
+        }
+    }
+}
+
+TEST(DevReloadChecks, ACompiledChoicesFormAndTheDevIrAgreeOnTheSameUi) {
+    // arrange the same ui source compiled into a facade and serialized into the dev ir (§16, AD-25)
+    std::ifstream file(ALBOR_DUAL_ENGINE_CHOICES_UI, std::ios::binary);
+    ASSERT_TRUE(file.good());
+    const std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    albor::compiler::DiagnosticList diagnostics;
+    const std::vector<albor::compiler::Token> tokens = albor::compiler::Lexer(source, diagnostics).tokenize();
+    const albor::compiler::SourceFile parsed = albor::compiler::Parser(tokens, diagnostics).parse();
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const std::optional<IrNode> definition = albor::compiler::serialize_component(parsed.components.front());
+    ASSERT_TRUE(definition.has_value());
+    // the compiled path builds the facade, which is the production output (§11.3)
+    BindingEngine engine;
+    TestTextEngine text;
+    DualEngineChoices choices(&engine, &text);
+    // the dev path applies the serialized definition onto a matching root (§12.1)
+    RowLayout root;
+    ReloadFixture fixture;
+    const ReloadReport report = apply_reload(root, *definition, fixture.context);
+    EXPECT_EQ(report.added, 4U);
+    // assert both trees carry the same choices and stepper, which is what AD-25 claims (§16)
+    const UiNode& compiled_row = *static_cast<UiNode&>(choices).child_at(0);
+    ASSERT_EQ(compiled_row.child_count(), root.child_count());
+    const auto* compiled_group = dynamic_cast<const RadioGroup*>(compiled_row.child_at(0));
+    const auto* ir_group = dynamic_cast<const RadioGroup*>(root.child_at(0));
+    ASSERT_NE(compiled_group, nullptr);
+    ASSERT_NE(ir_group, nullptr);
+    EXPECT_EQ(compiled_group->selected(), ir_group->selected());
+    EXPECT_EQ(compiled_group->selected(), 1);
+    EXPECT_EQ(compiled_group->vertical(), ir_group->vertical());
+    EXPECT_FALSE(compiled_group->vertical());
+    EXPECT_FLOAT_EQ(compiled_group->spacing(), ir_group->spacing());
+    EXPECT_FLOAT_EQ(compiled_group->spacing(), 4.0f);
+    ASSERT_EQ(compiled_group->child_count(), ir_group->child_count());
+    ASSERT_EQ(compiled_group->child_count(), 2U);
+    for (std::size_t index = 0; index < 2; index++) {
+        const auto* compiled_choice = dynamic_cast<const RadioButton*>(compiled_group->child_at(index));
+        const auto* ir_choice = dynamic_cast<const RadioButton*>(ir_group->child_at(index));
+        ASSERT_NE(compiled_choice, nullptr);
+        ASSERT_NE(ir_choice, nullptr);
+        EXPECT_EQ(compiled_choice->value(), ir_choice->value());
+        EXPECT_EQ(compiled_choice->label(), ir_choice->label());
+        EXPECT_EQ(compiled_choice->checked(), ir_choice->checked());
+        EXPECT_EQ(compiled_choice->disabled(), ir_choice->disabled());
+    }
+    // assert the bounded stepper agrees on the number, the range and the step (§8, §16)
+    const auto* compiled_stepper = dynamic_cast<const NumericStepper*>(compiled_row.child_at(1));
+    const auto* ir_stepper = dynamic_cast<const NumericStepper*>(root.child_at(1));
+    ASSERT_NE(compiled_stepper, nullptr);
+    ASSERT_NE(ir_stepper, nullptr);
+    EXPECT_FLOAT_EQ(compiled_stepper->value(), ir_stepper->value());
+    EXPECT_FLOAT_EQ(compiled_stepper->value(), -50.0f);
+    EXPECT_FLOAT_EQ(compiled_stepper->minimum(), ir_stepper->minimum());
+    EXPECT_FLOAT_EQ(compiled_stepper->maximum(), ir_stepper->maximum());
+    EXPECT_FLOAT_EQ(compiled_stepper->step(), ir_stepper->step());
+    EXPECT_EQ(compiled_stepper->disabled(), ir_stepper->disabled());
+}
+
+TEST(DevReloadChecks, ACompiledImageFormAndTheDevIrAgreeOnTheSameUi) {
+    // arrange the same ui source compiled into a facade and serialized into the dev ir (§16, AD-25)
+    std::ifstream file(ALBOR_DUAL_ENGINE_IMAGE_UI, std::ios::binary);
+    ASSERT_TRUE(file.good());
+    const std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    albor::compiler::DiagnosticList diagnostics;
+    const std::vector<albor::compiler::Token> tokens = albor::compiler::Lexer(source, diagnostics).tokenize();
+    const albor::compiler::SourceFile parsed = albor::compiler::Parser(tokens, diagnostics).parse();
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const std::optional<IrNode> definition = albor::compiler::serialize_component(parsed.components.front());
+    ASSERT_TRUE(definition.has_value());
+    // the compiled path builds the facade, which is the production output (§11.3)
+    BindingEngine engine;
+    TestTextEngine text;
+    DualEngineImage image(&engine, &text);
+    // the dev path applies the serialized definition onto a matching root (§12.1)
+    ColumnLayout root;
+    ReloadFixture fixture;
+    fixture.context.asset_root = ALBOR_TEST_VECTORS_DIR;
+    const ReloadReport report = apply_reload(root, *definition, fixture.context);
+    EXPECT_EQ(report.added, 1U);
+    // assert both trees carry the same picture, name and size, which is what AD-25 claims (§16)
+    const UiNode& compiled_column = *static_cast<UiNode&>(image).child_at(0);
+    ASSERT_EQ(compiled_column.child_count(), root.child_count());
+    const auto* compiled_image = dynamic_cast<const Image*>(compiled_column.child_at(0));
+    const auto* ir_image = dynamic_cast<const Image*>(root.child_at(0));
+    ASSERT_NE(compiled_image, nullptr);
+    ASSERT_NE(ir_image, nullptr);
+    EXPECT_EQ(compiled_image->description(), ir_image->description());
+    EXPECT_FLOAT_EQ(compiled_image->width(), ir_image->width());
+    EXPECT_FLOAT_EQ(compiled_image->height(), ir_image->height());
+    ASSERT_NE(compiled_image->source(), nullptr);
+    ASSERT_NE(ir_image->source(), nullptr);
+    // assert both paths decode the one asset to the same pixel extent (§6.4)
+    EXPECT_EQ(compiled_image->source()->width(), ir_image->source()->width());
+    EXPECT_EQ(compiled_image->source()->height(), ir_image->source()->height());
+    // act the same definition arrives again, which is what live editing does on every edit (§12.1)
+    const std::shared_ptr<const ImageResource> before = ir_image->source();
+    const ReloadReport again = apply_reload(root, *definition, fixture.context);
+    // assert the node kept its identity and its retained handle, because an unchanged image must not reload (§12.1, §6.4)
+    EXPECT_EQ(again.preserved, 1U);
+    EXPECT_EQ(find_by_id(root, "logo"), ir_image);
+    EXPECT_EQ(ir_image->source(), before);
 }

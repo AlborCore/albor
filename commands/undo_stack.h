@@ -17,10 +17,10 @@ namespace albor
         std::string label;
 
         // the work that reverses the step, which receives the invocation it reverses (§18.4)
-        std::function<void(const CommandInvocation&)> undo;
+        std::function<void(const CommandInvocation&)> undo{};
 
         // the work that reapplies the step, which receives the invocation it replays and may be empty (§18.4)
-        std::function<void(const CommandInvocation&)> redo;
+        std::function<void(const CommandInvocation&)> redo{};
     };
 
     // the undo stack behind the shared command, which one invocation contributes exactly one entry to (§18.4)

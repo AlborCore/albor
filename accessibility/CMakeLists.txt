@@ -31,3 +31,8 @@ if(APPLE)
     set_source_files_properties("./accessibility_bridge.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(albor-accessibility PRIVATE "-framework AppKit" "-framework Foundation")
 endif()
+
+# the windows bridge reaches ui automation core and subclasses the native window, which only the win32 half does (§10.2, AD-16)
+if(WIN32)
+    target_link_libraries(albor-accessibility PRIVATE uiautomationcore comctl32 oleaut32)
+endif()

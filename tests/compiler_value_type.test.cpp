@@ -283,6 +283,7 @@ TEST(ElementCatalog, HoldsEveryBuiltinWidget) {
     EXPECT_TRUE(catalog.find("Slider") != nullptr);
     EXPECT_TRUE(catalog.find("CheckBox") != nullptr);
     EXPECT_TRUE(catalog.find("Canvas") != nullptr);
+    EXPECT_TRUE(catalog.find("Image") != nullptr);
     EXPECT_TRUE(catalog.find("ScrollView") != nullptr);
     EXPECT_TRUE(catalog.find("ListBox") != nullptr);
 }
@@ -309,6 +310,7 @@ TEST(ElementCatalog, HoldsTheContainersAndTheLeavesApart) {
     EXPECT_FALSE(catalog.find("Slider")->accepts_children);
     EXPECT_FALSE(catalog.find("CheckBox")->accepts_children);
     EXPECT_FALSE(catalog.find("Canvas")->accepts_children);
+    EXPECT_FALSE(catalog.find("Image")->accepts_children);
 }
 
 TEST(ElementCatalog, DeclaresTheLengthPropertiesAsAssignableFloats) {
@@ -321,6 +323,25 @@ TEST(ElementCatalog, DeclaresTheLengthPropertiesAsAssignableFloats) {
     // assert the lengths accept an assignment, because a length lands on them through the checker (§11.1)
     EXPECT_TRUE(catalog.find("Column")->find_property("spacing")->assignable);
     EXPECT_TRUE(catalog.find("Label")->find_property("font_size")->assignable);
+}
+
+TEST(ElementCatalog, ExposesTheImageProperties) {
+    // arrange, act
+    const ElementCatalog catalog = ElementCatalog::with_builtins();
+    // assert the asset, the name and the two dimensions are what an image declares (§8, §10.1)
+    const ElementType* image = catalog.find("Image");
+    ASSERT_NE(image, nullptr);
+    EXPECT_TRUE(image->find_property("source")->type.is(TypeKind::Image));
+    EXPECT_TRUE(image->find_property("description")->type.is(TypeKind::String));
+    EXPECT_TRUE(image->find_property("width")->type.is(TypeKind::Float));
+    EXPECT_TRUE(image->find_property("height")->type.is(TypeKind::Float));
+    // assert a written value may reach every one of them, because an author may bind or set each (§11.1)
+    EXPECT_TRUE(image->find_property("source")->assignable);
+    EXPECT_TRUE(image->find_property("description")->assignable);
+    EXPECT_TRUE(image->find_property("width")->assignable);
+    EXPECT_TRUE(image->find_property("height")->assignable);
+    // assert an image raises no signal, because the user does not drive it (§8)
+    EXPECT_TRUE(image->signals.empty());
 }
 
 TEST(ElementCatalog, ExposesTheHandledSignals) {
@@ -372,14 +393,14 @@ TEST(ElementCatalog, AddsANativeTypeFromAManifest) {
     ASSERT_TRUE(catalog.find("WaveformView") != nullptr);
     EXPECT_TRUE(catalog.find("WaveformView")->find_property("line_color") != nullptr);
     EXPECT_TRUE(catalog.find("WaveformView")->find_signal("selection_changed") != nullptr);
-    EXPECT_EQ(catalog.types().size(), 14U);
+    EXPECT_EQ(catalog.types().size(), 22U);
 }
 
 TEST(ElementCatalog, StartsWithNothingBeyondTheBuiltins) {
     // arrange, act
     const ElementCatalog catalog = ElementCatalog::with_builtins();
     // assert
-    EXPECT_EQ(catalog.types().size(), 13U);
+    EXPECT_EQ(catalog.types().size(), 21U);
 }
 
 TEST(ElementCatalog, RefusesToShadowABuiltinWithAManifest) {
@@ -389,7 +410,7 @@ TEST(ElementCatalog, RefusesToShadowABuiltinWithAManifest) {
     catalog.add_native(ElementType{.name = "Label", .properties = {}, .signals = {}, .accepts_children = true});
     // assert
     EXPECT_FALSE(catalog.find("Label")->accepts_children);
-    EXPECT_EQ(catalog.types().size(), 13U);
+    EXPECT_EQ(catalog.types().size(), 21U);
 }
 
 TEST(ElementCatalog, RefusesToRedefineANativeDataType) {

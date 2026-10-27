@@ -60,7 +60,13 @@ namespace
             m_measured_size = out_size;
             // the animation is scheduled once the wiring handed the engine down the tree (§7.3, AD-04d)
             if (m_handle == 0 && animation_engine() != nullptr)
-                m_handle = animation_engine()->schedule_repeating([](float) { return true; }, albor::AnimationDuration{16});
+                m_handle = animation_engine()->schedule_repeating(
+                    [this](float) {
+                        // a real animation writes a property or invalidates its node, which asks for the frame (§7.3)
+                        invalidate();
+                        return true;
+                    },
+                    albor::AnimationDuration{16});
         }
 
         // the handle the schedule handed out, which zero still means (§7.3)
@@ -247,15 +253,17 @@ TEST(MainWindow, TwoMainWindowsAreWiredIndependently) {
     EXPECT_TRUE(application.destroy_window(second_handle));
 }
 
-TEST(MainWindow, AMainWindowIsDrivenByEveryPumpedTick) {
-    // arrange the factories and one main window (§6.1)
+TEST(MainWindow, AnAlwaysRenderWindowIsDrivenByEveryPumpedTick) {
+    // arrange a tree that opts into continuous rendering, which is the explicit exception to the retained policy (§6.1)
     InstalledScope scope;
     albor::Application& application = albor::Application::instance();
     albor::WindowOptions options;
     options.title = "Main Window";
-    const albor::WindowHandle handle = application.create_window(options, empty_form());
+    albor::MainWindowConfig config;
+    config.always_render = true;
+    const albor::WindowHandle handle = application.create_window(options, empty_form(), config);
     ASSERT_TRUE(handle.valid());
-    // act pump two ticks, which drive the window twice (§6.1)
+    // act pump two ticks, which drive the window twice because every tick renders (§6.1)
     application.pump();
     application.pump();
     // assert the two stage frame ran for each tick (§6.1, AD-18)
@@ -299,8 +307,9 @@ TEST(MainWindow, DestroyingOneOfTwoKeepsTheApplicationRunning) {
     EXPECT_EQ(application.window(first_handle), nullptr);
     EXPECT_NE(application.window(second_handle), nullptr);
     EXPECT_EQ(application.window_count(), 1u);
-    // act pump the remaining window through another tick (§6.1)
+    // act invalidate and pump the remaining window, which is the retained path (§6.1)
     const std::uint64_t built_before = application.frame_count(second_handle);
+    application.stage(second_handle)->root().invalidate();
     application.pump();
     // assert the survivor is still driven, which is what the run down to nothing means (§4.1, §6.1)
     EXPECT_EQ(application.frame_count(second_handle), built_before + 1u);
@@ -508,12 +517,10 @@ TEST(MainWindow, ASceneSourceThatProducesNothingPresentsNothing) {
 }
 
 TEST(MainWindow, ARetainedTreeSkipsATickThatChangedNothing) {
-    // arrange a config that asks for the dirty policy, which is what a retained tree wants (§6.1, AD-06)
+    // arrange a default window, because retained rendering is the normal policy (§6.1, AD-06)
     InstalledScope scope;
     albor::Application& application = albor::Application::instance();
-    albor::MainWindowConfig config;
-    config.build_only_when_dirty = true;
-    const albor::WindowHandle handle = application.create_window(albor::WindowOptions{}, empty_form(), config);
+    const albor::WindowHandle handle = application.create_window(albor::WindowOptions{}, empty_form());
     ASSERT_TRUE(handle.valid());
     // act pump three ticks against a tree nothing invalidated (§6.1)
     application.pump();
@@ -534,11 +541,13 @@ TEST(MainWindow, AFrameHookRunsBetweenTheBuildAndTheSubmit) {
     // arrange a main window and a hook that records what it observed (§6.1, §10.1)
     InstalledScope scope;
     albor::Application& application = albor::Application::instance();
-    const albor::WindowHandle handle = application.create_window(albor::WindowOptions{}, empty_form());
+    albor::MainWindowConfig config;
+    config.always_render = true;
+    const albor::WindowHandle handle = application.create_window(albor::WindowOptions{}, empty_form(), config);
     ASSERT_TRUE(handle.valid());
     int runs = 0;
     EXPECT_TRUE(application.set_frame_hook(handle, [&runs] { runs++; }));
-    // act pump two ticks (§6.1)
+    // act pump two ticks, which continuous rendering presents twice (§6.1)
     application.pump();
     application.pump();
     // assert the hook ran once per presented frame, because it sits between build and submit (§6.1)
@@ -599,6 +608,7 @@ TEST(MainWindow, AWindowAddedWhileTheLoopRunsJoinsTheRun) {
     // act close the first, which must leave the second running (§4.1)
     EXPECT_TRUE(application.destroy_window(first_handle));
     EXPECT_NE(application.window(second_handle), nullptr);
+    application.stage(second_handle)->root().invalidate();
     application.pump();
     // assert the survivor is still driven, which is the whole claim of running until the last close (§4.1, §6.1)
     EXPECT_EQ(application.frame_count(second_handle), 2u);

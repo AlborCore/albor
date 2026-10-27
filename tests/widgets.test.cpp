@@ -1,15 +1,22 @@
+#include <limits>
 #include <memory>
+#include <span>
 #include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 
 #include "commands/command.h"
 #include "core/constraints.h"
 #include "focus/focus_manager.h"
+#include "input/input_controller.h"
+#include "input/input_dispatcher.h"
 #include "layout/column_layout.h"
 #include "layout/row_layout.h"
 #include "render/frame_scene.h"
+#include "render/image_resource.h"
 #include "render/render_context.h"
+#include "render/resource_factory.h"
 #include "runtime/binding_engine.h"
 #include "semantics/semantic_node.h"
 #include "semantics/semantic_provider.h"
@@ -18,8 +25,16 @@
 #include "widgets/button.h"
 #include "widgets/canvas.h"
 #include "widgets/checkbox.h"
+#include "widgets/image.h"
 #include "widgets/label.h"
+#include "widgets/numeric_stepper.h"
+#include "widgets/progress_bar.h"
+#include "widgets/radio_button.h"
+#include "widgets/radio_group.h"
 #include "widgets/slider.h"
+#include "widgets/tab_page.h"
+#include "widgets/tab_title.h"
+#include "widgets/tab_view.h"
 #include "widgets/text_field.h"
 #include "widgets/theme_controller.h"
 #include "window/window_metrics.h"
@@ -4332,6 +4347,187 @@ TEST(LabelChecks, AFontSelectionRemeasuresAndInvalidates) {
     EXPECT_EQ(label.font_fallback().front(), "Fallback One");
 }
 
+TEST(ProgressBarChecks, MeasuresTheDefaultExtent) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    Size measured{};
+    // act
+    bar.measure(SizeConstraints::unconstrained(), measured);
+    // assert the bar measures to the themed default extent, because it has no content (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 160.0f);
+    EXPECT_FLOAT_EQ(measured.height, 8.0f);
+}
+
+TEST(ProgressBarChecks, ClampsTheValueIntoTheUnitRange) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    // act
+    bar.set_value(-0.25f);
+    // assert
+    EXPECT_FLOAT_EQ(bar.value(), 0.0f);
+    bar.set_value(1.25f);
+    EXPECT_FLOAT_EQ(bar.value(), 1.0f);
+}
+
+TEST(ProgressBarChecks, SetValueRedraws) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    bar.clear_dirty();
+    // act
+    bar.set_value(0.5f);
+    // assert
+    EXPECT_TRUE(bar.render_dirty());
+}
+
+TEST(ProgressBarChecks, AnUnchangedValueRedrawsNothing) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    bar.set_value(0.5f);
+    bar.clear_dirty();
+    // act
+    bar.set_value(0.5f);
+    // assert
+    EXPECT_FALSE(bar.render_dirty());
+}
+
+TEST(ProgressBarChecks, PaintsATrackAndAFillForTheFraction) {
+    // arrange a half full bar arranged over the default extent (§8)
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    Size measured{};
+    bar.measure(SizeConstraints::unconstrained(), measured);
+    bar.arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, measured));
+    bar.set_value(0.5f);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    bar.render(recorder);
+    // assert one track and one fill are recorded in paint order (§6.1)
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_EQ(rects.size(), 2u);
+    EXPECT_FLOAT_EQ(rects[0].width, 160.0f);
+    EXPECT_FLOAT_EQ(rects[0].height, 8.0f);
+    EXPECT_FLOAT_EQ(rects[1].width, 80.0f);
+    EXPECT_FLOAT_EQ(rects[1].height, 8.0f);
+    // the fill starts at the track's left edge, which is what makes the fraction read from the start (§8)
+    EXPECT_FLOAT_EQ(rects[1].x, 10.0f);
+}
+
+TEST(ProgressBarChecks, AnEmptyBarDrawsOnlyItsTrack) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    bar.render(recorder);
+    // assert
+    EXPECT_EQ(rect_commands(*recorder.scene()).size(), 1u);
+}
+
+TEST(ProgressBarChecks, AFullBarFillsTheWholeTrack) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    bar.set_value(1.0f);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    bar.render(recorder);
+    // assert
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_EQ(rects.size(), 2u);
+    EXPECT_FLOAT_EQ(rects[1].width, rects[0].width);
+}
+
+TEST(ProgressBarChecks, TheThemeResolvesTheTrackAndFill) {
+    // arrange a themed bar whose two colours are explicit, so the palette decides what is drawn (§6.1)
+    BindingEngine engine;
+    Theme theme;
+    theme.set_progress_bar_track(Color::rgb(0.1f, 0.2f, 0.3f));
+    theme.set_progress_bar_fill(Color::rgb(0.8f, 0.9f, 1.0f));
+    theme.set_progress_bar_radius(4.0f);
+    ProgressBar bar(&engine);
+    bar.set_theme(&theme);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    bar.set_value(0.5f);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    bar.render(recorder);
+    // assert the two commands carry the themed colours and the themed capsule radius (§6.1, §8.4)
+    ASSERT_EQ(recorder.scene()->commands().size(), 2u);
+    EXPECT_EQ(recorder.scene()->commands()[0].paint().fill, Color::rgb(0.1f, 0.2f, 0.3f));
+    EXPECT_EQ(recorder.scene()->commands()[1].paint().fill, Color::rgb(0.8f, 0.9f, 1.0f));
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].rect_geometry().radius, 4.0f);
+}
+
+TEST(ProgressBarChecks, SetTrackColorRedraws) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    bar.clear_dirty();
+    // act
+    bar.set_track_color(Color::rgb(0.1f, 0.1f, 0.1f));
+    // assert
+    EXPECT_TRUE(bar.render_dirty());
+}
+
+TEST(ProgressBarChecks, SetFillColorRedraws) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    bar.clear_dirty();
+    // act
+    bar.set_fill_color(Color::rgb(0.1f, 0.1f, 0.1f));
+    // assert
+    EXPECT_TRUE(bar.render_dirty());
+}
+
+TEST(ProgressBarChecks, AnnouncesTheProgressRoleAndItsFraction) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine, "download");
+    bar.arrange(Rect::from_origin_size(Point{1.0f, 2.0f}, Size{160.0f, 8.0f}));
+    bar.set_value(0.5f);
+    // act
+    const SemanticNode node = bar.semantic_node();
+    // assert
+    EXPECT_EQ(node.role(), SemanticRole::ProgressBar);
+    EXPECT_EQ(node.name(), "download 0.500000");
+    EXPECT_EQ(node.check(), CheckState::NotCheckable);
+    EXPECT_EQ(node.bounds(), (Rect::from_origin_size(Point{1.0f, 2.0f}, Size{160.0f, 8.0f})));
+    EXPECT_FALSE(node.disabled());
+    // a progress bar takes no action, because the user only reads it (§10.1)
+    EXPECT_EQ(node.action_count(), 0u);
+}
+
+TEST(ProgressBarChecks, ADisabledBarAnnouncesTheState) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine, "download");
+    bar.set_disabled(true);
+    // act
+    const SemanticNode node = bar.semantic_node();
+    // assert
+    EXPECT_TRUE(node.disabled());
+    EXPECT_TRUE(bar.disabled());
+}
+
+TEST(ProgressBarChecks, AnUnchangedDisabledStateRedrawsNothing) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    bar.set_disabled(true);
+    bar.clear_dirty();
+    // act
+    bar.set_disabled(true);
+    // assert
+    EXPECT_FALSE(bar.render_dirty());
+}
+
 TEST(TextFieldFontChecks, AFontSelectionRemeasuresAndInvalidates) {
     // arrange a field measured once, whose engine captures the selection it is asked for (§9.1)
     BindingEngine engine;
@@ -4351,4 +4547,1782 @@ TEST(TextFieldFontChecks, AFontSelectionRemeasuresAndInvalidates) {
     EXPECT_TRUE(field.layout_dirty());
     EXPECT_EQ(text_engine.last_font_spec.family, "Inter");
     EXPECT_EQ(text_engine.last_font_spec.weight, FontWeight::Semibold);
+}
+
+TEST(TabPageChecks, MeasuresTheLabelForTheStrip) {
+    // arrange a page whose label the strip draws (§9.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabPage page(&engine, &text_engine, "Tab");
+    // act
+    page.measure_header(20.0f);
+    // assert the run measures at the advance the double reports, which is what the strip sizes by (§9.1)
+    EXPECT_FLOAT_EQ(page.label_layout().size.width, 30.0f);
+    EXPECT_FLOAT_EQ(page.label_layout().size.height, 16.0f);
+    // act the label changes, which invalidates the page and measures a new run (§9.1)
+    page.set_label("Four");
+    EXPECT_TRUE(page.layout_dirty());
+    page.measure_header(20.0f);
+    // assert the new run is the one the strip draws (§9.1)
+    EXPECT_FLOAT_EQ(page.label_layout().size.width, 40.0f);
+}
+
+TEST(TabPageChecks, AnEmptyLabelMeasuresAsNothing) {
+    // arrange a page with no label, which a strip uses only its minimum width for (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabPage page(&engine, &text_engine);
+    // act
+    page.measure_header(20.0f);
+    // assert the empty run carries no layout, which the strip reads as no label (§9.1)
+    EXPECT_TRUE(page.label_layout().empty());
+}
+
+TEST(TabPageChecks, ATitleIsMeasuredForTheStripAndKeptOutOfThePage) {
+    // arrange a page with a title and a content child of different sizes (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabPage page(&engine, &text_engine, "Label");
+    auto title_owner = std::make_unique<TabTitle>(&engine);
+    TabTitle* title = title_owner.get();
+    auto icon = std::make_unique<WidgetChildNode>();
+    icon->m_intrinsic = Size{80.0f, 20.0f};
+    title->add_child(std::move(icon));
+    page.add_child(std::move(title_owner));
+    auto body = std::make_unique<WidgetChildNode>();
+    body->m_intrinsic = Size{50.0f, 30.0f};
+    page.add_child(std::move(body));
+    // act the header measures the title, and the page measures only its content (§8.2)
+    page.measure_header(13.0f);
+    Size measured{};
+    page.measure(SizeConstraints::unconstrained(), measured);
+    // assert the title is the header's extent and the content child is the page's extent (§8.2)
+    EXPECT_FLOAT_EQ(page.title_size().width, 80.0f);
+    EXPECT_FLOAT_EQ(page.title_size().height, 20.0f);
+    EXPECT_FLOAT_EQ(measured.width, 50.0f);
+    EXPECT_FLOAT_EQ(measured.height, 30.0f);
+    // act the page body is arranged, which leaves the title for the strip to place (§8.2)
+    page.arrange(Rect::from_origin_size(Point{0.0f, 32.0f}, Size{200.0f, 68.0f}));
+    // assert the page never placed the title, because the strip owns its header geometry (§8.2)
+    EXPECT_TRUE(title->bounds().empty());
+}
+
+TEST(TabPageChecks, ATitleDoesNotEnterThePageSemantics) {
+    // arrange a selected page whose title and body are both children (§10.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabPage page(&engine, &text_engine, "Label");
+    page.add_child(std::make_unique<TabTitle>(&engine));
+    page.add_child(std::make_unique<WidgetChildNode>());
+    page.set_selected(true);
+    // act
+    const std::size_t children = page.semantic_child_count();
+    // assert only the body is a semantic child, because the title is the tab's visual name (§10.1)
+    EXPECT_EQ(children, 1u);
+}
+
+TEST(TabViewChecks, MeasuresTheStripAndTheSelectedPage) {
+    // arrange two pages under a strip, whose selected page carries a child of its own (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto first_owner = std::make_unique<TabPage>(&engine, &text_engine, "One");
+    tabs.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "Two");
+    TabPage* second = second_owner.get();
+    auto content = std::make_unique<WidgetChildNode>();
+    content->m_intrinsic = Size{40.0f, 30.0f};
+    second->add_child(std::move(content));
+    tabs.add_child(std::move(second_owner));
+    tabs.set_selected(1);
+    Size measured{};
+    // act
+    tabs.measure(SizeConstraints::unconstrained(), measured);
+    // assert the strip is two minimum tabs wide and the selected page adds its content height (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 128.0f);
+    EXPECT_FLOAT_EQ(measured.height, 62.0f);
+}
+
+TEST(TabViewChecks, ShowsOnlyTheSelectedPage) {
+    // arrange two pages arranged under a strip (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto first_owner = std::make_unique<TabPage>(&engine, &text_engine, "One");
+    TabPage* first = first_owner.get();
+    tabs.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "Two");
+    TabPage* second = second_owner.get();
+    tabs.add_child(std::move(second_owner));
+    // act
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // assert the first page is shown and the second is hidden beside it (§8)
+    EXPECT_TRUE(first->visible());
+    EXPECT_FALSE(second->visible());
+    EXPECT_TRUE(first->selected());
+    EXPECT_FALSE(second->selected());
+    // assert the headers are one minimum tab wide and sit side by side (§8.2)
+    EXPECT_EQ(first->header_bounds(), (Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 32.0f})));
+    EXPECT_EQ(second->header_bounds(), (Rect::from_origin_size(Point{64.0f, 0.0f}, Size{64.0f, 32.0f})));
+    // assert the page body sits under the whole strip, which is what the reader sees (§8.2)
+    EXPECT_EQ(second->bounds(), (Rect::from_origin_size(Point{0.0f, 32.0f}, Size{200.0f, 68.0f})));
+    // act the second page is selected, which is what a press or a binding does (§8)
+    tabs.set_selected(1);
+    // assert the shown and hidden pages swap, because exactly one page is visible (§8)
+    EXPECT_FALSE(first->visible());
+    EXPECT_TRUE(second->visible());
+    EXPECT_FALSE(first->selected());
+    EXPECT_TRUE(second->selected());
+}
+
+TEST(TabViewChecks, APressOnAHeaderSelectsItsPage) {
+    // arrange a view whose second header sits at x sixty four and whose first page is shown (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "Two"));
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    Event event{.kind = EventKind::PointerDown, .position = Point{74.0f, 10.0f}};
+    // act
+    tabs.dispatch_event(event);
+    // assert the press is claimed and the page it landed on is shown (§8.3)
+    EXPECT_TRUE(event.handled);
+    EXPECT_EQ(tabs.selected(), 1);
+}
+
+TEST(TabViewChecks, TheArrowKeysMoveTheSelection) {
+    // arrange a two page view arranged and focused, whose pages are selected by the strip keys (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "Two"));
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // act the right arrow moves one page forward (§8.3)
+    Event right{.kind = EventKind::KeyDown, .key = Key::ArrowRight};
+    tabs.dispatch_event(right);
+    // assert the next page is shown and the key was claimed (§8.3)
+    EXPECT_TRUE(right.handled);
+    EXPECT_EQ(tabs.selected(), 1);
+    // act the left arrow moves one page back (§8.3)
+    Event left{.kind = EventKind::KeyDown, .key = Key::ArrowLeft};
+    tabs.dispatch_event(left);
+    // assert the previous page is shown again (§8.3)
+    EXPECT_TRUE(left.handled);
+    EXPECT_EQ(tabs.selected(), 0);
+    // act end and home name the two ends of the strip (§8.3)
+    Event end{.kind = EventKind::KeyDown, .key = Key::End};
+    tabs.dispatch_event(end);
+    EXPECT_EQ(tabs.selected(), 1);
+    Event home{.kind = EventKind::KeyDown, .key = Key::Home};
+    tabs.dispatch_event(home);
+    EXPECT_EQ(tabs.selected(), 0);
+}
+
+TEST(TabViewChecks, ClampsTheSelectionToThePagesItHolds) {
+    // arrange two pages in a view whose selection can be written out of range (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "Two"));
+    // act the selection lands past the end, which a binding can compute (§8)
+    tabs.set_selected(99);
+    // assert the last page is the one the view can show (§8)
+    EXPECT_EQ(tabs.selected(), 1);
+    // act the selection lands before the start, which a binding can compute too (§8)
+    tabs.set_selected(-5);
+    // assert the first page is the one the view can show (§8)
+    EXPECT_EQ(tabs.selected(), 0);
+}
+
+TEST(TabViewChecks, RaisesTheSelectionSignal) {
+    // arrange a view whose selection moves are recorded by the installed work (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "Two"));
+    std::vector<int> changes;
+    tabs.set_on_selection_changed([&changes](int index) { changes.push_back(index); });
+    // act the selection moves once, then repeats and clamps without moving (§8.3)
+    tabs.set_selected(1);
+    tabs.set_selected(1);
+    tabs.set_selected(99);
+    tabs.set_selected(0);
+    // assert only the two actual moves were reported, because the signal is a change not a write (§8.3)
+    ASSERT_EQ(changes.size(), 2u);
+    EXPECT_EQ(changes[0], 1);
+    EXPECT_EQ(changes[1], 0);
+}
+
+TEST(TabViewChecks, TheThemeSizesTheStripAndTheIndicator) {
+    // arrange a theme whose strip is taller and whose indicator is thicker than the fallback (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_tab_strip_height(40.0f);
+    theme.set_tab_padding_horizontal(10.0f);
+    theme.set_tab_minimum_width(80.0f);
+    theme.set_tab_indicator_height(3.0f);
+    theme.set_tab_indicator(Color::rgb(0.9f, 0.1f, 0.2f));
+    TabView tabs(&engine);
+    tabs.set_theme(&theme);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "Two"));
+    Size measured{};
+    // act
+    tabs.measure(SizeConstraints::unconstrained(), measured);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    tabs.render(recorder);
+    // assert the strip takes the themed height and the two minimum tabs (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 160.0f);
+    EXPECT_FLOAT_EQ(measured.height, 40.0f);
+    // assert the indicator is the themed height and sits on the strip's bottom edge (§6.1)
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_EQ(rects.size(), 1u);
+    EXPECT_FLOAT_EQ(rects[0].y, 37.0f);
+    EXPECT_FLOAT_EQ(rects[0].height, 3.0f);
+    EXPECT_FLOAT_EQ(rects[0].width, 60.0f);
+    // assert the themed colour reached the one shape command (§6.1)
+    ASSERT_EQ(recorder.scene()->commands().size(), 3u);
+    EXPECT_EQ(recorder.scene()->commands()[0].paint().fill, Color::rgb(0.9f, 0.1f, 0.2f));
+    // assert both labels were drawn, because the strip shows every title it holds (§9.1)
+    EXPECT_EQ(text_commands(*recorder.scene()).size(), 2u);
+}
+
+TEST(TabViewChecks, AnnouncesTheTabGroupAndItsPages) {
+    // arrange a view with two identified pages, whose second page carries content (§10.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    tabs.set_explicit_id("pages");
+    auto first_owner = std::make_unique<TabPage>(&engine, &text_engine, "One", "one");
+    TabPage* first = first_owner.get();
+    tabs.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "Two", "two");
+    TabPage* second = second_owner.get();
+    second->add_child(std::make_unique<WidgetChildNode>());
+    tabs.add_child(std::move(second_owner));
+    tabs.set_selected(1);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    tabs.set_focused(true);
+    // act
+    const SemanticNode group = tabs.semantic_node();
+    const SemanticNode page_one = first->semantic_node();
+    const SemanticNode page_two = second->semantic_node();
+    // assert the group carries the tab view role and the actions that move its selection (§10.1)
+    EXPECT_EQ(group.role(), SemanticRole::TabView);
+    EXPECT_EQ(group.explicit_id(), "pages");
+    EXPECT_TRUE(group.focused());
+    EXPECT_EQ(group.action_count(), 4u);
+    // assert the unselected page is a tab item under its own name and header (§10.1)
+    EXPECT_EQ(page_one.role(), SemanticRole::TabItem);
+    EXPECT_EQ(page_one.name(), "One");
+    EXPECT_EQ(page_one.bounds(), first->header_bounds());
+    EXPECT_FALSE(page_one.selected());
+    EXPECT_EQ(page_one.action_count(), 1u);
+    // assert the selected page repeats the selection and the focus, which the reader needs (§10.1)
+    EXPECT_TRUE(page_two.selected());
+    EXPECT_TRUE(page_two.focused());
+    // assert only the selected page exposes its content to the walk (§10.1)
+    EXPECT_EQ(first->semantic_child_count(), 0u);
+    EXPECT_EQ(second->semantic_child_count(), 1u);
+    // assert the group still exposes both page nodes, because a reader has to reach them (§10.1)
+    ASSERT_EQ(tabs.semantic_child_count(), 2u);
+    std::unique_ptr<SemanticProvider> child = tabs.semantic_child(0);
+    ASSERT_NE(child, nullptr);
+    EXPECT_EQ(child->semantic_node().role(), SemanticRole::TabItem);
+}
+
+TEST(TabViewChecks, ATabActivationSelectsItsPage) {
+    // arrange a view showing the second page, whose first page carries the activate action (§10.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto first_owner = std::make_unique<TabPage>(&engine, &text_engine, "One");
+    TabPage* first = first_owner.get();
+    tabs.add_child(std::move(first_owner));
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "Two"));
+    tabs.set_selected(1);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // act
+    const SemanticNode page = first->semantic_node();
+    const bool activated = page.invoke(1);
+    // assert the action selected the page it belongs to, which is what a reader presses (§10.1)
+    EXPECT_TRUE(activated);
+    EXPECT_EQ(tabs.selected(), 0);
+}
+
+TEST(TabViewChecks, VerticalTabsStackDownTheLeft) {
+    // arrange a two page view whose strip runs down the left side (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto first_owner = std::make_unique<TabPage>(&engine, &text_engine, "One");
+    TabPage* first = first_owner.get();
+    tabs.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "Two");
+    TabPage* second = second_owner.get();
+    tabs.add_child(std::move(second_owner));
+    tabs.set_vertical(true);
+    Size measured{};
+    // act
+    tabs.measure(SizeConstraints::unconstrained(), measured);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // assert the strip is one tab wide and as tall as both rows, while the page takes the rest (§8.2)
+    EXPECT_TRUE(tabs.vertical());
+    EXPECT_FLOAT_EQ(measured.width, 64.0f);
+    EXPECT_FLOAT_EQ(measured.height, 64.0f);
+    EXPECT_EQ(first->header_bounds(), (Rect::from_origin_size(Point{0.0f, 0.0f}, Size{64.0f, 32.0f})));
+    EXPECT_EQ(second->header_bounds(), (Rect::from_origin_size(Point{0.0f, 32.0f}, Size{64.0f, 32.0f})));
+    EXPECT_EQ(second->bounds(), (Rect::from_origin_size(Point{64.0f, 0.0f}, Size{136.0f, 100.0f})));
+    // assert the indicator runs down the left edge of the selected row (§6.1)
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    tabs.render(recorder);
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_EQ(rects.size(), 1u);
+    EXPECT_EQ(rects[0], (Rect::from_origin_size(Point{0.0f, 12.0f}, Size{2.0f, 8.0f})));
+}
+
+TEST(TabViewChecks, AVerticalStripSelectsByRow) {
+    // arrange a vertical view with two headers stacked down the left side (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "Two"));
+    tabs.set_vertical(true);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 40.0f}};
+    // act
+    tabs.dispatch_event(press);
+    // assert the press landed on the second row and selected its page (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(tabs.selected(), 1);
+    // act the down arrow moves one row forward, which is the vertical reading order (§8.3)
+    Event down{.kind = EventKind::KeyDown, .key = Key::ArrowDown};
+    tabs.dispatch_event(down);
+    // assert the last row stays selected, because the strip has two ends (§8)
+    EXPECT_TRUE(down.handled);
+    EXPECT_EQ(tabs.selected(), 1);
+    // act the up arrow moves one row back (§8.3)
+    Event up{.kind = EventKind::KeyDown, .key = Key::ArrowUp};
+    tabs.dispatch_event(up);
+    // assert the first row is selected again (§8.3)
+    EXPECT_EQ(tabs.selected(), 0);
+}
+
+TEST(TabViewChecks, AComplexTitleSizesAndDrawsItsHeader) {
+    // arrange a second page whose title carries a composed icon rather than a plain run (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "Two");
+    TabPage* second = second_owner.get();
+    auto title_owner = std::make_unique<TabTitle>(&engine);
+    TabTitle* title = title_owner.get();
+    auto icon = std::make_unique<WidgetChildNode>();
+    icon->m_intrinsic = Size{80.0f, 20.0f};
+    title->add_child(std::move(icon));
+    second->add_child(std::move(title_owner));
+    tabs.add_child(std::move(second_owner));
+    Size measured{};
+    // act
+    tabs.measure(SizeConstraints::unconstrained(), measured);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    tabs.render(recorder);
+    // assert the title sets the second header's width, which makes the strip wider than two minimum tabs (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 168.0f);
+    EXPECT_EQ(second->header_bounds(), (Rect::from_origin_size(Point{64.0f, 0.0f}, Size{104.0f, 32.0f})));
+    // assert the title was placed inside the header inset, at the height it measured to (§8.2)
+    EXPECT_EQ(title->bounds(), (Rect::from_origin_size(Point{76.0f, 6.0f}, Size{80.0f, 20.0f})));
+    // assert the title drew even though its page is not selected, because the strip shows every title (§8)
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_EQ(rects.size(), 2u);
+    EXPECT_EQ(rects[1], title->bounds());
+}
+
+TEST(TabViewChecks, AVerticalTitleSizesTheStripWidth) {
+    // arrange a vertical view whose second title is wider than the minimum tab (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "One"));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "Two");
+    TabPage* second = second_owner.get();
+    auto title_owner = std::make_unique<TabTitle>(&engine);
+    auto icon = std::make_unique<WidgetChildNode>();
+    icon->m_intrinsic = Size{120.0f, 20.0f};
+    title_owner->add_child(std::move(icon));
+    second->add_child(std::move(title_owner));
+    tabs.add_child(std::move(second_owner));
+    tabs.set_vertical(true);
+    Size measured{};
+    // act
+    tabs.measure(SizeConstraints::unconstrained(), measured);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{300.0f, 100.0f}));
+    // assert the widest title sets the strip width, which both rows share (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 144.0f);
+    EXPECT_EQ(second->header_bounds(), (Rect::from_origin_size(Point{0.0f, 32.0f}, Size{144.0f, 32.0f})));
+    // assert the page takes the area to the right of the strip (§8.2)
+    EXPECT_EQ(second->bounds(), (Rect::from_origin_size(Point{144.0f, 0.0f}, Size{156.0f, 100.0f})));
+}
+
+TEST(TabViewChecks, ASameCountReplacementDropsTheRemovedPage) {
+    // arrange two pages whose cache is populated before one page leaves (§8.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto first_owner = std::make_unique<TabPage>(&engine, &text_engine, "One");
+    TabPage* first = first_owner.get();
+    tabs.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "Two");
+    TabPage* second = second_owner.get();
+    tabs.add_child(std::move(second_owner));
+    ASSERT_EQ(tabs.tab_count(), 2u);
+    // act the first page leaves and a non-page child keeps the child count the same (§8.1)
+    std::unique_ptr<UiNode> removed = tabs.remove_child(first);
+    tabs.add_child(std::make_unique<WidgetChildNode>());
+    // assert the strip holds the surviving page, because a count is not a structural identity (§8.1)
+    EXPECT_EQ(removed.get(), first);
+    EXPECT_EQ(tabs.tab_count(), 1u);
+    EXPECT_EQ(tabs.tab_at(0), second);
+}
+
+TEST(TabViewChecks, ReorderingPagesKeepsTheStripInChildOrder) {
+    // arrange two pages and a populated cache (§8.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto first_owner = std::make_unique<TabPage>(&engine, &text_engine, "One");
+    TabPage* first = first_owner.get();
+    tabs.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "Two");
+    TabPage* second = second_owner.get();
+    tabs.add_child(std::move(second_owner));
+    ASSERT_EQ(tabs.tab_count(), 2u);
+    // act the first page moves behind the second, which keeps the child count (§8.1)
+    std::unique_ptr<UiNode> detached = tabs.remove_child(first);
+    tabs.insert_child(1, std::move(detached));
+    // assert the strip follows the new child order, not the cached pointer order (§8.1)
+    EXPECT_EQ(tabs.tab_at(0), second);
+    EXPECT_EQ(tabs.tab_at(1), first);
+    // act the first header is pressed, which now belongs to the page in slot zero (§8.3)
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    tabs.dispatch_event(press);
+    // assert the page in slot zero is the one selected, which proves the strip order followed the tree (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(tabs.selected(), 0);
+    EXPECT_TRUE(second->selected());
+    EXPECT_FALSE(first->selected());
+}
+
+TEST(TabPageChecks, ASameCountReplacementOfTheTitleClearsIt) {
+    // arrange a page whose title cache is populated before the title leaves (§8.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabPage page(&engine, &text_engine, "Page");
+    auto title_owner = std::make_unique<TabTitle>(&engine);
+    TabTitle* title = title_owner.get();
+    page.add_child(std::move(title_owner));
+    page.add_child(std::make_unique<WidgetChildNode>());
+    page.measure_header(13.0f);
+    ASSERT_EQ(page.title(), title);
+    // act the title leaves and a non-title child keeps the child count the same (§8.1)
+    std::unique_ptr<UiNode> removed = page.remove_child(title);
+    page.add_child(std::make_unique<WidgetChildNode>());
+    // assert the page no longer points at the removed title and its extent is gone (§8.1, §8.2)
+    EXPECT_EQ(removed.get(), title);
+    EXPECT_EQ(page.title(), nullptr);
+    EXPECT_EQ(page.title_size(), Size{});
+}
+
+TEST(TabPageChecks, ATitleIsArrangedByTheHeaderNotThePage) {
+    // arrange a page with a title and a body child of different sizes (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabPage page(&engine, &text_engine, "Page");
+    auto title_owner = std::make_unique<TabTitle>(&engine);
+    TabTitle* title = title_owner.get();
+    auto icon = std::make_unique<WidgetChildNode>();
+    icon->m_intrinsic = Size{80.0f, 20.0f};
+    title->add_child(std::move(icon));
+    page.add_child(std::move(title_owner));
+    page.measure_header(13.0f);
+    page.arrange(Rect::from_origin_size(Point{0.0f, 32.0f}, Size{200.0f, 68.0f}));
+    // assert the page did not place the title, because the strip owns the header bounds (§8.2)
+    EXPECT_TRUE(title->bounds().empty());
+}
+
+TEST(TabViewChecks, AnInvisibleTitleFallsBackToTheLabel) {
+    // arrange a page whose title is hidden, so the label is the header again (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto page_owner = std::make_unique<TabPage>(&engine, &text_engine, "One");
+    TabPage* page = page_owner.get();
+    auto title_owner = std::make_unique<TabTitle>(&engine);
+    TabTitle* title = title_owner.get();
+    auto icon = std::make_unique<WidgetChildNode>();
+    WidgetChildNode* icon_ptr = icon.get();
+    title->add_child(std::move(icon));
+    title->set_visible(false);
+    page->add_child(std::move(title_owner));
+    tabs.add_child(std::move(page_owner));
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    tabs.render(recorder);
+    // assert the hidden title's content is not drawn and the label is what the strip shows (§8)
+    EXPECT_EQ(icon_ptr->draws, 0u);
+    EXPECT_EQ(text_commands(*recorder.scene()).size(), 1u);
+}
+
+TEST(TabViewChecks, APressOutsideTheViewSelectsNothing) {
+    // arrange a view with four tabs, whose last header overflows the view (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    for (int index = 0; index < 4; index++)
+        tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "Tab"));
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // act the press lands outside the view but inside the overflow header (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{252.0f, 10.0f}};
+    tabs.dispatch_event(press);
+    // assert the view takes no press outside its bounds, which keeps an overflow header inert (§8.3)
+    EXPECT_FALSE(press.handled);
+    EXPECT_EQ(tabs.selected(), 0);
+}
+
+TEST(TabViewChecks, AVerticalStripStaysInsideTheView) {
+    // arrange a vertical view whose title is wider than the view (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto page_owner = std::make_unique<TabPage>(&engine, &text_engine, "Page");
+    TabPage* page = page_owner.get();
+    auto title_owner = std::make_unique<TabTitle>(&engine);
+    TabTitle* title = title_owner.get();
+    auto icon = std::make_unique<WidgetChildNode>();
+    icon->m_intrinsic = Size{300.0f, 20.0f};
+    title->add_child(std::move(icon));
+    page->add_child(std::move(title_owner));
+    tabs.add_child(std::move(page_owner));
+    tabs.set_vertical(true);
+    Size measured{};
+    tabs.measure(SizeConstraints::unconstrained(), measured);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // assert the strip and its title stay inside the view, so the clip is what hides the overflow (§8.2)
+    EXPECT_LE(page->header_bounds().width, 200.0f);
+    EXPECT_LE(title->bounds().x + title->bounds().width, 200.0f);
+}
+
+TEST(TabViewChecks, TheTitleIsPlacedBeforeTheFirstPaint) {
+    // arrange a page with a composed title, measured and arranged but not yet painted (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto page_owner = std::make_unique<TabPage>(&engine, &text_engine, "Page");
+    TabPage* page = page_owner.get();
+    auto title_owner = std::make_unique<TabTitle>(&engine);
+    TabTitle* title = title_owner.get();
+    auto icon = std::make_unique<WidgetChildNode>();
+    icon->m_intrinsic = Size{80.0f, 20.0f};
+    title->add_child(std::move(icon));
+    page->add_child(std::move(title_owner));
+    tabs.add_child(std::move(page_owner));
+    Size measured{};
+    // act
+    tabs.measure(SizeConstraints::unconstrained(), measured);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // assert the title already has its header geometry, so layout does not depend on a paint pass (§8.2)
+    EXPECT_FALSE(title->bounds().empty());
+    EXPECT_EQ(title->bounds(), (Rect::from_origin_size(Point{12.0f, 6.0f}, Size{80.0f, 20.0f})));
+}
+
+TEST(TabViewChecks, TheHiddenPageTakesNoPointerEvent) {
+    // arrange two pages with a button each, and the first page selected (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto first_owner = std::make_unique<TabPage>(&engine, &text_engine, "One");
+    TabPage* first_page = first_owner.get();
+    auto first_button = std::make_unique<Button>(&engine, &text_engine, "A");
+    Button* first_button_ptr = first_button.get();
+    std::size_t first_clicks = 0;
+    first_button->set_on_click([&first_clicks] { first_clicks++; });
+    first_page->add_child(std::move(first_button));
+    tabs.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "Two");
+    TabPage* second_page = second_owner.get();
+    auto second_button = std::make_unique<Button>(&engine, &text_engine, "B");
+    Button* second_button_ptr = second_button.get();
+    std::size_t second_clicks = 0;
+    second_button->set_on_click([&second_clicks] { second_clicks++; });
+    second_page->add_child(std::move(second_button));
+    tabs.add_child(std::move(second_owner));
+    tabs.set_selected(0);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    InputController controller;
+    controller.attach(tabs);
+    Event press{.kind = EventKind::PointerDown, .position = Point{50.0f, 60.0f}};
+    // act
+    controller.deliver(press);
+    // assert the selected page's button took the press and the hidden page's button did not (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(first_clicks, 1u);
+    EXPECT_EQ(second_clicks, 0u);
+    EXPECT_EQ(controller.focus().focused(), first_button_ptr);
+    // act the second page is selected, which hides the first and clears its caret (§8.3)
+    tabs.set_selected(1);
+    // assert the hidden button loses the focus and cannot take it again until shown (§8.3)
+    EXPECT_NE(controller.focus().focused(), first_button_ptr);
+    EXPECT_FALSE(FocusManager::focusable(*first_button_ptr));
+    EXPECT_TRUE(controller.focus().focused() == nullptr || controller.focus().focused() == second_page || controller.focus().focused() == second_button_ptr);
+    // act a space key arrives after the hidden button lost the caret (§8.3)
+    Event space{.kind = EventKind::KeyDown, .key = Key::Space};
+    controller.deliver(space);
+    // assert the hidden button did not activate, which a hidden page must never do (§8.3)
+    EXPECT_EQ(first_clicks, 1u);
+}
+
+TEST(TabViewChecks, ATitleChildDoesNotTakeTheHeaderPress) {
+    // arrange a selected page whose title holds an interactive child (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto page_owner = std::make_unique<TabPage>(&engine, &text_engine, "One");
+    TabPage* page = page_owner.get();
+    auto title_owner = std::make_unique<TabTitle>(&engine);
+    TabTitle* title = title_owner.get();
+    auto title_button = std::make_unique<Button>(&engine, &text_engine, "T");
+    Button* title_button_ptr = title_button.get();
+    std::size_t title_clicks = 0;
+    title_button->set_on_click([&title_clicks] { title_clicks++; });
+    title->add_child(std::move(title_button));
+    page->add_child(std::move(title_owner));
+    tabs.add_child(std::move(page_owner));
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // act the header is pressed, which is the tab's target rather than the title's (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    tabs.dispatch_event(press);
+    // assert the tab selected and the title's button never ran (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(tabs.selected(), 0);
+    EXPECT_EQ(title_clicks, 0u);
+    // assert the title and its child are not focus stops, because the strip owns the interaction (§8.3)
+    EXPECT_FALSE(title->hit_test(Point{10.0f, 10.0f}));
+    EXPECT_FALSE(FocusManager::focusable(*title));
+    EXPECT_FALSE(FocusManager::focusable(*title_button_ptr));
+}
+
+TEST(TabViewChecks, RemovingAPageBeforeTheSelectionKeepsThePageShown) {
+    // arrange four pages with the third selected (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto first_owner = std::make_unique<TabPage>(&engine, &text_engine, "A");
+    TabPage* first = first_owner.get();
+    tabs.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "B");
+    tabs.add_child(std::move(second_owner));
+    auto third_owner = std::make_unique<TabPage>(&engine, &text_engine, "C");
+    TabPage* third = third_owner.get();
+    tabs.add_child(std::move(third_owner));
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "D"));
+    tabs.set_selected(2);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // act the page before it leaves, which moves the selected index (§8)
+    std::unique_ptr<UiNode> removed = tabs.remove_child(first);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // assert the same page is still shown at its new index (§8)
+    EXPECT_EQ(removed.get(), first);
+    EXPECT_EQ(tabs.selected(), 1);
+    EXPECT_TRUE(third->selected());
+    EXPECT_TRUE(third->visible());
+}
+
+TEST(TabViewChecks, InsertingAPageBeforeTheSelectionKeepsThePageShown) {
+    // arrange two pages with the second selected (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "A"));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "B");
+    TabPage* second = second_owner.get();
+    tabs.add_child(std::move(second_owner));
+    tabs.set_selected(1);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // act a page is inserted before it (§8)
+    tabs.insert_child(0, std::make_unique<TabPage>(&engine, &text_engine, "New"));
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // assert the same page is still shown at its new index (§8)
+    EXPECT_EQ(tabs.selected(), 2);
+    EXPECT_TRUE(second->selected());
+    EXPECT_TRUE(second->visible());
+}
+
+TEST(TabViewChecks, RemovingTheSelectedLastPageDoesNotJumpOnTheNextAdd) {
+    // arrange three pages with the last selected (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "A"));
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "B"));
+    auto third_owner = std::make_unique<TabPage>(&engine, &text_engine, "C");
+    TabPage* third = third_owner.get();
+    tabs.add_child(std::move(third_owner));
+    tabs.set_selected(2);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // act the selected page leaves, which clamps the selection (§8)
+    std::unique_ptr<UiNode> removed = tabs.remove_child(third);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    EXPECT_EQ(removed.get(), third);
+    EXPECT_EQ(tabs.selected(), 1);
+    // act a page is added after the removal (§8)
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "D"));
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // assert the selection stayed at the clamped index instead of jumping to the added page (§8)
+    EXPECT_EQ(tabs.selected(), 1);
+}
+
+TEST(TabViewChecks, AStructuralSelectionChangeRaisesTheSignal) {
+    // arrange two pages with the second selected and a recording handler (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "A"));
+    tabs.add_child(std::make_unique<TabPage>(&engine, &text_engine, "B"));
+    tabs.set_selected(1);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    std::vector<int> changes;
+    tabs.set_on_selection_changed([&changes](int index) { changes.push_back(index); });
+    // act a page is inserted before the selection, which moves the selected index (§8)
+    tabs.insert_child(0, std::make_unique<TabPage>(&engine, &text_engine, "New"));
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // assert the model was told the new index, because the displayed page moved (§8.3)
+    ASSERT_EQ(changes.size(), 1u);
+    EXPECT_EQ(changes[0], 2);
+    EXPECT_EQ(tabs.selected(), 2);
+}
+
+TEST(RadioButtonChecks, MeasuresTheCircleAndLabel) {
+    // arrange a choice whose label is measured by the shared text engine (§8.2, §9.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioButton choice(&engine, &text_engine, 0, "One");
+    Size measured{};
+    // act
+    choice.measure(SizeConstraints::unconstrained(), measured);
+    // assert the row is the circle, the gap and the run (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 52.0f);
+    EXPECT_FLOAT_EQ(measured.height, 16.0f);
+}
+
+TEST(RadioButtonChecks, AnEmptyLabelMeasuresOnlyTheCircle) {
+    // arrange a choice with no label, which a caller might use beside a separate label (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioButton choice(&engine, &text_engine);
+    Size measured{};
+    // act
+    choice.measure(SizeConstraints::unconstrained(), measured);
+    // assert the gap is not added when there is no run to separate (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 16.0f);
+    EXPECT_FLOAT_EQ(measured.height, 16.0f);
+}
+
+TEST(RadioButtonChecks, ALongLabelWrapsInsideTheOfferedRow) {
+    // arrange a label wider than the room the parent offers (§8.2, §9.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioButton choice(&engine, &text_engine, 0, "abcdefghij");
+    Size measured{};
+    // act
+    choice.measure(SizeConstraints::at_most(Size{80.0f, 40.0f}), measured);
+    // assert the row stays inside the offered ceiling, because the label is measured against it (§8.2)
+    EXPECT_LE(measured.width, 80.0f);
+    EXPECT_FLOAT_EQ(measured.width, 80.0f);
+    EXPECT_FLOAT_EQ(measured.height, 16.0f);
+}
+
+TEST(RadioButtonChecks, MeasuresFromTheInstalledTheme) {
+    // arrange a theme that sizes the circle and the gap differently from the default (§8.4)
+    Theme theme;
+    theme.set_radio_button_size(Size{20.0f, 20.0f});
+    theme.set_radio_button_gap(5.0f);
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioButton choice(&engine, &text_engine, 0, "A");
+    apply_theme(choice, theme);
+    Size measured{};
+    // act
+    choice.measure(SizeConstraints::unconstrained(), measured);
+    // assert the row follows the theme rather than the builtin literals (§8.2, §8.4)
+    EXPECT_FLOAT_EQ(measured.width, 35.0f);
+    EXPECT_FLOAT_EQ(measured.height, 20.0f);
+}
+
+TEST(RadioButtonChecks, ASquareCircleFitsAShortRow) {
+    // arrange a row shorter than the themed circle, which a shrunken group can produce (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioButton choice(&engine, &text_engine, 0, "");
+    choice.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{52.0f, 6.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{80.0f, 20.0f}, 1.0f));
+    // act
+    choice.render(recorder);
+    // assert the outline is a six by six circle inside the row, not a sixteen high circle hanging out (§8.2)
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_FALSE(rects.empty());
+    EXPECT_FLOAT_EQ(rects.front().width, 6.0f);
+    EXPECT_FLOAT_EQ(rects.front().height, 6.0f);
+    EXPECT_GE(rects.front().y, 0.0f);
+    EXPECT_LE(rects.front().y + rects.front().height, 6.0f);
+}
+
+TEST(RadioButtonChecks, APressRunsTheInstalledSelection) {
+    // arrange a choice with a recorded selection and an arranged row (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioButton choice(&engine, &text_engine, 0, "One");
+    choice.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{52.0f, 16.0f}));
+    std::size_t selections = 0;
+    choice.set_on_select([&selections] { selections++; });
+    Event press{.kind = EventKind::PointerDown, .position = Point{20.0f, 8.0f}};
+    // act
+    choice.dispatch_event(press);
+    // assert the row claims the press and runs the group's selection work (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(selections, 1u);
+}
+
+TEST(RadioButtonChecks, ASpaceRunsTheInstalledSelection) {
+    // arrange a focused choice with a recorded selection (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioButton choice(&engine, &text_engine, 0, "One");
+    choice.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{52.0f, 16.0f}));
+    std::size_t selections = 0;
+    choice.set_on_select([&selections] { selections++; });
+    Event space{.kind = EventKind::KeyDown, .key = Key::Space};
+    // act
+    choice.dispatch_event(space);
+    // assert space is the keyboard selection, which the choice claims (§8.3)
+    EXPECT_TRUE(space.handled);
+    EXPECT_EQ(selections, 1u);
+}
+
+TEST(RadioButtonChecks, ADisabledChoiceRefusesThePress) {
+    // arrange a disabled choice, which draws its state but takes no input (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioButton choice(&engine, &text_engine, 0, "One");
+    choice.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{52.0f, 16.0f}));
+    choice.set_disabled(true);
+    std::size_t selections = 0;
+    choice.set_on_select([&selections] { selections++; });
+    Event press{.kind = EventKind::PointerDown, .position = Point{20.0f, 8.0f}};
+    // act
+    choice.dispatch_event(press);
+    // assert the press was not claimed and the choice was not selected (§8.3)
+    EXPECT_FALSE(press.handled);
+    EXPECT_EQ(selections, 0u);
+}
+
+TEST(RadioButtonChecks, AnnouncesItsLabelAndChosenState) {
+    // arrange a chosen choice with a label and an installed selection (§10.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioButton choice(&engine, &text_engine, 2, "One", "one");
+    choice.arrange(Rect::from_origin_size(Point{1.0f, 2.0f}, Size{52.0f, 16.0f}));
+    choice.set_checked(true);
+    choice.set_on_select([] {});
+    // act
+    const SemanticNode node = choice.semantic_node();
+    // assert the role, name, check state and selection are what a reader announces (§10.1)
+    EXPECT_EQ(node.role(), SemanticRole::RadioButton);
+    EXPECT_EQ(node.name(), "One");
+    EXPECT_EQ(node.check(), CheckState::Checked);
+    EXPECT_TRUE(node.selected());
+    EXPECT_EQ(node.bounds(), (Rect::from_origin_size(Point{1.0f, 2.0f}, Size{52.0f, 16.0f})));
+    EXPECT_EQ(node.action_count(), 1u);
+}
+
+TEST(RadioButtonChecks, PaintsTheOutlineAndADotWhenChosen) {
+    // arrange two rows drawn from the same theme (§6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioButton choice(&engine, &text_engine, 0, "One");
+    choice.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{52.0f, 16.0f}));
+    SceneRecorder unchecked(WindowMetrics::from_logical(Size{80.0f, 40.0f}, 1.0f));
+    choice.render(unchecked);
+    // act
+    choice.set_checked(true);
+    SceneRecorder checked(WindowMetrics::from_logical(Size{80.0f, 40.0f}, 1.0f));
+    choice.render(checked);
+    // assert the unchecked row is one outline and the chosen row adds a fill and a dot (§8.4)
+    EXPECT_EQ(rect_commands(*unchecked.scene()).size(), 1u);
+    EXPECT_EQ(rect_commands(*checked.scene()).size(), 3u);
+    // assert the label is one run in both states (§9.1)
+    EXPECT_EQ(text_commands(*unchecked.scene()).size(), 1u);
+    EXPECT_EQ(text_commands(*checked.scene()).size(), 1u);
+}
+
+TEST(RadioButtonChecks, SetLabelRemeasuresTheRow) {
+    // arrange a measured choice with a short label (§9.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioButton choice(&engine, &text_engine, 0, "A");
+    Size measured{};
+    choice.measure(SizeConstraints::unconstrained(), measured);
+    const float before = measured.width;
+    // act the label grows, which changes the row width (§8.2)
+    choice.set_label("Four");
+    choice.measure(SizeConstraints::unconstrained(), measured);
+    // assert the row follows the new run (§8.2)
+    EXPECT_GT(measured.width, before);
+    EXPECT_TRUE(choice.layout_dirty());
+}
+
+TEST(RadioGroupChecks, MeasuresItsChoicesInARow) {
+    // arrange two choices in a horizontal group, with the default gap (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioGroup group(&engine);
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 0, "One"));
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 1, "Two"));
+    Size measured{};
+    // act
+    group.measure(SizeConstraints::unconstrained(), measured);
+    // assert the row is both choices and the gap between them (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 112.0f);
+    EXPECT_FLOAT_EQ(measured.height, 16.0f);
+}
+
+TEST(RadioGroupChecks, MeasuresItsChoicesInAColumn) {
+    // arrange two choices in a vertical group, with the default gap (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioGroup group(&engine);
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 0, "One"));
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 1, "Two"));
+    group.set_vertical(true);
+    Size measured{};
+    // act
+    group.measure(SizeConstraints::unconstrained(), measured);
+    // assert the column is the widest choice and both rows plus the gap (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 52.0f);
+    EXPECT_FLOAT_EQ(measured.height, 40.0f);
+    EXPECT_TRUE(group.vertical());
+}
+
+TEST(RadioGroupChecks, SelectsTheChoiceWithTheValue) {
+    // arrange a group with two values (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioGroup group(&engine);
+    auto first_owner = std::make_unique<RadioButton>(&engine, &text_engine, 0, "One");
+    RadioButton* first = first_owner.get();
+    group.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<RadioButton>(&engine, &text_engine, 1, "Two");
+    RadioButton* second = second_owner.get();
+    group.add_child(std::move(second_owner));
+    // act
+    group.set_selected(1);
+    group.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    // assert exactly the choice with the value is checked (§8)
+    EXPECT_EQ(group.selected(), 1);
+    EXPECT_FALSE(first->checked());
+    EXPECT_TRUE(second->checked());
+}
+
+TEST(RadioGroupChecks, AShrunkGroupKeepsEveryChoiceMeasured) {
+    // arrange a group of three choices that needs more width than the parent gives it (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioGroup group(&engine);
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 0, "One"));
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 1, "Two"));
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 2, "Six"));
+    // act
+    group.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 20.0f}));
+    // assert every choice keeps a positive width inside the group, because no choice may vanish or fall outside (§8.2)
+    ASSERT_EQ(group.child_count(), 3U);
+    EXPECT_FLOAT_EQ(group.child_at(0)->bounds().width, 28.0f);
+    EXPECT_FLOAT_EQ(group.child_at(1)->bounds().width, 28.0f);
+    EXPECT_FLOAT_EQ(group.child_at(2)->bounds().width, 28.0f);
+    EXPECT_FLOAT_EQ(group.child_at(1)->bounds().x, 36.0f);
+    EXPECT_FLOAT_EQ(group.child_at(2)->bounds().x, 72.0f);
+    EXPECT_LE(group.child_at(2)->bounds().x + group.child_at(2)->bounds().width, 100.0f);
+}
+
+TEST(RadioGroupChecks, UsesTheThemeSpacingWhenNoneIsWritten) {
+    // arrange a theme that spaces choices wider than the builtin default (§8.4)
+    Theme theme;
+    theme.set_radio_group_spacing(20.0f);
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioGroup group(&engine);
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 0, "One"));
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 1, "Two"));
+    apply_theme(group, theme);
+    Size measured{};
+    // act
+    group.measure(SizeConstraints::unconstrained(), measured);
+    // assert an unwritten gap comes from the theme (§8.2, §8.4)
+    EXPECT_FLOAT_EQ(group.spacing(), 20.0f);
+    EXPECT_FLOAT_EQ(measured.width, 124.0f);
+}
+
+TEST(RadioGroupChecks, AChoiceValueChangeReappliesTheSelection) {
+    // arrange a group whose selected value is the second choice (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioGroup group(&engine);
+    auto first_owner = std::make_unique<RadioButton>(&engine, &text_engine, 0, "One");
+    RadioButton* first = first_owner.get();
+    group.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<RadioButton>(&engine, &text_engine, 1, "Two");
+    RadioButton* second = second_owner.get();
+    group.add_child(std::move(second_owner));
+    group.set_selected(1);
+    group.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    // act the first choice takes the selected value, which the group must reapply (§8)
+    first->set_value(1);
+    // assert the new match is the one checked choice, because the first match wins (§8)
+    EXPECT_TRUE(first->checked());
+    EXPECT_FALSE(second->checked());
+}
+
+TEST(RadioGroupChecks, ASelectedValueWrittenBeforeTheChildrenMarksTheChoice) {
+    // arrange a group whose selected value is written before the choices are adopted (§8, §11.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioGroup group(&engine);
+    group.set_selected(1);
+    auto first_owner = std::make_unique<RadioButton>(&engine, &text_engine, 0, "One");
+    RadioButton* first = first_owner.get();
+    group.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<RadioButton>(&engine, &text_engine, 1, "Two");
+    RadioButton* second = second_owner.get();
+    group.add_child(std::move(second_owner));
+    // assert adding the matching choice marks it before any layout or semantic read (§8)
+    EXPECT_TRUE(second->checked());
+    // act the semantic tree is built before the first layout pass (§10.1)
+    const SemanticNode node = group.semantic_node();
+    // assert the group announces its selection and the matching choice carries the check state (§10.1)
+    EXPECT_EQ(node.role(), SemanticRole::RadioGroup);
+    EXPECT_FALSE(first->checked());
+    EXPECT_TRUE(second->checked());
+    std::unique_ptr<SemanticProvider> child = group.semantic_child(1);
+    ASSERT_NE(child, nullptr);
+    EXPECT_EQ(child->semantic_node().check(), CheckState::Checked);
+}
+
+TEST(RadioGroupChecks, AChoicePressSelectsItsValue) {
+    // arrange an arranged group with a recorded selection signal (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioGroup group(&engine);
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 0, "One"));
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 1, "Two"));
+    group.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    std::vector<int> changes;
+    group.set_on_selection_changed([&changes](int value) { changes.push_back(value); });
+    Event press{.kind = EventKind::PointerDown, .position = Point{65.0f, 8.0f}};
+    // act
+    InputDispatcher::dispatch(group, press);
+    // assert the second choice claimed the press and became the selected value (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(group.selected(), 1);
+    ASSERT_EQ(changes.size(), 1u);
+    EXPECT_EQ(changes[0], 1);
+}
+
+TEST(RadioGroupChecks, AChoiceCannotReachADestroyedGroup) {
+    // arrange a choice detached from its group, which keeps the callback the group installed (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    auto group = std::make_unique<RadioGroup>(&engine);
+    auto choice = std::make_unique<RadioButton>(&engine, &text_engine, 0, "One");
+    RadioButton* raw = choice.get();
+    group->add_child(std::move(choice));
+    group->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    std::unique_ptr<UiNode> detached = group->remove_child(raw);
+    ASSERT_NE(detached, nullptr);
+    // act the detached choice is pressed while the group is still alive (§8.3)
+    Event detached_press{.kind = EventKind::PointerDown, .position = Point{10.0f, 8.0f}};
+    raw->dispatch_event(detached_press);
+    // assert the removed choice cannot drive the live group (§8.3)
+    EXPECT_EQ(group->selected(), 0);
+    // act the detached choice is cleared, the group is destroyed, and the choice is pressed afterwards (§8.3, AD-09)
+    raw->set_checked(false);
+    group.reset();
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 8.0f}};
+    raw->dispatch_event(press);
+    // assert the choice is still a valid control and the press is claimed without calling the dead group (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_FALSE(raw->checked());
+}
+
+TEST(RadioGroupChecks, DuplicateValuesSelectTheFirstChoice) {
+    // arrange two choices with the same value, which the group selects by value (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioGroup group(&engine);
+    auto first_owner = std::make_unique<RadioButton>(&engine, &text_engine, 0, "One");
+    RadioButton* first = first_owner.get();
+    group.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<RadioButton>(&engine, &text_engine, 0, "Two");
+    RadioButton* second = second_owner.get();
+    group.add_child(std::move(second_owner));
+    std::vector<int> changes;
+    group.set_on_selection_changed([&changes](int value) { changes.push_back(value); });
+    // act the second duplicate is pressed, which carries the same selected value (§8)
+    group.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    Event press{.kind = EventKind::PointerDown, .position = Point{65.0f, 8.0f}};
+    InputDispatcher::dispatch(group, press);
+    // assert the first matching choice owns the check and no new selection moved (§8)
+    EXPECT_TRUE(first->checked());
+    EXPECT_FALSE(second->checked());
+    EXPECT_TRUE(changes.empty());
+}
+
+TEST(RadioGroupChecks, TheSignalReportsOnlyActualChanges) {
+    // arrange a group with a recorded signal (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioGroup group(&engine);
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 0, "One"));
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 1, "Two"));
+    std::vector<int> changes;
+    group.set_on_selection_changed([&changes](int value) { changes.push_back(value); });
+    // act the same value is written twice, which is one actual move (§8.3)
+    group.set_selected(1);
+    group.set_selected(1);
+    // assert only the move was reported (§8.3)
+    ASSERT_EQ(changes.size(), 1u);
+    EXPECT_EQ(changes[0], 1);
+}
+
+TEST(RadioGroupChecks, ExposesItsChoicesAsRadioButtons) {
+    // arrange a group with one selected choice (§10.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    RadioGroup group(&engine);
+    group.set_explicit_id("modes");
+    auto first_owner = std::make_unique<RadioButton>(&engine, &text_engine, 0, "One");
+    RadioButton* first = first_owner.get();
+    group.add_child(std::move(first_owner));
+    group.add_child(std::make_unique<RadioButton>(&engine, &text_engine, 1, "Two"));
+    group.set_selected(0);
+    group.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 20.0f}));
+    // act
+    const SemanticNode node = group.semantic_node();
+    // assert the group and its choice hierarchy are announced (§10.1)
+    EXPECT_EQ(node.role(), SemanticRole::RadioGroup);
+    EXPECT_EQ(node.explicit_id(), "modes");
+    EXPECT_EQ(node.action_count(), 2u);
+    EXPECT_EQ(group.semantic_child_count(), 2u);
+    std::unique_ptr<SemanticProvider> child = group.semantic_child(0);
+    ASSERT_NE(child, nullptr);
+    EXPECT_EQ(child->semantic_node().role(), SemanticRole::RadioButton);
+    EXPECT_EQ(first->semantic_node().check(), CheckState::Checked);
+    EXPECT_FALSE(group.accepts_focus());
+}
+
+TEST(NumericStepperChecks, MeasuresTheDefaultPlate) {
+    // arrange a stepper whose value is a short run (§8.2, §9.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    Size measured{};
+    // act
+    stepper.measure(SizeConstraints::unconstrained(), measured);
+    // assert the themed extent is the floor the run fits inside (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 120.0f);
+    EXPECT_FLOAT_EQ(measured.height, 32.0f);
+}
+
+TEST(NumericStepperChecks, MeasuresFromTheInstalledTheme) {
+    // arrange a theme that sizes the plate and its step zones (§8.4)
+    Theme theme;
+    theme.set_numeric_stepper_extent(Size{200.0f, 40.0f});
+    theme.set_numeric_stepper_button_width(30.0f);
+    theme.set_numeric_stepper_padding(5.0f);
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    apply_theme(stepper, theme);
+    Size measured{};
+    // act
+    stepper.measure(SizeConstraints::unconstrained(), measured);
+    // assert the plate takes the themed extent, because the run fits inside it (§8.2, §8.4)
+    EXPECT_FLOAT_EQ(measured.width, 200.0f);
+    EXPECT_FLOAT_EQ(measured.height, 40.0f);
+}
+
+TEST(NumericStepperChecks, AWidenedRangeRecoversTheAuthoredValue) {
+    // arrange a stepper whose zero default range clamps the authored thirty to zero (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_maximum(0.0f);
+    stepper.set_value(30.0f);
+    // assert the value is clamped while the range is zero wide (§8)
+    EXPECT_FLOAT_EQ(stepper.value(), 0.0f);
+    // act the range widens after the value was requested, which happens when a bound host value settles (§7.3, §8)
+    stepper.set_maximum(100.0f);
+    // assert the request survives the temporary clamp, so the control shows the authored thirty (§8)
+    EXPECT_FLOAT_EQ(stepper.value(), 30.0f);
+    // act a user write replaces the request, which must not jump back when the range moves again (§8)
+    stepper.set_value(0.0f);
+    stepper.set_maximum(50.0f);
+    // assert the later range move keeps the user's value rather than the old authored request (§8)
+    EXPECT_FLOAT_EQ(stepper.value(), 0.0f);
+}
+
+TEST(NumericStepperChecks, ClampsTheValueIntoItsRange) {
+    // arrange a stepper with a ten to twenty range (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_minimum(10.0f);
+    stepper.set_maximum(20.0f);
+    // act the value lands below and above the range (§8)
+    stepper.set_value(5.0f);
+    // assert the lower bound is what the control shows (§8)
+    EXPECT_FLOAT_EQ(stepper.value(), 10.0f);
+    stepper.set_value(25.0f);
+    // assert the upper bound is what the control shows (§8)
+    EXPECT_FLOAT_EQ(stepper.value(), 20.0f);
+}
+
+TEST(NumericStepperChecks, APressOnThePlusZoneStepsUp) {
+    // arrange an arranged stepper with a recorded value signal (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    std::vector<float> changes;
+    stepper.set_on_change([&changes](float value) { changes.push_back(value); });
+    Event press{.kind = EventKind::PointerDown, .position = Point{110.0f, 16.0f}};
+    // act
+    stepper.dispatch_event(press);
+    // assert the increment zone steps one unit and reports it (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 1.0f);
+    ASSERT_EQ(changes.size(), 1u);
+    EXPECT_FLOAT_EQ(changes[0], 1.0f);
+}
+
+TEST(NumericStepperChecks, TheStepAmountMovesTheValue) {
+    // arrange a half-unit step between zero and ten (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_maximum(10.0f);
+    stepper.set_step(0.5f);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    // act
+    Event press{.kind = EventKind::PointerDown, .position = Point{110.0f, 16.0f}};
+    stepper.dispatch_event(press);
+    // assert the stored step is what the zone moves by (§8.3)
+    EXPECT_FLOAT_EQ(stepper.value(), 0.5f);
+    EXPECT_FLOAT_EQ(stepper.step(), 0.5f);
+}
+
+TEST(NumericStepperChecks, TheMinusZoneStepsDown) {
+    // arrange a stepper carrying five in the middle of its range (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_value(5.0f);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    // act a press on the left zone (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{5.0f, 16.0f}};
+    stepper.dispatch_event(press);
+    // assert the decrement zone moves the value back by one step (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 4.0f);
+}
+
+TEST(NumericStepperChecks, ADownWheelNotchStepsTheValueDown) {
+    // arrange a stepper carrying five (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_value(5.0f);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    Event wheel{.kind = EventKind::Wheel, .position = Point{60.0f, 16.0f}, .scroll = -1.0f};
+    // act
+    stepper.dispatch_event(wheel);
+    // assert the notch direction decides the step (§8.3)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 4.0f);
+}
+
+TEST(NumericStepperChecks, ThePageKeysMoveTenSteps) {
+    // arrange a stepper at five with unit steps (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_value(5.0f);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    // act
+    Event up{.kind = EventKind::KeyDown, .key = Key::PageUp};
+    stepper.dispatch_event(up);
+    // assert a page is ten steps forward (§8.3)
+    EXPECT_TRUE(up.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 15.0f);
+    Event down{.kind = EventKind::KeyDown, .key = Key::PageDown};
+    stepper.dispatch_event(down);
+    // assert a page back is ten steps, which mirrors the forward move (§8.3)
+    EXPECT_TRUE(down.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 5.0f);
+}
+
+TEST(NumericStepperChecks, AWheelNotchStepsTheValue) {
+    // arrange a stepper with a recorded value signal (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    std::vector<float> changes;
+    stepper.set_on_change([&changes](float value) { changes.push_back(value); });
+    Event wheel{.kind = EventKind::Wheel, .position = Point{40.0f, 16.0f}, .scroll = 1.0f};
+    // act
+    stepper.dispatch_event(wheel);
+    // assert the notch steps up and claims the event (§8.3)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 1.0f);
+    ASSERT_EQ(changes.size(), 1u);
+}
+
+TEST(NumericStepperChecks, ANarrowPlatePlacesThePlusMarkInThePlusZone) {
+    // arrange a plate narrower than two ideal step zones, where the old left check overlapped the right zone (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{40.0f, 32.0f}));
+    // act the press lands under the plus mark, at twenty six points (§8.3)
+    Event plus{.kind = EventKind::PointerDown, .position = Point{26.0f, 16.0f}};
+    stepper.dispatch_event(plus);
+    // assert the plus mark increments, because the two zones split at the middle (§8.3)
+    EXPECT_TRUE(plus.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 1.0f);
+    // act the left half decrements, because the zones are disjoint (§8.3)
+    Event minus{.kind = EventKind::PointerDown, .position = Point{5.0f, 16.0f}};
+    stepper.dispatch_event(minus);
+    // assert the decrement zone still steps the value back (§8.3)
+    EXPECT_TRUE(minus.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 0.0f);
+}
+
+TEST(NumericStepperChecks, ANonFiniteBindingIsIgnored) {
+    // arrange a stepper carrying a finite value, bound, and step (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_value(5.0f);
+    // act each input is non finite, which no valid range or step can carry (§8)
+    stepper.set_value(std::numeric_limits<float>::quiet_NaN());
+    stepper.set_minimum(std::numeric_limits<float>::quiet_NaN());
+    stepper.set_maximum(std::numeric_limits<float>::infinity());
+    stepper.set_step(std::numeric_limits<float>::infinity());
+    // assert the finite state survives, because a poisoned value would break every later clamp (§8)
+    EXPECT_FLOAT_EQ(stepper.value(), 5.0f);
+    EXPECT_FLOAT_EQ(stepper.minimum(), 0.0f);
+    EXPECT_FLOAT_EQ(stepper.maximum(), 100.0f);
+    EXPECT_FLOAT_EQ(stepper.step(), 1.0f);
+}
+
+TEST(NumericStepperChecks, ANegativeStepUsesItsMagnitude) {
+    // arrange a written negative step, which must not reverse the buttons (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_step(-2.0f);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    // act
+    Event press{.kind = EventKind::PointerDown, .position = Point{110.0f, 16.0f}};
+    stepper.dispatch_event(press);
+    // assert the stored step is the magnitude and the plus zone still increments (§8.3)
+    EXPECT_FLOAT_EQ(stepper.step(), 2.0f);
+    EXPECT_FLOAT_EQ(stepper.value(), 2.0f);
+}
+
+TEST(NumericStepperChecks, TheHomeAndEndKeysReachTheBounds) {
+    // arrange a stepper arranged for key input (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_minimum(2.0f);
+    stepper.set_maximum(12.0f);
+    stepper.set_value(5.0f);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    // act
+    Event end{.kind = EventKind::KeyDown, .key = Key::End};
+    stepper.dispatch_event(end);
+    // assert end names the upper bound (§8.3)
+    EXPECT_TRUE(end.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 12.0f);
+    Event home{.kind = EventKind::KeyDown, .key = Key::Home};
+    stepper.dispatch_event(home);
+    // assert home names the lower bound (§8.3)
+    EXPECT_TRUE(home.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 2.0f);
+}
+
+TEST(NumericStepperChecks, AnnouncesItsValueAndSteppingActions) {
+    // arrange a stepper carrying a formatted fraction (§10.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine, "effort");
+    stepper.set_value(3.5f);
+    // act
+    const SemanticNode node = stepper.semantic_node();
+    // assert the role, id, value and the two actions a reader can drive (§10.1)
+    EXPECT_EQ(node.role(), SemanticRole::NumericStepper);
+    EXPECT_EQ(node.explicit_id(), "effort");
+    EXPECT_EQ(node.value(), "3.5");
+    EXPECT_EQ(node.action_count(), 2u);
+    const bool incremented = node.invoke(1);
+    // assert the increment action is the one the plate's plus zone runs (§10.1)
+    EXPECT_TRUE(incremented);
+    EXPECT_FLOAT_EQ(stepper.value(), 4.5f);
+}
+
+TEST(NumericStepperChecks, AWholeNumberFormatsWithoutTrailingDecimals) {
+    // arrange a stepper with a whole value (§9.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_value(12.0f);
+    // act
+    const SemanticNode node = stepper.semantic_node();
+    // assert the value run is the shortest integer form (§9.1)
+    EXPECT_EQ(node.value(), "12");
+}
+
+TEST(NumericStepperChecks, ATinyNegativeValueDoesNotFormatAsNegativeZero) {
+    // arrange a value that rounds to zero at the displayed precision (§9.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_minimum(-1.0f);
+    stepper.set_value(-0.0000004f);
+    // act
+    const SemanticNode node = stepper.semantic_node();
+    // assert the signed tiny value reads as zero rather than the misleading -0 (§9.1)
+    EXPECT_FLOAT_EQ(stepper.value(), -0.0000004f);
+    EXPECT_EQ(node.value(), "0");
+}
+
+TEST(NumericStepperChecks, ADisabledStepperRefusesThePress) {
+    // arrange a disabled stepper (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_disabled(true);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    Event press{.kind = EventKind::PointerDown, .position = Point{110.0f, 16.0f}};
+    // act
+    stepper.dispatch_event(press);
+    // assert the press is not claimed and the value does not move (§8.3)
+    EXPECT_FALSE(press.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 0.0f);
+    EXPECT_TRUE(stepper.disabled());
+}
+
+TEST(NumericStepperChecks, ADisabledStepperRefusesTheWheelAndTheKey) {
+    // arrange a disabled stepper with a value to protect (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.set_value(5.0f);
+    stepper.set_disabled(true);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    // act
+    Event wheel{.kind = EventKind::Wheel, .position = Point{60.0f, 16.0f}, .scroll = 1.0f};
+    stepper.dispatch_event(wheel);
+    Event key{.kind = EventKind::KeyDown, .key = Key::ArrowUp};
+    stepper.dispatch_event(key);
+    // assert neither path is claimed and the value stays put (§8.3)
+    EXPECT_FALSE(wheel.handled);
+    EXPECT_FALSE(key.handled);
+    EXPECT_FLOAT_EQ(stepper.value(), 5.0f);
+}
+
+TEST(NumericStepperChecks, ThePlateAndTheTwoMarksArePainted) {
+    // arrange an arranged stepper drawn from the theme (§6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    NumericStepper stepper(&engine, &text_engine);
+    stepper.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 32.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{160.0f, 60.0f}, 1.0f));
+    // act
+    stepper.render(recorder);
+    // assert the plate, the minus and the two plus bars are four shapes and the value is one run (§8.4)
+    EXPECT_EQ(rect_commands(*recorder.scene()).size(), 4u);
+    EXPECT_EQ(text_commands(*recorder.scene()).size(), 1u);
+}
+
+TEST(ImageChecks, AnImageMeasuresToTheNaturalPixelExtent) {
+    // arrange a three by two image, whose extent is what an unconstrained layout asks for (§6.4, §8.2)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[3 * 2 * 4]{};
+    const std::shared_ptr<const ImageResource> source = factory.create_image(3, 2, ImageFormat::RGBA8, pixels);
+    Image image(&engine);
+    image.set_source(source);
+    Size measured{};
+    // act
+    image.measure(SizeConstraints::unconstrained(), measured);
+    // assert the image offers its pixel extent, because no explicit size was written (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 3.0f);
+    EXPECT_FLOAT_EQ(measured.height, 2.0f);
+}
+
+TEST(ImageChecks, ExplicitDimensionsReplaceTheNaturalExtentIndependently) {
+    // arrange a three by two image with one explicit dimension at a time (§8.2)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[3 * 2 * 4]{};
+    Image image(&engine);
+    image.set_source(factory.create_image(3, 2, ImageFormat::RGBA8, pixels));
+    Size measured{};
+    // act the width alone, then both dimensions, then a zero width
+    image.set_width(30.0f);
+    image.measure(SizeConstraints::unconstrained(), measured);
+    // assert the height keeps the natural extent while the width follows the author (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 30.0f);
+    EXPECT_FLOAT_EQ(measured.height, 2.0f);
+    image.set_height(10.0f);
+    image.measure(SizeConstraints::unconstrained(), measured);
+    // assert both dimensions now follow the author (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 30.0f);
+    EXPECT_FLOAT_EQ(measured.height, 10.0f);
+    image.set_width(0.0f);
+    image.measure(SizeConstraints::unconstrained(), measured);
+    // assert zero restores the natural width while the explicit height stays (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 3.0f);
+    EXPECT_FLOAT_EQ(measured.height, 10.0f);
+}
+
+TEST(ImageChecks, AnExplicitDimensionRequestsLayout) {
+    // arrange an image whose source already settled its natural extent (§8.2)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[2 * 2 * 4]{};
+    Image image(&engine);
+    image.set_source(factory.create_image(2, 2, ImageFormat::RGBA8, pixels));
+    image.clear_dirty();
+    // act set each explicit dimension in turn, because either one changes the offered extent (§8.2)
+    image.set_width(12.0f);
+    // assert a written width invalidates the measure pass, because the offered extent changed (§8.2)
+    EXPECT_TRUE(image.layout_dirty());
+    image.clear_dirty();
+    image.set_height(8.0f);
+    // assert the height does the same, so one axis cannot move without a measure (§8.2)
+    EXPECT_TRUE(image.layout_dirty());
+}
+
+TEST(ImageChecks, ConstraintsClampTheNaturalExtent) {
+    // arrange a four by three image under a parent that offers less room (§8.2)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[4 * 3 * 4]{};
+    Image image(&engine);
+    image.set_source(factory.create_image(4, 3, ImageFormat::RGBA8, pixels));
+    Size measured{};
+    // act
+    image.measure(SizeConstraints::at_most(Size{2.0f, 2.0f}), measured);
+    // assert the parent decision is final, even against the natural extent (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 2.0f);
+    EXPECT_FLOAT_EQ(measured.height, 2.0f);
+}
+
+TEST(ImageChecks, TightConstraintsRaiseTheNaturalExtent) {
+    // arrange a two by two image under a parent that demands a larger rectangle (§8.2)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[2 * 2 * 4]{};
+    Image image(&engine);
+    image.set_source(factory.create_image(2, 2, ImageFormat::RGBA8, pixels));
+    Size measured{};
+    // act
+    image.measure(SizeConstraints::tight(Size{5.0f, 4.0f}), measured);
+    // assert the minimum raises both axes, because a tight parent decides the extent (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 5.0f);
+    EXPECT_FLOAT_EQ(measured.height, 4.0f);
+}
+
+TEST(ImageChecks, ANegativeDimensionMeansTheNaturalExtent) {
+    // arrange an image whose width is written below zero, which is no size at all (§8.2)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[2 * 2 * 4]{};
+    Image image(&engine);
+    image.set_source(factory.create_image(2, 2, ImageFormat::RGBA8, pixels));
+    Size measured{};
+    // act
+    image.set_width(-12.0f);
+    image.measure(SizeConstraints::unconstrained(), measured);
+    // assert the width clamps to zero, which means the natural pixel width (§8.2)
+    EXPECT_FLOAT_EQ(image.width(), 0.0f);
+    EXPECT_FLOAT_EQ(measured.width, 2.0f);
+}
+
+TEST(ImageChecks, ANewSourceRemeasuresTheImage) {
+    // arrange an image measured from one source and then replaced (§6.4)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[4 * 3 * 4]{};
+    std::uint8_t small[4]{};
+    Image image(&engine);
+    image.set_source(factory.create_image(4, 3, ImageFormat::RGBA8, pixels));
+    Size measured{};
+    image.measure(SizeConstraints::unconstrained(), measured);
+    image.clear_dirty();
+    // act
+    image.set_source(factory.create_image(1, 1, ImageFormat::RGBA8, small));
+    // assert a new extent invalidates the layout, because the offered size changed (§6.4, §8.2)
+    EXPECT_TRUE(image.layout_dirty());
+    image.measure(SizeConstraints::unconstrained(), measured);
+    EXPECT_FLOAT_EQ(measured.width, 1.0f);
+    EXPECT_FLOAT_EQ(measured.height, 1.0f);
+}
+
+TEST(ImageChecks, TheSameSourceRequestsNothing) {
+    // arrange an image already showing one retained handle (§6.4)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[4]{};
+    const std::shared_ptr<const ImageResource> source = factory.create_image(1, 1, ImageFormat::RGBA8, pixels);
+    Image image(&engine);
+    image.set_source(source);
+    image.clear_dirty();
+    // act
+    image.set_source(source);
+    // assert the identical handle changes nothing, because the picture is the same (§6.4)
+    EXPECT_FALSE(image.layout_dirty());
+    EXPECT_FALSE(image.render_dirty());
+}
+
+TEST(ImageChecks, ASameExtentSourceRedrawsWithoutRemeasuring) {
+    // arrange an image whose next source has the same extent but different pixels (§6.4)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t first[4]{};
+    std::uint8_t second[4]{255, 0, 0, 255};
+    Image image(&engine);
+    image.set_source(factory.create_image(1, 1, ImageFormat::RGBA8, first));
+    image.clear_dirty();
+    // act
+    image.set_source(factory.create_image(1, 1, ImageFormat::RGBA8, second));
+    // assert the frame redraws without a measure pass, because the offered extent did not change (§6.4, §8.2)
+    EXPECT_TRUE(image.render_dirty());
+    EXPECT_FALSE(image.layout_dirty());
+}
+
+TEST(ImageChecks, TheSourceIsRecordedIntoTheArrangedBounds) {
+    // arrange an image with a source, arranged at a rectangle the parent chose (§6.4, §8.2)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[2 * 2 * 4]{255, 0, 0, 255};
+    const std::shared_ptr<const ImageResource> source = factory.create_image(2, 2, ImageFormat::RGBA8, pixels);
+    Image image(&engine);
+    image.set_source(source);
+    const Rect bounds = Rect::from_origin_size(Point{10.0f, 20.0f}, Size{30.0f, 40.0f});
+    image.arrange(bounds);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    // act
+    image.render(recorder);
+    // assert one image command carries the source into the arranged rectangle (§6.4)
+    std::vector<DrawCommand> commands;
+    for (const DrawCommand& command : recorder.scene()->commands())
+        if (command.kind() == DrawCommandKind::Image)
+            commands.push_back(command);
+    ASSERT_EQ(commands.size(), 1u);
+    EXPECT_EQ(commands.front().image_geometry().image, source);
+    EXPECT_EQ(commands.front().image_geometry().destination, bounds);
+    // assert the paint is white, which leaves every sampled texel unmodified (§6.4)
+    EXPECT_EQ(commands.front().paint().fill, Color::rgb(1.0f, 1.0f, 1.0f));
+    EXPECT_TRUE(rect_commands(*recorder.scene()).empty());
+}
+
+TEST(ImageChecks, AnEmptySourceRecordsNothing) {
+    // arrange an image with no source, arranged where it would draw (§6.4)
+    BindingEngine engine;
+    Image image(&engine);
+    image.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{40.0f, 40.0f}, 1.0f));
+    // act
+    image.render(recorder);
+    // assert there is no command, because there are no pixels to map (§6.4)
+    for (const DrawCommand& command : recorder.scene()->commands())
+        EXPECT_NE(command.kind(), DrawCommandKind::Image);
+}
+
+TEST(ImageChecks, ASourceWithNoExtentIsAnnouncedDisabled) {
+    // arrange an image whose source exists but carries no pixels, which is what an empty picture is (§6.4, §10.1)
+    BindingEngine engine;
+    Image image(&engine);
+    image.set_source(std::make_shared<ImageResource>(0, 0, 0, ImageFormat::RGBA8, std::span<const std::uint8_t>{}));
+    // act
+    const SemanticNode node = image.semantic_node();
+    // assert a source with no pixels is disabled, because there is nothing to describe (§10.1)
+    EXPECT_TRUE(node.disabled());
+}
+
+TEST(ImageChecks, AnImageAnnouncesItsDescriptionAndBounds) {
+    // arrange an arranged image with an author id and a written description (§10.1, AD-11)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[2 * 2 * 4]{};
+    Image image(&engine, "logo");
+    image.set_source(factory.create_image(2, 2, ImageFormat::RGBA8, pixels));
+    image.set_description("Company logo");
+    image.arrange(Rect::from_origin_size(Point{4.0f, 6.0f}, Size{24.0f, 12.0f}));
+    // act
+    const SemanticNode node = image.semantic_node();
+    // assert the role, identity, name and bounds reach the semantic tree (§10.1)
+    EXPECT_EQ(node.role(), SemanticRole::Image);
+    EXPECT_EQ(node.explicit_id(), "logo");
+    EXPECT_EQ(node.name(), "Company logo");
+    EXPECT_EQ(node.bounds(), image.bounds());
+    EXPECT_FALSE(node.disabled());
+    EXPECT_EQ(node.check(), CheckState::NotCheckable);
+}
+
+TEST(ImageChecks, AnEmptyDescriptionFallsBackToTheAuthorIdentity) {
+    // arrange an image whose description is empty, which leaves the author id as its name (§10.1, AD-11)
+    BindingEngine engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[4]{};
+    Image image(&engine, "logo");
+    image.set_source(factory.create_image(1, 1, ImageFormat::RGBA8, pixels));
+    // act
+    const SemanticNode node = image.semantic_node();
+    // assert the identity names the image when the author wrote no description (§10.1)
+    EXPECT_EQ(node.name(), "logo");
+}
+
+TEST(ImageChecks, AnImageWithNoPixelsIsDisabledAndIsNotAFocusStop) {
+    // arrange an image with no source, which has nothing to describe or focus (§6.4, §8.3)
+    BindingEngine engine;
+    Image image(&engine);
+    // act
+    const SemanticNode node = image.semantic_node();
+    // assert the empty image is disabled and the widget declines the caret (§8.3, §10.1)
+    EXPECT_TRUE(node.disabled());
+    EXPECT_FALSE(image.accepts_focus());
 }

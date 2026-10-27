@@ -161,12 +161,36 @@ namespace albor
     }
 
     bool UiNode::hit_test(Point logical_point) const {
+        // a hidden node and every descendant below it are out of reach, which keeps a hidden page inert (§8.3)
+        if (!visible_in_tree())
+            return false;
         // the children are hit tested last added first, because the topmost one wins (§8.3)
         for (auto position = m_children.size(); position > 0; position--)
             if (m_children[position - 1]->hit_test(logical_point))
                 return true;
         // a container with no visible content under the point is not a hit (§8.3)
         return false;
+    }
+
+    bool UiNode::visible_in_tree() const {
+        // every ancestor decides as well, because hiding a page must hide everything it holds (§8.3)
+        for (const UiNode* current = this; current != nullptr; current = current->parent()) {
+            // one hidden ancestor makes the whole subtree unreachable (§8.3)
+            if (!current->visible())
+                return false;
+        }
+        // every node on the climb is visible, which is what input and focus read (§8.3)
+        return true;
+    }
+
+    bool UiNode::accepts_focus() const {
+        // an ordinary node is a focus stop, which a decorative container may override (§8.3)
+        return true;
+    }
+
+    bool UiNode::focusable_children() const {
+        // an ordinary node lets the walk enter its children, which a decorative subtree may decline (§8.3)
+        return true;
     }
 
     void UiNode::dispatch_event(Event&) {

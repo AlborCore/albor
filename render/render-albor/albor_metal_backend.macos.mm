@@ -2,11 +2,14 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <mutex>
+#include <utility>
 #include <vector>
 
 #import <Metal/Metal.h>
@@ -14,6 +17,7 @@
 
 #include "core/geometry.h"
 #include "render/aged_cache.h"
+#include "render/frame_profile.h"
 #include "render/render-albor/albor_batch.h"
 #include "render/render-albor/albor_geometry.h"
 #include "render/render-albor/albor_glyph_cache.h"
@@ -323,7 +327,7 @@ namespace albor::render
         {
         public:
             // build an offscreen surface, or a windowed one when the handle names a layer (§6.2)
-            AlborRenderSurface(NativeWindowHandle handle, const WindowMetrics& metrics);
+            AlborRenderSurface(NativeWindowHandle handle, const WindowMetrics& metrics, std::shared_ptr<std::atomic<std::uint64_t>> batch_buffer_allocations);
             ~AlborRenderSurface() override;
 
             AlborRenderSurface(const AlborRenderSurface&) = delete;
@@ -346,13 +350,16 @@ namespace albor::render
             void upload_textures(id<MTLCommandBuffer> command);
 
             // encode every recorded draw of the batch into the frame (§6.3)
-            void encode(id<MTLCommandBuffer> command, MTLRenderPassDescriptor* pass) const;
+            void encode(id<MTLCommandBuffer> command, MTLRenderPassDescriptor* pass);
 
             // blur a cast offscreen and composite it under the shape, which runs four passes (§6.2)
             void composite_shadow(id<MTLCommandBuffer> command, const BatchShadow& shadow, id<MTLTexture> target) const;
 
             // composite a layer onto the target beneath it at the opacity its group names (§6.2)
             void composite_layer(id<MTLCommandBuffer> command, id<MTLTexture> layer, id<MTLTexture> target, float opacity) const;
+
+            // count one retained batch buffer, which the backend reports and a steady frame must not raise (§6.3, AD-06)
+            void note_batch_buffer_allocation();
 
             // the layer the surface presents into, which is nil for an offscreen surface (§6.2)
             CAMetalLayer* __strong m_layer = nil;
@@ -366,6 +373,31 @@ namespace albor::render
             // the immutable batch the frame builds, which the encoder consumes once (§6.3)
             FrameBatch m_batch;
 
+            // one retained pair of batch buffers, which a frame fills and the gpu reads (§6.3, AD-06)
+            struct BatchSlot
+            {
+                // the vertices the frame copied, which a later frame in this slot reuses (AD-06)
+                id<MTLBuffer> __strong vertices = nil;
+
+                // the indices the frame copied, which a later frame in this slot reuses (AD-06)
+                id<MTLBuffer> __strong indices = nil;
+
+                // the command that last read this slot, which its next use waits on (§6.3)
+                id<MTLCommandBuffer> __strong command = nil;
+            };
+
+            // how many slots the surface cycles, which covers the drawables the layer keeps in flight (§6.3)
+            static constexpr std::size_t BATCH_SLOT_COUNT = 3;
+
+            // the retained batch buffers, which a frame writes and the gpu reads three frames later (§6.3, AD-06)
+            std::array<BatchSlot, BATCH_SLOT_COUNT> m_batch_slots;
+
+            // the slot the next frame writes, which advances once per frame (§6.3)
+            std::size_t m_batch_slot = 0;
+
+            // the counter the backend reports, which each retained batch buffer raises once (§6.3, AD-06)
+            std::shared_ptr<std::atomic<std::uint64_t>> m_batch_buffer_allocations;
+
             // how many frames an unreferenced texture survives, which bounds the memory a long run holds (AD-06)
             static constexpr std::uint64_t TEXTURE_IDLE_FRAMES = 120;
 
@@ -377,6 +409,9 @@ namespace albor::render
 
             // the glyph paths this surface already walked, which the context borrows so a glyph walks once (§6.4, AD-06)
             GlyphPathCache m_glyph_paths;
+
+            // the expanded glyphs this surface keeps, which the context borrows so a glyph sweeps once (§6.4, AD-06)
+            GlyphMeshCache m_glyph_meshes;
 
             // how many frames this surface has drawn, which the eviction ages the cache by (AD-06)
             std::uint64_t m_frame_counter = 0;
@@ -397,8 +432,8 @@ namespace albor::render
             bool m_begun = false;
         };
 
-        AlborRenderSurface::AlborRenderSurface(NativeWindowHandle handle, const WindowMetrics& metrics) :
-            m_layer(handle.valid() ? (__bridge CAMetalLayer*)handle.object() : nil), m_metrics(metrics) {
+        AlborRenderSurface::AlborRenderSurface(NativeWindowHandle handle, const WindowMetrics& metrics, std::shared_ptr<std::atomic<std::uint64_t>> batch_buffer_allocations) :
+            m_layer(handle.valid() ? (__bridge CAMetalLayer*)handle.object() : nil), m_metrics(metrics), m_batch_buffer_allocations(std::move(batch_buffer_allocations)) {
             // a windowed surface presents through the layer, which is configured for the target format (§6.3)
             if (m_layer != nil) {
                 m_layer.device = device_state().device;
@@ -410,6 +445,12 @@ namespace albor::render
         }
 
         AlborRenderSurface::~AlborRenderSurface() = default;
+
+        void AlborRenderSurface::note_batch_buffer_allocation() {
+            // a surface built without a counter still draws, which the portable shell does (§6.2)
+            if (m_batch_buffer_allocations != nullptr)
+                m_batch_buffer_allocations->fetch_add(1u, std::memory_order_relaxed);
+        }
 
         bool AlborRenderSurface::valid() const {
             // a surface draws only once its target allocated and the shared state built (§6.2)
@@ -464,13 +505,15 @@ namespace albor::render
             m_batch.uploads.clear();
             m_batch.shadows.clear();
             // the context records logical points onto the physical target, so the device scale is handed to it (AD-27)
-            m_context = std::make_unique<AlborRenderContext>(m_batch, Rect::from_origin_size(Point{0.0f, 0.0f}, m_metrics.logical_size), m_metrics.scale_factor, &m_glyph_paths);
+            m_context = std::make_unique<AlborRenderContext>(m_batch, Rect::from_origin_size(Point{0.0f, 0.0f}, m_metrics.logical_size), m_metrics.scale_factor, &m_glyph_paths, &m_glyph_meshes);
             // the frame counter advances once per frame, which the textures record and the glyph paths age against (AD-06)
             m_frame_counter++;
             // the textures age against the same counter, which drops the images no draw reached (AD-06)
             m_textures.begin_frame(m_frame_counter);
             // the glyph paths age against the same counter, which drops the ones no draw reached (§6.4, AD-06)
             m_glyph_paths.begin_frame(m_frame_counter);
+            // the glyph meshes age against the same counter too, which drops the ones no draw reached (§6.4, AD-06)
+            m_glyph_meshes.begin_frame(m_frame_counter);
             // the frame is now in flight, which the matching end presents (§6.1)
             m_begun = true;
             return *m_context;
@@ -686,7 +729,7 @@ namespace albor::render
             }
         }
 
-        void AlborRenderSurface::encode(id<MTLCommandBuffer> command, MTLRenderPassDescriptor* pass) const {
+        void AlborRenderSurface::encode(id<MTLCommandBuffer> command, MTLRenderPassDescriptor* pass) {
             // the frame opens one encoder, which a layer or shadow pass has to close and reopen (§6.2)
             id<MTLRenderCommandEncoder> encoder = [command renderCommandEncoderWithDescriptor:pass];
             [encoder setRenderPipelineState:device_state().pipeline];
@@ -695,10 +738,36 @@ namespace albor::render
             id<MTLBuffer> vertices = nil;
             id<MTLBuffer> indices = nil;
             if (!m_batch.vertices.empty() && !m_batch.indices.empty()) {
-                vertices = [device_state().device newBufferWithBytes:m_batch.vertices.data() length:m_batch.vertices.size() * sizeof(BatchVertex) options:MTLResourceStorageModeShared];
-                indices = [device_state().device newBufferWithBytes:m_batch.indices.data() length:m_batch.indices.size() * sizeof(std::uint32_t) options:MTLResourceStorageModeShared];
-                [encoder setVertexBuffer:vertices offset:0 atIndex:0];
+                // the slot this frame fills was read three frames ago, so the gpu is done with it before the copy (§6.3)
+                BatchSlot& slot = m_batch_slots[m_batch_slot];
+                if (slot.command != nil)
+                    [slot.command waitUntilCompleted];
+                // a slot grows to the batch size once, so a later frame copies into it instead of allocating (AD-06)
+                const NSUInteger vertex_bytes = static_cast<NSUInteger>(m_batch.vertices.size() * sizeof(BatchVertex));
+                const NSUInteger index_bytes = static_cast<NSUInteger>(m_batch.indices.size() * sizeof(std::uint32_t));
+                if (slot.vertices == nil || slot.vertices.length < vertex_bytes) {
+                    slot.vertices = [device_state().device newBufferWithLength:vertex_bytes options:MTLResourceStorageModeShared];
+                    if (slot.vertices != nil)
+                        note_batch_buffer_allocation();
+                }
+                if (slot.indices == nil || slot.indices.length < index_bytes) {
+                    slot.indices = [device_state().device newBufferWithLength:index_bytes options:MTLResourceStorageModeShared];
+                    if (slot.indices != nil)
+                        note_batch_buffer_allocation();
+                }
+                // a slot the device refused carries no geometry, which the frame draws without rather than nil (§6.3)
+                if (slot.vertices != nil && slot.indices != nil) {
+                    std::memcpy(slot.vertices.contents, m_batch.vertices.data(), vertex_bytes);
+                    std::memcpy(slot.indices.contents, m_batch.indices.data(), index_bytes);
+                    // the command keeps the slot it reads, so the next frame in this slot can wait on it (§6.3)
+                    slot.command = command;
+                    vertices = slot.vertices;
+                    indices = slot.indices;
+                    [encoder setVertexBuffer:vertices offset:0 atIndex:0];
+                }
             }
+            // the slot advances every frame, so the next present writes the one the gpu finished last (§6.3)
+            m_batch_slot = (m_batch_slot + 1) % BATCH_SLOT_COUNT;
             // the target the open encoder writes into, which an open layer replaces (§6.2)
             id<MTLTexture> target = m_target;
             // one open layer records the target it paints and the draw it ends at (§6.2)
@@ -823,8 +892,8 @@ namespace albor::render
                             texture = *found;
                     }
                     [encoder setFragmentTexture:texture atIndex:0];
-                    // the draw consumes its own index range, which the builder recorded (§6.3)
-                    [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:draw.index_count indexType:MTLIndexTypeUInt32 indexBuffer:indices indexBufferOffset:draw.index_begin * sizeof(std::uint32_t)];
+                    // the draw consumes its own index range, based at its own first vertex (§6.3)
+                    [encoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:draw.index_count indexType:MTLIndexTypeUInt32 indexBuffer:indices indexBufferOffset:draw.index_begin * sizeof(std::uint32_t) instanceCount:1 baseVertex:static_cast<NSInteger>(draw.base_vertex) baseInstance:0];
                 }
             }
             // the frame closes its encoder once every draw is recorded (§6.3)
@@ -835,12 +904,19 @@ namespace albor::render
             // an end without a begun frame is a no operation rather than an error (§6.1)
             if (!m_begun)
                 return;
+            // the present is what the frame spends after the scene is recorded, which the profile reports (§6.3)
+            const FrameProfileScope present_scope;
+            // the batch is complete once the scene is recorded, so its size is what the profile reports (§6.3)
+            profile_batch(m_batch.vertices.size(), m_batch.indices.size() / 3u, m_batch.draws.size(), m_batch.shadows.size(), m_glyph_meshes.count());
             // the frame runs inside a pool, because a render thread has none of its own (§6.3, AD-18)
             @autoreleasepool {
                 // the frame is one command buffer, which the queue submits once (§6.3)
                 id<MTLCommandBuffer> command = [device_state().queue commandBuffer];
                 // a windowed surface presents the drawable the layer hands out for this frame (§6.3)
+                const FrameProfileScope wait_scope;
                 id<CAMetalDrawable> drawable = m_layer != nil ? [m_layer nextDrawable] : nil;
+                // the wait is the compositor pacing, which a slow frame shows before the encode (§6.3)
+                profile_drawable_wait(wait_scope.elapsed_ms());
                 // the pass clears the target first, which an empty frame leaves transparent (§6.1)
                 MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
                 pass.colorAttachments[0].texture = m_target;
@@ -848,9 +924,15 @@ namespace albor::render
                 pass.colorAttachments[0].storeAction = MTLStoreActionStore;
                 pass.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 0.0);
                 // the images the frame carries become textures once, which a later frame reuses (AD-06)
+                const FrameProfileScope upload_scope;
                 upload_textures(command);
+                profile_upload(upload_scope.elapsed_ms());
                 // the encode replays every recorded draw, closing the pass around each shadow (§6.3)
+                const FrameProfileScope encode_scope;
                 encode(command, pass);
+                profile_encode(encode_scope.elapsed_ms());
+                // the blit and the commit finish the present, which the profile splits from the encode (§6.3)
+                const FrameProfileScope commit_scope;
                 // a windowed frame blits the target onto the drawable, which keeps one pixel path for both kinds (§6.3)
                 if (drawable != nil) {
                     id<MTLBlitCommandEncoder> blit = [command blitCommandEncoder];
@@ -860,9 +942,12 @@ namespace albor::render
                 }
                 // the buffer is committed, which is what makes the frame exactly once (§6.1)
                 [command commit];
+                profile_commit(commit_scope.elapsed_ms());
                 // the frame counts once it is submitted, which a read back then waits on (§4.3)
                 m_finished++;
             }
+            // the recorded present includes the wait, the encode and the blit, which the profile reports (§6.3)
+            profile_present(present_scope.elapsed_ms());
             // the frame is no longer in flight, so a read back accepts one (§6.1)
             m_begun = false;
             // a resize that waited for this frame applies now, so the next frame uses one extent (§6.2)
@@ -919,8 +1004,8 @@ namespace albor::render
         return ensure_device_state();
     }
 
-    std::unique_ptr<RenderSurface> backend_create_surface(NativeWindowHandle handle, const WindowMetrics& metrics) {
+    std::unique_ptr<RenderSurface> backend_create_surface(NativeWindowHandle handle, const WindowMetrics& metrics, std::shared_ptr<std::atomic<std::uint64_t>> batch_buffer_allocations) {
         // a surface without the shared state cannot draw, so none is built, and a null handle stays offscreen (§6.2)
-        return ensure_device_state() ? std::make_unique<AlborRenderSurface>(handle, metrics) : nullptr;
+        return ensure_device_state() ? std::make_unique<AlborRenderSurface>(handle, metrics, std::move(batch_buffer_allocations)) : nullptr;
     }
 } // namespace albor::render

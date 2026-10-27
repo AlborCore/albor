@@ -26,8 +26,8 @@ namespace albor::render
         constexpr float SINGULAR_LIMIT = 0.000001f;
     } // namespace
 
-    AlborRenderContext::AlborRenderContext(FrameBatch& batch, const Rect& logical_extent, float device_scale, GlyphPathCache* glyph_paths) :
-        m_batch(batch), m_extent(logical_extent), m_device_scale(device_scale > 0.0f ? device_scale : 1.0f), m_glyph_paths(glyph_paths), m_clip{.rect = logical_extent}, m_clip_device(device_transform()) {}
+    AlborRenderContext::AlborRenderContext(FrameBatch& batch, const Rect& logical_extent, float device_scale, GlyphPathCache* glyph_paths, GlyphMeshCache* glyph_meshes) :
+        m_batch(batch), m_extent(logical_extent), m_device_scale(device_scale > 0.0f ? device_scale : 1.0f), m_glyph_paths(glyph_paths), m_glyph_meshes(glyph_meshes), m_clip{.rect = logical_extent}, m_clip_device(device_transform()) {}
 
     void AlborRenderContext::save() {
         // the current transform, clip, clip transform and opacity are pushed, which a restore pops (§6.2)
@@ -213,7 +213,7 @@ namespace albor::render
         stamp_directions(contour);
     }
 
-    void AlborRenderContext::record(EmittedRange range, CoverageKind coverage, float ramp, const Color& color, std::uint64_t texture, bool convex, CompositionMode composition) {
+    void AlborRenderContext::record(EmittedRange range, CoverageKind coverage, float ramp, const Color& color, std::uint64_t texture, bool convex, CompositionMode composition, std::uint32_t base_vertex) {
         // an expansion that appended no index records no draw (§6.2)
         if (range.index_count == 0)
             return;
@@ -221,6 +221,7 @@ namespace albor::render
         BatchDraw draw;
         draw.index_begin = range.index_begin;
         draw.index_count = range.index_count;
+        draw.base_vertex = base_vertex;
         draw.coverage = coverage;
         draw.ramp = ramp;
         draw.color = pack_color(color);
@@ -400,12 +401,31 @@ namespace albor::render
         m_batch.draws.push_back(draw);
     }
 
+    void AlborRenderContext::append_glyph_mesh(const GlyphMesh& mesh, float offset_x, float offset_y, const Color& color, CompositionMode composition) {
+        // the mesh starts at the current index and vertex, which the draw's base vertex names
+        const std::uint32_t index_begin = static_cast<std::uint32_t>(m_batch.indices.size());
+        const std::uint32_t vertex_begin = static_cast<std::uint32_t>(m_batch.vertices.size());
+        // the cached vertices are copied as one block, which a debug build copies far faster than one push at a time
+        m_batch.vertices.insert(m_batch.vertices.end(), mesh.vertices.begin(), mesh.vertices.end());
+        // every copied vertex lands at the glyph position, which a translation keeps exact (AD-27)
+        for (std::size_t index = vertex_begin; index < m_batch.vertices.size(); index++) {
+            m_batch.vertices[index].x += offset_x;
+            m_batch.vertices[index].y += offset_y;
+        }
+        // the cached indices are copied as one block too, which keeps the triangle list the mesh carried (AD-27)
+        m_batch.indices.insert(m_batch.indices.end(), mesh.indices.begin(), mesh.indices.end());
+        // the mesh is one draw, which its own zero based indices reach through the batch's vertex base (§6.3, AD-06)
+        record(EmittedRange{.index_begin = index_begin, .index_count = static_cast<std::uint32_t>(m_batch.indices.size()) - index_begin}, CoverageKind::Plain, 1.0f, color.with_alpha(m_opacity), 0, false, composition, vertex_begin);
+    }
+
     void AlborRenderContext::draw_text(const TextLayout& layout, Point origin, const Paint& paint) {
         // a run with no glyph or a context the frame does not draw through records nothing (§6.2)
         if (!drawable() || layout.empty())
             return;
         // the text takes the fill colour when the paint fills, and the stroke colour otherwise (§6.2)
         const Color color = paint.fills() ? paint.fill : paint.stroke;
+        // a mesh is cached in device space, so it answers only while the scene transform is a translation (AD-27)
+        const bool mesh_cacheable = m_glyph_meshes != nullptr && m_transform.scale_x == 1.0f && m_transform.scale_y == 1.0f && m_transform.skew_x == 0.0f && m_transform.skew_y == 0.0f;
         // the glyphs are replayed as shaped, which is what stage one measured (§9.1, AD-18)
         const ShapedRun& run = *layout.run;
         // every line carries its own typeface and its own baseline (§9.1)
@@ -417,8 +437,26 @@ namespace albor::render
             const Point baseline{.x = origin.x + line.origin.x, .y = origin.y + line.origin.y};
             // every glyph is its own outline, whose counters the group fill cuts (§6.2, §6.4)
             for (const ShapedGlyph& glyph : line.glyphs) {
-                // the path answers from the cache, keyed on the font content, the glyph and the size (§6.4)
+                // the path key names the outline the glyph needs, which the cache and the walk both read (§6.4)
                 const GlyphPathKey key{.font_hash = line.font.font_hash(), .glyph_id = glyph.id, .font_size = run.font_size()};
+                // the mesh key adds the scale its fringe lands at, because the mesh itself is device space geometry (AD-27)
+                const GlyphMeshKey mesh_key{.path = key, .device_scale = m_device_scale};
+                // the glyph sits at its own offset from the baseline, which the shaped run placed (§9.1)
+                const float glyph_x = baseline.x + glyph.position.x;
+                const float glyph_y = baseline.y + glyph.position.y;
+                // the glyph lands at its scene position under the device scale, which the mesh replay places it at (AD-27)
+                const float device_x = (m_transform.translate_x + glyph_x) * m_device_scale;
+                const float device_y = (m_transform.translate_y + glyph_y) * m_device_scale;
+                // a mesh an earlier frame expanded answers before the outline is walked again (§6.4, AD-06)
+                if (mesh_cacheable) {
+                    // a hit replays the cached triangles at the glyph position, which skips the sweep (§6.4)
+                    if (const std::shared_ptr<const GlyphMesh> held_mesh = m_glyph_meshes->find(mesh_key); held_mesh != nullptr) {
+                        // the mesh sits at the glyph origin in device space, so the device position places it (AD-27)
+                        append_glyph_mesh(*held_mesh, device_x, device_y, color, paint.composition);
+                        // the glyph is drawn, so the rest of the loop belongs to the next one (§9.1)
+                        continue;
+                    }
+                }
                 // a hit draws a path an earlier frame walked, and a miss walks the font below (§9.1, AD-06)
                 const std::shared_ptr<const GlyphPath> held = m_glyph_paths != nullptr ? m_glyph_paths->find(key) : nullptr;
                 // the walk runs into a local, so a context with no cache allocates nothing a frame (§9.1, AD-06)
@@ -434,9 +472,28 @@ namespace albor::render
                 // a glyph without a visible shape draws nothing, which a space is (§6.2)
                 if (path.points.empty())
                     continue;
-                // the glyph sits at its own offset from the baseline, which the shaped run placed (§9.1)
-                const float glyph_x = baseline.x + glyph.position.x;
-                const float glyph_y = baseline.y + glyph.position.y;
+                // a cacheable miss expands the glyph once at the device scale, so later frames replay it (§6.4, AD-06)
+                if (mesh_cacheable) {
+                    // the outline is measured in device space without the translate, which the replay adds back (AD-27)
+                    std::vector<Point> scaled;
+                    scaled.reserve(path.points.size());
+                    for (const Point& point : path.points)
+                        scaled.push_back(Point{.x = point.x * m_device_scale, .y = point.y * m_device_scale});
+                    // the subpaths become contours, which one group fill sweeps so the counters stay open (§6.4)
+                    std::vector<Contour> contours = build_contours(path.verbs, scaled);
+                    // the mesh is expanded into a batch of its own, which the cache keeps as device space geometry (§6.4)
+                    FrameBatch scratch;
+                    (void)expand_fill_group(scratch, contours, FillRule::NonZero);
+                    // the expanded mesh is shared under the identity it was built for, so a later frame replays it (§6.4)
+                    std::shared_ptr<GlyphMesh> built = std::make_shared<GlyphMesh>();
+                    built->vertices = std::move(scratch.vertices);
+                    built->indices = std::move(scratch.indices);
+                    m_glyph_meshes->store(mesh_key, built);
+                    // the first frame draws the mesh it just built, under the same placement a hit uses (AD-27)
+                    append_glyph_mesh(*built, device_x, device_y, color, paint.composition);
+                    // the glyph is drawn, so the per frame expansion below is skipped (§6.2)
+                    continue;
+                }
                 // the outline shifts onto the glyph position before the device transform maps it (§6.3, AD-27)
                 std::vector<Point> points;
                 points.reserve(path.points.size());

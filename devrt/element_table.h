@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
@@ -15,7 +16,7 @@ namespace albor
 namespace albor::devrt
 {
     // what one property assignment does to a node, which reports whether the value was one the property holds (§12.1)
-    using PropertySetter = std::function<bool(UiNode& node, std::string_view value)>;
+    using PropertySetter = std::function<bool(UiNode& node, std::string_view value, const std::filesystem::path& asset_root)>;
 
     // what one element name builds over a window's engines, which is what a reload creates its nodes with (§12.1)
     using NodeFactory = std::function<std::unique_ptr<UiNode>(std::string_view element, BindingEngine& engine, TextEngine& text)>;
@@ -27,7 +28,7 @@ namespace albor::devrt
     [[nodiscard]] bool known_element(std::string_view element);
 
     // apply one property assignment to a node, reporting whether it landed, because a name and a value are refused (§12.1)
-    bool apply_property(UiNode& node, std::string_view element, std::string_view property, std::string_view value);
+    bool apply_property(UiNode& node, std::string_view element, std::string_view property, std::string_view value, const std::filesystem::path& asset_root = {});
 
     // name the element a live node was built from, which is empty for a node the closed set does not describe (§12.1)
     [[nodiscard]] std::string_view element_of(const UiNode& node);

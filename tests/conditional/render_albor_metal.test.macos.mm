@@ -374,6 +374,30 @@ TEST(AlborRendererBackendChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) 
     EXPECT_LT(growth, 12 * 1024 * 1024);
 }
 
+TEST(AlborRendererBackendChecks, ReusesTheBatchBuffersAcrossSteadyFrames) {
+    // arrange a backend and an offscreen surface, which needs no layer to draw a frame (§6.2)
+    albor::render::AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(AlborSize{320.0f, 200.0f}, 1.0f);
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(surface, nullptr);
+    ASSERT_TRUE(surface->valid());
+    // arrange one immutable scene, which every frame replays unchanged (§6.1)
+    FrameScene built(metrics, Color::rgb(1.0f, 1.0f, 1.0f));
+    built.add_command(DrawCommand::rectangle(AlborRect::from_origin_size(AlborPoint{20.0f, 20.0f}, AlborSize{120.0f, 80.0f}), Paint{.fill = Color::rgb(0.2f, 0.4f, 0.8f)}));
+    const std::shared_ptr<const FrameScene> scene = std::make_shared<const FrameScene>(std::move(built));
+    // act a warmup that fills every retained slot, which a steady frame then reuses (AD-06)
+    for (int frame = 0; frame < 8; frame++)
+        backend.execute_frame(*surface, *scene);
+    // arrange the allocations the warmup made, which the steady frames must not raise (AD-06)
+    const std::uint64_t allocations = backend.batch_buffer_allocations();
+    ASSERT_GT(allocations, 0u);
+    // act a steady stream of the same scene, which is the shape a manual drag has every frame (§6.1)
+    for (int frame = 0; frame < 120; frame++)
+        backend.execute_frame(*surface, *scene);
+    // assert every steady frame reused the buffers the warmup allocated, which a per frame allocation would raise (AD-06)
+    EXPECT_EQ(backend.batch_buffer_allocations(), allocations);
+}
+
 TEST(AlborRendererBackendChecks, ResizesTheOffscreenTarget) {
     // arrange
     albor::render::AlborRendererBackend backend;
@@ -1573,6 +1597,8 @@ TEST(AlborParityChecks, AShapedRunMatchesTheReference) {
             actual_ink++;
     }
     ASSERT_GT(expected_ink, 0u);
+    // assert the platform run left ink, which a baseline placed off the surface would not
+    ASSERT_GT(actual_ink, 0u);
     // the atlas and the outline rasterizer cover a comparable area, which a displaced baseline breaks
     EXPECT_LE(actual_ink, expected_ink * 2u);
 }
@@ -1627,6 +1653,8 @@ TEST(AlborParityChecks, ARotatedShapedRunMatchesTheReference) {
         }
     }
     ASSERT_GT(expected_ink, 0u);
+    // assert the turned run left ink, which a baseline placed off the surface would not
+    ASSERT_GT(actual_ink, 0u);
     EXPECT_LE(actual_ink, (expected_ink * 5u) / 4u);
     // the ink spans the same columns, which a transform mapped in the wrong order would displace
     EXPECT_NEAR(static_cast<double>(actual_left), static_cast<double>(expected_left), 2.0);

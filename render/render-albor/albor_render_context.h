@@ -21,7 +21,7 @@ namespace albor::render
     {
     public:
         // wrap the batch of the frame being built, which draws logical points onto the physical raster (AD-27)
-        AlborRenderContext(FrameBatch& batch, const Rect& logical_extent, float device_scale, GlyphPathCache* glyph_paths = nullptr);
+        AlborRenderContext(FrameBatch& batch, const Rect& logical_extent, float device_scale, GlyphPathCache* glyph_paths = nullptr, GlyphMeshCache* glyph_meshes = nullptr);
 
         AlborRenderContext(const AlborRenderContext&) = delete;
         AlborRenderContext& operator=(const AlborRenderContext&) = delete;
@@ -102,11 +102,14 @@ namespace albor::render
         // emit a shape that both fills and strokes, which the rectangle primitives share (§6.2)
         void emit_shape(Contour contour, const Paint& paint, Cap cap, Join join);
 
+        // append a cached glyph mesh at the device offset its glyph sits at, which one frame translates (§6.4, AD-06)
+        void append_glyph_mesh(const GlyphMesh& mesh, float offset_x, float offset_y, const Color& color, CompositionMode composition);
+
         // emit an image as the two triangles its destination rectangle spans (§6.4)
         void emit_image(const Rect& destination, const Color& color, std::uint64_t texture, CompositionMode composition);
 
-        // record one draw over the index range an expansion appended (§6.3)
-        void record(EmittedRange range, CoverageKind coverage, float ramp, const Color& color, std::uint64_t texture, bool convex, CompositionMode composition);
+        // record one draw over the index range an expansion appended, based at the vertex the range starts at (§6.3)
+        void record(EmittedRange range, CoverageKind coverage, float ramp, const Color& color, std::uint64_t texture, bool convex, CompositionMode composition, std::uint32_t base_vertex = 0);
 
         // the batch the frame being built accumulates into (§6.3)
         FrameBatch& m_batch;
@@ -119,6 +122,9 @@ namespace albor::render
 
         // the glyph paths the surface keeps across frames, which this context borrows so a glyph walks once (§6.4, AD-06)
         GlyphPathCache* m_glyph_paths;
+
+        // the expanded glyphs the surface keeps, which this context borrows so a glyph sweeps once (§6.4, AD-06)
+        GlyphMeshCache* m_glyph_meshes;
 
         // the scene space transform the later draws land under (§6.2)
         Transform m_transform;

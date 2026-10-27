@@ -106,8 +106,8 @@ namespace albor
         // whether a builder produced a tree, which is what decides between the pipeline and a scene source (§8.1)
         bool m_has_tree = false;
 
-        // whether a tick that found nothing dirty skips its frame, which is what a retained tree wants (§6.1)
-        bool m_build_only_when_dirty = false;
+        // whether every tick renders even when the tree is clean, which is the explicit exception (§6.1)
+        bool m_always_render = false;
 
         // the source an application that owns its scene installs, which replaces the pipeline's own build (§6.1)
         SceneSource m_scene_source;

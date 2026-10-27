@@ -6,7 +6,7 @@ find_package(ZLIB REQUIRED)
 # the portable half names no platform type, so it builds wherever the framework builds (§10.3, AD-05)
 file(GLOB CPP_SOURCES "./*.cpp")
 
-# the local transport reaches the unix domain socket api, which each platform spells differently (§10.3, AD-16)
+# the local transport reaches a unix domain socket or a named pipe, which each platform spells differently (§10.3, AD-16)
 #
 # the glob does not recurse, because the host keeps its own platform sources under host/ and the two
 # libraries would carry the same unit twice, which the linker refuses (§10.3)
@@ -29,6 +29,11 @@ target_compile_features(albor-automation-objects PUBLIC cxx_std_23)
 
 # the command surface routes through the shared action object of AD-15, which is production code below this module (§10.3, §18)
 target_link_libraries(albor-automation-objects PUBLIC albor-commands albor-semantics ZLIB::ZLIB)
+
+# the windows transport builds its pipe and token security descriptors through the security api (§10.3, AD-10)
+if(WIN32)
+    target_link_libraries(albor-automation-objects PRIVATE advapi32)
+endif()
 
 # the linkable name the consumers use, which carries every unit so a cycle inside the library still resolves (§10.3)
 add_library(albor-automation INTERFACE)

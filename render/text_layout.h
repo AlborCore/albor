@@ -11,7 +11,7 @@ namespace albor
     struct TextLayout
     {
         // the shaped run the measurement produced, which is null when nothing could be shaped (§9.1)
-        std::shared_ptr<const ShapedRun> run;
+        std::shared_ptr<const ShapedRun> run{};
 
         // the size of the run in logical pixels
         Size size;

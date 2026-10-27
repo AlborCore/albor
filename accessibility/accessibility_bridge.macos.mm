@@ -3,6 +3,8 @@
 // the application kit accessibility protocol is the macos side of the bridge (§10.2, AD-16)
 #import <AppKit/AppKit.h>
 
+#include <cstdlib>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -26,6 +28,18 @@ namespace
             return NSAccessibilityStaticTextRole;
         case albor::SemanticRole::Slider:
             return NSAccessibilitySliderRole;
+        case albor::SemanticRole::ProgressBar:
+            return NSAccessibilityProgressIndicatorRole;
+        case albor::SemanticRole::TabView:
+            return NSAccessibilityTabGroupRole;
+        case albor::SemanticRole::TabItem:
+            return NSAccessibilityRadioButtonRole;
+        case albor::SemanticRole::RadioGroup:
+            return NSAccessibilityRadioGroupRole;
+        case albor::SemanticRole::RadioButton:
+            return NSAccessibilityRadioButtonRole;
+        case albor::SemanticRole::NumericStepper:
+            return NSAccessibilityIncrementorRole;
         case albor::SemanticRole::ScrollView:
             return NSAccessibilityScrollAreaRole;
         case albor::SemanticRole::List:
@@ -148,8 +162,8 @@ typedef NSArray* (^AlborAccessibilityChildren)(std::size_t);
     return published == nullptr ? NO : published->node.selected();
 }
 
-// override: the value of a checkable or editable node, which the application kit reads as a string (§10.1)
-- (NSString*)accessibilityValue {
+// override: the value of a checkable, editable or incrementable node, which the protocol reads untyped (§10.1)
+- (id)accessibilityValue {
     // the publication this element names is the one the bridge assigned (§10.2)
     const Published* published = static_cast<const Published*>(self.publication);
     // an element with no publication carries no value, which is the quiet default (§10.2)
@@ -158,6 +172,12 @@ typedef NSArray* (^AlborAccessibilityChildren)(std::size_t);
     // an editable node announces its text, because that is the value assistive technology edits (§10.1)
     if (published->node.role() == albor::SemanticRole::TextField)
         return [NSString stringWithUTF8String:published->node.value().c_str()];
+    // a tab item's value is its selected state, because the radio button role reads a value (§10.1)
+    if (published->node.role() == albor::SemanticRole::TabItem)
+        return published->node.selected() ? @"1" : @"0";
+    // a stepper announces the number it carries as a number, because an incrementor adjusts a numeric value (§10.1)
+    if (published->node.role() == albor::SemanticRole::NumericStepper)
+        return @(std::strtod(std::string(published->node.value()).c_str(), nullptr));
     // only a checkable node otherwise carries a value, because nothing else has one to report (§10.1)
     if (published->node.check() == albor::CheckState::NotCheckable)
         return nil;
@@ -174,6 +194,22 @@ typedef NSArray* (^AlborAccessibilityChildren)(std::size_t);
     const Published* published = static_cast<const Published*>(self.publication);
     // a node with no action cannot be pressed, which the protocol reports as a refusal (§10.1)
     return published != nullptr && published->node.invoke(PRESS_ACTION);
+}
+
+// override: increment is the action a stepper receives from assistive technology (§10.1)
+- (BOOL)accessibilityPerformIncrement {
+    // the publication this element names is the one the bridge assigned (§10.2)
+    const Published* published = static_cast<const Published*>(self.publication);
+    // a node without an increment action refuses the request, which the protocol reports (§10.1)
+    return published != nullptr && published->node.invoke("increment");
+}
+
+// override: decrement is the action a stepper receives from assistive technology (§10.1)
+- (BOOL)accessibilityPerformDecrement {
+    // the publication this element names is the one the bridge assigned (§10.2)
+    const Published* published = static_cast<const Published*>(self.publication);
+    // a node without a decrement action refuses the request, which the protocol reports (§10.1)
+    return published != nullptr && published->node.invoke("decrement");
 }
 
 // override: the children come from the published tree, which is where the hierarchy lives (§10.2)

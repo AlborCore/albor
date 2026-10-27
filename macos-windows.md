@@ -1,13 +1,26 @@
 # Windows vs. macOS parity analysis
 
 **Scope:** comparison of the Windows platform and rendering work with the macOS reference, including test coverage.
-**Date:** 2026-10-24, updated after the macOS parity tests and the latest Windows CI run.
+**Date:** 2026-10-26, after the image-widget pass.
 
 ## Verdict
 
-Windows is broadly at parity with macOS for windowing, input, Blend2D, and the resolver layer of text handling. The macOS renderer, Blend2D and platform-font test gaps identified in the first pass have been closed; both renderer ledgers now report 72 tests.
+Windows is now at functional parity with macOS for windowing, input, clipboard, IME, DPI, event-loop pacing,
+Blend2D, shaped text, the `render-albor` D3D backend, the named-pipe automation transport, and the accessibility
+bridge. The Windows accessibility bridge is a real UI Automation provider, not a stub; both accessibility role
+suites carry **14 tests**, and Windows adds a real UI Automation client test.
 
-It is **not fully at parity**. The Windows accessibility bridge is still a stub, and the latest Windows CI run fails the shaped-text parity tests with no reference ink plus a debug allocation test. The macOS release and coverage jobs are green. The macOS gaps addressed here are test-coverage gaps, not production-code gaps.
+The per-abstraction support table is maintained in [`docs/status.md`](docs/status.md#windows-support).
+
+The remaining differences are shared or process gaps rather than Windows implementation gaps:
+
+- `WindowOptions` still has no `parent` field, and modality is validated but not enforced on either platform.
+- macOS has no equivalent of the Windows clipboard/IME/DPI/event-loop integration suite yet.
+- Windows has no code-coverage job comparable to `macos-coverage`.
+- `IValueProvider::SetValue` is read-only because a `SemanticAction` carries no value argument yet.
+- Windows UI Automation exposes the numeric stepper value read-only and does not yet expose its increment and
+  decrement actions; it also maps a radio group to a group without a selection provider. macOS exposes both.
+  These are the remaining accessibility capability gaps in this pass.
 
 ## 1. Platform adapter
 
@@ -18,45 +31,59 @@ Both adapters implement the same `PlatformWindow` and `PlatformEventLoop` interf
 | Window creation, show/hide, close veto | AppKit, 832-line adapter | Win32, 767-line adapter | Parity |
 | Popup role | `NSPanel`, non-activating, non-opaque layer | Win32 popup, topmost, non-activating | Parity |
 | Outside-click and deactivation dismissal | Present and tested | Present and tested | Parity |
-| Resize, DPI/scale changes | AppKit notifications | `WM_SIZE`, `WM_DPICHANGED` | Windows implementation present |
+| Resize, DPI/scale changes | AppKit notifications | `WM_SIZE`, `WM_DPICHANGED`, tested | Parity |
 | Keyboard/mouse/wheel | Present | Present | Parity |
-| IME/text composition | `NSTextInputClient` | `WM_IME_*`, candidate anchor/selection | Parity |
-| Clipboard | Pasteboard implementation | Win32 clipboard implementation | Parity in code |
-| Event loop pacing | CVDisplayLink | Waitable timer thread | Different mechanism, same contract |
+| IME/text composition | `NSTextInputClient` | `WM_IME_*`, candidate anchor/selection, tested | Parity |
+| Clipboard | Pasteboard implementation | Win32 clipboard implementation, tested | Parity |
+| Event loop pacing | CVDisplayLink | Waitable timer thread, tested | Different mechanism, same contract |
 | System appearance | AppKit appearance | Registry-based appearance | Parity |
-| Accessibility | 346-line NSAccessibility bridge | 14-line stub returning `false` | **Windows behind** |
+| Automation local transport | Unix domain socket | Named pipe, tested | Parity |
+| Accessibility | 382-line NSAccessibility bridge, 14 tests | 1,216-line UI Automation bridge, 14 role tests + 1 client test | Parity |
 
-The popup test sets are close: **10 macOS tests vs. 9 Windows tests**. The missing macOS test is `ThePopupLayerIsNonopaque`, which is AppKit-specific and has no direct Win32 equivalent.
+The popup test sets remain asymmetric by design: **10 macOS tests vs. 9 Windows tests**. The missing macOS test
+is `ThePopupLayerIsNonopaque`, which is AppKit-specific and has no direct Win32 equivalent.
 
-Neither platform has direct integration tests for clipboard, IME, DPI changes, or the event loop. That is a shared gap, not a Windows-specific one.
+Windows now has dedicated integration tests for clipboard round-tripping, IME composition lifecycle, DPI metrics
+and the `WM_DPICHANGED` resize path, and frame-tick delivery. macOS still lacks the equivalent clipboard, IME,
+DPI and event-loop integration tests; that is a macOS test-coverage gap, not a Windows one.
 
 ### Shared platform gap
 
-`WindowOptions` in `window/window_options.h` does not contain the `parent` field that design §5.1 shows. Modality is validated in `window_options.cpp`, but no platform or application code enforcing `WindowModal` or `ApplicationModal` was found. This affects both macOS and Windows equally.
+`WindowOptions` in `window/window_options.h` does not contain the `parent` field that design §5.1 shows.
+Modality is validated in `window_options.cpp`, but no platform or application code enforces `WindowModal` or
+`ApplicationModal` on either platform. This is documented here rather than resolved because adding a parent
+handle changes the shared creation contract, not one backend.
 
-## 2. Text and Blend2D
+## 2. Text and shaped-run parity
 
 | Area | macOS | Windows | Assessment |
 | --- | --- | --- | --- |
 | HarfBuzz text engine | Same shared engine | Same shared engine | Parity |
 | Platform font resolver | CoreText | DirectWrite | Both implemented |
 | Platform font tests | 8 CoreText tests | 8 DirectWrite tests | Parity |
-| Blend2D windowed surface | 212 lines, 3 tests | 377 lines, 3 tests | Parity |
-| Embedded font registration | Shared | Shared | Parity |
+| Shaped-run parity | 4 tests | 4 tests | Parity |
+| Repeated measure allocation | 0 allocations | 0 allocations | Parity |
 
-The macOS platform-font suite exercises the resolver factory, refusal of unknown families, the system face,
-sfnt reconstruction and its reproducibility, null handling, collection-member extraction, and shaping through
-the platform engine. The resolver layers are covered on both platforms.
+The Windows shaped failures were test geometry, not a reference-renderer defect: at 28 px the Windows default
+face reports an ascent of `30.214844` and a descent of `7.027344`, so the fixed origin placed the baseline outside
+the 40 by 40 surface and the reference produced no ink. The Windows tests now center the run with
+`layout.ascent` and `layout.descent` and rotate about the run baseline. The macOS placement is unchanged; both
+platforms now assert that the shaped and rotated runs left ink, so a zero-ink run cannot pass.
 
-That unit-level parity does not make end-to-end text parity true on Windows: the two shaped-run parity checks
-currently fail in Windows CI because the software reference produces no ink (see §5). The macOS shaped-run
-checks pass locally.
+The same pass found a real D3D backend defect: D3D11 `SV_VertexID` excludes `BaseVertexLocation`, while Metal's
+`[[vertex_id]]` includes `baseVertex`. The shader now receives `baseVertex` in its uniform block and indexes
+`vertices[vertexId + baseVertex]`; the committed DXBC artifact and stamp were regenerated with
+`bash build/shaders.sh --d3d --write`.
+
+The long-run allocation probe is fixed by storing the default `FontSpec` in the engine state instead of
+constructing a temporary on every measure. The embedded engine constructor also carries its weight into that
+default selection, which preserves bold-only family selection. The long-run count is now **0 allocations**.
 
 ## 3. `render-albor` backend
 
-This is the strongest part of the Windows port.
+This remains the strongest part of the Windows port.
 
-- Both backends expose the same 41-test parity corpus:
+- Both backends expose the same **73-test** corpus:
   - aligned and feathered geometry
   - clips and transforms
   - soft shadows, hard shadows, sheared casters
@@ -65,17 +92,17 @@ This is the strongest part of the Windows port.
   - paths, holed/concave/even-odd fills
   - lines, pictures, images, fractional scaling, texture reuse
   - shaped, rotated, sheared, and embedded text runs
-- Metal test file: **72 tests**
-- Direct3D test file: **72 tests**
+- Metal test file: **73 tests**
+- Direct3D test file: **73 tests**
 - Both have 41 parity tests.
-- Both backends now cover:
+- Both backends cover:
   - canonical RGBA readback
   - reading the same finished frame twice
   - refusing a read while a frame is in flight
   - applying a resize that arrived mid-frame
   - empty offscreen frame behavior
   - real window or layer presentation and submit counting
-- Direct3D additionally covers two surfaces binding one window and re-rooting. The macOS suite now covers two
+- Direct3D additionally covers two surfaces binding one window and re-rooting. The macOS suite covers two
   surfaces sharing one `CAMetalLayer` and each retaining its own target and cache.
 - Metal-specific checks have D3D equivalents:
   - Metal layer presentation vs. offscreen window presentation
@@ -83,100 +110,153 @@ This is the strongest part of the Windows port.
   - background offscreen draw vs. clear plus opaque-rectangle tests
   - different-scene scale refusal vs. doubled-geometry scale assertion
 - The D3D hard-shadow bound is **8**, stricter than Metal's bound of **32**.
-- Both two-scale tests now verify the doubled extent and the pixel placement of the scaled geometry.
+- Both two-scale tests verify the doubled extent and the pixel placement of the scaled geometry.
 
-The renderer test ledgers are now at the same count and cover the same lifecycle classes. The macOS additions
-are `ReadsBackInCanonicalRgbaOrder`, `ReadsTheSameFinishedFrameTwice`, `RefusesAReadWhileAFrameIsInFlight`,
-`ASecondSurfaceCanShareTheLayer`, and the strengthened `DefersAResizeThatArrivesMidFrame`, which now verifies
-the applied extent on the next frame. The two-scale test now verifies doubled extent and geometry too.
+The batch-buffer reuse test was mutation-proven: after 16 warmup allocations, forcing a buffer recreation on every
+steady frame produced **256 allocations after 120 frames** (240 extra, 2 per frame) and failed
+`AlborRendererBackendChecks.ReusesTheBatchBuffersAcrossSteadyFrames`. The mutation was reverted, and the test
+passes with the retained buffers.
 
-Equal test counts do not mean equal passing behavior. The latest Windows CI run fails
-`AlborParityChecks.AShapedRunMatchesTheReference` and `AlborParityChecks.ARotatedShapedRunMatchesTheReference`
-with `expected_ink=0`, so the Windows shaped-text path is behind macOS in observed behavior.
+D3D tests no longer skip when the device, window, or composited surface is missing. Those paths are required
+coverage, so a host that cannot provide them fails the test rather than reporting a green skip.
 
-**Caveat:** D3D tests use `GTEST_SKIP` when no Direct3D device or compositor is available, while the Metal tests generally assert readiness. If a Windows CI runner cannot create a composited window or D3D device, those tests can pass as skipped, so a green result may cover less than it appears to. The current run is not green, so skipped-test coverage is still an open question.
+## 4. Accessibility — now implemented
 
-## 4. Accessibility — the real gap
+Windows has `accessibility/accessibility_platform.win32.c++`, a UI Automation provider that publishes the semantic
+tree:
 
-This is the largest remaining functional area where Windows is clearly behind:
+- The window is subclassed with `SetWindowSubclass`; `WM_GETOBJECT` with `UiaRootObjectId` is answered through
+  `UiaReturnRawElementProvider`, and the provider map is released on `WM_DESTROY`.
+- The fragment root implements `IRawElementProviderSimple`, `IRawElementProviderFragment` and
+  `IRawElementProviderFragmentRoot`; every node implements the simple and fragment interfaces plus the patterns
+  its role supports.
+- Role mapping covers every `SemanticRole`: Button, CheckBox, Text, Slider, ProgressBar, TabView, TabItem,
+  RadioGroup (Group), RadioButton, NumericStepper (Spinner), Pane (Canvas and ScrollView), Edit, Image, ListItem,
+  List, Group, Window and Custom.
+- Properties include name, automation id, control type, enabled, keyboard focus, focusability, control/content
+  element flags, offscreen, process id, framework id, bounding rectangle, value and read-only, toggle state, and
+  selection-item state.
+- Patterns include Invoke for buttons, Toggle for checkboxes, Value for text fields and numeric steppers, and
+  SelectionItem for list rows, tab items and radio buttons. Invoke, toggle, select and deselect run the semantic
+  actions the application registered; selecting a tab item or radio button invokes its `activate` action, and
+  both stay selected because their group carries one selection.
+- The provider reads an immutable publication snapshot, so a rebuild cannot invalidate an element a reader holds.
+  Structure changes are raised with `UiaRaiseStructureChangedEvent`.
+- `IValueProvider::SetValue` returns `UIA_E_ELEMENTNOTAVAILABLE`; the bridge has no channel to carry the new text
+  into the application, because `SemanticAction` takes no arguments. Reading the value is supported.
 
-- macOS has `accessibility/accessibility_bridge.macos.mm`, a 346-line NSAccessibility bridge, with **10 role/accessibility tests**.
-- Windows has `accessibility/accessibility_platform.win32.c++`, which simply reports that no bridge exists:
-  - `available()` returns `false`
-  - `build()` returns `nullptr`
-  - no UI Automation implementation
-  - no Windows accessibility tests
-- Design §10.2 requires UI Automation on Windows.
-- `README.md` currently says "accessibility: macOS bridge, Win32 adapter layer ... done," which is inaccurate.
-- `docs/status.md` says platform accessibility adapters are planned, which is accurate.
+The **14 Windows role tests** mirror the macOS role suite: root role, child hierarchy, empty publication, detach,
+text-field value, checkbox toggle state, list role, tab group and tab selection, radio group and choice selection,
+numeric-stepper value, image role with its name and disabled state, selected row, unselected row, and a plain label
+with no value. The suite also sends `WM_GETOBJECT` and asserts the window returns a provider key. A fifteenth test
+drives a real `IUIAutomation` client through `ElementFromHandle` and `FindFirst`, which proves UI Automation reaches
+the published root rather than only the direct provider interfaces. The providers are reached through the platform-only
+`accessibility/accessibility_platform.win32.h` accessor, which is the Windows analogue of reading the AppKit
+hierarchy directly.
 
-Because the public `albor` umbrella includes `albor-accessibility`, a Windows application built against `albor` receives an accessibility module that is inert.
+`README.md` and `docs/status.md` now describe both bridges accurately.
 
-## 5. CI and verification
+## 5. Windows platform services
 
-Current state:
+`tests/conditional/platform_services.test.win32.c++` adds **8 tests**:
 
-- macOS: `macos-release` and `macos-coverage`
-- Windows: `windows-release` and `windows-debug`
-- Linux: disabled
-- Windows has no code-coverage job comparable to macOS coverage.
-- Previous Windows branch runs failed on the D3D shader stamp. The cause was the `.hlsl` file being checked out with CRLF on Windows; this was fixed by marking `.hlsl` as LF and `.dxbc` as binary.
-- The latest completed run (`40034355612`) has the Windows shader checks passing, and both macOS jobs passing.
-- The Windows release and debug jobs compile but fail:
-  - `AlborParityChecks.AShapedRunMatchesTheReference`
-  - `AlborParityChecks.ARotatedShapedRunMatchesTheReference`
-  - both report `expected_ink=0` for the software reference
-  - Windows debug additionally fails `AllocationProbeChecks.ARepeatedMeasureOfALongRunCostsNoAllocation`
-- So the Windows shader-stamp problem is fixed, but Windows text rendering and one debug allocation check remain failing.
-- An earlier macOS release run had a flaky failure in `AStreamOfPresentedFramesKeepsTheFootprintFlat`; the latest macOS release and coverage runs passed.
+- clipboard Unicode round-trip and empty-copy clearing
+- IME composition start/end lifecycle and the no-IME anchor/selection no-op
+- DPI scale reporting from `GetDpiForWindow` and the `WM_DPICHANGED` resize report
+- a stopped loop ignoring a tick and a live pacing thread pumping on its UI thread
 
-## 6. Test-case summary
+These close the Windows side of the previous clipboard/IME/DPI/event-loop gap. macOS still needs its own
+integration tests for the same services.
+
+Windows now also has a named-pipe automation transport matching the macOS Unix domain socket. It is covered by
+10 transport tests plus a host test that starts the embedded host over `host.json` and completes an MCP
+`initialize` and `tools/list` exchange. `automation.md` documents the pipe endpoint, and `form-albor.exe` starts
+the host with `albor automation: serving <descriptor>` instead of the previous no-transport refusal.
+
+## 6. CI and verification
+
+The last full Windows run, before the radio and stepper suite, recorded:
+
+| configuration | suite | result |
+| --- | --- | ---: |
+| debug | `albor-tests.exe` | 3,371 tests: 3,369 passed, 2 skipped, 0 failed |
+| release | `albor-tests.exe` | 3,201 tests: 3,199 passed, 2 skipped, 0 failed |
+| debug | `albor-generated-font-checks.exe` | 4 passed |
+| release | `albor-generated-font-checks.exe` | 4 passed |
+| debug | `albor-render-albor-auto-checks.exe` | 1 passed |
+| release | `albor-render-albor-auto-checks.exe` | 1 passed |
+| debug | `albor-render-blend2d-auto-checks.exe` | 4 passed |
+| release | `albor-render-blend2d-auto-checks.exe` | 4 passed |
+
+`bash build/check-format.sh` passes, and `bash build/shaders.sh --d3d` reports that the committed DXBC artifact
+matches the six HLSL entry points. The Windows host cannot build the macOS bridge, so the macOS half of this
+pass was verified locally instead: the macOS debug suite ran 3,476 tests with 0 failures. The Windows counts
+above predate the radio, stepper and Image widget suites, and the pushed CI run is the authority for both platforms.
+
+The complete Windows suite has exactly **2 skips**:
+
+- `DepfileChecks.EscapesBackslashRunsAroundMakeSyntax` — a Windows backslash is a path separator, so the
+  backslash-as-file-character case is genuinely platform-conditional.
+- `GlyphOutlineChecks.ACubicOutlineIsTessellated` — the test opens the macOS CFF face
+  `/System/Library/Fonts/Supplemental/STIXGeneral.otf`.
+
+Neither skip hides required Windows coverage. The previous D3D device, window, composited-surface, DirectWrite,
+collection-font and accessibility skips are gone: those paths now assert.
+
+The macOS configuration still excludes `metal_teardown.test.cpp` from Release at link time (issue 29) and the
+Metal footprint test skips when coverage instrumentation is active. Those are macOS-specific, intentional, and
+unrelated to Windows.
+
+The radio-group, radio-button, numeric-stepper, Image and dual-engine suites are included in the macOS count,
+but not in the Windows counts above, because this host cannot build Windows. The pushed CI run is the
+authoritative result for both configurations.
+
+A Windows coverage job was evaluated and not added. It would need a Windows-native instrumentation toolchain
+(`clang-cl` plus `llvm-cov`, or OpenCppCoverage), and the footprint/allocation probes are sensitive to
+instrumentation. The existing `windows-debug` and `windows-release` jobs cover both configurations; a coverage
+job remains a tracked enhancement rather than a parity requirement.
+
+## 7. Test-case summary
 
 | Suite | macOS | Windows |
 | --- | ---: | ---: |
-| `render-albor` backend/parity | 72 | 72 |
+| `render-albor` backend/parity | 73 | 73 |
 | Window popup | 10 | 9 |
 | Blend2D windowed | 3 | 3 |
 | Platform font resolver | 8 dedicated | 8 |
-| Accessibility roles | 10 | 0 |
+| Accessibility roles | 14 | 15 (14 parity + 1 UI Automation client) |
+| Windows platform services | not present | 8 |
 | Skia backend | 30 macOS-only | replaced by D3D |
 | Metal teardown | 2 macOS-only | not applicable |
 
-The renderer, Blend2D and platform-font suites are now at parity in test count and cover the same lifecycle classes, but the Windows shaped-run tests fail in CI. The other meaningful remaining difference is **accessibility test coverage**: macOS has 10 tests, Windows has none.
+## 8. Changes in the Windows parity pass
 
-## 7. Documentation inconsistencies
-
-- `README.md` says the Win32 accessibility adapter layer is done; it is a stub.
-- `docs/status.md` correctly says accessibility adapters are planned.
-- Design §10.2 states Windows bridges to UI Automation; implementation does not.
-- `WindowOptions` lacks the `parent` field shown in design §5.1, and modality enforcement is missing on both platforms.
-- A deleted `render-albor-windows.md` plan should not be used as a current status source; the code and tests are the authority.
-
-## 8. Changes made in the macOS parity pass
-
-- Added four Metal lifecycle tests: canonical RGBA readback, repeated read of one finished frame, refusal of a
-  read during an in-flight frame, and two surfaces sharing one `CAMetalLayer`.
-- Strengthened the mid-frame resize test to verify the applied extent on the next frame, and the two-scale
-  test to verify the doubled extent and geometry.
-- Added eight CoreText platform-font tests covering resolver refusal, system-family resolution, default face,
-  sfnt reconstruction and reproducibility, null handling, collection-member extraction, and platform-engine
-  shaping.
-- Added a macOS Blend2D test for a real `NSWindow`-backed layer: surface creation, metrics, frame readback,
-  resize and empty-extent refusal.
-- Updated the CMake test wiring and added the AppKit link the real-window test needs.
+- Fixed the Windows shaped and rotated shaped tests by centering on the face ascent/descent and rotating about
+  the run baseline; added zero-ink assertions to the Windows and macOS shaped tests.
+- Fixed D3D base-vertex handling by adding `baseVertex` to the uniform block and indexing the vertex buffer with
+  `vertexId + baseVertex`; regenerated the committed DXBC artifact and stamp.
+- Fixed the long-run measure allocation by storing the default `FontSpec` in the engine state and carrying the
+  embedded engine's weight into that selection.
+- Proved and retained batch-buffer reuse with a mutation test.
+- Implemented the Windows UI Automation bridge and its 10 role parity tests plus a real UI Automation client test;
+  the portable accessibility suite now fails rather than skips on Windows and macOS when the bridge is missing.
+- Removed required Windows `GTEST_SKIP` paths from D3D, DirectWrite, collection-font and accessibility coverage.
+- Added the Windows clipboard, IME, DPI and event-loop integration suite.
+- Added the Windows named-pipe automation transport, 10 transport tests and a host MCP exchange test.
+- Enabled the `form` example on Windows, which builds and runs against the Win32/Direct3D adapter.
+- Added the per-abstraction Windows support table to `docs/status.md`.
+- Added the radio-group, radio-button and numeric-stepper roles to both accessibility bridges, with 2 parity
+  tests on each platform.
+- Added the `Image` widget with natural or explicit sizing, retained pixel painting, semantic name and bounds,
+  preview asset resolution beside the source file and dev-runtime asset-root resolution. Both accessibility
+  bridges already mapped `SemanticRole::Image`, so the parity suites carry the role without a bridge change.
+- Updated `README.md` and `docs/status.md` to describe both accessibility bridges.
 
 ## 9. Remaining priorities
 
-1. **Fix the Windows shaped-text parity failure**: determine why the software reference produces no ink for
-   `AShapedRunMatchesTheReference` and `ARotatedShapedRunMatchesTheReference`, then rerun both Windows jobs.
-2. **Investigate the Windows debug allocation failure** in
-   `AllocationProbeChecks.ARepeatedMeasureOfALongRunCostsNoAllocation`; it is not reproduced by the macOS debug suite.
-3. **Implement the Windows UI Automation bridge** and add tests comparable to the 10 macOS accessibility tests.
-4. **Audit Windows CI skips** for D3D/compositor tests; ensure the windowed and parity paths actually run on the hosted runner.
-5. **Add platform-level tests** for clipboard, IME, DPI changes, and event-loop tick delivery; these are missing on both platforms.
-6. **Resolve the shared parent/modality gap** in `WindowOptions` and the window manager.
-7. **Add Windows coverage** if the Windows port should hold the same verification standard as macOS.
-
-Until shaped text and the debug allocation test pass, and accessibility is implemented, Windows is **near parity
-for windowing and most rendering, but not at full parity overall**. The macOS test-coverage gaps identified in the
-first pass are closed.
+1. **Resolve the shared parent/modality gap** in `WindowOptions` and the window manager; it affects both platforms.
+2. **Add macOS equivalents** of the Windows clipboard, IME, DPI and event-loop integration tests.
+3. **Carry text edits through the UI Automation value pattern** once a semantic action can receive the new value.
+4. **Add a Windows coverage job** once a Windows instrumentation toolchain and exclusion policy are chosen.
+5. **Validate the UIA bridge with a third-party assistive-technology client** on an interactive Windows desktop; the
+   role and UI Automation client tests cover the hierarchy and patterns, but not a screen reader's navigation.

@@ -35,7 +35,7 @@ namespace albor::automation
         std::string command;
 
         // the arguments, which are already split because the transport decoded them (§10.3)
-        std::vector<std::string> arguments;
+        std::vector<std::string> arguments{};
     };
 
     // one response the server sends back, which is either an answer or a stated refusal (§10.3, AD-10)

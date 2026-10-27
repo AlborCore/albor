@@ -74,6 +74,9 @@ namespace albor::render
         std::uint32_t index_begin = 0;
         std::uint32_t index_count = 0;
 
+        // the vertex the draw's indices start at, which lets a cached mesh keep its zero based indices (§6.3, AD-06)
+        std::uint32_t base_vertex = 0;
+
         // whether the draw fills, strokes or blits, which decides the coverage math the shader runs
         CoverageKind coverage = CoverageKind::Plain;
 

@@ -25,8 +25,8 @@ namespace albor::automation
         HostPaths paths;
         // the directory is named by the process id, because two running applications must never share one (§10.3)
         paths.directory = base / std::string(HOST_FAMILY) / std::to_string(identity.pid);
-        // the socket is the local transport endpoint inside that directory (§10.3, AD-10)
-        paths.socket = paths.directory / "mcp.sock";
+        // the transport endpoint is the local socket or pipe a client connects to (§10.3, AD-10)
+        paths.socket = host_endpoint_path(identity, paths.directory);
         // the token sits beside the socket, because the transport publishes both together (§10.3, AD-10)
         paths.token = paths.directory / "token";
         // the descriptor sits beside them, because that is what a client finds first (§10.3)
@@ -35,8 +35,8 @@ namespace albor::automation
         if (paths.socket.string().size() >= MAX_SOCKET_PATH) {
             // the fallback keeps the user and process in its path, so an old run cannot answer for a new one (§10.3)
             paths.directory = std::filesystem::path("/tmp") / ("albor-" + std::to_string(identity.user)) / std::to_string(identity.pid);
-            // the socket is rebuilt under the short directory (§10.3)
-            paths.socket = paths.directory / "mcp.sock";
+            // the transport endpoint is rebuilt for the short layout (§10.3)
+            paths.socket = host_endpoint_path(identity, paths.directory);
             // the token is rebuilt under the short directory (§10.3)
             paths.token = paths.directory / "token";
             // the descriptor is rebuilt under the short directory (§10.3)

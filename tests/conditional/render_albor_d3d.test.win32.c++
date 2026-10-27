@@ -79,10 +79,8 @@ TEST(AlborRendererBackendChecks, BringsUpTheDirect3DDevice) {
     AlborRendererBackend backend;
     // act
     const bool ready = backend.ready();
-    // assert a host with no direct3d device skips, so a platform gap is not read as a product defect (§6.2)
-    if (!ready)
-        GTEST_SKIP() << "no direct3d device on this host";
-    EXPECT_TRUE(ready);
+    // assert the backend is ready, because a windows host without a direct3d device cannot verify the backend (§6.2)
+    ASSERT_TRUE(ready) << "no direct3d device on this host";
 }
 
 TEST(AlborRendererBackendChecks, BuildsAnOffscreenSurfaceWithoutAWindow) {
@@ -97,6 +95,29 @@ TEST(AlborRendererBackendChecks, BuildsAnOffscreenSurfaceWithoutAWindow) {
     // the surface and the backend agree on readiness, so a half built device cannot hand out a surface (§6.2)
     EXPECT_EQ(backend.ready(), surface->valid());
     EXPECT_EQ(surface->metrics(), metrics);
+}
+
+TEST(AlborRendererBackendChecks, ReusesTheBatchBuffersAcrossSteadyFrames) {
+    // arrange a backend and an offscreen surface, which needs no window to draw a frame (§6.2)
+    AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{320.0f, 200.0f}, 1.0f);
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(surface, nullptr);
+    ASSERT_TRUE(surface->valid());
+    // arrange one immutable scene, which every frame replays unchanged (§6.1)
+    FrameScene scene(metrics, Color::rgb(1.0f, 1.0f, 1.0f));
+    scene.add_command(DrawCommand::rectangle(Rect::from_origin_size(Point{20.0f, 20.0f}, Size{120.0f, 80.0f}), Paint{.fill = Color::rgb(0.2f, 0.4f, 0.8f)}));
+    // act a warmup that fills every retained buffer, which a steady frame then reuses (AD-06)
+    for (int frame = 0; frame < 8; frame++)
+        backend.execute_frame(*surface, scene);
+    // arrange the allocations the warmup made, which the steady frames must not raise (AD-06)
+    const std::uint64_t allocations = backend.batch_buffer_allocations();
+    ASSERT_GT(allocations, 0u);
+    // act a steady stream of the same scene, which is the shape a manual drag has every frame (§6.1)
+    for (int frame = 0; frame < 120; frame++)
+        backend.execute_frame(*surface, scene);
+    // assert every steady frame reused the buffers the warmup allocated, which a per frame allocation would raise (AD-06)
+    EXPECT_EQ(backend.batch_buffer_allocations(), allocations);
 }
 
 TEST(AlborRendererBackendChecks, ClearsAnEmptyOffscreenFrameToTransparent) {
@@ -1347,23 +1368,23 @@ TEST(AlborParityChecks, AShapedRunMatchesTheReference) {
     ASSERT_NE(engine, nullptr);
     const TextLayout layout = engine->measure("Al", 0.0f, 28.0f);
     ASSERT_FALSE(layout.empty());
+    // the run is placed by the face's own ascent, so its glyphs stay inside the surface on every platform face (§9.1)
+    const Point run_origin{.x = 2.0f, .y = (metrics.logical_size.height - (layout.ascent + layout.descent)) * 0.5f};
     // act
     RenderContext& expected = expected_surface->begin_frame();
     expected.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
-    expected.draw_text(layout, Point{2.0f, 32.0f}, Paint{.fill = Color::rgb(0.1f, 0.1f, 0.1f)});
+    expected.draw_text(layout, run_origin, Paint{.fill = Color::rgb(0.1f, 0.1f, 0.1f)});
     expected_surface->end_frame();
     RenderContext& actual = actual_surface->begin_frame();
     actual.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
-    actual.draw_text(layout, Point{2.0f, 32.0f}, Paint{.fill = Color::rgb(0.1f, 0.1f, 0.1f)});
+    actual.draw_text(layout, run_origin, Paint{.fill = Color::rgb(0.1f, 0.1f, 0.1f)});
     actual_surface->end_frame();
     const Screenshot expected_shot = capture_surface(*expected_surface);
     const Screenshot actual_shot = capture_surface(*actual_surface);
-    // assert both surfaces put ink down at the same place
+    // assert both surfaces put ink down, because a zero ink reference makes every comparison meaningless (§6.3)
     ASSERT_FALSE(expected_shot.empty());
     ASSERT_FALSE(actual_shot.empty());
     ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
-    // the bound is the 70 measured on this host, which a hinted stem drawn unhinted leaves on its edges
-    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 80);
     // the strokes cover the same area, which a displaced baseline would break
     std::size_t expected_ink = 0;
     std::size_t actual_ink = 0;
@@ -1374,6 +1395,9 @@ TEST(AlborParityChecks, AShapedRunMatchesTheReference) {
             actual_ink++;
     }
     ASSERT_GT(expected_ink, 0u);
+    ASSERT_GT(actual_ink, 0u);
+    // the bound is the 70 measured on this host, which a hinted stem drawn unhinted leaves on its edges
+    EXPECT_LE(expected_shot.max_channel_difference(actual_shot), 80);
     // the atlas and the outline rasterizer cover a comparable area, which a displaced baseline breaks
     EXPECT_LE(actual_ink, expected_ink * 2u);
 }
@@ -1391,21 +1415,25 @@ TEST(AlborParityChecks, ARotatedShapedRunMatchesTheReference) {
     ASSERT_NE(engine, nullptr);
     const TextLayout layout = engine->measure("Al", 0.0f, 28.0f);
     ASSERT_FALSE(layout.empty());
-    const Transform turn = Transform::translation(-8.0f, -36.0f).then(Transform{.scale_x = 0.9396926f, .skew_x = -0.34202015f, .skew_y = 0.34202015f, .scale_y = 0.9396926f}).then(Transform::translation(8.0f, 36.0f));
+    // the run is placed by the face's own ascent, so its turned glyphs stay inside the surface (§9.1)
+    const Point run_origin{.x = 8.0f, .y = (metrics.logical_size.height - (layout.ascent + layout.descent)) * 0.5f};
+    // the turn pivots on the run's baseline origin, so the transform rotates it in place rather than moving it away
+    const Point pivot{.x = run_origin.x, .y = run_origin.y + layout.ascent};
+    const Transform turn = Transform::translation(-pivot.x, -pivot.y).then(Transform{.scale_x = 0.9396926f, .skew_x = -0.34202015f, .skew_y = 0.34202015f, .scale_y = 0.9396926f}).then(Transform::translation(pivot.x, pivot.y));
     // act the same transform reaches both contexts, which the backends must map the same way (§6.3)
     RenderContext& expected = expected_surface->begin_frame();
     expected.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
     expected.set_transform(turn);
-    expected.draw_text(layout, Point{8.0f, 36.0f}, Paint{.fill = Color::rgb(0.1f, 0.1f, 0.1f)});
+    expected.draw_text(layout, run_origin, Paint{.fill = Color::rgb(0.1f, 0.1f, 0.1f)});
     expected_surface->end_frame();
     RenderContext& actual = actual_surface->begin_frame();
     actual.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
     actual.set_transform(turn);
-    actual.draw_text(layout, Point{8.0f, 36.0f}, Paint{.fill = Color::rgb(0.1f, 0.1f, 0.1f)});
+    actual.draw_text(layout, run_origin, Paint{.fill = Color::rgb(0.1f, 0.1f, 0.1f)});
     actual_surface->end_frame();
     const Screenshot expected_shot = capture_surface(*expected_surface);
     const Screenshot actual_shot = capture_surface(*actual_surface);
-    // assert both turned runs cover the same area, which a run left unrotated would miss entirely (§9.1)
+    // assert both turned runs drew ink, which a run left outside the surface would not (§9.1)
     ASSERT_FALSE(expected_shot.empty());
     ASSERT_FALSE(actual_shot.empty());
     ASSERT_EQ(expected_shot.pixels.size(), actual_shot.pixels.size());
@@ -1428,6 +1456,7 @@ TEST(AlborParityChecks, ARotatedShapedRunMatchesTheReference) {
         }
     }
     ASSERT_GT(expected_ink, 0u);
+    ASSERT_GT(actual_ink, 0u);
     EXPECT_LE(actual_ink, (expected_ink * 5u) / 4u);
     // the ink spans the same columns, which a transform mapped in the wrong order would displace
     EXPECT_NEAR(static_cast<double>(actual_left), static_cast<double>(expected_left), 2.0);
@@ -2161,14 +2190,12 @@ TEST(AlborRendererBackendChecks, PresentsThroughAnOffScreenWindow) {
         }
     };
     HiddenWindow host(L"albor-d3d-present");
-    if (host.window == nullptr)
-        GTEST_SKIP() << "no window";
+    ASSERT_NE(host.window, nullptr) << "no window";
     AlborRendererBackend backend;
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{16.0f, 16.0f}, 1.0f);
     std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle::from_object(reinterpret_cast<const void*>(host.window)), metrics);
-    // assert a host without a compositor skips, because it has no windowed path to present (§5.3)
-    if (surface == nullptr)
-        GTEST_SKIP() << "no composited window surface on this host";
+    // assert a windowed surface is required, because a host without one cannot verify the present path (§5.3)
+    ASSERT_NE(surface, nullptr) << "no composited window surface on this host";
     ASSERT_TRUE(surface->valid());
     // act a frame that copies the target into the swapchain and submits it (§6.3)
     const std::uint64_t before = d3d_presented_frames();
@@ -2232,15 +2259,13 @@ TEST(AlborRendererBackendChecks, ASurfaceKeepsItsWindowWhenAnotherBindsIt) {
         }
     };
     HiddenWindow host(L"albor-d3d-shared");
-    if (host.window == nullptr)
-        GTEST_SKIP() << "no window";
+    ASSERT_NE(host.window, nullptr) << "no window";
     AlborRendererBackend backend;
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{8.0f, 8.0f}, 1.0f);
     const NativeWindowHandle handle = NativeWindowHandle::from_object(reinterpret_cast<const void*>(host.window));
     std::unique_ptr<RenderSurface> first = backend.create_surface(handle, metrics);
-    // assert a host without a compositor skips, because it has no windowed path to bind (§5.3)
-    if (first == nullptr)
-        GTEST_SKIP() << "no composited window surface on this host";
+    // assert a windowed surface is required, because a host without one cannot verify the shared window path (§5.3)
+    ASSERT_NE(first, nullptr) << "no composited window surface on this host";
     ASSERT_TRUE(first->valid());
     // act a second surface on the same window, which re-roots the visual tree (§5.3)
     std::unique_ptr<RenderSurface> second = backend.create_surface(handle, metrics);
@@ -2295,14 +2320,12 @@ TEST(AlborRendererBackendChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) 
         }
     };
     HiddenWindow host(L"albor-d3d-stream");
-    if (host.window == nullptr)
-        GTEST_SKIP() << "no window";
+    ASSERT_NE(host.window, nullptr) << "no window";
     AlborRendererBackend backend;
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 2.0f);
     std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle::from_object(reinterpret_cast<const void*>(host.window)), metrics);
-    // assert a host without a compositor skips, because it presents nothing to measure (§6.2)
-    if (surface == nullptr)
-        GTEST_SKIP() << "no composited window surface on this host";
+    // assert a windowed surface is required, because a host without one presents nothing to measure (§6.2)
+    ASSERT_NE(surface, nullptr) << "no composited window surface on this host";
     ASSERT_TRUE(surface->valid());
     // arrange a scene with one layer and one image, so every frame allocates an offscreen target and uploads (§6.2)
     FrameScene built(metrics, Color::rgb(0.06f, 0.07f, 0.09f));
@@ -2395,14 +2418,12 @@ TEST(AlborRendererBackendChecks, AppliesAResizeThatArrivedMidFrame) {
         }
     };
     HiddenWindow host(L"albor-d3d-deferred");
-    if (host.window == nullptr)
-        GTEST_SKIP() << "no window";
+    ASSERT_NE(host.window, nullptr) << "no window";
     AlborRendererBackend backend;
     const WindowMetrics small = WindowMetrics::from_logical(Size{16.0f, 12.0f}, 1.0f);
     const WindowMetrics large = WindowMetrics::from_logical(Size{32.0f, 24.0f}, 1.0f);
     std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle::from_object(reinterpret_cast<const void*>(host.window)), small);
-    if (surface == nullptr)
-        GTEST_SKIP() << "no composited window surface on this host";
+    ASSERT_NE(surface, nullptr) << "no composited window surface on this host";
     ASSERT_TRUE(surface->valid());
     // act a resize that arrives while the frame is in flight, which the surface defers to the end (Â§6.2)
     surface->begin_frame();

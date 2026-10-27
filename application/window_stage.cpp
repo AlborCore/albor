@@ -4,6 +4,7 @@
 
 #include "core/dev_hook.h"
 #include "input/input_controller.h"
+#include "render/frame_profile.h"
 #include "render/frame_scene.h"
 #include "render/render_executor.h"
 #include "ui/frame_pipeline.h"
@@ -13,7 +14,7 @@
 namespace albor
 {
     WindowStage::WindowStage(Window& window, RendererBackend& renderer, TextEngine& text, RootBuilder builder, const MainWindowConfig& config) :
-        m_renderer(&renderer), m_window(&window), m_text(&text), m_build_only_when_dirty(config.build_only_when_dirty), m_scene_source(std::move(config.scene_source)) {
+        m_renderer(&renderer), m_window(&window), m_text(&text), m_always_render(config.always_render), m_scene_source(std::move(config.scene_source)) {
         // the tree is built once over the engines, because the widgets read them for the whole run (§8.1)
         std::unique_ptr<UiNode> root = builder ? builder(m_engine, text) : nullptr;
         // an application that draws by hand brings no tree, which is what the scene source is for (§6.1)
@@ -62,15 +63,23 @@ namespace albor
         // an unwired stage has nothing to build, which the window betrayed at creation time (§6.1)
         if (!wired())
             return;
+        // the tick interval is recorded before the frame work, because a stalled ui thread shows there first (§6.1)
+        profile_ui_tick();
         // an application that owns its scene builds it here, and stage two still executes it off the ui thread (§6.1)
         if (m_scene_source) {
+            const FrameProfileScope build_scope;
             const std::shared_ptr<const FrameScene> scene = m_scene_source(window.metrics(), m_frame_index);
+            // the build time is read before the scene is checked, because a source may draw for a while and return nothing
+            const double build_ms = build_scope.elapsed_ms();
             // a source that produced nothing has no frame to present, which is what an empty tick means (§6.1)
             if (!scene)
                 return;
             if (m_frame_hook)
                 m_frame_hook();
+            const FrameProfileScope submit_scope;
             m_executor->submit(*m_surface, scene);
+            // the source path reports the same split as the tree path, so the two runs stay comparable (§6.1)
+            profile_ui_frame(build_ms, submit_scope.elapsed_ms());
             m_frame_index++;
             return;
         }
@@ -88,14 +97,20 @@ namespace albor
         // the frame is dated, because the next delta is measured from it (§7.3)
         m_last_frame = now;
         // stage one settles the graph and records the scene, stage two executes it (§6.1, AD-18)
-        const std::shared_ptr<const FrameScene> scene = m_build_only_when_dirty ? m_pipeline->build_if_dirty(window.metrics()) : m_pipeline->build(window.metrics());
+        const FrameProfileScope build_scope;
+        const std::shared_ptr<const FrameScene> scene = m_always_render ? m_pipeline->build(window.metrics()) : m_pipeline->build_if_dirty(window.metrics());
+        // the build time is read before the scene is checked, because a clean tree still pays the settle and the record
+        const double build_ms = build_scope.elapsed_ms();
         // a retained tree that found nothing dirty produces no scene, so the tick presents nothing (§6.1)
         if (!scene)
             return;
         // whatever an application derived from the settled graph is refreshed before the scene is presented (§6.1, §10.1)
         if (m_frame_hook)
             m_frame_hook();
+        const FrameProfileScope submit_scope;
         m_pipeline->submit(scene);
+        // the build and the submit are what the ui thread spends on the frame, which the profile reports (§6.1)
+        profile_ui_frame(build_ms, submit_scope.elapsed_ms());
         m_frame_index++;
     }
 

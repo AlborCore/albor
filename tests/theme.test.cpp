@@ -134,6 +134,13 @@ namespace albor
         theme.set_scrollbar_extent(12.0f);
         theme.set_scrollbar_thumb_minimum(28.0f);
         theme.set_scroll_line_extent(30.0f);
+        theme.set_radio_button_size(Size{18.0f, 18.0f});
+        theme.set_radio_button_outline(1.5f);
+        theme.set_radio_button_gap(7.0f);
+        theme.set_radio_group_spacing(9.0f);
+        theme.set_numeric_stepper_extent(Size{150.0f, 34.0f});
+        theme.set_numeric_stepper_button_width(30.0f);
+        theme.set_numeric_stepper_padding(7.0f);
         // assert every measurement follows the theme, which is what makes one theme reskin the app (§8.2)
         EXPECT_EQ(theme.metrics().button_minimum, (Size{40.0f, 22.0f}));
         EXPECT_EQ(theme.metrics().checkbox_box, (Size{20.0f, 20.0f}));
@@ -146,6 +153,13 @@ namespace albor
         EXPECT_FLOAT_EQ(theme.metrics().scrollbar_extent, 12.0f);
         EXPECT_FLOAT_EQ(theme.metrics().scrollbar_thumb_minimum, 28.0f);
         EXPECT_FLOAT_EQ(theme.metrics().scroll_line_extent, 30.0f);
+        EXPECT_EQ(theme.metrics().radio_button_size, (Size{18.0f, 18.0f}));
+        EXPECT_FLOAT_EQ(theme.metrics().radio_button_outline, 1.5f);
+        EXPECT_FLOAT_EQ(theme.metrics().radio_button_gap, 7.0f);
+        EXPECT_FLOAT_EQ(theme.metrics().radio_group_spacing, 9.0f);
+        EXPECT_EQ(theme.metrics().numeric_stepper_extent, (Size{150.0f, 34.0f}));
+        EXPECT_FLOAT_EQ(theme.metrics().numeric_stepper_button_width, 30.0f);
+        EXPECT_FLOAT_EQ(theme.metrics().numeric_stepper_padding, 7.0f);
     }
 
     TEST(Theme, ADefaultThemeIsUsableWithoutBeingTouched) {
@@ -282,6 +296,10 @@ namespace albor
         EXPECT_FLOAT_EQ(macos.metrics().slider_thumb, 22.0f);
         EXPECT_FLOAT_EQ(macos.metrics().slider_thumb_radius, 11.0f);
         EXPECT_FLOAT_EQ(macos.metrics().slider_thumb_shadow, 0.14f);
+        EXPECT_EQ(macos.metrics().radio_button_size, (Size{16.0f, 16.0f}));
+        EXPECT_FLOAT_EQ(macos.metrics().radio_button_outline, 2.0f);
+        EXPECT_EQ(macos.metrics().numeric_stepper_extent, (Size{120.0f, 30.0f}));
+        EXPECT_FLOAT_EQ(macos.metrics().numeric_stepper_button_width, 28.0f);
         // the hierarchy sizes body copy at thirteen (§8.4)
         EXPECT_FLOAT_EQ(macos.typography().body, 13.0f);
     }
@@ -305,6 +323,9 @@ namespace albor
         EXPECT_FLOAT_EQ(fluent.metrics().corner_radius, 4.0f);
         EXPECT_FLOAT_EQ(fluent.metrics().checkbox_outline, 1.5f);
         EXPECT_FLOAT_EQ(fluent.metrics().slider_tick_length, 4.0f);
+        EXPECT_EQ(fluent.metrics().radio_button_size, (Size{18.0f, 18.0f}));
+        EXPECT_FLOAT_EQ(fluent.metrics().radio_button_outline, 1.5f);
+        EXPECT_EQ(fluent.metrics().numeric_stepper_extent, (Size{140.0f, 32.0f}));
         EXPECT_FLOAT_EQ(fluent.typography().body, 14.0f);
     }
 
@@ -314,6 +335,9 @@ namespace albor
         // assert the control metrics are the ones a tool surface sizes (§8.4)
         EXPECT_EQ(pro_dark.metrics().button_minimum, (Size{24.0f, 24.0f}));
         EXPECT_FLOAT_EQ(pro_dark.metrics().button_padding_horizontal, 8.0f);
+        EXPECT_EQ(pro_dark.metrics().radio_button_size, (Size{16.0f, 16.0f}));
+        EXPECT_FLOAT_EQ(pro_dark.metrics().radio_button_outline, 1.0f);
+        EXPECT_EQ(pro_dark.metrics().numeric_stepper_extent, (Size{120.0f, 28.0f}));
         // assert the face lifts off the surface, which is the contrast a tool separates with (§8.4)
         EXPECT_GT(pro_dark.palette().button_plate[state_index(ControlState::Normal)].red, Accents{}.surface.red);
     }

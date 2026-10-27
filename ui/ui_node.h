@@ -60,8 +60,17 @@ namespace albor
         // record the drawing commands of the node into the context, which stage one replays (§6.1)
         virtual void render(RenderContext& context);
 
-        // report whether the point lands on this node or on one of its descendants (§8.3)
+        // report whether the node lands under the point, which a hidden subtree never does (§8.3)
         [[nodiscard]] virtual bool hit_test(Point logical_point) const;
+
+        // report whether the node and every ancestor are visible, which input and focus read (§8.3)
+        [[nodiscard]] bool visible_in_tree() const;
+
+        // report whether the node itself can take focus, which a container may decline (§8.3)
+        [[nodiscard]] virtual bool accepts_focus() const;
+
+        // report whether the focus walk enters this node's children, which a decorative subtree declines (§8.3)
+        [[nodiscard]] virtual bool focusable_children() const;
 
         // offer the event to this node only, because the dispatcher walks the tree so each node is offered once (§8.3)
         virtual void dispatch_event(Event& event);

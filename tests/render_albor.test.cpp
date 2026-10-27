@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 #include "core/paint.h"
+#include "render/font_face.h"
 #include "render/frame_scene.h"
 #include "render/image_resource.h"
 #include "render/line_batch.h"
@@ -2713,6 +2714,190 @@ TEST(ExpandFillGroupChecks, ClampsTheRingOfANeedleCorner) {
     for (const BatchVertex& vertex : batch.vertices)
         nearest = std::min(nearest, std::hypot(vertex.x - 70.0f, vertex.y - 11.0f));
     EXPECT_LT(nearest, FILL_MITER_LIMIT * FRINGE + 0.01f);
+}
+
+namespace
+{
+    // the font double whose one glyph is a square with a counter, which a mesh check draws (§6.4)
+    class SquareFontFace final : public FontFace
+    {
+    public:
+        // the identity every mesh check keys the glyph under (§15, AD-34)
+        [[nodiscard]] std::uint64_t hash() const override { return 0x5eedu; }
+
+        // the double carries no bytes, because the outline below is all a check reads (§9.1)
+        [[nodiscard]] std::span<const std::uint8_t> bytes() const override { return {}; }
+
+        // the one glyph is an outer square and a counter wound the other way, which the group fill cuts open (§6.4)
+        [[nodiscard]] GlyphOutlineData outline(std::uint32_t, float) const override {
+            // every walk is counted, so a check can prove the mesh answered instead of the face (§6.4)
+            m_outlines++;
+            // the outer ring runs one way and the counter runs the other, which the nonzero rule cuts open (§6.4)
+            return GlyphOutlineData{
+                .verbs = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close, PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close},
+                .points = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 10.0f, .y = 0.0f}, Point{.x = 10.0f, .y = 10.0f}, Point{.x = 0.0f, .y = 10.0f}, Point{.x = 3.0f, .y = 3.0f}, Point{.x = 3.0f, .y = 7.0f}, Point{.x = 7.0f, .y = 7.0f}, Point{.x = 7.0f, .y = 3.0f}},
+            };
+        }
+
+        // how often the face was asked for the outline, which a mesh check asserts on (§6.4)
+        [[nodiscard]] std::size_t outline_calls() const { return m_outlines; }
+
+    private:
+        // the walks a check counts, which a mutable field lets the const outline report (§6.4)
+        mutable std::size_t m_outlines = 0;
+    };
+} // namespace
+
+TEST(DrawTextChecks, ReplaysATranslatedGlyphFromItsMesh) {
+    // arrange a run whose one glyph the square face outlines, and the per frame expansion it must match
+    const std::shared_ptr<SquareFontFace> face = std::make_shared<SquareFontFace>();
+    const FontHandle handle = FontHandle::from_face(face);
+    ShapedRun::Line line;
+    line.font = handle;
+    line.glyphs.push_back(ShapedGlyph{.id = 1u, .position = Point{.x = 0.0f, .y = 0.0f}, .cluster = 0u});
+    TextLayout layout;
+    layout.run = ShapedRun::make({line}, 16.0f, handle.font_hash());
+    ASSERT_FALSE(layout.empty());
+    const Rect extent = Rect::from_origin_size(Point{.x = 0.0f, .y = 0.0f}, Size{40.0f, 40.0f});
+    const Paint paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)};
+    FrameBatch direct_batch;
+    AlborRenderContext direct(direct_batch, extent, 1.0f);
+    direct.draw_text(layout, Point{.x = 0.0f, .y = 0.0f}, paint);
+    ASSERT_FALSE(direct_batch.draws.empty());
+    // act the first cached frame expands the glyph into a mesh at the origin (§6.4, AD-06)
+    GlyphPathCache paths;
+    GlyphMeshCache meshes;
+    FrameBatch first_batch;
+    AlborRenderContext first(first_batch, extent, 1.0f, &paths, &meshes);
+    first.draw_text(layout, Point{.x = 0.0f, .y = 0.0f}, paint);
+    // assert the mesh expansion carries exactly what the per frame expansion carried, so the cache changes no pixel (§6.4)
+    EXPECT_EQ(meshes.count(), 1u);
+    ASSERT_EQ(first_batch.vertices.size(), direct_batch.vertices.size());
+    ASSERT_EQ(first_batch.indices, direct_batch.indices);
+    for (std::size_t index = 0; index < first_batch.vertices.size(); index++) {
+        EXPECT_FLOAT_EQ(first_batch.vertices[index].x, direct_batch.vertices[index].x);
+        EXPECT_FLOAT_EQ(first_batch.vertices[index].y, direct_batch.vertices[index].y);
+        EXPECT_FLOAT_EQ(first_batch.vertices[index].lateral, direct_batch.vertices[index].lateral);
+        EXPECT_FLOAT_EQ(first_batch.vertices[index].longitudinal, direct_batch.vertices[index].longitudinal);
+    }
+    // act a later frame draws the same glyph at another origin through a fresh path cache (§6.4)
+    GlyphPathCache other_paths;
+    FrameBatch second_batch;
+    AlborRenderContext second(second_batch, extent, 1.0f, &other_paths, &meshes);
+    second.draw_text(layout, Point{.x = 5.0f, .y = 7.0f}, paint);
+    // assert the mesh answered, so the face was walked by the direct and first cached frames only (§6.4)
+    EXPECT_EQ(face->outline_calls(), 2u);
+    EXPECT_EQ(other_paths.count(), 0u);
+    // assert the replay is the same mesh shifted onto the new origin, which a translation alone places (AD-27)
+    ASSERT_EQ(second_batch.vertices.size(), first_batch.vertices.size());
+    for (std::size_t index = 0; index < second_batch.vertices.size(); index++) {
+        EXPECT_FLOAT_EQ(second_batch.vertices[index].x, first_batch.vertices[index].x + 5.0f);
+        EXPECT_FLOAT_EQ(second_batch.vertices[index].y, first_batch.vertices[index].y + 7.0f);
+        EXPECT_FLOAT_EQ(second_batch.vertices[index].lateral, first_batch.vertices[index].lateral);
+        EXPECT_FLOAT_EQ(second_batch.vertices[index].longitudinal, first_batch.vertices[index].longitudinal);
+    }
+    EXPECT_EQ(second_batch.indices, first_batch.indices);
+}
+
+TEST(DrawTextChecks, BasesTheGlyphIndicesAtTheVertexItsMeshStartsAt) {
+    // arrange a frame that already carries a rectangle before the glyph (§6.3)
+    const std::shared_ptr<SquareFontFace> face = std::make_shared<SquareFontFace>();
+    const FontHandle handle = FontHandle::from_face(face);
+    ShapedRun::Line line;
+    line.font = handle;
+    line.glyphs.push_back(ShapedGlyph{.id = 1u, .position = Point{.x = 0.0f, .y = 0.0f}, .cluster = 0u});
+    TextLayout layout;
+    layout.run = ShapedRun::make({line}, 16.0f, handle.font_hash());
+    const Rect extent = Rect::from_origin_size(Point{.x = 0.0f, .y = 0.0f}, Size{40.0f, 40.0f});
+    const Paint paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)};
+    GlyphPathCache paths;
+    GlyphMeshCache meshes;
+    FrameBatch batch;
+    AlborRenderContext context(batch, extent, 1.0f, &paths, &meshes);
+    context.draw_rect(Rect::from_origin_size(Point{.x = 0.0f, .y = 0.0f}, Size{4.0f, 4.0f}), paint);
+    const std::uint32_t vertex_begin = static_cast<std::uint32_t>(batch.vertices.size());
+    // act
+    context.draw_text(layout, Point{.x = 0.0f, .y = 0.0f}, paint);
+    // assert the text is the draw after the rectangle, and its vertices start where the rectangle left off (§6.3)
+    ASSERT_EQ(batch.draws.size(), 2u);
+    EXPECT_EQ(batch.draws[1].base_vertex, vertex_begin);
+    EXPECT_GT(batch.draws[1].index_count, 0u);
+    // assert the indices it carries are the mesh's own, which a batch base vertex shifts onto the glyph (§6.4, AD-06)
+    const std::uint32_t mesh_vertices = static_cast<std::uint32_t>(batch.vertices.size()) - vertex_begin;
+    for (std::uint32_t index = batch.draws[1].index_begin; index < batch.draws[1].index_begin + batch.draws[1].index_count; index++)
+        EXPECT_LT(batch.indices[index], mesh_vertices);
+}
+
+TEST(DrawTextChecks, FallsBackToAPerFrameExpansionUnderAScale) {
+    // arrange a scene transform that scales, which a cached mesh cannot replay by translation alone (AD-27)
+    const std::shared_ptr<SquareFontFace> face = std::make_shared<SquareFontFace>();
+    const FontHandle handle = FontHandle::from_face(face);
+    ShapedRun::Line line;
+    line.font = handle;
+    line.glyphs.push_back(ShapedGlyph{.id = 1u, .position = Point{.x = 0.0f, .y = 0.0f}, .cluster = 0u});
+    TextLayout layout;
+    layout.run = ShapedRun::make({line}, 16.0f, handle.font_hash());
+    const Rect extent = Rect::from_origin_size(Point{.x = 0.0f, .y = 0.0f}, Size{40.0f, 40.0f});
+    const Paint paint{.fill = Color::rgb(0.0f, 0.0f, 0.0f)};
+    GlyphMeshCache meshes;
+    FrameBatch batch;
+    AlborRenderContext context(batch, extent, 1.0f, nullptr, &meshes);
+    context.set_transform(Transform::scaling(2.0f, 2.0f));
+    // act
+    context.draw_text(layout, Point{.x = 0.0f, .y = 0.0f}, paint);
+    // assert the glyph draws and no mesh is kept, because a scaled glyph is expanded at its own scale (AD-27)
+    EXPECT_EQ(meshes.count(), 0u);
+    EXPECT_EQ(batch.draws.size(), 1u);
+    EXPECT_FALSE(batch.vertices.empty());
+}
+
+TEST(GlyphMeshCacheChecks, AnswersAMeshItExpanded) {
+    // arrange an empty cache and the identity of one outline at one device scale (§6.4)
+    GlyphMeshCache cache;
+    const GlyphMeshKey key{.path = GlyphPathKey{.font_hash = 0x5eedu, .glyph_id = 3u, .font_size = 16.0f}, .device_scale = 2.0f};
+    // act nothing was ever expanded under that identity (§6.4)
+    EXPECT_EQ(cache.find(key), nullptr);
+    // act one mesh is expanded and stored under it (§6.4)
+    const std::shared_ptr<const GlyphMesh> mesh = std::make_shared<const GlyphMesh>();
+    cache.store(key, mesh);
+    // assert the stored mesh answers its own identity, which is what keeps a frame from sweeping it again (§6.4, AD-06)
+    EXPECT_EQ(cache.find(key), mesh);
+    EXPECT_EQ(cache.count(), 1u);
+}
+
+TEST(GlyphMeshCacheChecks, SeparatesTheScaleTheFringeLandsAt) {
+    // arrange one expanded mesh at one device scale (§6.4, AD-27)
+    const GlyphPathKey outline{.font_hash = 0x5eedu, .glyph_id = 3u, .font_size = 16.0f};
+    const GlyphMeshKey expanded{.path = outline, .device_scale = 1.0f};
+    GlyphMeshCache cache;
+    cache.store(expanded, std::make_shared<const GlyphMesh>());
+    // act the same outline is asked for at another scale (§9.1, AD-27)
+    const GlyphMeshKey other_scale{.path = outline, .device_scale = 2.0f};
+    // assert it answers nothing, because the fringe is measured in device pixels (§6.4, AD-27)
+    EXPECT_EQ(cache.find(other_scale), nullptr);
+    // assert the original scale still answers, so the miss above is the scale and not the outline (§6.4)
+    EXPECT_NE(cache.find(expanded), nullptr);
+}
+
+TEST(GlyphMeshCacheChecks, DropsAMeshNoDrawReached) {
+    // arrange one expanded mesh stored at a frame of its own (§6.4, AD-06)
+    const GlyphMeshKey key{.path = GlyphPathKey{.font_hash = 0x5eedu, .glyph_id = 3u, .font_size = 16.0f}, .device_scale = 1.0f};
+    GlyphMeshCache cache;
+    cache.begin_frame(10u);
+    cache.store(key, std::make_shared<const GlyphMesh>());
+    // act the cache is aged to the limit of that store, which is the last frame the store alone survives (§6.4, AD-06)
+    cache.begin_frame(10u + GlyphMeshCache::IDLE_FRAMES);
+    // assert the mesh is still answered, because a draw inside the limit must find it (§6.4)
+    EXPECT_NE(cache.find(key), nullptr);
+    // act the cache is aged to the limit of that draw, which only a re-stamped entry survives (§6.4, AD-06)
+    cache.begin_frame(10u + 2u * GlyphMeshCache::IDLE_FRAMES);
+    // assert the mesh is still answered, because the draw above stamped it as reached again (§6.4)
+    EXPECT_NE(cache.find(key), nullptr);
+    // act the cache is aged past the limit from that draw, which is a frame nothing drew the glyph in (§6.4)
+    cache.begin_frame(10u + 3u * GlyphMeshCache::IDLE_FRAMES + 1u);
+    // assert the mesh is gone, because a mesh no draw reached is memory a frame cannot use (§6.4, AD-06)
+    EXPECT_EQ(cache.find(key), nullptr);
+    EXPECT_EQ(cache.count(), 0u);
 }
 
 TEST(GlyphPathCacheChecks, AnswersAPathItAlreadyWalked) {

@@ -152,9 +152,10 @@ int main() {
 `run()` returns when the last main window closes (§4.1). A window may also be added while
 the loop is running, from a task or a timer; the run still ends with the last one.
 
-`albor::MainWindowConfig` carries the per-window choices: the clear `background`, whether a
-tick that changed nothing is skipped (`build_only_when_dirty`), and a `scene_source` for an
-application that owns its `FrameScene` and brings no tree at all. `application.set_frame_hook`
+`albor::MainWindowConfig` carries the per-window choices: the clear `background`, an
+`always_render` escape hatch for a tree that draws non-reactive state, and a `scene_source` for
+an application that owns its `FrameScene` and brings no tree at all. A retained tree renders on
+invalidation by default; `always_render` is the exception, not the setup step. `application.set_frame_hook`
 installs work that runs between a window's build and its submit; `application.set_input_handler`
 observes the event **after** the tree has answered it, `event.handled` included (§8.3).
 
@@ -191,14 +192,14 @@ counter, a manifest-driven chart with custom line-batch rendering, the compiled
 | reactive properties, eager-push binding engine, snapshots | done (§7) |
 | ui tree, components, event routing, focus | done (§8) |
 | measure/arrange layout, row/column/stack/grid/padding | done (§8.2) |
-| widgets: Button, Label, CheckBox, Slider, Canvas, TextField, ListBox, ScrollView | done (§8) |
+| widgets: Button, Label, CheckBox, RadioButton, RadioGroup, Slider, NumericStepper, Canvas, Image, TextField, ListBox, ScrollView, ProgressBar, TabView, Tab, TabTitle | done (§8) |
 | semantic tree, explicit keys, semantic provider | done (§10.1) |
 | `.ui` compiler, manifest, glue generator, codegen | done (phase 4, §11) |
 | text shaping (HarfBuzz), embedded font registration and weights, i18n catalog | done (§9.1, AD-34) |
 | animation engine, theme system and widget states | done (§7.3) |
 | inspector, LSP, preview host, automation core, MCP adapter | done (Dev/Test only, phase 5) |
-| accessibility: macOS bridge, Win32 adapter layer | done; AT-SPI adapter planned (§10.2) |
-| Win32 platform: window, clipboard, event loop, text encoding | implemented and built in CI; Direct3D backend ships (§5.3) |
+| accessibility: macOS NSAccessibility and Windows UI Automation bridges | done; AT-SPI adapter planned (§10.2) |
+| Win32 platform: window, clipboard, event loop, text encoding, named-pipe automation | implemented and built in CI; Direct3D backend ships (§5.3) |
 | Wayland / X11 / Vulkan platform and renderer | planned (phase 1 follow-up) |
 | out-of-process dev service that delivers definitions to the extension | planned (§12.1, AD-12) |
 
@@ -222,6 +223,8 @@ directly.
 - [`albor-design-v4.md`](albor-design-v4.md) — the architecture specification; the
   single source of truth for module layout and decisions (`AD-NN`, `§N` are cited
   throughout the code and reviews).
+- [`gap-analysis-xyce-studio.md`](gap-analysis-xyce-studio.md) — the application-readiness
+  analysis against the Xyce Studio reference application, with the ordered P0/P1 work list.
 - [`STYLE-GUIDE.md`](STYLE-GUIDE.md) — code style rules enforced by
   `build/check-format.sh`.
 - [`AGENTS.md`](AGENTS.md) — the contract for AI agents working in this repository.

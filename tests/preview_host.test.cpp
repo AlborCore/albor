@@ -13,14 +13,23 @@
 #include "layout/row_layout.h"
 #include "layout/stack_layout.h"
 #include "preview/preview_host.h"
+#include "render/image_resource.h"
 #include "runtime/binding_engine.h"
 #include "ui/ui_node.h"
 #include "widgets/button.h"
 #include "widgets/canvas.h"
 #include "widgets/checkbox.h"
+#include "widgets/image.h"
 #include "widgets/label.h"
+#include "widgets/numeric_stepper.h"
+#include "widgets/progress_bar.h"
+#include "widgets/radio_button.h"
+#include "widgets/radio_group.h"
 #include "widgets/scroll_view.h"
 #include "widgets/slider.h"
+#include "widgets/tab_page.h"
+#include "widgets/tab_title.h"
+#include "widgets/tab_view.h"
 #include "widgets/text_field.h"
 
 using namespace albor;
@@ -102,6 +111,39 @@ TEST(PreviewHostChecks, AnEmbeddedImageResolvesBesideTheSourcePath) {
     // assert the carried asset was found, because the preview was told where the source lives (§16, §6.4)
     EXPECT_EQ(result.diagnostics, 0U);
     EXPECT_NE(result.root, nullptr);
+    std::filesystem::remove_all(root, ignored);
+}
+
+TEST(PreviewHostChecks, AnImageWidgetShowsTheAssetAndItsWrittenDescription) {
+    // arrange a source whose image widget names an asset beside it, with a description and an explicit size (§6.4, §8)
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "albor-preview-image-widget";
+    std::error_code ignored;
+    std::filesystem::remove_all(root, ignored);
+    std::filesystem::create_directories(root);
+    std::filesystem::copy_file(std::filesystem::path(ALBOR_TEST_VECTORS_DIR) / "icon.png", root / "icon.png", std::filesystem::copy_options::overwrite_existing);
+    const std::string source = R"UI(component Panel {
+    Image {
+        id: logo;
+        source: @image("icon.png");
+        description: "Company logo";
+        width: 32px;
+        height: 16px;
+    }
+})UI";
+    // act
+    BindingEngine engine;
+    const preview::PreviewResult result = preview::build(source, engine, root / "panel.ui");
+    // assert the widget was built and the asset beside the source was decoded (§12.2, §6.4)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    Image* image = dynamic_cast<Image*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<Image*>(&node) != nullptr; }));
+    ASSERT_NE(image, nullptr);
+    ASSERT_NE(image->source(), nullptr);
+    EXPECT_EQ(image->source()->width(), 1U);
+    // assert the written name and dimensions reached the widget, because the preview shows them (§8, §10.1)
+    EXPECT_EQ(image->description(), "Company logo");
+    EXPECT_FLOAT_EQ(image->width(), 32.0f);
+    EXPECT_FLOAT_EQ(image->height(), 16.0f);
     std::filesystem::remove_all(root, ignored);
 }
 
@@ -207,10 +249,15 @@ TEST(PreviewHostChecks, EveryElementThisBuildKnowsIsInstantiated) {
                 Slider { id: level; }
                 CheckBox { id: agreed; }
                 Button { id: go; text: "Go"; }
+                RadioGroup {
+                    RadioButton { label: "One"; }
+                }
+                NumericStepper { }
             }
         }
         Grid { }
         Canvas { id: surface; }
+        Image { id: logo; }
     }
 })UI";
     BindingEngine engine;
@@ -228,7 +275,10 @@ TEST(PreviewHostChecks, EveryElementThisBuildKnowsIsInstantiated) {
     EXPECT_NE(find_first(*result.root, [](UiNode& node) { return dynamic_cast<ScrollView*>(&node) != nullptr; }), nullptr);
     EXPECT_NE(find_first(*result.root, [](UiNode& node) { return dynamic_cast<Slider*>(&node) != nullptr; }), nullptr);
     EXPECT_NE(find_first(*result.root, [](UiNode& node) { return dynamic_cast<CheckBox*>(&node) != nullptr; }), nullptr);
+    EXPECT_NE(find_first(*result.root, [](UiNode& node) { return dynamic_cast<RadioGroup*>(&node) != nullptr; }), nullptr);
+    EXPECT_NE(find_first(*result.root, [](UiNode& node) { return dynamic_cast<NumericStepper*>(&node) != nullptr; }), nullptr);
     EXPECT_NE(find_first(*result.root, [](UiNode& node) { return dynamic_cast<Canvas*>(&node) != nullptr; }), nullptr);
+    EXPECT_NE(find_first(*result.root, [](UiNode& node) { return dynamic_cast<Image*>(&node) != nullptr; }), nullptr);
     // assert the scroll view built the real viewport, because a preview shows what the app will show (§12.2)
     UiNode* scroller = find_first(*result.root, [](UiNode& node) { return dynamic_cast<ScrollView*>(&node) != nullptr; });
     ASSERT_NE(scroller, nullptr);
@@ -393,4 +443,188 @@ TEST(PreviewHostChecks, AFieldShowsTheValueAndHintTheAuthorWrote) {
     EXPECT_EQ(field->value(), "Albor");
     // assert the hint reaches it too, because an empty field draws what the author wrote (§8)
     EXPECT_EQ(field->placeholder(), "type here");
+}
+
+TEST(PreviewHostChecks, AProgressBarShowsTheFractionTheAuthorWrote) {
+    // arrange a bar writing its fraction, which a preview shows as the author wrote it (§8)
+    const std::string source = R"UI(component WrittenProgress {
+    ProgressBar {
+        id: download;
+        value: 0.75;
+    }
+})UI";
+    BindingEngine engine;
+    // act
+    preview::PreviewResult result = preview::build(source, engine);
+    // assert nothing was reported, because every property here is one the catalog declares (§11.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    ProgressBar* progress = dynamic_cast<ProgressBar*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<ProgressBar*>(&node) != nullptr; }));
+    ASSERT_NE(progress, nullptr);
+    // assert the fraction reached the widget, because a preview shows the value the app will show (§8)
+    EXPECT_FLOAT_EQ(progress->value(), 0.75f);
+}
+
+TEST(PreviewHostChecks, ARadioGroupShowsItsChoicesAndSelection) {
+    // arrange a group writing its selection, orientation, gap and two labelled choices (§8)
+    const std::string source = R"UI(component WrittenRadios {
+    RadioGroup {
+        id: modes;
+        selected: 1;
+        vertical: true;
+        spacing: 3.0;
+
+        RadioButton {
+            id: fast;
+            value: 0;
+            label: "Fast";
+        }
+
+        RadioButton {
+            id: safe;
+            value: 1;
+            label: "Safe";
+        }
+    }
+})UI";
+    BindingEngine engine;
+    // act
+    preview::PreviewResult result = preview::build(source, engine);
+    // assert nothing was reported, because every property here is one the catalog declares (§11.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    RadioGroup* group = dynamic_cast<RadioGroup*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<RadioGroup*>(&node) != nullptr; }));
+    ASSERT_NE(group, nullptr);
+    // assert the group carries the written selection, orientation and gap (§8)
+    EXPECT_EQ(group->selected(), 1);
+    EXPECT_TRUE(group->vertical());
+    EXPECT_FLOAT_EQ(group->spacing(), 3.0f);
+    // assert both choices reached the group with the labels the author wrote (§8)
+    ASSERT_EQ(group->child_count(), 2u);
+    auto* first = dynamic_cast<RadioButton*>(group->child_at(0));
+    auto* second = dynamic_cast<RadioButton*>(group->child_at(1));
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    EXPECT_EQ(first->value(), 0);
+    EXPECT_EQ(first->label(), "Fast");
+    EXPECT_EQ(second->value(), 1);
+    EXPECT_EQ(second->label(), "Safe");
+}
+
+TEST(PreviewHostChecks, ANumericStepperValueOutsideTheDefaultRangeKeepsTheAuthoredValue) {
+    // arrange a stepper whose value only fits once the written bounds are applied (§8)
+    const std::string source = R"UI(component NegativeStepper {
+    NumericStepper {
+        value: -50.0;
+        min: -100.0;
+        max: 100.0;
+    }
+})UI";
+    BindingEngine engine;
+    // act
+    preview::PreviewResult result = preview::build(source, engine);
+    // assert the preview applies the bounds before the value, because the app shows the authored number (§8, §12.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    NumericStepper* stepper = dynamic_cast<NumericStepper*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<NumericStepper*>(&node) != nullptr; }));
+    ASSERT_NE(stepper, nullptr);
+    EXPECT_FLOAT_EQ(stepper->value(), -50.0f);
+    EXPECT_FLOAT_EQ(stepper->minimum(), -100.0f);
+    EXPECT_FLOAT_EQ(stepper->maximum(), 100.0f);
+}
+
+TEST(PreviewHostChecks, ARadioGroupKeepsANegativeStaticSelection) {
+    // arrange a group with a negative selected value and a grouped choice, which the parser keeps as an expression (§8)
+    const std::string source = R"UI(component NegativeRadio {
+    RadioGroup {
+        selected: (-1);
+        RadioButton { value: -1; label: "Low"; }
+        RadioButton { value: 0; label: "Zero"; }
+    }
+})UI";
+    BindingEngine engine;
+    // act
+    preview::PreviewResult result = preview::build(source, engine);
+    // assert the preview resolves the written grouping and negation rather than leaving the default selection (§12.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    RadioGroup* group = dynamic_cast<RadioGroup*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<RadioGroup*>(&node) != nullptr; }));
+    ASSERT_NE(group, nullptr);
+    EXPECT_EQ(group->selected(), -1);
+    ASSERT_EQ(group->child_count(), 2u);
+    EXPECT_TRUE(dynamic_cast<RadioButton*>(group->child_at(0))->checked());
+}
+
+TEST(PreviewHostChecks, ANumericStepperShowsTheWrittenNumberAndRange) {
+    // arrange a stepper writing its value, bounds, step and disabled state (§8)
+    const std::string source = R"UI(component WrittenStepper {
+    NumericStepper {
+        id: effort;
+        value: 4.0;
+        min: 1.0;
+        max: 9.0;
+        step: 2.0;
+        disabled: true;
+    }
+})UI";
+    BindingEngine engine;
+    // act
+    preview::PreviewResult result = preview::build(source, engine);
+    // assert nothing was reported, because every property here is one the catalog declares (§11.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    NumericStepper* stepper = dynamic_cast<NumericStepper*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<NumericStepper*>(&node) != nullptr; }));
+    ASSERT_NE(stepper, nullptr);
+    // assert the written number and range reached the control, because a preview shows the app's values (§8)
+    EXPECT_FLOAT_EQ(stepper->value(), 4.0f);
+    EXPECT_FLOAT_EQ(stepper->minimum(), 1.0f);
+    EXPECT_FLOAT_EQ(stepper->maximum(), 9.0f);
+    EXPECT_FLOAT_EQ(stepper->step(), 2.0f);
+    EXPECT_TRUE(stepper->disabled());
+}
+
+TEST(PreviewHostChecks, ATabViewShowsTheSelectedPageAndItsLabels) {
+    // arrange a tab view writing a selection and two labelled pages (§8)
+    const std::string source = R"UI(component WrittenTabs {
+    TabView {
+        selected: 1;
+        vertical: true;
+
+        Tab {
+            id: first_tab;
+            label: "One";
+            TabTitle {
+                Label { text: "★"; }
+            }
+            Label { text: "first"; }
+        }
+
+        Tab {
+            id: second_tab;
+            label: "Two";
+            Label { text: "second"; }
+        }
+    }
+})UI";
+    BindingEngine engine;
+    // act
+    preview::PreviewResult result = preview::build(source, engine);
+    // assert nothing was reported, because every property here is one the catalog declares (§11.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    TabView* tabs = dynamic_cast<TabView*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<TabView*>(&node) != nullptr; }));
+    ASSERT_NE(tabs, nullptr);
+    // assert the view holds both pages and the chosen index reached it (§8)
+    ASSERT_EQ(tabs->tab_count(), 2u);
+    EXPECT_EQ(tabs->selected(), 1);
+    EXPECT_TRUE(tabs->vertical());
+    // assert each page carries the label its strip draws (§8)
+    ASSERT_NE(tabs->tab_at(0), nullptr);
+    ASSERT_NE(tabs->tab_at(1), nullptr);
+    EXPECT_EQ(tabs->tab_at(0)->label(), "One");
+    EXPECT_EQ(tabs->tab_at(1)->label(), "Two");
+    // assert the strip content reached the first page, which is what a composed title needs (§8)
+    ASSERT_NE(tabs->tab_at(0)->title(), nullptr);
+    EXPECT_EQ(tabs->tab_at(0)->title()->child_count(), 1u);
+    EXPECT_EQ(tabs->tab_at(1)->title(), nullptr);
 }

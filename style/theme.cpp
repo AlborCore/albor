@@ -78,6 +78,23 @@ namespace albor
             // the track rounds into a capsule and the thumb rounds into a circle (§8.4)
             theme.set_slider_track_radius(2.0f);
             theme.set_slider_thumb_radius(11.0f);
+            // a macos progress bar is a six point capsule, which is the system indicator (§8.4)
+            theme.set_progress_bar_extent(Size{220.0f, 6.0f});
+            theme.set_progress_bar_track_thickness(6.0f);
+            theme.set_progress_bar_radius(3.0f);
+            // a macos tab strip is thirty two tall with a two point indicator (§8.4)
+            theme.set_tab_strip_height(32.0f);
+            theme.set_tab_padding_horizontal(12.0f);
+            theme.set_tab_minimum_width(72.0f);
+            theme.set_tab_indicator_height(2.0f);
+            // a macos radio is sixteen round with a two point ring, and a compact stepper (§8.4)
+            theme.set_radio_button_size(Size{16.0f, 16.0f});
+            theme.set_radio_button_outline(2.0f);
+            theme.set_radio_button_gap(6.0f);
+            theme.set_radio_group_spacing(8.0f);
+            theme.set_numeric_stepper_extent(Size{120.0f, 30.0f});
+            theme.set_numeric_stepper_button_width(28.0f);
+            theme.set_numeric_stepper_padding(8.0f);
             // the ring stands one away and rounds with the plate it surrounds (§6.1, §6.2)
             theme.set_focus_ring_offset(1.0f);
             theme.set_focus_ring_radius(6.0f);
@@ -116,6 +133,23 @@ namespace albor
             // discrete steps on a fluent slider show their ticks (§8.4)
             theme.set_slider_tick_length(4.0f);
             theme.set_slider_tick_width(1.5f);
+            // a fluent progress bar is a four point capsule, which is the language indicator (§8.4)
+            theme.set_progress_bar_extent(Size{220.0f, 4.0f});
+            theme.set_progress_bar_track_thickness(4.0f);
+            theme.set_progress_bar_radius(2.0f);
+            // a fluent tab strip is thirty six tall with a two point indicator (§8.4)
+            theme.set_tab_strip_height(36.0f);
+            theme.set_tab_padding_horizontal(14.0f);
+            theme.set_tab_minimum_width(76.0f);
+            theme.set_tab_indicator_height(2.0f);
+            // a fluent radio is eighteen round with a one and a half point ring (§8.4)
+            theme.set_radio_button_size(Size{18.0f, 18.0f});
+            theme.set_radio_button_outline(1.5f);
+            theme.set_radio_button_gap(6.0f);
+            theme.set_radio_group_spacing(8.0f);
+            theme.set_numeric_stepper_extent(Size{140.0f, 32.0f});
+            theme.set_numeric_stepper_button_width(32.0f);
+            theme.set_numeric_stepper_padding(8.0f);
             theme.set_focus_ring_offset(1.0f);
             theme.set_focus_ring_radius(5.0f);
             // the hierarchy resolves at the sizes the system font is set at (§8.4)
@@ -146,6 +180,23 @@ namespace albor
             theme.set_slider_track_radius(1.5f);
             theme.set_slider_thumb_radius(7.0f);
             theme.set_slider_thumb_shadow(0.14f);
+            // a tool progress bar is a four point capsule, which is the compact indicator (§8.4)
+            theme.set_progress_bar_extent(Size{220.0f, 4.0f});
+            theme.set_progress_bar_track_thickness(4.0f);
+            theme.set_progress_bar_radius(2.0f);
+            // a tool tab strip is twenty eight tall with a two point indicator (§8.4)
+            theme.set_tab_strip_height(28.0f);
+            theme.set_tab_padding_horizontal(10.0f);
+            theme.set_tab_minimum_width(64.0f);
+            theme.set_tab_indicator_height(2.0f);
+            // a tool radio is sixteen round with a one point ring, and a compact stepper (§8.4)
+            theme.set_radio_button_size(Size{16.0f, 16.0f});
+            theme.set_radio_button_outline(1.0f);
+            theme.set_radio_button_gap(5.0f);
+            theme.set_radio_group_spacing(6.0f);
+            theme.set_numeric_stepper_extent(Size{120.0f, 28.0f});
+            theme.set_numeric_stepper_button_width(24.0f);
+            theme.set_numeric_stepper_padding(6.0f);
             theme.set_focus_ring_offset(1.0f);
             theme.set_focus_ring_radius(5.0f);
             // the hierarchy resolves at the reading sizes a tool screen carries (§8.4)
@@ -516,6 +567,76 @@ namespace albor
         m_metrics.slider_step = value;
     }
 
+    void Theme::set_progress_bar_extent(Size value) {
+        // the extent is stored whole, because the control measures to one box (§8.2)
+        m_metrics.progress_bar_extent = value;
+    }
+
+    void Theme::set_progress_bar_track_thickness(float value) {
+        // the thickness is one value because the track is drawn as a single band (§6.1)
+        m_metrics.progress_bar_track_thickness = value;
+    }
+
+    void Theme::set_progress_bar_radius(float value) {
+        // the radius is one value because a bar rounds every end the same (§8.4)
+        m_metrics.progress_bar_radius = value;
+    }
+
+    void Theme::set_tab_strip_height(float value) {
+        // the height is one value because every tab shares the strip it sits in (§8.2)
+        m_metrics.tab_strip_height = value;
+    }
+
+    void Theme::set_tab_padding_horizontal(float value) {
+        // the inset is one value because every label sits the same depth from its edge (§8.2)
+        m_metrics.tab_padding_horizontal = value;
+    }
+
+    void Theme::set_tab_minimum_width(float value) {
+        // the minimum is one value because every tab takes at least the same width (§8.2)
+        m_metrics.tab_minimum_width = value;
+    }
+
+    void Theme::set_tab_indicator_height(float value) {
+        // the thickness is one value because the strip draws one indicator (§6.1)
+        m_metrics.tab_indicator_height = value;
+    }
+
+    void Theme::set_radio_button_size(Size value) {
+        // the extent is stored whole, because a radio button is one circle (§8.2)
+        m_metrics.radio_button_size = value;
+    }
+
+    void Theme::set_radio_button_outline(float value) {
+        // the outline is one width because the circle has no per side override (§6.1)
+        m_metrics.radio_button_outline = value;
+    }
+
+    void Theme::set_radio_button_gap(float value) {
+        // the gap is one value because the label sits on one side of the circle (§8.2)
+        m_metrics.radio_button_gap = value;
+    }
+
+    void Theme::set_radio_group_spacing(float value) {
+        // the spacing is the default a group uses when the author writes none (§8.2)
+        m_metrics.radio_group_spacing = value;
+    }
+
+    void Theme::set_numeric_stepper_extent(Size value) {
+        // the extent is stored whole, because the control measures to one box (§8.2)
+        m_metrics.numeric_stepper_extent = value;
+    }
+
+    void Theme::set_numeric_stepper_button_width(float value) {
+        // the zone width is one value because both sides are the same target (§8.2)
+        m_metrics.numeric_stepper_button_width = value;
+    }
+
+    void Theme::set_numeric_stepper_padding(float value) {
+        // the inset is one value because the plate pads both sides the same (§8.2)
+        m_metrics.numeric_stepper_padding = value;
+    }
+
     Color Theme::surface() const {
         // the surface is stored by value, so a frame background reads the installed one (§6.1)
         return m_surface;
@@ -584,6 +705,56 @@ namespace albor
     void Theme::set_slider_fill(Color value) {
         // the normal state is the common case, which is the shorthand (§8.4)
         m_palette.slider_fill[state_index(ControlState::Normal)] = value;
+    }
+
+    void Theme::set_progress_bar_track(Color value) {
+        // the normal state is the common case, which is the shorthand (§6.1)
+        m_palette.progress_bar_track[state_index(ControlState::Normal)] = value;
+    }
+
+    void Theme::set_progress_bar_track(ControlState state, Color value) {
+        // the entry is written by its state index, which is what the resolver reads (§6.1)
+        m_palette.progress_bar_track[state_index(state)] = value;
+    }
+
+    void Theme::set_progress_bar_fill(Color value) {
+        // the normal state is the common case, which is the shorthand (§6.1)
+        m_palette.progress_bar_fill[state_index(ControlState::Normal)] = value;
+    }
+
+    void Theme::set_progress_bar_fill(ControlState state, Color value) {
+        // the entry is written by its state index, which is what the resolver reads (§6.1)
+        m_palette.progress_bar_fill[state_index(state)] = value;
+    }
+
+    void Theme::set_tab_label(Color value) {
+        // the normal state is the common case, which is the shorthand (§6.1)
+        m_palette.tab_label[state_index(ControlState::Normal)] = value;
+    }
+
+    void Theme::set_tab_label(ControlState state, Color value) {
+        // the entry is written by its state index, which is what the resolver reads (§6.1)
+        m_palette.tab_label[state_index(state)] = value;
+    }
+
+    void Theme::set_tab_label_selected(Color value) {
+        // the normal state is the common case, which is the shorthand (§6.1)
+        m_palette.tab_label_selected[state_index(ControlState::Normal)] = value;
+    }
+
+    void Theme::set_tab_label_selected(ControlState state, Color value) {
+        // the entry is written by its state index, which is what the resolver reads (§6.1)
+        m_palette.tab_label_selected[state_index(state)] = value;
+    }
+
+    void Theme::set_tab_indicator(Color value) {
+        // the normal state is the common case, which is the shorthand (§6.1)
+        m_palette.tab_indicator[state_index(ControlState::Normal)] = value;
+    }
+
+    void Theme::set_tab_indicator(ControlState state, Color value) {
+        // the entry is written by its state index, which is what the resolver reads (§6.1)
+        m_palette.tab_indicator[state_index(state)] = value;
     }
 
     void Theme::set_canvas_background(Color value) {

@@ -1,5 +1,7 @@
 #include "render/render_executor.h"
 
+#include "render/frame_profile.h"
+
 namespace albor
 {
     RenderExecutor::RenderExecutor(RendererBackend* backend) :
@@ -32,6 +34,9 @@ namespace albor
             // a stopped executor accepts nothing, because its thread is gone (§6.1)
             if (m_stopping)
                 return false;
+            // a pending frame the new one replaces is a frame the ui thread dropped, which the profile counts (§6.1)
+            if (!m_requests.empty())
+                profile_coalesced();
             // an older pending frame is dropped, so the render thread always draws the newest state (§6.1)
             m_requests.clear();
             // append to list of pending frame requests
@@ -131,7 +136,10 @@ namespace albor
             return;
         }
         // stage two only touches the immutable scene and the surface, never application state (§6.1, AD-18)
+        const FrameProfileScope render_scope;
         m_backend->execute_frame(*request.surface, *request.scene);
+        // the whole stage two call is what the render thread spends on the frame, which the profile reports (§6.1)
+        profile_render_frame(render_scope.elapsed_ms());
         {
             // the lock is taken to publish the count and to release the flush waiters (§6.1)
             const std::lock_guard<std::mutex> lock(m_mutex);

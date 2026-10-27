@@ -10,10 +10,10 @@ namespace albor
     struct SizeConstraints
     {
         // the smallest extent the child may take
-        Size minimum;
+        Size minimum{};
 
         // the extent the child would take if nothing constrained it
-        Size preferred;
+        Size preferred{};
 
         // the largest extent the child may take, which infinity leaves unbounded
         Size maximum{std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity()};

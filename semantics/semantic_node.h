@@ -32,6 +32,24 @@ namespace albor
         // a continuous value the user drags
         Slider,
 
+        // a read only value that shows how far a task has advanced
+        ProgressBar,
+
+        // a container that groups tab items and owns their single selection
+        TabView,
+
+        // one page of a tab view, which the user selects
+        TabItem,
+
+        // a container that groups radio buttons and owns their single choice
+        RadioGroup,
+
+        // one choice in a radio group
+        RadioButton,
+
+        // a bounded numeric value with an increment and a decrement
+        NumericStepper,
+
         // a drawing surface, which the user may interact with directly
         Canvas,
 

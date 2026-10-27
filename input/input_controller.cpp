@@ -15,6 +15,27 @@ namespace albor
     }
 
     void InputController::release_subtree(UiNode* node) {
+        // a leaving subtree drops the caret it held, because a hidden control must not keep receiving keys (§8.3)
+        UiNode* focused = m_focus.focused();
+        if (focused != nullptr) {
+            // the focused node descends from the leaving subtree, so the caret moves out first (§8.3)
+            for (const UiNode* current = focused; current != nullptr; current = current->parent()) {
+                if (current == node) {
+                    m_focus.clear_focus();
+                    break;
+                }
+            }
+        }
+        // a leaving subtree drops the drag capture it held, because moves must not reach a hidden control (§8.3)
+        if (m_capture != nullptr) {
+            // the captured node descends from the leaving subtree, so the capture is released (§8.3)
+            for (const UiNode* current = m_capture; current != nullptr; current = current->parent()) {
+                if (current == node) {
+                    m_capture = nullptr;
+                    break;
+                }
+            }
+        }
         // the chain runs deepest first, so the node's descendants stand before it and its ancestors behind (§8.3)
         const auto found = std::find(m_hover_chain.begin(), m_hover_chain.end(), node);
         // a subtree that was never hovered holds nothing to exit (§8.3)

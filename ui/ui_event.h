@@ -275,10 +275,10 @@ namespace albor
         EventKind kind = EventKind::PointerDown;
 
         // the logical position a pointer event carries, which is the origin for every other kind
-        Point position;
+        Point position{};
 
         // the logical position the pointer event started from, which a drag measures against
-        Point origin;
+        Point origin{};
 
         // the wheel delta a wheel event carries, which is zero for every other kind
         float scroll = 0.0f;
@@ -290,13 +290,13 @@ namespace albor
         Key key = Key::None;
 
         // the modifier keys held during the event, which distinguishes shift tab (§8.3)
-        Modifiers modifiers;
+        Modifiers modifiers{};
 
         // the utf8 text a text or composing event carries, which is the marked string while composing (§8.3)
-        std::string text;
+        std::string text{};
 
         // the document range an input method asked to replace, which is absent when it asked for none (§8.3)
-        std::optional<TextInputRange> replacement;
+        std::optional<TextInputRange> replacement{};
 
         // whether a handler claimed the event, which stops the walk at this node (§8.3)
         bool handled = false;
