@@ -66,6 +66,10 @@ jobs:
         if: matrix.enable
         run: ${{ matrix.setup }}
 
+      - name: msvc environment
+        if: matrix.enable && runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: restore the vcpkg binary cache
         if: matrix.enable
         uses: actions/cache@v5
