@@ -29,8 +29,8 @@ Cross-file `.ui` composition and the TextField undo lifetime defect are merged f
 `application-readiness` branch. The continuation branch adds the composition and control
 vocabulary for the shell, the toolbar and the netlist editor. ComboBox now opens the native
 `WindowRole::Popup`/`ListBox` surface when the application owns the stage, and keeps the in-tree
-overlay as the fallback for detached trees and tests; the Windows half of that pass is verified
-by CI before #18 closes.
+overlay as the fallback for detached trees and tests; the Windows half of that pass passed CI
+run 40691294678, and #18 is complete.
 
 A full port is not the right next step. The right next step is the vertical slice described at the
 end of this document, with the open P0 list cleared first.
@@ -55,7 +55,7 @@ part of the gap.
 | Two-way binding ergonomics | The explicit write-back pattern remains; it is workable and no longer the first blocker |
 | No draw vocabulary | Still two primitives; #28 remains |
 | No menus or context menus | Still absent; #55 remains |
-| No ComboBox, Panel/Card | `Panel`/`Card`, the ComboBox trigger and its native popup surface ship on this branch; #15 and #18 stay open only until the pushed CI parity run |
+| No ComboBox, Panel/Card | `Panel`/`Card`, the ComboBox trigger and its native popup surface ship on this branch and pass CI on both platforms |
 | TextField polish | Word selection (#68) and IME mark wrapping (#70) remain; undo lifetime (#69) is fixed on this branch and covered by CI |
 
 The result is a framework that covers the ordinary form and list surface well. The remaining work
@@ -90,8 +90,8 @@ desktop port.
   application installs a `PopupHost`, falling back to the in-tree overlay for detached trees. The
   popup is hidden rather than destroyed, follows its owner, and dismisses on outside press or
   deactivation (`window/popup_host.h`, `widgets/combo_box.h`).
-- **Platforms:** macOS and Windows are implemented; Linux is planned. The macOS jobs pass
-  locally; the Windows job runs after the phase push and is the authority for the Windows source.
+- **Platforms:** macOS and Windows are implemented; Linux is planned. The macOS and Windows
+  jobs pass in CI run 40691294678, including the popup parity tests on both platforms.
 
 ## P0 — blockers for an application port
 
@@ -127,15 +127,14 @@ semantics are covered by tests. The popup is owned by the trigger window, placed
 flipped and clamped into the work area, follows an owner move, forwards a trigger click to the
 toggle path, and is hidden rather than destroyed for cheap reopening. The in-tree overlay remains
 the fallback when no application `PopupHost` owns the stage. macOS runtime validation covered open,
-pointer selection, keyboard selection, trigger toggle, outside dismissal and reopening; the
-Windows CI run remains the platform authority.
+pointer selection, keyboard selection, trigger toggle, outside dismissal and reopening. CI run
+40691294678 passed the Windows owner-move, anchor, capture-handoff and forwarding tests.
 
 **Why it blocks.** The reference application has 30 ComboBox instantiations. There is no trigger,
 no popup list, no expanded state and no single-choice selection surface for a compact set of
 options. `ListBox` and `WindowRole::Popup` now exist, so the two hard dependencies are in place.
 
-**Next move.** Push the branch and verify the Windows owner/anchor/forward tests in CI before
-closing #18. The four P0 controls then move to the vertical slice.
+**Next move.** None for #18; it is complete and the vertical slice follows.
 
 **Acceptance.**
 
@@ -302,14 +301,14 @@ a separate issue-hygiene pass so their status stops misleading the next cycle.
 ## Issue closure for the continuation branch
 
 `p0-widget-continuation` completes **#15** Panel/Card, **#18** ComboBox, **#131** icon/content
-Button and **#132** styled TextField. #18 stays open only until the pushed Windows CI run verifies
-the native popup owner, anchor and forwarding tests; the branch has no other incomplete P0 work.
+Button and **#132** styled TextField. CI run 40691294678 passed the native popup owner, anchor
+and forwarding tests, so **#18** is closed. The branch has no other incomplete P0 work.
 
 ## Recommended sequence
 
 | Cycle | Goal | Work |
 | --- | --- | --- |
-| 1 — make components reusable | A page can be assembled from shared `.ui` files | Cross-file composition (merged), #69 undo lifetime (merged), #15 Panel/Card (done), icon/content Button (done), #18 ComboBox (native popup done; CI verification pending) |
+| 1 — make components reusable | A page can be assembled from shared `.ui` files | Cross-file composition (merged), #69 undo lifetime (merged), #15 Panel/Card (done), icon/content Button (done), #18 ComboBox (native popup done; Windows CI green) |
 | 2 — make the editing surfaces real | The netlist editor and chart views reach feature parity | Styled TextField, #28 path curves and draw primitives |
 | 3 — make the shell complete | The application looks and behaves like the reference | #55 menus, #72 per-node styling, #74 focus proof, #57 accessibility actions, #68/#70 field polish, #58/#56 command ergonomics |
 
@@ -363,8 +362,9 @@ The framework is ready for the full port when all of the following are true:
 - `bash build/check-format.sh` passes at the phase boundary before the review.
 - The generated `p0_widgets.ui` and `netlist_editor.ui` fixtures compile through codegen, so the
   new catalogue entries and record construction are exercised by the build.
-- Windows build and parity counts are authoritative in CI; this branch is not pushed yet, so the
-  Windows run is pending.
+- CI run `40691294678` passed both Windows configurations: 3,565 debug tests (3,563 passed,
+  2 skipped) and 3,387 release tests (3,385 passed, 2 skipped). The 14 Win32 popup tests passed.
+- The macOS debug CI suite runs 3,588 tests and the release suite 3,408, both with zero failures.
 - The earlier review found two blockers and several majors. The branch now fixes the null
   text-engine popup path, gives the popup a root overlay layer so later siblings cannot cover or
   steal it, separates the highlighted row from the committed selection, preserves a selection

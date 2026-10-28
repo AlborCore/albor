@@ -28,7 +28,7 @@ Both adapters implement the same `PlatformWindow` and `PlatformEventLoop` interf
 
 | Area | macOS | Windows | Assessment |
 | --- | --- | --- | --- |
-| Window creation, show/hide, close veto | AppKit, 927-line adapter | Win32, 948-line adapter | Parity |
+| Window creation, show/hide, close veto | AppKit, 927-line adapter | Win32, 952-line adapter | Parity |
 | Popup role | `NSPanel`, owned child, anchored placement, non-activating, non-opaque layer | Win32 popup, owned child, anchored placement, topmost, non-activating | Parity |
 | Outside-click, trigger-click and deactivation dismissal | Present and tested, with anchor exclusion | Present and tested, with trigger forwarding | Parity |
 | Resize, DPI/scale changes | AppKit notifications | `WM_SIZE`, `WM_DPICHANGED`, tested | Parity |
@@ -184,27 +184,20 @@ the host with `albor automation: serving <descriptor>` instead of the previous n
 
 ## 6. CI and verification
 
-The last full Windows run, before the radio and stepper suite, recorded:
+The latest full Windows run, CI `40691294678` at `a8e019f`, recorded:
 
 | configuration | suite | result |
 | --- | --- | ---: |
-| debug | `albor-tests.exe` | 3,371 tests: 3,369 passed, 2 skipped, 0 failed |
-| release | `albor-tests.exe` | 3,201 tests: 3,199 passed, 2 skipped, 0 failed |
+| debug | `albor-tests.exe` | 3,565 tests: 3,563 passed, 2 skipped, 0 failed |
+| release | `albor-tests.exe` | 3,387 tests: 3,385 passed, 2 skipped, 0 failed |
 | debug | `albor-generated-font-checks.exe` | 4 passed |
 | release | `albor-generated-font-checks.exe` | 4 passed |
-| debug | `albor-render-albor-auto-checks.exe` | 1 passed |
-| release | `albor-render-albor-auto-checks.exe` | 1 passed |
-| debug | `albor-render-blend2d-auto-checks.exe` | 4 passed |
-| release | `albor-render-blend2d-auto-checks.exe` | 4 passed |
 
 `bash build/check-format.sh` passes, and `bash build/shaders.sh --d3d` reports that the committed DXBC artifact
 matches the six HLSL entry points. The Windows host cannot build the macOS bridge, so the macOS half of this
-pass was verified locally instead: the macOS debug suite ran 3,476 tests with 0 failures. The Windows counts
-above predate the radio, stepper and Image widget suites, and the pushed CI run is the authority for both platforms.
-
-The native ComboBox popup pass has not run on Windows yet. The local macOS debug suite runs **3,588 tests** with
-zero failures, including all 14 macOS popup tests; the Windows counts below predate this pass, so the pushed CI run
-is the authority for the new owner, anchor, capture-handoff and forward path.
+pass runs in the macOS CI jobs: the debug suite runs **3,588 tests** with zero failures, including all 14 macOS
+popup tests, and the release suite runs 3,408 tests with zero failures. The 14 Win32 popup tests passed in both
+Windows configurations, including owner-move following, trigger-click forwarding and capture handoff.
 
 The complete Windows suite has exactly **2 skips**:
 
