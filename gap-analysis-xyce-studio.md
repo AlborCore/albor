@@ -30,7 +30,7 @@ Cross-file `.ui` composition and the TextField undo lifetime defect are merged f
 vocabulary for the shell, the toolbar and the netlist editor. ComboBox now opens the native
 `WindowRole::Popup`/`ListBox` surface when the application owns the stage, and keeps the in-tree
 overlay as the fallback for detached trees and tests; the Windows half of that pass passed CI
-run 40691294678, and #18 is complete.
+run 40691294678, so #18 is ready to close when the branch merges.
 
 A full port is not the right next step. The right next step is the vertical slice described at the
 end of this document, with the open P0 list cleared first.
@@ -134,7 +134,7 @@ pointer selection, keyboard selection, trigger toggle, outside dismissal and reo
 no popup list, no expanded state and no single-choice selection surface for a compact set of
 options. `ListBox` and `WindowRole::Popup` now exist, so the two hard dependencies are in place.
 
-**Next move.** None for #18; it is complete and the vertical slice follows.
+**Next move.** None for #18; it is implemented and CI green, and closes when the branch merges.
 
 **Acceptance.**
 
@@ -302,7 +302,8 @@ a separate issue-hygiene pass so their status stops misleading the next cycle.
 
 `p0-widget-continuation` completes **#15** Panel/Card, **#18** ComboBox, **#131** icon/content
 Button and **#132** styled TextField. CI run 40691294678 passed the native popup owner, anchor
-and forwarding tests, so **#18** is closed. The branch has no other incomplete P0 work.
+and forwarding tests. **#18** remains open until the branch merges to `main`; the branch has no
+other incomplete P0 work.
 
 ## Recommended sequence
 
