@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "compiler/codegen/codegen.h"
@@ -23,7 +24,7 @@ namespace
         // the structs the file declares join the catalog, which is what makes a property of one resolve (§11.1)
         register_ui_structs(file, catalog, diagnostics);
         // the enums the file declares join the catalog, which is what makes a property of one hold a member (§11.1)
-        register_ui_enums(file, catalog);
+        register_ui_enums(file, catalog, diagnostics);
         // the checker resolves it against the catalog, which is where the native types come from (§11.1, AD-17)
         const CheckedFile checked = TypeChecker(catalog, diagnostics).check(file);
         // the generator turns the checked file into the facade files, which is what the driver writes (§11.3)
@@ -37,6 +38,25 @@ namespace
     std::vector<GeneratedFile> generate(std::string_view source, DiagnosticList& diagnostics) {
         // the builtin catalog is what a ui file may use without a manifest (§11.3, §8)
         return generate(source, diagnostics, ElementCatalog::with_builtins());
+    }
+
+    std::vector<GeneratedFile> generate_imported(std::string_view source, std::vector<ImportedComponent> imported, DiagnosticList& diagnostics) {
+        // the scanner runs first, because the parser takes units (§11.1)
+        const std::vector<Token> tokens = Lexer(source, diagnostics).tokenize();
+        // the parser builds the untyped tree (§11.1)
+        const SourceFile file = Parser(tokens, diagnostics).parse();
+        // the builtin catalog is what the source uses beside the imported interface (§11.3, §8)
+        ElementCatalog catalog = ElementCatalog::with_builtins();
+        // the checker resolves the source against the interfaces the loader would have supplied (§11.1)
+        TypeChecker checker(catalog, diagnostics);
+        checker.set_imported_components(std::move(imported));
+        const CheckedFile checked = checker.check(file);
+        // the generator turns the checked file into the facade files, which is what the driver writes (§11.3)
+        CodeGenerator generator(diagnostics);
+        // the catalog is what tells the generator a native type is generatable (§11.2, AD-17)
+        generator.set_catalog(&catalog);
+        // the generated units are returned, which is where the imported include appears (§14.2)
+        return generator.generate(checked);
     }
 
     // the output of one generator run, including the embedded assets it read (§6.4, §14.2)
@@ -58,7 +78,7 @@ namespace
         // the structs the file declares join the catalog, which is what makes a property of one resolve (§11.1)
         register_ui_structs(file, catalog, diagnostics);
         // the enums the file declares join the catalog, which is what makes a property of one hold a member (§11.1)
-        register_ui_enums(file, catalog);
+        register_ui_enums(file, catalog, diagnostics);
         // the checker resolves it against the catalog, which is where the native types come from (§11.1, AD-17)
         const CheckedFile checked = TypeChecker(catalog, diagnostics).check(file);
         // the generator turns the checked file into the facade files, which is what the driver writes (§11.3)
@@ -2820,6 +2840,30 @@ TEST(Codegen, AnAssetNamespaceAvoidsAReservedSpelling) {
     const GeneratedFile& asset_header = file_named(generation.files, "-9--panel-_assets.h");
     EXPECT_TRUE(contains(asset_header.content, "namespace assets_9_panel_assets"));
     EXPECT_FALSE(contains(asset_header.content, "__"));
+}
+
+TEST(Codegen, IncludesAndConstructsAnImportedComponent) {
+    // arrange an imported interface with one property and one signal, which the source instantiates (§11.1)
+    CheckedProperty title;
+    title.name = "title";
+    title.type = scalar(TypeKind::String);
+    CheckedSignal dismissed;
+    dismissed.name = "dismissed";
+    ImportedComponent panel;
+    panel.name = "SidePanel";
+    panel.header = "side_panel.h";
+    panel.properties.push_back(std::move(title));
+    panel.signals.push_back(std::move(dismissed));
+    DiagnosticList diagnostics;
+    // act the source is generated against the imported interface (§11.1)
+    const std::vector<GeneratedFile> files = generate_imported("component C { SidePanel { title: \"x\"; on_dismissed: { } } }", {std::move(panel)}, diagnostics);
+    // assert the generated source includes the imported header and constructs its facade (§11.3)
+    ASSERT_EQ(diagnostics.count(), 0U);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "#include \"side_panel.h\""));
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<SidePanel>(engine, text_engine)"));
+    EXPECT_TRUE(contains(cpp.content, "->set_title(std::string(\"x\"))"));
+    EXPECT_TRUE(contains(cpp.content, "->set_on_dismissed("));
 }
 
 TEST(Codegen, AnAssetNamespaceFallsBackWhenTheStemIsEmpty) {

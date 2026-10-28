@@ -275,16 +275,25 @@ namespace albor::compiler
         declaration.span.start = peek().span.start;
         // the keyword is consumed, because the caller has already matched it (§11.1, AD-17)
         advance();
-        // the module name is read as a dotted path, because a module may be qualified (§11.1, AD-17)
-        declaration.module = expect_identifier();
-        // a dotted module keeps reading its segments until the terminator (§11.1, AD-17)
-        while (at_punctuation(".")) {
-            // the dot is consumed, because the caller has committed to another segment (§11.1, AD-17)
+        // a quoted string names a ui file, which a component declaration in that file brings into scope (§11.1)
+        if (peek().kind == Token::Kind::String) {
+            // the decoded path is kept as written, because the loader resolves it against the importing file (§11.1)
+            declaration.path = peek().value;
+            // the string is consumed, because the path is read exactly once (§11.1)
             advance();
-            // the separator joins the segments, because the module name is a single token (§11.1, AD-17)
-            declaration.module += ".";
-            // the next segment is required, so a trailing dot is reported (§11.1, AD-17)
-            declaration.module += expect_identifier();
+        }
+        else {
+            // the module name is read as a dotted path, because a module may be qualified (§11.1, AD-17)
+            declaration.module = expect_identifier();
+            // a dotted module keeps reading its segments until the terminator (§11.1, AD-17)
+            while (at_punctuation(".")) {
+                // the dot is consumed, because the caller has committed to another segment (§11.1, AD-17)
+                advance();
+                // the separator joins the segments, because the module name is a single token (§11.1, AD-17)
+                declaration.module += ".";
+                // the next segment is required, so a trailing dot is reported (§11.1, AD-17)
+                declaration.module += expect_identifier();
+            }
         }
         // the declaration ends at the terminator, which is required (§11.1)
         expect_punctuation(";");

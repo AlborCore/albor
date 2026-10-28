@@ -84,6 +84,18 @@ namespace albor::language_server
 
     std::size_t DocumentStore::size() const { return m_documents.size(); }
 
+    std::vector<std::string> DocumentStore::uris() const {
+        // the uris accumulate in stable order, because the map keeps them sorted (§12.2)
+        std::vector<std::string> uris;
+        // the capacity is reserved once, because the size is known (§12.2)
+        uris.reserve(m_documents.size());
+        // each open document contributes its uri, which is how a compile resolves an import buffer (§12.2)
+        for (const auto& [uri, document] : m_documents)
+            uris.push_back(uri);
+        // the uris are returned whole (§12.2)
+        return uris;
+    }
+
     void DocumentStore::close(std::string_view uri) {
         // the document is looked up first, because a transparent erase needs a key of the map's own type (§12.2)
         const auto found = m_documents.find(uri);

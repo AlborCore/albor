@@ -161,6 +161,8 @@ namespace albor
             .label = entry.label.empty() ? m_state.label : entry.label,
             .undo = [entry, invocation](const CommandInvocation&) { entry.undo(invocation); },
             .redo = [entry, invocation](const CommandInvocation&) { entry.redo(invocation); },
+            .owner = entry.owner,
+            .live = entry.live,
         });
     }
 } // namespace albor

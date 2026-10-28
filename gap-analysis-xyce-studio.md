@@ -18,21 +18,19 @@ progress, radio groups, numeric steppers, command-bound buttons and a retained c
 cannot yet host the full Xyce Studio shell without either duplicating component structure or
 living without controls the application uses on nearly every page.
 
-**There are six P0 gaps.**
+**There are four open P0 gaps.**
 
-1. Cross-file `.ui` composition — no ticket, residual of #39
-2. ComboBox — #18
-3. Panel/Card — #15
-4. TextField undo lifetime — #69
-5. Icon/content Button — no ticket
-6. Styled/syntax-highlighted TextField — no ticket
+1. ComboBox — #18
+2. Panel/Card — #15
+3. Icon/content Button — #131
+4. Styled/syntax-highlighted TextField — #132
 
-The first three are composition and control-vocabulary gaps. The fourth is a correctness defect.
-The last two are the gaps that keep the toolbar and the netlist editor — the two surfaces the
-application spends most of its time in — from being written in the declarative language.
+Cross-file `.ui` composition and the TextField undo lifetime defect are implemented on the
+`application-readiness` branch, pushed, and covered by the macOS and Windows CI jobs. The remaining
+four are composition and control vocabulary for the shell, the toolbar and the netlist editor.
 
 A full port is not the right next step. The right next step is the vertical slice described at the
-end of this document, with the P0 list cleared first.
+end of this document, with the open P0 list cleared first.
 
 ## What changed since the last revision
 
@@ -44,7 +42,7 @@ part of the gap.
 | No text input at all | `TextField` ships with caret, selection, clipboard, IME, undo, multi-line and its own scrolling (#13, #67) |
 | No conditional element or `visible` binding | `if`, `visible` and `Repeat` ship (#39) |
 | No `struct`, `enum`, `global` or `function` | All four are top-level declarations, with records and value sets (`docs/ui-language/types.md`) |
-| No `@children` slot or component reuse | Same-file composition and one-level inheritance with `@children` ship |
+| No `@children` slot or component reuse | Same-file composition, one-level inheritance with `@children`, and cross-file `import` ship on this branch with CI coverage |
 | No scroll container | `ScrollView` and virtualized `ListBox` ship (#14, #16) |
 | Missing RadioButton, RadioGroup, SpinBox, Image, ProgressBar, TabView | Radio controls, `NumericStepper`, `Image`, `ProgressBar`, `TabView`, `Tab` and `TabTitle` ship (#19) |
 | No image loading or compile-time asset embedding | `@image` embeds PNG assets; preview and devrt resolve the same path (#9, #19) |
@@ -55,21 +53,27 @@ part of the gap.
 | No draw vocabulary | Still two primitives; #28 remains |
 | No menus or context menus | Still absent; #55 remains |
 | No ComboBox, Panel/Card | Still absent; #18 and #15 remain |
-| TextField polish | Word selection (#68), IME mark wrapping (#70) and undo lifetime (#69) remain |
+| TextField polish | Word selection (#68) and IME mark wrapping (#70) remain; undo lifetime (#69) is fixed on this branch and covered by CI |
 
 The result is a framework that covers the ordinary form and list surface well. The remaining work
 is concentrated in the application shell, reusable component structure, and the two heavyweight
 editing surfaces.
 
+The branch also adds the `albor-lsp` stdio host and import-aware editor diagnostics. Manifest-native
+catalogs (#126) and a VS Code client (#130) remain tooling follow-ups; they do not block the
+desktop port.
+
 ## Current baseline
 
 - **Widget catalogue:** 21 elements — eleven containers and ten leaves
   (`docs/components/index.md`).
-- **Composition:** same-file only. A component can instantiate only components its own file
-  declares. `import` currently resolves manifest modules, not `.ui` components
-  (`docs/ui-language/components.md#composition-vs-inheritance`).
+- **Composition:** same-file composition, cross-file `import "path.ui"` and one-level inheritance.
+  Each imported file declares one component named after its stem, imports resolve relative to the
+  importing file, and cycles are rejected. Compiled output constructs the imported facade; preview
+  and the dev runtime expand the imported tree (`docs/ui-language/components.md`).
 - **Text editing:** one `TextField` leaf, single-run rendering, with caret, selection, clipboard,
-  IME, undo, multi-line and scrolling (`widgets/text_field.h`).
+  IME, undo, multi-line and scrolling (`widgets/text_field.h`). The field owns its undo entries
+  and revokes them when it is destroyed or bound to another stack.
 - **Button:** text-only leaf with a plate, label, disabled state, command binding and
   accessibility action (`widgets/button.h`).
 - **Canvas:** a closed draw vocabulary of `fill_rect` and `fill_rounded_rect`; richer content
@@ -79,35 +83,32 @@ editing surfaces.
 - **Accessibility:** macOS NSAccessibility and Windows UI Automation bridges, with roles and
   actions; increment, decrement and toggle are not yet reachable, and value writing is read-only
   (`macos-windows.md`).
-- **Platforms:** macOS and Windows are implemented; Linux is planned. The latest pushed CI run for
-  this branch is green for both implemented platforms.
+- **Platforms:** macOS and Windows are implemented; Linux is planned. The branch is pushed and
+  its macOS and Windows CI jobs are green, including the Windows debug build-scope check.
 
 ## P0 — blockers for an application port
 
-### P0.1 Cross-file `.ui` composition
+### P0.1 Cross-file `.ui` composition — done and CI green
 
 **Ticket:** none; residual of #39.
 
-**Current rule.** A component instantiates only components the same file declares. A file may
-import manifest modules, but it cannot import another `.ui` file's components.
+**State.** Implemented on this branch. `import "path.ui";` resolves relative to the importing
+file, an imported file declares exactly one component named after its stem, imports may be
+transitive, and cycles are rejected. The compiled path generates a facade per file and constructs
+it from the importer. The preview and the dev runtime expand the imported tree because they have
+no generated facade; expression substitution applies the instance properties and the declared
+defaults. CMake `IMPORTS` records the direct imports, orders the generated units, and the build
+scope proof covers imported body and interface edits.
 
-**Why it blocks.** Xyce Studio has 22 components — parameter panels, chart views, modal panels,
-the netlist editor, the shell. Copying one shared panel into every screen, or reducing each screen
-to a single file, is not a maintainable application structure. This is the first gap because every
-other page-level widget depends on being reusable.
+**Acceptance evidence.**
 
-**Next move.** Make `import` resolve component symbols across `.ui` files, compile each file to
-its own facade, build the component graph, reject cycles, and teach codegen the include order and
-the per-file rebuild boundary. The feature must preserve the existing same-file shadow rule.
+- Two `.ui` files compile, preview and reload through the compiled and design-time paths.
+- Cycle, missing-file and naming diagnostics carry the offending file path.
+- Editing an imported body rebuilds only that component; editing its interface rebuilds it and its
+  importer (`bash build/check-build-scope.sh`).
+- Same-file composition and inheritance tests still compile and pass in CI.
 
-**Acceptance.**
-
-- Two `.ui` files, one importing a component from the other, compile and run through both the
-  compiled and dev-runtime paths.
-- A cycle is diagnosed with the file and component names.
-- Editing an imported component's body rebuilds only that component's generated unit and its
-  includers.
-- The same-file composition and inheritance tests keep passing.
+The feature is pushed and runs through the macOS and Windows CI jobs; it is ready to merge.
 
 ### P0.2 ComboBox
 
@@ -150,30 +151,28 @@ small: no title bar, no collapse behaviour, no per-node style cascade.
 - It announces a group role and its author `id`.
 - Layout and semantic tests cover the container, and the compiler catalogue exposes it.
 
-### P0.4 TextField undo lifetime
+### P0.4 TextField undo lifetime — done and CI green
 
 **Ticket:** #69.
 
-**Why it blocks.** `UndoStack` is application-scoped, but a `TextField` records entries whose
-lambdas capture the field. Closing a window or rebuilding a form leaves those entries behind; a
-later undo calls into a destroyed field. This is a use-after-free in a normal application flow,
-not a polish item.
+**State.** Implemented on this branch. `UndoEntry` carries an owner ticket and a live flag.
+`UndoStack::remove_owner` revokes the ticket before filtering, drops dead folded groups and skips
+dead steps inside a mixed group. A `TextField` owns one ticket, records its edits under it, and
+revokes the entries when it is destroyed or rebound to another stack. The stack reports only live
+steps through `can_undo`, `can_redo`, `depth` and `top_label`.
 
-**Next move.** Add a revocation channel to `UndoStack` — an owning ticket or weak observer that a
-recording field can release — and make undo skip entries whose recorder is gone. Skipping is
-preferred over dropping because it leaves the surviving history coherent.
+**Acceptance evidence.**
 
-**Acceptance.**
+- A destroyed field leaves no entry that undo can call.
+- Rebinding a field to another stack revokes its entries on the old stack.
+- A folded group with no live step disappears; a mixed group keeps its live steps.
+- Both stack directions have regressions, and the header states the contract.
 
-- A test edits a bound field, destroys the field, then runs undo on the stack: no dangling call,
-  and `depth()` remains coherent.
-- The header states the contract an application can reason about without reading the
-  implementation.
-- Existing undo/redo tests keep passing.
+The suites are executed by the macOS and Windows CI jobs; the fix is ready to merge.
 
 ### P0.5 Icon/content Button
 
-**Ticket:** none.
+**Ticket:** #131.
 
 **Why it blocks.** `Button` is a text-only leaf. The application needs icon buttons, icon-plus-label
 buttons and buttons whose content is composed rather than a single caption. The current workaround
@@ -195,7 +194,7 @@ keep the text-only path byte-compatible.
 
 ### P0.6 Styled/syntax-highlighted TextField
 
-**Ticket:** none.
+**Ticket:** #132.
 
 **Why it blocks.** The netlist editor is the application's core editing surface. `TextField`
 paints one run; it has no per-range colour, underline or style. Syntax highlighting cannot be
@@ -242,19 +241,19 @@ This is P0 for the netlist editor. The rest of the shell can be ported before it
 
 ## Issue closure for the current branch
 
-The branch `issue-19-tier2-widgets` completes **#19** — `ProgressBar`, `TabView`/`Tab`/`TabTitle`
-and `Image`, plus the application-POC additions `RadioButton`, `RadioGroup` and
-`NumericStepper`. The PR should carry exactly one closing keyword:
+The branch `application-readiness` completes **#69** — the TextField undo lifetime. The branch has
+no ticket for cross-file `.ui` composition; that work is tracked in this document. The pull request
+carries exactly one closing keyword, because the CI jobs have passed:
 
 ```text
-Closes #19
+Closes #69
 ```
 
 Do not add closing keywords for the following without separate verification. They are partial,
 stale or adjacent work that this branch does not finish.
 
-- **#15, #18, #55, #28, #72, #74, #57, #68, #70, #58, #56, #69** — still open by definition; the
-  branch either does not touch them or only touches their surrounding area.
+- **#15, #18, #131, #132, #55, #28, #72, #74, #57, #68, #70, #58, #56** — still open by definition;
+  the branch either does not touch them or only touches their surrounding area.
 - **#41** — the description says Win32 is not started, but the Windows platform and Direct3D
   backend now exist. The issue is stale and should be re-scoped, not closed as completed by this
   branch.
@@ -264,20 +263,20 @@ stale or adjacent work that this branch does not finish.
   acceptance item with parity and coverage language that needs an explicit sign-off. Verify it
   against its own acceptance criteria before closing.
 
-Closing only #19 is the correct behavior for this merge. The stale tickets should be corrected in
+Closing only #69 is the correct behavior for this merge. The stale tickets should be corrected in
 a separate issue-hygiene pass so their status stops misleading the next cycle.
 
 ## Recommended sequence
 
 | Cycle | Goal | Work |
 | --- | --- | --- |
-| 1 — make components reusable | A page can be assembled from shared `.ui` files | Cross-file composition, #15 Panel/Card, #18 ComboBox, #69 undo lifetime, icon/content Button |
+| 1 — make components reusable | A page can be assembled from shared `.ui` files | Cross-file composition (done, awaiting review), #15 Panel/Card, #18 ComboBox, #69 undo lifetime (done, awaiting review), icon/content Button |
 | 2 — make the editing surfaces real | The netlist editor and chart views reach feature parity | Styled TextField, #28 path curves and draw primitives |
 | 3 — make the shell complete | The application looks and behaves like the reference | #55 menus, #72 per-node styling, #74 focus proof, #57 accessibility actions, #68/#70 field polish, #58/#56 command ergonomics |
 
 The order inside cycle 1 is deliberate: cross-file composition first, because every other widget
-is reused through it; undo lifetime second, because it is a correctness defect; then the controls
-in the order the shell needs them.
+is reused through it; undo lifetime second, because it is a correctness defect; then the remaining
+controls in the order the shell needs them.
 
 ## First vertical slice
 
@@ -317,8 +316,12 @@ The framework is ready for the full port when all of the following are true:
 
 ## Validation baseline
 
-- Branch: `issue-19-tier2-widgets`.
-- Last local macOS debug run before the final warning-only cleanup: 3,476 tests, 0 failures.
-- The latest pushed CI run for the branch completed successfully for macOS and Windows.
-- Windows build and parity counts are authoritative in CI; this host cannot build them.
-- `bash build/check-format.sh` and `git diff --check` pass on the branch.
+- Branch: `application-readiness`, based on `main` at `b0c0277`.
+- The local macOS debug, release and test builds pass after the cross-file, undo and LSP changes.
+- `bash build/check-build-scope.sh` passes locally and in the Windows debug CI job for root,
+  imported-body and imported-interface edits.
+- The macOS and Windows CI jobs execute the unit suites; the latest application-readiness run is
+  green.
+- Windows build and parity counts are authoritative in CI; this host cannot build them, and the
+  branch is pushed with a green Windows run.
+- `bash build/check-format.sh` passes at the phase boundary before the review.

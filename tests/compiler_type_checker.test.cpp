@@ -23,7 +23,7 @@ namespace
         // the structs the file declares join the catalog, which is what makes a property of one resolve (§11.1)
         register_ui_structs(parsed, catalog, diagnostics);
         // the enums the file declares join the catalog, which is what makes a property of one hold a member (§11.1)
-        register_ui_enums(parsed, catalog);
+        register_ui_enums(parsed, catalog, diagnostics);
         // every checked expression borrows its parse, so each parse is kept for the life of the test binary (§11.1)
         static std::vector<std::unique_ptr<SourceFile>> keep_parsed;
         keep_parsed.push_back(std::make_unique<SourceFile>(std::move(parsed)));
@@ -2092,6 +2092,63 @@ TEST(TypeChecker, ReportsAComponentInstantiationCycle) {
     // assert the cycle is reported, because no tree may contain itself (§11.1)
     ASSERT_GE(diagnostics.count(), 1U);
     EXPECT_EQ(first(diagnostics).code, "E0429");
+}
+
+TEST(TypeChecker, ResolvesAnImportedComponentAndItsInterface) {
+    // arrange a file that imports one component with a property and a signal (§11.1)
+    DiagnosticList diagnostics;
+    std::vector<Token> tokens = Lexer("component C { inout property<string> q; SidePanel { title: \"x\"; on_dismissed: { q = \"y\"; } } }", diagnostics).tokenize();
+    SourceFile parsed = Parser(tokens, diagnostics).parse();
+    static std::vector<std::unique_ptr<SourceFile>> keep_parsed;
+    keep_parsed.push_back(std::make_unique<SourceFile>(std::move(parsed)));
+    CheckedProperty title;
+    title.name = "title";
+    title.type = scalar(TypeKind::String);
+    CheckedSignal dismissed;
+    dismissed.name = "dismissed";
+    ImportedComponent panel;
+    panel.name = "SidePanel";
+    panel.header = "side_panel.h";
+    panel.properties.push_back(std::move(title));
+    panel.signals.push_back(std::move(dismissed));
+    TypeChecker checker(ElementCatalog::with_builtins(), diagnostics);
+    checker.set_imported_components({std::move(panel)});
+    // act the importing file is checked against the imported interface (§11.1)
+    const CheckedFile file = checker.check(*keep_parsed.back());
+    // assert the instance resolved, its property assigned and its handler accepted (§11.1)
+    EXPECT_EQ(diagnostics.count(), 0U);
+    ASSERT_EQ(file.imported_components.size(), 1U);
+    ASSERT_EQ(file.components.size(), 1U);
+    ASSERT_NE(file.components.at(0).root, nullptr);
+    EXPECT_EQ(file.components.at(0).root->element_type, "SidePanel");
+    EXPECT_EQ(file.imported_components.at(0).header, "side_panel.h");
+    ASSERT_EQ(file.components.at(0).root->assignments.size(), 1U);
+    EXPECT_EQ(file.components.at(0).root->assignments.at(0).name, "title");
+    ASSERT_EQ(file.components.at(0).root->handlers.size(), 1U);
+    EXPECT_EQ(file.components.at(0).root->handlers.at(0).name, "dismissed");
+}
+
+TEST(TypeChecker, ReportsAnUnknownPropertyOnAnImportedComponent) {
+    // arrange an imported interface that declares only title, while the instance writes text (§11.1)
+    DiagnosticList diagnostics;
+    std::vector<Token> tokens = Lexer("component C { SidePanel { text: \"x\"; } }", diagnostics).tokenize();
+    SourceFile parsed = Parser(tokens, diagnostics).parse();
+    static std::vector<std::unique_ptr<SourceFile>> keep_parsed;
+    keep_parsed.push_back(std::make_unique<SourceFile>(std::move(parsed)));
+    CheckedProperty title;
+    title.name = "title";
+    title.type = scalar(TypeKind::String);
+    ImportedComponent panel;
+    panel.name = "SidePanel";
+    panel.header = "side_panel.h";
+    panel.properties.push_back(std::move(title));
+    TypeChecker checker(ElementCatalog::with_builtins(), diagnostics);
+    checker.set_imported_components({std::move(panel)});
+    // act the file is checked, which the interface rejects (§11.1)
+    (void)checker.check(*keep_parsed.back());
+    // assert the unknown property is reported, because only the imported declaration counts (§11.1)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0411");
 }
 
 TEST(TypeChecker, ASlotStripsFromTheTreeWhenABaseIsUsedDirectly) {

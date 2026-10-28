@@ -585,11 +585,14 @@ namespace albor::compiler
         SourceSpan span;
     };
 
-    // a module brought into scope by an import, which names a manifest module (§11.1, AD-17)
+    // a source of declarations brought into scope by an import, which is a manifest module or a ui file (§11.1, AD-17)
     struct ImportDeclaration
     {
         // the module name as written, which the checker resolves against the manifest set (§11.1, AD-17)
         std::string module;
+
+        // the ui file as written, which is empty when the import names a manifest module (§11.1)
+        std::string path;
 
         // where the import was written (§11.1, AD-17)
         SourceSpan span;

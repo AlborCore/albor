@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <string>
@@ -253,6 +254,31 @@ namespace albor::compiler
         SourceSpan span;
     };
 
+    // one component an imported ui file declares, which the importing file may instantiate (§11.1)
+    struct ImportedComponent
+    {
+        // the component name, which becomes the generated class name (§11.1, AD-03a)
+        std::string name;
+
+        // the generated header the declaration lives in, which is the file the importer includes (§11.1)
+        std::string header;
+
+        // the resolved properties, which an assignment resolves against (§11.1)
+        std::vector<CheckedProperty> properties;
+
+        // the resolved signals, which a handler resolves against (§11.1)
+        std::vector<CheckedSignal> signals;
+
+        // the imported component's checked tree, which a design time path expands into its importer (§12.1)
+        std::shared_ptr<CheckedNode> root;
+
+        // the components the imported file itself imports, which a recursive expansion follows (§11.1)
+        std::vector<ImportedComponent> imported_components;
+
+        // the file the component was declared in, which resolves a design time asset beside it (§6.4, §12.1)
+        std::filesystem::path source_path;
+    };
+
     // one fully checked source file, which is what the codegen takes (§11.1)
     struct CheckedFile
     {
@@ -267,6 +293,9 @@ namespace albor::compiler
 
         // the manifest modules the file imported, which name where a record header lives (§11.1, §11.2, AD-17)
         std::vector<std::string> imported_modules;
+
+        // the components the file imported from other ui files, which an element reference resolves after its own (§11.1)
+        std::vector<ImportedComponent> imported_components;
     };
 
     // the checker that resolves a parsed file into a typed tree, which reports rather than throws (§11.1)
@@ -278,6 +307,9 @@ namespace albor::compiler
 
         // check the file in two passes, which is what makes a reference resolvable wherever it appears (§11.1)
         [[nodiscard]] CheckedFile check(const SourceFile& file);
+
+        // publish the components imported ui files declare, which an element resolves after the file's own (§11.1)
+        void set_imported_components(std::vector<ImportedComponent> components);
 
     private:
         // the scope a reference resolves in, which is either a component or a repeat body (§11.1)
@@ -487,11 +519,17 @@ namespace albor::compiler
 
         // the element types the file's own components expose to an instance, which resolve before the catalog (§11.1)
         std::map<std::string, ElementType> m_file_component_types;
+
+        // the components imported from other ui files, which the checked file carries for codegen (§11.1)
+        std::vector<ImportedComponent> m_imported_components;
+
+        // the element types those imports expose, which resolve after the file's own and before the catalog (§11.1)
+        std::map<std::string, ElementType> m_imported_component_types;
     };
 
     // register the structs a file declares, turning each into a record the catalog resolves before the check (§11.1)
     void register_ui_structs(const SourceFile& file, ElementCatalog& catalog, DiagnosticList& diagnostics);
 
     // register the enums a file declares, turning each into a value set the catalog resolves before the check (§11.1)
-    void register_ui_enums(const SourceFile& file, ElementCatalog& catalog);
+    void register_ui_enums(const SourceFile& file, ElementCatalog& catalog, DiagnosticList& diagnostics);
 } // namespace albor::compiler

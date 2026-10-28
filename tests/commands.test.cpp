@@ -637,6 +637,78 @@ TEST(CommandRegistry, ALeavingCommandReleasesItsShortcuts) {
     EXPECT_EQ(registry.find_shortcut(shortcut), nullptr);
 }
 
+TEST(UndoStack, ARevokedOwnerLeavesNoReversibleStep) {
+    // arrange an entry that belongs to an owner, which is the shape a live widget records (§18)
+    UndoStack stack;
+    auto owner = std::make_shared<UndoOwner>();
+    int applied = 0;
+    stack.push(UndoEntry{.label = "edit", .undo = [&applied](const CommandInvocation&) { applied++; }, .redo = {}, .owner = owner});
+    // act the owner is revoked, which is what its destruction does before the stack runs (§18)
+    owner->revoke();
+    // assert the dead step neither publishes nor runs (§18)
+    EXPECT_FALSE(stack.can_undo());
+    EXPECT_FALSE(stack.undo());
+    EXPECT_EQ(applied, 0);
+    EXPECT_EQ(stack.depth(), 0u);
+}
+
+TEST(UndoStack, ARevokedOwnerInsideAFoldedGroupIsNotCalled) {
+    // arrange a group that folded a step owned by a widget, which the group copies into one action (§18)
+    UndoStack stack;
+    auto owner = std::make_shared<UndoOwner>();
+    int applied = 0;
+    {
+        UndoGroup group = stack.open_group("Edit");
+        stack.push(UndoEntry{.label = "edit", .undo = [&applied](const CommandInvocation&) { applied++; }, .redo = {}, .owner = owner});
+    }
+    // act the owner is revoked after the fold, so the copied step must be skipped rather than called (§18)
+    owner->revoke();
+    // assert the dead group publishes nothing before the stack is asked to run it (§18)
+    EXPECT_FALSE(stack.can_undo());
+    EXPECT_EQ(stack.depth(), 0u);
+    EXPECT_FALSE(stack.undo());
+    // assert no captured object was reached through the folded action (§18)
+    EXPECT_EQ(applied, 0);
+}
+
+TEST(UndoStack, AFoldedGroupRunsOnlyTheStepWhoseOwnerLives) {
+    // arrange one folded action carrying two steps, each owned by a different widget (§18)
+    UndoStack stack;
+    auto first_owner = std::make_shared<UndoOwner>();
+    auto second_owner = std::make_shared<UndoOwner>();
+    int first_applied = 0;
+    int second_applied = 0;
+    {
+        UndoGroup group = stack.open_group("Edit");
+        stack.push(UndoEntry{.label = "first", .undo = [&first_applied](const CommandInvocation&) { first_applied++; }, .redo = {}, .owner = first_owner});
+        stack.push(UndoEntry{.label = "second", .undo = [&second_applied](const CommandInvocation&) { second_applied++; }, .redo = {}, .owner = second_owner});
+    }
+    // act the first owner is revoked, which removes only the step that captured it (§18)
+    first_owner->revoke();
+    // assert the group still runs the live step and never reaches the dead one (§18)
+    EXPECT_TRUE(stack.can_undo());
+    EXPECT_TRUE(stack.undo());
+    EXPECT_EQ(first_applied, 0);
+    EXPECT_EQ(second_applied, 1);
+}
+
+TEST(UndoStack, RemovingAnOwnerDropsItsEntriesFromBothDirections) {
+    // arrange an owned step in each direction with one unowned step between them (§18)
+    UndoStack stack;
+    auto owner = std::make_shared<UndoOwner>();
+    stack.push(UndoEntry{.label = "owned below", .undo = [](const CommandInvocation&) {}, .redo = [](const CommandInvocation&) {}, .owner = owner});
+    stack.push(UndoEntry{.label = "free", .undo = [](const CommandInvocation&) {}, .redo = [](const CommandInvocation&) {}});
+    stack.push(UndoEntry{.label = "owned above", .undo = [](const CommandInvocation&) {}, .redo = [](const CommandInvocation&) {}, .owner = owner});
+    stack.undo();
+    // act the owner is removed, which is what a destroyed field calls (§18)
+    stack.remove_owner(owner);
+    // assert the unowned history survives while the owned entries are gone from both directions (§18)
+    EXPECT_TRUE(stack.can_undo());
+    EXPECT_EQ(stack.top_label(), "free");
+    EXPECT_FALSE(stack.can_redo());
+    EXPECT_EQ(stack.depth(), 1u);
+}
+
 TEST(CommandRegistry, RemovingOneOfTwoCommandsSharingAnIdKeepsTheSurvivor) {
     // arrange two commands share one author assigned id, which the later join wins in the index (§18.1, AD-11)
     CommandRegistry registry;
@@ -651,4 +723,46 @@ TEST(CommandRegistry, RemovingOneOfTwoCommandsSharingAnIdKeepsTheSurvivor) {
     ASSERT_NE(found, nullptr);
     EXPECT_EQ(found->id(), first.id());
     EXPECT_EQ(registry.size(), std::size_t{1});
+}
+
+TEST(UndoStack, ARevokedOwnerDoesNotConsumeTheDepthLimit) {
+    // arrange a dead step between two live ones, which the cap must not count as retained history (§18)
+    UndoStack stack;
+    stack.set_depth_limit(2);
+    int applied = 0;
+    stack.push(UndoEntry{.label = "first", .undo = [&applied](const CommandInvocation&) { applied++; }, .redo = {}});
+    auto owner = std::make_shared<UndoOwner>();
+    stack.push(UndoEntry{.label = "dead", .undo = [&applied](const CommandInvocation&) { applied++; }, .redo = {}, .owner = owner});
+    owner->revoke();
+    stack.push(UndoEntry{.label = "second", .undo = [&applied](const CommandInvocation&) { applied++; }, .redo = {}});
+    // assert both live steps remain, because pruning happens before the cap is enforced (§18)
+    EXPECT_EQ(stack.depth(), 2U);
+    EXPECT_EQ(stack.top_label(), "second");
+    EXPECT_TRUE(stack.undo());
+    EXPECT_TRUE(stack.undo());
+    EXPECT_EQ(applied, 2);
+}
+
+TEST(UndoStack, AGroupOutlivingItsStackDoesNotCallIt) {
+    // arrange a group whose borrowed stack is destroyed before the scope closes (§18)
+    auto stack = std::make_unique<UndoStack>();
+    UndoGroup group = stack->open_group("Edit");
+    ASSERT_TRUE(group.open());
+    // act the stack dies while the group is still in scope (§18)
+    stack.reset();
+    // assert the group reports itself closed and its destructor does not call a dead stack (§18)
+    EXPECT_FALSE(group.open());
+}
+
+TEST(UndoStack, TheLifetimeTokenDiesWithTheStack) {
+    // arrange a token borrowed from a stack, which a field holds after binding (§18)
+    std::shared_ptr<const bool> token;
+    {
+        auto stack = std::make_unique<UndoStack>();
+        token = stack->lifetime();
+        ASSERT_NE(token, nullptr);
+        EXPECT_TRUE(*token);
+    }
+    // assert the token reports the stack is gone, because a raw pointer cannot prove it (§18)
+    EXPECT_FALSE(*token);
 }

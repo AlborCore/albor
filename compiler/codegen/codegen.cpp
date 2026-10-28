@@ -676,8 +676,8 @@ namespace albor::compiler
             };
 
             // build the emitter over the component and the shared problem list (§11.3)
-            ComponentEmitter(const CheckedComponent& component, DiagnosticList& diagnostics, const ElementCatalog* catalog, std::vector<std::string> modules, const std::vector<CheckedFunction>* functions, const std::vector<CheckedGlobal>* globals, const std::vector<CheckedComponent>* file_components, AssetTable& assets) :
-                m_component(component), m_diagnostics(diagnostics), m_class(component.name), m_stem(snake_case(component.name)), m_functions(functions), m_globals(globals), m_catalog(catalog), m_assets(assets), m_modules(std::move(modules)), m_file_components(file_components) {
+            ComponentEmitter(const CheckedComponent& component, DiagnosticList& diagnostics, const ElementCatalog* catalog, std::vector<std::string> modules, const std::vector<CheckedFunction>* functions, const std::vector<CheckedGlobal>* globals, const std::vector<CheckedComponent>* file_components, const std::vector<ImportedComponent>* imported_components, AssetTable& assets) :
+                m_component(component), m_diagnostics(diagnostics), m_class(component.name), m_stem(snake_case(component.name)), m_functions(functions), m_globals(globals), m_catalog(catalog), m_assets(assets), m_modules(std::move(modules)), m_file_components(file_components), m_imported_components(imported_components) {
                 // the declared function names are collected, which tells a call apart from a colour op (§11.1)
                 if (m_functions != nullptr)
                     for (const CheckedFunction& function : *m_functions)
@@ -733,6 +733,12 @@ namespace albor::compiler
 
             // find a file component by name, which an element reference resolves before the builtin table (§11.1)
             [[nodiscard]] const CheckedComponent* component_named(std::string_view element) const;
+
+            // find an imported component by name, which resolves after the file's own components (§11.1)
+            [[nodiscard]] const ImportedComponent* imported_component_named(std::string_view element) const;
+
+            // report whether an element is either a file or an imported component (§11.1)
+            [[nodiscard]] bool declared_component(std::string_view element) const;
 
             // the widget info of an element, where a file component contributes beside the builtin set (§11.3)
             [[nodiscard]] WidgetInfo info_of(std::string_view element) const;
@@ -999,6 +1005,9 @@ namespace albor::compiler
             // the components the file declares, which an element reference resolves against before the builtin set (§11.1)
             const std::vector<CheckedComponent>* m_file_components = nullptr;
 
+            // the components imported from other ui files, which resolve after the file's own components (§11.1)
+            const std::vector<ImportedComponent>* m_imported_components = nullptr;
+
             // the repeats in preorder, each of which is a keyed view over its source (§18.1, AD-13)
             std::vector<RepeatSlot> m_repeats;
 
@@ -1049,17 +1058,35 @@ namespace albor::compiler
             return nullptr;
         }
 
+        const ImportedComponent* ComponentEmitter::imported_component_named(std::string_view element) const {
+            // the imported interfaces are searched after the file's own, because a local name shadows an import (§11.1)
+            if (m_imported_components != nullptr)
+                for (const ImportedComponent& component : *m_imported_components)
+                    if (component.name == element)
+                        return &component;
+            // nothing the file imported goes by that name, so the builtin set decides (§11.1)
+            return nullptr;
+        }
+
+        bool ComponentEmitter::declared_component(std::string_view element) const {
+            // either declaration kind makes the element a generated component, so both are checked (§11.1)
+            return component_named(element) != nullptr || imported_component_named(element) != nullptr;
+        }
+
         WidgetInfo ComponentEmitter::info_of(std::string_view element) const {
             // a file component constructs through its facade, which takes both engines like a label does (§11.3)
             if (const CheckedComponent* component = component_named(element))
                 return {.header = snake_case(component->name) + ".h", .class_name = component->name, .needs_engine = true, .needs_text_engine = true};
+            // an imported component constructs through the header its own file generated (§11.3)
+            if (const ImportedComponent* component = imported_component_named(element))
+                return {.header = component->header, .class_name = component->name, .needs_engine = true, .needs_text_engine = true};
             // every other element is a builtin, whose header and class the closed set names (§11.3)
             return widget_info().at(element);
         }
 
         std::string ComponentEmitter::setter_of(std::string_view element, std::string_view property) const {
-            // a file component exposes one setter per property, named the way its facade declares it (§11.3)
-            if (component_named(element) != nullptr)
+            // a generated component exposes one setter per property, named the way its facade declares it (§11.3)
+            if (declared_component(element))
                 return "set_" + sanitize(property);
             // the composite key is assembled, because the map is keyed by the pair (§11.3)
             const std::string key = std::string(element) + "." + std::string(property);
@@ -1153,8 +1180,8 @@ namespace albor::compiler
         }
 
         std::string ComponentEmitter::signal_setter_of(std::string_view element, std::string_view signal) const {
-            // a file component signal wires through the slot its facade declares, which the written name decides (§11.3)
-            if (component_named(element) != nullptr)
+            // a generated component signal wires through the slot its facade declares (§11.3)
+            if (declared_component(element))
                 return "set_on_" + sanitize(signal);
             // the composite key is assembled, because the map is keyed by the pair (§11.3)
             const std::string key = std::string(element) + "." + std::string(signal);
@@ -1187,6 +1214,26 @@ namespace albor::compiler
                     return named;
                 }
                 // a signal the file never declared carries no parameters, which only a blocked output reaches (§11.3)
+                return {};
+            }
+            // an imported component signal declares its own parameters, which the raised values read by name (§11.3)
+            if (const ImportedComponent* component = imported_component_named(element)) {
+                // the declared signal is located, because only it carries the parameter list (§11.3)
+                for (const CheckedSignal& declared : component->signals) {
+                    // a name mismatch means another signal, which the next iteration then takes (§11.3)
+                    if (declared.name != signal)
+                        continue;
+                    // the parameters pair type and name in declaration order, which the handler signature follows (§11.3)
+                    std::vector<std::pair<std::string, std::string>> named;
+                    for (std::size_t index = 0; index < declared.parameter_types.size(); index++) {
+                        // the C++ type is the checked spelling, which the facade setter already uses (§11.3)
+                        const std::string type = cpp_type(declared.parameter_types[index]);
+                        // the name is shared with the facade slot, so the lambda declares the same one (§14.1)
+                        named.emplace_back(type, sanitize(index < declared.parameter_names.size() ? declared.parameter_names[index] : std::string{}));
+                    }
+                    return named;
+                }
+                // a signal the import never declared carries no parameters, which only a blocked output reaches (§11.3)
                 return {};
             }
             // a slider change carries the new value, and the catalog names it (§11.3)
@@ -1232,6 +1279,14 @@ namespace albor::compiler
                     if (declared.name == signal)
                         return pair_parameters(declared.parameter_types, declared.parameter_names);
                 // a signal the file never declared carries no parameters, which only a blocked output reaches (§11.3)
+                return {};
+            }
+            // an imported component signal declares its own parameters, which carry the checked types (§11.3)
+            if (const ImportedComponent* component = imported_component_named(element)) {
+                for (const CheckedSignal& declared : component->signals)
+                    if (declared.name == signal)
+                        return pair_parameters(declared.parameter_types, declared.parameter_names);
+                // a signal the import never declared carries no parameters, which only a blocked output reaches (§11.3)
                 return {};
             }
             // a builtin element resolves against the catalog, where the raised types are declared (§11.3)
@@ -1409,7 +1464,7 @@ namespace albor::compiler
                 return;
             }
             // an element outside the widget set is native, which has no generated construction path (§11.3, AD-17)
-            if (!widget_info().contains(std::string_view(node.element_type)) && component_named(std::string_view(node.element_type)) == nullptr) {
+            if (!widget_info().contains(std::string_view(node.element_type)) && !declared_component(std::string_view(node.element_type))) {
                 // the problem names the type, because that is what the author wrote (§11.3)
                 m_diagnostics.add(Diagnostic::Severity::Error, node.span, "E0501", "'" + node.element_type + "' is not a generated element type");
                 // the blocking flag is set, which empties the generated output (§11.3)
@@ -4138,6 +4193,11 @@ namespace albor::compiler
         }
     } // namespace
 
+    std::string component_header_name(std::string_view component_name) {
+        // the generated stem is the snake case class name, which is the file a component facade lives in (§14.1)
+        return snake_case(component_name) + ".h";
+    }
+
     CodeGenerator::CodeGenerator(DiagnosticList& diagnostics) :
         m_diagnostics(diagnostics) {}
 
@@ -4170,7 +4230,7 @@ namespace albor::compiler
         std::vector<std::string> chunk_contents;
         for (const CheckedComponent& component : file.components) {
             // the emitter is built per component, because the output files are per component (§14.1)
-            ComponentEmitter emitter(component, m_diagnostics, m_catalog, file.imported_modules, &file.functions, &file.globals, &file.components, assets);
+            ComponentEmitter emitter(component, m_diagnostics, m_catalog, file.imported_modules, &file.functions, &file.globals, &file.components, &file.imported_components, assets);
             // a component that was blocked empties the whole output, which the driver then treats as failed (§11.3)
             if (!emitter.emit())
                 return {};

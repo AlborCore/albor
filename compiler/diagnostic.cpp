@@ -71,7 +71,7 @@ namespace albor::compiler
         // the code follows, because tooling and a reader both want it in the same place (§11.1)
         text += ": " + diagnostic.code + ": ";
         // the path and position make the message locatable, which a span alone cannot (§11.1)
-        text += std::string(path) + ":" + std::to_string(diagnostic.span.start.line) + ":" + std::to_string(diagnostic.span.start.column) + ": ";
+        text += (diagnostic.path.empty() ? std::string(path) : diagnostic.path) + ":" + std::to_string(diagnostic.span.start.line) + ":" + std::to_string(diagnostic.span.start.column) + ": ";
         // the message is what the whole line is for (§11.1)
         text += diagnostic.message;
         return text;

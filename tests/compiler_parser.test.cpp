@@ -211,6 +211,16 @@ TEST(Parser, ReadsAnUnqualifiedImport) {
     EXPECT_EQ(file.imports.at(0).module, "albor");
 }
 
+TEST(Parser, ReadsAUiFileImport) {
+    // arrange, act
+    const SourceFile file = parse("import \"panels/side_panel.ui\";");
+    // assert the path is kept exactly as written, because the loader resolves it against the importing file (§11.1)
+    ASSERT_EQ(file.imports.size(), 1U);
+    EXPECT_TRUE(file.imports.at(0).module.empty());
+    EXPECT_EQ(file.imports.at(0).path, "panels/side_panel.ui");
+    EXPECT_EQ(file.imports.at(0).span.start.line, 1U);
+}
+
 TEST(Parser, ReadsAStructWithItsFields) {
     // arrange, act
     const SourceFile file = parse("struct Frame { float width; float height; }");

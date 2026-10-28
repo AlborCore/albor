@@ -1,0 +1,13 @@
+// the imported build-scope fixture, which proves a shared ui file generates its own facade (§11.1, §14.3)
+
+component ScopePanel {
+    in property<string> label_text: "Panel";
+
+    Column {
+        spacing: 2px;
+
+        Label {
+            text: label_text;
+        }
+    }
+}

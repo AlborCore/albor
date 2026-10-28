@@ -203,6 +203,10 @@ jobs:
         if: matrix.enable
         run: cmake --build --preset ${{ matrix.preset }} --parallel 4
 
+      - name: build scope
+        if: matrix.enable && matrix.preset == 'debug'
+        run: bash build/check-build-scope.sh
+
       - name: unit tests
         if: matrix.enable
         working-directory: .build-${{ matrix.preset }}/tests

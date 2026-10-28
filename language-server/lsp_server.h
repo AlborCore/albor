@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -43,11 +44,29 @@ namespace albor::language_server
         // hand out how many documents are open, which a test asserts on (§12.2)
         [[nodiscard]] std::size_t document_count() const;
 
+        // report whether an exit notification arrived, which is what ends the stdio loop (§12.2)
+        [[nodiscard]] bool exit_requested() const;
+
     private:
+        // compile an open document as a root, publishing imports and clearing stale publications (§12.2, §16)
+        [[nodiscard]] Exchange compile_root(std::string_view uri);
+
+        // forget a closed root and clear the publications no other root still owns (§12.2)
+        void close_root(std::string_view uri, std::vector<Notification>& notifications);
+
         // the documents the editor has open, which every request is answered from (§12.2)
         DocumentStore m_documents;
 
+        // the uris each open root published, which is what a later compile or close clears (§12.2, §16)
+        std::map<std::string, std::vector<std::string>, std::less<>> m_root_publications;
+
+        // the files each open root read, which is what an imported change recompiles (§11.1, §12.2)
+        std::map<std::string, std::vector<std::string>, std::less<>> m_root_dependencies;
+
         // how many diagnostics the last compile produced, which an agreement test reads (§16)
         std::size_t m_last_diagnostics = 0;
+
+        // whether an exit notification arrived, which makes the stdio loop stop (§12.2)
+        bool m_exit_requested = false;
     };
 } // namespace albor::language_server

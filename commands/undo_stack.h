@@ -2,13 +2,39 @@
 
 #include <cstddef>
 #include <functional>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace albor
 {
     // the invocation an undo step carries, which is declared in the invocation vocabulary of §18.3
     struct CommandInvocation;
+
+    // the lifetime token an entry carries, which a destroyed owner revokes before its history can run (§18.4)
+    class UndoOwner
+    {
+    public:
+        UndoOwner() = default;
+        UndoOwner(const UndoOwner&) = delete;
+        UndoOwner& operator=(const UndoOwner&) = delete;
+        UndoOwner(UndoOwner&&) = delete;
+        UndoOwner& operator=(UndoOwner&&) = delete;
+
+        // the destructor revokes, because an owner that is gone can never run its entries (§18.4)
+        ~UndoOwner();
+
+        // revoke the owner, which makes every entry that carries the token unreachable (§18.4)
+        void revoke();
+
+        // report whether the owner still exists, which a stored entry checks before it runs (§18.4)
+        [[nodiscard]] bool alive() const;
+
+    private:
+        // whether the owner still exists, which a destruction clears (§18.4)
+        bool m_alive = true;
+    };
 
     // one reversible step, which the stack owns until it is undone or dropped (§18.4)
     struct UndoEntry
@@ -21,6 +47,12 @@ namespace albor
 
         // the work that reapplies the step, which receives the invocation it replays and may be empty (§18.4)
         std::function<void(const CommandInvocation&)> redo{};
+
+        // the token whose revocation makes the step unreachable, which is empty for an entry that owns no object (§18.4)
+        std::shared_ptr<UndoOwner> owner{};
+
+        // a predicate a folded group uses to report whether any captured step still lives, empty otherwise (§18.4)
+        std::function<bool()> live{};
     };
 
     // the undo stack behind the shared command, which one invocation contributes exactly one entry to (§18.4)
@@ -44,11 +76,14 @@ namespace albor
         friend class UndoStack;
 
         // build a scope over a stack, which the stack alone hands out (§18.4)
-        explicit UndoGroup(UndoStack* stack) :
-            m_stack(stack) {}
+        explicit UndoGroup(UndoStack* stack, std::shared_ptr<const bool> lifetime) :
+            m_stack(stack), m_lifetime(std::move(lifetime)) {}
 
         // the stack whose group this scope closes, which is null once the scope has been moved from (§18.4)
         UndoStack* m_stack = nullptr;
+
+        // the token that proves the borrowed stack still exists when the scope closes (§18.4)
+        std::shared_ptr<const bool> m_lifetime;
     };
 
     // the undo stack behind the shared command, which one invocation contributes exactly one entry to (§18.4)
@@ -63,7 +98,10 @@ namespace albor
         UndoStack& operator=(const UndoStack&) = delete;
         UndoStack(UndoStack&&) = delete;
         UndoStack& operator=(UndoStack&&) = delete;
-        ~UndoStack() = default;
+        ~UndoStack();
+
+        // hand out the token a borrowed field checks before it calls back, which dies with the stack (§18.4)
+        [[nodiscard]] std::shared_ptr<const bool> lifetime() const;
 
         // push one step, which folds into an open group and otherwise becomes its own entry (§18.4)
         void push(UndoEntry entry);
@@ -91,6 +129,9 @@ namespace albor
 
         // forget every step in both directions, which is what a document close requires (§18.4)
         void clear();
+
+        // revoke an owner and drop every step it recorded, which is what its destruction requires (§18.4)
+        void remove_owner(const std::shared_ptr<UndoOwner>& owner);
 
         // hand out how many steps are retained, which is what the depth limit bounds (§18.4)
         [[nodiscard]] std::size_t depth() const;
@@ -139,6 +180,9 @@ namespace albor
 
         // the retained maximum, which a depth of zero keeps nothing (§18.4)
         std::size_t m_depth_limit = 256;
+
+        // whether this stack is still alive, which a borrowed field reads before it calls back (§18.4)
+        std::shared_ptr<bool> m_lifetime = std::make_shared<bool>(true);
 
         // how many step bodies have run, which the group folding tests assert against (§18.4)
         std::size_t m_applied = 0;

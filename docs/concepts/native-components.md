@@ -50,10 +50,11 @@ record Task {
 
 ## Importing
 
-A `.ui` file names the manifest modules it uses:
+A `.ui` file names the manifest modules and `.ui` files it uses:
 
 ```text
-import task;      // the task.ui-manifest module
+import task;                        // the task.ui-manifest module
+import "panels/side_panel.ui";      // a component from another ui file
 
 component ScrollLog {
     inout property<vector<Task>> tasks;
@@ -63,13 +64,16 @@ component ScrollLog {
         Repeat(task in tasks) {
             Label { text: task.title; }
         }
+        SidePanel {}
     }
 }
 ```
 
-An import names a manifest module — the manifest file's base name — and is what a record's
-generated header path is built from. The file's own declared types still resolve first: a
-name the file itself declares shadows one an import brings in.
+An unquoted import names a manifest module — the manifest file's base name — and is what a
+record's generated header path is built from. A quoted import names a `.ui` file relative to
+the importing file and brings its one component into scope. The file's own declared types
+still resolve first: a name the file itself declares shadows one an import brings in, and an
+imported component resolves before the native catalog.
 
 ## Wiring the build
 

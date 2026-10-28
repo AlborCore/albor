@@ -2945,6 +2945,86 @@ TEST(TextFieldScrollChecks, SettingAValueFollowsTheCaretItKept) {
     EXPECT_GT(field.scroll_offset(), 0.0f);
 }
 
+TEST(TextFieldUndoChecks, ADestroyedFieldRemovesItsEntriesBeforeTheStackRuns) {
+    // arrange a field whose edit recorded one entry into a stack that outlives it (§18)
+    EditingTextEngine engine;
+    UndoStack stack;
+    {
+        auto field = std::make_unique<TextField>(nullptr, &engine, "Ab");
+        field->bind_undo_stack(&stack);
+        field->set_caret(2);
+        Event insert{.kind = EventKind::TextInput, .text = "c"};
+        field->dispatch_event(insert);
+        ASSERT_EQ(stack.depth(), 1u);
+        // act the field is destroyed while the stack still holds the document history (§18)
+    }
+    // assert the dead field's entry left with it, so no undo reaches a destroyed object (§18)
+    EXPECT_EQ(stack.depth(), 0u);
+    EXPECT_FALSE(stack.can_undo());
+    EXPECT_FALSE(stack.undo());
+}
+
+TEST(TextFieldUndoChecks, AFieldOutlivingItsStackDiesWithoutCallingIt) {
+    // arrange a field and a stack in the opposite lifetime order to the usual ownership (§18)
+    EditingTextEngine engine;
+    auto stack = std::make_unique<UndoStack>();
+    auto field = std::make_unique<TextField>(nullptr, &engine, "Ab");
+    field->bind_undo_stack(stack.get());
+    field->set_caret(2);
+    Event insert{.kind = EventKind::TextInput, .text = "c"};
+    field->dispatch_event(insert);
+    ASSERT_EQ(stack->depth(), 1u);
+    // act the borrowed stack is destroyed while the field still holds the pointer (§18)
+    stack.reset();
+    // assert the field can still be destroyed without calling the dead stack (§18)
+    field.reset();
+}
+
+TEST(TextFieldUndoChecks, TheUndoKeyFallsThroughAfterItsStackDies) {
+    // arrange a field that recorded an edit into a stack destroyed before it (§18)
+    EditingTextEngine engine;
+    auto stack = std::make_unique<UndoStack>();
+    auto field = std::make_unique<TextField>(nullptr, &engine, "Ab");
+    field->bind_undo_stack(stack.get());
+    field->set_caret(2);
+    Event insert{.kind = EventKind::TextInput, .text = "c"};
+    field->dispatch_event(insert);
+    ASSERT_EQ(stack->depth(), 1u);
+    stack.reset();
+    // act the undo chord arrives after the borrowed stack is gone (§18)
+    Event undo{.kind = EventKind::KeyDown, .key = Key::Z};
+    undo.modifiers.command = true;
+    field->dispatch_event(undo);
+    // assert the field claims nothing it cannot reverse and leaves the value alone (§18)
+    EXPECT_FALSE(undo.handled);
+    EXPECT_EQ(field->value(), "Abc");
+    field.reset();
+}
+
+TEST(TextFieldUndoChecks, RebindingTheStackDropsThePreviousHistory) {
+    // arrange a field that recorded one edit into the first stack (§18)
+    EditingTextEngine engine;
+    UndoStack first;
+    UndoStack second;
+    TextField field(nullptr, &engine, "Ab");
+    field.bind_undo_stack(&first);
+    field.set_caret(2);
+    Event insert{.kind = EventKind::TextInput, .text = "c"};
+    field.dispatch_event(insert);
+    ASSERT_EQ(first.depth(), 1u);
+    // act the field binds another stack, which is what rebuilding a form does (§18)
+    field.bind_undo_stack(&second);
+    // assert the old history left with the binding, so no entry reaches the field through the old stack (§18)
+    EXPECT_EQ(first.depth(), 0u);
+    EXPECT_FALSE(first.can_undo());
+    Event second_insert{.kind = EventKind::TextInput, .text = "d"};
+    field.dispatch_event(second_insert);
+    ASSERT_EQ(second.depth(), 1u);
+    // assert the new entry reverses the edit the field recorded after the rebind (§18)
+    field.undo();
+    EXPECT_EQ(field.value(), "Abc");
+}
+
 TEST(TextFieldScrollChecks, ADragPastTheEdgeKeepsTheDraggedEndInView) {
     // arrange a ten line field in a one line plate, whose whole value is not yet on screen (§8.3)
     EditingTextEngine engine;

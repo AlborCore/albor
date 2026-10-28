@@ -123,7 +123,8 @@ underlying targets directly. The framework's public building blocks are:
 
 `albor-compiler`, `albor-manifest`, `albor-language-server`, `albor-preview` and
 `albor-inspector` are development tools, not runtime dependencies of a shipped application.
-The alloc probe is test-only and is not part of the consumer surface.
+The `albor-lsp` executable is the stdio transport around the language server; it is also a
+development tool. The alloc probe is test-only and is not part of the consumer surface.
 
 A composition that keeps the default platform and text engine but chooses another
 renderer is:
@@ -162,7 +163,8 @@ albor_build_font_assets(my_app
         Inter regular "assets/Inter-Regular.ttf"
         Inter bold "assets/Inter-Bold.ttf")
 
-albor_build_ui_component(my_app "${CMAKE_CURRENT_SOURCE_DIR}/main.ui")
+albor_build_ui_component(my_app "${CMAKE_CURRENT_SOURCE_DIR}/side_panel.ui")
+albor_build_ui_component(my_app "${CMAKE_CURRENT_SOURCE_DIR}/main.ui" IMPORTS "${CMAKE_CURRENT_SOURCE_DIR}/side_panel.ui")
 
 target_link_libraries(my_app PRIVATE albor)
 ```
@@ -172,9 +174,12 @@ facade is checked against the same faces. The `albor` target already carries the
 so a consumer does not link `albor-text-harfbuzz-auto` separately. See
 [Fonts](ui-language/fonts.md) for the family and weight rules.
 
-The generated header is included by the consumer; no generated file has to be named in
-CMake. The helper adds the generated directory to the target's include path and writes only
-changed units.
+Each imported `.ui` file gets its own call before the importer, and the importer names its
+direct imports in `IMPORTS`; a relative path resolves beside the importing file. The helper
+compiles every file into the same target and orders the generated headers before the unit
+that includes them. The generated header is included by
+the consumer; no generated file has to be named in CMake. The helper adds the generated
+directory to the target's include path and writes only changed units.
 
 ## Build configuration and automation
 

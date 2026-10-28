@@ -60,6 +60,35 @@ namespace albor::compiler
     TypeChecker::TypeChecker(const ElementCatalog& catalog, DiagnosticList& diagnostics) :
         m_catalog(catalog), m_diagnostics(diagnostics) {}
 
+    void TypeChecker::set_imported_components(std::vector<ImportedComponent> components) {
+        // the imported components replace the previous set, because a checker run names one file's imports (§11.1)
+        m_imported_components = std::move(components);
+        // the published types start empty, because they are rebuilt from the interfaces above (§11.1)
+        m_imported_component_types.clear();
+        for (const ImportedComponent& component : m_imported_components) {
+            // a duplicate name publishes once, because the loader reports the ambiguity before checking (§11.1)
+            if (m_imported_component_types.contains(component.name))
+                continue;
+            // the type is assembled locally, because each interface contributes its own members (§11.1)
+            ElementType type;
+            // the name is what an element writes, so an instance resolves against it (§11.1)
+            type.name = component.name;
+            // the declared properties come first, because one shadows a common property of the same name (§11.1)
+            for (const CheckedProperty& property : component.properties)
+                type.properties.push_back(ElementProperty{.name = property.name, .type = property.type, .assignable = true});
+            // the common properties join, because a component arranges like any other node does (§8.2)
+            for (const ElementProperty& common : common_element_properties())
+                type.properties.push_back(common);
+            // the signals carry their parameter names, because a handler body reads the raised value by them (§11.1)
+            for (const CheckedSignal& signal : component.signals)
+                type.signals.push_back(ElementSignal{.name = signal.name, .parameter_types = signal.parameter_types, .parameter_names = signal.parameter_names});
+            // content reaches an imported component through its own file, never through an instance (§11.1)
+            type.accepts_children = false;
+            // the type is published, because an element reference resolves it before the catalog (§11.1)
+            m_imported_component_types.emplace(component.name, std::move(type));
+        }
+    }
+
     namespace
     {
         // copy a checked subtree, because a derived body must not disturb the base's own checked tree (§11.1)
@@ -150,7 +179,10 @@ namespace albor::compiler
         CheckedFile checked;
         // the imports name the manifest modules, which is what a record header path is built from (§11.1, AD-17)
         for (const ImportDeclaration& imported : file.imports)
-            checked.imported_modules.push_back(imported.module);
+            if (!imported.module.empty())
+                checked.imported_modules.push_back(imported.module);
+        // the imported components travel with the checked file, because the codegen includes their headers (§11.1)
+        checked.imported_components = m_imported_components;
         // the function signatures are resolved first, so a call may appear before the declaration it names (§11.1)
         check_function_signatures(file, checked.functions);
         // the signatures are published, because a body resolves its calls against them (§11.1)
@@ -220,6 +252,9 @@ namespace albor::compiler
         m_component_index.clear();
         // the published element types are cleared with it, because they were rebuilt for this file (§11.1)
         m_file_component_types.clear();
+        // the imported interfaces are cleared too, because a later check supplies its own set (§11.1)
+        m_imported_components.clear();
+        m_imported_component_types.clear();
         return checked;
     }
 
@@ -835,8 +870,10 @@ namespace albor::compiler
         out->span = node.span;
         // an element resolves against the file's components first, because a declared name shadows a native one (§11.1)
         const auto own_type = m_file_component_types.find(node.element_type);
+        // an imported component resolves next, because an import brings a declared name into scope (§11.1)
+        const auto imported_type = m_imported_component_types.find(node.element_type);
         // the catalog decides only when no component has that name, which is the same rule a type follows (§11.1)
-        const ElementType* type = own_type != m_file_component_types.end() ? &own_type->second : m_catalog.find(node.element_type);
+        const ElementType* type = own_type != m_file_component_types.end() ? &own_type->second : imported_type != m_imported_component_types.end() ? &imported_type->second : m_catalog.find(node.element_type);
         // an element the catalog does not hold is reported, because nothing else can check it (§11.1)
         if (type == nullptr) {
             // the problem points at the type name, because that is what the author wrote (§11.1)
@@ -1301,6 +1338,9 @@ namespace albor::compiler
             // an instance of a file component takes content only through a derived one, where the slot is filled (§11.1)
             if (m_file_component_types.contains(type.name))
                 m_diagnostics.add(Diagnostic::Severity::Error, node.children.at(0)->span, "E0430", "'" + type.name + "' takes content only through a derived component, not through an instance");
+            // an imported component takes no content, because its declaration lives in another file (§11.1)
+            else if (m_imported_component_types.contains(type.name))
+                m_diagnostics.add(Diagnostic::Severity::Error, node.children.at(0)->span, "E0434", "'" + type.name + "' is an imported component instance, which takes no child elements");
             else
                 // the problem points at the first child, because that is what cannot go here (§11.1)
                 m_diagnostics.add(Diagnostic::Severity::Error, node.children.at(0)->span, "E0407", "'" + type.name + "' cannot contain child elements");
@@ -1891,6 +1931,9 @@ namespace albor::compiler
     void register_ui_structs(const SourceFile& file, ElementCatalog& catalog, DiagnosticList& diagnostics) {
         // the structs are walked in declaration order, which is the order a field may name an earlier one (§11.1)
         for (const StructDeclaration& declaration : file.structs) {
+            // a second ui record of one name is ambiguous, because a property of it would take the first shape (§11.1)
+            if (const RecordType* existing = catalog.find_record(declaration.name); existing != nullptr && existing->from_ui)
+                diagnostics.add(Diagnostic::Severity::Error, declaration.span, "E0432", "'" + declaration.name + "' is declared as a struct more than once across the import graph");
             // the record starts with its name and collects the fields as they are resolved (§11.1)
             RecordType record{.name = declaration.name, .fields = {}, .from_ui = true};
             // each field is walked, because a field read resolves by name against the declaration (§11.1)
@@ -1911,9 +1954,12 @@ namespace albor::compiler
         }
     }
 
-    void register_ui_enums(const SourceFile& file, ElementCatalog& catalog) {
+    void register_ui_enums(const SourceFile& file, ElementCatalog& catalog, DiagnosticList& diagnostics) {
         // the enums are walked in declaration order, which is the order a member may be read (§11.1)
         for (const EnumDeclaration& declaration : file.enums) {
+            // a second ui enum of one name is ambiguous, because a property of it would take the first members (§11.1)
+            if (const NamedValueSet* existing = catalog.find_named_value_set(declaration.name); existing != nullptr && existing->user)
+                diagnostics.add(Diagnostic::Severity::Error, declaration.span, "E0433", "'" + declaration.name + "' is declared as an enum more than once across the import graph");
             // the set starts with its name, marked as file declared so it resolves as a property type (§11.1)
             NamedValueSet set{.name = declaration.name, .kind = TypeKind::Error, .user = true, .cpp_name = declaration.name, .members = {}};
             // each member is walked, because a member read resolves by written name against the declaration (§11.1)

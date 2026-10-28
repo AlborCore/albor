@@ -61,13 +61,19 @@ The manifest is the single source of truth; the glue is generated from it
 ## The CMake helpers
 
 ```cmake
-albor_build_ui_component(my-app "${CMAKE_CURRENT_SOURCE_DIR}/greeting.ui")
+albor_build_ui_component(my-app "${CMAKE_CURRENT_SOURCE_DIR}/side_panel.ui")
+albor_build_ui_component(my-app "${CMAKE_CURRENT_SOURCE_DIR}/main.ui" IMPORTS "${CMAKE_CURRENT_SOURCE_DIR}/side_panel.ui")
 albor_build_native_record(my-app "${CMAKE_CURRENT_SOURCE_DIR}/task.ui-manifest")
 albor_build_native_component(my-app "${CMAKE_CURRENT_SOURCE_DIR}/chart.ui-manifest" WaveformView)
 ```
 
-All three run the appropriate driver as a build step, write under the build directory, and
+All four run the appropriate driver as a build step, write under the build directory, and
 join the target's sources and include path — an application never names a generated file.
+Declare an imported `.ui` file with its own `albor_build_ui_component` call before the file
+that imports it, and name the direct imports in `IMPORTS`. A relative `IMPORTS` path resolves
+beside the importing `.ui` file, matching the language. That makes the importer's generated
+header wait for the imported units and compiles every file into the same target. Two sources
+with the same stem cannot share a target, because they would write the same generated pair.
 The target still links one public framework target, `albor` or `albor-blend2d`; see
 [Consuming Albor](consuming.md).
 
@@ -81,10 +87,18 @@ the link.
 
 ## Language server
 
-`language-server/` implements the Language Server Protocol over stdio for `.ui` files:
-diagnostics (parse, type, layout, style, translation), hover, and go-to-definition. The
-editor experience — completion, inline diagnostics — is served by the same frontend, so a
-diagnostic in the editor is the diagnostic the build produces.
+`language-server/` implements the Language Server Protocol for `.ui` files: parse, type and
+codegen diagnostics, completion, and hover. The editor experience is served by the same
+frontend, so a diagnostic in the editor is the diagnostic the build produces.
+
+`albor-lsp`, built under `tools/albor-lsp`, is the stdio host an editor launches. It reads
+`Content-Length`-framed JSON-RPC 2.0 from stdin, gives each request to the server, and writes
+the reply and every `textDocument/publishDiagnostics` notification back to stdout. It takes no
+arguments, and exits when stdin closes or the editor sends `exit`. The server advertises full
+document sync, completion, hover and diagnostics; it does not implement go-to-definition,
+references, or semantic highlighting yet. The host currently uses the built-in element
+catalog, so manifest-provided native components are not resolved in the editor until that
+catalog is wired into the host.
 
 ## Preview
 
