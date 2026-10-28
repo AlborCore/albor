@@ -118,6 +118,16 @@ namespace albor
         m_states.multiline = multiline;
     }
 
+    bool SemanticNode::expanded() const {
+        // the expanded state is what a popup announces while its list is open (§10.1)
+        return m_states.expanded;
+    }
+
+    void SemanticNode::set_expanded(bool expanded) {
+        // the state is independent of selection, because a closed combo box still carries a chosen value (§10.1)
+        m_states.expanded = expanded;
+    }
+
     const Rect& SemanticNode::bounds() const {
         // the bounds let an adapter place the accessibility frame (§10.1)
         return m_bounds;

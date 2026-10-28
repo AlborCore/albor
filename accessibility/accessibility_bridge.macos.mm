@@ -44,6 +44,8 @@ namespace
             return NSAccessibilityScrollAreaRole;
         case albor::SemanticRole::List:
             return NSAccessibilityListRole;
+        case albor::SemanticRole::ComboBox:
+            return NSAccessibilityComboBoxRole;
         case albor::SemanticRole::Canvas:
         case albor::SemanticRole::Group:
         case albor::SemanticRole::ListItem:
@@ -169,8 +171,8 @@ typedef NSArray* (^AlborAccessibilityChildren)(std::size_t);
     // an element with no publication carries no value, which is the quiet default (§10.2)
     if (published == nullptr)
         return nil;
-    // an editable node announces its text, because that is the value assistive technology edits (§10.1)
-    if (published->node.role() == albor::SemanticRole::TextField)
+    // an editable node or a combo box announces its text, because that is the value assistive technology reads (§10.1)
+    if (published->node.role() == albor::SemanticRole::TextField || published->node.role() == albor::SemanticRole::ComboBox)
         return [NSString stringWithUTF8String:published->node.value().c_str()];
     // a tab item's value is its selected state, because the radio button role reads a value (§10.1)
     if (published->node.role() == albor::SemanticRole::TabItem)
@@ -186,6 +188,17 @@ typedef NSArray* (^AlborAccessibilityChildren)(std::size_t);
         return @"mixed";
     // the two definite states announce the word assistive technology expects (§10.1)
     return published->node.checked() ? @"1" : @"0";
+}
+
+// override: the expanded flag is the open popup state a combo box announces (§10.1)
+- (NSNumber*)accessibilityExpanded {
+    // the publication this element names is the one the bridge assigned (§10.2)
+    const Published* published = static_cast<const Published*>(self.publication);
+    // only a combo box carries an expanded state, because no other node opens a popup (§10.1)
+    if (published == nullptr || published->node.role() != albor::SemanticRole::ComboBox)
+        return nil;
+    // the state is the same one the portable semantic node carries (§10.1)
+    return @(published->node.expanded());
 }
 
 // override: press is the action assistive technology sends to a push control (§10.1)

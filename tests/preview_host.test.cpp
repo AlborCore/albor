@@ -20,9 +20,11 @@
 #include "widgets/button.h"
 #include "widgets/canvas.h"
 #include "widgets/checkbox.h"
+#include "widgets/combo_box.h"
 #include "widgets/image.h"
 #include "widgets/label.h"
 #include "widgets/numeric_stepper.h"
+#include "widgets/panel.h"
 #include "widgets/progress_bar.h"
 #include "widgets/radio_button.h"
 #include "widgets/radio_group.h"
@@ -120,6 +122,75 @@ TEST(PreviewHostChecks, AnImportedComponentIsExpandedAndItsPropertyIsAssigned) {
     ASSERT_NE(label, nullptr);
     EXPECT_EQ(label->text(), "Shared");
     std::filesystem::remove_all(root, ignored);
+}
+
+TEST(PreviewHostChecks, AComboBoxCarriesItsStaticOptions) {
+    // arrange a combo box with two options and a selected index (§8)
+    const char* source = R"UI(component Panel {
+    ComboBox {
+        id: mode;
+        items: [@tr("Lines"), "Points"];
+        selected: 1;
+    }
+})UI";
+    // act
+    BindingEngine engine;
+    const preview::PreviewResult result = preview::build(source, engine);
+    // assert the preview built the control with the authored option list and selection (§12.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    ComboBox* combo = dynamic_cast<ComboBox*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<ComboBox*>(&node) != nullptr; }));
+    ASSERT_NE(combo, nullptr);
+    EXPECT_EQ(combo->items().size(), 2U);
+    EXPECT_EQ(combo->items().at(0), "Lines");
+    EXPECT_EQ(combo->items().at(1), "Points");
+    EXPECT_EQ(combo->selected(), 1);
+}
+
+TEST(PreviewHostChecks, APanelBuildsItsChildrenInsideTheTheme) {
+    // arrange a panel with a static inset, which a preview applies from the declaration (§8.2)
+    const char* source = R"UI(component Page {
+    Panel {
+        padding: 12px;
+        Column {
+            Label { text: "Inside"; }
+        }
+    }
+})UI";
+    // act
+    BindingEngine engine;
+    const preview::PreviewResult result = preview::build(source, engine);
+    // assert the panel and its child were built, because the preview resolves the container (§12.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    Panel* panel = dynamic_cast<Panel*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<Panel*>(&node) != nullptr; }));
+    ASSERT_NE(panel, nullptr);
+    EXPECT_FLOAT_EQ(panel->padding(), 12.0f);
+    EXPECT_NE(find_first(*panel, [](UiNode& node) { return dynamic_cast<Label*>(&node) != nullptr; }), nullptr);
+}
+
+TEST(PreviewHostChecks, ATextFieldCarriesItsDeclaredDecorations) {
+    // arrange a field with one declared range, which is what the netlist editor preview needs (§9.1)
+    const char* source = R"UI(component Panel {
+    TextField {
+        id: netlist;
+        value: "line 1";
+        decorations: [TextDecoration { start: 0, end: 4, foreground: #FF0000, underline: true }];
+    }
+})UI";
+    // act
+    BindingEngine engine;
+    const preview::PreviewResult result = preview::build(source, engine);
+    // assert the range reached the field with its colour and underline (§12.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    TextField* field = dynamic_cast<TextField*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<TextField*>(&node) != nullptr; }));
+    ASSERT_NE(field, nullptr);
+    ASSERT_EQ(field->decorations().size(), 1U);
+    EXPECT_EQ(field->decorations().front().start, 0U);
+    EXPECT_EQ(field->decorations().front().end, 4U);
+    EXPECT_TRUE(field->decorations().front().underline);
+    EXPECT_FLOAT_EQ(field->decorations().front().foreground.red, 1.0f);
 }
 
 TEST(PreviewHostChecks, AnImportedComputedTextIsEvaluated) {

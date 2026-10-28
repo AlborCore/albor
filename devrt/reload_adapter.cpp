@@ -131,8 +131,11 @@ namespace albor::devrt
                 }
                 // the matched node is read at its slot, which the identity or the position found (§12.1)
                 UiNode* match = parent.child_at(*slot);
+                // a card and a panel are one class under two names, so the alias is not an element change (§8.2)
+                const std::string actual_element = context.element_of ? std::string(context.element_of(*match)) : std::string{};
+                const bool alias = (actual_element == "Panel" && node.element == "Card") || (actual_element == "Card" && node.element == "Panel");
                 // a matched node whose element changed is a different class, so its instance cannot be kept (§12.1)
-                if (context.element_of && context.factory && context.engine != nullptr && context.element_of(*match) != node.element) {
+                if (context.element_of && context.factory && context.engine != nullptr && actual_element != node.element && !alias) {
                     // the replacement is built before anything is torn down, so a refusal leaves the old node (§12.1)
                     std::unique_ptr<UiNode> replacement = context.factory(node.element, *context.engine, *context.text);
                     // a factory that builds nothing keeps the node it had, because a refusal changes nothing (§12.1)

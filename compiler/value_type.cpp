@@ -314,6 +314,24 @@ namespace albor::compiler
                                               .signals = {},
                                               // a stack is a container, so it accepts children (§8.2)
                                               .accepts_children = true});
+        // a container frames a section with a themed face and inset, which is the reusable card (§8.2)
+        catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
+                                              .name = "Panel",
+                                              // the inset, gap, face, corner and border are the card surface (§8.2, §8.4)
+                                              .properties = {ElementProperty{.name = "padding", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "spacing", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "background", .type = scalar(TypeKind::Color), .assignable = true}, ElementProperty{.name = "corner_radius", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "border_width", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "border_color", .type = scalar(TypeKind::Color), .assignable = true}},
+                                              // a panel raises no signal, because it is a grouping surface (§8)
+                                              .signals = {},
+                                              // a panel frames its content, so it accepts children (§8.2)
+                                              .accepts_children = true});
+        // a card is the same surface under the name a settings page uses (§8.2)
+        catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
+                                              .name = "Card",
+                                              // the card carries the same surface properties as the panel (§8.2, §8.4)
+                                              .properties = {ElementProperty{.name = "padding", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "spacing", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "background", .type = scalar(TypeKind::Color), .assignable = true}, ElementProperty{.name = "corner_radius", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "border_width", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "border_color", .type = scalar(TypeKind::Color), .assignable = true}},
+                                              // a card raises no signal, because it is a grouping surface (§8)
+                                              .signals = {},
+                                              // a card frames its content, so it accepts children (§8.2)
+                                              .accepts_children = true});
         // a container lays its children out in a grid, which is what a table is (§8.2)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Grid",
@@ -341,6 +359,15 @@ namespace albor::compiler
                                               .signals = {ElementSignal{.name = "selection_changed", .parameter_types = {}, .parameter_names = {}}, ElementSignal{.name = "activated", .parameter_types = {scalar(TypeKind::String)}, .parameter_names = {"key"}}},
                                               // a list hosts the row content it repeats, so it accepts children (§8.2)
                                               .accepts_children = true});
+        // a leaf chooses one value from a compact list, which is the trigger and popup a form uses (§8)
+        catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
+                                              .name = "ComboBox",
+                                              // the options, index, label, hint and disabled state are the surface (§8)
+                                              .properties = {ElementProperty{.name = "items", .type = ValueType::parameterized(TypeKind::Vector, scalar(TypeKind::String)), .assignable = true}, ElementProperty{.name = "selected", .type = scalar(TypeKind::Int), .assignable = true}, ElementProperty{.name = "label", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "placeholder", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true}},
+                                              // a combo box raises the index the user chose (§8.3)
+                                              .signals = {ElementSignal{.name = "selection_changed", .parameter_types = {scalar(TypeKind::Int)}, .parameter_names = {"index"}}},
+                                              // a combo box is a leaf, so it takes no child elements (§8)
+                                              .accepts_children = false});
         // a container shows one page at a time and owns the selection of its tabs (§8)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "TabView",
@@ -416,16 +443,16 @@ namespace albor::compiler
         // a leaf edits a string the user types, which is what a form field or a search box is (§8)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "TextField",
-                                              // the value, the hint, the states and the font of a field (§8)
-                                              .properties = {ElementProperty{.name = "value", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "placeholder", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "read_only", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "multiline", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "font_size", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "font_family", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "font_weight", .type = scalar(TypeKind::FontWeight), .assignable = true}, ElementProperty{.name = "font_fallback", .type = ValueType::parameterized(TypeKind::Vector, scalar(TypeKind::String)), .assignable = true}},
+                                              // the value, hint, states, font and styled ranges of a field (§8, §9.1)
+                                              .properties = {ElementProperty{.name = "value", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "placeholder", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "read_only", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "multiline", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "font_size", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "font_family", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "font_weight", .type = scalar(TypeKind::FontWeight), .assignable = true}, ElementProperty{.name = "font_fallback", .type = ValueType::parameterized(TypeKind::Vector, scalar(TypeKind::String)), .assignable = true}, ElementProperty{.name = "decorations", .type = ValueType::parameterized(TypeKind::Vector, ValueType::native("TextDecoration")), .assignable = true}},
                                               // a field raises per keystroke and on its commit (§8)
                                               .signals = {ElementSignal{.name = "changed", .parameter_types = {scalar(TypeKind::String)}, .parameter_names = {"value"}}, ElementSignal{.name = "committed", .parameter_types = {scalar(TypeKind::String)}, .parameter_names = {"value"}}},
                                               // a field is a leaf, so it takes no children (§8)
                                               .accepts_children = false});
         // a leaf performs an action when it is pressed, which is a push control (§8)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
-                                              .name = "Button", // the label and the plate and the disabled state are what a button exposes (§8)
-                                              .properties = {ElementProperty{.name = "text", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "background", .type = scalar(TypeKind::Color), .assignable = true}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "action", .type = scalar(TypeKind::Command), .assignable = true}},
+                                              .name = "Button", // the label, icon, plate and disabled state are what a button exposes (§8)
+                                              .properties = {ElementProperty{.name = "text", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "icon", .type = scalar(TypeKind::Image), .assignable = true}, ElementProperty{.name = "icon_size", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "background", .type = scalar(TypeKind::Color), .assignable = true}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "action", .type = scalar(TypeKind::Command), .assignable = true}},
                                               // a button raises a click when it is pressed (§8)
                                               .signals = {ElementSignal{.name = "clicked", .parameter_types = {}, .parameter_names = {}}},
                                               // a button is a leaf, so it takes no children (§8)
@@ -466,6 +493,22 @@ namespace albor::compiler
                                               .signals = {},
                                               // a canvas is a leaf, so it takes no children (§8, §6.4)
                                               .accepts_children = false});
+        // the styled range a text field applies over its shaped run, which a declared `.ui` list can carry (§9.1)
+        RecordType text_decoration;
+        // the record is named by the type the field setter takes (§9.1)
+        text_decoration.name = "TextDecoration";
+        // the range starts at a byte offset, because the field paints over the bytes it already shaped (§9.1)
+        text_decoration.fields.push_back(RecordFieldType{.name = "start", .type = scalar(TypeKind::Int)});
+        // the range ends before the byte offset, because ranges are half open like every text span (§9.1)
+        text_decoration.fields.push_back(RecordFieldType{.name = "end", .type = scalar(TypeKind::Int)});
+        // the foreground replaces the value colour inside the range (§9.1)
+        text_decoration.fields.push_back(RecordFieldType{.name = "foreground", .type = scalar(TypeKind::Color)});
+        // the background paints a band under the range (§9.1)
+        text_decoration.fields.push_back(RecordFieldType{.name = "background", .type = scalar(TypeKind::Color)});
+        // the underline marks a range such as a diagnostic or a spelling error (§9.1)
+        text_decoration.fields.push_back(RecordFieldType{.name = "underline", .type = scalar(TypeKind::Bool)});
+        // the record joins the builtins, because a field decoration names no manifest (§9.1)
+        catalog.add_record(text_decoration);
         // every builtin arranges inside a parent, so the common properties are appended once (§8.2)
         catalog.add_common_properties();
         return catalog;

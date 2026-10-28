@@ -18,16 +18,18 @@ progress, radio groups, numeric steppers, command-bound buttons and a retained c
 cannot yet host the full Xyce Studio shell without either duplicating component structure or
 living without controls the application uses on nearly every page.
 
-**There are four open P0 gaps.**
+**The four P0 gaps are implemented on the `p0-widget-continuation` branch.**
 
 1. ComboBox — #18
 2. Panel/Card — #15
 3. Icon/content Button — #131
 4. Styled/syntax-highlighted TextField — #132
 
-Cross-file `.ui` composition and the TextField undo lifetime defect are implemented on the
-`application-readiness` branch, pushed, and covered by the macOS and Windows CI jobs. The remaining
-four are composition and control vocabulary for the shell, the toolbar and the netlist editor.
+Cross-file `.ui` composition and the TextField undo lifetime defect are merged from the
+`application-readiness` branch. The continuation branch adds the composition and control
+vocabulary for the shell, the toolbar and the netlist editor. ComboBox still paints its popup as an
+in-tree overlay rather than a native `WindowRole::Popup` surface; that native parity remains the
+specific #18 follow-up.
 
 A full port is not the right next step. The right next step is the vertical slice described at the
 end of this document, with the open P0 list cleared first.
@@ -65,7 +67,7 @@ desktop port.
 
 ## Current baseline
 
-- **Widget catalogue:** 21 elements — eleven containers and ten leaves
+- **Widget catalogue:** 24 elements — thirteen containers and eleven leaves
   (`docs/components/index.md`).
 - **Composition:** same-file composition, cross-file `import "path.ui"` and one-level inheritance.
   Each imported file declares one component named after its stem, imports resolve relative to the
@@ -114,6 +116,11 @@ The feature is pushed and runs through the macOS and Windows CI jobs; it is read
 
 **Ticket:** #18.
 
+**State.** Implemented on `p0-widget-continuation`: the trigger, option list, keyboard and pointer
+selection, dismissal paths and the portable expanded/selected semantics are covered by tests. The
+popup is an in-tree root overlay, so it paints above later siblings and takes input first; it is
+still not the native `WindowRole::Popup`/`ListBox` surface, which remains the #18 acceptance gap.
+
 **Why it blocks.** The reference application has 30 ComboBox instantiations. There is no trigger,
 no popup list, no expanded state and no single-choice selection surface for a compact set of
 options. `ListBox` and `WindowRole::Popup` now exist, so the two hard dependencies are in place.
@@ -134,6 +141,10 @@ needs: expanded, selected and disabled.
 ### P0.3 Panel/Card
 
 **Ticket:** #15.
+
+**State.** Implemented on `p0-widget-continuation` as `Panel`, with `Card` as the same facade. It
+paints the theme face, radius and border, stacks children inside its padding and announces a
+`Group` with the author identity. Layout and semantic tests and the `.ui` catalogue are in place.
 
 **Why it blocks.** Every settings page and the shell are built from themed sections. A `Padding`
 around a `Canvas` can imitate the pixels, but it does not give the application a reusable container
@@ -174,6 +185,11 @@ The suites are executed by the macOS and Windows CI jobs; the fix is ready to me
 
 **Ticket:** #131.
 
+**State.** Implemented on `p0-widget-continuation` as an `icon` image property plus an optional
+`icon_size`; the text-only measurement and paint path is unchanged, and the semantic name falls
+back to the author id for an icon-only button. A composed content slot was not added because the
+property covers the icon-only and icon-plus-label cases the application needs.
+
 **Why it blocks.** `Button` is a text-only leaf. The application needs icon buttons, icon-plus-label
 buttons and buttons whose content is composed rather than a single caption. The current workaround
 is to paint a custom control in C++, which loses the command binding and the standard button
@@ -195,6 +211,12 @@ keep the text-only path byte-compatible.
 ### P0.6 Styled/syntax-highlighted TextField
 
 **Ticket:** #132.
+
+**State.** Implemented on `p0-widget-continuation` as `TextDecoration`: byte ranges carry a
+foreground, a background and an underline, and they paint over the field's existing shaped run.
+The C++ API and a `.ui` record list are covered, and `tests/vectors/netlist_editor.ui` carries a
+keyword, number and comment corpus. A wrapped/scroll alignment test is still worth adding before
+the editor port.
 
 **Why it blocks.** The netlist editor is the application's core editing surface. `TextField`
 paints one run; it has no per-range colour, underline or style. Syntax highlighting cannot be
@@ -266,11 +288,17 @@ stale or adjacent work that this branch does not finish.
 Closing only #69 is the correct behavior for this merge. The stale tickets should be corrected in
 a separate issue-hygiene pass so their status stops misleading the next cycle.
 
+## Issue closure for the continuation branch
+
+`p0-widget-continuation` completes **#15** Panel/Card, **#131** icon/content Button and **#132**
+styled TextField. It implements the portable ComboBox trigger, popup and semantics for **#18**, but
+#18 stays open until the popup is carried by the native `WindowRole::Popup`/`ListBox` surface.
+
 ## Recommended sequence
 
 | Cycle | Goal | Work |
 | --- | --- | --- |
-| 1 — make components reusable | A page can be assembled from shared `.ui` files | Cross-file composition (done, awaiting review), #15 Panel/Card, #18 ComboBox, #69 undo lifetime (done, awaiting review), icon/content Button |
+| 1 — make components reusable | A page can be assembled from shared `.ui` files | Cross-file composition (merged), #69 undo lifetime (merged), #15 Panel/Card (done), icon/content Button (done), #18 ComboBox (in-tree popup done; native popup remains) |
 | 2 — make the editing surfaces real | The netlist editor and chart views reach feature parity | Styled TextField, #28 path curves and draw primitives |
 | 3 — make the shell complete | The application looks and behaves like the reference | #55 menus, #72 per-node styling, #74 focus proof, #57 accessibility actions, #68/#70 field polish, #58/#56 command ergonomics |
 
@@ -316,12 +344,20 @@ The framework is ready for the full port when all of the following are true:
 
 ## Validation baseline
 
-- Branch: `application-readiness`, based on `main` at `b0c0277`.
-- The local macOS debug, release and test builds pass after the cross-file, undo and LSP changes.
-- `bash build/check-build-scope.sh` passes locally and in the Windows debug CI job for root,
-  imported-body and imported-interface edits.
-- The macOS and Windows CI jobs execute the unit suites; the latest application-readiness run is
-  green.
-- Windows build and parity counts are authoritative in CI; this host cannot build them, and the
-  branch is pushed with a green Windows run.
+- Branch: `p0-widget-continuation`, based on `main` at `bb1108b` after the
+  `application-readiness` merge.
+- The local macOS debug, release and test builds pass after the P0 widget work.
+- The local debug suite runs 3571 tests and all pass.
+- `bash build/check-build-scope.sh` passes for root, imported-body and imported-interface edits.
 - `bash build/check-format.sh` passes at the phase boundary before the review.
+- The generated `p0_widgets.ui` and `netlist_editor.ui` fixtures compile through codegen, so the
+  new catalogue entries and record construction are exercised by the build.
+- Windows build and parity counts are authoritative in CI; this branch is not pushed yet, so the
+  Windows run is pending.
+- The independent review found two blockers and several majors. The branch now fixes the null
+  text-engine popup path, gives the popup a root overlay layer so later siblings cannot cover or
+  steal it, separates the highlighted row from the committed selection, preserves a selection
+  written before the items, adds the stable ComboBox label, carries ComboBox items and
+  `TextDecoration` ranges through devrt/preview, keeps the Card alias on reload, and paints
+  decoration bands under the selection. Native `WindowRole::Popup` parity, per-frame decoration
+  subset allocation and the Windows expand/collapse pattern remain follow-ups.

@@ -76,11 +76,22 @@ namespace albor
         // the content is clipped into the plate, because a run wider than the field must not bleed over it (§6.2)
         context.save();
         context.clip_rect(bounds());
+        // the styled ranges belong to the value, while a placeholder or a composition keeps the plain path (§9.1)
+        const bool shows_value = !has_marked_text() && !shows_placeholder;
+        // the range bands sit under the selection, because a selected token must keep the selection visible (§9.1)
+        if (shows_value && !m_decorations.empty())
+            paint_decoration_backgrounds(context, displayed, Point{.x = origin.x, .y = draw_y}, draw_y);
         // the selection is painted under the value, because a highlight sits behind the text it covers (§6.1)
         paint_selection(context);
         // the hint or the value or the mark records at the inset and the scrolled top (§6.1)
         if (!displayed.empty())
             context.draw_text(displayed, Point{.x = origin.x, .y = draw_y}, {.fill = resolve(has_marked_text() ? value_colors() : (shows_placeholder ? placeholder_colors() : value_colors()), has_marked_text() ? m_foreground : (shows_placeholder ? m_placeholder_foreground : m_foreground))});
+        // the range glyphs paint over the base run, which is what gives a token its own colour (§9.1)
+        if (shows_value && !m_decorations.empty())
+            paint_decoration_foregrounds(context, displayed, Point{.x = origin.x, .y = draw_y}, draw_y);
+        // the range underlines follow the glyphs, because a diagnostic marks the text it describes (§9.1)
+        if (shows_value && !m_decorations.empty())
+            paint_decoration_underlines(context, displayed, Point{.x = origin.x, .y = draw_y}, draw_y);
         // the mark rides under the provisional string, which is what a composition announces with (§8.3)
         if (has_marked_text())
             paint_mark_underline(context);
@@ -1267,6 +1278,153 @@ namespace albor
         m_scroll_offset = clamped;
         // the content moved, so the frame changes (§6.1)
         invalidate();
+    }
+
+    void TextField::set_decorations(std::vector<TextDecoration> decorations) {
+        // the ranges are stored in paint order, because the last overlapping range is the one that wins (§9.1)
+        m_decorations = std::move(decorations);
+        // the shaped run did not change, so only the next frame is requested (§9.1)
+        invalidate();
+    }
+
+    const std::vector<TextDecoration>& TextField::decorations() const {
+        // the ranges are handed back as stored, because a caller only reads them (§9.1)
+        return m_decorations;
+    }
+
+    void TextField::clear_decorations() {
+        // an empty list has nothing to clear, so the unchanged path requests no frame (§9.1)
+        if (m_decorations.empty())
+            return;
+        // the ranges leave together, which restores the single colour path (§9.1)
+        m_decorations.clear();
+        // the value now paints without decorations, so the next frame is requested (§9.1)
+        invalidate();
+    }
+
+    TextLayout TextField::decoration_layout(const TextLayout& displayed, const TextDecoration& decoration) const {
+        // a run that was never shaped has no glyphs to split, so the range is empty (§9.1)
+        if (displayed.run == nullptr)
+            return TextLayout{};
+        // the first byte is clamped into the value, because a caller may name a stale range (§9.1)
+        const std::size_t first = std::min(decoration.start, m_value.size());
+        // the end is clamped after the start, which keeps the range half open and non negative (§9.1)
+        const std::size_t last = std::min(std::max(decoration.end, first), m_value.size());
+        // an empty range carries no glyph, so there is nothing to draw (§9.1)
+        if (first == last)
+            return TextLayout{};
+        // each line keeps its origin and the glyphs the range covers, which keeps every glyph in place (§9.1)
+        std::vector<ShapedRun::Line> lines;
+        for (const ShapedRun::Line& line : displayed.run->lines()) {
+            // a line outside the range contributes no glyph, which keeps the subset small (§9.1)
+            if (line.end_byte <= first || line.start_byte >= last)
+                continue;
+            // the line is copied whole first, because its origin and font are part of the shape (§9.1)
+            ShapedRun::Line range_line = line;
+            // the glyph list is rebuilt from the covered clusters, which is what colours the range (§9.1)
+            range_line.glyphs.clear();
+            for (const ShapedGlyph& glyph : line.glyphs) {
+                // a glyph whose cluster sits in the range is painted by this subset (§9.1)
+                if (glyph.cluster >= first && glyph.cluster < last)
+                    range_line.glyphs.push_back(glyph);
+            }
+            // a line with no covered glyph contributes nothing, which is what an empty fragment is (§9.1)
+            if (!range_line.glyphs.empty())
+                lines.push_back(std::move(range_line));
+        }
+        // a range that covers no shaped glyph draws nothing, which is the empty subset (§9.1)
+        if (lines.empty())
+            return TextLayout{};
+        // the subset shares the font and source of the run, so the renderer replays the same face (§9.1)
+        TextLayout subset;
+        subset.run = ShapedRun::make(std::move(lines), displayed.run->font_size(), displayed.run->font_hash(), displayed.run->shape_source());
+        // the extents stay those of the whole run, because the glyph positions are absolute to the line (§9.1)
+        subset.size = displayed.size;
+        subset.ascent = displayed.ascent;
+        subset.descent = displayed.descent;
+        return subset;
+    }
+
+    void TextField::paint_decoration_backgrounds(RenderContext& context, const TextLayout& displayed, Point origin, float draw_y) const {
+        // a range band needs a shaped run, because the band follows the run's own line boxes (§9.1)
+        if (displayed.run == nullptr || m_value.empty())
+            return;
+        for (const TextDecoration& decoration : m_decorations) {
+            // a transparent background draws no band, which is the common syntax highlighting case (§9.1)
+            if (decoration.background.alpha <= 0.0f)
+                continue;
+            // the first byte is clamped, because a caller may name a range past the value (§9.1)
+            const std::size_t first = std::min(decoration.start, m_value.size());
+            // the end is clamped after the start, which keeps the band well formed (§9.1)
+            const std::size_t last = std::min(std::max(decoration.end, first), m_value.size());
+            // an empty range has no band to draw (§9.1)
+            if (first == last)
+                continue;
+            for (std::size_t index = 0; index < displayed.run->lines().size(); index++) {
+                // the line the band covers is read for its own box (§9.1)
+                const ShapedRun::Line& line = displayed.run->lines()[index];
+                // a line outside the range contributes no band (§9.1)
+                if (line.end_byte <= first || line.start_byte >= last)
+                    continue;
+                // the band starts at the first covered pen and stops at the last (§9.1)
+                const float start_x = origin.x + line.origin.x + displayed.run->x_at_byte(index, std::max(first, line.start_byte));
+                const float end_x = origin.x + line.origin.x + displayed.run->x_at_byte(index, std::min(last, line.end_byte));
+                // the line box ties the band to the ascent and descent the line was measured at (§9.1)
+                const float top = draw_y + line.origin.y - line.ascent;
+                // the band sits under the value, which is why it is recorded before the base run (§9.1)
+                context.draw_rect(Rect{.x = start_x, .y = top, .width = std::max(0.0f, end_x - start_x), .height = line.ascent + line.descent}, {.fill = decoration.background});
+            }
+        }
+    }
+
+    void TextField::paint_decoration_foregrounds(RenderContext& context, const TextLayout& displayed, Point origin, float draw_y) const {
+        // a transparent foreground leaves the base colour, which is what a background only range means (§9.1)
+        if (displayed.run == nullptr)
+            return;
+        for (const TextDecoration& decoration : m_decorations) {
+            // a range with no foreground keeps the value colour, so no subset is drawn (§9.1)
+            if (decoration.foreground.alpha <= 0.0f)
+                continue;
+            // the subset carries only the glyphs the range covers, which keeps the shaped positions (§9.1)
+            const TextLayout subset = decoration_layout(displayed, decoration);
+            // an empty subset draws nothing, which is what a range past the value is (§9.1)
+            if (subset.empty())
+                continue;
+            // the subset paints at the base run's origin, so every glyph lands where it was shaped (§9.1)
+            context.draw_text(subset, Point{.x = origin.x, .y = draw_y}, {.fill = decoration.foreground});
+        }
+    }
+
+    void TextField::paint_decoration_underlines(RenderContext& context, const TextLayout& displayed, Point origin, float draw_y) const {
+        // an underline needs a shaped run, because the line box decides where it sits (§9.1)
+        if (displayed.run == nullptr || m_value.empty())
+            return;
+        for (const TextDecoration& decoration : m_decorations) {
+            // only a range that asks for an underline draws one (§9.1)
+            if (!decoration.underline)
+                continue;
+            // the first byte is clamped into the value, because a caller may name a stale range (§9.1)
+            const std::size_t first = std::min(decoration.start, m_value.size());
+            // the end is clamped after the start, which keeps the underline well formed (§9.1)
+            const std::size_t last = std::min(std::max(decoration.end, first), m_value.size());
+            // an empty range has no underline to draw (§9.1)
+            if (first == last)
+                continue;
+            // the underline follows the foreground when it names one, otherwise it keeps the base value colour (§9.1)
+            const Color colour = decoration.foreground.alpha > 0.0f ? decoration.foreground : resolve(value_colors(), m_foreground);
+            for (std::size_t index = 0; index < displayed.run->lines().size(); index++) {
+                // the line the range covers is read for its own origin and box (§9.1)
+                const ShapedRun::Line& line = displayed.run->lines()[index];
+                // a line outside the range contributes no underline (§9.1)
+                if (line.end_byte <= first || line.start_byte >= last)
+                    continue;
+                // the line starts at the first covered pen and stops at the last (§9.1)
+                const float start_x = origin.x + line.origin.x + displayed.run->x_at_byte(index, std::max(first, line.start_byte));
+                const float end_x = origin.x + line.origin.x + displayed.run->x_at_byte(index, std::min(last, line.end_byte));
+                // the underline sits just below the baseline, which is the line box's descent side (§9.1)
+                context.draw_rect(Rect{.x = start_x, .y = draw_y + line.origin.y + 1.0f, .width = std::max(0.0f, end_x - start_x), .height = 1.0f}, {.fill = colour});
+            }
+        }
     }
 
     void TextField::replace_range(std::size_t start, std::size_t end, std::string_view text) {

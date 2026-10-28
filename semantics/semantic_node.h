@@ -65,6 +65,9 @@ namespace albor
         // a container of list items that share one selection, which assistive technology groups (§10.1)
         List,
 
+        // a compact choice control that opens a popup list (§10.1)
+        ComboBox,
+
         // a container that groups other semantic nodes
         Group,
 
@@ -114,6 +117,9 @@ namespace albor
 
         // whether the node edits more than one line, which assistive technology announces (§10.1)
         bool multiline = false;
+
+        // whether a combo box or another popup control is currently open (§10.1)
+        bool expanded = false;
 
         // compare two state sets field by field
         friend bool operator==(const SemanticStates& lhs, const SemanticStates& rhs) = default;
@@ -203,6 +209,12 @@ namespace albor
 
         // set or clear the multi line state, which assistive technology announces (§10.1)
         void set_multiline(bool multiline);
+
+        // report whether a popup control is expanded (§10.1)
+        [[nodiscard]] bool expanded() const;
+
+        // set or clear the expanded state, which a combo box updates when its popup opens (§10.1)
+        void set_expanded(bool expanded);
 
         // hand out the bounds the node occupies in logical pixels (§10.1)
         [[nodiscard]] const Rect& bounds() const;

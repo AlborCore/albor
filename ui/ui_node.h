@@ -51,6 +51,15 @@ namespace albor
         // remove a child and hand it back to the caller, returning null when the node is not a child (§8.1)
         [[nodiscard]] std::unique_ptr<UiNode> remove_child(UiNode* child);
 
+        // hand out the overlay children, which paint above the ordinary tree and take input first (§8.3)
+        [[nodiscard]] const std::vector<std::unique_ptr<UiNode>>& overlays() const;
+
+        // adopt an overlay and append it, which does not participate in the parent layout (§8.3)
+        UiNode& add_overlay(std::unique_ptr<UiNode> overlay);
+
+        // remove an overlay and hand it back, returning null when the node is not an overlay (§8.3)
+        [[nodiscard]] std::unique_ptr<UiNode> remove_overlay(UiNode* overlay);
+
         // measure the node against the constraints a parent offers it (§8.2)
         virtual void measure(const SizeConstraints& constraints, Size& out_size);
 
@@ -203,6 +212,9 @@ namespace albor
 
         // the owned children, in the order they were added (§8.1)
         std::vector<std::unique_ptr<UiNode>> m_children;
+
+        // the owned overlays, which paint above the children and do not take layout space (§8.3)
+        std::vector<std::unique_ptr<UiNode>> m_overlays;
 
         // the engine a widget schedules through, which the pipeline hands down the tree (§7.3)
         AnimationEngine* m_animations = nullptr;

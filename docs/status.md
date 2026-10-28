@@ -61,7 +61,7 @@ those configurations (AD-10); **Not supported** means there is no Windows implem
 | Reactive properties and bindings | Full | shared eager-push runtime |
 | UI tree, components, event routing | Full | shared UI module |
 | Semantic tree and semantic provider | Full | shared semantics module |
-| Standard widgets | Full | twenty-one elements, including Image, TextField, ListBox, ScrollView, TabView, RadioGroup and NumericStepper |
+| Standard widgets | Full | twenty-four elements, including Panel, ComboBox, Image, TextField, ListBox, ScrollView, TabView, RadioGroup and NumericStepper; the ComboBox popup is an in-tree overlay and native `WindowRole::Popup` parity remains open |
 | Text measurement and shaping | Full | HarfBuzz with DirectWrite resolution; 8 font tests and 4 shaped-run parity tests |
 | `.ui` compiler, parser and typed IR | Full | platform-neutral compiler, built and tested on Windows |
 | Manifest, glue generator and C++ codegen | Full | generated facades build on Windows |
@@ -90,7 +90,7 @@ Windows has no code-coverage job comparable to `macos-coverage`; the existing
 | Input normalization, coalescing, focus | `input/`, `focus/` | shipped |
 | Layout: measure & arrange, containers | `layout/` | shipped |
 | Text, measurement, shaping | `text/` | baseline — HarfBuzz, embedded font registration and weight selection |
-| Standard widgets | `widgets/` | shipped — twenty-one elements |
+| Standard widgets | `widgets/` | shipped — twenty-four elements |
 | Animation core | `animation/` | baseline |
 | Compiler frontend, `.ui` parser, typed IR | `compiler/` | shipped |
 | Manifest parser, validator, glue generator | `manifest/` | shipped |

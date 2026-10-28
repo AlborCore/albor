@@ -25,9 +25,11 @@
 #include "widgets/button.h"
 #include "widgets/canvas.h"
 #include "widgets/checkbox.h"
+#include "widgets/combo_box.h"
 #include "widgets/image.h"
 #include "widgets/label.h"
 #include "widgets/numeric_stepper.h"
+#include "widgets/panel.h"
 #include "widgets/progress_bar.h"
 #include "widgets/radio_button.h"
 #include "widgets/radio_group.h"
@@ -149,11 +151,19 @@ namespace
             ShapedRun::Line line;
             // the line origin is the baseline the synthesized glyphs hang from (§9.1)
             line.origin = Point{.x = 0.0f, .y = HEIGHT * 0.8f};
+            // the line covers the whole double text, which is what a decoration range indexes (§9.1)
+            line.start_byte = 0;
+            line.end_byte = text.size();
+            // the line box and advance are the geometry the selection and caret read (§9.1)
+            line.ascent = HEIGHT * 0.8f;
+            line.descent = HEIGHT * 0.2f;
             // every character becomes one glyph placed a fixed advance apart, which is what the double measures (§9.1)
             for (const char character : text)
-                line.glyphs.push_back(ShapedGlyph{.id = static_cast<std::uint32_t>(character), .position = Point{.x = static_cast<float>(line.glyphs.size()) * ADVANCE, .y = 0.0f}});
+                line.glyphs.push_back(ShapedGlyph{.id = static_cast<std::uint32_t>(character), .position = Point{.x = static_cast<float>(line.glyphs.size()) * ADVANCE, .y = 0.0f}, .cluster = static_cast<std::uint32_t>(line.glyphs.size())});
             // the advance counts characters, and the ceiling clamps the result the way a container expects (§8.2)
             const float advanced = static_cast<float>(text.size()) * ADVANCE;
+            // the line width is what a caret past the last glyph resolves against (§9.1)
+            line.width = advanced;
             // the shaped run travels beside the extents, which is what a measurement hands over (§9.1)
             return TextLayout{.run = ShapedRun::make({std::move(line)}, font_size), .size = Size{.width = max_width > 0.0f ? std::min(advanced, max_width) : advanced, .height = HEIGHT}, .ascent = HEIGHT * 0.8f, .descent = HEIGHT * 0.2f};
         }
@@ -6325,4 +6335,529 @@ TEST(ImageChecks, AnImageWithNoPixelsIsDisabledAndIsNotAFocusStop) {
     // assert the empty image is disabled and the widget declines the caret (§8.3, §10.1)
     EXPECT_TRUE(node.disabled());
     EXPECT_FALSE(image.accepts_focus());
+}
+
+TEST(PanelChecks, AnAuthoredFaceWinsEvenWhenItMatchesTheFallback) {
+    // arrange a themed panel whose author writes the fallback colour explicitly (§6.1)
+    BindingEngine engine;
+    Panel panel(&engine);
+    Theme theme;
+    theme.set_panel_background(Color::rgb(0.9f, 0.1f, 0.1f));
+    panel.set_theme(&theme);
+    const Color authored = Color::rgb(0.13f, 0.15f, 0.19f);
+    // act
+    panel.set_background(authored);
+    // assert the explicit face is not mistaken for an unchanged default (§6.1)
+    EXPECT_EQ(panel.background(), authored);
+}
+
+TEST(PanelChecks, RendersItsFaceAndBorderThroughTheTheme) {
+    // arrange a themed panel with a distinct face and hairline (§6.1, §8.4)
+    BindingEngine engine;
+    Panel panel(&engine);
+    Theme theme;
+    theme.set_panel_background(Color::rgb(0.2f, 0.3f, 0.4f));
+    theme.set_panel_border(Color::rgb(0.5f, 0.6f, 0.7f));
+    panel.set_theme(&theme);
+    panel.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{80.0f, 40.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    panel.render(recorder);
+    // assert the panel records one themed face with its hairline (§6.1)
+    EXPECT_EQ(panel.background(), Color::rgb(0.2f, 0.3f, 0.4f));
+    EXPECT_EQ(panel.border_color(), Color::rgb(0.5f, 0.6f, 0.7f));
+    EXPECT_FLOAT_EQ(panel.corner_radius(), 6.0f);
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    ASSERT_EQ(rect_commands(*scene).size(), 1U);
+    const DrawCommand& plate = scene->commands().front();
+    EXPECT_EQ(plate.kind(), DrawCommandKind::RoundedRect);
+    EXPECT_EQ(plate.paint().fill, Color::rgb(0.2f, 0.3f, 0.4f));
+    EXPECT_EQ(plate.paint().stroke, Color::rgb(0.5f, 0.6f, 0.7f));
+}
+
+TEST(PanelChecks, MeasuresChildrenInsideThePaddingAndSpacing) {
+    // arrange two fixed children, which make the panel extent arithmetic (§8.2)
+    BindingEngine engine;
+    Panel panel(&engine, "settings");
+    auto first = std::make_unique<WidgetChildNode>();
+    first->m_intrinsic = Size{40.0f, 20.0f};
+    auto second = std::make_unique<WidgetChildNode>();
+    second->m_intrinsic = Size{60.0f, 30.0f};
+    panel.add_child(std::move(first));
+    panel.add_child(std::move(second));
+    panel.set_padding(10.0f);
+    panel.set_spacing(4.0f);
+    Size measured{};
+    // act
+    panel.measure(SizeConstraints::unconstrained(), measured);
+    // assert the inset frames both axes and the gap joins the two children (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 80.0f);
+    EXPECT_FLOAT_EQ(measured.height, 74.0f);
+}
+
+TEST(PanelChecks, ArrangesChildrenInsideThePadding) {
+    // arrange a panel with one child and a ten point inset (§8.2)
+    BindingEngine engine;
+    Panel panel(&engine);
+    auto child = std::make_unique<WidgetChildNode>();
+    child->m_intrinsic = Size{40.0f, 20.0f};
+    WidgetChildNode* leaf = child.get();
+    panel.add_child(std::move(child));
+    panel.set_padding(10.0f);
+    Size measured{};
+    panel.measure(SizeConstraints::unconstrained(), measured);
+    // act
+    panel.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{80.0f, 60.0f}));
+    // assert the child sits inside the inset and takes the content width (§8.2)
+    EXPECT_EQ(leaf->bounds(), Rect::from_origin_size(Point{10.0f, 10.0f}, Size{60.0f, 20.0f}));
+}
+
+TEST(PanelChecks, AnnouncesAGroupWithItsAuthorIdentity) {
+    // arrange a panel with an author id, which is what automation selects by (AD-11)
+    BindingEngine engine;
+    Panel panel(&engine, "settings");
+    panel.arrange(Rect::from_origin_size(Point{4.0f, 6.0f}, Size{80.0f, 60.0f}));
+    // act
+    const SemanticNode node = panel.semantic_node();
+    // assert the role, identity and bounds reach the semantic tree (§10.1)
+    EXPECT_EQ(node.role(), SemanticRole::Group);
+    EXPECT_EQ(node.explicit_id(), "settings");
+    EXPECT_EQ(node.bounds(), panel.bounds());
+    EXPECT_FALSE(panel.accepts_focus());
+}
+
+TEST(PanelChecks, AThemeResolvesThePanelTokens) {
+    // arrange a themed panel with distinct face, border and inset tokens (§6.1, §8.2)
+    BindingEngine engine;
+    Panel panel(&engine);
+    Theme theme;
+    theme.set_panel_background(Color::rgb(0.1f, 0.2f, 0.3f));
+    theme.set_panel_border(Color::rgb(0.4f, 0.5f, 0.6f));
+    theme.set_panel_padding(5.0f);
+    theme.set_panel_radius(7.0f);
+    theme.set_panel_border_width(2.0f);
+    panel.set_theme(&theme);
+    // act
+    panel.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{80.0f, 60.0f}));
+    // assert the panel reads the theme rather than the fallback literals (§6.1, §8.4)
+    EXPECT_EQ(panel.background(), Color::rgb(0.1f, 0.2f, 0.3f));
+    EXPECT_EQ(panel.border_color(), Color::rgb(0.4f, 0.5f, 0.6f));
+    EXPECT_FLOAT_EQ(panel.padding(), 5.0f);
+    EXPECT_FLOAT_EQ(panel.corner_radius(), 7.0f);
+    EXPECT_FLOAT_EQ(panel.border_width(), 2.0f);
+}
+
+TEST(ComboBoxChecks, SelectsAnItemAndAnnouncesTheChoice) {
+    // arrange a combo box with three options and a selected second option (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ComboBox combo(&engine, &text_engine, "choice");
+    combo.set_items({"Alpha", "Beta", "Gamma"});
+    combo.set_selected(1);
+    combo.set_label("Mode");
+    combo.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 28.0f}));
+    // act
+    const SemanticNode node = combo.semantic_node();
+    // assert the role, identity, stable label, selected state and item children reach the tree (§10.1)
+    EXPECT_EQ(node.role(), SemanticRole::ComboBox);
+    EXPECT_EQ(node.explicit_id(), "choice");
+    EXPECT_EQ(node.name(), "Mode");
+    EXPECT_TRUE(node.selected());
+    EXPECT_FALSE(node.expanded());
+    EXPECT_EQ(combo.semantic_child_count(), 3u);
+    const std::unique_ptr<SemanticProvider> child = combo.semantic_child(1);
+    ASSERT_NE(child, nullptr);
+    EXPECT_EQ(child->semantic_node().role(), SemanticRole::ListItem);
+    EXPECT_EQ(child->semantic_node().name(), "Beta");
+    EXPECT_TRUE(child->semantic_node().selected());
+}
+
+TEST(ComboBoxChecks, OpensOnTheKeyboardAndCommitsTheHighlightedOption) {
+    // arrange a closed combo box with a selection signal (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ComboBox combo(&engine, &text_engine);
+    combo.set_items({"Alpha", "Beta", "Gamma"});
+    combo.set_selected(0);
+    combo.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 28.0f}));
+    int chosen = -1;
+    combo.set_on_selection_changed([&chosen](int index) { chosen = index; });
+    Event down{.kind = EventKind::KeyDown, .key = Key::ArrowDown};
+    // act the down arrow opens the list and moves the highlight
+    combo.dispatch_event(down);
+    // assert the popup is expanded but the arrow only moved the highlight, not the committed value (§8.3)
+    EXPECT_TRUE(combo.expanded());
+    EXPECT_EQ(combo.selected(), 0);
+    EXPECT_TRUE(down.handled);
+    Event commit{.kind = EventKind::KeyDown, .key = Key::Return};
+    combo.dispatch_event(commit);
+    // assert return commits the highlighted option and closes the popup (§8.3)
+    EXPECT_FALSE(combo.expanded());
+    EXPECT_EQ(chosen, 1);
+    EXPECT_TRUE(commit.handled);
+}
+
+TEST(ComboBoxChecks, TheTriggerPaintsTheSelectedValueAndMarker) {
+    // arrange a selected combo box at a known rectangle (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ComboBox combo(&engine, &text_engine);
+    combo.set_items({"Alpha", "Beta"});
+    combo.set_selected(1);
+    combo.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 28.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{300.0f, 100.0f}, 1.0f));
+    // act
+    combo.render(recorder);
+    // assert the selected run and the disclosure marker both record, while the popup stays closed (§6.1)
+    const std::vector<DrawCommand> texts = text_commands(*recorder.scene());
+    ASSERT_EQ(texts.size(), 2U);
+    EXPECT_EQ(texts.front().text_geometry().layout.run->glyph_count(), 4U);
+    EXPECT_FALSE(combo.expanded());
+}
+
+TEST(ComboBoxChecks, ATriggerPressTogglesThePopup) {
+    // arrange a closed combo box arranged at a known rectangle (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ComboBox combo(&engine, &text_engine);
+    combo.set_items({"Alpha", "Beta"});
+    combo.arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{160.0f, 28.0f}));
+    Event press{.kind = EventKind::PointerDown, .position = Point{20.0f, 30.0f}};
+    // act
+    combo.dispatch_event(press);
+    // assert the trigger opens the popup and claims the press (§8.3)
+    EXPECT_TRUE(combo.expanded());
+    EXPECT_TRUE(press.handled);
+    Event second{.kind = EventKind::PointerDown, .position = Point{20.0f, 30.0f}};
+    combo.dispatch_event(second);
+    // assert the second press closes the popup again (§8.3)
+    EXPECT_FALSE(combo.expanded());
+    EXPECT_TRUE(second.handled);
+}
+
+TEST(ComboBoxChecks, APressOnAnOptionChoosesIt) {
+    // arrange an open combo box, arranged where the first popup row is known (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ComboBox combo(&engine, &text_engine);
+    combo.set_items({"Alpha", "Beta"});
+    combo.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 28.0f}));
+    combo.open();
+    int chosen = -1;
+    combo.set_on_selection_changed([&chosen](int index) { chosen = index; });
+    Event press{.kind = EventKind::PointerDown, .position = Point{5.0f, 33.0f}};
+    // act
+    combo.dispatch_event(press);
+    // assert the row press commits the first option and closes the popup (§8.3)
+    EXPECT_EQ(combo.selected(), 0);
+    EXPECT_EQ(chosen, 0);
+    EXPECT_FALSE(combo.expanded());
+    EXPECT_TRUE(press.handled);
+}
+
+TEST(ComboBoxChecks, AnOutsidePressClosesWithoutChoosing) {
+    // arrange an open combo box with a selected option (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ComboBox combo(&engine, &text_engine);
+    combo.set_items({"Alpha", "Beta"});
+    combo.set_selected(0);
+    combo.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 28.0f}));
+    combo.open();
+    Event press{.kind = EventKind::PointerDown, .position = Point{-10.0f, -10.0f}};
+    // act
+    combo.dispatch_event(press);
+    // assert the outside press closes the popup and the chosen value stands (§8.3)
+    EXPECT_FALSE(combo.expanded());
+    EXPECT_EQ(combo.selected(), 0);
+    EXPECT_TRUE(press.handled);
+}
+
+TEST(ComboBoxChecks, EscapeClosesWithoutChoosing) {
+    // arrange an open combo box with a selected option and a signal counter (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ComboBox combo(&engine, &text_engine);
+    combo.set_items({"Alpha", "Beta"});
+    combo.set_selected(0);
+    combo.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 28.0f}));
+    combo.open();
+    int chosen = -1;
+    combo.set_on_selection_changed([&chosen](int index) { chosen = index; });
+    Event escape{.kind = EventKind::KeyDown, .key = Key::Escape};
+    // act
+    combo.dispatch_event(escape);
+    // assert escape closes the list without committing a new value (§8.3)
+    EXPECT_FALSE(combo.expanded());
+    EXPECT_EQ(chosen, -1);
+    EXPECT_TRUE(escape.handled);
+}
+
+TEST(ComboBoxChecks, ArrowsChangeOnlyTheHighlightUntilReturnCommits) {
+    // arrange a combo box with a committed selection and a signal counter (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ComboBox combo(&engine, &text_engine);
+    combo.set_items({"Alpha", "Beta", "Gamma"});
+    combo.set_selected(0);
+    combo.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 28.0f}));
+    int chosen = -1;
+    combo.set_on_selection_changed([&chosen](int index) { chosen = index; });
+    // act two arrows and escape, which is navigation rather than a commit (§8.3)
+    Event down{.kind = EventKind::KeyDown, .key = Key::ArrowDown};
+    combo.dispatch_event(down);
+    combo.dispatch_event(down);
+    Event escape{.kind = EventKind::KeyDown, .key = Key::Escape};
+    combo.dispatch_event(escape);
+    // assert the committed value and the handler stayed untouched (§8.3)
+    EXPECT_EQ(combo.selected(), 0);
+    EXPECT_EQ(chosen, -1);
+    EXPECT_FALSE(combo.expanded());
+}
+
+TEST(ComboBoxChecks, TheHighlightedRowIsWhatReturnCommits) {
+    // arrange an open combo box with a selected first row (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ComboBox combo(&engine, &text_engine);
+    combo.set_items({"Alpha", "Beta", "Gamma"});
+    combo.set_selected(0);
+    combo.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 28.0f}));
+    combo.open();
+    int chosen = -1;
+    combo.set_on_selection_changed([&chosen](int index) { chosen = index; });
+    // act the pointer highlights the third row, then return commits the highlight (§8.3)
+    Event hover{.kind = EventKind::PointerMove, .position = Point{5.0f, 28.0f + 4.0f + 56.0f + 1.0f}};
+    combo.dispatch_event(hover);
+    Event commit{.kind = EventKind::KeyDown, .key = Key::Return};
+    combo.dispatch_event(commit);
+    // assert the hovered row is the one committed, not the old selection (§8.3)
+    EXPECT_EQ(chosen, 2);
+    EXPECT_EQ(combo.selected(), 2);
+    EXPECT_FALSE(combo.expanded());
+}
+
+TEST(ComboBoxChecks, ASelectionWrittenBeforeTheOptionsSurvivesTheList) {
+    // arrange a declaration order that writes selected before items (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ComboBox combo(&engine, &text_engine);
+    // act
+    combo.set_selected(1);
+    combo.set_items({"Alpha", "Beta"});
+    // assert the pending index applies once the list arrives (§8.3)
+    EXPECT_EQ(combo.selected(), 1);
+}
+
+TEST(ComboBoxChecks, ANullTextEngineStillPaintsThePopup) {
+    // arrange a control whose application supplied no text engine (§9.1)
+    BindingEngine engine;
+    ComboBox combo(&engine, nullptr);
+    combo.set_items({"Alpha", "Beta"});
+    combo.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 28.0f}));
+    combo.open();
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{300.0f, 300.0f}, 1.0f));
+    // act
+    combo.render(recorder);
+    // assert the popup face still records without a shaped option run (§9.1)
+    EXPECT_GT(rect_commands(*recorder.scene()).size(), 0u);
+    EXPECT_EQ(combo.selected(), -1);
+}
+
+TEST(ComboBoxChecks, APopupPressWinsOverALaterSiblingThroughTheRouter) {
+    // arrange a column where a button follows the combo box and would cover its popup (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    auto column = std::make_unique<ColumnLayout>();
+    auto combo = std::make_unique<ComboBox>(&engine, &text_engine);
+    auto button = std::make_unique<Button>(&engine, &text_engine, "Below");
+    ComboBox* choice = combo.get();
+    choice->set_items({"Alpha", "Beta"});
+    Button* below = button.get();
+    std::size_t clicks = 0;
+    below->set_on_click([&clicks] { clicks++; });
+    column->add_child(std::move(combo));
+    column->add_child(std::move(button));
+    root.add_child(std::move(column));
+    Size measured{};
+    root.measure(SizeConstraints::unconstrained(), measured);
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 200.0f}));
+    choice->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 28.0f}));
+    below->arrange(Rect::from_origin_size(Point{0.0f, 28.0f}, Size{160.0f, 28.0f}));
+    choice->open();
+    ASSERT_TRUE(choice->expanded());
+    ASSERT_NE(choice->parent(), nullptr);
+    ASSERT_EQ(root.overlays().size(), 1U);
+    // act a press on the first popup row goes through the real dispatcher (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{5.0f, 33.0f}};
+    InputDispatcher::dispatch(root, press);
+    // assert the popup layer received it and the button did not (§8.3)
+    EXPECT_EQ(choice->selected(), 0);
+    EXPECT_EQ(clicks, 0u);
+    EXPECT_TRUE(press.handled);
+    // act an outside press through the same router also reaches the popup layer (§8.3)
+    choice->open();
+    Event outside{.kind = EventKind::PointerDown, .position = Point{180.0f, 180.0f}};
+    InputDispatcher::dispatch(root, outside);
+    // assert the outside press closes the popup and leaves the committed choice alone (§8.3)
+    EXPECT_FALSE(choice->expanded());
+    EXPECT_TRUE(outside.handled);
+}
+
+TEST(ComboBoxChecks, ADisabledControlCannotOpen) {
+    // arrange a disabled combo box with options (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ComboBox combo(&engine, &text_engine);
+    combo.set_items({"Alpha"});
+    combo.set_disabled(true);
+    combo.open();
+    // assert the disabled control refuses the popup and the semantic action (§8.3, §10.1)
+    EXPECT_FALSE(combo.expanded());
+    EXPECT_TRUE(combo.semantic_node().disabled());
+}
+
+TEST(ButtonIconChecks, ANamedIconMeasuresBesideTheLabel) {
+    // arrange a button with a ten by ten icon and a two character label (§8.2, §6.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[10 * 10 * 4]{};
+    Button button(&engine, &text_engine, "Go");
+    button.set_icon(factory.create_image(10, 10, ImageFormat::RGBA8, pixels));
+    button.set_icon_size(20.0f);
+    Size measured{};
+    // act
+    button.measure(SizeConstraints::unconstrained(), measured);
+    // assert the icon, gap and label determine the content width (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 46.0f);
+    EXPECT_FLOAT_EQ(measured.height, 20.0f);
+}
+
+TEST(ButtonIconChecks, AnIconOnlyButtonUsesItsAuthorIdentityAsTheName) {
+    // arrange an icon-only button with an author id, which is its accessible name (§10.1, AD-11)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[4 * 4 * 4]{};
+    Button button(&engine, &text_engine, "", "toolbar.open");
+    button.set_icon(factory.create_image(4, 4, ImageFormat::RGBA8, pixels));
+    // act
+    const SemanticNode node = button.semantic_node();
+    // assert the label is empty and the author identity names the button (§10.1)
+    EXPECT_EQ(node.name(), "toolbar.open");
+    EXPECT_TRUE(button.label().empty());
+}
+
+TEST(ButtonIconChecks, AnIconOnlyButtonPaintsNoTextAndClearsBackToTheLabelPath) {
+    // arrange an icon-only button with a ten point icon (§6.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[10 * 10 * 4]{};
+    Button button(&engine, &text_engine);
+    button.set_icon(factory.create_image(10, 10, ImageFormat::RGBA8, pixels));
+    button.set_icon_size(20.0f);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{80.0f, 24.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the icon-only path records the image and no run (§6.4)
+    std::size_t images = 0;
+    for (const DrawCommand& command : recorder.scene()->commands())
+        if (command.kind() == DrawCommandKind::Image)
+            images++;
+    EXPECT_EQ(images, 1U);
+    EXPECT_TRUE(text_commands(*recorder.scene()).empty());
+    // act and assert clearing the icon restores the text-only path (§8.2)
+    button.set_label("Go");
+    button.set_icon(nullptr);
+    SceneRecorder labelled(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    button.render(labelled);
+    EXPECT_EQ(text_commands(*labelled.scene()).size(), 1U);
+}
+
+TEST(ButtonIconChecks, TheIconAndLabelAreBothRecorded) {
+    // arrange a button with an icon and a label, arranged at a known rectangle (§6.1, §6.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[8 * 8 * 4]{};
+    Button button(&engine, &text_engine, "Go");
+    button.set_icon(factory.create_image(8, 8, ImageFormat::RGBA8, pixels));
+    button.set_icon_size(20.0f);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 24.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the image and the label both reach the scene (§6.1)
+    std::size_t images = 0;
+    for (const DrawCommand& command : recorder.scene()->commands())
+        if (command.kind() == DrawCommandKind::Image)
+            images++;
+    EXPECT_EQ(images, 1u);
+    EXPECT_EQ(text_commands(*recorder.scene()).size(), 1u);
+}
+
+TEST(TextFieldDecorationChecks, AStyledRangeAddsForegroundAndUnderlineCommands) {
+    // arrange a field with one styled range over its first byte (§9.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TextField field(&engine, &text_engine, "abc");
+    TextDecoration decoration;
+    decoration.start = 0;
+    decoration.end = 1;
+    decoration.foreground = Color::rgb(0.9f, 0.1f, 0.1f);
+    decoration.underline = true;
+    field.set_decorations({decoration});
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 24.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    field.render(recorder);
+    // assert the base run, the coloured subset and the underline all reach the scene (§9.1)
+    EXPECT_GE(text_commands(*recorder.scene()).size(), 2u);
+    EXPECT_EQ(rect_commands(*recorder.scene()).size(), 1u);
+    EXPECT_EQ(field.decorations().size(), 1u);
+}
+
+TEST(TextFieldDecorationChecks, ASelectionStaysVisibleOverABackgroundRange) {
+    // arrange a field whose selection overlaps a range with a background band (§9.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TextField field(&engine, &text_engine, "abc");
+    TextDecoration decoration;
+    decoration.start = 0;
+    decoration.end = 3;
+    decoration.background = Color::rgb(0.9f, 0.1f, 0.1f);
+    field.set_decorations({decoration});
+    field.set_selection(0, 3);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 24.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    field.render(recorder);
+    // assert the band is recorded before the selection, so the highlight is not erased (§9.1)
+    std::size_t band = 0;
+    std::size_t selection = 0;
+    for (const DrawCommand& command : recorder.scene()->commands())
+        if (command.kind() == DrawCommandKind::Rect) {
+            const Color fill = command.paint().fill;
+            if (fill == decoration.background)
+                band = static_cast<std::size_t>(&command - recorder.scene()->commands().data());
+            else if (fill == Color::rgba(0.20f, 0.55f, 0.90f, 0.35f))
+                selection = static_cast<std::size_t>(&command - recorder.scene()->commands().data());
+        }
+    EXPECT_LT(band, selection);
+}
+
+TEST(TextFieldDecorationChecks, ClearingTheRangesRemovesTheDecorationPath) {
+    // arrange a field already carrying a range (§9.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TextField field(&engine, &text_engine, "abc");
+    field.set_decorations({TextDecoration{.start = 0, .end = 1, .foreground = Color::rgb(1.0f, 0.0f, 0.0f)}});
+    // act
+    field.clear_decorations();
+    // assert the field returns to the single colour path (§9.1)
+    EXPECT_TRUE(field.decorations().empty());
 }

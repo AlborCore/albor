@@ -2,12 +2,15 @@
 
 #include <charconv>
 #include <cstdio>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "compiler/import_expander.h"
 #include "compiler/static_expression.h"
+#include "core/json.h"
 
 namespace albor::compiler
 {
@@ -86,6 +89,78 @@ namespace albor::compiler
             return std::nullopt;
         }
 
+        // turn an array of string literals into the json spelling the dev runtime reads (§12.1)
+        std::optional<std::string> string_array_value(const Expression& expression) {
+            // only an array carries a list, because a scalar has no elements to serialize (§12.1)
+            const auto* array = dynamic_cast<const ArrayExpression*>(&expression);
+            // a value outside an array is not a list, which the caller drops (§12.1)
+            if (array == nullptr)
+                return std::nullopt;
+            // the elements become json strings, because the IR carries one line per property (§12.1)
+            std::vector<core::Json> values;
+            // every element must be a string literal, because a computed option is not a static declaration (§12.1)
+            for (const ExpressionPtr& element : array->elements) {
+                // a translated option carries its source text, which is the default the runtime shows (§9.2)
+                if (const auto* translation = dynamic_cast<const TranslationExpression*>(element.get())) {
+                    // the source text is the option the preview and dev runtime can show without a catalog (§9.2)
+                    values.emplace_back(translation->text);
+                    // the element is consumed without falling through to the literal path (§12.1)
+                    continue;
+                }
+                // the element is read as a literal, because a binding has no static value (§12.1)
+                const auto* literal = dynamic_cast<const LiteralExpression*>(element.get());
+                // a non string element makes the array unrepresentable rather than partially dropped (§12.1)
+                if (literal == nullptr || literal->kind != LiteralExpression::Kind::String)
+                    return std::nullopt;
+                // the decoded string is the option text, which the runtime setter receives (§12.1)
+                values.emplace_back(literal->text);
+            }
+            // the json array is the one line value a property carries (§12.1)
+            return core::Json(std::move(values)).to_string();
+        }
+
+        // the literal resolver is declared here because the decoration spelling reuses it (§12.1)
+        const LiteralExpression* find_literal(const Expression& expression, bool& negative);
+
+        // turn a declared decoration list into the json objects the dev runtime reads (§9.1, §12.1)
+        std::optional<std::string> decoration_array_value(const Expression& expression) {
+            // only an array carries the ranges, because a single record is not a list (§9.1)
+            const auto* array = dynamic_cast<const ArrayExpression*>(&expression);
+            // a value outside an array is not a list, which the caller drops (§12.1)
+            if (array == nullptr)
+                return std::nullopt;
+            // each range becomes a json object, because a decoration has several named fields (§9.1)
+            std::vector<core::Json> values;
+            for (const ExpressionPtr& element : array->elements) {
+                // a decoration is a record construction, because the language has no positional form (§9.1)
+                const auto* record = dynamic_cast<const RecordConstructionExpression*>(element.get());
+                // a non decoration element makes the list unrepresentable rather than partially dropped (§12.1)
+                if (record == nullptr || record->type_name != "TextDecoration")
+                    return std::nullopt;
+                // the object carries only the fields the author wrote, so the widget defaults stay in force (§9.1)
+                core::Json object;
+                for (const ConstructionField& field : record->fields) {
+                    // the field value must be a literal, because a computed range is not a static declaration (§12.1)
+                    bool negative = false;
+                    const LiteralExpression* literal = find_literal(*field.value, negative);
+                    // a field the reader cannot represent drops the whole list (§12.1)
+                    if (literal == nullptr)
+                        return std::nullopt;
+                    // the literal is spelled the same way the other IR values are (§12.1)
+                    std::optional<std::string> value = literal_value(*literal, negative);
+                    // a value the reader cannot parse drops the whole list (§12.1)
+                    if (!value)
+                        return std::nullopt;
+                    // the field joins the object under its declared name (§9.1)
+                    object.set(field.name, core::Json(std::move(*value)));
+                }
+                // the object joins the list in declaration order (§9.1)
+                values.emplace_back(std::move(object));
+            }
+            // the json array is the one line value a property carries (§12.1)
+            return core::Json(std::move(values)).to_string();
+        }
+
         // find the literal a value is written as, unwrapping a grouping and a numeric negation (§11.1)
         const LiteralExpression* find_literal(const Expression& expression, bool& negative) {
             // a literal is the value itself (§11.1)
@@ -137,6 +212,24 @@ namespace albor::compiler
                     // the marker keeps the image apart from a plain string, which a reader applies differently (§12.1)
                     ir.properties.push_back(devrt::IrProperty{.name = assignment.name, .value = std::string(devrt::IMAGE_VALUE_PREFIX) + image->path});
                     continue;
+                }
+                // a combo box option list is the string array the runtime reads from the json spelling (§12.1)
+                if (node.element_type == "ComboBox" && assignment.name == "items") {
+                    // the array is parsed into the one line property the IR carries (§12.1)
+                    if (std::optional<std::string> array = string_array_value(*assignment.value)) {
+                        // the option list joins the node as one line (§12.1)
+                        ir.properties.push_back(devrt::IrProperty{.name = assignment.name, .value = std::move(*array)});
+                        continue;
+                    }
+                }
+                // a text field decoration list is the record array the runtime reads from json (§9.1, §12.1)
+                if (node.element_type == "TextField" && assignment.name == "decorations") {
+                    // the ranges are parsed into the one line property the IR carries (§12.1)
+                    if (std::optional<std::string> array = decoration_array_value(*assignment.value)) {
+                        // the decoration list joins the node as one line (§12.1)
+                        ir.properties.push_back(devrt::IrProperty{.name = assignment.name, .value = std::move(*array)});
+                        continue;
+                    }
                 }
                 // the sign and the literal are read together, because a written negation is part of the value (§11.1)
                 bool negative = false;
@@ -193,6 +286,24 @@ namespace albor::compiler
                     // the marker keeps the image apart from a plain string, which a reader applies differently (§12.1)
                     ir.properties.push_back(devrt::IrProperty{.name = assignment.name, .value = std::string(devrt::IMAGE_VALUE_PREFIX) + image->path});
                     continue;
+                }
+                // a combo box option list is the string array the runtime reads from the json spelling (§12.1)
+                if (node.element_type == "ComboBox" && assignment.name == "items") {
+                    // the array is parsed into the one line property the IR carries (§12.1)
+                    if (std::optional<std::string> array = string_array_value(*assignment.value)) {
+                        // the option list joins the node as one line (§12.1)
+                        ir.properties.push_back(devrt::IrProperty{.name = assignment.name, .value = std::move(*array)});
+                        continue;
+                    }
+                }
+                // a text field decoration list is the record array the runtime reads from json (§9.1, §12.1)
+                if (node.element_type == "TextField" && assignment.name == "decorations") {
+                    // the ranges are parsed into the one line property the IR carries (§12.1)
+                    if (std::optional<std::string> array = decoration_array_value(*assignment.value)) {
+                        // the decoration list joins the node as one line (§12.1)
+                        ir.properties.push_back(devrt::IrProperty{.name = assignment.name, .value = std::move(*array)});
+                        continue;
+                    }
                 }
                 // the sign and the literal are read together, because a written negation is part of the value (§11.1)
                 bool negative = false;

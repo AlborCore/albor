@@ -260,6 +260,10 @@ job remains a tracked enhancement rather than a parity requirement.
   and writes `Content-Length` frames and is covered by framing tests; Windows additionally switches stdin and
   stdout to binary mode so the CRT does not translate frame bytes, while macOS uses the portable no-op shim.
   Windows CI is the build authority for that platform source.
+- Added `Panel`/`Card`, `ComboBox`, icon `Button` properties and styled `TextField` decoration ranges.
+  `Panel` maps to the existing semantic `Group`, `ComboBox` maps to `NSAccessibilityComboBoxRole` and the UI
+  Automation combo-box control type, and both platforms share the portable widget and semantic tests. The
+  ComboBox value and expanded state publish on both bridges; native expand/collapse actions remain a follow-up.
 - Updated `README.md` and `docs/status.md` to describe both accessibility bridges.
 
 ## 9. Remaining priorities

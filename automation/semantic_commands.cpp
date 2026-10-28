@@ -48,6 +48,8 @@ namespace albor::automation
                 return "listitem";
             case SemanticRole::List:
                 return "list";
+            case SemanticRole::ComboBox:
+                return "combo_box";
             case SemanticRole::Group:
                 return "group";
             case SemanticRole::ScrollView:
@@ -155,6 +157,9 @@ namespace albor::automation
                 // a multi line node marks itself, because the state is what a reader announces with (§10.1)
                 if (node->multiline())
                     out << " multiline";
+                // an expanded popup marks itself, because the state is what a client opens against (§10.1)
+                if (node->expanded())
+                    out << " expanded";
                 // a disabled node marks itself, because a client must not drive one (§10.1)
                 if (node->disabled())
                     out << " disabled";

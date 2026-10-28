@@ -84,6 +84,8 @@ namespace albor::accessibility::platform
                 return UIA_ListItemControlTypeId;
             case SemanticRole::List:
                 return UIA_ListControlTypeId;
+            case SemanticRole::ComboBox:
+                return UIA_ComboBoxControlTypeId;
             case SemanticRole::Group:
                 return UIA_GroupControlTypeId;
             case SemanticRole::ScrollView:
@@ -107,6 +109,7 @@ namespace albor::accessibility::platform
             case SemanticRole::TabItem:
             case SemanticRole::RadioButton:
             case SemanticRole::NumericStepper:
+            case SemanticRole::ComboBox:
                 return true;
             default:
                 return false;
@@ -644,7 +647,7 @@ namespace albor::accessibility::platform
                     *result = static_cast<IInvokeProvider*>(this);
                 else if (interface_id == __uuidof(IToggleProvider) && node() != nullptr && node()->role() == SemanticRole::Checkbox)
                     *result = static_cast<IToggleProvider*>(this);
-                else if (interface_id == __uuidof(IValueProvider) && node() != nullptr && (node()->role() == SemanticRole::TextField || node()->role() == SemanticRole::NumericStepper))
+                else if (interface_id == __uuidof(IValueProvider) && node() != nullptr && (node()->role() == SemanticRole::TextField || node()->role() == SemanticRole::NumericStepper || node()->role() == SemanticRole::ComboBox))
                     *result = static_cast<IValueProvider*>(this);
                 else if (interface_id == __uuidof(ISelectionItemProvider) && node() != nullptr && (node()->role() == SemanticRole::ListItem || node()->role() == SemanticRole::TabItem || node()->role() == SemanticRole::RadioButton))
                     *result = static_cast<ISelectionItemProvider*>(this);
@@ -687,7 +690,7 @@ namespace albor::accessibility::platform
                     break;
                 case UIA_ValuePatternId:
                     // an editable field and a stepper carry a value, which the role checks agree on (§10.1)
-                    if (published->role() == SemanticRole::TextField || published->role() == SemanticRole::NumericStepper)
+                    if (published->role() == SemanticRole::TextField || published->role() == SemanticRole::NumericStepper || published->role() == SemanticRole::ComboBox)
                         *result = static_cast<IUnknown*>(static_cast<IValueProvider*>(this));
                     break;
                 case UIA_SelectionItemPatternId:
@@ -749,12 +752,12 @@ namespace albor::accessibility::platform
                     return S_OK;
                 case UIA_ValueValuePropertyId:
                     // a text field and a stepper carry a value, which the role branch enforces (§10.1)
-                    if (published->role() == SemanticRole::TextField || published->role() == SemanticRole::NumericStepper)
+                    if (published->role() == SemanticRole::TextField || published->role() == SemanticRole::NumericStepper || published->role() == SemanticRole::ComboBox)
                         set_variant_bstr(result, bstr_from_utf8(published->value()));
                     return S_OK;
                 case UIA_ValueIsReadOnlyPropertyId:
                     // the bridge cannot carry an edit, so the value is read only for now (§10.2)
-                    if (published->role() == SemanticRole::TextField || published->role() == SemanticRole::NumericStepper)
+                    if (published->role() == SemanticRole::TextField || published->role() == SemanticRole::NumericStepper || published->role() == SemanticRole::ComboBox)
                         set_variant_bool(result, true);
                     return S_OK;
                 case UIA_ToggleToggleStatePropertyId:
@@ -763,9 +766,14 @@ namespace albor::accessibility::platform
                         set_variant_int(result, static_cast<LONG>(toggle_state_for(published->check())));
                     return S_OK;
                 case UIA_SelectionItemIsSelectedPropertyId:
-                    // the selected state belongs to a list row, tab item or radio, which the role branch enforces (§10.1)
-                    if (published->role() == SemanticRole::ListItem || published->role() == SemanticRole::TabItem || published->role() == SemanticRole::RadioButton)
+                    // the selected state belongs to a list row, tab item, radio or combo box (§10.1)
+                    if (published->role() == SemanticRole::ListItem || published->role() == SemanticRole::TabItem || published->role() == SemanticRole::RadioButton || published->role() == SemanticRole::ComboBox)
                         set_variant_bool(result, published->selected());
+                    return S_OK;
+                case UIA_ExpandCollapseExpandCollapseStatePropertyId:
+                    // a combo box announces whether its popup is open, which the portable state carries (§10.1)
+                    if (published->role() == SemanticRole::ComboBox)
+                        set_variant_int(result, published->expanded() ? ExpandCollapseState_Expanded : ExpandCollapseState_Collapsed);
                     return S_OK;
                 case UIA_IsInvokePatternAvailablePropertyId:
                     set_variant_bool(result, published->role() == SemanticRole::Button);

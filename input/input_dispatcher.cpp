@@ -13,6 +13,22 @@ namespace albor
     }
 
     void InputDispatcher::route_down(UiNode& node, Event& event) {
+        // an overlay is offered before every ordinary child, because it draws above them (§8.3)
+        const auto& overlays = node.overlays();
+        for (auto position = overlays.size(); position > 0; position--) {
+            // a claimed event stops the walk, so a popup press does not also reach a sibling (§8.3)
+            if (event.handled)
+                return;
+            // a hidden overlay is out of reach, which keeps a dismissed popup inert (§8.3)
+            UiNode* overlay = overlays[position - 1].get();
+            if (overlay == nullptr || !overlay->visible())
+                continue;
+            // a positioned event enters only the overlay the point reaches (§8.3)
+            if (EventFilter::positioned(event) && !overlay->hit_test(event.position))
+                continue;
+            // the overlay owns the event path while it is open (§8.3)
+            route_down(*overlay, event);
+        }
         // every caller arrives with an unclaimed event, and the loop re-checks before each child (§8.3)
         for (auto position = node.child_count(); position > 0; position--) {
             // a claimed event stops the walk, so no sibling reacts to the same event (§8.3)
@@ -79,8 +95,23 @@ namespace albor
     }
 
     void InputDispatcher::hover_chain(UiNode& root, Point logical_point, std::vector<UiNode*>& out_chain) {
+        // an overlay owns the point before an ordinary child, because it draws above them (§8.3)
+        const auto& overlays = root.overlays();
+        bool overlay_hit = false;
+        for (auto position = overlays.size(); position > 0; position--) {
+            // the overlay is skipped when the point misses it or it is hidden (§8.3)
+            UiNode* overlay = overlays[position - 1].get();
+            if (overlay == nullptr || !overlay->hit_test(logical_point))
+                continue;
+            // the overlay chain is collected before the root itself (§8.3)
+            hover_chain(*overlay, logical_point, out_chain);
+            // the ordinary children are skipped, because the overlay holds the point (§8.3)
+            overlay_hit = true;
+            // the walk stops at the overlay that held the point (§8.3)
+            break;
+        }
         // the children are searched last added first, because the topmost control owns the point (§8.3)
-        for (auto position = root.child_count(); position > 0; position--) {
+        for (auto position = root.child_count(); position > 0 && !overlay_hit; position--) {
             UiNode* child = root.child_at(position - 1);
             // a child that misses the point holds nothing inside it either, so the walk stops there (§8.3)
             if (child == nullptr || !child->hit_test(logical_point))

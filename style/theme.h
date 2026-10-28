@@ -190,6 +190,21 @@ namespace albor
 
         // the radius a focus ring is drawn with, which a ring shares with the plate it surrounds (§6.2)
         float focus_ring_radius = 8.0f;
+
+        // the inset a panel puts between its edge and its content (§8.2)
+        float panel_padding = 12.0f;
+
+        // the corner radius a panel draws, which is what makes it a card surface (§6.2)
+        float panel_radius = 6.0f;
+
+        // how wide a panel strokes its border, where zero draws no border (§8.4)
+        float panel_border_width = 1.0f;
+
+        // the height one combo box row takes in its popup (§8.2)
+        float combo_box_item_height = 28.0f;
+
+        // the largest height a combo box popup draws before it scrolls (§8.2)
+        float combo_box_popup_max_height = 240.0f;
     };
 
     // the colours a theme resolves by role, which is what lets a widget ask instead of carry a literal (§6.1)
@@ -272,6 +287,12 @@ namespace albor
 
         // the plate a canvas draws behind its content, per state, which is what a state visual needs to land on (§6.1)
         Color canvas_background[5] = {Color{0.11f, 0.12f, 0.15f, 1.0f}, Color{0.15f, 0.17f, 0.21f, 1.0f}, Color{0.09f, 0.10f, 0.13f, 1.0f}, Color{0.18f, 0.19f, 0.22f, 1.0f}, Color{0.13f, 0.14f, 0.18f, 1.0f}};
+
+        // the face a panel draws behind its content, per state, which is what a card surface is (§6.1)
+        Color panel_background[5] = {Color{0.13f, 0.15f, 0.19f, 1.0f}, Color{0.16f, 0.18f, 0.23f, 1.0f}, Color{0.11f, 0.13f, 0.17f, 1.0f}, Color{0.17f, 0.18f, 0.21f, 1.0f}, Color{0.14f, 0.16f, 0.20f, 1.0f}};
+
+        // the border a panel strokes, per state, which separates a card from the surface (§8.4)
+        Color panel_border[5] = {Color{0.27f, 0.30f, 0.36f, 1.0f}, Color{0.32f, 0.36f, 0.43f, 1.0f}, Color{0.23f, 0.26f, 0.31f, 1.0f}, Color{0.24f, 0.26f, 0.30f, 1.0f}, Color{0.28f, 0.31f, 0.37f, 1.0f}};
     };
 
     // the platform preset a theme is built through, which decides the face style and the metrics (§8.4)
@@ -566,6 +587,33 @@ namespace albor
 
         // replace one state of the canvas plate, which is what a state visual reads (§6.1)
         void set_canvas_background(ControlState state, Color value);
+
+        // replace the face of the normal state of a panel (§6.1)
+        void set_panel_background(Color value);
+
+        // replace one state of a panel face, which is what a state visual reads (§6.1)
+        void set_panel_background(ControlState state, Color value);
+
+        // replace the border of the normal state of a panel (§8.4)
+        void set_panel_border(Color value);
+
+        // replace one state of a panel border, which is what a state visual reads (§8.4)
+        void set_panel_border(ControlState state, Color value);
+
+        // replace the inset a panel puts around its content (§8.2)
+        void set_panel_padding(float value);
+
+        // replace the corner radius a panel draws (§6.2)
+        void set_panel_radius(float value);
+
+        // replace how wide a panel strokes its border (§8.4)
+        void set_panel_border_width(float value);
+
+        // replace the height one combo box row takes in its popup (§8.2)
+        void set_combo_box_item_height(float value);
+
+        // replace the largest height a combo box popup draws before it scrolls (§8.2)
+        void set_combo_box_popup_max_height(float value);
 
         // replace how wide a focus ring strokes, which is what makes it readable (§6.1)
         void set_focus_ring_width(float value);

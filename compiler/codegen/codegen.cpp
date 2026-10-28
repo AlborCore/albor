@@ -573,6 +573,8 @@ namespace albor::compiler
                 {"Padding", {.header = "layout/padding_layout.h", .class_name = "PaddingLayout", .needs_engine = false, .needs_text_engine = false}},
                 {"Stack", {.header = "layout/stack_layout.h", .class_name = "StackLayout", .needs_engine = false, .needs_text_engine = false}},
                 {"Grid", {.header = "layout/grid_layout.h", .class_name = "GridLayout", .needs_engine = false, .needs_text_engine = false}},
+                {"Panel", {.header = "widgets/panel.h", .class_name = "Panel", .needs_engine = true, .needs_text_engine = false}},
+                {"Card", {.header = "widgets/panel.h", .class_name = "Panel", .needs_engine = true, .needs_text_engine = false}},
                 {"Label", {.header = "widgets/label.h", .class_name = "Label", .needs_engine = true, .needs_text_engine = true}},
                 {"Button", {.header = "widgets/button.h", .class_name = "Button", .needs_engine = true, .needs_text_engine = true}},
                 {"Slider", {.header = "widgets/slider.h", .class_name = "Slider", .needs_engine = true, .needs_text_engine = false}},
@@ -582,6 +584,7 @@ namespace albor::compiler
                 {"Image", {.header = "widgets/image.h", .class_name = "Image", .needs_engine = true, .needs_text_engine = false}},
                 {"ScrollView", {.header = "widgets/scroll_view.h", .class_name = "ScrollView", .needs_engine = true, .needs_text_engine = false}},
                 {"ListBox", {.header = "widgets/list_box.h", .class_name = "ListBox", .needs_engine = true, .needs_text_engine = false}},
+                {"ComboBox", {.header = "widgets/combo_box.h", .class_name = "ComboBox", .needs_engine = true, .needs_text_engine = true}},
                 {"TabView", {.header = "widgets/tab_view.h", .class_name = "TabView", .needs_engine = true, .needs_text_engine = false}},
                 {"Tab", {.header = "widgets/tab_page.h", .class_name = "TabPage", .needs_engine = true, .needs_text_engine = true}},
                 {"TabTitle", {.header = "widgets/tab_title.h", .class_name = "TabTitle", .needs_engine = true, .needs_text_engine = false}},
@@ -1097,10 +1100,24 @@ namespace albor::compiler
                 {"Row.spacing", "set_gap"},
                 {"Padding.padding", "set_padding"},
                 {"Grid.spacing", "set_gap"},
+                {"Panel.padding", "set_padding"},
+                {"Panel.spacing", "set_spacing"},
+                {"Panel.background", "set_background"},
+                {"Panel.corner_radius", "set_corner_radius"},
+                {"Panel.border_width", "set_border_width"},
+                {"Panel.border_color", "set_border_color"},
+                {"Card.padding", "set_padding"},
+                {"Card.spacing", "set_spacing"},
+                {"Card.background", "set_background"},
+                {"Card.corner_radius", "set_corner_radius"},
+                {"Card.border_width", "set_border_width"},
+                {"Card.border_color", "set_border_color"},
                 {"Label.text", "set_text"},
                 {"Label.foreground", "set_foreground"},
                 {"Label.font_size", "set_font_size"},
                 {"Button.text", "set_label"},
+                {"Button.icon", "set_icon"},
+                {"Button.icon_size", "set_icon_size"},
                 {"Button.background", "set_background"},
                 {"Button.disabled", "set_disabled"},
                 {"Button.action", "set_command"},
@@ -1130,6 +1147,11 @@ namespace albor::compiler
                 {"ListBox.scrollbar", "set_scrollbar_visibility"},
                 {"ListBox.overscan", "set_overscan"},
                 {"ListBox.disabled", "set_disabled"},
+                {"ComboBox.items", "set_items"},
+                {"ComboBox.selected", "set_selected"},
+                {"ComboBox.label", "set_label"},
+                {"ComboBox.placeholder", "set_placeholder"},
+                {"ComboBox.disabled", "set_disabled"},
                 {"TabView.selected", "set_selected"},
                 {"TabView.vertical", "set_vertical"},
                 {"Tab.label", "set_label"},
@@ -1156,6 +1178,7 @@ namespace albor::compiler
                 {"TextField.font_family", "set_font_family"},
                 {"TextField.font_weight", "set_font_weight"},
                 {"TextField.font_fallback", "set_font_fallback"},
+                {"TextField.decorations", "set_decorations"},
             };
             // the lookup is a ready made key, because the pair is the identity (§11.3)
             const auto found = setters.find(key);
@@ -1187,7 +1210,7 @@ namespace albor::compiler
             const std::string key = std::string(element) + "." + std::string(signal);
             // the signal to setter map is the closed catalogue of §8 (§11.3)
             static const std::unordered_map<std::string, std::string_view> setters{
-                {"Button.clicked", "set_on_click"}, {"Slider.changed", "set_on_change"}, {"CheckBox.toggled", "set_on_toggle"}, {"ScrollView.scrolled", "set_on_scroll"}, {"ListBox.selection_changed", "set_on_selection_changed"}, {"ListBox.activated", "set_on_activate"}, {"TabView.selection_changed", "set_on_selection_changed"}, {"RadioGroup.selection_changed", "set_on_selection_changed"}, {"NumericStepper.changed", "set_on_change"}, {"TextField.changed", "set_on_change"}, {"TextField.committed", "set_on_commit"},
+                {"Button.clicked", "set_on_click"}, {"Slider.changed", "set_on_change"}, {"CheckBox.toggled", "set_on_toggle"}, {"ScrollView.scrolled", "set_on_scroll"}, {"ListBox.selection_changed", "set_on_selection_changed"}, {"ListBox.activated", "set_on_activate"}, {"ComboBox.selection_changed", "set_on_selection_changed"}, {"TabView.selection_changed", "set_on_selection_changed"}, {"RadioGroup.selection_changed", "set_on_selection_changed"}, {"NumericStepper.changed", "set_on_change"}, {"TextField.changed", "set_on_change"}, {"TextField.committed", "set_on_commit"},
             };
             // the lookup is a ready made key, because the pair is the identity (§11.3)
             const auto found = setters.find(key);
@@ -1248,6 +1271,9 @@ namespace albor::compiler
             // a list activation carries the identity text of the activated row, which is what the handler reads (§18.1)
             if (element == "ListBox" && signal == "activated")
                 return {{"std::string", "key"}};
+            // a combo box selection carries the chosen index, which is what the handler reads (§8.3)
+            if (element == "ComboBox" && signal == "selection_changed")
+                return {{"int", "index"}};
             // a tab selection carries the index the view moved to, which the handler reads (§8.3)
             if (element == "TabView" && signal == "selection_changed")
                 return {{"int", "index"}};
@@ -1342,6 +1368,13 @@ namespace albor::compiler
                     for (const RecordFieldType& field : record->fields)
                         if (carries_image(field.type))
                             m_uses_image = true;
+                    return;
+                }
+                // the styled range is a portable builtin declared beside the field that consumes it (§9.1)
+                if (record->name == "TextDecoration") {
+                    // the field header declares it, so the facade includes that rather than inventing one (§9.1)
+                    if (std::find(m_record_headers.begin(), m_record_headers.end(), std::string("widgets/text_field.h")) == m_record_headers.end())
+                        m_record_headers.push_back("widgets/text_field.h");
                     return;
                 }
                 // each imported module is searched, because the record lives in exactly one of them (§11.1, §11.2, AD-17)

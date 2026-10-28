@@ -2866,6 +2866,129 @@ TEST(Codegen, IncludesAndConstructsAnImportedComponent) {
     EXPECT_TRUE(contains(cpp.content, "->set_on_dismissed("));
 }
 
+TEST(Codegen, PanelAndCardPropertiesReachTheContainer) {
+    // arrange a panel and a card with the surface properties a settings page writes (§8.2, §8.4)
+    const std::string_view source = R"(
+component C {
+    Column {
+        Panel {
+            padding: 12px;
+            spacing: 4px;
+            background: #112233;
+            corner_radius: 5px;
+            border_width: 2px;
+            border_color: #445566;
+            Column {}
+        }
+        Card {
+            padding: 8px;
+            Column {}
+        }
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert both surface names construct the same panel class and their setters are emitted (§11.3)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<Panel>(engine)"));
+    EXPECT_TRUE(contains(cpp.content, "->set_padding(12.0f)"));
+    EXPECT_TRUE(contains(cpp.content, "->set_spacing(4.0f)"));
+    EXPECT_TRUE(contains(cpp.content, "->set_background("));
+    EXPECT_TRUE(contains(cpp.content, "->set_corner_radius(5.0f)"));
+    EXPECT_TRUE(contains(cpp.content, "->set_border_width(2.0f)"));
+    EXPECT_TRUE(contains(cpp.content, "->set_border_color("));
+}
+
+TEST(Codegen, ComboBoxPropertiesReachTheChoiceControl) {
+    // arrange a combo box whose options, selection and hint come from the declarative surface (§8)
+    const std::string_view source = R"(
+component C {
+    ComboBox {
+        items: ["Alpha", "Beta"];
+        selected: 1;
+        label: "Choice";
+        placeholder: "Choose";
+        disabled: false;
+        on_selection_changed: { }
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the choice control is constructed with both engines and its properties reach it (§11.3)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<ComboBox>(engine, text_engine)"));
+    EXPECT_TRUE(contains(cpp.content, "->set_items("));
+    EXPECT_TRUE(contains(cpp.content, "->set_selected(1)"));
+    EXPECT_TRUE(contains(cpp.content, "->set_label("));
+    EXPECT_TRUE(contains(cpp.content, "->set_placeholder("));
+    EXPECT_TRUE(contains(cpp.content, "->set_on_selection_changed("));
+}
+
+TEST(Codegen, ButtonIconPropertiesReachTheButton) {
+    // arrange a button whose icon is an embedded asset and whose square is explicit (§6.4, §8.2)
+    const std::string_view source = R"(
+component C {
+    Button {
+        text: "Go";
+        icon: @image("icon.png");
+        icon_size: 20px;
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path("image_panel.ui"));
+    // assert the icon accessor and the square setter reach the generated source (§11.3)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const GeneratedFile& cpp = file_named(generation.files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "->set_icon(image_panel_assets::image_0())"));
+    EXPECT_TRUE(contains(cpp.content, "->set_icon_size("));
+}
+
+TEST(Codegen, TextFieldDecorationsReachTheStyledRangeSetter) {
+    // arrange a field carrying one declared range, which a syntax highlight writes (§9.1)
+    const std::string_view source = R"(
+component C {
+    TextField {
+        value: "abc";
+        decorations: [TextDecoration { start: 0, end: 1, foreground: #FF0000, underline: true }];
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the range record and the decoration setter reach the generated source (§11.3)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "->set_decorations("));
+    EXPECT_TRUE(contains(cpp.content, "TextDecoration{"));
+}
+
+TEST(Codegen, ADeclaredDecorationListPullsTheFieldHeader) {
+    // arrange a component property that carries the styled range type (§9.1)
+    const std::string_view source = R"(
+component C {
+    in property<vector<TextDecoration>> tokens: [];
+    Column {}
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the generated facade includes the header that declares TextDecoration (§11.3)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const GeneratedFile& header = file_named(files, "c.h");
+    EXPECT_TRUE(contains(header.content, "#include \"widgets/text_field.h\""));
+    EXPECT_TRUE(contains(header.content, "std::vector<TextDecoration>"));
+}
+
 TEST(Codegen, AnAssetNamespaceFallsBackWhenTheStemIsEmpty) {
     // arrange a source path ending at a directory, whose stem is empty (§6.4)
     const std::string_view source = "component C { in property<image> icon: @image(\"icon.png\"); Column {} }";

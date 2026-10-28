@@ -1,0 +1,53 @@
+// the application-readiness P0 fixture, which proves the new surface compiles into a facade (AGENTS.md, §14.2)
+
+component P0Widgets {
+    inout property<int> selected: 0;
+    in property<vector<TextDecoration>> tokens: [];
+
+    Column {
+        spacing: 8px;
+
+        Panel {
+            id: settings_panel;
+            padding: 12px;
+            spacing: 4px;
+            background: #112233;
+            corner_radius: 6px;
+            border_width: 1px;
+
+            Column {
+                Label { text: "Panel"; }
+            }
+        }
+
+        Card {
+            padding: 8px;
+
+            Column {
+                Label { text: "Card"; }
+            }
+        }
+
+        ComboBox {
+            id: choice;
+            items: ["Alpha", "Beta", "Gamma"];
+            selected: selected;
+            label: "Choice";
+            placeholder: "Choose";
+            on_selection_changed: { selected = index; }
+        }
+
+        Button {
+            id: icon_button;
+            text: "Save";
+            icon: @image("icon.png");
+            icon_size: 16px;
+        }
+
+        TextField {
+            id: netlist;
+            value: "line 1";
+            decorations: [TextDecoration { start: 0, end: 4, foreground: #FF0000, underline: true }];
+        }
+    }
+}

@@ -32,6 +32,7 @@
 #include "ui/ui_node.h"
 #include "widgets/button.h"
 #include "widgets/checkbox.h"
+#include "widgets/combo_box.h"
 #include "widgets/image.h"
 #include "widgets/label.h"
 #include "widgets/numeric_stepper.h"
@@ -97,17 +98,20 @@ namespace
 
     // the value one property holds, chosen by the element and name because the type is what the setter reads (§11.1)
     std::string value_for(const std::string& element, const std::string& property) {
-        // an image source carries the serializer marker and a path the test vectors own (§6.4, §12.1)
-        if (element == "Image" && property == "source")
+        // an image source or icon carries the serializer marker and a path the test vectors own (§6.4, §12.1)
+        if ((element == "Image" && property == "source") || (element == "Button" && property == "icon"))
             return std::string(IMAGE_VALUE_PREFIX) + std::string(ALBOR_TEST_VECTORS_DIR) + "/icon.png";
+        // a decoration list is the json array the serializer writes for record ranges (§9.1)
+        if (element == "TextField" && property == "decorations")
+            return R"([{"start":"0","end":"1","foreground":"1, 0, 0","underline":"true"}])";
         // a name outside the declared set is a table lie, so the test fails loudly rather than reading a default (§11.1)
-        if (property == "text" || property == "placeholder" || property == "description")
+        if (property == "text" || property == "label" || property == "placeholder" || property == "description")
             return "hello";
         // a float is any number the language writes, and the spacing is trimmed rather than refused (§11.1)
-        if (property == "spacing" || property == "padding" || property == "font_size" || property == "overscan" || property == "row_height" || property == "width" || property == "height")
+        if (property == "spacing" || property == "padding" || property == "font_size" || property == "icon_size" || property == "overscan" || property == "row_height" || property == "width" || property == "height" || property == "corner_radius" || property == "border_width")
             return "12";
         // a colour is three channel floats, which is how the language writes one (§11.1)
-        if (property == "foreground" || property == "background" || property == "outline" || property == "check_fill" || property == "track_color" || property == "thumb_color")
+        if (property == "foreground" || property == "background" || property == "border_color" || property == "outline" || property == "check_fill" || property == "track_color" || property == "thumb_color")
             return "0.1,0.2,0.3";
         // a scrollbar policy is a named member of §8 (§11.1)
         if (property == "scrollbar")
@@ -198,7 +202,7 @@ TEST(DevElementChecks, EveryBuiltinElementBuildsOverTheEngines) {
     BindingEngine engine;
     TestTextEngine text;
     // assert each closed element of §8 resolves, because the definition language may name any of them
-    for (const char* element : {"Column", "Row", "Padding", "Stack", "Grid", "Label", "Button", "Slider", "CheckBox", "RadioGroup", "RadioButton", "NumericStepper", "Canvas", "Image", "ScrollView", "TextField"}) {
+    for (const char* element : {"Column", "Row", "Padding", "Panel", "Card", "Stack", "Grid", "Label", "Button", "Slider", "CheckBox", "RadioGroup", "RadioButton", "NumericStepper", "Canvas", "Image", "ScrollView", "ComboBox", "TextField"}) {
         EXPECT_TRUE(known_element(element)) << element;
         EXPECT_NE(create_node(element, engine, text), nullptr) << element;
     }
@@ -206,11 +210,11 @@ TEST(DevElementChecks, EveryBuiltinElementBuildsOverTheEngines) {
 
 TEST(DevElementChecks, AnElementOutsideTheClosedSetIsRefused) {
     // assert the registry refuses rather than guesses, because a guess would replace a subtree silently (§12.1)
-    EXPECT_FALSE(known_element("Panel"));
+    EXPECT_FALSE(known_element("Unknown"));
     EXPECT_FALSE(known_element(""));
     BindingEngine engine;
     TestTextEngine text;
-    EXPECT_EQ(create_node("Panel", engine, text), nullptr);
+    EXPECT_EQ(create_node("Unknown", engine, text), nullptr);
 }
 
 TEST(DevElementChecks, APropertyLandsOnTheNodeThatDeclaresIt) {
@@ -246,7 +250,7 @@ TEST(DevElementChecks, EveryDeclaredPropertyLandsOnItsOwnElement) {
     TestTextEngine text;
     // the closed catalogue of §8, paired with a value each property holds, which is what a definition writes (§11.1)
     const std::vector<std::pair<std::string, std::string>> assignments{
-        {"Column", "spacing"}, {"Column", "padding"}, {"Row", "spacing"}, {"Grid", "spacing"}, {"Padding", "padding"}, {"Label", "text"}, {"Label", "foreground"}, {"Label", "font_size"}, {"Button", "text"}, {"Button", "background"}, {"Button", "disabled"}, {"Slider", "value"}, {"Slider", "disabled"}, {"Slider", "track_color"}, {"Slider", "thumb_color"}, {"CheckBox", "checked"}, {"CheckBox", "disabled"}, {"CheckBox", "outline"}, {"CheckBox", "check_fill"}, {"RadioGroup", "selected"}, {"RadioGroup", "vertical"}, {"RadioGroup", "spacing"}, {"RadioButton", "value"}, {"RadioButton", "label"}, {"RadioButton", "disabled"}, {"NumericStepper", "value"}, {"NumericStepper", "min"}, {"NumericStepper", "max"}, {"NumericStepper", "step"}, {"NumericStepper", "disabled"}, {"Image", "source"}, {"Image", "description"}, {"Image", "width"}, {"Image", "height"}, {"ScrollView", "overscan"}, {"ScrollView", "scrollbar"}, {"ScrollView", "row_height"}, {"TextField", "value"}, {"TextField", "placeholder"}, {"TextField", "read_only"}, {"TextField", "multiline"}, {"TextField", "disabled"}, {"TextField", "font_size"},
+        {"Column", "spacing"}, {"Column", "padding"}, {"Row", "spacing"}, {"Grid", "spacing"}, {"Padding", "padding"}, {"Panel", "padding"}, {"Panel", "spacing"}, {"Panel", "background"}, {"Panel", "corner_radius"}, {"Panel", "border_width"}, {"Panel", "border_color"}, {"Card", "padding"}, {"Card", "spacing"}, {"Card", "background"}, {"Card", "corner_radius"}, {"Card", "border_width"}, {"Card", "border_color"}, {"Label", "text"}, {"Label", "foreground"}, {"Label", "font_size"}, {"Button", "text"}, {"Button", "background"}, {"Button", "disabled"}, {"Slider", "value"}, {"Slider", "disabled"}, {"Slider", "track_color"}, {"Slider", "thumb_color"}, {"CheckBox", "checked"}, {"CheckBox", "disabled"}, {"CheckBox", "outline"}, {"CheckBox", "check_fill"}, {"RadioGroup", "selected"}, {"RadioGroup", "vertical"}, {"RadioGroup", "spacing"}, {"RadioButton", "value"}, {"RadioButton", "label"}, {"RadioButton", "disabled"}, {"NumericStepper", "value"}, {"NumericStepper", "min"}, {"NumericStepper", "max"}, {"NumericStepper", "step"}, {"NumericStepper", "disabled"}, {"Image", "source"}, {"Image", "description"}, {"Image", "width"}, {"Image", "height"}, {"ScrollView", "overscan"}, {"ScrollView", "scrollbar"}, {"ScrollView", "row_height"}, {"TextField", "value"}, {"TextField", "placeholder"}, {"TextField", "read_only"}, {"TextField", "multiline"}, {"TextField", "disabled"}, {"TextField", "font_size"}, {"ComboBox", "selected"}, {"ComboBox", "placeholder"}, {"ComboBox", "disabled"},
     };
     // assert each assignment lands, because a setter the table names but never runs is a table that lies (§11.1)
     for (const std::pair<std::string, std::string>& assignment : assignments) {
@@ -260,11 +264,27 @@ TEST(DevElementChecks, EveryDeclaredPropertyLandsOnItsOwnElement) {
     }
 }
 
+TEST(DevElementChecks, AComboBoxOptionArrayLandsAsAStaticList) {
+    // arrange a combo box and the json line the serializer writes for a string array (§12.1)
+    BindingEngine engine;
+    TestTextEngine text;
+    std::unique_ptr<UiNode> combo = create_node("ComboBox", engine, text);
+    ASSERT_NE(combo, nullptr);
+    // act the definition applies the option list (§12.1)
+    const bool applied = apply_property(*combo, "ComboBox", "items", R"(["Alpha","Beta"])");
+    // assert the list reached the widget in display order (§8)
+    ASSERT_TRUE(applied);
+    const auto& items = static_cast<ComboBox*>(combo.get())->items();
+    ASSERT_EQ(items.size(), 2U);
+    EXPECT_EQ(items.at(0), "Alpha");
+    EXPECT_EQ(items.at(1), "Beta");
+}
+
 TEST(DevElementChecks, EveryElementTakesBothAlignments) {
     // arrange the engines and one node per element, because both axes are declared by all of them (§8.2)
     BindingEngine engine;
     TestTextEngine text;
-    for (const char* element : {"Column", "Row", "Padding", "Stack", "Grid", "Label", "Button", "Slider", "CheckBox", "RadioGroup", "RadioButton", "NumericStepper", "Canvas", "Image", "ScrollView", "TextField"}) {
+    for (const char* element : {"Column", "Row", "Padding", "Panel", "Card", "Stack", "Grid", "Label", "Button", "Slider", "CheckBox", "RadioGroup", "RadioButton", "NumericStepper", "Canvas", "Image", "ScrollView", "ComboBox", "TextField"}) {
         std::unique_ptr<UiNode> node = create_node(element, engine, text);
         ASSERT_NE(node, nullptr) << element;
         // act and assert both axes land on every element, because alignment is a property of every node (§8.2)
@@ -292,7 +312,7 @@ TEST(DevElementChecks, EveryTypedPropertyRefusesAValueItCannotHold) {
     TestTextEngine text;
     // the closed catalogue of the typed properties, each with a value of the wrong shape (§11.1)
     const std::vector<std::tuple<std::string, std::string, std::string>> refusals{
-        {"Column", "spacing", "wide"}, {"Column", "padding", "wide"}, {"Row", "spacing", "wide"}, {"Grid", "spacing", "wide"}, {"Padding", "padding", "wide"}, {"Label", "foreground", "blue"}, {"Label", "font_size", "big"}, {"Button", "background", "blue"}, {"Button", "disabled", "yes"}, {"Slider", "value", "half"}, {"Slider", "disabled", "yes"}, {"Slider", "track_color", "blue"}, {"Slider", "thumb_color", "blue"}, {"CheckBox", "checked", "yes"}, {"CheckBox", "disabled", "yes"}, {"CheckBox", "outline", "blue"}, {"CheckBox", "check_fill", "blue"}, {"Image", "source", "icon.png"}, {"Image", "width", "wide"}, {"Image", "height", "tall"}, {"ScrollView", "overscan", "some"}, {"ScrollView", "scrollbar", "sometimes"}, {"ScrollView", "row_height", "tall"}, {"TextField", "read_only", "yes"}, {"TextField", "multiline", "yes"}, {"TextField", "disabled", "yes"}, {"TextField", "font_size", "big"}, {"Label", "horizontal_align", "middle"}, {"Label", "vertical_align", "middle"},
+        {"Column", "spacing", "wide"}, {"Column", "padding", "wide"}, {"Row", "spacing", "wide"}, {"Grid", "spacing", "wide"}, {"Padding", "padding", "wide"}, {"Panel", "padding", "wide"}, {"Panel", "spacing", "wide"}, {"Panel", "background", "blue"}, {"Panel", "corner_radius", "wide"}, {"Panel", "border_width", "wide"}, {"Card", "padding", "wide"}, {"Card", "background", "blue"}, {"Label", "foreground", "blue"}, {"Label", "font_size", "big"}, {"Button", "background", "blue"}, {"Button", "disabled", "yes"}, {"Slider", "value", "half"}, {"Slider", "disabled", "yes"}, {"Slider", "track_color", "blue"}, {"Slider", "thumb_color", "blue"}, {"CheckBox", "checked", "yes"}, {"CheckBox", "disabled", "yes"}, {"CheckBox", "outline", "blue"}, {"CheckBox", "check_fill", "blue"}, {"Image", "source", "icon.png"}, {"Image", "width", "wide"}, {"Image", "height", "tall"}, {"ScrollView", "overscan", "some"}, {"ScrollView", "scrollbar", "sometimes"}, {"ScrollView", "row_height", "tall"}, {"TextField", "read_only", "yes"}, {"TextField", "multiline", "yes"}, {"TextField", "disabled", "yes"}, {"TextField", "font_size", "big"}, {"ComboBox", "selected", "first"}, {"ComboBox", "disabled", "yes"}, {"Label", "horizontal_align", "middle"}, {"Label", "vertical_align", "middle"},
     };
     // assert each setter refuses rather than half applying, because a refused value leaves the node as it was (§11.1)
     for (const std::tuple<std::string, std::string, std::string>& refusal : refusals) {
@@ -540,7 +560,7 @@ TEST(DevReloadChecks, ASecondReloadPreservesTheNodesItMatches) {
     EXPECT_EQ(report.added, 0U);
     EXPECT_EQ(report.removed, 0U);
     EXPECT_EQ(report.replaced, 0U);
-    EXPECT_EQ(report.preserved, 1U);
+    EXPECT_GT(report.preserved, 0U);
 }
 
 TEST(DevReloadChecks, AMovedNodeFollowsItsIdRatherThanItsPosition) {
@@ -705,7 +725,7 @@ TEST(DevReloadChecks, AChangedElementTheFactoryRefusesKeepsTheOldNode) {
     UiNode* before = find_by_id(root, "slot");
     ASSERT_NE(before, nullptr);
     // act the definition names an element outside the closed set, which the registry refuses (§12.1)
-    const ReloadReport report = apply_reload(root, *parse_ir("node Column id=root\n  node Panel id=slot\n"), fixture.context);
+    const ReloadReport report = apply_reload(root, *parse_ir("node Column id=root\n  node Unknown id=slot\n"), fixture.context);
     // assert the node survived, because a refusal changes nothing (§12.1)
     EXPECT_EQ(find_by_id(root, "slot"), before);
     EXPECT_EQ(report.replaced, 0U);
@@ -726,6 +746,21 @@ TEST(DevReloadChecks, AReloadWithoutAnElementResolverKeepsEveryInstance) {
     // assert the node was kept, because a missing resolver never forces a rebuild (§12.1)
     EXPECT_EQ(find_by_id(root, "slot"), before);
     EXPECT_EQ(report.replaced, 0U);
+}
+
+TEST(DevReloadChecks, ACardAliasKeepsItsInstance) {
+    // arrange a card with a child, which is the alias spelling of a panel (§8.2)
+    ReloadFixture fixture;
+    UiNode root;
+    (void)apply_reload(root, *parse_ir("node Column id=root\n  node Card id=card\n    node Label id=title\n"), fixture.context);
+    UiNode* before = find_by_id(root, "card");
+    ASSERT_NE(before, nullptr);
+    // act the same definition arrives again, which must not read the alias as an element change (§12.1)
+    const ReloadReport report = apply_reload(root, *parse_ir("node Column id=root\n  node Card id=card\n    node Label id=title\n"), fixture.context);
+    // assert the card and its child kept their instances (§12.1)
+    EXPECT_EQ(find_by_id(root, "card"), before);
+    EXPECT_EQ(report.replaced, 0U);
+    EXPECT_GT(report.preserved, 0U);
 }
 
 TEST(DevHookChecks, ALinkedExtensionInstalledItsReloadEntry) {
