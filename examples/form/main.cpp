@@ -23,7 +23,7 @@ int main() {
     // the window opens with the example title and the documented size (§5.1)
     albor::WindowOptions options;
     options.title = "Albor \xE2\x80\x94 Widget Form";
-    options.size = albor::Size{420.0f, 760.0f};
+    options.size = albor::Size{420.0f, 840.0f};
     // the application builds the compiled component over its engines and hands back the facade (§8.1, §11.3)
     albor::WidgetForm* form = nullptr;
     const albor::WindowHandle handle = application.create_window(options, form);
