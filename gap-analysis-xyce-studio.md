@@ -22,12 +22,12 @@ living without controls the application uses on nearly every page.
 
 1. ComboBox — #18
 2. Panel/Card — #15
-3. Icon/content Button — no ticket
-4. Styled/syntax-highlighted TextField — no ticket
+3. Icon/content Button — #131
+4. Styled/syntax-highlighted TextField — #132
 
 Cross-file `.ui` composition and the TextField undo lifetime defect are implemented on the
-`application-readiness` branch and await review. The remaining four are composition and control
-vocabulary for the shell, the toolbar and the netlist editor.
+`application-readiness` branch, pushed, and covered by the macOS and Windows CI jobs. The remaining
+four are composition and control vocabulary for the shell, the toolbar and the netlist editor.
 
 A full port is not the right next step. The right next step is the vertical slice described at the
 end of this document, with the open P0 list cleared first.
@@ -42,7 +42,7 @@ part of the gap.
 | No text input at all | `TextField` ships with caret, selection, clipboard, IME, undo, multi-line and its own scrolling (#13, #67) |
 | No conditional element or `visible` binding | `if`, `visible` and `Repeat` ship (#39) |
 | No `struct`, `enum`, `global` or `function` | All four are top-level declarations, with records and value sets (`docs/ui-language/types.md`) |
-| No `@children` slot or component reuse | Same-file composition, one-level inheritance with `@children`, and cross-file `import` ship on this branch |
+| No `@children` slot or component reuse | Same-file composition, one-level inheritance with `@children`, and cross-file `import` ship on this branch with CI coverage |
 | No scroll container | `ScrollView` and virtualized `ListBox` ship (#14, #16) |
 | Missing RadioButton, RadioGroup, SpinBox, Image, ProgressBar, TabView | Radio controls, `NumericStepper`, `Image`, `ProgressBar`, `TabView`, `Tab` and `TabTitle` ship (#19) |
 | No image loading or compile-time asset embedding | `@image` embeds PNG assets; preview and devrt resolve the same path (#9, #19) |
@@ -53,11 +53,15 @@ part of the gap.
 | No draw vocabulary | Still two primitives; #28 remains |
 | No menus or context menus | Still absent; #55 remains |
 | No ComboBox, Panel/Card | Still absent; #18 and #15 remain |
-| TextField polish | Word selection (#68) and IME mark wrapping (#70) remain; undo lifetime (#69) is fixed on this branch |
+| TextField polish | Word selection (#68) and IME mark wrapping (#70) remain; undo lifetime (#69) is fixed on this branch and covered by CI |
 
 The result is a framework that covers the ordinary form and list surface well. The remaining work
 is concentrated in the application shell, reusable component structure, and the two heavyweight
 editing surfaces.
+
+The branch also adds the `albor-lsp` stdio host and import-aware editor diagnostics. Manifest-native
+catalogs (#126) and a VS Code client (#130) remain tooling follow-ups; they do not block the
+desktop port.
 
 ## Current baseline
 
@@ -79,12 +83,12 @@ editing surfaces.
 - **Accessibility:** macOS NSAccessibility and Windows UI Automation bridges, with roles and
   actions; increment, decrement and toggle are not yet reachable, and value writing is read-only
   (`macos-windows.md`).
-- **Platforms:** macOS and Windows are implemented; Linux is planned. The current branch has not
-  been pushed, so its Windows CI run is pending.
+- **Platforms:** macOS and Windows are implemented; Linux is planned. The branch is pushed and
+  its macOS and Windows CI jobs are green, including the Windows debug build-scope check.
 
 ## P0 — blockers for an application port
 
-### P0.1 Cross-file `.ui` composition — done on `application-readiness`
+### P0.1 Cross-file `.ui` composition — done and CI green
 
 **Ticket:** none; residual of #39.
 
@@ -102,9 +106,9 @@ scope proof covers imported body and interface edits.
 - Cycle, missing-file and naming diagnostics carry the offending file path.
 - Editing an imported body rebuilds only that component; editing its interface rebuilds it and its
   importer (`bash build/check-build-scope.sh`).
-- Same-file composition and inheritance tests still compile and pass review.
+- Same-file composition and inheritance tests still compile and pass in CI.
 
-The feature awaits the phase review and the Windows CI run before it is called shipped.
+The feature is pushed and runs through the macOS and Windows CI jobs; it is ready to merge.
 
 ### P0.2 ComboBox
 
@@ -147,7 +151,7 @@ small: no title bar, no collapse behaviour, no per-node style cascade.
 - It announces a group role and its author `id`.
 - Layout and semantic tests cover the container, and the compiler catalogue exposes it.
 
-### P0.4 TextField undo lifetime — done on `application-readiness`
+### P0.4 TextField undo lifetime — done and CI green
 
 **Ticket:** #69.
 
@@ -164,11 +168,11 @@ steps through `can_undo`, `can_redo`, `depth` and `top_label`.
 - A folded group with no live step disappears; a mixed group keeps its live steps.
 - Both stack directions have regressions, and the header states the contract.
 
-The tests compile but have not been executed in this phase; the branch awaits review and CI.
+The suites are executed by the macOS and Windows CI jobs; the fix is ready to merge.
 
 ### P0.5 Icon/content Button
 
-**Ticket:** none.
+**Ticket:** #131.
 
 **Why it blocks.** `Button` is a text-only leaf. The application needs icon buttons, icon-plus-label
 buttons and buttons whose content is composed rather than a single caption. The current workaround
@@ -190,7 +194,7 @@ keep the text-only path byte-compatible.
 
 ### P0.6 Styled/syntax-highlighted TextField
 
-**Ticket:** none.
+**Ticket:** #132.
 
 **Why it blocks.** The netlist editor is the application's core editing surface. `TextField`
 paints one run; it has no per-range colour, underline or style. Syntax highlighting cannot be
@@ -238,8 +242,8 @@ This is P0 for the netlist editor. The rest of the shell can be ported before it
 ## Issue closure for the current branch
 
 The branch `application-readiness` completes **#69** — the TextField undo lifetime. The branch has
-no ticket for cross-file `.ui` composition; that work is tracked in this document. The PR should
-carry exactly one closing keyword once the phase review and CI pass:
+no ticket for cross-file `.ui` composition; that work is tracked in this document. The pull request
+carries exactly one closing keyword, because the CI jobs have passed:
 
 ```text
 Closes #69
@@ -248,8 +252,8 @@ Closes #69
 Do not add closing keywords for the following without separate verification. They are partial,
 stale or adjacent work that this branch does not finish.
 
-- **#15, #18, #55, #28, #72, #74, #57, #68, #70, #58, #56** — still open by definition; the branch
-  either does not touch them or only touches their surrounding area.
+- **#15, #18, #131, #132, #55, #28, #72, #74, #57, #68, #70, #58, #56** — still open by definition;
+  the branch either does not touch them or only touches their surrounding area.
 - **#41** — the description says Win32 is not started, but the Windows platform and Direct3D
   backend now exist. The issue is stale and should be re-scoped, not closed as completed by this
   branch.
@@ -313,9 +317,11 @@ The framework is ready for the full port when all of the following are true:
 ## Validation baseline
 
 - Branch: `application-readiness`, based on `main` at `b0c0277`.
-- The local macOS debug configure and build pass after the cross-file and undo changes.
-- `bash build/check-build-scope.sh` passes for root, imported-body and imported-interface edits.
-- Unit suites compile but have not been executed in this phase, per the repository workflow.
+- The local macOS debug, release and test builds pass after the cross-file, undo and LSP changes.
+- `bash build/check-build-scope.sh` passes locally and in the Windows debug CI job for root,
+  imported-body and imported-interface edits.
+- The macOS and Windows CI jobs execute the unit suites; the latest application-readiness run is
+  green.
 - Windows build and parity counts are authoritative in CI; this host cannot build them, and the
-  branch has not been pushed yet.
-- `bash build/check-format.sh` is run at the phase boundary before the review.
+  branch is pushed with a green Windows run.
+- `bash build/check-format.sh` passes at the phase boundary before the review.
