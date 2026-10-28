@@ -392,18 +392,22 @@ namespace albor
             }
             // the state is the window's own, which the create message stored and every later message reads (§5.3)
             auto* state = reinterpret_cast<Win32WindowState*>(GetWindowLongPtrW(window, GWLP_USERDATA));
-            // a window with no state or no listener is past the framework, so the default window handles it (§4.2)
-            if (state == nullptr || state->listener == nullptr)
+            // a window with no state is past the framework, so the default window handles it (§4.2)
+            if (state == nullptr)
                 return DefWindowProcW(window, code, wparam, lparam);
-            // the platform events are normalized below, one native message family at a time (§5.3, §8.3)
-            switch (code) {
-            case WM_WINDOWPOSCHANGED: {
+            // transient surfaces follow a moved owner before the listener gate, because placement is platform state (§5.1)
+            if (code == WM_WINDOWPOSCHANGED) {
                 // a moved owner moves its transient surfaces, which win32 does not do for an owned window (§5.1)
                 if (!state->popup)
                     reposition_owned_popups(window);
                 // the default handling is kept, because the system still owns the window position state (§5.3)
                 return DefWindowProcW(window, code, wparam, lparam);
             }
+            // a window with no listener is past the framework, so the default window handles it (§4.2)
+            if (state->listener == nullptr)
+                return DefWindowProcW(window, code, wparam, lparam);
+            // the platform events are normalized below, one native message family at a time (§5.3, §8.3)
+            switch (code) {
             case WM_SIZE: {
                 // a minimized window reports a zero client area, which is not a metrics change to raise (§5.3)
                 if (wparam == SIZE_MINIMIZED)
