@@ -43,14 +43,17 @@ namespace albor
         // the controller routes the normalized events into the tree (§8.3)
         m_input = std::make_unique<InputController>();
         m_input->attach(m_pipeline->root());
-        // every window offers its root, because automation observes the process even when the scene is hand drawn (§10.3)
-        const dev::WindowBinding binding{.root = &m_pipeline->root(), .engine = &m_engine, .text = m_text, .surface = m_surface.get(), .executor = m_executor.get(), .has_tree = m_has_tree};
-        dev::bind_root(binding);
+        // a popup belongs to its control rather than the automation root, so it keeps the main binding (§10.3, §5.1)
+        if (window.options().role != WindowRole::Popup) {
+            // every main window offers its root, because automation observes a hand drawn scene too (§10.3)
+            const dev::WindowBinding binding{.root = &m_pipeline->root(), .engine = &m_engine, .text = m_text, .surface = m_surface.get(), .executor = m_executor.get(), .has_tree = m_has_tree};
+            dev::bind_root(binding);
+        }
     }
 
     WindowStage::~WindowStage() {
         // the dev extension is told the tree went away, because it must never patch a destroyed window (§12.1, §5.2)
-        if (m_surface && m_pipeline)
+        if (m_surface && m_pipeline && m_window != nullptr && m_window->options().role != WindowRole::Popup)
             dev::unbind_root(&m_pipeline->root());
     }
 
@@ -124,6 +127,14 @@ namespace albor
         renderer.resize_surface(*m_surface, window.metrics());
         // the tree is remeasured, because the window now presents at other metrics (§8.2)
         m_pipeline->root().invalidate_layout();
+    }
+
+    void WindowStage::cancel_pointer_capture() {
+        // an unwired stage has no input to cancel, which the window betrayed at creation time (§8.3)
+        if (!m_input)
+            return;
+        // the controller drops the drag, because the window it belonged to left the screen (§8.3)
+        m_input->cancel_pointer_capture();
     }
 
     void WindowStage::deliver(Event& event) {

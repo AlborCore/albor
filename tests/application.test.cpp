@@ -10,6 +10,7 @@
 #include "application/ui_timer.h"
 #include "ui/ui_event.h"
 #include "window/platform_window_factory.h"
+#include "window/popup_host.h"
 
 using namespace albor;
 
@@ -823,6 +824,23 @@ TEST(Application, ConstructionStartsNoPacingSource) {
     // assert
     EXPECT_FALSE(observed->pacing_started);
     EXPECT_FALSE(observed->pacing_stopped);
+}
+
+TEST(Application, DestroyingAnOuterApplicationRestoresTheLiveInnerHost) {
+    // arrange two applications, where the outer one is destroyed first (§5.1)
+    PopupHost* original = window_popup_host();
+    auto outer = std::make_unique<Application>(std::make_unique<TestEventLoop>());
+    auto inner = std::make_unique<Application>(std::make_unique<TestEventLoop>());
+    PopupHost* inner_host = inner.get();
+    ASSERT_EQ(window_popup_host(), inner_host);
+    // act destroy the outer host before the inner one, which leaves the stale slot behind (§5.1)
+    outer.reset();
+    // assert the live inner host remains installed, because the dead outer one is skipped (§5.1)
+    EXPECT_EQ(window_popup_host(), inner_host);
+    // act destroy the last live host, which restores whatever hosted before the pair (§5.1)
+    inner.reset();
+    // assert the process is left with the same host it started with (§5.1)
+    EXPECT_EQ(window_popup_host(), original);
 }
 
 TEST(Application, RunStartsThePacingSource) {

@@ -1,6 +1,6 @@
 # Xyce Studio application readiness — Albor gap analysis
 
-**Date:** 2026-10-26
+**Date:** 2026-10-28
 **Status:** tracked guidance — the working plan for the next implementation cycles
 **Reference application:** `/Users/rogelio/Projects/xyce-studio` (Slint UI, 23 `.slint` files,
 about 9,100 lines)
@@ -27,9 +27,10 @@ living without controls the application uses on nearly every page.
 
 Cross-file `.ui` composition and the TextField undo lifetime defect are merged from the
 `application-readiness` branch. The continuation branch adds the composition and control
-vocabulary for the shell, the toolbar and the netlist editor. ComboBox still paints its popup as an
-in-tree overlay rather than a native `WindowRole::Popup` surface; that native parity remains the
-specific #18 follow-up.
+vocabulary for the shell, the toolbar and the netlist editor. ComboBox now opens the native
+`WindowRole::Popup`/`ListBox` surface when the application owns the stage, and keeps the in-tree
+overlay as the fallback for detached trees and tests; the Windows half of that pass is verified
+by CI before #18 closes.
 
 A full port is not the right next step. The right next step is the vertical slice described at the
 end of this document, with the open P0 list cleared first.
@@ -54,7 +55,7 @@ part of the gap.
 | Two-way binding ergonomics | The explicit write-back pattern remains; it is workable and no longer the first blocker |
 | No draw vocabulary | Still two primitives; #28 remains |
 | No menus or context menus | Still absent; #55 remains |
-| No ComboBox, Panel/Card | Still absent; #18 and #15 remain |
+| No ComboBox, Panel/Card | `Panel`/`Card`, the ComboBox trigger and its native popup surface ship on this branch; #15 and #18 stay open only until the pushed CI parity run |
 | TextField polish | Word selection (#68) and IME mark wrapping (#70) remain; undo lifetime (#69) is fixed on this branch and covered by CI |
 
 The result is a framework that covers the ordinary form and list surface well. The remaining work
@@ -76,7 +77,7 @@ desktop port.
 - **Text editing:** one `TextField` leaf, single-run rendering, with caret, selection, clipboard,
   IME, undo, multi-line and scrolling (`widgets/text_field.h`). The field owns its undo entries
   and revokes them when it is destroyed or bound to another stack.
-- **Button:** text-only leaf with a plate, label, disabled state, command binding and
+- **Button:** text or icon content with a plate, label, disabled state, command binding and
   accessibility action (`widgets/button.h`).
 - **Canvas:** a closed draw vocabulary of `fill_rect` and `fill_rounded_rect`; richer content
   belongs in a manifest-declared native custom render node (`docs/components/canvas.md`).
@@ -85,8 +86,12 @@ desktop port.
 - **Accessibility:** macOS NSAccessibility and Windows UI Automation bridges, with roles and
   actions; increment, decrement and toggle are not yet reachable, and value writing is read-only
   (`macos-windows.md`).
-- **Platforms:** macOS and Windows are implemented; Linux is planned. The branch is pushed and
-  its macOS and Windows CI jobs are green, including the Windows debug build-scope check.
+- **Popup surfaces:** a ComboBox opens an owned native `WindowRole::Popup` list when an
+  application installs a `PopupHost`, falling back to the in-tree overlay for detached trees. The
+  popup is hidden rather than destroyed, follows its owner, and dismisses on outside press or
+  deactivation (`window/popup_host.h`, `widgets/combo_box.h`).
+- **Platforms:** macOS and Windows are implemented; Linux is planned. The macOS jobs pass
+  locally; the Windows job runs after the phase push and is the authority for the Windows source.
 
 ## P0 — blockers for an application port
 
@@ -116,18 +121,21 @@ The feature is pushed and runs through the macOS and Windows CI jobs; it is read
 
 **Ticket:** #18.
 
-**State.** Implemented on `p0-widget-continuation`: the trigger, option list, keyboard and pointer
-selection, dismissal paths and the portable expanded/selected semantics are covered by tests. The
-popup is an in-tree root overlay, so it paints above later siblings and takes input first; it is
-still not the native `WindowRole::Popup`/`ListBox` surface, which remains the #18 acceptance gap.
+**State.** Implemented on `p0-widget-continuation`: the trigger, native `WindowRole::Popup`/`ListBox`
+surface, keyboard and pointer selection, dismissal paths and the portable expanded/selected
+semantics are covered by tests. The popup is owned by the trigger window, placed below the anchor,
+flipped and clamped into the work area, follows an owner move, forwards a trigger click to the
+toggle path, and is hidden rather than destroyed for cheap reopening. The in-tree overlay remains
+the fallback when no application `PopupHost` owns the stage. macOS runtime validation covered open,
+pointer selection, keyboard selection, trigger toggle, outside dismissal and reopening; the
+Windows CI run remains the platform authority.
 
 **Why it blocks.** The reference application has 30 ComboBox instantiations. There is no trigger,
 no popup list, no expanded state and no single-choice selection surface for a compact set of
 options. `ListBox` and `WindowRole::Popup` now exist, so the two hard dependencies are in place.
 
-**Next move.** Build the trigger and popup around `ListBox`, using the popup surface for the drop
-down. Add open/close, pointer and keyboard selection, and the semantic states a screen reader
-needs: expanded, selected and disabled.
+**Next move.** Push the branch and verify the Windows owner/anchor/forward tests in CI before
+closing #18. The four P0 controls then move to the vertical slice.
 
 **Acceptance.**
 
@@ -137,6 +145,9 @@ needs: expanded, selected and disabled.
 - The `.ui` catalogue exposes the element and its options.
 - Semantics expose role, name, expanded, selected and the choose action.
 - Layout, input, semantic and dual-engine tests exist.
+- The native popup is owned by its trigger window, placed below the anchor, dismissed by an
+  outside press, and reopens without recreating the surface; identical tests exist on macOS and
+  Windows.
 
 ### P0.3 Panel/Card
 
@@ -290,15 +301,15 @@ a separate issue-hygiene pass so their status stops misleading the next cycle.
 
 ## Issue closure for the continuation branch
 
-`p0-widget-continuation` completes **#15** Panel/Card, **#131** icon/content Button and **#132**
-styled TextField. It implements the portable ComboBox trigger, popup and semantics for **#18**, but
-#18 stays open until the popup is carried by the native `WindowRole::Popup`/`ListBox` surface.
+`p0-widget-continuation` completes **#15** Panel/Card, **#18** ComboBox, **#131** icon/content
+Button and **#132** styled TextField. #18 stays open only until the pushed Windows CI run verifies
+the native popup owner, anchor and forwarding tests; the branch has no other incomplete P0 work.
 
 ## Recommended sequence
 
 | Cycle | Goal | Work |
 | --- | --- | --- |
-| 1 — make components reusable | A page can be assembled from shared `.ui` files | Cross-file composition (merged), #69 undo lifetime (merged), #15 Panel/Card (done), icon/content Button (done), #18 ComboBox (in-tree popup done; native popup remains) |
+| 1 — make components reusable | A page can be assembled from shared `.ui` files | Cross-file composition (merged), #69 undo lifetime (merged), #15 Panel/Card (done), icon/content Button (done), #18 ComboBox (native popup done; CI verification pending) |
 | 2 — make the editing surfaces real | The netlist editor and chart views reach feature parity | Styled TextField, #28 path curves and draw primitives |
 | 3 — make the shell complete | The application looks and behaves like the reference | #55 menus, #72 per-node styling, #74 focus proof, #57 accessibility actions, #68/#70 field polish, #58/#56 command ergonomics |
 
@@ -347,17 +358,25 @@ The framework is ready for the full port when all of the following are true:
 - Branch: `p0-widget-continuation`, based on `main` at `bb1108b` after the
   `application-readiness` merge.
 - The local macOS debug, release and test builds pass after the P0 widget work.
-- The local debug suite runs 3571 tests and all pass.
+- The local debug suite runs 3588 tests and all pass.
 - `bash build/check-build-scope.sh` passes for root, imported-body and imported-interface edits.
 - `bash build/check-format.sh` passes at the phase boundary before the review.
 - The generated `p0_widgets.ui` and `netlist_editor.ui` fixtures compile through codegen, so the
   new catalogue entries and record construction are exercised by the build.
 - Windows build and parity counts are authoritative in CI; this branch is not pushed yet, so the
   Windows run is pending.
-- The independent review found two blockers and several majors. The branch now fixes the null
+- The earlier review found two blockers and several majors. The branch now fixes the null
   text-engine popup path, gives the popup a root overlay layer so later siblings cannot cover or
   steal it, separates the highlighted row from the committed selection, preserves a selection
   written before the items, adds the stable ComboBox label, carries ComboBox items and
   `TextDecoration` ranges through devrt/preview, keeps the Card alias on reload, and paints
-  decoration bands under the selection. Native `WindowRole::Popup` parity, per-frame decoration
-  subset allocation and the Windows expand/collapse pattern remain follow-ups.
+  decoration bands under the selection. The native popup pass then moved the list into a retained
+  owned `WindowRole::Popup` surface, with application popup ownership and shutdown, macOS child
+  placement and Windows owner-follow placement, trigger-click forwarding and outside dismissal.
+- The native-popup review found one Win32 capture blocker, an Escape routing defect, a portable
+  parent divergence and missing surface coverage. The branch now defers Win32 popup capture until
+  the owner receives the opening release, offers Escape to the focused control before consuming
+  it, resolves a portable `WindowHandle parent` in the registry and refuses a stale one, attaches
+  parented dialogs on both platforms, drops a popup stage capture when its own press hides it, and
+  covers the real popup builder, theme rebuild, non-LIFO host teardown and press-after-close path.
+  Per-frame decoration subset allocation and the Windows expand/collapse pattern remain follow-ups.

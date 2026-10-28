@@ -30,7 +30,7 @@ those configurations (AD-10); **Not supported** means there is no Windows implem
 | --- | --- | --- |
 | Application, event loop, tasks, timers | Full | Win32 message loop and waitable timer pacing |
 | Window roles and close request | Full | Normal, Dialog, Tool, Popup; close veto |
-| Window modality and parent windows | Partial | modality is validated but not enforced; `WindowOptions.parent` is still missing (§5.1) |
+| Window modality and parent windows | Partial | a portable parent resolves to a live native owner, a stale one is refused, and a popup anchor is carried; modality is validated but not enforced (§5.1) |
 | Window events | Full | resize, DPI, close, pointer, keyboard, wheel, appearance |
 | Clipboard | Full | native Win32 clipboard; 2 integration tests |
 | IME and text composition | Full | `WM_IME_*`, candidate anchor and document selection; lifecycle test |
@@ -61,7 +61,7 @@ those configurations (AD-10); **Not supported** means there is no Windows implem
 | Reactive properties and bindings | Full | shared eager-push runtime |
 | UI tree, components, event routing | Full | shared UI module |
 | Semantic tree and semantic provider | Full | shared semantics module |
-| Standard widgets | Full | twenty-four elements, including Panel, ComboBox, Image, TextField, ListBox, ScrollView, TabView, RadioGroup and NumericStepper; the ComboBox popup is an in-tree overlay and native `WindowRole::Popup` parity remains open |
+| Standard widgets | Full | twenty-four elements, including Panel, ComboBox, Image, TextField, ListBox, ScrollView, TabView, RadioGroup and NumericStepper; ComboBox prefers a native `WindowRole::Popup` list and falls back to the in-tree overlay for detached trees |
 | Text measurement and shaping | Full | HarfBuzz with DirectWrite resolution; 8 font tests and 4 shaped-run parity tests |
 | `.ui` compiler, parser and typed IR | Full | platform-neutral compiler, built and tested on Windows |
 | Manifest, glue generator and C++ codegen | Full | generated facades build on Windows |

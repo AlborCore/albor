@@ -3,6 +3,8 @@
 #include <string>
 
 #include "core/geometry.h"
+#include "core/native_window_handle.h"
+#include "window/window_handle.h"
 
 namespace albor
 {
@@ -38,7 +40,7 @@ namespace albor
     // the creation time description of a window, which the platform turns into a native window (§5.1)
     struct WindowOptions
     {
-        // the window title, which must not be empty because both the window manager and assistive technology announce it (§5.1)
+        // the window title, which the window manager and assistive technology announce (§5.1)
         std::string title = "Albor Application";
 
         // the logical size the window opens at
@@ -55,6 +57,15 @@ namespace albor
 
         // whether the window is on screen as soon as it is created
         bool visible = true;
+
+        // the framework handle of the owner a transient surface follows, which is invalid for a top level window (§5.1)
+        WindowHandle parent{};
+
+        // the native owner the registry resolves from parent before the platform creates the window (§5.1)
+        NativeWindowHandle native_parent{};
+
+        // the owner content rectangle a popup anchors to, in logical content coordinates (§5.1)
+        Rect anchor{};
 
         // the default construction of the documented 800 by 600 window
         WindowOptions();

@@ -1,7 +1,7 @@
 # Windows vs. macOS parity analysis
 
 **Scope:** comparison of the Windows platform and rendering work with the macOS reference, including test coverage.
-**Date:** 2026-10-26, after the image-widget pass.
+**Date:** 2026-10-28, after the native ComboBox popup pass.
 
 ## Verdict
 
@@ -14,7 +14,7 @@ The per-abstraction support table is maintained in [`docs/status.md`](docs/statu
 
 The remaining differences are shared or process gaps rather than Windows implementation gaps:
 
-- `WindowOptions` still has no `parent` field, and modality is validated but not enforced on either platform.
+- Modality is validated but not enforced on either platform.
 - macOS has no equivalent of the Windows clipboard/IME/DPI/event-loop integration suite yet.
 - Windows has no code-coverage job comparable to `macos-coverage`.
 - `IValueProvider::SetValue` is read-only because a `SemanticAction` carries no value argument yet.
@@ -28,9 +28,9 @@ Both adapters implement the same `PlatformWindow` and `PlatformEventLoop` interf
 
 | Area | macOS | Windows | Assessment |
 | --- | --- | --- | --- |
-| Window creation, show/hide, close veto | AppKit, 832-line adapter | Win32, 767-line adapter | Parity |
-| Popup role | `NSPanel`, non-activating, non-opaque layer | Win32 popup, topmost, non-activating | Parity |
-| Outside-click and deactivation dismissal | Present and tested | Present and tested | Parity |
+| Window creation, show/hide, close veto | AppKit, 927-line adapter | Win32, 948-line adapter | Parity |
+| Popup role | `NSPanel`, owned child, anchored placement, non-activating, non-opaque layer | Win32 popup, owned child, anchored placement, topmost, non-activating | Parity |
+| Outside-click, trigger-click and deactivation dismissal | Present and tested, with anchor exclusion | Present and tested, with trigger forwarding | Parity |
 | Resize, DPI/scale changes | AppKit notifications | `WM_SIZE`, `WM_DPICHANGED`, tested | Parity |
 | Keyboard/mouse/wheel | Present | Present | Parity |
 | IME/text composition | `NSTextInputClient` | `WM_IME_*`, candidate anchor/selection, tested | Parity |
@@ -40,8 +40,10 @@ Both adapters implement the same `PlatformWindow` and `PlatformEventLoop` interf
 | Automation local transport | Unix domain socket | Named pipe, tested | Parity |
 | Accessibility | 382-line NSAccessibility bridge, 14 tests | 1,216-line UI Automation bridge, 14 role tests + 1 client test | Parity |
 
-The popup test sets remain asymmetric by design: **10 macOS tests vs. 9 Windows tests**. The missing macOS test
-is `ThePopupLayerIsNonopaque`, which is AppKit-specific and has no direct Win32 equivalent.
+Both popup suites now carry **14 tests**. They cover ownership, anchor placement, trigger-click forwarding,
+owner-move following and a parented dialog. The AppKit-only `ThePopupLayerIsNonopaque` has no direct Win32
+equivalent, while Win32 adds the opening-press capture handoff that has no AppKit counterpart. A press that hides
+the surface from inside its own dispatch now drops the popup stage's capture, so the next open accepts its first click.
 
 Windows now has dedicated integration tests for clipboard round-tripping, IME composition lifecycle, DPI metrics
 and the `WM_DPICHANGED` resize path, and frame-tick delivery. macOS still lacks the equivalent clipboard, IME,
@@ -49,10 +51,17 @@ DPI and event-loop integration tests; that is a macOS test-coverage gap, not a W
 
 ### Shared platform gap
 
-`WindowOptions` in `window/window_options.h` does not contain the `parent` field that design §5.1 shows.
-Modality is validated in `window_options.cpp`, but no platform or application code enforces `WindowModal` or
-`ApplicationModal` on either platform. This is documented here rather than resolved because adding a parent
-handle changes the shared creation contract, not one backend.
+`WindowOptions` now carries a portable `WindowHandle parent` and a logical trigger `anchor`; the window registry
+resolves the handle to the native owner before the platform creates the surface, and refuses a handle that names no
+live window rather than silently making the child top level. Both adapters create an owned
+popup, place it below the anchor, flip and clamp it into the monitor work area, keep the owner focused, forward a
+click on the trigger back to the owner, reposition the popup when the owner moves, and attach a parented dialog as
+an owned child. Two native differences remain recorded rather than claimed away: an AppKit child dialog follows an
+owner move while a Win32 owned dialog does not, and a Win32 popup that holds capture offers activation to another
+application instead of synthesizing a cross-process click, while the AppKit monitor returns the event directly.
+
+The remaining shared gap is modality: it is validated in `window_options.cpp`, but no platform or application code
+enforces `WindowModal` or `ApplicationModal` on either platform.
 
 ## 2. Text and shaped-run parity
 
@@ -193,6 +202,10 @@ matches the six HLSL entry points. The Windows host cannot build the macOS bridg
 pass was verified locally instead: the macOS debug suite ran 3,476 tests with 0 failures. The Windows counts
 above predate the radio, stepper and Image widget suites, and the pushed CI run is the authority for both platforms.
 
+The native ComboBox popup pass has not run on Windows yet. The local macOS debug suite runs **3,588 tests** with
+zero failures, including all 14 macOS popup tests; the Windows counts below predate this pass, so the pushed CI run
+is the authority for the new owner, anchor, capture-handoff and forward path.
+
 The complete Windows suite has exactly **2 skips**:
 
 - `DepfileChecks.EscapesBackslashRunsAroundMakeSyntax` — a Windows backslash is a path separator, so the
@@ -221,7 +234,7 @@ job remains a tracked enhancement rather than a parity requirement.
 | Suite | macOS | Windows |
 | --- | ---: | ---: |
 | `render-albor` backend/parity | 73 | 73 |
-| Window popup | 10 | 9 |
+| Window popup | 14 | 14 |
 | Blend2D windowed | 3 | 3 |
 | Platform font resolver | 8 dedicated | 8 |
 | Accessibility roles | 14 | 15 (14 parity + 1 UI Automation client) |
@@ -263,12 +276,22 @@ job remains a tracked enhancement rather than a parity requirement.
 - Added `Panel`/`Card`, `ComboBox`, icon `Button` properties and styled `TextField` decoration ranges.
   `Panel` maps to the existing semantic `Group`, `ComboBox` maps to `NSAccessibilityComboBoxRole` and the UI
   Automation combo-box control type, and both platforms share the portable widget and semantic tests. The
-  ComboBox value and expanded state publish on both bridges; native expand/collapse actions remain a follow-up.
+  ComboBox value and expanded state publish on both bridges; the UI Automation expand/collapse pattern remains a follow-up.
+- Added native ComboBox popup surfaces. `WindowOptions` carries a portable parent handle and an anchor, which the
+  window registry resolves to a native owner; `Application` owns a `PopupHost`, tracks popup owners, destroys owned
+  popups with their owner, and tears popups down before the main stages. The macOS panel and Win32 popup are owned
+  children placed below the trigger, flip and clamp into the work area, dismiss on an outside press or application
+  deactivation, follow an owner move, and forward a trigger click to the owner instead of consuming it. `ComboBox`
+  keeps the in-tree overlay only as a fallback when no host or owning stage exists, retains the hidden native surface
+  for cheap reopening, rebuilds it after a theme or type change, and commits when the already-selected row is
+  pressed. The Escape path now reaches the focused control before the controller consumes it, the Win32 opening
+  press hands capture to the popup only after the owner receives the release, and a press that hides its own
+  surface drops the popup capture instead of arming it against the next open. Both popup suites carry 14 tests.
 - Updated `README.md` and `docs/status.md` to describe both accessibility bridges.
 
 ## 9. Remaining priorities
 
-1. **Resolve the shared parent/modality gap** in `WindowOptions` and the window manager; it affects both platforms.
+1. **Enforce window modality** in the window manager; it affects both platforms.
 2. **Add macOS equivalents** of the Windows clipboard, IME, DPI and event-loop integration tests.
 3. **Carry text edits through the UI Automation value pattern** once a semantic action can receive the new value.
 4. **Add a Windows coverage job** once a Windows instrumentation toolchain and exclusion policy are chosen.

@@ -55,10 +55,17 @@ component PlotSettings {
 ## Notes
 
 - The trigger shows the selected string; the popup highlights both the chosen row and the row
-  under the pointer.
+  under the pointer. Pressing the already-selected row still commits and closes the list.
 - The semantic node carries role `ComboBox`, the stable `label` (or author `id`) as its name, the
-  expanded state, the disabled state and the chosen state. It exposes one list item per option.
-- The popup is an in-tree overlay layer added to the topmost root, so it paints above later siblings
-  and receives pointer input first. It is still not a native `WindowRole::Popup` surface; that
-  native parity is the remaining #18 gap.
+  expanded state, the disabled state and the chosen state. It exposes one list item per option and
+  the `open`, `close`, `select_next`, `select_previous` and `activate` semantic actions.
+- When the application installs a `PopupHost` and the control belongs to an application-owned
+  stage, the open list is a native `WindowRole::Popup` owned by the trigger's window. Its content is
+  a themed `ListBox` in a non-activating surface placed below the trigger and kept inside the work
+  area. The native surface is hidden rather than destroyed, so reopening reuses it.
+- A native popup closes on Escape, an outside press, owner deactivation or application shutdown. A
+  press on the trigger is forwarded to the control, which toggles the list itself. The hidden
+  native surface is destroyed with the control or its owning window.
+- Without a popup host or owning stage, the in-tree overlay remains the fallback. It paints above
+  later siblings and receives pointer input first.
 - The trigger is a focus stop; the option list is not a separate focus target.

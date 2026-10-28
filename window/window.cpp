@@ -99,6 +99,14 @@ namespace albor
         return m_platform->native_handle();
     }
 
+    NativeWindowHandle Window::native_window_handle() const {
+        // a window without a native window has no parent object to lend a popup (§5.1)
+        if (!m_platform)
+            return NativeWindowHandle{};
+        // the platform half owns the native window object (§5.1)
+        return m_platform->native_window_handle();
+    }
+
     SystemAppearance Window::system_appearance() const {
         // a window without a native window has no system to ask, so it reports the portable default (§5.3)
         if (!m_platform)

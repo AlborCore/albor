@@ -99,6 +99,9 @@ namespace albor
         // install the work told when a row is activated, which carries the identity text the row is keyed by (§18.1)
         void set_on_activate(std::function<void(const std::string&)> handler);
 
+        // install the work told when a press lands on a row, which a chooser uses to commit on click (§8.3)
+        void set_on_item_pressed(std::function<void(std::size_t)> handler);
+
         // set whether the list refuses input, which the internal view follows (§8.3)
         void set_disabled(bool disabled);
 
@@ -156,6 +159,9 @@ namespace albor
 
         // the work told when a row is activated, which carries the identity text (§18.1)
         std::function<void(const std::string&)> m_on_activate;
+
+        // the work told when a press lands on a row, which is separate from activation (§8.3)
+        std::function<void(std::size_t)> m_on_item_pressed;
 
         // whether the list refuses input, which navigation and activation both read (§8.3)
         bool m_disabled = false;

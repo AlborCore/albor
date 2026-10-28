@@ -17,6 +17,7 @@
 #include "text/text_engine.h"
 #include "ui/ui_event.h"
 #include "ui/ui_node.h"
+#include "window/popup_host.h"
 #include "window/system_appearance.h"
 #include "window/window.h"
 #include "window/window_handle.h"
@@ -70,7 +71,7 @@ namespace albor
     class TextEngine;
 
     // the central singleton that owns the native loop, the window registry and the task dispatcher (§4.1)
-    class Application
+    class Application : public PopupHost
     {
     public:
         // build an application over a native loop the caller owns, which a test substitutes (§4.1)
@@ -110,6 +111,18 @@ namespace albor
 
         // create a main window over the config, whose tree the builder builds, wired for rendering (§6.1, §8.1)
         WindowHandle create_window(const WindowOptions& options, RootBuilder builder, const MainWindowConfig& config);
+
+        // open the native transient surface a control anchors, which is how a popup leaves the owner surface (§5.1)
+        [[nodiscard]] WindowHandle open_popup(const UiNode& anchor, Rect anchor_rect, Size size, PopupRootBuilder builder, Color background, std::function<void()> on_closed) override;
+
+        // hide a native transient surface without dropping its tree (§5.1)
+        void close_popup(WindowHandle popup) override;
+
+        // show a native transient surface whose tree is already built (§5.1)
+        void show_popup(WindowHandle popup) override;
+
+        // destroy a native transient surface and its tree (§5.1)
+        void destroy_popup(WindowHandle popup) override;
 
         // create a main window whose tree is the named component, and hand the caller the facade it drives (§14.1)
         template <class Root>
@@ -223,14 +236,23 @@ namespace albor
             }
         }
 
+        // build a window and its stage, with the listener and the native close hook the caller needs (§5.3, §6.1)
+        WindowHandle create_window_impl(const WindowOptions& options, RootBuilder builder, const MainWindowConfig& config, std::function<void()> on_native_closed, bool keep_on_native_close);
+
         // attach the framework listeners to a window, which is what makes its events reach the application (§5.3)
-        void bind_window(WindowHandle handle, Window& window);
+        void bind_window(WindowHandle handle, Window& window, std::function<void()> on_native_closed, bool keep_on_native_close);
+
+        // find the window whose stage owns a node, which is what anchors a popup to its trigger (§5.1)
+        [[nodiscard]] WindowHandle window_for_node(const UiNode& node) const;
 
         // build the renderer and the engine the main windows share, which only the first one pays for (§6.3, §9.1)
         bool ensure_engines();
 
         // drop the stage of a closed window, since nothing may touch its surface afterwards (§6.1)
         void release_stage(WindowHandle handle);
+
+        // destroy the transient surfaces a window owns, because an owner never leaves an orphan popup (§5.1)
+        void destroy_owned_popups(WindowHandle owner);
 
         // apply the teardowns that arrived while a frame pass was walking the stages (§4.2)
         void drain_deferred_stages();
@@ -262,6 +284,9 @@ namespace albor
 
         // the registry that owns every open window (§4.1)
         WindowRegistry m_windows;
+
+        // the owner of every native transient surface, because a popup never outlives its trigger window (§5.1)
+        std::map<std::uint64_t, WindowHandle> m_popup_owners;
 
         // the windows whose teardown was deferred by a close that arrived mid frame, so the walk stays valid (§4.2)
         std::vector<WindowHandle> m_deferred;

@@ -51,6 +51,9 @@ namespace albor
         // override: hand out the window handle a renderer backend attaches to (§3.5)
         [[nodiscard]] NativeWindowHandle native_handle() const override;
 
+        // override: hand out the hwnd an owned popup uses as its parent (§5.1)
+        [[nodiscard]] NativeWindowHandle native_window_handle() const override;
+
         // override: read the appearance the system renders with, which a theme follows (§5.3, §8.4)
         [[nodiscard]] SystemAppearance system_appearance() const override;
 

@@ -810,6 +810,26 @@ TEST(ListBoxChecks, APressSelectsTheRowUnderThePointer) {
     EXPECT_EQ(fixture.box.selected_key().text(), "c");
 }
 
+TEST(ListBoxChecks, APressRunsTheChooserEvenOnTheSelectedRow) {
+    // arrange three rows with the second one already selected, which a chooser must still commit (§8.3)
+    Fixture fixture;
+    fixture.add_row("a");
+    fixture.add_row("b");
+    fixture.add_row("c");
+    fixture.box.set_row_height(20.0f);
+    fixture.layout(200.0f, 100.0f);
+    fixture.box.select(1);
+    std::size_t pressed = 99;
+    fixture.box.set_on_item_pressed([&pressed](std::size_t index) { pressed = index; });
+    // act a press lands on the selected second row (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{5.0f, 25.0f}};
+    fixture.box.dispatch_event(press);
+    // assert the press still reaches the chooser, because a click is a commit rather than a change only (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(pressed, 1u);
+    EXPECT_EQ(fixture.box.selected_index(), 1u);
+}
+
 TEST(ListBoxChecks, APressPastTheRowsIsLeftToAParent) {
     // arrange two rows in a viewport taller than them, so there is empty space below (§8.2)
     Fixture fixture;

@@ -121,6 +121,172 @@ TEST(MacosPopupWindow, ANormalWindowKeepsTheTitledMask) {
     EXPECT_TRUE(platform->visible());
 }
 
+TEST(MacosPopupWindow, ThePopupIsAChildOfItsOwnerAndSitsBelowTheAnchor) {
+    // arrange an owner window and a popup anchored at a known content point (§5.1)
+    WindowOptions owner_options;
+    owner_options.title = "popup-anchor-owner";
+    owner_options.size = albor::Size{320.0f, 240.0f};
+    std::unique_ptr<MacosPlatformWindow> owner = MacosPlatformWindow::create(owner_options);
+    ASSERT_NE(owner, nullptr);
+    owner->show();
+    NSWindow* owner_window = nil;
+    for (NSWindow* window in [NSApplication sharedApplication].windows) {
+        if ([window.title isEqualToString:@"popup-anchor-owner"])
+            owner_window = window;
+    }
+    ASSERT_NE(owner_window, nil);
+    const albor::Rect anchor = albor::Rect::from_origin_size(albor::Point{20.0f, 30.0f}, albor::Size{100.0f, 24.0f});
+    WindowOptions popup_options;
+    popup_options.role = WindowRole::Popup;
+    popup_options.title = "popup-anchor";
+    popup_options.size = albor::Size{180.0f, 80.0f};
+    popup_options.native_parent = owner->native_window_handle();
+    popup_options.anchor = anchor;
+    std::unique_ptr<MacosPlatformWindow> platform = MacosPlatformWindow::create(popup_options);
+    ASSERT_NE(platform, nullptr);
+    // act
+    platform->show();
+    // assert the panel is a child of its owner, which is what makes it follow the owner (§5.1)
+    NSPanel* panel = nil;
+    for (NSWindow* window in [NSApplication sharedApplication].windows) {
+        if ([window.title isEqualToString:@"popup-anchor"])
+            panel = (NSPanel*)window;
+    }
+    ASSERT_NE(panel, nil);
+    EXPECT_EQ(panel.parentWindow, owner_window);
+    // assert the frame hangs below the anchor in screen coordinates (§5.1)
+    const NSRect content_bounds = owner_window.contentView.bounds;
+    const NSRect anchor_content = NSMakeRect(anchor.x, content_bounds.size.height - anchor.y - anchor.height, anchor.width, anchor.height);
+    const NSRect anchor_window = [owner_window.contentView convertRect:anchor_content toView:nil];
+    const NSRect anchor_screen = [owner_window convertRectToScreen:anchor_window];
+    EXPECT_NEAR(panel.frame.origin.x, anchor_screen.origin.x, 0.5);
+    EXPECT_NEAR(panel.frame.origin.y, anchor_screen.origin.y - 80.0, 0.5);
+    // act hide and show the retained panel, which must reattach it to the same owner (§5.1)
+    platform->hide();
+    EXPECT_EQ(panel.parentWindow, nil);
+    platform->show();
+    // assert the reopened panel is a child again and keeps the anchor placement (§5.1)
+    EXPECT_EQ(panel.parentWindow, owner_window);
+    EXPECT_NEAR(panel.frame.origin.x, anchor_screen.origin.x, 0.5);
+    EXPECT_NEAR(panel.frame.origin.y, anchor_screen.origin.y - 80.0, 0.5);
+}
+
+TEST(MacosPopupWindow, AClickOnTheAnchorDoesNotDismissThePopup) {
+    // arrange a shown popup over a trigger rectangle in its owner (§5.1)
+    WindowOptions owner_options;
+    owner_options.title = "popup-anchor-click-owner";
+    owner_options.size = albor::Size{320.0f, 240.0f};
+    std::unique_ptr<MacosPlatformWindow> owner = MacosPlatformWindow::create(owner_options);
+    ASSERT_NE(owner, nullptr);
+    RecordingListener owner_listener;
+    owner->set_listener(&owner_listener);
+    owner->show();
+    NSWindow* owner_window = nil;
+    for (NSWindow* window in [NSApplication sharedApplication].windows) {
+        if ([window.title isEqualToString:@"popup-anchor-click-owner"])
+            owner_window = window;
+    }
+    ASSERT_NE(owner_window, nil);
+    const albor::Rect anchor = albor::Rect::from_origin_size(albor::Point{20.0f, 30.0f}, albor::Size{100.0f, 24.0f});
+    WindowOptions popup_options;
+    popup_options.role = WindowRole::Popup;
+    popup_options.title = "popup-anchor-click";
+    popup_options.size = albor::Size{180.0f, 80.0f};
+    popup_options.native_parent = owner->native_window_handle();
+    popup_options.anchor = anchor;
+    std::unique_ptr<MacosPlatformWindow> platform = MacosPlatformWindow::create(popup_options);
+    ASSERT_NE(platform, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    platform->show();
+    // act a press lands on the trigger, which belongs to the toggle rather than the dismissal (§5.1)
+    const NSRect content_bounds = owner_window.contentView.bounds;
+    const NSPoint content_point = NSMakePoint(anchor.x + 5.0, content_bounds.size.height - anchor.y - anchor.height + 5.0);
+    const NSPoint window_point = [owner_window.contentView convertPoint:content_point toView:nil];
+    NSEvent* click = [NSEvent mouseEventWithType:NSEventTypeLeftMouseDown location:window_point modifierFlags:0 timestamp:0.0 windowNumber:owner_window.windowNumber context:nil eventNumber:1 clickCount:1 pressure:1.0];
+    [[NSApplication sharedApplication] sendEvent:click];
+    // assert the click reached the owner, which is the trigger that toggles the list (§5.1)
+    EXPECT_EQ(owner_listener.last_event.kind, EventKind::PointerDown);
+    // assert the popup stays open, because the trigger toggles it itself (§5.1)
+    EXPECT_EQ(listener.closed, 0);
+    EXPECT_TRUE(platform->visible());
+}
+
+TEST(MacosPopupWindow, ADialogAttachesToItsParent) {
+    // arrange an owner window and a dialog that names it as parent (§5.1)
+    WindowOptions owner_options;
+    owner_options.title = "dialog-parent-owner";
+    owner_options.size = albor::Size{320.0f, 240.0f};
+    std::unique_ptr<MacosPlatformWindow> owner = MacosPlatformWindow::create(owner_options);
+    ASSERT_NE(owner, nullptr);
+    owner->show();
+    NSWindow* owner_window = nil;
+    for (NSWindow* window in [NSApplication sharedApplication].windows) {
+        if ([window.title isEqualToString:@"dialog-parent-owner"])
+            owner_window = window;
+    }
+    ASSERT_NE(owner_window, nil);
+    WindowOptions dialog_options;
+    dialog_options.role = WindowRole::Dialog;
+    dialog_options.title = "dialog-parent";
+    dialog_options.size = albor::Size{180.0f, 120.0f};
+    dialog_options.native_parent = owner->native_window_handle();
+    std::unique_ptr<MacosPlatformWindow> dialog = MacosPlatformWindow::create(dialog_options);
+    ASSERT_NE(dialog, nullptr);
+    // act show and hide the dialog, which follows the native child relation (§5.1)
+    dialog->show();
+    NSWindow* dialog_window = nil;
+    for (NSWindow* window in [NSApplication sharedApplication].windows) {
+        if ([window.title isEqualToString:@"dialog-parent"])
+            dialog_window = window;
+    }
+    ASSERT_NE(dialog_window, nil);
+    // assert the dialog is a child of its parent, which is the appkit owner relation (§5.1)
+    EXPECT_EQ(dialog_window.parentWindow, owner_window);
+    dialog->hide();
+    // assert a hidden dialog leaves the child list, which keeps the owner clean (§5.1)
+    EXPECT_EQ(dialog_window.parentWindow, nil);
+}
+
+TEST(MacosPopupWindow, MovingTheOwnerKeepsThePopupAttached) {
+    // arrange a shown popup attached to an owner, which appkit moves as one surface (§5.1)
+    WindowOptions owner_options;
+    owner_options.title = "popup-follow-owner";
+    owner_options.size = albor::Size{320.0f, 240.0f};
+    std::unique_ptr<MacosPlatformWindow> owner = MacosPlatformWindow::create(owner_options);
+    ASSERT_NE(owner, nullptr);
+    owner->show();
+    NSWindow* owner_window = nil;
+    for (NSWindow* window in [NSApplication sharedApplication].windows) {
+        if ([window.title isEqualToString:@"popup-follow-owner"])
+            owner_window = window;
+    }
+    ASSERT_NE(owner_window, nil);
+    WindowOptions popup_options;
+    popup_options.role = WindowRole::Popup;
+    popup_options.title = "popup-follow";
+    popup_options.size = albor::Size{180.0f, 80.0f};
+    popup_options.native_parent = owner->native_window_handle();
+    popup_options.anchor = albor::Rect::from_origin_size(albor::Point{20.0f, 30.0f}, albor::Size{100.0f, 24.0f});
+    std::unique_ptr<MacosPlatformWindow> platform = MacosPlatformWindow::create(popup_options);
+    ASSERT_NE(platform, nullptr);
+    platform->show();
+    NSPanel* panel = nil;
+    for (NSWindow* window in [NSApplication sharedApplication].windows) {
+        if ([window.title isEqualToString:@"popup-follow"])
+            panel = (NSPanel*)window;
+    }
+    ASSERT_NE(panel, nil);
+    const NSPoint owner_before = owner_window.frame.origin;
+    const NSPoint popup_before = panel.frame.origin;
+    // act move the owner, which carries the transient child with it (§5.1)
+    [owner_window setFrameOrigin:NSMakePoint(owner_before.x + 40.0, owner_before.y + 30.0)];
+    const NSPoint owner_after = owner_window.frame.origin;
+    // assert the popup followed by the same offset, because the anchor did not change (§5.1)
+    EXPECT_NEAR(panel.frame.origin.x, popup_before.x + owner_after.x - owner_before.x, 0.5);
+    EXPECT_NEAR(panel.frame.origin.y, popup_before.y + owner_after.y - owner_before.y, 0.5);
+}
+
 TEST(MacosPopupWindow, AnOutsideClickDismissesThePopupAndReportsClosed) {
     // arrange a shown popup with a listener, which the dismissal reports the close to (§5.2)
     WindowOptions options;

@@ -3,13 +3,23 @@
 namespace albor
 {
     WindowHandle WindowRegistry::create(const WindowOptions& options, const std::function<void(Window&)>& before_show) {
+        // the portable parent handle resolves through this registry, because only it knows the live window (§5.1)
+        WindowOptions resolved = options;
+        if (resolved.parent.valid()) {
+            // a parent that names no live window is refused, because an orphan would silently become top level (§5.1)
+            const Window* owner = find(resolved.parent);
+            if (owner == nullptr)
+                return WindowHandle{};
+            // the live owner hands over the native window the platform needs, which keeps the handle portable (§5.1)
+            resolved.native_parent = owner->native_window_handle();
+        }
         // build the native window first, because a platform that refuses the options yields no window at all (§5.1)
-        std::unique_ptr<PlatformWindow> platform = PlatformWindow::create(options);
+        std::unique_ptr<PlatformWindow> platform = PlatformWindow::create(resolved);
         // a refused option set is reported as the invalid handle rather than a broken window (§5.1)
         if (!platform)
             return WindowHandle{};
-        // a framework window wraps the native window and starts with the options it was created from
-        std::unique_ptr<Window> window = std::make_unique<Window>(WindowHandle::from_id(m_next_id), options, std::move(platform));
+        // a framework window wraps the native window and keeps the resolved options, including both owner handles (§5.1)
+        std::unique_ptr<Window> window = std::make_unique<Window>(WindowHandle::from_id(m_next_id), resolved, std::move(platform));
         // the handle of the window is the identity the caller uses from here on (§5.2)
         const WindowHandle handle = window->handle();
         // the slot for the new identifier grows to fit, leaving any destroyed slot before it empty (§5.2)
@@ -22,7 +32,7 @@ namespace albor
         if (before_show)
             before_show(*m_windows[handle.id() - 1]);
         // the visibility of the options is applied last, which is what the binding was in time for (§5.1)
-        if (options.visible)
+        if (resolved.visible)
             m_windows[handle.id() - 1]->show();
         return handle;
     }

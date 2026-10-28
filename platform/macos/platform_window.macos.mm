@@ -3,6 +3,7 @@
 #import <AppKit/AppKit.h>
 #import <QuartzCore/CAMetalLayer.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -216,7 +217,7 @@ namespace
 
 // the effective appearance of the window changed, which is the route appkit recommends for a theme flip (§8.4)
 - (void)viewDidChangeEffectiveAppearance {
-    // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
+    // a gone listener drops the event, because the window died (§4.2)
     if (self.listener == nullptr)
         return;
     // the framework receives the appearance the system now renders with (§8.4)
@@ -237,7 +238,7 @@ namespace
 }
 
 - (void)mouseDown:(NSEvent*)event {
-    // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
+    // a gone listener drops the event, because the window died (§4.2)
     if (self.listener == nullptr)
         return;
     albor::Event message;
@@ -247,7 +248,7 @@ namespace
 }
 
 - (void)mouseDragged:(NSEvent*)event {
-    // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
+    // a gone listener drops the event, because the window died (§4.2)
     if (self.listener == nullptr)
         return;
     albor::Event message;
@@ -257,7 +258,7 @@ namespace
 }
 
 - (void)mouseUp:(NSEvent*)event {
-    // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
+    // a gone listener drops the event, because the window died (§4.2)
     if (self.listener == nullptr)
         return;
     albor::Event message;
@@ -267,7 +268,7 @@ namespace
 }
 
 - (void)scrollWheel:(NSEvent*)event {
-    // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
+    // a gone listener drops the event, because the window died (§4.2)
     if (self.listener == nullptr)
         return;
     albor::Event message;
@@ -280,7 +281,7 @@ namespace
 }
 
 - (void)keyDown:(NSEvent*)event {
-    // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
+    // a gone listener drops the event, because the window died (§4.2)
     if (self.listener == nullptr)
         return;
     albor::Event message;
@@ -293,7 +294,7 @@ namespace
 }
 
 - (void)keyUp:(NSEvent*)event {
-    // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
+    // a gone listener drops the event, because the window died (§4.2)
     if (self.listener == nullptr)
         return;
     albor::Event message;
@@ -305,7 +306,7 @@ namespace
 
 // the committed text the input method finalised, which is what a commit REPLACED the mark with (§8.3)
 - (void)insertText:(id)string replacementRange:(NSRange)replacementRange {
-    // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
+    // a gone listener drops the event, because the window died (§4.2)
     if (self.listener == nullptr)
         return;
     // an attributed string hands its plain text over, which is what a mark resolved to (§8.3)
@@ -330,7 +331,7 @@ namespace
 - (void)setMarkedText:(id)string selectedRange:(NSRange)selectedRange replacementRange:(NSRange)replacementRange {
     // the marked range is derived from the mark, which is the only thing this side of the protocol holds (§8.3)
     (void)selectedRange;
-    // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
+    // a gone listener drops the event, because the window died (§4.2)
     if (self.listener == nullptr)
         return;
     // an attributed string hands its plain text over, which is what a composition holds (§8.3)
@@ -484,6 +485,15 @@ namespace albor
         // whether the window is a popup, which the show path and the dismissal monitor consult (§5.1)
         bool popup = false;
 
+        // the window a transient surface is owned by, which the show path reattaches it to (§5.1)
+        NSWindow* owner = nil;
+
+        // the anchor the popup follows, which is the trigger's content rectangle (§5.1)
+        Rect anchor{};
+
+        // the logical size the popup presents, which the platform scales into its frame (§5.1)
+        Size popup_size{};
+
         // the local monitor that dismisses the popup on an outside click, which is removed before the state dies (§5.1)
         id dismiss_monitor = nil;
 
@@ -520,11 +530,66 @@ namespace albor
             return WindowMetrics::from_logical(Size{static_cast<float>(bounds.size.width), static_cast<float>(bounds.size.height)}, static_cast<float>(scale));
         }
 
+        // place a popup under its owner's anchor and keep it on the owner's screen (§5.1)
+        void position_popup(NSWindow* popup, NSWindow* owner, Rect anchor, Size size) {
+            // a popup without a parent keeps the cascade position, because there is no anchor to follow (§5.1)
+            if (owner == nil || owner.contentView == nil)
+                return;
+            // the anchor arrives in top left content coordinates, while appkit content is bottom left (§5.1)
+            NSView* content = owner.contentView;
+            const NSRect content_bounds = content.bounds;
+            const NSRect anchor_in_content = NSMakeRect(static_cast<CGFloat>(anchor.x), content_bounds.size.height - static_cast<CGFloat>(anchor.y) - static_cast<CGFloat>(anchor.height), static_cast<CGFloat>(anchor.width), static_cast<CGFloat>(anchor.height));
+            // the anchor is converted through the window to screen space, which the popup frame uses (§5.1)
+            const NSRect anchor_in_window = [content convertRect:anchor_in_content toView:nil];
+            const NSRect anchor_screen = [owner convertRectToScreen:anchor_in_window];
+            // the screen the owner occupies is the work area the popup must stay inside (§5.1)
+            NSScreen* screen = owner.screen != nil ? owner.screen : [NSScreen mainScreen];
+            const NSRect work = screen != nil ? screen.visibleFrame : NSMakeRect(0.0, 0.0, 1920.0, 1080.0);
+            // the popup hangs below the anchor first, which is the conventional dropdown position (§5.1)
+            const CGFloat width = static_cast<CGFloat>(size.width);
+            const CGFloat height = static_cast<CGFloat>(size.height);
+            CGFloat x = anchor_screen.origin.x;
+            CGFloat y = anchor_screen.origin.y - height;
+            // a popup that would leave the work area flips above the anchor (§5.1)
+            if (y < work.origin.y)
+                y = anchor_screen.origin.y + anchor_screen.size.height;
+            // the popup is clamped into the work area, so a trigger at an edge still shows the list (§5.1)
+            x = std::clamp(x, work.origin.x, std::max(work.origin.x, work.origin.x + work.size.width - width));
+            y = std::clamp(y, work.origin.y, std::max(work.origin.y, work.origin.y + work.size.height - height));
+            // the frame is applied before the panel is ordered front, so the first frame lands in place (§5.1)
+            [popup setFrame:NSMakeRect(x, y, width, height) display:NO];
+            // the panel is a child of its owner, so it follows the owner and stays above it (§5.1)
+            if (popup.parentWindow != owner) {
+                // an old owner is detached first, because a window has one parent at a time (§5.1)
+                if (popup.parentWindow != nil)
+                    [popup.parentWindow removeChildWindow:popup];
+                // the current owner adopts it before the show, which is what makes the popup follow (§5.1)
+                [owner addChildWindow:popup ordered:NSWindowAbove];
+            }
+        }
+
+        // report whether a click landed on the trigger rectangle the popup is anchored to (§5.1)
+        bool anchor_contains(NSWindow* owner, Rect anchor, NSEvent* event) {
+            // a click in another window is outside the anchor, because the anchor belongs to the owner (§5.1)
+            if (owner == nil || event.window != owner || owner.contentView == nil)
+                return false;
+            // the point is converted to content space, where the anchor was recorded (§5.1)
+            NSView* content = owner.contentView;
+            const NSPoint point = [content convertPoint:event.locationInWindow fromView:nil];
+            // the top left anchor is flipped into the bottom left content space appkit uses (§5.1)
+            const CGFloat top = content.bounds.size.height - static_cast<CGFloat>(anchor.y) - static_cast<CGFloat>(anchor.height);
+            // the anchor test is the same half open rectangle the control uses for a hit (§8.3)
+            return point.x >= static_cast<CGFloat>(anchor.x) && point.x < static_cast<CGFloat>(anchor.x + anchor.width) && point.y >= top && point.y < top + static_cast<CGFloat>(anchor.height);
+        }
+
         // the dismissal a popup shares between its outside click monitor and its deactivation observer (§5.1, §8.4)
         void dismiss_popup(const std::shared_ptr<MacosWindowState>& state) {
             // an already hidden popup is not dismissed, so its hook never fires a second time (§5.1, §5.2)
             if (state->window == nil || !state->visible)
                 return;
+            // a child popup detaches before it is ordered out, so the relation does not outlive the surface (§5.1)
+            if (state->window.parentWindow != nil)
+                [state->window.parentWindow removeChildWindow:state->window];
             // the popup is ordered out, which is the whole of a dismissal for a transient surface (§5.1)
             [state->window orderOut:nil];
             state->visible = false;
@@ -600,7 +665,7 @@ namespace albor
                                                      object:window
                                                       queue:main_queue
                                                  usingBlock:^(NSNotification*) {
-                                                   // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
+                                                   // a gone listener drops the event, because the window died (§4.2)
                                                    if (state->listener == nullptr)
                                                        return;
                                                    // the framework receives the metrics the platform now reports (§9.1)
@@ -611,7 +676,7 @@ namespace albor
                                                       object:window
                                                        queue:main_queue
                                                   usingBlock:^(NSNotification*) {
-                                                    // a listener that is gone means the framework window is already destroyed, so the event is dropped (§4.2)
+                                                    // a gone listener drops the event, because the window died (§4.2)
                                                     if (state->listener == nullptr)
                                                         return;
                                                     // the framework receives the metrics the platform now reports (§9.1)
@@ -619,12 +684,21 @@ namespace albor
                                                   }];
         // the popup flag is kept so the show path knows not to activate, and the teardown knows it owns a monitor (§5.1)
         state->popup = popup;
+        // the owner is the appkit window the registry resolved, which an owned surface follows (§5.1)
+        state->owner = (__bridge NSWindow*)options.native_parent.object();
+        // a popup remembers its anchor and extent, because every show repositions and reattaches it (§5.1)
+        if (popup) {
+            // the trigger anchor is kept in content coordinates, where the platform converts it (§5.1)
+            state->anchor = options.anchor;
+            // the logical popup extent is kept, because the frame is set on every show (§5.1)
+            state->popup_size = options.size;
+        }
         // a popup dismisses on a click outside its bounds, which is the outside dismissal of §5.1
         if (popup) {
             // the handler dismisses on a press that reached a window other than the popup (§5.1)
             NSEvent* (^dismiss)(NSEvent*) = ^NSEvent*(NSEvent* event) {
               // a click that reached the popup itself is not an outside click, so it passes through (§5.1)
-              if (event.window != state->window)
+              if (event.window != state->window && !anchor_contains(state->owner, state->anchor, event))
                   dismiss_popup(state);
               // the click is returned, so it still reaches whatever the user actually clicked (§5.1)
               return event;
@@ -649,7 +723,7 @@ namespace albor
                                                           object:nil
                                                            queue:[NSOperationQueue mainQueue]
                                                       usingBlock:^(NSNotification*) {
-                                                        // a gone listener means the window died, so the event drops (§4.2)
+                                                        // a gone listener drops the event, because the window died (§4.2)
                                                         if (state->listener == nullptr)
                                                             return;
                                                         // the framework receives the new system appearance (§8.4)
@@ -660,7 +734,7 @@ namespace albor
     }
 
     MacosPlatformWindow::~MacosPlatformWindow() {
-        // the listeners are detached first, because a teardown notification would otherwise reach a half dead object (§4.2)
+        // the listeners detach first, because a teardown notification would reach a half dead object (§4.2)
         m_state->listener = nullptr;
         m_state->window.delegate = nil;
         // the content view keeps no listener, because the framework window is already gone (§4.2)
@@ -718,9 +792,19 @@ namespace albor
             return;
         // a popup is non activating, so it is ordered front without taking key (§5.1)
         if (m_state->popup) {
+            // the surface follows its owner's anchor on every show, because the owner may have moved (§5.1)
+            position_popup(m_state->window, m_state->owner, m_state->anchor, m_state->popup_size);
             [m_state->window orderFront:nil];
         }
         else {
+            // an owned dialog attaches to its parent, which keeps it above and moving with the owner (§5.1)
+            if (m_state->owner != nil && m_state->window.parentWindow != m_state->owner) {
+                // an old owner is detached first, because a window has one parent at a time (§5.1)
+                if (m_state->window.parentWindow != nil)
+                    [m_state->window.parentWindow removeChildWindow:m_state->window];
+                // the owner adopts the dialog before the show, which is the native parent relation (§5.1)
+                [m_state->owner addChildWindow:m_state->window ordered:NSWindowAbove];
+            }
             [m_state->window makeKeyAndOrderFront:nil];
             // the application is activated so that the window takes focus and the pacing source ticks (§4.1)
             [[NSApplication sharedApplication] activateIgnoringOtherApps:YES];
@@ -732,6 +816,9 @@ namespace albor
         // a window with no native window was never on screen (§5.3)
         if (m_state->window == nil)
             return;
+        // a hidden child stops following its owner, which keeps the child list of the owner clean (§5.1)
+        if (m_state->window.parentWindow != nil)
+            [m_state->window.parentWindow removeChildWindow:m_state->window];
         [m_state->window orderOut:nil];
         m_state->visible = false;
     }
@@ -765,6 +852,14 @@ namespace albor
             return NativeWindowHandle{};
         // the layer crosses into the framework as an opaque pointer, which no appkit type may name (§3.5, AD-05)
         return NativeWindowHandle::from_object((__bridge const void*)m_state->layer);
+    }
+
+    NativeWindowHandle MacosPlatformWindow::native_window_handle() const {
+        // a window that was destroyed hands out the invalid handle, which a popup refuses (§5.1)
+        if (m_state->window == nil)
+            return NativeWindowHandle{};
+        // the appkit window crosses as an opaque pointer, which no public header names (§3.5, AD-05)
+        return NativeWindowHandle::from_object((__bridge const void*)m_state->window);
     }
 
     SystemAppearance MacosPlatformWindow::system_appearance() const {

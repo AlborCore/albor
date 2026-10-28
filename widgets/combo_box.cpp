@@ -1,10 +1,15 @@
 #include "widgets/combo_box.h"
 
 #include <algorithm>
+#include <cmath>
+#include <memory>
 #include <utility>
 
+#include "layout/column_layout.h"
 #include "semantics/semantic_provider.h"
+#include "widgets/label.h"
 #include "widgets/widget.h"
+#include "window/popup_host.h"
 
 namespace albor
 {
@@ -55,6 +60,204 @@ namespace albor
         ComboBox& m_owner;
     };
 
+    // the native popup face, which is one themed plate over the list the application shows (§5.1, §8.3)
+    class ComboBoxPopupSurface final : public Widget
+    {
+    public:
+        // build the surface and its list over the engines the owner built (§8.1)
+        ComboBoxPopupSurface(BindingEngine* engine, Size size, float padding, const Theme* theme, std::string list_id) :
+            Widget(engine), m_size(size), m_padding(padding), m_list(std::make_unique<ListBox>(engine, std::move(list_id))) {
+            // the list is the only child, because the surface is the popup plate around it (§8.1)
+            m_list_ptr = m_list.get();
+            // the list follows the popup theme, which is the control's theme in the owner window (§6.1)
+            m_list->set_theme(theme);
+            // the surface takes the same theme, so its plate and border resolve with the trigger (§6.1)
+            set_theme(theme);
+            // the list fills the content area, so it is adopted after its pointer is kept (§8.1)
+            add_child(std::move(m_list));
+        }
+
+        // override: the popup has the exact size the owner computed, because it is not laid out by a parent (§8.2)
+        void measure(const SizeConstraints& constraints, Size& out_size) override {
+            // the popup is fixed, so the offered constraints only clamp the exact extent (§8.2)
+            m_measured_size = constraints.constrain(m_size);
+            // the preferred size follows the fixed one, which is what the surface reports (§8.2)
+            m_preferred_size = m_measured_size;
+            // the list measures against its content area, because its viewport is the inside of the plate (§8.2)
+            Size list_size{};
+            m_list_ptr->measure(SizeConstraints::tight(content_size()), list_size);
+            out_size = m_measured_size;
+        }
+
+        // override: place the list inside the plate's inset, which is what the padding frames (§8.2)
+        void arrange(const Rect& bounds) override {
+            // the assigned bounds replace the previous ones, because the popup was just placed (§8.2)
+            m_bounds = bounds;
+            // the arranged extent becomes the preferred one, because the owner has now decided (§8.2)
+            m_preferred_size = Size{.width = bounds.width, .height = bounds.height};
+            // the list takes the inside of the inset, which leaves the plate visible around it (§8.2)
+            m_list_ptr->arrange(Rect::from_origin_size(Point{.x = bounds.x + m_padding, .y = bounds.y + m_padding}, content_size()));
+        }
+
+        // override: the popup plate is the panel face, because a popup reads as a floating card (§6.1)
+        [[nodiscard]] Color background() const override {
+            // a themed popup takes the panel background, which matches every other floating surface (§6.1)
+            if (theme() != nullptr)
+                return theme()->palette().panel_background[state_index(ControlState::Normal)];
+            // the unthemed fallback keeps the popup readable without a theme (§6.1)
+            return Color{0.13f, 0.15f, 0.19f, 1.0f};
+        }
+
+        // override: the popup hairline is the panel border, which separates the card from the owner (§6.1)
+        [[nodiscard]] float border_width() const override {
+            // a themed popup takes the panel hairline width (§6.1)
+            if (theme() != nullptr)
+                return theme()->metrics().button_border_width;
+            // the unthemed fallback keeps a hairline visible (§6.1)
+            return 1.0f;
+        }
+
+        // override: the popup hairline is the panel border colour (§6.1)
+        [[nodiscard]] Color border_color() const override {
+            // a themed popup takes the panel border, which is the floating card token (§6.1)
+            if (theme() != nullptr)
+                return theme()->palette().panel_border[state_index(ControlState::Normal)];
+            // the unthemed fallback keeps the card boundary visible (§6.1)
+            return Color{0.27f, 0.30f, 0.36f, 1.0f};
+        }
+
+        // override: the popup uses the panel radius, because it is a card rather than a field (§6.2)
+        [[nodiscard]] float corner_radius() const override {
+            // a themed popup takes the panel radius, which is the floating surface shape (§6.2)
+            if (theme() != nullptr)
+                return theme()->metrics().panel_radius;
+            // the unthemed fallback keeps a small rounded card (§6.2)
+            return 6.0f;
+        }
+
+        // hand out the list the popup hosts, which the control drives (§8.3)
+        [[nodiscard]] ListBox* list() const { return m_list_ptr; }
+
+        // override: the surface groups the list, which is the popup's semantic content (§10.1)
+        [[nodiscard]] SemanticNode semantic_node() const override {
+            // the group role describes the floating container rather than a control (§10.1)
+            SemanticNode node{SemanticRole::Group};
+            // the group carries the arranged popup bounds (§10.1)
+            node.set_bounds(m_bounds);
+            // the container is not checkable, because the list owns the choice (§10.1)
+            node.set_check(CheckState::NotCheckable);
+            return node;
+        }
+
+        // hand out the content area inside the plate, which is the list viewport (§8.2)
+        [[nodiscard]] Size content_size() const {
+            // the padding is capped at half of each extent, so a tiny popup still has a non negative inside (§8.2)
+            const float horizontal = std::min(m_padding, m_size.width * 0.5f);
+            // the vertical inset is capped the same way (§8.2)
+            const float vertical = std::min(m_padding, m_size.height * 0.5f);
+            // the inside is what the padding leaves (§8.2)
+            return Size{.width = std::max(0.0f, m_size.width - horizontal * 2.0f), .height = std::max(0.0f, m_size.height - vertical * 2.0f)};
+        }
+
+    private:
+        // the exact popup extent the owner computed (§8.2)
+        Size m_size{};
+
+        // the inset the list sits inside (§8.2)
+        float m_padding = 0.0f;
+
+        // the list owned by the widget tree, which is the popup content (§8.1)
+        std::unique_ptr<ListBox> m_list;
+
+        // the list the control keeps a stable pointer to (§8.3)
+        ListBox* m_list_ptr = nullptr;
+    };
+
+    // one fixed height row in the native popup list, which keeps the list band and the label aligned (§8.2)
+    class ComboBoxItemRow final : public Widget
+    {
+    public:
+        // build a row over the engines and the theme of the owner (§8.1)
+        ComboBoxItemRow(BindingEngine* engine, TextEngine* text, std::string value, float height, float padding, float font_size, const Theme* theme) :
+            Widget(engine), m_label(std::make_unique<Label>(engine, text, std::move(value))), m_height(height), m_padding(padding) {
+            // the label takes the row theme, because it resolves its foreground through the palette (§6.1)
+            m_label->set_theme(theme);
+            // the label uses the same body size as the trigger, so the popup matches the field (§9.1)
+            m_label->set_font_size(font_size);
+            // the row keeps the label as its only child, which paints over the selection band (§8.1)
+            m_label_ptr = m_label.get();
+            // the label is adopted after its pointer is kept, because the tree owns it (§8.1)
+            add_child(std::move(m_label));
+        }
+
+        // override: every row is exactly one item height, which is what the list model assumes (§8.2)
+        void measure(const SizeConstraints& constraints, Size& out_size) override {
+            // the label measures against the room the row leaves, because a long option must not overflow (§9.1)
+            Size label_size{};
+            m_label_ptr->measure(SizeConstraints::at_most(Size{.width = std::max(0.0f, constraints.maximum.width - m_padding * 2.0f), .height = m_height}), label_size);
+            // the row takes its fixed height and the width the label asks for, which the column may stretch (§8.2)
+            m_measured_size = constraints.constrain(Size{.width = label_size.width + m_padding * 2.0f, .height = m_height});
+            // the preferred size follows the measured one, which a parent can query without a second pass (§8.2)
+            m_preferred_size = m_measured_size;
+            out_size = m_measured_size;
+        }
+
+        // override: the label is centred vertically in the fixed row, which is where the selection band sits (§8.2)
+        void arrange(const Rect& bounds) override {
+            // the assigned bounds replace the previous ones, which the row paints against (§8.2)
+            m_bounds = bounds;
+            // the arranged extent is the preferred one, because the list has now decided (§8.2)
+            m_preferred_size = Size{.width = bounds.width, .height = bounds.height};
+            // the label's measured height is what centres it in the row (§8.2)
+            const float label_height = m_label_ptr->measured_size().height;
+            // the label starts after the inset and is centred vertically (§8.2)
+            m_label_ptr->arrange(Rect::from_origin_size(Point{.x = bounds.x + m_padding, .y = bounds.y + (bounds.height - label_height) * 0.5f}, Size{.width = std::max(0.0f, bounds.width - m_padding * 2.0f), .height = label_height}));
+        }
+
+        // override: the row is not a keyboard stop, because the list owns navigation (§8.3)
+        [[nodiscard]] bool accepts_focus() const override { return false; }
+
+        // override: announce the row as a label carrying its option text (§10.1)
+        [[nodiscard]] SemanticNode semantic_node() const override {
+            // the label role describes the option text a reader hears (§10.1)
+            SemanticNode node{SemanticRole::Label};
+            // the option text is the row's accessible name (§10.1)
+            node.set_name(m_label_ptr->text());
+            // the bounds let an adapter place the announcement where the row was drawn (§10.1)
+            node.set_bounds(m_bounds);
+            // the row is not checkable, because the list owns the selection state (§10.1)
+            node.set_check(CheckState::NotCheckable);
+            return node;
+        }
+
+    private:
+        // the label that draws the option (§8.1)
+        std::unique_ptr<Label> m_label;
+
+        // the label the row paints, which is stable for the row lifetime (§8.1)
+        Label* m_label_ptr = nullptr;
+
+        // the exact row height the list model uses (§8.2)
+        float m_height = 0.0f;
+
+        // the leading and trailing inset inside the row (§8.2)
+        float m_padding = 0.0f;
+    };
+
+    namespace
+    {
+        // read the identity of a popup row from the owner's option vector (§18.1, §13.3)
+        model::ItemKey popup_item_key(void* context, std::size_t index) {
+            // the context is the owner's option list, which outlives the popup while it is open (§8.3)
+            const auto* items = static_cast<const std::vector<std::string>*>(context);
+            // a missing context or index names no row, which a stale event may ask for (§8.3)
+            if (items == nullptr || index >= items->size())
+                return model::ItemKey{};
+            // the option text is the stable row identity in the popup (§18.1)
+            return model::ItemKey{(*items)[index]};
+        }
+    } // namespace
+
     ComboBox::ComboBox(BindingEngine* engine, TextEngine* text_engine, std::string explicit_id) :
         Widget(engine, std::move(explicit_id)), m_text_engine(text_engine) {
         // the marker is measured up front, because the trigger always draws one (§9.1)
@@ -62,14 +265,16 @@ namespace albor
     }
 
     ComboBox::~ComboBox() {
-        // a widget that dies with an open popup removes its layer before the root unwinds (§8.3)
-        if (m_popup == nullptr)
-            return;
-        // a rootless widget never added a layer, so there is nothing to detach (§8.3)
-        if (UiNode* root = popup_root(); root != nullptr)
-            (void)root->remove_overlay(m_popup);
-        // the layer is gone, so the pointer no longer names a live node (§8.3)
-        m_popup = nullptr;
+        // a native surface is owned by the application, so the control destroys it before its own tree unwinds (§5.1)
+        destroy_native_popup();
+        // a widget that dies with an overlay removes its layer before the root unwinds (§8.3)
+        if (m_popup != nullptr) {
+            // a rootless widget never added a layer, so there is nothing to detach (§8.3)
+            if (UiNode* root = popup_root(); root != nullptr)
+                (void)root->remove_overlay(m_popup);
+            // the layer is gone, so the pointer no longer names a live node (§8.3)
+            m_popup = nullptr;
+        }
     }
 
     UiNode* ComboBox::popup_root() {
@@ -265,8 +470,8 @@ namespace albor
         }
         // the trigger clip comes off before the popup, because the popup hangs outside the plate (§6.2)
         context.restore();
-        // a rootless control draws its own popup, because it never joined a layer (§8.3)
-        if (m_expanded && m_popup == nullptr)
+        // only the in-tree fallback draws its own popup; a native surface draws in its own window (§8.3, §5.1)
+        if (m_expanded && m_popup == nullptr && !m_popup_window.valid())
             paint_popup(context);
     }
 
@@ -322,7 +527,10 @@ namespace albor
         // a closed popup leaves only the trigger as a target (§8.3)
         if (!m_expanded)
             return in_trigger;
-        // an open popup is a hit anywhere inside its rectangle, which lets it receive the close press (§8.3)
+        // a native popup is outside this window, so only the trigger is a hit in the owner (§5.1)
+        if (m_popup_window.valid())
+            return in_trigger;
+        // an open in-tree popup is a hit anywhere inside its rectangle, which lets it receive the close press (§8.3)
         const Rect popup = popup_rect();
         const bool in_popup = !popup.empty() && logical_point.x >= popup.x && logical_point.x < popup.x + popup.width && logical_point.y >= popup.y && logical_point.y < popup.y + popup.height;
         return in_trigger || in_popup;
@@ -525,6 +733,10 @@ namespace albor
         // an unchanged list remeasures nothing, because every run is already current (§9.1)
         if (m_items == items)
             return;
+        // a native popup holds the rows it built, so a changed list retires it before the items move (§5.1)
+        if (m_expanded)
+            close();
+        destroy_native_popup();
         // the list is stored first, so the selection clamp reads the new size (§8.2)
         m_items = std::move(items);
         // a selection past the end is cleared, because the option it named is gone (§8.3)
@@ -561,6 +773,9 @@ namespace albor
             m_hovered = m_selected;
         // the trigger text changed, so the frame is requested (§6.1)
         invalidate();
+        // a visible native popup follows the committed row, because its list is the same choice (§8.3)
+        if (m_expanded)
+            sync_native_selection();
     }
 
     int ComboBox::selected() const {
@@ -613,6 +828,15 @@ namespace albor
         m_expanded = true;
         // the committed row is the initial highlight, while an empty selection starts at the first row (§8.3)
         m_hovered = m_selected >= 0 ? m_selected : 0;
+        // a native host turns the popup into a real transient surface owned by the application (§5.1)
+        if (PopupHost* host = window_popup_host(); host != nullptr && open_native_popup(*host)) {
+            // an in-tree layer from an earlier fallback must not also paint (§8.3)
+            if (m_popup != nullptr)
+                m_popup->set_visible(false);
+            // the trigger changed to the expanded state, so the frame is requested (§6.1)
+            invalidate();
+            return;
+        }
         // a widget that joined a tree adds its popup to the topmost layer, which draws above every sibling (§8.3)
         if (UiNode* root = popup_root(); root != nullptr && m_popup == nullptr) {
             // the layer is created before it is moved into the root, so the widget keeps a stable pointer (§8.3)
@@ -635,7 +859,10 @@ namespace albor
             return;
         // the popup leaves the screen without changing the selection (§8.3)
         m_expanded = false;
-        // the layer stays owned by the root, but it no longer paints or takes input (§8.3)
+        // a native surface is hidden rather than destroyed, so its tree can be reopened (§5.1)
+        if (m_popup_window.valid())
+            close_native_popup();
+        // the in-tree layer stays owned by the root, but it no longer paints or takes input (§8.3)
         if (m_popup != nullptr)
             m_popup->set_visible(false);
         // the hover row belongs to the open popup, so it is cleared with it (§8.3)
@@ -679,6 +906,157 @@ namespace albor
         m_hovered = next;
         // the popup highlight changed, so the frame is requested (§6.1)
         invalidate();
+        // a native popup follows the keyboard highlight even though the owner keeps the focus (§8.3)
+        sync_native_selection();
+    }
+
+    bool ComboBox::open_native_popup(PopupHost& host) {
+        // a popup that was hidden keeps its built tree, so reopening only shows the same surface (§5.1)
+        if (m_popup_window.valid() && m_popup_host == &host) {
+            // a theme or type change invalidates the rows, so the surface is rebuilt rather than shown stale (§6.1, §9.1)
+            if (m_popup_theme == theme() && m_popup_font_size == font_size()) {
+                host.show_popup(m_popup_window);
+                sync_native_selection();
+                return true;
+            }
+            destroy_native_popup();
+        }
+        // a surface opened by another host is stale, because its window registry died with that host (§5.1)
+        if (m_popup_window.valid()) {
+            m_popup_window = WindowHandle{};
+            m_popup_host = nullptr;
+            m_popup_list = nullptr;
+            m_popup_theme = nullptr;
+            m_popup_font_size = 0.0f;
+        }
+        // a rootless control has no owner window for the native surface, so the tree fallback stays (§5.1)
+        if (popup_root() == nullptr)
+            return false;
+        // the owner computes the popup extent, which is the same rectangle the in-tree fallback would draw (§8.2)
+        const Rect popup = popup_rect();
+        if (popup.empty())
+            return false;
+        // the row height is shared by the surface list and the row widgets, so the band and text agree (§8.2)
+        const ControlMetrics& m = metrics();
+        const float row_height = std::max(1.0f, m.combo_box_item_height);
+        // the list identity extends the author id, so two combo boxes never publish the same semantic key (AD-11)
+        const std::string list_id = identity().explicit_id.empty() ? std::string{} : identity().explicit_id + "-popup-list";
+        // the builder runs synchronously inside the host, so the owner can keep the list pointer it returns (§8.1)
+        auto builder = [this, popup, row_height, m, list_id](BindingEngine& engine, TextEngine& text) -> std::unique_ptr<UiNode> {
+            // the surface is the popup plate, and the list inside it is the actual chooser (§5.1, §8.3)
+            auto surface = std::make_unique<ComboBoxPopupSurface>(&engine, Size{.width = popup.width, .height = popup.height}, m.text_field_padding, theme(), list_id);
+            ListBox* list = surface->list();
+            // the list uses the same theme and row height as the in-tree popup, so the two paths agree (§6.1, §8.2)
+            list->set_theme(theme());
+            list->set_row_height(row_height);
+            list->set_viewport_extent(surface->content_size());
+            list->set_scrollbar_visibility(ScrollbarVisibility::AsNeeded);
+            list->set_item_count(m_items.size());
+            // the reader names each row by its option text, which is the same identity the popup shows (§18.1)
+            list->set_key_reader(&popup_item_key, &m_items);
+            // the rows are fixed height labels, so the list band and the text line up on every row (§8.2)
+            auto rows = std::make_unique<ColumnLayout>();
+            rows->set_gap(0.0f);
+            for (const std::string& item : m_items) {
+                // the row keeps the label's font and theme, because the popup is part of the owner's form (§8.1)
+                rows->add_child(std::make_unique<ComboBoxItemRow>(&engine, &text, item, row_height, m.text_field_padding, font_size(), theme()));
+            }
+            // the scroll view owns the rows, which is what the list scrolls and clips (§8.2)
+            list->scroll_view().add_child(std::move(rows));
+            // a pointer press chooses the row under it, even when the row was already selected (§8.3)
+            list->set_on_item_pressed([this](std::size_t index) {
+                // a stale surface may deliver a press after the control closed, so only an open popup commits (§8.3)
+                if (!m_expanded || index >= m_items.size())
+                    return;
+                choose(static_cast<int>(index));
+            });
+            // a keyboard activation chooses the focused row, which is the same commit as a press (§8.3)
+            list->set_on_activate([this](const std::string&) {
+                // a closed popup has no row to commit (§8.3)
+                if (!m_expanded || m_popup_list == nullptr)
+                    return;
+                choose(static_cast<int>(m_popup_list->selected_index()));
+            });
+            // a selection moved by a pointer is also a commit, because the popup is a chooser (§8.3)
+            list->set_on_selection_changed([this] {
+                // a programmatic selection write must not look like a user choice (§8.3)
+                if (m_syncing_popup || !m_expanded || m_popup_list == nullptr)
+                    return;
+                choose(static_cast<int>(m_popup_list->selected_index()));
+            });
+            // the owner keeps the list pointer, which the surface owns until the native window dies (§8.1)
+            m_popup_list = list;
+            return surface;
+        };
+        // the popup clears with the owner's panel face, so a native surface never flashes white (§6.1)
+        const Color background = theme() != nullptr ? theme()->palette().panel_background[state_index(ControlState::Normal)] : Color{0.13f, 0.15f, 0.19f, 1.0f};
+        // a dismissal outside the surface closes the control state but keeps the tree for reopening (§5.1)
+        const WindowHandle handle = host.open_popup(*this, bounds(), Size{.width = popup.width, .height = popup.height}, std::move(builder), background, [this] {
+            // a dismissal after the control already closed is not a state change (§5.1)
+            if (!m_popup_window.valid() || !m_expanded)
+                return;
+            // the native list left, so the trigger returns to its closed state (§8.3)
+            m_expanded = false;
+            // the highlight belongs to the open popup, so it is cleared with it (§8.3)
+            m_hovered = -1;
+            // the trigger paints its closed state on the next frame (§6.1)
+            invalidate();
+        });
+        // a host that refused the surface leaves the tree fallback to open the popup (§5.1)
+        if (!handle.valid()) {
+            m_popup_list = nullptr;
+            return false;
+        }
+        // the handle is recorded before the list selection is written, because the callback reads it (§5.1, §8.3)
+        m_popup_window = handle;
+        // the host is recorded with the handle, because only its registry can release that surface (§5.1)
+        m_popup_host = &host;
+        // the theme and type are recorded, because a later change must rebuild the retained rows (§6.1, §9.1)
+        m_popup_theme = theme();
+        m_popup_font_size = font_size();
+        // the committed row is the initial native selection, while the callback is suppressed as programmatic (§8.3)
+        sync_native_selection();
+        return true;
+    }
+
+    void ComboBox::close_native_popup() {
+        // a handle without its host is already gone with that application, so there is nothing to hide (§5.1)
+        PopupHost* host = window_popup_host();
+        if (!m_popup_window.valid() || host == nullptr || host != m_popup_host)
+            return;
+        // the surface is hidden rather than destroyed, which keeps the list pointer valid for reopening (§5.1)
+        host->close_popup(m_popup_window);
+    }
+
+    void ComboBox::destroy_native_popup() {
+        // a control without a native surface has nothing to release (§5.1)
+        if (!m_popup_window.valid())
+            return;
+        // the handle and host are cleared first, so a close callback cannot reach a half destroyed control (§5.1)
+        const WindowHandle popup = m_popup_window;
+        PopupHost* host = m_popup_host;
+        m_popup_window = WindowHandle{};
+        m_popup_host = nullptr;
+        // the list belongs to the surface, so the pointer is cleared with the handle (§8.3)
+        m_popup_list = nullptr;
+        // the retained surface is gone, so its theme and type marker no longer name a live tree (§6.1)
+        m_popup_theme = nullptr;
+        m_popup_font_size = 0.0f;
+        // only the host that opened the surface may destroy it, because another registry has no such window (§5.1)
+        if (window_popup_host() == host && host != nullptr)
+            host->destroy_popup(popup);
+    }
+
+    void ComboBox::sync_native_selection() {
+        // a closed or tree-only popup has no native list to update (§8.3)
+        if (!m_expanded || m_popup_list == nullptr || m_hovered < 0)
+            return;
+        // the guard keeps the programmatic write from being reported as a user choice (§8.3)
+        m_syncing_popup = true;
+        // the list scrolls the selected row into view through its ordinary selection path (§8.2)
+        m_popup_list->select(static_cast<std::size_t>(m_hovered));
+        // the guard is cleared after the model callback has returned (§8.3)
+        m_syncing_popup = false;
     }
 
     void ComboBox::choose(int index) {

@@ -1,3 +1,4 @@
+#include <functional>
 #include <limits>
 #include <memory>
 #include <span>
@@ -39,6 +40,7 @@
 #include "widgets/tab_view.h"
 #include "widgets/text_field.h"
 #include "widgets/theme_controller.h"
+#include "window/popup_host.h"
 #include "window/window_metrics.h"
 
 using namespace albor;
@@ -117,7 +119,7 @@ namespace
         }
     };
 
-    // the text engine test double, which measures with a fixed advance so a widget test asserts on the widget rather than on whatever shaping backend the platform happens to provide (§9.1)
+    // the text engine test double, which measures with a fixed advance so a test asserts on the widget (§9.1)
     class StubTextEngine final : public TextEngine
     {
     public:
@@ -127,7 +129,7 @@ namespace
         // the height the double reports for any run, in logical pixels (§9.1)
         static constexpr float HEIGHT = 16.0f;
 
-        // how many measurements the widget asked for, which a test asserts on, and which has to be mutable because the measurement contract is const (§9.1)
+        // how many measurements the widget asked for, which is mutable because the contract is const (§9.1)
         mutable std::size_t measurements = 0;
 
         // whether the double reports itself as able to measure (§9.1)
@@ -181,6 +183,65 @@ namespace
             last_font_spec = spec;
             // the double shapes no face, so it measures exactly as the size only overload does (§9.1)
             return measure(text, max_width, font_size);
+        }
+    };
+
+    // the popup host test double, which records what a control asks a native surface to do (§5.1)
+    class RecordingPopupHost final : public PopupHost
+    {
+    public:
+        // the handle every accepted surface is named by, or an invalid one when the host refuses (§5.1)
+        WindowHandle handle = WindowHandle::from_id(1000);
+
+        // the anchor the last opening named, which is the control that owns the list (§5.1)
+        const UiNode* anchor = nullptr;
+
+        // the trigger rectangle the last opening named (§5.1)
+        Rect anchor_rect{};
+
+        // the surface extent the last opening named (§5.1)
+        Size size{};
+
+        // the clear colour the last opening named (§6.1)
+        Color background{};
+
+        // how many openings, shows, hides and destructions arrived (§5.1)
+        std::size_t opens = 0;
+        std::size_t shows = 0;
+        std::size_t closes = 0;
+        std::size_t destroys = 0;
+
+        // the dismissal work the control installed, which a test invokes as a native dismissal (§5.1)
+        std::function<void()> on_closed;
+
+        // the tree builder the host received, which a test invokes to cover the real native surface (§5.1)
+        PopupRootBuilder builder;
+
+        [[nodiscard]] WindowHandle open_popup(const UiNode& anchor_node, Rect anchor_bounds, Size surface_size, PopupRootBuilder root_builder, Color clear, std::function<void()> closed) override {
+            // the request is recorded before the answer, because a test reads back what the control asked (§5.1)
+            opens++;
+            anchor = &anchor_node;
+            anchor_rect = anchor_bounds;
+            size = surface_size;
+            background = clear;
+            builder = std::move(root_builder);
+            on_closed = std::move(closed);
+            return handle;
+        }
+
+        void close_popup(WindowHandle) override {
+            // the hide is counted, because a closed list is kept rather than destroyed (§5.1)
+            closes++;
+        }
+
+        void show_popup(WindowHandle) override {
+            // the show is counted, because a retained surface reopens without a new tree (§5.1)
+            shows++;
+        }
+
+        void destroy_popup(WindowHandle) override {
+            // the destruction is counted, because the control releases the surface when it dies (§5.1)
+            destroys++;
         }
     };
 } // namespace
@@ -6515,6 +6576,168 @@ TEST(ComboBoxChecks, TheTriggerPaintsTheSelectedValueAndMarker) {
     EXPECT_FALSE(combo.expanded());
 }
 
+TEST(ComboBoxChecks, ANativeHostOwnsThePopupUntilTheControlDies) {
+    // arrange a combo box in a tree and a host that accepts the native surface (§5.1)
+    RecordingPopupHost host;
+    PopupHost* previous = window_popup_host();
+    set_window_popup_host(&host);
+    {
+        BindingEngine engine;
+        StubTextEngine text_engine;
+        UiNode root;
+        auto column = std::make_unique<ColumnLayout>();
+        auto combo = std::make_unique<ComboBox>(&engine, &text_engine);
+        ComboBox* choice = combo.get();
+        choice->set_items({"Alpha", "Beta", "Gamma"});
+        choice->set_selected(0);
+        column->add_child(std::move(combo));
+        root.add_child(std::move(column));
+        Size measured{};
+        root.measure(SizeConstraints::unconstrained(), measured);
+        root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 200.0f}));
+        // act open and close the list, then reopen the retained surface (§5.1)
+        choice->open();
+        EXPECT_EQ(host.opens, 1u);
+        EXPECT_EQ(host.anchor, choice);
+        EXPECT_EQ(host.anchor_rect, choice->bounds());
+        EXPECT_GT(host.size.width, 0.0f);
+        EXPECT_GT(host.size.height, 0.0f);
+        EXPECT_TRUE(choice->expanded());
+        choice->close();
+        EXPECT_EQ(host.closes, 1u);
+        EXPECT_FALSE(choice->expanded());
+        choice->open();
+        EXPECT_EQ(host.opens, 1u);
+        EXPECT_EQ(host.shows, 1u);
+        // act dismiss the native surface, which closes the control without dropping the tree (§5.1)
+        ASSERT_TRUE(host.on_closed);
+        host.on_closed();
+        EXPECT_FALSE(choice->expanded());
+        EXPECT_EQ(host.closes, 1u);
+        // act reopen after the dismissal, which shows the same surface again (§5.1)
+        choice->open();
+        EXPECT_EQ(host.shows, 2u);
+        EXPECT_TRUE(choice->expanded());
+    }
+    // assert the control destroyed the surface it opened when its tree unwound (§5.1)
+    EXPECT_EQ(host.destroys, 1u);
+    set_window_popup_host(previous);
+}
+
+TEST(ComboBoxChecks, TheNativeSurfaceBuildsACommittingList) {
+    // arrange a combo box whose host records the real native surface builder (§5.1)
+    RecordingPopupHost host;
+    PopupHost* previous = window_popup_host();
+    set_window_popup_host(&host);
+    {
+        BindingEngine engine;
+        StubTextEngine text_engine;
+        UiNode root;
+        auto column = std::make_unique<ColumnLayout>();
+        auto combo = std::make_unique<ComboBox>(&engine, &text_engine, "mode");
+        ComboBox* choice = combo.get();
+        choice->set_items({"Alpha", "Beta"});
+        choice->set_selected(0);
+        column->add_child(std::move(combo));
+        root.add_child(std::move(column));
+        Size measured{};
+        root.measure(SizeConstraints::unconstrained(), measured);
+        root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 200.0f}));
+        choice->open();
+        ASSERT_TRUE(host.builder);
+        // act build and lay out the surface exactly as the native window would (§5.1)
+        std::unique_ptr<UiNode> surface = host.builder(engine, text_engine);
+        ASSERT_NE(surface, nullptr);
+        ASSERT_EQ(surface->child_count(), 1u);
+        auto* list = dynamic_cast<ListBox*>(surface->child_at(0));
+        ASSERT_NE(list, nullptr);
+        Size surface_size{};
+        surface->measure(SizeConstraints::tight(host.size), surface_size);
+        surface->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, surface_size));
+        // act press the first row, which is already the selected one (§8.3)
+        const Rect list_bounds = list->bounds();
+        Event press{.kind = EventKind::PointerDown, .position = Point{list_bounds.x + 4.0f, list_bounds.y + list->row_height() * 0.5f}};
+        list->dispatch_event(press);
+        // assert the real list committed the row and closed the chooser (§8.3)
+        EXPECT_TRUE(press.handled);
+        EXPECT_EQ(choice->selected(), 0);
+        EXPECT_FALSE(choice->expanded());
+    }
+    // assert the control released the surface when the tree unwound (§5.1)
+    EXPECT_EQ(host.destroys, 1u);
+    set_window_popup_host(previous);
+}
+
+TEST(ComboBoxChecks, AThemeChangeRebuildsTheRetainedNativeSurface) {
+    // arrange a combo box whose native popup was built under the default theme (§5.1)
+    RecordingPopupHost host;
+    PopupHost* previous = window_popup_host();
+    set_window_popup_host(&host);
+    {
+        BindingEngine engine;
+        StubTextEngine text_engine;
+        UiNode root;
+        auto column = std::make_unique<ColumnLayout>();
+        auto combo = std::make_unique<ComboBox>(&engine, &text_engine);
+        ComboBox* choice = combo.get();
+        choice->set_items({"Alpha", "Beta"});
+        column->add_child(std::move(combo));
+        root.add_child(std::move(column));
+        Size measured{};
+        root.measure(SizeConstraints::unconstrained(), measured);
+        root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 200.0f}));
+        choice->open();
+        choice->close();
+        ASSERT_EQ(host.opens, 1u);
+        ASSERT_EQ(host.shows, 0u);
+        // act change the theme and reopen, which cannot reuse the old rows (§6.1, §9.1)
+        Theme changed;
+        choice->set_theme(&changed);
+        choice->open();
+        // assert the stale surface was destroyed and a new one was built instead of shown (§5.1)
+        EXPECT_EQ(host.destroys, 1u);
+        EXPECT_EQ(host.opens, 2u);
+        EXPECT_EQ(host.shows, 0u);
+    }
+    // assert the replacement surface is released with the control (§5.1)
+    EXPECT_EQ(host.destroys, 2u);
+    set_window_popup_host(previous);
+}
+
+TEST(ComboBoxChecks, AHostThatRefusesTheSurfaceFallsBackToTheOverlay) {
+    // arrange a host that declines the surface, which leaves the tree layer as the only popup (§5.1)
+    RecordingPopupHost host;
+    host.handle = WindowHandle{};
+    PopupHost* previous = window_popup_host();
+    set_window_popup_host(&host);
+    {
+        BindingEngine engine;
+        StubTextEngine text_engine;
+        UiNode root;
+        auto column = std::make_unique<ColumnLayout>();
+        auto combo = std::make_unique<ComboBox>(&engine, &text_engine);
+        ComboBox* choice = combo.get();
+        choice->set_items({"Alpha", "Beta"});
+        column->add_child(std::move(combo));
+        root.add_child(std::move(column));
+        Size measured{};
+        root.measure(SizeConstraints::unconstrained(), measured);
+        root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 200.0f}));
+        // act
+        choice->open();
+        // assert the host was asked and the tree layer opened instead, because a refusal is a fallback (§5.1)
+        EXPECT_EQ(host.opens, 1u);
+        EXPECT_TRUE(choice->expanded());
+        EXPECT_EQ(root.overlays().size(), 1u);
+        choice->close();
+        EXPECT_FALSE(choice->expanded());
+        EXPECT_EQ(host.closes, 0u);
+    }
+    // assert a refused surface is never destroyed, because the host never owned one (§5.1)
+    EXPECT_EQ(host.destroys, 0u);
+    set_window_popup_host(previous);
+}
+
 TEST(ComboBoxChecks, ATriggerPressTogglesThePopup) {
     // arrange a closed combo box arranged at a known rectangle (§8.3)
     BindingEngine engine;
@@ -6590,6 +6813,29 @@ TEST(ComboBoxChecks, EscapeClosesWithoutChoosing) {
     // assert escape closes the list without committing a new value (§8.3)
     EXPECT_FALSE(combo.expanded());
     EXPECT_EQ(chosen, -1);
+    EXPECT_TRUE(escape.handled);
+}
+
+TEST(ComboBoxChecks, EscapeThroughTheInputControllerClosesThePopup) {
+    // arrange a focused combo box inside a tree, which is the real key routing path (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    auto choice = std::make_unique<ComboBox>(&engine, &text_engine);
+    choice->set_items({"Alpha", "Beta"});
+    choice->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 28.0f}));
+    ComboBox* control = choice.get();
+    root.add_child(std::move(choice));
+    InputController controller;
+    controller.attach(root);
+    controller.focus().request_focus(control);
+    control->open();
+    ASSERT_TRUE(control->expanded());
+    Event escape{.kind = EventKind::KeyDown, .key = Key::Escape};
+    // act the controller routes escape, which must reach the control before it is swallowed (§8.3)
+    controller.deliver(escape);
+    // assert the focused control closed its popup and the key was consumed (§8.3)
+    EXPECT_FALSE(control->expanded());
     EXPECT_TRUE(escape.handled);
 }
 
