@@ -6837,16 +6837,22 @@ TEST(TextFieldDecorationChecks, ASelectionStaysVisibleOverABackgroundRange) {
     // act
     field.render(recorder);
     // assert the band is recorded before the selection, so the highlight is not erased (§9.1)
-    std::size_t band = 0;
-    std::size_t selection = 0;
-    for (const DrawCommand& command : recorder.scene()->commands())
-        if (command.kind() == DrawCommandKind::Rect) {
-            const Color fill = command.paint().fill;
-            if (fill == decoration.background)
-                band = static_cast<std::size_t>(&command - recorder.scene()->commands().data());
-            else if (fill == Color::rgba(0.20f, 0.55f, 0.90f, 0.35f))
-                selection = static_cast<std::size_t>(&command - recorder.scene()->commands().data());
-        }
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    const std::vector<DrawCommand>& commands = scene->commands();
+    std::size_t band = commands.size();
+    std::size_t selection = commands.size();
+    for (std::size_t index = 0; index < commands.size(); index++) {
+        const DrawCommand& command = commands[index];
+        if (command.kind() != DrawCommandKind::Rect)
+            continue;
+        const Color fill = command.paint().fill;
+        if (fill == decoration.background)
+            band = index;
+        else if (fill == Color::rgba(0.20f, 0.55f, 0.90f, 0.35f))
+            selection = index;
+    }
+    ASSERT_LT(band, commands.size());
+    ASSERT_LT(selection, commands.size());
     EXPECT_LT(band, selection);
 }
 
