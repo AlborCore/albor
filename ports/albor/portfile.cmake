@@ -34,10 +34,16 @@ vcpkg_check_features(OUT_FEATURE_OPTIONS FEATURE_OPTIONS
 )
 
 # the port builds the framework and nothing else, because examples and the test binary are development surfaces (§2.2)
+# the local pass runs through ccache, which keeps CI's per-check cost to its misses instead of full rebuilds (AD-16)
+set(extra_options "")
+if(DEFINED ENV{ALBOR_PORT_SOURCE_PATH})
+    list(APPEND extra_options "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache")
+endif()
 vcpkg_cmake_configure(
     SOURCE_PATH "${SOURCE_PATH}"
     OPTIONS
         ${FEATURE_OPTIONS}
+        ${extra_options}
         -DALBOR_EXAMPLES=OFF
         -DALBOR_TESTS=OFF
 )

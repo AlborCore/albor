@@ -15,5 +15,9 @@ Compile a .ui component at build time:
 Exactly one platform adapter, one text engine and one renderer may be linked; the umbrella
 target carries them all, and the granular albor-*-auto targets are the expert surface.
 
+On Windows the consumer's configuration must match the installed binaries' MSVC runtime,
+which vcpkg's own consumption provides automatically (both debug and release are built);
+a plain-prefix consumer links release at the minimum.
+
 On macOS the deployment floor is 13.3: export MACOSX_DEPLOYMENT_TARGET before configuring,
 or set VCPKG_OSX_DEPLOYMENT_TARGET in the triplet you build the package with.
