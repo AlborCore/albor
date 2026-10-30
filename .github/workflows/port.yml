@@ -1,0 +1,205 @@
+name: port
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-pr:
+    if: github.event_name == 'push' && github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      has_pr: ${{ steps.check.outputs.has_pr }}
+    steps:
+      - name: check for an open pull request
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          response=$(curl -skf -H "Authorization: token $GITHUB_TOKEN" "${GITHUB_API_URL}/repos/${{ github.repository }}/pulls?head=${{ github.repository_owner }}:${{ github.ref_name }}&state=open&per_page=1")
+          count=$(echo "$response" | grep -c '"number"' || true)
+          echo "has_pr=$( [ "$count" -gt 0 ] && echo true || echo false )" >> "$GITHUB_OUTPUT"
+
+  # the port never drifts from the project, which the fast gate checks before any build spends runners (AD-19)
+  consistency:
+    name: check-port
+    needs: [check-pr]
+    if: |-
+      !cancelled() &&
+      (github.event_name != 'push' || github.ref == 'refs/heads/main' || needs.check-pr.outputs.has_pr != 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - name: the checked drift gate
+        run: bash build/check-port.sh
+
+  # the staged install fixture, which consumes the default feature surface through find_package alone (§3.3, AD-19)
+  fixture:
+    name: fixture (${{ matrix.name }})
+    needs: [check-pr]
+    if: |-
+      !cancelled() &&
+      (github.event_name != 'push' || github.ref == 'refs/heads/main' || needs.check-pr.outputs.has_pr != 'true')
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos
+            os: macos-15
+            vcpkg-root: /usr/local/share/vcpkg
+            setup: |
+              # the vcpkg binary cache root must exist before vcpkg runs
+              mkdir -p .vcpkg-cache
+              # the preset is c++23, so take the newest xcode the image carries rather than its default
+              sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
+          - name: windows
+            os: windows-latest
+            vcpkg-root: C:\vcpkg
+            setup: |
+              # the vcpkg binary cache root must exist before vcpkg runs
+              mkdir -p .vcpkg-cache
+    env:
+      VCPKG_ROOT: ${{ matrix.vcpkg-root }}
+      MACOSX_DEPLOYMENT_TARGET: 13.3
+      VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
+    steps:
+      - uses: actions/checkout@v7
+      - name: platform setup
+        run: ${{ matrix.setup }}
+      - name: msvc environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: restore the vcpkg binary cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ github.workspace }}/.vcpkg-cache
+          key: vcpkg-port-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**', 'ports/albor/**') }}
+          restore-keys: |
+            vcpkg-port-${{ runner.os }}-
+      - name: staging build with the port's default features
+        run: |
+          # the stage mirrors the port's default surface, which is what the fixture proves (§3.3)
+          cmake -S . -B .build-port-stage -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DALBOR_EXAMPLES=OFF -DALBOR_TESTS=OFF \
+            -DALBOR_RENDERER_SKIA=OFF -DALBOR_RENDERER_BLEND2D=OFF
+          cmake --build .build-port-stage --parallel 4
+      - name: install the staged package
+        run: cmake --install .build-port-stage --prefix .build-port-stage/stage
+      - name: build the consumer against the stage
+        run: |
+          # the fixture names only find_package(albor CONFIG REQUIRED), which is the full consumer contract (AD-19)
+          cmake -S tests/consumer -B .build-port-fixture -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_INSTALLED_DIR="$(pwd)/.build-port-stage/vcpkg_installed" \
+            -DCMAKE_PREFIX_PATH="$(pwd)/.build-port-stage/stage"
+          cmake --build .build-port-fixture
+
+  # the overlay port consumption end to end, which is the matrix an official registry submission would run (AD-19)
+  port:
+    name: port (${{ matrix.name }})
+    needs: [check-pr]
+    if: |-
+      !cancelled() &&
+      (github.event_name != 'push' || github.ref == 'refs/heads/main' || needs.check-pr.outputs.has_pr != 'true')
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: bash
+      strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-default
+            os: macos-15
+            vcpkg-root: /usr/local/share/vcpkg
+            consumer: tests/port-consumer
+          - name: macos-blend2d
+            os: macos-15
+            vcpkg-root: /usr/local/share/vcpkg
+            consumer: tests/port-consumer-blend2d
+          - name: macos-skia-reference
+            os: macos-15
+            vcpkg-root: /usr/local/share/vcpkg
+            consumer: tests/port-consumer-skia
+          - name: macos-pinned-release
+            os: macos-15
+            vcpkg-root: /usr/local/share/vcpkg
+            consumer: tests/port-consumer
+            pinned: true
+          - name: windows-default
+            os: windows-latest
+            vcpkg-root: C:\vcpkg
+            consumer: tests/port-consumer
+          - name: windows-blend2d
+            os: windows-latest
+            vcpkg-root: C:\vcpkg
+            consumer: tests/port-consumer-blend2d
+          - name: windows-pinned-release
+            os: windows-latest
+            vcpkg-root: C:\vcpkg
+            consumer: tests/port-consumer
+            pinned: true
+    # the pinned entries run without the local-checkout override, which the portfile answers through its REF;
+    # their attempt cannot succeed before the first release merge exists, so their failure stays tolerated until then (AD-19)
+    continue-on-error: ${{ matrix.pinned == true }}
+    env:
+      VCPKG_ROOT: ${{ matrix.vcpkg-root }}
+      MACOSX_DEPLOYMENT_TARGET: 13.3
+      VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
+      # the port builds the checked-out tree while the pinned commit predates the packaging, which the portfile announces (AD-19)
+      ALBOR_PORT_SOURCE_PATH: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: platform setup
+        run: |
+          # the vcpkg binary cache root must exist before vcpkg runs
+          mkdir -p .vcpkg-cache
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            # the preset is c++23, so take the newest xcode the image carries rather than its default
+            sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
+          fi
+      - name: msvc environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: restore the vcpkg binary cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ github.workspace }}/.vcpkg-cache
+          key: vcpkg-port-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**', 'ports/albor/**') }}
+          restore-keys: |
+            vcpkg-port-${{ runner.os }}-
+      - name: consume the overlay port end to end
+        run: |
+          # the consumer's manifest would name a published version one day, which the overlay answers today (AD-19)
+          if [ "${{ matrix.pinned }}" != "true" ]; then
+            # a source-tree entry builds the working tree, which the portfile announces as unpinned (AD-19)
+            export ALBOR_PORT_SOURCE_PATH="${{ github.workspace }}"
+          else
+            # the pinned entry consumes the release, which vcpkg_from_git fetches from the pinned REF (AD-19)
+            unset ALBOR_PORT_SOURCE_PATH
+          fi
+          cmake -S ${{ matrix.consumer }} -B .build-port-consumer -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+          cmake --build .build-port-consumer

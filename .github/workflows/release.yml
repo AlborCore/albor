@@ -1,0 +1,137 @@
+name: release
+
+# the release flow is one dispatch. phase A opens the version PR (three version sites patched together),
+# waits for its green checks and records its merge; phase B tags that merge and opens the REF line, which
+# pins the released sources; every PR carries the release PAT so the pull events are not suppressed, and
+# GitHub's own auto-merge does the merging inside the protected branch rules (AD-19)
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: the release version without the v (for example 0.2.0)
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - name: the dispatch is a release on main
+        run: '[ "${{ github.ref }}" = "refs/heads/main" ] || { echo "a release dispatches from main, not ${{ github.ref }}"; exit 1; }'
+      - name: the release token exists
+        run: '[ -n "$RELEASE_PAT" ] || { echo "the RELEASE_PAT secret is unset; the release automation drives its PRs with it, because events raised by GITHUB_TOKEN suppress the repository CI (AD-19)"; exit 1; }'
+      - name: the version is a greater semver and its tag is free
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          # the input enters the step through the environment, which a crafty value cannot escape before validation (AD-19)
+          if ! echo "$RELEASE_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "the release version '$RELEASE_VERSION' is not semver form like 0.2.0"; exit 1
+          fi
+          python3 - "$RELEASE_VERSION" <<'PYEOF'
+          import json, re, sys
+
+          version = sys.argv[1]
+          manifest = json.load(open("vcpkg.json"))
+          current = manifest.get("version-string", "")
+
+          def parts(v): return [int(p) for p in re.match(r"^([0-9]+\.[0-9]+\.[0-9]+)", v).group(1).split(".")]
+          if parts(version) <= parts(current):
+              print(f"the release version {version} is not greater than the released {current}"); sys.exit(1)
+          print(f"{version} follows {current}")
+          PYEOF
+          if gh api "repos/${{ github.repository }}/git/ref/tags/v$RELEASE_VERSION" >/dev/null 2>&1; then
+            echo "the tag v$RELEASE_VERSION already exists; delete it or choose a greater version"; exit 1
+          fi
+
+      - name: phase A opens the version PR
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+        run: |
+          # the three version sites move together, which the drift gate accepts as one consistent step (AD-19)
+          version="$RELEASE_VERSION"
+          sed -i.bak "s/\"version-string\": \"[^\"]*\"/\"version-string\": \"$version\"/" vcpkg.json
+          sed -i.bak -E "s/^([[:space:]]*project\([^)]*VERSION[[:space:]]+)[0-9]+\.[0-9]+\.[0-9]+/\\1$version/" CMakeLists.txt
+          sed -i.bak "s/\"version-semver\": \"[^\"]*\"/\"version-semver\": \"$version\"/" ports/albor/vcpkg.json
+          rm -f vcpkg.json.bak CMakeLists.txt.bak ports/albor/vcpkg.json.bak
+          grep -q "\"version-string\": \"$version\"" vcpkg.json
+          grep -qE "^([[:space:]]*project\([^)]*VERSION[[:space:]]+$version)" CMakeLists.txt
+          grep -q "\"version-semver\": \"$version\"" ports/albor/vcpkg.json
+          branch="release/v$version"
+          git config user.name "albor release bot"
+          git config user.email "release@albor.invalid"
+          git checkout -b "$branch"
+          git add vcpkg.json CMakeLists.txt ports/albor/vcpkg.json
+          git commit -m "release: v$version moves the three version sites together (AD-19)"
+          git push origin "$branch"
+          gh pr create --title "release: v$version" \
+            --body "the version sites move together for the release v$version; the tag and the pinned REF follow once this lands (AD-19)." \
+            --head "$branch" --base main
+          gh pr merge "$branch" --auto --squash
+
+      - name: the version PR merges under its own checks
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+        run: |
+          # the merge is GitHub's own auto-merge; the job waits for the state rather than guessing the sha (AD-19)
+          deadline=$((SECONDS + 7200))
+          until [ "$(gh pr view "release/v$RELEASE_VERSION" --json state --jq .state)" = "MERGED" ]; do
+            [ $SECONDS -lt $deadline ] || { echo "the release PR never merged in time"; exit 1; }
+            sleep 30
+          done
+          merge_sha=$(gh pr view "release/v$RELEASE_VERSION" --json mergeCommit --jq .mergeCommit.oid)
+          echo "MERGE_SHA=$merge_sha" >> "$GITHUB_ENV"
+
+      - name: phase B tags the merge and opens the REF line
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+        run: |
+          # the tag names the released tree, whose port version is exactly the one being released (AD-19)
+          gh api -X POST "repos/${{ github.repository }}/git/refs" \
+            -f ref="refs/tags/v$RELEASE_VERSION" -f sha="$MERGE_SHA"
+
+      - name: phase B pins the sources at the tagged merge
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+        run: |
+          ref="$MERGE_SHA"
+          sed -i.bak -E "s/^([[:space:]]*REF[[:space:]]+)[0-9a-f]{40}\\b/\\1$ref/" ports/albor/portfile.cmake
+          rm -f ports/albor/portfile.cmake.bak
+          grep -qE "^[[:space:]]*REF[[:space:]]+$ref$" ports/albor/portfile.cmake
+          branch="release/v$RELEASE_VERSION-pin"
+          git config user.name "albor release bot"
+          git config user.email "release@albor.invalid"
+          git checkout -b "$branch"
+          git add ports/albor/portfile.cmake
+          git commit -m "release: v$RELEASE_VERSION pins its sources at the tagged merge commit (AD-19)"
+          git push origin "$branch"
+          gh pr create --title "release: v$RELEASE_VERSION pins its sources" \
+            --body "the pinned REF now names the commit the tag v$RELEASE_VERSION carries, so the package fetches exactly the released tree (AD-19)." \
+            --head "$branch" --base main
+          gh pr merge "$branch" --auto --squash
+
+      - name: what the release did
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+        run: |
+          echo "merge commit : $MERGE_SHA (tagged v$RELEASE_VERSION)"
+          echo "pull requests: v$RELEASE_VERSION (merged), the pin PR (auto-merging)"
