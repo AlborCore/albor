@@ -1,39 +1,46 @@
 name: release
 
-# the release flow is one dispatch. phase A opens the version PR (three version sites patched together),
-# waits for its green checks and records its merge; phase B tags that merge and opens the REF line, which
-# pins the released sources; every PR carries the release PAT so the pull events are not suppressed, and
-# GitHub's own auto-merge does the merging inside the protected branch rules (AD-19)
+# the release is made of two PRs a human reviews and merges at their own pace, and the automation only
+# prepares content: the dispatch opens the version PR; the merge of that PR triggers the tag on the merge
+# commit and the one-line pin PR. Nothing merges itself, and every PR carries the full CI like any change (AD-19)
 on:
   workflow_dispatch:
     inputs:
       version:
         description: the release version without the v (for example 0.2.0)
         required: true
+  push:
+    branches: [main]
+    paths: [ports/albor/**]
 
 permissions:
   contents: read
 
 concurrency:
-  group: release
+  group: release-${{ github.event_name }}
   cancel-in-progress: false
 
-env:
-  RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
-
 jobs:
-  release:
+  prepare:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 10
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.RELEASE_PAT }}
+
       - name: the dispatch is a release on main
         run: '[ "${{ github.ref }}" = "refs/heads/main" ] || { echo "a release dispatches from main, not ${{ github.ref }}"; exit 1; }'
+
       - name: the release token exists
-        run: '[ -n "$RELEASE_PAT" ] || { echo "the RELEASE_PAT secret is unset; the release automation drives its PRs with it, because events raised by GITHUB_TOKEN suppress the repository CI (AD-19)"; exit 1; }'
+        run: '[ -n "$RELEASE_PAT" ] || { echo "the RELEASE_PAT secret is unset; the automation drives its PRs with it, because events raised by GITHUB_TOKEN suppress the repository CI (AD-19)"; exit 1; }'
+        env:
+          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
+
       - name: the version is a greater semver and its tag is free
         env:
           RELEASE_VERSION: ${{ inputs.version }}
@@ -49,7 +56,9 @@ jobs:
           manifest = json.load(open("vcpkg.json"))
           current = manifest.get("version-string", "")
 
-          def parts(v): return [int(p) for p in re.match(r"^([0-9]+\.[0-9]+\.[0-9]+)", v).group(1).split(".")]
+          def parts(value):
+              return [int(part) for part in re.match(r"^([0-9]+\.[0-9]+\.[0-9]+)", value).group(1).split(".")]
+
           if parts(version) <= parts(current):
               print(f"the release version {version} is not greater than the released {current}"); sys.exit(1)
           print(f"{version} follows {current}")
@@ -58,12 +67,11 @@ jobs:
             echo "the tag v$RELEASE_VERSION already exists; delete it or choose a greater version"; exit 1
           fi
 
-      - name: phase A opens the version PR
+      - name: the version PR carries the three sites together
         env:
           RELEASE_VERSION: ${{ inputs.version }}
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: |
-          # the three version sites move together, which the drift gate accepts as one consistent step (AD-19)
           version="$RELEASE_VERSION"
           sed -i.bak "s/\"version-string\": \"[^\"]*\"/\"version-string\": \"$version\"/" vcpkg.json
           sed -i.bak -E "s/^([[:space:]]*project\([^)]*VERSION[[:space:]]+)[0-9]+\.[0-9]+\.[0-9]+/\\1$version/" CMakeLists.txt
@@ -80,58 +88,73 @@ jobs:
           git commit -m "release: v$version moves the three version sites together (AD-19)"
           git push origin "$branch"
           gh pr create --title "release: v$version" \
-            --body "the version sites move together for the release v$version; the tag and the pinned REF follow once this lands (AD-19)." \
+            --body "the version sites move together for the release v$version; once this merges, the tag and the pinned REF follow without further steps (AD-19)." \
             --head "$branch" --base main
-          gh pr merge "$branch" --auto --squash
 
-      - name: the version PR merges under its own checks
+  finish:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - name: the release token exists
+        run: '[ -n "$RELEASE_PAT" ] || { echo "the RELEASE_PAT secret is unset; the automation drives its PRs with it, because events raised by GITHUB_TOKEN suppress the repository CI (AD-19)"; exit 1; }'
         env:
-          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
+
+      - name: the current version is tagged, otherwise the finish records it
+        env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: |
-          # the merge is GitHub's own auto-merge; the job waits for the state rather than guessing the sha (AD-19)
-          deadline=$((SECONDS + 7200))
-          until [ "$(gh pr view "release/v$RELEASE_VERSION" --json state --jq .state)" = "MERGED" ]; do
-            [ $SECONDS -lt $deadline ] || { echo "the release PR never merged in time"; exit 1; }
-            sleep 30
-          done
-          merge_sha=$(gh pr view "release/v$RELEASE_VERSION" --json mergeCommit --jq .mergeCommit.oid)
-          echo "MERGE_SHA=$merge_sha" >> "$GITHUB_ENV"
-
-      - name: phase B tags the merge and opens the REF line
-        env:
-          RELEASE_VERSION: ${{ inputs.version }}
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
-        run: |
-          # the tag names the released tree, whose port version is exactly the one being released (AD-19)
+          # the idempotence of the finish: a published tag means the release finished, and the job exits without work (AD-19)
+          version=$(python3 -c "import json,sys; print(json.load(open('ports/albor/vcpkg.json')).get('version-semver',''))")
+          [ -n "$version" ] || { echo "the port carries no release version"; exit 1; }
+          if gh api "repos/${{ github.repository }}/git/ref/tags/v$version" >/dev/null 2>&1; then
+            echo "the tag v$version already exists; the release is finished"; exit 0
+          fi
           gh api -X POST "repos/${{ github.repository }}/git/refs" \
-            -f ref="refs/tags/v$RELEASE_VERSION" -f sha="$MERGE_SHA"
+            -f ref="refs/tags/v$version" -f sha="${{ github.sha }}"
 
-      - name: phase B pins the sources at the tagged merge
+      - name: the pin PR pins the sources at the tagged merge
         env:
-          RELEASE_VERSION: ${{ inputs.version }}
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: |
-          ref="$MERGE_SHA"
-          sed -i.bak -E "s/^([[:space:]]*REF[[:space:]]+)[0-9a-f]{40}\\b/\\1$ref/" ports/albor/portfile.cmake
-          rm -f ports/albor/portfile.cmake.bak
-          grep -qE "^[[:space:]]*REF[[:space:]]+$ref$" ports/albor/portfile.cmake
-          branch="release/v$RELEASE_VERSION-pin"
+          version=$(python3 -c "import json; print(json.load(open('ports/albor/vcpkg.json')).get('version-semver',''))")
+          ref="${{ github.sha }}"
+          # the state the release expects once every PR lands: the REF names the tagged merge, so the job audits rather than reworks (AD-19)
+          if grep -qE "^[[:space:]]*REF[[:space:]]+${ref}$" ports/albor/portfile.cmake; then
+            echo "the pinned REF already names the tagged merge; the release is finished"
+            exit 0
+          fi
+          # a pin PR that already exists is waiting for its review, which the job leaves untouched (AD-19)
+          state=$(gh pr view "release/v$version-pin" --json state --jq .state 2>/dev/null || echo ABSENT)
+          if [ "$state" = "OPEN" ] || [ "$state" = "MERGED" ]; then
+            echo "the pin PR release/v$version-pin is $state and waits for the human step"; exit 0
+          fi
+          branch="release/v$version-pin"
           git config user.name "albor release bot"
           git config user.email "release@albor.invalid"
           git checkout -b "$branch"
+          sed -i.bak -E "s/^([[:space:]]*REF[[:space:]]+)[0-9a-f]{40}\\b/\\1$ref/" ports/albor/portfile.cmake
+          rm -f ports/albor/portfile.cmake.bak
+          grep -qE "^[[:space:]]*REF[[:space:]]+$ref$" ports/albor/portfile.cmake
           git add ports/albor/portfile.cmake
-          git commit -m "release: v$RELEASE_VERSION pins its sources at the tagged merge commit (AD-19)"
+          git commit -m "release: v$version pins its sources at the tagged merge commit (AD-19)"
           git push origin "$branch"
-          gh pr create --title "release: v$RELEASE_VERSION pins its sources" \
-            --body "the pinned REF now names the commit the tag v$RELEASE_VERSION carries, so the package fetches exactly the released tree (AD-19)." \
+          gh pr create --title "release: v$version pins its sources" \
+            --body "the pinned REF now names the commit the tag v$version carries, so the package fetches exactly the released tree (AD-19)." \
             --head "$branch" --base main
-          gh pr merge "$branch" --auto --squash
 
-      - name: what the release did
+      - name: what the finish recorded
         env:
-          RELEASE_VERSION: ${{ inputs.version }}
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: |
-          echo "merge commit : $MERGE_SHA (tagged v$RELEASE_VERSION)"
-          echo "pull requests: v$RELEASE_VERSION (merged), the pin PR (auto-merging)"
+          version=$(python3 -c "import json; print(json.load(open('ports/albor/vcpkg.json')).get('version-semver',''))")
+          echo "tagged merge   : v$version at ${{ github.sha }}"
+          echo "pin pull req   : $(gh pr list --head "release/v$version-pin" --json url --jq '.[0].url' 2>/dev/null || echo 'none')"

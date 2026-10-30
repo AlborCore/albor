@@ -237,8 +237,9 @@ The consumer's manual, from a first window to renderer features, is
 
 ## Releases
 
-The [`release`](.github/workflows/release.yml) workflow makes a release one dispatch that a
-human only reviews; every mechanical step is machine work. Merges to `main` are squash
+The [`release`](https://github.com/AlborCore/albor/blob/main/.github/workflows/release.yml)
+workflow makes a release two PRs that a human reviews and merges at their own pace; every
+mechanical step is machine work and **nothing merges itself**. Merges to `main` are squash
 commits and the branch may not be pushed to directly, so the flow leans on what a squash
 repository can trust: **a main commit is the pinned source, and a tag on it is permanent
 history**.
@@ -250,17 +251,17 @@ history**.
    ```
 
 2. **The version PR** — automation patches the three version sites together (root
-   `vcpkg.json`, `project(albor VERSION)`, and the port's `version-semver`), opens the PR
-   with the release token, and hands it to GitHub auto-merge. The PR runs the full CI
-   matrix like every other PR, and one review of the diff is the release decision.
+   `vcpkg.json`, `project(albor VERSION)`, and the port's `version-semver`) and opens the
+   PR with the release token. The PR runs the full CI matrix like every other change.
+   **You review it and merge it when you see it appropriate.**
 
-3. **The tag** — once the version PR merges, automation tags that merge commit `v0.2.0`.
-   Tag creation touches refs only, which the tag ruleset grants through the token; commits
-   to `main` are never pushed by hand.
+3. **The tag** — the merge itself triggers the finish job, which records the squash commit
+   as the release: it tags that commit `v0.2.0`. Tag creation touches refs only, which the
+   tag ruleset grants through the token; commits to `main` are never pushed by hand.
 
-4. **The pin PR** — automation patches the portfile's one-line `REF` to the merge commit
-   and opens it with auto-merge as well. That single line makes the package fetch **exactly
-   the released tree**, whose port version is the one being released.
+4. **The pin PR** — the same finish job opens it: one line, the portfile's `REF` becoming
+   the merge commit the tag names, so the package fetches **exactly the released tree**,
+   whose port version is the one being released. **You review it and merge it.**
 
 What makes the flow sound without manual steps:
 
@@ -270,9 +271,10 @@ What makes the flow sound without manual steps:
   for humans; the pin is the commit.
 - The pinned tree is the released tree: the pin PR lands after the version PR, so a package
   claiming 0.2.0 fetches sources whose `project(VERSION)` says 0.2.0. The `REF` never names
-  the tree it lives in, so there is no circularity. Until the first release lands, the
-  no-override consumption of the port is exercised through the release itself; the test bed
-  keeps using the local-checkout override.
+  the tree it lives in, so there is no circularity.
+- The finish job is **idempotent and review-friendly**: it never merges anything, it
+  recognizes an already-open pin PR and leaves it to you, and on the next ports-directory
+  push it finds the tag published and exits without work.
 - [`build/check-port.sh`](build/check-port.sh) enforces the contract on every run: the
   port's version equals the project's, the dependency matrices agree (project / port /
   fixture, per feature), and the pinned `REF` names a commit that exists on GitHub.
@@ -280,9 +282,8 @@ What makes the flow sound without manual steps:
 One-time repository settings the flow needs:
 
 - the **`RELEASE_PAT` secret** — a token with `contents: write` and `pull-requests:
-  read/write` on this repository. The automation drives its PRs and merges with it, because
+  read/write` on this repository. The automation opens its PRs and the tag with it, because
   events raised by the default `GITHUB_TOKEN` do not trigger the repository's CI.
-- *Allow auto-merge* enabled,
 - a tag rules entry that permits the release token to create `v*` tags.
 
 ## Documentation
