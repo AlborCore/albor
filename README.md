@@ -216,6 +216,75 @@ cmake --build --preset debug  # build
 Unit tests are built into `./.build-debug/tests/albor-tests` — run that executable
 directly.
 
+## Consuming as a package
+
+Third-party projects install the framework through vcpkg. The port ships inside this
+repository (`ports/albor/`) and a consumer wires it as an overlay until a registry carries
+it; the default install carries the recommended GPU runtime with no third-party renderer
+backends, and the `blend2d` / `skia-reference` features opt into them:
+
+```json
+{ "dependencies": [{ "name": "albor" }] }
+```
+
+```cmake
+find_package(albor CONFIG REQUIRED)
+target_link_libraries(my_app PRIVATE albor)
+```
+
+The consumer's manual, from a first window to renderer features, is
+[Consuming Albor](docs/consuming.md).
+
+## Releases
+
+The [`release`](.github/workflows/release.yml) workflow makes a release one dispatch that a
+human only reviews; every mechanical step is machine work. Merges to `main` are squash
+commits and the branch may not be pushed to directly, so the flow leans on what a squash
+repository can trust: **a main commit is the pinned source, and a tag on it is permanent
+history**.
+
+1. **Dispatch the workflow** with the version, from `main`, and nothing else:
+
+   ```sh
+   gh workflow run release.yml -f version=0.2.0
+   ```
+
+2. **The version PR** — automation patches the three version sites together (root
+   `vcpkg.json`, `project(albor VERSION)`, and the port's `version-semver`), opens the PR
+   with the release token, and hands it to GitHub auto-merge. The PR runs the full CI
+   matrix like every other PR, and one review of the diff is the release decision.
+
+3. **The tag** — once the version PR merges, automation tags that merge commit `v0.2.0`.
+   Tag creation touches refs only, which the tag ruleset grants through the token; commits
+   to `main` are never pushed by hand.
+
+4. **The pin PR** — automation patches the portfile's one-line `REF` to the merge commit
+   and opens it with auto-merge as well. That single line makes the package fetch **exactly
+   the released tree**, whose port version is the one being released.
+
+What makes the flow sound without manual steps:
+
+- The package fetches its sources with `vcpkg_from_git` at the pinned commit. Git objects
+  are immutable, so integrity needs **no hash of a tree that does not exist yet** — the
+  classic reason release stamping needed a human hand. The tag decorates the same commit
+  for humans; the pin is the commit.
+- The pinned tree is the released tree: the pin PR lands after the version PR, so a package
+  claiming 0.2.0 fetches sources whose `project(VERSION)` says 0.2.0. The `REF` never names
+  the tree it lives in, so there is no circularity. Until the first release lands, the
+  no-override consumption of the port is exercised through the release itself; the test bed
+  keeps using the local-checkout override.
+- [`build/check-port.sh`](build/check-port.sh) enforces the contract on every run: the
+  port's version equals the project's, the dependency matrices agree (project / port /
+  fixture, per feature), and the pinned `REF` names a commit that exists on GitHub.
+
+One-time repository settings the flow needs:
+
+- the **`RELEASE_PAT` secret** — a token with `contents: write` and `pull-requests:
+  read/write` on this repository. The automation drives its PRs and merges with it, because
+  events raised by the default `GITHUB_TOKEN` do not trigger the repository's CI.
+- *Allow auto-merge* enabled,
+- a tag rules entry that permits the release token to create `v*` tags.
+
 ## Documentation
 
 - [`docs/`](docs/index.md) — the user guide, including

@@ -281,6 +281,12 @@ job remains a tracked enhancement rather than a parity requirement.
   press hands capture to the popup only after the owner receives the release, and a press that hides its own
   surface drops the popup capture instead of arming it against the next open. Both popup suites carry 14 tests.
 - Updated `README.md` and `docs/status.md` to describe both accessibility bridges.
+- Added the vcpkg distribution (`ports/albor`) for both platforms: exported targets, installed headers, tools
+  and the package config is a cross-platform CMake story, so the port carries the same surface on macOS and
+  Windows; the renderer backends are vcpkg features (`blend2d`, `skia-reference`) on both. The macOS leg is
+  verified with end-to-end overlay consumption; the Windows leg is a CI matrix in `.github/workflows/port.yml`
+  (staged install fixture + overlay port default/blend2d on both platforms, skia-reference on macOS), whose
+  first green run is the parity evidence for this entry.
 
 ## 9. Remaining priorities
 
