@@ -24,7 +24,7 @@ if(APPLE AND CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     set(VCPKG_OVERLAY_TRIPLETS "${ALBOR_SOURCE_DIR}/.triplets" CACHE STRING "the local triplets that stamp the dependencies with the floor")
 endif()
 
-project(albor LANGUAGES CXX)
+project(albor VERSION 0.1.0 LANGUAGES CXX)
 
 # a consumer inherits the framework's targets rather than its cache, so the floor is applied to them after the project
 if(APPLE)
@@ -62,11 +62,18 @@ option(ALBOR_EXAMPLES "Build the example applications" ${ALBOR_DEV_BUILD})
 option(ALBOR_TESTS "Build the unit test binary" ${ALBOR_DEV_BUILD})
 option(ALBOR_COVERAGE "Instrument the unit tests so a coverage report can be generated from them" OFF)
 
+# the reference and portable backends are build-time surfaces, which a consumer picks through the package, while the developer tree carries both (§6.3, AD-26)
+option(ALBOR_RENDERER_SKIA "Build the transitional skia reference backend" ${ALBOR_DEV_BUILD})
+option(ALBOR_RENDERER_BLEND2D "Build the portable blend2d CPU backend" ${ALBOR_DEV_BUILD})
+
 # the configuration name that the debug information and the log labels carry
 set(ALBOR_CONFIGURATION "Release" CACHE STRING "The albor configuration this build represents")
 
 # the shared build rules for generated components, which the examples and the fixtures use (§14.2)
 include(build/AlborComponent.cmake)
+
+# the installed package names its directories through gnu conventions, which every install rule below shares (AD-19)
+include(GNUInstallDirs)
 
 # include paths are relative to the framework root, which the targets publish to their consumers (§3.5, AD-05)
 include_directories("${ALBOR_SOURCE_DIR}")
@@ -104,6 +111,11 @@ if(ALBOR_COVERAGE)
     add_link_options(-fprofile-instr-generate)
 endif()
 
+# the test binary compares against the skia backend, so a test build without the reference is refused (AD-26)
+if(ALBOR_TESTS AND NOT ALBOR_RENDERER_SKIA)
+    message(FATAL_ERROR "albor: ALBOR_TESTS=ON needs ALBOR_RENDERER_SKIA=ON, because the comparison reference covers the suites (AD-26)")
+endif()
+
 # the platform adapters are written against the os directly, which is what AD-16 decides
 if(APPLE)
     enable_language(OBJCXX)
@@ -113,26 +125,31 @@ if(APPLE)
     set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
 endif()
 
-# the skia package is discovered once here, because three modules reach it and a second discovery would put the
-# same archive on a link line twice, which the linker then reports as a duplicate (AD-05, AD-26)
-find_package(unofficial-skia CONFIG REQUIRED)
+# the skia package enters the link only when the reference renderer is built, because a skia-free install never compiles against it (§6.3, AD-26)
+if(ALBOR_RENDERER_SKIA)
+    find_package(unofficial-skia CONFIG REQUIRED)
+endif()
 find_package(harfbuzz CONFIG REQUIRED)
 find_package(freetype CONFIG REQUIRED)
 
 # the single carrier every module that reaches skia links, so the package enters a link line exactly once (AD-05)
 # skia's text module is not linked, because the vendored engine shapes text and skia only rasterizes the result (§9.1, AD-34)
-add_library(albor-skia INTERFACE)
-target_link_libraries(albor-skia INTERFACE unofficial::skia::skia)
+if(ALBOR_RENDERER_SKIA)
+    add_library(albor-skia INTERFACE)
+    target_link_libraries(albor-skia INTERFACE unofficial::skia::skia)
+endif()
 
-# the skia headers self include as "skia/core/...", so every consumer needs the directory above include/skia as an
-# include root. it is resolved once here rather than in each module, because three modules reach skia and a copied
+# the skia headers self include as "skia/core/...", so the skia backend needs the directory above include/skia as an
+# include root. it is resolved once here rather than in each module, because the modules that reach skia and a copied
 # block is a block that drifts (AD-05, AD-28)
-if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
-    set(ALBOR_SKIA_INCLUDE_ROOT "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include")
-else()
-    get_target_property(ALBOR_SKIA_TARGET_INCLUDES unofficial::skia::skia INTERFACE_INCLUDE_DIRECTORIES)
-    list(GET ALBOR_SKIA_TARGET_INCLUDES 0 ALBOR_SKIA_INCLUDE_ROOT)
-    string(REGEX REPLACE "/skia$" "" ALBOR_SKIA_INCLUDE_ROOT "${ALBOR_SKIA_INCLUDE_ROOT}")
+if(ALBOR_RENDERER_SKIA)
+    if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+        set(ALBOR_SKIA_INCLUDE_ROOT "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include")
+    else()
+        get_target_property(ALBOR_SKIA_TARGET_INCLUDES unofficial::skia::skia INTERFACE_INCLUDE_DIRECTORIES)
+        list(GET ALBOR_SKIA_TARGET_INCLUDES 0 ALBOR_SKIA_INCLUDE_ROOT)
+        string(REGEX REPLACE "/skia$" "" ALBOR_SKIA_INCLUDE_ROOT "${ALBOR_SKIA_INCLUDE_ROOT}")
+    endif()
 endif()
 
 enable_testing()
@@ -202,17 +219,26 @@ add_subdirectory(focus)
 # the model views that materialize keyed rows, which is what a repeater owns (§3.2, §18.1, AD-13)
 add_subdirectory(model)
 
-# the skia metal backend that implements the rendering hal (§3.2, AD-05)
-add_subdirectory(render/render-skia)
-
-# the cpu reference backend that ci compares against, which is not a platform adapter (§3.2, AD-26)
-add_subdirectory(render/render-software)
-
-# the blend2d cpu backend, a portable alternative to the skia reference (§3.2, AD-26)
-add_subdirectory(render/render-blend2d)
-
-# the in-repo gpu backend whose retirement of skia is decided on issue 102 (§6.3, AD-26)
+# the recommended gpu backend the default runtime names, which builds on every platform with an adapter (§3.2, AD-05)
 add_subdirectory(render/render-albor)
+
+# the transitional skia reference, which only the renderer option carries (§6.3, AD-26)
+if(ALBOR_RENDERER_SKIA)
+    add_subdirectory(render/render-skia)
+endif()
+
+# the cpu reference backend that the link line names when chosen, which is not a platform adapter (§3.2, AD-26)
+if(ALBOR_RENDERER_BLEND2D)
+    add_subdirectory(render/render-blend2d)
+endif()
+
+# the software reference the unit tests test against, which is a test-only library (§2.2, AD-26)
+if(ALBOR_TEST OR ALBOR_TESTS)
+    if(NOT ALBOR_RENDERER_BLEND2D)
+        message(FATAL_ERROR "albor: the test surfaces need ALBOR_RENDERER_BLEND2D=ON, because the software reference is built over its rasterization (AD-26)")
+    endif()
+    add_subdirectory(render/render-software)
+endif()
 
 # the macos appkit adapter with its display link pacing (§3.2, AD-16)
 add_subdirectory(platform/macos)
@@ -238,10 +264,10 @@ target_link_libraries(albor-text-auto INTERFACE albor-text-harfbuzz-auto)
 target_compile_features(albor-text-auto INTERFACE cxx_std_23)
 
 # the desktop platform is selected by the host, not by the consumer, and only exists where an adapter is built (§3.3, AD-16)
-if(APPLE OR WIN32)
+if((APPLE AND NOT IOS) OR WIN32)
     # define the platform library interface
     add_library(albor-platform-auto INTERFACE)
-    if(APPLE)
+    if(APPLE AND NOT IOS)
         target_link_libraries(albor-platform-auto INTERFACE albor-platform-macos-auto)
     else()
         target_link_libraries(albor-platform-auto INTERFACE albor-platform-windows-auto)
@@ -260,13 +286,120 @@ if(APPLE OR WIN32)
     _albor_link_default_runtime(albor)
     target_link_libraries(albor INTERFACE albor-render-albor-auto)
 
-    # the portable renderer choice: everything else is the same runtime (§6.3, AD-19)
-    add_library(albor-blend2d INTERFACE)
-    _albor_link_default_runtime(albor-blend2d)
-    target_link_libraries(albor-blend2d INTERFACE albor-render-blend2d-auto)
+    # the portable renderer choice: everything else is the same runtime, and it exists only where its backend was built (§6.3, AD-19)
+    if(TARGET albor-render-blend2d-auto)
+        add_library(albor-blend2d INTERFACE)
+        _albor_link_default_runtime(albor-blend2d)
+        target_link_libraries(albor-blend2d INTERFACE albor-render-blend2d-auto)
+    endif()
 else()
     # a desktop umbrella without a desktop platform would silently create no window, so it is not offered (§3.3, AD-16)
     message(STATUS "albor: the desktop umbrella is unavailable until this platform has a platform adapter")
+endif()
+
+# the installed package adds its exported targets, headers, tools and config file; only the top-level build owns the install (AD-19, §14.2)
+if(ALBOR_DEV_BUILD)
+
+    # the portable runtime, which every supported platform carries (§3.3); each module's own interface already carries the installed include dir (§3.5)
+    install(TARGETS
+            albor-core albor-window albor-runtime albor-semantics albor-accessibility albor-i18n
+            albor-animation albor-style albor-resources albor-commands albor-input albor-focus
+            albor-model albor-layout albor-widgets albor-application albor-ui albor-text albor-render
+            EXPORT albor-targets
+            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+    # the vendored text engine with its whole archive registration and the recommended text seam (§9.1)
+    install(TARGETS albor-text-harfbuzz albor-text-harfbuzz-auto albor-text-auto
+            EXPORT albor-targets
+            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+    # the recommended gpu backend, which every supported platform carries (§6.3)
+    install(TARGETS albor-render-albor albor-render-albor-auto
+            EXPORT albor-targets
+            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+    # the transitional skia reference, which only the renderer option carries (§6.3, AD-26)
+    if(ALBOR_RENDERER_SKIA)
+        install(TARGETS albor-skia albor-render-skia albor-render-skia-auto
+                EXPORT albor-targets
+                ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    endif()
+
+    # the portable cpu backend, which only the renderer option carries (AD-26)
+    if(ALBOR_RENDERER_BLEND2D)
+        install(TARGETS albor-render-blend2d albor-render-blend2d-auto
+                EXPORT albor-targets
+                ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    endif()
+
+    # the headless platform exists on every platform and is the test surface's adapter (§5.3)
+    install(TARGETS albor-platform-headless albor-platform-headless-auto
+            EXPORT albor-targets
+            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# the desktop platform pairs with the umbrella, which exist only where a desktop adapter does (§3.3, AD-16)
+if(APPLE AND NOT IOS)
+    install(TARGETS albor-platform-macos albor-platform-macos-auto
+            EXPORT albor-targets
+            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+elseif(WIN32)
+    install(TARGETS albor-platform-windows albor-platform-windows-auto
+            EXPORT albor-targets
+            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
+
+if((APPLE AND NOT IOS) OR WIN32)
+    # the recommended umbrella, which the GPU runtime carries (§3.3)
+    install(TARGETS albor-platform-auto albor
+            EXPORT albor-targets
+            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+    # the portable umbrella, which the blend2d renderer option carries (§6.3, AD-19)
+    if(TARGET albor-blend2d)
+        install(TARGETS albor-blend2d
+                EXPORT albor-targets
+                ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+                RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    endif()
+endif()
+
+# the modules' headers install with the module structure preserved, which is what the root-relative includes demand (§3.5, AD-05)
+foreach(module core window runtime semantics accessibility i18n animation style resources commands input focus model layout widgets application ui text render platform)
+    # the render backend subdirs stay private, which an anchored path regex covers without touching a lookalike checkout (AD-05)
+    install(DIRECTORY "${ALBOR_SOURCE_DIR}/${module}" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} FILES_MATCHING PATTERN "*.h" REGEX "(^|/)render-(software|skia|albor|blend2d)(/|$)" EXCLUDE)
+endforeach()
+
+# the codegen drivers are executables a consumer build runs, which the installed helpers locate through their prefix (AD-19)
+install(TARGETS albor-codegen albor-manifest-glue albor-font-embed RUNTIME DESTINATION tools/albor)
+
+# the export lives at lib/cmake/albor, which vcpkg's fixup relocates for every configuration a triplet requests (AD-19)
+install(EXPORT albor-targets FILE albor-targets.cmake DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/albor)
+
+# the package config, its version file and the shared helpers land beside the export, which is where the consumer searches (AD-19)
+include(CMakePackageConfigHelpers)
+configure_package_config_file(
+    "${ALBOR_SOURCE_DIR}/build/albor-config.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/albor-config.cmake"
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/albor)
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/albor-config-version.cmake"
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMinorVersion)
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/albor-config.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/albor-config-version.cmake"
+    "${ALBOR_SOURCE_DIR}/build/AlborComponent.cmake"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/albor)
+
 endif()
 
 if(ALBOR_EXAMPLES)

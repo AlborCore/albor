@@ -10,7 +10,7 @@ list(FILTER CPP_SOURCES EXCLUDE REGEX "/render-(skia|software|blend2d|albor)/")
 add_library(albor-render STATIC ${CPP_SOURCES})
 
 # the rendering hal is header visible, because every backend implements it (§6.2)
-target_include_directories(albor-render PUBLIC ${ALBOR_SOURCE_DIR})
+target_include_directories(albor-render PUBLIC $<BUILD_INTERFACE:${ALBOR_SOURCE_DIR}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_compile_features(albor-render PUBLIC cxx_std_23)
 
 # the render module needs the window metrics it presents into and the shared value types (§3.2)

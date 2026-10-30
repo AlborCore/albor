@@ -20,7 +20,7 @@ endif()
 add_library(albor-accessibility STATIC ${CPP_SOURCES} ${MACOS_SOURCES} ${WIN32_SOURCES})
 
 # the bridge implements the rendering hal and names albor types only (§3.5, AD-05)
-target_include_directories(albor-accessibility PUBLIC ${ALBOR_SOURCE_DIR})
+target_include_directories(albor-accessibility PUBLIC $<BUILD_INTERFACE:${ALBOR_SOURCE_DIR}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_compile_features(albor-accessibility PUBLIC cxx_std_23)
 
 # the semantic tree is what the bridge publishes, so the dependency is public (AD-05, §10.1)

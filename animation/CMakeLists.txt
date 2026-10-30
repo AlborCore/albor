@@ -7,7 +7,7 @@ file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 add_library(albor-animation STATIC ${CPP_SOURCES})
 
 # the animation types are header visible, because the frame pipeline holds an engine (§3.5)
-target_include_directories(albor-animation PUBLIC ${ALBOR_SOURCE_DIR})
+target_include_directories(albor-animation PUBLIC $<BUILD_INTERFACE:${ALBOR_SOURCE_DIR}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_compile_features(albor-animation PUBLIC cxx_std_23)
 
 # the animation module needs nothing but the standard library, because it only advances time (§3.2, AD-19)

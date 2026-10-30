@@ -7,7 +7,7 @@ file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 add_library(albor-ui STATIC ${CPP_SOURCES})
 
 # the ui tree is header visible, because every component derives from it (§3.5)
-target_include_directories(albor-ui PUBLIC ${ALBOR_SOURCE_DIR})
+target_include_directories(albor-ui PUBLIC $<BUILD_INTERFACE:${ALBOR_SOURCE_DIR}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_compile_features(albor-ui PUBLIC cxx_std_23)
 
 # the ui module needs the reactive engine, the render hal, the window metrics it presents into and the animation

@@ -1,0 +1,43 @@
+@PACKAGE_INIT@
+
+# the config of the installed package: everything the consumer needs lands in one prefix (AD-19)
+include(CMakeFindDependencyMacro)
+
+# the targets file defines every imported target, which the package imports before its consumers link (AD-19)
+include("${CMAKE_CURRENT_LIST_DIR}/albor-targets.cmake")
+
+# a package without the desktop umbrella cannot open a window, which is refused here rather than failing silently at link (§3.3, AD-16)
+if(NOT TARGET albor AND NOT TARGET albor-blend2d)
+    message(FATAL_ERROR "albor: the installed package on this platform carries no desktop umbrella; link the granular albor-*-auto targets instead (§3.3)")
+endif()
+
+# the leaf products the freetype and png configs reference by target name, which vcpkg's wrappers create only under a manifest (AD-19)
+find_dependency(ZLIB)
+find_dependency(BZip2)
+find_dependency(PNG)
+
+# the third party packages the rendered target surface names, which the config discovers from the consumer's prefix (AD-19)
+# the renderer backends arrive through their features, whose presence the imported targets reveal (AD-19)
+if(TARGET albor-skia)
+    find_dependency(unofficial-skia CONFIG)
+endif()
+find_dependency(harfbuzz CONFIG)
+find_dependency(freetype CONFIG)
+find_dependency(ICU COMPONENTS uc i18n)
+if(TARGET albor-render-blend2d)
+    find_dependency(blend2d CONFIG)
+endif()
+find_dependency(Threads)
+
+# the shipped shaders are stamped with the framework's floor, which a consumer below refuses rather than links (§6.3, AD-16)
+if(APPLE AND CMAKE_OSX_DEPLOYMENT_TARGET AND CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS "13.3")
+    message(FATAL_ERROR "albor: CMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET} is below the shipped package's floor 13.3, which the shipped shaders and the tested surface cover (§6.3)")
+endif()
+
+# the tools prefix carries the same version's codegen drivers, which the shared helpers resolve against (AD-19)
+set(ALBOR_TOOL_DIR "${PACKAGE_PREFIX_DIR}/tools/albor")
+
+# the shared helpers live beside this file, which is where a consumer compiles its .ui components from (§14.2)
+include("${CMAKE_CURRENT_LIST_DIR}/AlborComponent.cmake")
+
+check_required_components(albor)
