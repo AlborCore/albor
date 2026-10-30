@@ -281,7 +281,7 @@ and the vcpkg package through the in-repository overlay port, whose dependency m
 version the `build/check-port.sh` gate keeps identical to the project's. The package route
 is the one an official registry submission will carry, and the overlay is its rehearsal.
 The pin is the commit the portfile names; a git object carries it immutably, and the
-renewal per release is one line that the [release workflow](.github/workflows/release.yml)
+renewal per release is one line that the [release workflow](https://github.com/AlborCore/albor/blob/main/.github/workflows/release.yml)
 writes.
 
 ## One target, one artifact

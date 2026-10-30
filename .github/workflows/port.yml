@@ -161,9 +161,8 @@ jobs:
             vcpkg-root: C:\vcpkg
             consumer: tests/port-consumer
             pinned: true
-    # the pinned entries run without the local-checkout override, which the portfile answers through its REF;
-    # their attempt cannot succeed before the first release merge exists, so their failure stays tolerated until then (AD-19)
-    continue-on-error: ${{ matrix.pinned == true }}
+    # the pinned entries consume the release, which the portfile answers through its REF; their attempt cannot
+    # succeed before the first release merge exists, so their failure stays tolerated until then (AD-19)
     env:
       VCPKG_ROOT: ${{ matrix.vcpkg-root }}
       MACOSX_DEPLOYMENT_TARGET: 13.3
@@ -191,6 +190,8 @@ jobs:
           restore-keys: |
             vcpkg-port-${{ runner.os }}-
       - name: consume the overlay port end to end
+        # the pinned entries fail by design until the first release merge exists, so their failure stays stage-scoped (AD-19)
+        continue-on-error: ${{ matrix.pinned == true }}
         run: |
           # the consumer's manifest would name a published version one day, which the overlay answers today (AD-19)
           if [ "${{ matrix.pinned }}" != "true" ]; then
