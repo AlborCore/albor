@@ -1,0 +1,24 @@
+component ConsumerPanel {
+    in property<string> label: "Fixture";
+
+    inout property<int> hit_count: 0;
+
+    signal run_clicked();
+
+    Column {
+        spacing: 12px;
+        padding: 16px;
+
+        Label {
+            text: label + " " + string(hit_count);
+        }
+
+        Button {
+            text: "Count";
+            on_clicked: {
+                hit_count = hit_count + 1;
+                run_clicked();
+            }
+        }
+    }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "albor-port-consumer-skia",
+  "version-string": "0.1.0",
+  "description": "The overlay-port skia-reference consumption proof (tests)",
+  "builtin-baseline": "43643e1f5cf73db40d0d4bd610183348eb09b24e",
+  "dependencies": [
+    {
+      "name": "albor",
+      "features": ["skia-reference"]
+    }
+  ]
+}

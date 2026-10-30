@@ -1,0 +1,48 @@
+{
+  "name": "albor-consumer-fixture",
+  "version-string": "0.1.0",
+  "description": "The staged-install consumer fixture of the albor package (tests/consumer)",
+  "builtin-baseline": "43643e1f5cf73db40d0d4bd610183348eb09b24e",
+  "dependencies": [
+    {
+      "name": "harfbuzz",
+      "platform": "osx",
+      "features": [
+        "icu",
+        "coretext"
+      ]
+    },
+    {
+      "name": "harfbuzz",
+      "platform": "windows",
+      "features": [
+        "icu",
+        "directwrite",
+        "gdi"
+      ]
+    },
+    {
+      "name": "harfbuzz",
+      "platform": "linux",
+      "features": [
+        "icu"
+      ]
+    },
+    {
+      "name": "freetype"
+    },
+    {
+      "name": "bzip2"
+    },
+    {
+      "name": "icu"
+    },
+    {
+      "name": "libpng"
+    },
+    {
+      "name": "zlib",
+      "version>=": "1.3.2"
+    }
+  ]
+}

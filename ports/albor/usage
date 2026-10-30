@@ -1,0 +1,19 @@
+albor provides C++ targets for the declarative UI framework:
+
+    find_package(albor CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE albor)          # recommended GPU runtime (Metal / Direct3D)
+
+The portable CPU renderer and the skia reference arrive through the package features
+(`albor[blend2d]`, `albor[skia-reference]`):
+
+    target_link_libraries(main PRIVATE albor-blend2d)  # the blend2d feature's umbrella
+
+Compile a .ui component at build time:
+
+    albor_build_ui_component(main "${CMAKE_CURRENT_SOURCE_DIR}/panel.ui")
+
+Exactly one platform adapter, one text engine and one renderer may be linked; the umbrella
+target carries them all, and the granular albor-*-auto targets are the expert surface.
+
+On macOS the deployment floor is 13.3: export MACOSX_DEPLOYMENT_TARGET before configuring,
+or set VCPKG_OSX_DEPLOYMENT_TARGET in the triplet you build the package with.
