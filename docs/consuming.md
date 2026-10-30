@@ -79,15 +79,19 @@ target_link_libraries(my_app PRIVATE albor)
 ```
 
 `albor` installs the recommended runtime: platform adapter, HarfBuzz, widgets, layout,
-accessibility, i18n, resources and the in-repo GPU renderer. The renderer backends are
-package features rather than default baggage — a plain install carries no skia and no
-Blend2D binaries, because the default umbrella needs neither:
+accessibility, i18n, resources and the in-repo GPU renderer. The portable renderer is a
+package feature rather than a default dependency — a plain install carries no Blend2D
+binaries, because the default umbrella needs none:
 
 | feature | what the package gains |
 | --- | --- |
 | *(none)* | `albor`, the recommended GPU runtime |
 | `blend2d` | `albor-blend2d`, the portable CPU renderer umbrella |
-| `skia-reference` | `albor-render-skia-auto`, the transitional skia backend for expert composition |
+
+The transitional skia reference is **not** shipped in the package: it is a source-tree
+backend that the conformance suites compare against, and the package drops it on the way
+to its retirement (issue 111). A package consumer chooses between the two shipped
+renderers; an expert composition that needs the skia reference builds from source.
 
 Until the framework sits in a vcpkg registry, the port ships inside the repository
 (`ports/albor/`) and a consumer wires it through an overlay:
@@ -116,10 +120,9 @@ runtime, so switching renderers does not change application code.
 | `albor-blend2d` | a portable CPU path, or a platform where the GPU backend is not the recommended default |
 
 In the vcpkg route the renderer choice is the package feature as well as the link target:
-`albor-blend2d` exists once the `blend2d` feature is installed, and the granular
-`albor-render-skia-auto` once `skia-reference` is. In the source route both backends build
-by default, and the CMake options `ALBOR_RENDERER_SKIA` and `ALBOR_RENDERER_BLEND2D` trim
-them for a smaller build.
+`albor-blend2d` exists once the `blend2d` feature is installed; the skia reference is not a
+package surface. In the source route both backends build by default, and the CMake options
+`ALBOR_RENDERER_SKIA` and `ALBOR_RENDERER_BLEND2D` trim them for a smaller build.
 
 Do not link both, and do not add a second renderer target to an umbrella target. Backends
 install themselves at load through whole-archive registration; two renderers in one binary

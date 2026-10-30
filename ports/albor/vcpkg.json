@@ -68,41 +68,6 @@
           ]
         }
       ]
-    },
-    "skia-reference": {
-      "description": "The transitional skia reference backend, which the comparison suites need (AD-26)",
-      "dependencies": [
-        {
-          "name": "skia",
-          "version>=": "148",
-          "platform": "osx",
-          "default-features": false,
-          "features": [
-            "graphite",
-            "metal"
-          ]
-        },
-        {
-          "name": "skia",
-          "version>=": "148",
-          "platform": "windows",
-          "default-features": false,
-          "features": [
-            "graphite",
-            "direct3d"
-          ]
-        },
-        {
-          "name": "skia",
-          "version>=": "148",
-          "platform": "linux",
-          "default-features": false,
-          "features": [
-            "graphite",
-            "vulkan"
-          ]
-        }
-      ]
     }
   }
 }

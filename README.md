@@ -220,8 +220,9 @@ directly.
 
 Third-party projects install the framework through vcpkg. The port ships inside this
 repository (`ports/albor/`) and a consumer wires it as an overlay until a registry carries
-it; the default install carries the recommended GPU runtime with no third-party renderer
-backends, and the `blend2d` / `skia-reference` features opt into them:
+it; the default install carries the recommended GPU runtime, and the `blend2d` feature adds
+the portable CPU renderer. The transitional skia reference is not a package surface — it
+retires from the framework in issue 111:
 
 ```json
 { "dependencies": [{ "name": "albor" }] }

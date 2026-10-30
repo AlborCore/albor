@@ -82,10 +82,11 @@ wires it as an overlay:
 }
 ```
 
-The default install carries the recommended GPU runtime and none of the third-party
-renderer backends; `albor[blend2d]` adds the portable CPU renderer and `albor[skia-reference]`
-the transitional skia backend. The detailed consumer map, advanced composition and
-troubleshooting are on [Consuming Albor](consuming.md).
+The default install carries the recommended GPU runtime, and `albor[blend2d]` adds the
+portable CPU renderer; the transitional skia reference is not a package surface — it stays
+a source-tree backend for the conformance work and retires with issue 111. The detailed
+consumer map, advanced composition and troubleshooting are on [Consuming
+Albor](consuming.md).
 
 The source route names the framework as a subtree: `FetchContent` — or `add_subdirectory` of
 a vendored copy — and every framework target publishes the framework's own include root, so

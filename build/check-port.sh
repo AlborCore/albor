@@ -80,28 +80,26 @@ port_host = [dep.get("name") for dep in port.get("dependencies", []) if isinstan
 if "vcpkg-cmake" not in port_host or "vcpkg-cmake-config" not in port_host:
     issue("port manifest lost its host cmake tooling")
 
-# the port's default runtime matrix equals the fixture's, and the union of the default matrix with every feature's
-# dependencies equals the project's manifest minus gtest, so a renderer feature can only name project dependencies (AD-19)
+# the port's default runtime matrix equals the fixture's, and everything the port's features name is a
+# project dependency, while the port may carry fewer renderers than the source route, which keeps its
+# reference backend a source-tree concern (AD-19, AD-26)
 manifest_entries = without_gtest(runtime_deps(manifest))
 port_entries = runtime_deps(port)
 fixture_entries = runtime_deps(fixture)
 feature_entries = {}
-if "features" in port and not isinstance(port["features"], dict):
-    issue("port manifest features has the wrong shape")
 for feature, definition in port.get("features", {}).items():
     feature_pkg = {"dependencies": definition.get("dependencies", [])}
     feature_entries[f"feature {feature}"] = runtime_deps(feature_pkg)
 if port_entries != fixture_entries:
     issue("fixture dependency matrix != the port's default runtime matrix (the test bed consumes the default features):\n  fixture   " + "\n  fixture   ".join(fixture_entries) + "\n  port      " + "\n  port      ".join(port_entries))
 
-union = sorted(set(port_entries) | set(entry for entries in feature_entries.values() for entry in entries))
-if union != manifest_entries:
-    issue("the port's default matrix plus its features does not equal the project manifest (minus gtest):\n  port+feat  " + "\n  port+feat  ".join(union) + "\n  project    " + "\n  project    ".join(manifest_entries))
+if not set(port_entries) <= set(manifest_entries):
+    issue("the port's default runtime matrix names dependencies the project manifest does not declare (AD-19)")
 for name, entries in feature_entries.items():
     if not set(entries) <= set(manifest_entries):
         issue(f"{name} names dependencies the project manifest does not declare (AD-19)")
 
-print(f"matrices agree: project / port+features / fixture, version {manifest_version}")
+print(f"port default matrix is a project subset and matches the fixture (%d entries, version %s)" % (len(port_entries), manifest_version))
 
 if overrides:
     print(f"{override_name} is set to a local checkout; the pinned REF is not exercised")

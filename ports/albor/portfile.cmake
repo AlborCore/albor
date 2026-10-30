@@ -26,11 +26,12 @@ endif()
 # the framework is only static, which a dynamic triplet's preference silently overrides without the declaration (AD-19)
 vcpkg_check_linkage(ONLY_STATIC_LIBRARY)
 
-# the renderer backends ride the features, which the package passes to the checked-in cmake options (§6.3)
+# the renderer feature the package carries is blend2d; the transitional skia reference stays a source-tree
+# backend for the conformance suites and is written out of the package here, which is the packaging step
+# of its retirement (AD-26, issue 111)
 vcpkg_check_features(OUT_FEATURE_OPTIONS FEATURE_OPTIONS
     FEATURES
-        blend2d         ALBOR_RENDERER_BLEND2D
-        skia-reference  ALBOR_RENDERER_SKIA
+        blend2d ALBOR_RENDERER_BLEND2D
 )
 
 # the port builds the framework and nothing else, because examples and the test binary are development surfaces (§2.2)
@@ -46,6 +47,8 @@ vcpkg_cmake_configure(
         ${extra_options}
         -DALBOR_EXAMPLES=OFF
         -DALBOR_TESTS=OFF
+        # the source-tree default would build the skia reference, which the package writes out of itself (AD-26, issue 111)
+        -DALBOR_RENDERER_SKIA=OFF
 )
 vcpkg_cmake_install()
 

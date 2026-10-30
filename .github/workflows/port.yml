@@ -136,10 +136,6 @@ jobs:
             os: macos-15
             vcpkg-root: /usr/local/share/vcpkg
             consumer: tests/port-consumer-blend2d
-          - name: macos-skia-reference
-            os: macos-15
-            vcpkg-root: /usr/local/share/vcpkg
-            consumer: tests/port-consumer-skia
           - name: macos-pinned-release
             os: macos-15
             vcpkg-root: /usr/local/share/vcpkg
