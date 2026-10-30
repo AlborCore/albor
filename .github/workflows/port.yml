@@ -127,7 +127,7 @@ jobs:
     defaults:
       run:
         shell: bash
-      strategy:
+    strategy:
       fail-fast: false
       matrix:
         include:
