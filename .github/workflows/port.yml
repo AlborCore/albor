@@ -82,9 +82,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-port-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**', 'ports/albor/**') }}
+          key: vcpkg-fixture-${{ runner.os }}-${{ hashFiles('tests/consumer/vcpkg.json', '.triplets/**') }}
           restore-keys: |
-            vcpkg-port-${{ runner.os }}-
+            vcpkg-fixture-${{ runner.os }}-
       - name: restore the ccache directory
         uses: actions/cache/restore@v5
         with:
@@ -94,11 +94,13 @@ jobs:
             ccache-${{ runner.os }}-
       - name: staging build with the port's default features
         run: |
-          # the stage mirrors the port's default surface, which is what the fixture proves (§3.3)
+          # the stage resolves its dependencies through the test bed's manifest, which the drift gate keeps
+          # equal to the port's default matrix, so no package job ever walks the skia closure (AD-26, issue 111)
           cmake -S . -B .build-port-stage -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_BUILD_TYPE=Release \
+            -DVCPKG_MANIFEST_DIR="$PWD/tests/consumer" \
             -DALBOR_EXAMPLES=OFF -DALBOR_TESTS=OFF \
             -DALBOR_RENDERER_SKIA=OFF -DALBOR_RENDERER_BLEND2D=OFF
           cmake --build .build-port-stage --parallel 4
