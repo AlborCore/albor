@@ -22,6 +22,7 @@
 
 #include "accessibility/accessibility_platform.h"
 #include "accessibility/accessibility_platform.win32.h"
+#include "semantics/semantic_action.h"
 
 namespace albor::accessibility::platform
 {
@@ -84,6 +85,8 @@ namespace albor::accessibility::platform
                 return UIA_ListItemControlTypeId;
             case SemanticRole::List:
                 return UIA_ListControlTypeId;
+            case SemanticRole::MenuItem:
+                return UIA_MenuItemControlTypeId;
             case SemanticRole::ComboBox:
                 return UIA_ComboBoxControlTypeId;
             case SemanticRole::Group:
@@ -106,6 +109,7 @@ namespace albor::accessibility::platform
             case SemanticRole::Slider:
             case SemanticRole::TextField:
             case SemanticRole::ListItem:
+            case SemanticRole::MenuItem:
             case SemanticRole::TabItem:
             case SemanticRole::RadioButton:
             case SemanticRole::NumericStepper:
@@ -180,6 +184,14 @@ namespace albor::accessibility::platform
             VariantInit(value);
             value->vt = VT_BSTR;
             value->bstrVal = text;
+        }
+
+        // set a variant to a double, which the range pattern hands over as a number (§10.2)
+        void set_variant_double(VARIANT* value, double number) {
+            // the variant is cleared first, because the caller owns whatever it held before (§10.2)
+            VariantInit(value);
+            value->vt = VT_R8;
+            value->dblVal = number;
         }
 
         // build the runtime id array a fragment announces, which is how ui automation keeps element identity (§10.2)
@@ -600,7 +612,7 @@ namespace albor::accessibility::platform
         };
 
         // one published semantic node, which is the unit assistive technology reads and acts on (§10.2)
-        class NodeProvider final : public IRawElementProviderSimple, public IRawElementProviderFragment, public IInvokeProvider, public IToggleProvider, public IValueProvider, public ISelectionItemProvider
+        class NodeProvider final : public IRawElementProviderSimple, public IRawElementProviderFragment, public IInvokeProvider, public IToggleProvider, public IValueProvider, public ISelectionItemProvider, public IExpandCollapseProvider, public IRangeValueProvider
         {
         public:
             // the node reads one index of one immutable publication, which the bridge owns for as long as it lives (§10.2)
@@ -643,10 +655,14 @@ namespace albor::accessibility::platform
                     *result = static_cast<IRawElementProviderSimple*>(this);
                 else if (interface_id == __uuidof(IRawElementProviderFragment))
                     *result = static_cast<IRawElementProviderFragment*>(this);
-                else if (interface_id == __uuidof(IInvokeProvider) && node() != nullptr && node()->role() == SemanticRole::Button)
+                else if (interface_id == __uuidof(IInvokeProvider) && node() != nullptr && node()->role() != SemanticRole::ComboBox && role_supports_action(node()->role(), SemanticActionKind::Activate))
                     *result = static_cast<IInvokeProvider*>(this);
-                else if (interface_id == __uuidof(IToggleProvider) && node() != nullptr && node()->role() == SemanticRole::Checkbox)
+                else if (interface_id == __uuidof(IToggleProvider) && node() != nullptr && role_supports_action(node()->role(), SemanticActionKind::Toggle))
                     *result = static_cast<IToggleProvider*>(this);
+                else if (interface_id == __uuidof(IExpandCollapseProvider) && node() != nullptr && role_supports_action(node()->role(), SemanticActionKind::Expand))
+                    *result = static_cast<IExpandCollapseProvider*>(this);
+                else if (interface_id == __uuidof(IRangeValueProvider) && node() != nullptr && node()->has_range() && role_supports_action(node()->role(), SemanticActionKind::Increment))
+                    *result = static_cast<IRangeValueProvider*>(this);
                 else if (interface_id == __uuidof(IValueProvider) && node() != nullptr && (node()->role() == SemanticRole::TextField || node()->role() == SemanticRole::NumericStepper || node()->role() == SemanticRole::ComboBox))
                     *result = static_cast<IValueProvider*>(this);
                 else if (interface_id == __uuidof(ISelectionItemProvider) && node() != nullptr && (node()->role() == SemanticRole::ListItem || node()->role() == SemanticRole::TabItem || node()->role() == SemanticRole::RadioButton))
@@ -667,7 +683,7 @@ namespace albor::accessibility::platform
                 return S_OK;
             }
 
-            // hand out the pattern a role supports, which is how ui automation knows what it may ask (§10.2)
+            // hand out the pattern a role supports, which ui automation asks for (§10.2)
             HRESULT STDMETHODCALLTYPE GetPatternProvider(PATTERNID pattern_id, IUnknown** result) override {
                 // a missing result cannot be written, which the pointer contract refuses (§10.2)
                 if (result == nullptr)
@@ -679,18 +695,28 @@ namespace albor::accessibility::platform
                     return S_OK;
                 switch (pattern_id) {
                 case UIA_InvokePatternId:
-                    // a push control is the only role that invokes, which the pattern mapping fixes (§10.1)
-                    if (published->role() == SemanticRole::Button)
+                    // a push control invokes through the portable activate action, which the table names (§10.1, §10.2)
+                    if (published->role() != SemanticRole::ComboBox && role_supports_action(published->role(), SemanticActionKind::Activate))
                         *result = static_cast<IUnknown*>(static_cast<IInvokeProvider*>(this));
                     break;
                 case UIA_TogglePatternId:
-                    // a checkable control is the only role that toggles, which the pattern mapping fixes (§10.1)
-                    if (published->role() == SemanticRole::Checkbox)
+                    // a checkable control toggles through the portable toggle action (§10.1, §10.2)
+                    if (role_supports_action(published->role(), SemanticActionKind::Toggle))
                         *result = static_cast<IUnknown*>(static_cast<IToggleProvider*>(this));
                     break;
+                case UIA_ExpandCollapsePatternId:
+                    // a compact control opens through the portable expand action, which the table names (§10.1, §10.2)
+                    if (role_supports_action(published->role(), SemanticActionKind::Expand))
+                        *result = static_cast<IUnknown*>(static_cast<IExpandCollapseProvider*>(this));
+                    break;
+                case UIA_RangeValuePatternId:
+                    // a bounded control exposes the range its node published, which the pattern reads (§10.1, §10.2)
+                    if (published->has_range() && role_supports_action(published->role(), SemanticActionKind::Increment))
+                        *result = static_cast<IUnknown*>(static_cast<IRangeValueProvider*>(this));
+                    break;
                 case UIA_ValuePatternId:
-                    // an editable field and a stepper carry a value, which the role checks agree on (§10.1)
-                    if (published->role() == SemanticRole::TextField || published->role() == SemanticRole::NumericStepper || published->role() == SemanticRole::ComboBox)
+                    // an editable field and a combo box carry text, while a stepper exposes a range instead (§10.1)
+                    if (published->role() == SemanticRole::TextField || published->role() == SemanticRole::ComboBox)
                         *result = static_cast<IUnknown*>(static_cast<IValueProvider*>(this));
                     break;
                 case UIA_SelectionItemPatternId:
@@ -776,13 +802,44 @@ namespace albor::accessibility::platform
                         set_variant_int(result, published->expanded() ? ExpandCollapseState_Expanded : ExpandCollapseState_Collapsed);
                     return S_OK;
                 case UIA_IsInvokePatternAvailablePropertyId:
-                    set_variant_bool(result, published->role() == SemanticRole::Button);
+                    set_variant_bool(result, published->role() != SemanticRole::ComboBox && role_supports_action(published->role(), SemanticActionKind::Activate));
                     return S_OK;
                 case UIA_IsTogglePatternAvailablePropertyId:
-                    set_variant_bool(result, published->role() == SemanticRole::Checkbox);
+                    set_variant_bool(result, role_supports_action(published->role(), SemanticActionKind::Toggle));
+                    return S_OK;
+                case UIA_IsExpandCollapsePatternAvailablePropertyId:
+                    set_variant_bool(result, role_supports_action(published->role(), SemanticActionKind::Expand));
+                    return S_OK;
+                case UIA_IsRangeValuePatternAvailablePropertyId:
+                    set_variant_bool(result, published->has_range() && role_supports_action(published->role(), SemanticActionKind::Increment));
+                    return S_OK;
+                case UIA_RangeValueValuePropertyId:
+                    // the range value belongs to a bounded control, which the role table names (§10.1, §10.2)
+                    if (published->has_range() && role_supports_action(published->role(), SemanticActionKind::Increment))
+                        set_variant_double(result, published->range().value);
+                    return S_OK;
+                case UIA_RangeValueMinimumPropertyId:
+                    if (published->has_range() && role_supports_action(published->role(), SemanticActionKind::Increment))
+                        set_variant_double(result, published->range().minimum);
+                    return S_OK;
+                case UIA_RangeValueMaximumPropertyId:
+                    if (published->has_range() && role_supports_action(published->role(), SemanticActionKind::Increment))
+                        set_variant_double(result, published->range().maximum);
+                    return S_OK;
+                case UIA_RangeValueSmallChangePropertyId:
+                    if (published->has_range() && role_supports_action(published->role(), SemanticActionKind::Increment))
+                        set_variant_double(result, published->range().step);
+                    return S_OK;
+                case UIA_RangeValueLargeChangePropertyId:
+                    if (published->has_range() && role_supports_action(published->role(), SemanticActionKind::Increment))
+                        set_variant_double(result, published->range().step);
+                    return S_OK;
+                case UIA_RangeValueIsReadOnlyPropertyId:
+                    if (published->has_range() && role_supports_action(published->role(), SemanticActionKind::Increment))
+                        set_variant_bool(result, published->disabled());
                     return S_OK;
                 case UIA_IsValuePatternAvailablePropertyId:
-                    set_variant_bool(result, published->role() == SemanticRole::TextField || published->role() == SemanticRole::NumericStepper);
+                    set_variant_bool(result, published->role() == SemanticRole::TextField || published->role() == SemanticRole::ComboBox);
                     return S_OK;
                 case UIA_IsSelectionItemPatternAvailablePropertyId:
                     set_variant_bool(result, published->role() == SemanticRole::ListItem || published->role() == SemanticRole::TabItem || published->role() == SemanticRole::RadioButton);
@@ -934,7 +991,7 @@ namespace albor::accessibility::platform
                 const SemanticNode* published = node();
                 if (published == nullptr)
                     return UIA_E_ELEMENTNOTAVAILABLE;
-                return published->invoke("activate") ? S_OK : UIA_E_ELEMENTNOTAVAILABLE;
+                return published->invoke(action_name(SemanticActionKind::Activate)) ? S_OK : UIA_E_ELEMENTNOTAVAILABLE;
             }
 
             // run the action a checkable control exposes, which is the toggle pattern contract (§10.1, §10.2)
@@ -944,10 +1001,101 @@ namespace albor::accessibility::platform
                 if (published == nullptr)
                     return UIA_E_ELEMENTNOTAVAILABLE;
                 // the application owns the state, so the toggle is the action it registers (§10.2)
-                if (published->invoke("toggle"))
-                    return S_OK;
-                return published->invoke("activate") ? S_OK : UIA_E_ELEMENTNOTAVAILABLE;
+                return published->invoke(action_name(SemanticActionKind::Toggle)) ? S_OK : UIA_E_ELEMENTNOTAVAILABLE;
             }
+
+            // open the popup a combo box owns, which the expand collapse pattern asks (§10.2)
+            HRESULT STDMETHODCALLTYPE Expand() override {
+                // a node that was never published has no action to run, which the missing element reports (§10.2)
+                const SemanticNode* published = node();
+                if (published == nullptr)
+                    return UIA_E_ELEMENTNOTAVAILABLE;
+                return published->invoke(action_name(SemanticActionKind::Expand)) ? S_OK : UIA_E_ELEMENTNOTAVAILABLE;
+            }
+
+            // close the popup a combo box owns, which the expand collapse pattern asks (§10.2)
+            HRESULT STDMETHODCALLTYPE Collapse() override {
+                // a node that was never published has no action to run, which the missing element reports (§10.2)
+                const SemanticNode* published = node();
+                if (published == nullptr)
+                    return UIA_E_ELEMENTNOTAVAILABLE;
+                return published->invoke(action_name(SemanticActionKind::Collapse)) ? S_OK : UIA_E_ELEMENTNOTAVAILABLE;
+            }
+
+            // report whether the popup is open, which the expand collapse pattern reads (§10.2)
+            HRESULT STDMETHODCALLTYPE get_ExpandCollapseState(ExpandCollapseState* result) override {
+                // a missing result cannot be written, which the pointer contract refuses (§10.2)
+                if (result == nullptr)
+                    return E_POINTER;
+                // a node that was never published reports a closed popup, which the quiet default states (§10.2)
+                const SemanticNode* published = node();
+                *result = published != nullptr && published->expanded() ? ExpandCollapseState_Expanded : ExpandCollapseState_Collapsed;
+                return S_OK;
+            }
+
+            // write the bounded number a slider or stepper carries, which the range pattern asks (§10.1, §10.2)
+            HRESULT STDMETHODCALLTYPE SetValue(double value) override {
+                // a node that was never published cannot accept a write, which the missing element reports (§10.2)
+                const SemanticNode* published = node();
+                if (published == nullptr)
+                    return UIA_E_ELEMENTNOTAVAILABLE;
+                return published->set_range_value(value) ? S_OK : UIA_E_ELEMENTNOTAVAILABLE;
+            }
+
+            // read the bounded number, which the range pattern contract asks (§10.1, §10.2)
+            HRESULT STDMETHODCALLTYPE get_Value(double* result) override {
+                // a missing result cannot be written, which the pointer contract refuses (§10.2)
+                if (result == nullptr)
+                    return E_POINTER;
+                // a node without a range has no number, which the missing element reports (§10.2)
+                const SemanticNode* published = node();
+                if (published == nullptr || !published->has_range())
+                    return UIA_E_ELEMENTNOTAVAILABLE;
+                *result = published->range().value;
+                return S_OK;
+            }
+
+            // read the bottom of the range, which the range pattern contract asks (§10.1, §10.2)
+            HRESULT STDMETHODCALLTYPE get_Minimum(double* result) override {
+                // a missing result cannot be written, which the pointer contract refuses (§10.2)
+                if (result == nullptr)
+                    return E_POINTER;
+                // a node without a range has no minimum, which the missing element reports (§10.2)
+                const SemanticNode* published = node();
+                if (published == nullptr || !published->has_range())
+                    return UIA_E_ELEMENTNOTAVAILABLE;
+                *result = published->range().minimum;
+                return S_OK;
+            }
+
+            // read the top of the range, which the range pattern contract asks (§10.1, §10.2)
+            HRESULT STDMETHODCALLTYPE get_Maximum(double* result) override {
+                // a missing result cannot be written, which the pointer contract refuses (§10.2)
+                if (result == nullptr)
+                    return E_POINTER;
+                // a node without a range has no maximum, which the missing element reports (§10.2)
+                const SemanticNode* published = node();
+                if (published == nullptr || !published->has_range())
+                    return UIA_E_ELEMENTNOTAVAILABLE;
+                *result = published->range().maximum;
+                return S_OK;
+            }
+
+            // read one step, which is what a reader moves the value by (§10.1, §10.2)
+            HRESULT STDMETHODCALLTYPE get_SmallChange(double* result) override {
+                // a missing result cannot be written, which the pointer contract refuses (§10.2)
+                if (result == nullptr)
+                    return E_POINTER;
+                // a node without a range has no step, which the missing element reports (§10.2)
+                const SemanticNode* published = node();
+                if (published == nullptr || !published->has_range())
+                    return UIA_E_ELEMENTNOTAVAILABLE;
+                *result = published->range().step;
+                return S_OK;
+            }
+
+            // read one page step, which a bounded control reports as the same step (§10.1, §10.2)
+            HRESULT STDMETHODCALLTYPE get_LargeChange(double* result) override { return get_SmallChange(result); }
 
             // read the check state a checkable control announces, which is the toggle pattern contract (§10.1, §10.2)
             HRESULT STDMETHODCALLTYPE get_ToggleState(ToggleState* result) override {
@@ -977,12 +1125,18 @@ namespace albor::accessibility::platform
                 return S_OK;
             }
 
-            // report whether the field refuses edits, which the value pattern contract asks (§10.1, §10.2)
+            // report whether the field refuses edits, which both value patterns read (§10.1, §10.2)
             HRESULT STDMETHODCALLTYPE get_IsReadOnly(BOOL* result) override {
                 // a missing result cannot be written, which the pointer contract refuses (§10.2)
                 if (result == nullptr)
                     return E_POINTER;
-                // the bridge cannot carry an edit, so every field is read only for now (§10.2)
+                // a bounded control is writeable unless it is disabled, which is the range contract (§10.2)
+                const SemanticNode* published = node();
+                if (published != nullptr && published->has_range() && role_supports_action(published->role(), SemanticActionKind::Increment)) {
+                    *result = published->disabled() ? TRUE : FALSE;
+                    return S_OK;
+                }
+                // a text field still refuses an edit, because the bridge carries no text write yet (§10.2)
                 *result = TRUE;
                 return S_OK;
             }

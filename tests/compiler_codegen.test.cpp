@@ -892,7 +892,7 @@ component Well {
     // the widgets construct with the engines they need, which decides the arguments (§11.3)
     EXPECT_TRUE(contains(cpp.content, "std::make_unique<Slider>(engine);"));
     EXPECT_TRUE(contains(cpp.content, "std::make_unique<CheckBox>(engine);"));
-    EXPECT_TRUE(contains(cpp.content, "std::make_unique<Canvas>(engine);"));
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<Canvas>(engine, text_engine);"));
     EXPECT_TRUE(contains(cpp.content, "std::make_unique<Button>(engine, text_engine);"));
     EXPECT_TRUE(contains(cpp.content, "std::make_unique<Label>(engine, text_engine);"));
     // the wired callbacks carry the named parameters of their signals, which the body reads (§11.3)
@@ -1265,8 +1265,139 @@ TEST(Codegen, ACanvasDrawBlockBecomesADrawBody) {
     EXPECT_TRUE(contains(cpp.content, "static void draw_0_body(void* raw, RenderContext& context);"));
     EXPECT_TRUE(contains(cpp.content, "const float canvas_width = self->m_node_0->bounds().width;"));
     EXPECT_TRUE(contains(cpp.content, "context.draw_rect(Rect::from_origin_size(Point{canvas_origin.x + 0, canvas_origin.y + 0}, Size{canvas_width, canvas_height}), paint);"));
-    EXPECT_TRUE(contains(cpp.content, "(canvas_width*self->m_level.get())"));
+    EXPECT_TRUE(contains(cpp.content, "(canvas_width * self->m_level.get())"));
     EXPECT_TRUE(contains(cpp.content, "const Point canvas_origin{canvas_bounds.x, canvas_bounds.y};"));
+}
+
+TEST(Codegen, MenuShapesAndCommandRowsReachTheirWidgets) {
+    // arrange a menu bar, a menu and a toolbar whose rows bind one shared command (§18, §18.2)
+    const std::string_view source = R"(
+component C {
+    command save "Save";
+
+    Column {
+        MenuBar {
+            MenuItem { id: bar_save; text: "Save"; command: save; }
+        }
+        Menu {
+            id: file_menu;
+            MenuItem { id: row_save; text: "Save"; command: save; }
+            MenuSeparator {}
+        }
+        ToolBar {
+            Button { id: tool_save; text: "Save"; command: save; }
+        }
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert every container and row constructs and the command reaches each one (§8, §18.2)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<MenuBar>(engine);"));
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<Menu>(engine, text_engine);"));
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<MenuItem>(engine, text_engine);"));
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<MenuSeparator>(engine);"));
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<ToolBar>(engine);"));
+    EXPECT_TRUE(contains(cpp.content, "set_command(m_command_save.get());"));
+}
+
+TEST(Codegen, ACanvasDrawBlockRecordsTheExtendedVocabulary) {
+    // arrange a canvas that draws the line, circle, text and measured content a plot needs (§6.4)
+    const std::string source = R"(component C {
+    Canvas {
+        width: 100px;
+        height: 100px;
+        draw: {
+            stroke_rect(0, 0, 10, 10, 1, #FFFFFF);
+            fill_rounded_rect(0, 0, 10, 10, 2, #FFFFFF);
+            stroke_rounded_rect(0, 0, 10, 10, 2, 1, #FFFFFF);
+            fill_circle(8, 8, 4, #FF0000);
+            stroke_circle(8, 8, 4, 1, #00FF00);
+            stroke_line(0, 0, 20, 20, 1, #0000FF);
+            fill_rect(measure_text("axis", 12), 0, 10, 10, #FFFFFF);
+            draw_text("axis", 0, 20, 12, #FFFFFF);
+        }
+    }
+})";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    // assert every primitive reaches its draw call and text measures through the canvas (§6.4, §9.1)
+    EXPECT_TRUE(contains(cpp.content, "paint.stroke_width = 1;"));
+    EXPECT_TRUE(contains(cpp.content, "context.draw_polyline(std::span<const Point>(line_5), StrokeStyle{Color::rgb(0.0f, 0.0f, 1.0f), 1});"));
+    EXPECT_TRUE(contains(cpp.content, "context.draw_rounded_rect("));
+    EXPECT_TRUE(contains(cpp.content, "measure_text(std::string(\"axis\"), 12).size.width"));
+    EXPECT_TRUE(contains(cpp.content, "context.draw_text(self->m_node_0->measure_text(std::string(\"axis\"), 12), Point{canvas_origin.x + 0, canvas_origin.y + 20}, paint);"));
+}
+
+TEST(Codegen, ACanvasDrawBlockStartingWithStrokeLineHasNoPaint) {
+    // arrange a draw block whose only primitive is a line, which has no Paint value (§6.4)
+    const std::string_view source = R"(
+component C {
+    Canvas {
+        width: 20px;
+        height: 20px;
+        draw: {
+            stroke_line(0, 0, 20, 20, 1, #FFFFFF);
+        }
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the line renders through a stroke style and never references an undeclared paint (§6.4)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "context.draw_polyline("));
+    EXPECT_FALSE(contains(cpp.content, "paint = Paint{};"));
+    EXPECT_FALSE(contains(cpp.content, "paint.stroke"));
+}
+
+TEST(Codegen, ACommandNamedLikeAGlobalBindsTheCommand) {
+    // arrange a command and a module global share a name, which the command must win (§18)
+    const std::string_view source = R"(
+global save: int = 3;
+component C {
+    command save "Save";
+    Column { Button { text: "Save"; command: save; } }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the generated call takes the command pointer, not the integer global (§18)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "set_command(m_command_save.get());"));
+    EXPECT_FALSE(contains(cpp.content, "set_command(save);"));
+}
+
+TEST(Codegen, ACanvasDrawBlockCompositesAnEmbeddedImage) {
+    // arrange a canvas that draws an embedded asset, which the draw block could not express before #28 (§6.4)
+    const std::string_view source = R"(
+component C {
+    Canvas {
+        width: 100px;
+        height: 100px;
+        draw: {
+            draw_image(@image("icon.png"), 0, 0, 16, 16, #FFFFFF);
+        }
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const AssetGeneration generation = generate_assets(source, diagnostics, vector_path("image_panel.ui"));
+    // assert the asset registers and the primitive composites it into the destination rectangle (§6.4)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    ASSERT_EQ(generation.paths.size(), 1U);
+    const GeneratedFile& cpp = file_named(generation.files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "context.draw_image("));
+    EXPECT_TRUE(contains(cpp.content, "Rect::from_origin_size(Point{canvas_origin.x + 0, canvas_origin.y + 0}, Size{16, 16})"));
 }
 
 TEST(Codegen, ADrawBlockIsRefusedOutsideACanvas) {
@@ -2928,6 +3059,59 @@ component C {
     EXPECT_TRUE(contains(cpp.content, "->set_label("));
     EXPECT_TRUE(contains(cpp.content, "->set_placeholder("));
     EXPECT_TRUE(contains(cpp.content, "->set_on_selection_changed("));
+}
+
+TEST(Codegen, CommandDeclarationsBuildOneSharedObjectAndBindIt) {
+    // arrange a component that declares one command and binds it to two actionable children (§18, AD-15)
+    const std::string_view source = R"(
+component C {
+    command save "Save";
+
+    Column {
+        Button { text: "Save"; command: save; }
+        Button { text: "Save"; command: save; }
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the declaration compiles and every child binds the one object the body owns (§18.1, AD-15)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<Command>(std::string(\"C.save\"), std::string(\"Save\"))"));
+    EXPECT_TRUE(contains(cpp.content, "Command* C::command_save() const"));
+    EXPECT_TRUE(contains(cpp.content, "set_command(m_command_save.get())"));
+    // assert the header forwards the command rather than including its definition (§14.1, AD-19)
+    const GeneratedFile& header = file_named(files, "c.h");
+    EXPECT_TRUE(contains(header.content, "class Command;"));
+    EXPECT_TRUE(contains(header.content, "[[nodiscard]] Command* command_save() const;"));
+}
+
+TEST(Codegen, PerNodeAppearancePropertiesReachTheNode) {
+    // arrange a label with the appearance every node carries, including a builtin shadow record (§6.2, §8.4)
+    const std::string_view source = R"(
+component C {
+    Label {
+        text: "Styled";
+        opacity: 0.5;
+        border_width: 2px;
+        border_color: #445566;
+        drop_shadow: Shadow { color: #00000040, offset: Point { x: 0px, y: 2px }, blur: 4px };
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the common setters and the nested records reach the generated source (§11.3)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "->set_opacity("));
+    EXPECT_TRUE(contains(cpp.content, "->set_border_width("));
+    EXPECT_TRUE(contains(cpp.content, "->set_border_color("));
+    EXPECT_TRUE(contains(cpp.content, "->set_drop_shadow(Shadow{"));
+    EXPECT_TRUE(contains(cpp.content, ".offset = Point{"));
 }
 
 TEST(Codegen, ButtonIconPropertiesReachTheButton) {

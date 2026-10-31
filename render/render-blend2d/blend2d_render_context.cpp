@@ -881,6 +881,16 @@ namespace albor::blend2d
                 path.lineTo(points[point_index].x, points[point_index].y);
                 point_index++;
             }
+            // a quadratic curves through one control point to the end point (§6.4)
+            else if (verb == PathVerb::QuadraticTo) {
+                path.quadTo(points[point_index].x, points[point_index].y, points[point_index + 1].x, points[point_index + 1].y);
+                point_index += 2;
+            }
+            // a cubic curves through two control points to the end point (§6.4)
+            else if (verb == PathVerb::CubicTo) {
+                path.cubicTo(points[point_index].x, points[point_index].y, points[point_index + 1].x, points[point_index + 1].y, points[point_index + 2].x, points[point_index + 2].y);
+                point_index += 3;
+            }
             // a close runs the contour back to its start and consumes no point (§6.4)
             else if (verb == PathVerb::Close) {
                 path.close();

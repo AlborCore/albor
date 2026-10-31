@@ -883,3 +883,27 @@ TEST(SemanticNode, ADisabledFieldStillRefusesItsActions) {
     EXPECT_FALSE(invoked);
     EXPECT_FALSE(copied);
 }
+
+TEST(SemanticNode, ARangeWriteUpdatesThePublishedValue) {
+    // arrange a bounded node whose write records the target (§10.1, §10.2)
+    SemanticNode node(SemanticRole::Slider);
+    double written = 0.0;
+    node.set_range(SemanticRange{.value = 0.25, .minimum = 0.0, .maximum = 1.0, .step = 0.05}, [&written](double value) { written = value; });
+    // act
+    const bool accepted = node.set_range_value(0.8);
+    // assert the callback ran and the publication reads the value a client just wrote (§10.2)
+    EXPECT_TRUE(accepted);
+    EXPECT_DOUBLE_EQ(written, 0.8);
+    EXPECT_DOUBLE_EQ(node.range().value, 0.8);
+}
+
+TEST(SemanticNode, ARangeWriteClampsThePublishedValue) {
+    // arrange
+    SemanticNode node(SemanticRole::Slider);
+    node.set_range(SemanticRange{.value = 0.25, .minimum = 0.0, .maximum = 1.0, .step = 0.05}, [](double) {});
+    // act
+    const bool accepted = node.set_range_value(7.0);
+    // assert the range keeps its ceiling, because a platform may ask outside it (§10.2)
+    EXPECT_TRUE(accepted);
+    EXPECT_DOUBLE_EQ(node.range().value, 1.0);
+}

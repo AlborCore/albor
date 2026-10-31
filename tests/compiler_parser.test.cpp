@@ -1339,6 +1339,25 @@ TEST(Parser, ReadsChildrenAsASlotInsideTheRoot) {
     EXPECT_EQ(root.children.at(1)->kind, TreeNodeKind::Slot);
 }
 
+TEST(Parser, ReadsACommandDeclarationWithItsLabel) {
+    // arrange, act a command is declared once with the label every consumer shows (§18)
+    const SourceFile file = parse("component C { command save \"Save\"; Column {} }");
+    // assert the declaration carries its name and label, which codegen shares across every binding (§18)
+    const CommandDeclaration& command = file.components.at(0).commands.at(0);
+    EXPECT_EQ(command.name, "save");
+    EXPECT_EQ(command.label, "Save");
+    EXPECT_FALSE(command.span.empty());
+}
+
+TEST(Parser, ReadsACommandDeclarationWithoutALabel) {
+    // arrange, act the label is optional, because the name already says what the command does (§18)
+    const SourceFile file = parse("component C { command save; Column {} }");
+    // assert the declaration is kept with an empty label, which the checker fills from the name (§18)
+    const CommandDeclaration& command = file.components.at(0).commands.at(0);
+    EXPECT_EQ(command.name, "save");
+    EXPECT_TRUE(command.label.empty());
+}
+
 TEST(Parser, ReadsSignalParameterNamesBesideTheirTypes) {
     // arrange, act a signal declares parameters, which a handler body reads by name (§11.1)
     const SourceFile file = parse("component C { signal hit(float v, string s); Column {} }");

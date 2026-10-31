@@ -232,7 +232,19 @@ namespace albor::compiler
         SourceSpan span;
     };
 
-    // one component whose declarations and tree have been resolved and typed (§11.1)
+    // one command a component declares, which an actionable child binds by name (§18, AD-15)
+    struct CheckedCommand
+    {
+        // the name a `.ui` child writes on its `command:` property (§18)
+        std::string name;
+
+        // the one label every consumer shows, which is empty when the author wrote none (§18)
+        std::string label;
+
+        // where the declaration was written (§18)
+        SourceSpan span;
+    };
+
     struct CheckedComponent
     {
         // the component name, which becomes the generated class name (§11.1, AD-03a)
@@ -246,6 +258,9 @@ namespace albor::compiler
 
         // the resolved signals, which is what a handler resolves against (§11.1)
         std::vector<CheckedSignal> signals;
+
+        // the resolved commands, which an actionable child binds by name (§18, AD-15)
+        std::vector<CheckedCommand> commands;
 
         // the checked root element (§11.1)
         std::shared_ptr<CheckedNode> root;
@@ -329,6 +344,9 @@ namespace albor::compiler
 
             // the module-scoped values an expression reads, which a component scope carries and no function sees (§11.1)
             const std::vector<CheckedGlobal>* globals = nullptr;
+
+            // the commands the component declares, which an actionable child binds by name (§18, AD-15)
+            const std::vector<CheckedCommand>* commands = nullptr;
 
             // whether the scope sits inside a draw block, which is what exposes the canvas extent (§6.4)
             bool in_draw = false;
@@ -513,6 +531,9 @@ namespace albor::compiler
 
         // the declared names of the component being checked, with the span each was written at (§11.1)
         std::vector<std::pair<std::string, SourceSpan>> m_declared;
+
+        // the command names a checked binding used, which decides whether a declaration is unused (§18)
+        std::vector<std::string> m_used_commands;
 
         // the index each file component sits at by name, which a base and an element both resolve against (§11.1)
         std::map<std::string, std::size_t> m_component_index;

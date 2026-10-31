@@ -419,14 +419,14 @@ TEST(ElementCatalog, AddsANativeTypeFromAManifest) {
     ASSERT_TRUE(catalog.find("WaveformView") != nullptr);
     EXPECT_TRUE(catalog.find("WaveformView")->find_property("line_color") != nullptr);
     EXPECT_TRUE(catalog.find("WaveformView")->find_signal("selection_changed") != nullptr);
-    EXPECT_EQ(catalog.types().size(), 25U);
+    EXPECT_EQ(catalog.types().size(), 30U);
 }
 
 TEST(ElementCatalog, StartsWithNothingBeyondTheBuiltins) {
     // arrange, act
     const ElementCatalog catalog = ElementCatalog::with_builtins();
     // assert
-    EXPECT_EQ(catalog.types().size(), 24U);
+    EXPECT_EQ(catalog.types().size(), 29U);
 }
 
 TEST(ElementCatalog, RefusesToShadowABuiltinWithAManifest) {
@@ -436,7 +436,7 @@ TEST(ElementCatalog, RefusesToShadowABuiltinWithAManifest) {
     catalog.add_native(ElementType{.name = "Label", .properties = {}, .signals = {}, .accepts_children = true});
     // assert
     EXPECT_FALSE(catalog.find("Label")->accepts_children);
-    EXPECT_EQ(catalog.types().size(), 24U);
+    EXPECT_EQ(catalog.types().size(), 29U);
 }
 
 TEST(ElementCatalog, RefusesToRedefineANativeDataType) {

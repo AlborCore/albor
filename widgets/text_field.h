@@ -12,7 +12,6 @@
 #include "core/clipboard.h"
 #include "text/text_engine.h"
 #include "ui/caret_target.h"
-#include "ui/focus_target.h"
 #include "widgets/widget.h"
 
 namespace albor
@@ -244,6 +243,18 @@ namespace albor
 
         // move the caret without collapsing the selection, which is what a drag or a shift key does (§8.3)
         void extend_caret(std::size_t byte);
+
+        // select the word under a byte, which is what a double click does (§8.3)
+        void select_word_at(std::size_t byte, bool extend);
+
+        // select the line under a byte, which is what a triple click does (§8.3)
+        void select_line_at(std::size_t byte, bool extend);
+
+        // publish a range while keeping the anchor, which is what a shift double click extends (§8.3)
+        void select_range(std::size_t first, std::size_t last, bool extend);
+
+        // report whether a byte starts a line break, which selects the line rather than the word (§8.3)
+        [[nodiscard]] bool is_line_break_byte(std::size_t byte) const;
 
         // hand out the byte one caret step lands before the given one, which crosses a line break (§9.1)
         [[nodiscard]] std::size_t step_backward_byte(std::size_t byte) const;

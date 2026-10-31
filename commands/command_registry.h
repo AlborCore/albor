@@ -57,8 +57,17 @@ namespace albor
         // hand out the undo command, which is declared on first use and publishes the stack's own answer (§18.4)
         [[nodiscard]] UndoCommand& undo_command();
 
+        // declare the undo command under the author assigned id, which repeated calls preserve (§18.4, AD-11)
+        [[nodiscard]] UndoCommand& declare_undo(std::string explicit_id = "edit.undo", std::string label = "Undo");
+
         // hand out the redo command, which is declared on first use and publishes the stack's own answer (§18.4)
         [[nodiscard]] RedoCommand& redo_command();
+
+        // declare the redo command under the author assigned id, which repeated calls preserve (§18.4, AD-11)
+        [[nodiscard]] RedoCommand& declare_redo(std::string explicit_id = "edit.redo", std::string label = "Redo");
+
+        // bind an accelerator to a command by its author assigned id, which is what an application names (§18.5, AD-11)
+        [[nodiscard]] bool bind_shortcut(Shortcut shortcut, std::string_view explicit_id);
 
         // hand out the accelerator table, which a window routes keys through (§18.5)
         [[nodiscard]] ShortcutTable& shortcuts();

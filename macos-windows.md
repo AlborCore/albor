@@ -1,14 +1,14 @@
 # Windows vs. macOS parity analysis
 
 **Scope:** comparison of the Windows platform and rendering work with the macOS reference, including test coverage.
-**Date:** 2026-10-28, after the native ComboBox popup pass.
+**Date:** 2026-10-30, after the P1 accessibility action table and menu widgets.
 
 ## Verdict
 
 Windows is now at functional parity with macOS for windowing, input, clipboard, IME, DPI, event-loop pacing,
 Blend2D, shaped text, the `render-albor` D3D backend, the named-pipe automation transport, and the accessibility
-bridge. The Windows accessibility bridge is a real UI Automation provider, not a stub; both accessibility role
-suites carry **14 tests**, and Windows adds a real UI Automation client test.
+bridge. The Windows accessibility bridge is a real UI Automation provider, not a stub; the macOS role suite
+carries **18 tests**, the Windows suite carries **19 role tests**, and Windows adds a real UI Automation client test.
 
 The per-abstraction support table is maintained in [`docs/status.md`](docs/status.md#windows-support).
 
@@ -17,10 +17,11 @@ The remaining differences are shared or process gaps rather than Windows impleme
 - Modality is validated but not enforced on either platform.
 - macOS has no equivalent of the Windows clipboard/IME/DPI/event-loop integration suite yet.
 - Windows has no code-coverage job comparable to `macos-coverage`.
-- `IValueProvider::SetValue` is read-only because a `SemanticAction` carries no value argument yet.
-- Windows UI Automation exposes the numeric stepper value read-only and does not yet expose its increment and
-  decrement actions; it also maps a radio group to a group without a selection provider. macOS exposes both.
-  These are the remaining accessibility capability gaps in this pass.
+- `IValueProvider::SetValue` is read-only because a `SemanticAction` carries no value argument; a
+  bounded control still accepts a write through the macOS value attribute and the Windows
+  `IRangeValueProvider`.
+- Windows maps a radio group to a group without a selection provider, while macOS exposes the group
+  selection. This is the remaining accessibility capability gap in this pass.
 
 ## 1. Platform adapter
 
@@ -38,7 +39,7 @@ Both adapters implement the same `PlatformWindow` and `PlatformEventLoop` interf
 | Event loop pacing | CVDisplayLink | Waitable timer thread, tested | Different mechanism, same contract |
 | System appearance | AppKit appearance | Registry-based appearance | Parity |
 | Automation local transport | Unix domain socket | Named pipe, tested | Parity |
-| Accessibility | 382-line NSAccessibility bridge, 14 tests | 1,216-line UI Automation bridge, 14 role tests + 1 client test | Parity |
+| Accessibility | NSAccessibility bridge, 18 tests | UI Automation bridge, 19 role tests + 1 client test | Parity |
 
 Both popup suites now carry **14 tests**. They cover ownership, anchor placement, trigger-click forwarding,
 owner-move following and a parented dialog. The AppKit-only `ThePopupLayerIsNonopaque` has no direct Win32
@@ -141,27 +142,30 @@ tree:
   its role supports.
 - Role mapping covers every `SemanticRole`: Button, CheckBox, Text, Slider, ProgressBar, TabView, TabItem,
   RadioGroup (Group), RadioButton, NumericStepper (Spinner), Pane (Canvas and ScrollView), Edit, Image, ListItem,
-  List, Group, Window and Custom.
+  MenuItem, List, Group, Window and Custom.
 - Properties include name, automation id, control type, enabled, keyboard focus, focusability, control/content
-  element flags, offscreen, process id, framework id, bounding rectangle, value and read-only, toggle state, and
-  selection-item state.
-- Patterns include Invoke for buttons, Toggle for checkboxes, Value for text fields and numeric steppers, and
-  SelectionItem for list rows, tab items and radio buttons. Invoke, toggle, select and deselect run the semantic
+  element flags, offscreen, process id, framework id, bounding rectangle, value and read-only, toggle state,
+  selection-item state and the numeric range (value, minimum, maximum, step and read-only).
+- Patterns include Invoke for buttons and menu items, Toggle for checkboxes, Value for text fields and numeric
+  steppers, SelectionItem for list rows, tab items and radio buttons, ExpandCollapse for combo boxes, and
+  RangeValue for sliders and steppers. Invoke, toggle, expand, collapse, select and deselect run the semantic
   actions the application registered; selecting a tab item or radio button invokes its `activate` action, and
-  both stay selected because their group carries one selection.
+  both stay selected because their group carries one selection. `IRangeValueProvider::SetValue` writes the
+  node's published range, which clamps the target and refuses a disabled control.
 - The provider reads an immutable publication snapshot, so a rebuild cannot invalidate an element a reader holds.
   Structure changes are raised with `UiaRaiseStructureChangedEvent`.
-- `IValueProvider::SetValue` returns `UIA_E_ELEMENTNOTAVAILABLE`; the bridge has no channel to carry the new text
-  into the application, because `SemanticAction` takes no arguments. Reading the value is supported.
+- `IValueProvider::SetValue` still returns `UIA_E_ELEMENTNOTAVAILABLE` for text, because the bridge has no
+  channel to carry a new string into the application; reading the value is supported.
 
-The **14 Windows role tests** mirror the macOS role suite: root role, child hierarchy, empty publication, detach,
+The **19 Windows role tests** mirror the macOS role suite: root role, child hierarchy, empty publication, detach,
 text-field value, checkbox toggle state, list role, tab group and tab selection, radio group and choice selection,
-numeric-stepper value, image role with its name and disabled state, selected row, unselected row, and a plain label
-with no value. The suite also sends `WM_GETOBJECT` and asserts the window returns a provider key. A fifteenth test
-drives a real `IUIAutomation` client through `ElementFromHandle` and `FindFirst`, which proves UI Automation reaches
-the published root rather than only the direct provider interfaces. The providers are reached through the platform-only
-`accessibility/accessibility_platform.win32.h` accessor, which is the Windows analogue of reading the AppKit
-hierarchy directly.
+numeric-stepper value, image role with its name and disabled state, selected row, unselected row, a plain label
+with no value, checkbox toggle invocation, slider range read/write, disabled slider read-only, combo-box
+expand/collapse and menu-item control type. The suite also sends `WM_GETOBJECT` and asserts the window returns a
+provider key. A twentieth test drives a real `IUIAutomation` client through `ElementFromHandle` and `FindFirst`,
+which proves UI Automation reaches the published root rather than only the direct provider interfaces. The
+providers are reached through the platform-only `accessibility/accessibility_platform.win32.h` accessor, which is
+the Windows analogue of reading the AppKit hierarchy directly.
 
 `README.md` and `docs/status.md` now describe both bridges accurately.
 
@@ -230,7 +234,7 @@ job remains a tracked enhancement rather than a parity requirement.
 | Window popup | 14 | 14 |
 | Blend2D windowed | 3 | 3 |
 | Platform font resolver | 8 dedicated | 8 |
-| Accessibility roles | 14 | 15 (14 parity + 1 UI Automation client) |
+| Accessibility roles | 18 | 20 (19 parity + 1 UI Automation client) |
 | Windows platform services | not present | 8 |
 | Skia backend | 30 macOS-only | replaced by D3D |
 | Metal teardown | 2 macOS-only | not applicable |
@@ -280,6 +284,20 @@ job remains a tracked enhancement rather than a parity requirement.
   pressed. The Escape path now reaches the focused control before the controller consumes it, the Win32 opening
   press hands capture to the popup only after the owner receives the release, and a press that hides its own
   surface drops the popup capture instead of arming it against the next open. Both popup suites carry 14 tests.
+- Added the portable semantic action table. macOS and Windows now offer the same activate, toggle,
+  increment, decrement, expand and collapse actions; bounded controls publish a range, macOS answers
+  the value attribute write, and Windows implements `IRangeValueProvider` and `IExpandCollapseProvider`.
+  The suites add checkbox activation, disabled slider refusal, slider range write, Win32 toggle,
+  range and expand/collapse tests on both platform sources. `SemanticRole::MenuItem` maps to
+  `NSAccessibilityMenuItemRole` and `UIA_MenuItemControlTypeId`.
+- Added the in-tree `MenuBar`, `Menu`, `MenuItem`, `MenuSeparator` and `ToolBar` widgets over shared
+  commands, with visibility, enablement, shortcut display, semantic activation and arrow traversal.
+  The portable suite covers one command across a menu item, a button and an accelerator.
+- Added the declarative draw vocabulary: line, rectangle, rounded rectangle, circle, text and image
+  primitives plus `measure_text`, and quadratic and cubic `PathVerb` entries replayed by Skia,
+  Blend2D, the software reference and `render-albor`.
+- Added per-node `.ui` styling through builtin `Point`/`Shadow` records and common opacity, border
+  and drop-shadow properties.
 - Updated `README.md` and `docs/status.md` to describe both accessibility bridges.
 - Added the vcpkg distribution (`ports/albor`) for both platforms: exported targets, installed headers, tools
   and the package config is a cross-platform CMake story, so the port carries the same surface on macOS and

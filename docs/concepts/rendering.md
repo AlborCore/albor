@@ -53,14 +53,20 @@ Canvas {
 ```
 
 - `fill_rect(x, y, width, height, color)`
+- `stroke_rect(x, y, width, height, stroke_width, color)`
 - `fill_rounded_rect(x, y, width, height, radius, color)`
+- `stroke_rounded_rect(x, y, width, height, radius, stroke_width, color)`
+- `stroke_line(x1, y1, x2, y2, stroke_width, color)`
+- `fill_circle(center_x, center_y, radius, color)` and `stroke_circle(..., stroke_width, color)`
+- `draw_text(text, x, y, font_size, color)` and `draw_image(@image("asset.png"), x, y, width, height, color)`
+- `measure_text(text, font_size)` returns the run width, so a label can place the content after it
 - `canvas_width` and `canvas_height` are the canvas extent, in logical units, read-only
   inside the block.
 - Coordinates are relative to the canvas corner; the block re-runs when its bound properties
   change, so the example above is a live progress meter driven by `level`.
 
-The vocabulary is deliberately closed — two primitives, not a universal drawing API. Anything
-beyond it belongs in a **custom render node**.
+The vocabulary is deliberately closed: a compact drawing set, not a universal drawing API.
+Anything with expensive retained content belongs in a **custom render node**.
 
 ## Custom rendering from C++
 

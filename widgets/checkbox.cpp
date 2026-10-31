@@ -171,6 +171,8 @@ namespace albor
         node.set_bounds(bounds());
         // a disabled box reports the disabled state, which is what refuses activation (§10.1)
         node.set_disabled(disabled());
+        // the focus flag is part of the announced state, so an adapter can follow the ring (§10.1)
+        node.set_focused(focused());
         // the check state mirrors the stored boolean, which is what a screen reader announces (§10.1)
         node.set_check(m_indeterminate ? CheckState::Indeterminate : m_checked ? CheckState::Checked : CheckState::Unchecked);
         // the toggle action runs the same path a press does, and its identifier is discarded because a widget names actions by label (§10.1) the action body carries no disabled guard, because SemanticNode::invoke refuses every action while the node it belongs to is disabled, which is where that rule belongs (§10.1)

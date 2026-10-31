@@ -655,6 +655,8 @@ namespace albor
         node.set_bounds(bounds());
         // a disabled control reports the disabled state, which refuses every action (§10.1)
         node.set_disabled(disabled());
+        // the focus flag is part of the announced state, so an adapter can follow the ring (§10.1)
+        node.set_focused(focused());
         // the expanded state is what a screen reader announces while the popup is open (§10.1)
         node.set_expanded(m_expanded);
         // a selected option is a chosen value rather than a toggle, which is what the state reports (§10.1)
@@ -664,6 +666,9 @@ namespace albor
         // the open and close actions mirror the trigger, which automation can drive (§10.1)
         (void)node.add_action("open", [control = mutable_owner(this)] { control->open(); });
         (void)node.add_action("close", [control = mutable_owner(this)] { control->close(); });
+        // the expand and collapse names are the portable vocabulary a platform expand pattern invokes (§10.2)
+        (void)node.add_action("expand", [control = mutable_owner(this)] { control->open(); });
+        (void)node.add_action("collapse", [control = mutable_owner(this)] { control->close(); });
         // the next and previous actions move the highlighted option (§10.1)
         (void)node.add_action("select_next", [control = mutable_owner(this)] {
             control->open();

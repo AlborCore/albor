@@ -172,6 +172,17 @@ namespace albor
     void UiNode::render(RenderContext& context) {
         // the node opacity goes on first, because every child below draws inside it (§6.1)
         push_opacity(context);
+        // a plain container still records its common border and cast here (§6.1, §8.4)
+        if (!m_bounds.empty()) {
+            // the cast goes down first, because a shadow sits behind the shape that throws it (§6.2)
+            if (!m_drop_shadow.empty())
+                context.draw_shadow(m_bounds, 0.0f, m_drop_shadow);
+            // the border is an outline with no fill, because a layout container has no face of its own (§6.1)
+            const Paint border{.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), .stroke = m_border_color, .stroke_width = m_border_width};
+            // a zero width or transparent stroke records nothing, which keeps an unstyled container free (§6.2)
+            if (border.strokes())
+                context.draw_rect(m_bounds, border);
+        }
         // the children are recorded under that opacity, which is the whole of what this node draws (§6.1)
         render_children(context);
         // the opacity comes off last, so a sibling draws at the state this node found (§6.1)

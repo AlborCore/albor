@@ -109,6 +109,9 @@ namespace albor::compiler
         // read a signal declaration with its parameter types (§11.1)
         void parse_signal_declaration(ComponentDeclaration& component);
 
+        // read a command declaration with its authored label (§18, AD-15)
+        void parse_command_declaration(ComponentDeclaration& component);
+
         // read an element or a repeat, which is one child of the tree (§11.1)
         std::unique_ptr<TreeNode> parse_tree_node();
 

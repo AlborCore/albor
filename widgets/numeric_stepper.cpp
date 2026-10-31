@@ -182,8 +182,12 @@ namespace albor
         node.set_bounds(bounds());
         // a disabled stepper reports the disabled state, which refuses activation (§10.1)
         node.set_disabled(disabled());
+        // the focus flag is part of the announced state, so an adapter can follow the ring (§10.1)
+        node.set_focused(focused());
         // the value is the number the control currently carries, which a reader speaks (§10.1)
         node.set_value(m_value_text);
+        // the range is what a platform range pattern exposes, and a write clamps into it (§10.1, §10.2)
+        node.set_range(SemanticRange{.value = m_value, .minimum = m_minimum, .maximum = m_maximum, .step = m_step}, [control = mutable_owner(this)](double value) { control->set_value(static_cast<float>(value)); });
         // a stepper is not checkable, because it carries a number rather than a toggle (§10.1)
         node.set_check(CheckState::NotCheckable);
         // the two stepping actions are what automation can drive on the control (§10.1)

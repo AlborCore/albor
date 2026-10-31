@@ -20,7 +20,20 @@ namespace albor
 
     void SemanticTree::walk(const SemanticProvider& provider, std::size_t parent) {
         // the node comes before its children, which is the order an adapter announces them in (§10.1)
-        const std::size_t index = add(provider.semantic_node(), parent);
+        const SemanticNode announced = provider.semantic_node();
+        // a role of none carries no meaning, so the node is skipped while its children keep the same parent (§10.1, AD-09)
+        if (announced.role() == SemanticRole::None) {
+            // the children still walk, because a decorative wrapper must not hide them (§10.1)
+            for (std::size_t i = 0; i < provider.semantic_child_count(); i++) {
+                std::unique_ptr<SemanticProvider> child = provider.semantic_child(i);
+                if (child == nullptr)
+                    continue;
+                walk(*child, parent);
+            }
+            return;
+        }
+        // the node is stored, because it is what an adapter announces (§10.1)
+        const std::size_t index = add(announced, parent);
         // the children are built one at a time, because a virtualized node must not materialize all of them (§10.1, AD-09)
         for (std::size_t i = 0; i < provider.semantic_child_count(); i++) {
             // the child is requested by index, which is what keeps a large view virtualized (§10.1, AD-09)

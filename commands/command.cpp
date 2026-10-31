@@ -1,5 +1,6 @@
 #include "commands/command.h"
 
+#include <algorithm>
 #include <atomic>
 #include <utility>
 
@@ -145,6 +146,9 @@ namespace albor
         const std::vector<Binding> bindings = m_bindings;
         for (const Binding& binding : bindings) {
             // a consumer that was removed by an earlier callback is skipped, because its copy outlived the removal (§18.2)
+            const bool still_bound = std::any_of(m_bindings.begin(), m_bindings.end(), [&binding](const Binding& current) { return current.handle == binding.handle; });
+            if (!still_bound)
+                continue;
             if (binding.observer != nullptr)
                 binding.observer(binding.context, m_state);
         }

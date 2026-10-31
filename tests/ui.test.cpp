@@ -2154,6 +2154,20 @@ TEST(Component, RenderingAComponentPaintsItsBackground) {
     EXPECT_EQ(recorder.scene()->commands()[0].paint().fill, (Color::rgb(0.1f, 0.1f, 0.15f)));
 }
 
+TEST(UiNode, ALayoutContainerPaintsItsBorderAndShadow) {
+    // arrange a plain column carrying a border and cast, which a layout once ignored (§6.1, §8.4)
+    ColumnLayout column;
+    column.arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{80.0f, 40.0f}));
+    column.set_border_width(2.0f);
+    column.set_border_color(Color::rgb(0.8f, 0.2f, 0.2f));
+    column.set_drop_shadow(Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 0.4f), .offset = Point{0.0f, 2.0f}, .blur = 4.0f});
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 120.0f}, 1.0f));
+    // act
+    column.render(recorder);
+    // assert the cast and the border reached the scene rather than being accepted and ignored (§6.1)
+    EXPECT_GE(recorder.scene()->commands().size(), 2U);
+}
+
 TEST(Component, RenderingAnUnarrangedComponentPaintsNothing) {
     // arrange
     TestComponent component(nullptr, "canvas");

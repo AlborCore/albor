@@ -1,0 +1,65 @@
+// the first vertical slice, which brings the shared pages and the shell controls into one window (§14)
+
+import "slice_form.ui";
+import "slice_table.ui";
+
+component VerticalSlice {
+    command apply "Apply";
+    command close "Close";
+
+    inout property<int> page: 0;
+    inout property<int> revision: 0;
+
+    Column {
+        spacing: 8px;
+        padding: 8px;
+
+        MenuBar {
+            MenuItem {
+                id: slice_menu_apply;
+                text: "Apply";
+                command: apply;
+                shortcut: "Cmd+Return";
+            }
+            MenuItem {
+                id: slice_menu_close;
+                text: "Close";
+                command: close;
+                shortcut: "Cmd+W";
+            }
+        }
+
+        ToolBar {
+            Button {
+                id: slice_toolbar_apply;
+                text: "Apply";
+                command: apply;
+            }
+        }
+
+        TabView {
+            id: slice_tabs;
+            selected: page;
+            on_selection_changed: {
+                page = index;
+            }
+
+            Tab {
+                id: slice_form_tab;
+                label: "Form";
+                SliceForm {}
+            }
+
+            Tab {
+                id: slice_table_tab;
+                label: "Table";
+                SliceTable {}
+            }
+        }
+
+        Label {
+            id: slice_revision;
+            text: "revision " + string(revision);
+        }
+    }
+}

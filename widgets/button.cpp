@@ -164,6 +164,8 @@ namespace albor
         node.set_bounds(bounds());
         // a disabled button reports the disabled state, which is what refuses activation (§10.1)
         node.set_disabled(disabled());
+        // the focus flag is part of the announced state, so an adapter can follow the ring (§10.1)
+        node.set_focused(focused());
         // a button is not checkable, so the check state stays not checkable (§10.1)
         node.set_check(CheckState::NotCheckable);
         // the activate action runs the same handler a press does, and its identifier is discarded because a widget names actions by label (§10.1) the action body carries no disabled guard, because SemanticNode::invoke refuses every action while the node it belongs to is disabled, which is where that rule belongs (§10.1)

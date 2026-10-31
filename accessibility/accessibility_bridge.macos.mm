@@ -8,6 +8,8 @@
 #include <string_view>
 #include <vector>
 
+#include "semantics/semantic_action.h"
+
 // the element class is named ahead, because a publication holds one before the interface is declared (§10.2)
 @class AlborAccessibilityElement;
 
@@ -44,6 +46,8 @@ namespace
             return NSAccessibilityScrollAreaRole;
         case albor::SemanticRole::List:
             return NSAccessibilityListRole;
+        case albor::SemanticRole::MenuItem:
+            return NSAccessibilityMenuItemRole;
         case albor::SemanticRole::ComboBox:
             return NSAccessibilityComboBoxRole;
         case albor::SemanticRole::Canvas:
@@ -60,9 +64,6 @@ namespace
         // a role outside the enumeration announces nothing, which is the quiet default (§10.2)
         return NSAccessibilityUnknownRole;
     }
-
-    // the action a push control carries, which the bridge invokes when assistive technology presses it (§10.1)
-    constexpr std::string_view PRESS_ACTION = "activate";
 
     // one published semantic node, which an application kit element reads rather than copies (§10.2)
     struct Published
@@ -164,6 +165,34 @@ typedef NSArray* (^AlborAccessibilityChildren)(std::size_t);
     return published == nullptr ? NO : published->node.selected();
 }
 
+// override: report whether the value is writable, which a range control accepts and a text field does not (§10.2)
+- (BOOL)accessibilityIsValueAttributeSettable {
+    // the publication this element names is the one the bridge assigned (§10.2)
+    const Published* published = static_cast<const Published*>(self.publication);
+    // only a role the portable table names as incrementable carries a range a reader may write (§10.2)
+    return published != nullptr && published->node.has_range() && !published->node.disabled() && albor::role_supports_action(published->node.role(), albor::SemanticActionKind::Increment);
+}
+
+// override: answer the generic settable query, which application kit routes the value attribute through (§10.2)
+- (BOOL)accessibilityIsAttributeSettable:(NSString*)attribute {
+    // the value attribute is the one a range control writes, which the specific query answers (§10.2)
+    if ([attribute isEqualToString:NSAccessibilityValueAttribute])
+        return [self accessibilityIsValueAttributeSettable];
+    // every other attribute keeps the inherited answer, because the bridge writes nothing else (§10.2)
+    return [super accessibilityIsAttributeSettable:attribute];
+}
+
+// override: write the bounded number a slider or stepper carries, which is the range write (§10.2)
+- (void)setAccessibilityValue:(id)value {
+    // the publication this element names is the one the bridge assigned (§10.2)
+    const Published* published = static_cast<const Published*>(self.publication);
+    // a non number has no position in the range, so it is ignored rather than coerced (§10.2)
+    if (published == nullptr || ![value isKindOfClass:[NSNumber class]])
+        return;
+    // the node clamps the target and refuses it while disabled, which is the one write rule (§10.2)
+    (void)published->node.set_range_value([(NSNumber*)value doubleValue]);
+}
+
 // override: the value of a checkable, editable or incrementable node, which the protocol reads untyped (§10.1)
 - (id)accessibilityValue {
     // the publication this element names is the one the bridge assigned (§10.2)
@@ -180,6 +209,13 @@ typedef NSArray* (^AlborAccessibilityChildren)(std::size_t);
     // a stepper announces the number it carries as a number, because an incrementor adjusts a numeric value (§10.1)
     if (published->node.role() == albor::SemanticRole::NumericStepper)
         return @(std::strtod(std::string(published->node.value()).c_str(), nullptr));
+    // a slider announces the bounded number it carries, which is the value its range pattern exposes (§10.1, §10.2)
+    if (published->node.role() == albor::SemanticRole::Slider) {
+        // a slider without a published range falls back to its text, because a hand built node may carry only that (§10.1)
+        if (!published->node.has_range())
+            return @(std::strtod(std::string(published->node.value()).c_str(), nullptr));
+        return @(published->node.range().value);
+    }
     // only a checkable node otherwise carries a value, because nothing else has one to report (§10.1)
     if (published->node.check() == albor::CheckState::NotCheckable)
         return nil;
@@ -205,24 +241,38 @@ typedef NSArray* (^AlborAccessibilityChildren)(std::size_t);
 - (BOOL)accessibilityPerformPress {
     // the publication this element names is the one the bridge assigned (§10.2)
     const Published* published = static_cast<const Published*>(self.publication);
-    // a node with no action cannot be pressed, which the protocol reports as a refusal (§10.1)
-    return published != nullptr && published->node.invoke(PRESS_ACTION);
+    // a node with no publication cannot be pressed, which the protocol reports as a refusal (§10.1)
+    if (published == nullptr)
+        return NO;
+    // an open combo box closes on a second press, which is the toggle a trigger offers (§8.3, §10.2)
+    if (published->node.role() == albor::SemanticRole::ComboBox && published->node.expanded() && published->node.has_action(albor::action_name(albor::SemanticActionKind::Collapse)))
+        return published->node.invoke(albor::action_name(albor::SemanticActionKind::Collapse));
+    // the portable table names the press action for the role, which both platform bridges read (§10.2, AD-16)
+    const std::optional<albor::SemanticActionKind> primary = albor::primary_action(published->node.role());
+    // a role with no press action refuses the request, which the protocol reports (§10.2)
+    if (!primary.has_value())
+        return NO;
+    return published->node.invoke(albor::action_name(*primary));
 }
 
-// override: increment is the action a stepper receives from assistive technology (§10.1)
+// override: increment is the action a slider or a stepper receives from assistive technology (§10.1)
 - (BOOL)accessibilityPerformIncrement {
     // the publication this element names is the one the bridge assigned (§10.2)
     const Published* published = static_cast<const Published*>(self.publication);
-    // a node without an increment action refuses the request, which the protocol reports (§10.1)
-    return published != nullptr && published->node.invoke("increment");
+    // only a role the portable table names as incrementable accepts the request (§10.2)
+    if (published == nullptr || !albor::role_supports_action(published->node.role(), albor::SemanticActionKind::Increment))
+        return NO;
+    return published->node.invoke(albor::action_name(albor::SemanticActionKind::Increment));
 }
 
-// override: decrement is the action a stepper receives from assistive technology (§10.1)
+// override: decrement is the action a slider or a stepper receives from assistive technology (§10.1)
 - (BOOL)accessibilityPerformDecrement {
     // the publication this element names is the one the bridge assigned (§10.2)
     const Published* published = static_cast<const Published*>(self.publication);
-    // a node without a decrement action refuses the request, which the protocol reports (§10.1)
-    return published != nullptr && published->node.invoke("decrement");
+    // only a role the portable table names as decrementable accepts the request (§10.2)
+    if (published == nullptr || !albor::role_supports_action(published->node.role(), albor::SemanticActionKind::Decrement))
+        return NO;
+    return published->node.invoke(albor::action_name(albor::SemanticActionKind::Decrement));
 }
 
 // override: the children come from the published tree, which is where the hierarchy lives (§10.2)

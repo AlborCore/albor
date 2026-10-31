@@ -15,6 +15,9 @@ namespace albor::render
 
         // the squared magnitude below which a miter normal counts as zero, which a straight join carries
         constexpr float MITER_ZERO_LIMIT = 0.000001f;
+
+        // the number of lines one curve flattens into, which keeps both curve verbs deterministic (§6.4)
+        constexpr int CURVE_SEGMENTS = 24;
     } // namespace
 
     void stamp_directions(Contour& contour) {
@@ -66,6 +69,27 @@ namespace albor::render
         std::vector<Contour> contours;
         // the point cursor walks the point list beside the verb list
         std::size_t cursor = 0;
+        // the current position is what a curve starts from, which a move or a close updates
+        Point current{};
+
+        // append one reached point, merging a repeat into its predecessor, which keeps the segment nonzero
+        const auto append_point = [&contours](Point candidate) {
+            // a line before any move opens a contour of its own, which the recorded stream may do
+            if (contours.empty())
+                contours.emplace_back();
+            // a point repeating its predecessor merges flags, which keeps the segment nonzero (nanovg technique)
+            const bool repeats = !contours.back().points.empty() && std::abs(candidate.x - contours.back().points.back().position.x) <= POINT_TOLERANCE && std::abs(candidate.y - contours.back().points.back().position.y) <= POINT_TOLERANCE;
+            if (repeats) {
+                // the repeated point only adds its corner flag, which the join calculation reads
+                contours.back().points.back().flags |= Corner;
+                return;
+            }
+            // the reached point joins the contour, which every recorded point corners at
+            ContourPoint reached;
+            reached.position = candidate;
+            reached.flags = Corner;
+            contours.back().points.push_back(reached);
+        };
 
         // every verb appends to the contour under construction, which a MoveTo opens and a Close seals
         for (const PathVerb verb : verbs) {
@@ -79,35 +103,69 @@ namespace albor::render
                     anchor.position = points[cursor];
                     anchor.flags = Corner;
                     contours.back().points.push_back(anchor);
+                    // the anchor is the position a following line or curve leaves
+                    current = points[cursor];
                     cursor++;
                 }
                 break;
             // a line appends the next point, opening a contour itself when no move preceded it
             case PathVerb::LineTo:
-                if (contours.empty())
-                    contours.emplace_back();
                 if (cursor < points.size()) {
-                    // a point repeating its predecessor merges flags, which keeps the segment nonzero (nanovg technique)
-                    const Point candidate = points[cursor];
-                    const bool repeats = !contours.back().points.empty() && std::abs(candidate.x - contours.back().points.back().position.x) <= POINT_TOLERANCE && std::abs(candidate.y - contours.back().points.back().position.y) <= POINT_TOLERANCE;
-                    if (repeats) {
-                        // the repeated point only adds its corner flag, which the join calculation reads
-                        contours.back().points.back().flags |= Corner;
-                    }
-                    else {
-                        // the reached point joins the contour, which every recorded point corners at
-                        ContourPoint reached;
-                        reached.position = candidate;
-                        reached.flags = Corner;
-                        contours.back().points.push_back(reached);
-                    }
+                    append_point(points[cursor]);
+                    // the reached point is where the next segment starts
+                    current = points[cursor];
                     cursor++;
+                }
+                break;
+            // a quadratic flattens into short lines, because the contour consumes positions rather than curve controls
+            case PathVerb::QuadraticTo:
+                if (cursor + 1 < points.size()) {
+                    // the start is the tracked current position, which matches the gpu commands
+                    const Point start = current;
+                    const Point control = points[cursor];
+                    const Point end = points[cursor + 1];
+                    // the curve is sampled at a fixed subdivision, which keeps the native tessellation deterministic
+                    for (int step = 1; step <= CURVE_SEGMENTS; step++) {
+                        const float t = static_cast<float>(step) / static_cast<float>(CURVE_SEGMENTS);
+                        const float u = 1.0f - t;
+                        append_point(Point{u * u * start.x + 2.0f * u * t * control.x + t * t * end.x, u * u * start.y + 2.0f * u * t * control.y + t * t * end.y});
+                    }
+                    // the end point is where the next segment starts
+                    current = end;
+                    cursor += 2;
+                }
+                break;
+            // a cubic flattens into short lines, which the same subdivision makes deterministic
+            case PathVerb::CubicTo:
+                if (cursor + 2 < points.size()) {
+                    // the start is the tracked current position, which matches the gpu commands
+                    const Point start = current;
+                    const Point first = points[cursor];
+                    const Point second = points[cursor + 1];
+                    const Point end = points[cursor + 2];
+                    // the curve is sampled at the same fixed subdivision, which both curves share
+                    for (int step = 1; step <= CURVE_SEGMENTS; step++) {
+                        const float t = static_cast<float>(step) / static_cast<float>(CURVE_SEGMENTS);
+                        const float u = 1.0f - t;
+                        const float a = u * u * u;
+                        const float b = 3.0f * u * u * t;
+                        const float c = 3.0f * u * t * t;
+                        const float d = t * t * t;
+                        append_point(Point{a * start.x + b * first.x + c * second.x + d * end.x, a * start.y + b * first.y + c * second.y + d * end.y});
+                    }
+                    // the end point is where the next segment starts
+                    current = end;
+                    cursor += 3;
                 }
                 break;
             // a close seals the current contour, which the trailing point deduplication finishes below
             case PathVerb::Close:
-                if (!contours.empty())
+                if (!contours.empty()) {
                     contours.back().closed = true;
+                    // a closed contour continues from its start, which is what the gpu references do
+                    if (!contours.back().points.empty())
+                        current = contours.back().points.front().position;
+                }
                 break;
             }
         }

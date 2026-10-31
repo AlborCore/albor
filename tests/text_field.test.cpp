@@ -9,7 +9,9 @@
 #include "commands/command.h"
 #include "core/clipboard.h"
 #include "focus/focus_manager.h"
+#include "netlist_editor.h"
 #include "render/frame_scene.h"
+#include "runtime/binding_engine.h"
 #include "ui/scene_builder.h"
 #include "widgets/text_field.h"
 
@@ -1977,6 +1979,98 @@ TEST(TextFieldImeChecks, TheMarkDrawsTheUnderlineBar) {
     EXPECT_FLOAT_EQ(rects.front().width, static_cast<float>(field.marked_text().size()) * EditingTextEngine::ADVANCE);
 }
 
+TEST(TextFieldImeChecks, AMarkThatWrapsUnderlinesEveryLineItCovers) {
+    // arrange a multi line field whose composed run crosses three rows (§9.1)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abcdefghijklmnopqrstuvwxyz0123456789");
+    field.set_multiline(true);
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{56.0f, 80.0f}), measured);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{56.0f, 80.0f}));
+    field.set_caret(2);
+    // act
+    Event mark{.kind = EventKind::Composing, .text = "abcdefgh"};
+    field.dispatch_event(mark);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{120.0f, 100.0f}, 1.0f));
+    field.render(recorder);
+    // assert one bar per covered row, each clamped to the row's bytes (§8.3, §9.1)
+    std::vector<Rect> bars;
+    for (const Rect& rect : rect_commands(*recorder.scene()))
+        if (rect.height == 1.0f)
+            bars.push_back(rect);
+    ASSERT_EQ(bars.size(), 3u);
+    EXPECT_FLOAT_EQ(bars[0].width, 20.0f);
+    EXPECT_FLOAT_EQ(bars[1].width, 40.0f);
+    EXPECT_FLOAT_EQ(bars[2].width, 20.0f);
+    EXPECT_FLOAT_EQ(bars[1].y - bars[0].y, EditingTextEngine::HEIGHT);
+}
+
+TEST(TextFieldClickSelectionChecks, ADoubleClickSelectsTheWordUnderThePointer) {
+    // arrange a single line field whose words are separated by spaces (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "alpha beta gamma");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 20.0f}));
+    // act
+    Event press{.kind = EventKind::PointerDown, .position = Point{15.0f, 10.0f}, .click_count = 2};
+    field.dispatch_event(press);
+    // assert the word the click landed over is selected, with the caret at its far edge (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(field.selection_start(), std::size_t{0});
+    EXPECT_EQ(field.selection_end(), std::size_t{5});
+    EXPECT_EQ(field.caret(), std::size_t{5});
+    // assert the same range is readable through the semantic node automation walks (§10.1)
+    EXPECT_EQ(field.semantic_node().selection_start(), std::size_t{0});
+    EXPECT_EQ(field.semantic_node().selection_end(), std::size_t{5});
+}
+
+TEST(TextFieldClickSelectionChecks, AShiftDoubleClickExtendsToTheWordEdge) {
+    // arrange a collapsed caret at the start of the first word (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "alpha beta gamma");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 20.0f}));
+    field.set_selection(1, 1);
+    // act a shift double click lands on the second word (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{65.0f, 10.0f}, .modifiers = Modifiers{.shift = true}, .click_count = 2};
+    field.dispatch_event(press);
+    // assert the anchor stayed where it was and the caret moved to the word's far edge (§8.3)
+    EXPECT_EQ(field.selection_start(), std::size_t{1});
+    EXPECT_EQ(field.selection_end(), std::size_t{10});
+    EXPECT_EQ(field.caret(), std::size_t{10});
+}
+
+TEST(TextFieldClickSelectionChecks, ATripleClickCoversTheLine) {
+    // arrange a multi line field with three rows (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "alpha\nbeta\ngamma");
+    field.set_multiline(true);
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{200.0f, 80.0f}), measured);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 80.0f}));
+    // act a triple click lands on the second row (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{15.0f, 40.0f}, .click_count = 3};
+    field.dispatch_event(press);
+    // assert the line covers the row from its first byte through its content (§8.3)
+    EXPECT_EQ(field.selection_start(), std::size_t{6});
+    EXPECT_EQ(field.selection_end(), std::size_t{10});
+}
+
+TEST(TextFieldClickSelectionChecks, ADoubleClickOnALineBreakCoversTheLine) {
+    // arrange a field whose first row ends at a break, with a selection on the second row (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "alpha\nbeta");
+    field.set_multiline(true);
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{200.0f, 80.0f}), measured);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 80.0f}));
+    field.set_selection(7, 9);
+    // act a plain double click lands on the break that ends the first row (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{58.0f, 30.0f}, .click_count = 2};
+    field.dispatch_event(press);
+    // assert the line's own content is selected, because the break belongs to the row it ends (§8.3)
+    EXPECT_EQ(field.selection_start(), std::size_t{0});
+    EXPECT_EQ(field.selection_end(), std::size_t{5});
+}
+
 TEST(TextFieldImeChecks, AReadOnlyFieldRefusesCompose) {
     // arrange
     EditingTextEngine engine;
@@ -3023,6 +3117,92 @@ TEST(TextFieldUndoChecks, RebindingTheStackDropsThePreviousHistory) {
     // assert the new entry reverses the edit the field recorded after the rebind (§18)
     field.undo();
     EXPECT_EQ(field.value(), "Abc");
+}
+
+TEST(TextFieldDecorationChecks, TheNetlistFixturePaintsItsThreeTokenColours) {
+    // arrange the generated netlist fixture over the text double (§9.1, §11.3)
+    BindingEngine binding;
+    EditingTextEngine engine;
+    NetlistEditor editor(&binding, &engine);
+    Size measured{};
+    editor.measure(SizeConstraints::unconstrained(), measured);
+    editor.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, measured));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{400.0f, 120.0f}, 1.0f));
+    // act
+    editor.render(recorder);
+    // assert each declared range paints once in its own colour (§9.1)
+    std::size_t keyword = 0;
+    std::size_t number = 0;
+    std::size_t comment = 0;
+    for (const DrawCommand& command : recorder.scene()->commands()) {
+        if (command.kind() != DrawCommandKind::Text)
+            continue;
+        const Color fill = command.paint().fill;
+        if (fill == Color::rgb(0.180392157f, 0.525490196f, 0.870588235f))
+            keyword++;
+        else if (fill == Color::rgb(0.901960784f, 0.494117647f, 0.133333333f))
+            number++;
+        else if (fill == Color::rgb(0.152941176f, 0.682352941f, 0.376470588f))
+            comment++;
+    }
+    EXPECT_EQ(keyword, 1u);
+    EXPECT_EQ(number, 1u);
+    EXPECT_EQ(comment, 1u);
+}
+
+TEST(TextFieldDecorationChecks, WrappedDecorationsScrollWithTheCaretAndSelection) {
+    // arrange a wrapped field with one token on a row below the top (§9.1)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "abcdefghijklmnopqrstuvwxyz0123456789");
+    field.set_multiline(true);
+    Size measured{};
+    field.measure(SizeConstraints::at_most(Size{56.0f, 40.0f}), measured);
+    field.arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{56.0f, 40.0f}));
+    const Color token = Color::rgb(0.9f, 0.1f, 0.1f);
+    field.set_decorations({TextDecoration{.start = 9, .end = 10, .foreground = token, .underline = true}});
+    field.set_selection(9, 10);
+    field.scroll_to(16.0f);
+    // assert the value wrapped and the viewport carries a non zero offset (§8.2)
+    ASSERT_NE(field.layout().run, nullptr);
+    ASSERT_GT(field.layout().run->lines().size(), 3u);
+    ASSERT_FLOAT_EQ(field.scroll_offset(), 16.0f);
+    // act
+    SceneRecorder selection_recorder(WindowMetrics::from_logical(Size{120.0f, 80.0f}, 1.0f));
+    field.render(selection_recorder);
+    // assert the selection and the token underline share the row of the token (§9.1)
+    const std::size_t row = field.layout().run->line_at_byte(9);
+    const ShapedRun::Line& line = field.layout().run->lines()[row];
+    const float row_top = field.text_origin().y + line.origin.y - line.ascent;
+    const float row_x = field.text_origin().x + line.origin.x + field.layout().run->x_at_byte(row, 9);
+    Rect selection{};
+    Rect underline{};
+    for (const DrawCommand& command : selection_recorder.scene()->commands()) {
+        if (command.kind() != DrawCommandKind::Rect)
+            continue;
+        if (command.paint().fill == Color::rgba(0.20f, 0.55f, 0.90f, 0.35f))
+            selection = command.rect_geometry().rect;
+        else if (command.paint().fill == token)
+            underline = command.rect_geometry().rect;
+    }
+    EXPECT_FLOAT_EQ(selection.x, row_x);
+    EXPECT_FLOAT_EQ(selection.y, row_top);
+    EXPECT_FLOAT_EQ(underline.x, row_x);
+    EXPECT_FLOAT_EQ(underline.y, row_top + line.ascent + 1.0f);
+    // act and assert a collapsed selection paints the caret on the same row (§8.3)
+    field.set_selection(9, 9);
+    field.set_focused(true);
+    field.scroll_to(16.0f);
+    SceneRecorder caret_recorder(WindowMetrics::from_logical(Size{120.0f, 80.0f}, 1.0f));
+    field.render(caret_recorder);
+    const Rect caret = field.caret_rect();
+    Rect drawn_caret{};
+    for (const DrawCommand& command : caret_recorder.scene()->commands()) {
+        if (command.kind() == DrawCommandKind::Rect && command.paint().fill == Color::rgba(0.94f, 0.96f, 0.98f, 1.0f))
+            drawn_caret = command.rect_geometry().rect;
+    }
+    EXPECT_EQ(drawn_caret, caret);
+    EXPECT_FLOAT_EQ(caret.x, row_x);
+    EXPECT_FLOAT_EQ(caret.y, row_top);
 }
 
 TEST(TextFieldScrollChecks, ADragPastTheEdgeKeepsTheDraggedEndInView) {

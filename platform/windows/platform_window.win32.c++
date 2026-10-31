@@ -40,6 +40,15 @@ namespace albor
         // whether a left press is held, which tells a popup shown from that press to leave the capture alone (§5.1)
         bool mouse_down = false;
 
+        // how many clicks the last press belongs to, which a double or triple click selection reads (§8.3)
+        int click_count = 0;
+
+        // the tick the last press arrived at, which the double click window is measured against (§8.3)
+        ULONGLONG last_click_time = 0;
+
+        // the client point the last press landed at, which the double click slop is measured against (§8.3)
+        POINT last_click_point{};
+
         // whether the window is a popup, which the show path and the dismissal monitor consult (§5.1)
         bool popup = false;
 
@@ -75,6 +84,24 @@ namespace albor
     {
         // the name the window class is registered under, which is one per process (§5.3)
         constexpr const wchar_t* WINDOW_CLASS = L"AlborWindow";
+
+        // count a left press against the previous one, which is how win32 reports a triple click (§8.3)
+        int click_count_for(Win32WindowState& state, int x, int y) {
+            // the time and the slop both come from the system, because the double click is its gesture (§8.3)
+            const ULONGLONG now = GetTickCount64();
+            // each axis is measured without a sign, because the press may land either side (§8.3)
+            const int dx = x >= state.last_click_point.x ? x - state.last_click_point.x : state.last_click_point.x - x;
+            // the y axis is measured the same way, because the slop is a rectangle (§8.3)
+            const int dy = y >= state.last_click_point.y ? y - state.last_click_point.y : state.last_click_point.y - y;
+            // a press inside the window and the slop continues the sequence, which is what a multi click is (§8.3)
+            const bool continues = state.click_count > 0 && now - state.last_click_time <= static_cast<ULONGLONG>(GetDoubleClickTime()) && dx <= GetSystemMetrics(SM_CXDOUBLECLK) / 2 && dy <= GetSystemMetrics(SM_CYDOUBLECLK) / 2;
+            // the count advances on a continued sequence and starts over otherwise (§8.3)
+            state.click_count = continues ? state.click_count + 1 : 1;
+            // the press is remembered, because the next one is measured against it (§8.3)
+            state.last_click_time = now;
+            state.last_click_point = POINT{.x = x, .y = y};
+            return state.click_count;
+        }
 
         // the scale factor the window reports, which separates logical pixels from physical ones (AD-27)
         float scale_of(HWND window) {
@@ -445,6 +472,7 @@ namespace albor
                 // every ordinary window keeps the system activation policy (§5.3)
                 return DefWindowProcW(window, code, wparam, lparam);
             }
+            case WM_LBUTTONDBLCLK:
             case WM_LBUTTONDOWN: {
                 // a press a shown popup receives dismisses it, which the click outside the frame is (§5.1)
                 if (state->popup && state->visible && point_is_outside(window, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam))) {
@@ -467,6 +495,8 @@ namespace albor
                 Event message;
                 message.kind = EventKind::PointerDown;
                 message.position = logical_from_client(window, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
+                // the native sequence counts multiple clicks, which a text selection reads (§8.3)
+                message.click_count = click_count_for(*state, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
                 state->listener->on_platform_event(message);
                 return 0;
             }
@@ -647,7 +677,7 @@ namespace albor
             WNDCLASSEXW window_class{};
             window_class.cbSize = sizeof(window_class);
             // the class redraws on either axis resize, because every resize repaints the whole surface anyway (§5.3)
-            window_class.style = CS_HREDRAW | CS_VREDRAW;
+            window_class.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
             window_class.lpfnWndProc = &window_proc;
             // the arrow is the ordinary cursor, cast wide because this file builds without the unicode define (§5.3)
             window_class.hCursor = LoadCursorW(nullptr, reinterpret_cast<LPCWSTR>(IDC_ARROW));

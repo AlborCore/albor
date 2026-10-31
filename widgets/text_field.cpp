@@ -12,6 +12,9 @@ namespace albor
     {
         // how long one half of a caret blink lasts, which is the platform rhythm (§8.3)
         constexpr long CARET_BLINK_MS = 530;
+
+        // report whether a byte is whitespace, the fallback word boundary of §8.3
+        bool is_space_byte(char value) { return value == ' ' || value == '\t' || value == '\n' || value == '\r' || value == '\v' || value == '\f'; }
     } // namespace
 
     TextField::TextField(BindingEngine* engine, TextEngine* text_engine, std::string value, std::string explicit_id) :
@@ -545,7 +548,22 @@ namespace albor
                 return;
             }
             // the press is resolved against the row it landed on, because a multi line field has more than one (§9.1)
-            set_caret(byte_at_point(event.position));
+            const std::size_t byte = byte_at_point(event.position);
+            // a triple click covers the line, as does a double click on a break (§8.3)
+            if (event.click_count >= 3 || (event.click_count >= 2 && is_line_break_byte(byte))) {
+                select_line_at(byte, event.modifiers.shift);
+                return;
+            }
+            // a double click selects the word under the pointer, which is the gesture this field now owns (§8.3)
+            if (event.click_count >= 2) {
+                select_word_at(byte, event.modifiers.shift);
+                return;
+            }
+            // a shift press extends the selection, while a plain press places the caret (§8.3)
+            if (event.modifiers.shift)
+                extend_caret(byte);
+            else
+                set_caret(byte);
             return;
         }
         // a move while a press drag is alive extends the selection, which is what dragging means (§8.3)
@@ -577,8 +595,12 @@ namespace albor
         node.set_name(identity().explicit_id);
         // the value is what the node edits, which is the text the field carries (§10.1)
         node.set_value(m_value);
+        // the selection travels beside the value, because a client reads the edited range the same way (§10.1)
+        node.set_selection(selection_start(), selection_end());
         // the bounds travel with the node, because an adapter places the announcement where it was drawn (§10.1)
         node.set_bounds(bounds());
+        // the focus flag is part of the announced state, so an adapter can follow the caret (§10.1)
+        node.set_focused(focused());
         // the states are written directly, which is what a freshly built node is (§10.1)
         node.mutable_states().disabled = disabled();
         // the read only state travels beside disabled, because the two refuse different things (§10.1)
@@ -1084,16 +1106,24 @@ namespace albor
         // the mark covers the bytes the caret commit opened in the composed string (§8.3)
         const std::size_t from = std::min(m_caret, m_value.size());
         const std::size_t to = std::min(from + m_marked.size(), m_value.size() + m_marked.size());
-        // the line the mark begins on is the one it rides under, which a wrapped mark moves off the first row (§9.1)
-        const std::size_t index = m_marked_layout.run->line_at_byte(from);
-        const ShapedRun::Line& line = m_marked_layout.run->lines()[index];
-        // the underline starts where the caret held the composed run's bytes (§8.3)
-        const float start_x = bounds().x + m.text_field_padding + line.origin.x + m_marked_layout.run->x_at_byte(index, from);
-        const float end_x = bounds().x + m.text_field_padding + line.origin.x + m_marked_layout.run->x_at_byte(index, to);
         // the composed run hangs where the value hangs, so the mark and the caret share one top (§8.2)
         const float draw_y = displayed_top(m_marked_layout);
-        // the bar is one thin line under the baseline, which is where a mark reads (§8.3)
-        context.draw_rect(Rect{.x = start_x, .y = draw_y + line.origin.y + 1.0f, .width = std::max(0.0f, end_x - start_x), .height = 1.0f}, {.fill = resolve(caret_colors(), m_caret_foreground)});
+        // every line the mark crosses carries its own bar, which is what a wrapped composition looks like (§9.1)
+        for (std::size_t index = 0; index < m_marked_layout.run->lines().size(); index++) {
+            // the line is read for its own bytes, which is what the mark clamps against (§9.1)
+            const ShapedRun::Line& line = m_marked_layout.run->lines()[index];
+            // a line the mark does not touch carries no bar (§8.3)
+            if (line.end_byte <= from || line.start_byte >= to)
+                continue;
+            // the bar covers the mark within the line, which the bytes of this line bound (§9.1)
+            const std::size_t first = std::max(from, line.start_byte);
+            const std::size_t last = std::min(to, line.end_byte);
+            // the underline starts where the caret held the composed run's bytes (§8.3)
+            const float start_x = bounds().x + m.text_field_padding + line.origin.x + m_marked_layout.run->x_at_byte(index, first);
+            const float end_x = bounds().x + m.text_field_padding + line.origin.x + m_marked_layout.run->x_at_byte(index, last);
+            // the bar is one thin line under the baseline, which is where a mark reads (§8.3)
+            context.draw_rect(Rect{.x = start_x, .y = draw_y + line.origin.y + 1.0f, .width = std::max(0.0f, end_x - start_x), .height = 1.0f}, {.fill = resolve(caret_colors(), m_caret_foreground)});
+        }
     }
 
     void TextField::paste() {
@@ -1537,6 +1567,79 @@ namespace albor
         ensure_caret_visible();
         // a drag extension is visual only, because the value did not change (§6.1)
         invalidate();
+    }
+
+    void TextField::select_range(std::size_t first, std::size_t last, bool extend) {
+        // a fresh double click replaces the selection, because that is the gesture a user asked for (§8.3)
+        if (!extend) {
+            set_selection(first, last);
+            return;
+        }
+        // the anchor is kept, because a shift double click extends from where the selection started (§8.3)
+        const std::size_t anchor = std::min(m_anchor, m_value.size());
+        m_anchor = anchor;
+        // the caret lands on the word edge nearest the anchor, which is the direction the extension runs (§8.3)
+        if (anchor <= first)
+            extend_caret(last);
+        else if (anchor >= last)
+            extend_caret(first);
+        else
+            extend_caret(last);
+    }
+
+    void TextField::select_word_at(std::size_t byte, bool extend) {
+        // an empty value or an unshaped run has no word to select, so the caret stays at the start (§9.1)
+        if (m_value.empty() || m_layout.run == nullptr || m_layout.run->lines().empty()) {
+            set_caret(0);
+            return;
+        }
+        // a click past the value lands on its last character, because there is no word beyond it (§8.3)
+        const std::size_t resolved = std::min(byte, m_value.size() - 1);
+        // a click on a line break selects the line, which is the fallback the issue names (§8.3)
+        if (is_line_break_byte(resolved)) {
+            select_line_at(resolved, extend);
+            return;
+        }
+        // whitespace groups with whitespace, as the documented fallback for an engine with no segmenter (§8.3)
+        const bool space = is_space_byte(m_value[resolved]);
+        std::size_t first = resolved;
+        std::size_t last = resolved;
+        // the left edge walks back across characters of the same class, which keeps a cluster whole (§9.1)
+        while (first > 0) {
+            const std::size_t previous = step_backward_byte(first);
+            if (previous >= first || is_line_break_byte(previous) || is_space_byte(m_value[previous]) != space)
+                break;
+            first = previous;
+        }
+        // the right edge walks forward to the first byte of another class (§9.1)
+        while (last < m_value.size()) {
+            if (is_line_break_byte(last) || is_space_byte(m_value[last]) != space)
+                break;
+            const std::size_t next = step_forward_byte(last);
+            if (next <= last)
+                break;
+            last = next;
+        }
+        // a degenerate range still covers the clicked character, which is what a word is (§8.3)
+        if (last == first)
+            last = std::min(step_forward_byte(first), m_value.size());
+        select_range(first, last, extend);
+    }
+
+    void TextField::select_line_at(std::size_t byte, bool extend) {
+        // the line edges are the ones the home and end keys reach, so the two gestures agree (§8.3)
+        const std::size_t resolved = std::min(byte, m_value.size());
+        // a break terminates the line before it, so a click on the break belongs to that line (§8.3)
+        const std::size_t anchor = resolved > 0 && is_line_break_byte(resolved) ? resolved - 1 : resolved;
+        select_range(line_start_byte(anchor), line_end_byte(anchor), extend);
+    }
+
+    bool TextField::is_line_break_byte(std::size_t byte) const {
+        // an offset past the value names no break, because there is no byte to read (§8.3)
+        if (byte >= m_value.size())
+            return false;
+        // both spellings a line break can arrive in select the line, because they end it either way (§8.3)
+        return m_value[byte] == '\n' || m_value[byte] == '\r';
     }
 
     void TextField::remeasure() {

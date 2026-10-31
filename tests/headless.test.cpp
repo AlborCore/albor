@@ -15,9 +15,11 @@
 #include "render/renderer_backend.h"
 #include "render/screenshot.h"
 #include "runtime/binding_engine.h"
+#include "style/theme_builder.h"
 #include "text/text-harfbuzz/harfbuzz_text_engine.h"
 #include "ui/scene_builder.h"
 #include "ui/ui_node.h"
+#include "widgets/button.h"
 #include "widgets/canvas.h"
 #include "widgets/checkbox.h"
 #include "window/window_metrics.h"
@@ -619,4 +621,57 @@ TEST(HeadlessAppearanceChecks, AHeadlessWindowReportsTheAppearanceItWasGiven) {
     // assert the query reads what the raise stored (§8.4)
     EXPECT_TRUE(starts_default);
     EXPECT_TRUE(platform->system_appearance() == changed);
+}
+
+TEST(HeadlessFocusRingChecks, AFocusedButtonRastersARingOutsideItsPlate) {
+    // arrange a themed button on a black surface, placed so the ring stands on empty pixels (§6.1, §8.3)
+    BindingEngine engine;
+    const Theme theme = ThemeBuilder::dark(Accents{});
+    Button button(&engine, nullptr, "Press");
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{20.0f, 12.0f}, Size{24.0f, 24.0f}));
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{SURFACE_WIDTH, SURFACE_HEIGHT}, 1.0f);
+    SceneRecorder focused(metrics);
+    focused.set_background(Color::rgb(0.0f, 0.0f, 0.0f));
+    button.set_focused(true);
+    button.render(focused);
+    auto surface = software::SoftwareRenderSurface::create(metrics);
+    ASSERT_NE(surface, nullptr);
+    software::SoftwareRendererBackend backend;
+    // act
+    backend.execute_frame(*surface, *focused.scene());
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    ASSERT_FALSE(pixels.empty());
+    // assert the themed ring paints in the standoff the theme names (§6.1, §8.4)
+    bool painted = false;
+    for (int x = 12; x < 20; x++) {
+        std::uint8_t red = 0;
+        std::uint8_t green = 0;
+        std::uint8_t blue = 0;
+        pixel_at(pixels, 24u * static_cast<std::size_t>(metrics.pixel_size.width) + static_cast<std::size_t>(x), red, green, blue);
+        if (blue > 150u && blue > red + 60u)
+            painted = true;
+    }
+    EXPECT_TRUE(painted);
+    // assert the same state is observable through the semantic node an adapter walks (§10.1)
+    EXPECT_TRUE(button.semantic_node().focused());
+    // act and assert an unfocused button leaves the standoff empty (§6.1)
+    button.set_focused(false);
+    SceneRecorder resting(metrics);
+    resting.set_background(Color::rgb(0.0f, 0.0f, 0.0f));
+    button.render(resting);
+    backend.execute_frame(*surface, *resting.scene());
+    const std::vector<std::uint8_t> resting_pixels = surface->read_pixels();
+    ASSERT_FALSE(resting_pixels.empty());
+    painted = false;
+    for (int x = 12; x < 20; x++) {
+        std::uint8_t red = 0;
+        std::uint8_t green = 0;
+        std::uint8_t blue = 0;
+        pixel_at(resting_pixels, 24u * static_cast<std::size_t>(metrics.pixel_size.width) + static_cast<std::size_t>(x), red, green, blue);
+        if (blue > 150u && blue > red + 60u)
+            painted = true;
+    }
+    EXPECT_FALSE(painted);
+    EXPECT_FALSE(button.semantic_node().focused());
 }

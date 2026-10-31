@@ -3,9 +3,49 @@
 component P0Widgets {
     inout property<int> selected: 0;
     in property<vector<TextDecoration>> tokens: [];
+    command save "Save";
 
     Column {
         spacing: 8px;
+
+        Column {
+            spacing: 8px;
+
+            MenuBar {
+                MenuItem {
+                    id: menu_save;
+                    text: "Save";
+                    command: save;
+                }
+                MenuItem {
+                    id: menu_close;
+                    text: "Close";
+                }
+            }
+
+            Menu {
+                id: file_menu;
+                MenuItem {
+                    id: file_save;
+                    text: "Save";
+                    command: save;
+                }
+                MenuSeparator {}
+                MenuItem {
+                    id: file_close;
+                    text: "Close";
+                    shortcut: "Cmd+W";
+                }
+            }
+
+            ToolBar {
+                Button {
+                    id: toolbar_save;
+                    text: "Save";
+                    command: save;
+                }
+            }
+        }
 
         Panel {
             id: settings_panel;
@@ -17,6 +57,15 @@ component P0Widgets {
 
             Column {
                 Label { text: "Panel"; }
+
+                Label {
+                    id: styled_label;
+                    text: "Styled";
+                    opacity: 0.75;
+                    border_width: 2px;
+                    border_color: #445566;
+                    drop_shadow: Shadow { color: #00000040, offset: Point { x: 0px, y: 2px }, blur: 4px };
+                }
             }
         }
 
@@ -42,6 +91,13 @@ component P0Widgets {
             text: "Save";
             icon: @image("icon.png");
             icon_size: 16px;
+            command: save;
+        }
+
+        Button {
+            id: save_toolbar_button;
+            text: "Save";
+            command: save;
         }
 
         TextField {

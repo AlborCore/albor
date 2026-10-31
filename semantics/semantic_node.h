@@ -62,6 +62,9 @@ namespace albor
         // a row of a list, which repeats the role of its owning list
         ListItem,
 
+        // one row of a menu, which invokes the command it presents (§10.1, §18.2)
+        MenuItem,
+
         // a container of list items that share one selection, which assistive technology groups (§10.1)
         List,
 
@@ -112,6 +115,12 @@ namespace albor
         // the text the node carries, which an editable node reports and every other role leaves empty (§10.1)
         std::string value;
 
+        // the byte the node's text selection begins at, which is equal to the end when nothing is selected (§10.1)
+        std::size_t selection_start = 0;
+
+        // the byte the node's text selection ends at, which is the half open end the field paints (§10.1)
+        std::size_t selection_end = 0;
+
         // whether the node refuses edits but still takes focus and still permits a copy (§10.1)
         bool read_only = false;
 
@@ -130,6 +139,28 @@ namespace albor
 
     // the work a semantic action performs, which automation and accessibility both invoke (§10.1)
     using SemanticAction = std::function<void()>;
+
+    // the bounded numeric value a slider or a stepper carries, which ui automation exposes as a range (§10.1, §10.2)
+    struct SemanticRange
+    {
+        // the current value, which the control publishes after every change (§10.1)
+        double value = 0.0;
+
+        // the bottom of the range, which the value never falls below (§10.1)
+        double minimum = 0.0;
+
+        // the top of the range, which the value never rises above (§10.1)
+        double maximum = 0.0;
+
+        // the distance one increment or decrement moves the value (§10.1)
+        double step = 1.0;
+
+        // compare two ranges field by field
+        friend bool operator==(const SemanticRange& lhs, const SemanticRange& rhs) = default;
+    };
+
+    // the work a range write performs, which is what a platform SetValue asks for (§10.2)
+    using SemanticRangeAction = std::function<void(double)>;
 
     // one node of the unified semantic tree, which is what assistive technology consumes (§10.1, AD-09)
     class SemanticNode
@@ -198,6 +229,15 @@ namespace albor
         // replace the text the node carries, which is what an editable control publishes (§10.1)
         void set_value(std::string value);
 
+        // hand out the byte the text selection begins at, which a client reads beside the value (§10.1)
+        [[nodiscard]] std::size_t selection_start() const;
+
+        // hand out the byte the text selection ends at, which is the half open end (§10.1)
+        [[nodiscard]] std::size_t selection_end() const;
+
+        // replace the selection range, which an editable control publishes after a gesture (§10.1)
+        void set_selection(std::size_t start, std::size_t end);
+
         // report whether the node refuses edits but still takes focus and still permits a copy (§10.1)
         [[nodiscard]] bool read_only() const;
 
@@ -215,6 +255,18 @@ namespace albor
 
         // set or clear the expanded state, which a combo box updates when its popup opens (§10.1)
         void set_expanded(bool expanded);
+
+        // report whether the node carries a numeric range, which a slider and a stepper do (§10.1)
+        [[nodiscard]] bool has_range() const;
+
+        // hand out the numeric range, which a platform range pattern reads (§10.1, §10.2)
+        [[nodiscard]] const SemanticRange& range() const;
+
+        // publish the numeric range and the work a write performs, which an adapter invokes with a clamped value (§10.2)
+        void set_range(SemanticRange range, SemanticRangeAction on_write);
+
+        // write the range through the registered work, which returns false while the node is disabled (§10.1, §10.2)
+        bool set_range_value(double value) const;
 
         // hand out the bounds the node occupies in logical pixels (§10.1)
         [[nodiscard]] const Rect& bounds() const;
@@ -258,6 +310,15 @@ namespace albor
 
         // the bounds the node occupies in logical pixels (§10.1)
         Rect m_bounds;
+
+        // whether the node carries a numeric range, which a slider and a stepper set (§10.1)
+        bool m_has_range = false;
+
+        // the numeric range itself, which the platform range pattern reads (§10.1, §10.2)
+        mutable SemanticRange m_range;
+
+        // the work a range write performs, which stays empty when the node has no range (§10.2)
+        SemanticRangeAction m_on_range_write;
 
         // one registered action, with the name assistive technology and automation select it by (§10.1)
         struct Action

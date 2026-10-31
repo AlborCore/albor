@@ -48,6 +48,8 @@ namespace albor::automation
                 return "listitem";
             case SemanticRole::List:
                 return "list";
+            case SemanticRole::MenuItem:
+                return "menu_item";
             case SemanticRole::ComboBox:
                 return "combo_box";
             case SemanticRole::Group:
@@ -151,6 +153,9 @@ namespace albor::automation
                 // an editable node appends the text it carries, which is what a client reads back (§10.1)
                 if (!node->value().empty())
                     out << " value=" << escape_for_line(node->value());
+                // a selection appends its half open byte range, which a client reads beside the value (§10.1)
+                if (node->selection_start() != node->selection_end())
+                    out << " selection=" << node->selection_start() << ':' << node->selection_end();
                 // a read only node marks itself, because the state is what a client must respect (§10.1)
                 if (node->read_only())
                     out << " read_only";

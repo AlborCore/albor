@@ -244,6 +244,8 @@ namespace
     albor::Event message;
     message.kind = albor::EventKind::PointerDown;
     message.position = [self logicalPointOf:event];
+    // the platform counts multiple clicks, which a double or triple click selection reads (§8.3)
+    message.click_count = static_cast<int>(event.clickCount);
     self.listener->on_platform_event(message);
 }
 

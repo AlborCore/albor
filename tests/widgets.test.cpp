@@ -8,6 +8,8 @@
 #include <gtest/gtest.h>
 
 #include "commands/command.h"
+#include "commands/command_registry.h"
+#include "commands/shortcut.h"
 #include "core/constraints.h"
 #include "focus/focus_manager.h"
 #include "input/input_controller.h"
@@ -23,12 +25,16 @@
 #include "semantics/semantic_provider.h"
 #include "style/theme_builder.h"
 #include "ui/scene_builder.h"
+#include "ui/semantic_tree_builder.h"
 #include "widgets/button.h"
 #include "widgets/canvas.h"
 #include "widgets/checkbox.h"
 #include "widgets/combo_box.h"
 #include "widgets/image.h"
 #include "widgets/label.h"
+#include "widgets/menu.h"
+#include "widgets/menu_bar.h"
+#include "widgets/menu_item.h"
 #include "widgets/numeric_stepper.h"
 #include "widgets/panel.h"
 #include "widgets/progress_bar.h"
@@ -40,6 +46,7 @@
 #include "widgets/tab_view.h"
 #include "widgets/text_field.h"
 #include "widgets/theme_controller.h"
+#include "widgets/tool_bar.h"
 #include "window/popup_host.h"
 #include "window/window_metrics.h"
 
@@ -574,7 +581,7 @@ TEST(LabelChecks, AChildPastTheEndIsNoChild) {
     EXPECT_EQ(child, nullptr);
 }
 
-TEST(LabelChecks, AChildWithoutSemanticsAnnouncesNothing) {
+TEST(LabelChecks, AChildWithoutSemanticsWalksItsSubtree) {
     // arrange
     BindingEngine engine;
     StubTextEngine text_engine;
@@ -585,9 +592,9 @@ TEST(LabelChecks, AChildWithoutSemanticsAnnouncesNothing) {
     button.add_child(std::make_unique<RowLayout>());
     // act
     std::unique_ptr<SemanticProvider> child = button.semantic_child(0);
-    // assert a plain layout carries no meaning, so the walk reaches a node that announces nothing (§10.1)
+    // assert a plain layout is announced as a group, which is what a container is (§10.1)
     ASSERT_NE(child, nullptr);
-    EXPECT_EQ(child->semantic_node().role(), SemanticRole::None);
+    EXPECT_EQ(child->semantic_node().role(), SemanticRole::Group);
     EXPECT_EQ(child->semantic_child_count(), 0u);
     EXPECT_EQ(child->semantic_child(0), nullptr);
 }
@@ -2171,6 +2178,29 @@ TEST(CanvasChecks, ClampsIntoTheOfferedConstraints) {
     // assert
     EXPECT_FLOAT_EQ(measured.width, 10.0f);
     EXPECT_FLOAT_EQ(measured.height, 10.0f);
+}
+
+TEST(CanvasChecks, MeasuresDeclarativeTextThroughTheInstalledEngine) {
+    // arrange a canvas with the text engine a draw block measures through (§9.1, §6.4)
+    BindingEngine engine;
+    StubTextEngine text;
+    Canvas canvas(&engine, &text);
+    // act
+    const TextLayout layout = canvas.measure_text("axis", 12.0f);
+    // assert the engine measured the unbounded run, which is what lays the next drawing beside it (§6.4)
+    EXPECT_FLOAT_EQ(layout.size.width, 4.0f * StubTextEngine::ADVANCE);
+    EXPECT_EQ(text.measurements, 1U);
+}
+
+TEST(CanvasChecks, MeasuresNoTextWithoutAnEngine) {
+    // arrange a canvas whose host installed no text engine (§9.1)
+    BindingEngine engine;
+    Canvas canvas(&engine);
+    // act
+    const TextLayout layout = canvas.measure_text("axis", 12.0f);
+    // assert the empty layout stands in, which draws nothing rather than guessing (§9.1)
+    EXPECT_TRUE(layout.empty());
+    EXPECT_FLOAT_EQ(layout.size.width, 0.0f);
 }
 
 TEST(CanvasChecks, TheDrawCallbackRecordsIntoTheContext) {
@@ -7112,4 +7142,215 @@ TEST(TextFieldDecorationChecks, ClearingTheRangesRemovesTheDecorationPath) {
     field.clear_decorations();
     // assert the field returns to the single colour path (§9.1)
     EXPECT_TRUE(field.decorations().empty());
+}
+
+TEST(MenuChecks, OneCommandFeedsAMenuItemAButtonAndAnAccelerator) {
+    // arrange one command that a menu row, a button and a shortcut all bind to (§18.1, §18.5)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    CommandRegistry registry;
+    std::unique_ptr<Command> command = registry.declare("file.save", "Save");
+    const Shortcut shortcut{.key = Key::S, .modifiers = Modifiers{.command = true}};
+    ASSERT_TRUE(registry.bind_shortcut(shortcut, "file.save"));
+    Menu menu(&engine, &text_engine);
+    MenuItem& item = menu.add_item(*command, &registry.shortcuts(), shortcut);
+    Button button(&engine, &text_engine);
+    button.set_command(command.get());
+    std::size_t invocations = 0;
+    InvocationSource source = InvocationSource::Handler;
+    command->set_action([&invocations, &source](const CommandInvocation& invocation) {
+        // the route is recorded, so the semantic action can prove it used the same command (§18.3)
+        invocations++;
+        source = invocation.source;
+    });
+    // act assert one label and one accelerator reach both consumers from the same object (§18.2, §18.5)
+    EXPECT_EQ(item.label(), "Save");
+    EXPECT_EQ(button.label(), "Save");
+    EXPECT_EQ(item.shortcut_text(), registry.shortcuts().display(shortcut));
+    EXPECT_EQ(item.shortcut_text(), "Cmd+S");
+    // act withholding permission on the one object disables both consumers (§18.7)
+    command->set_enabled(false);
+    // assert the menu row and the button report the same answer, because neither holds a copy (§18.7)
+    EXPECT_TRUE(item.disabled());
+    EXPECT_TRUE(button.disabled());
+    // act the command is permitted again and assistive technology activates the row (§10.1, §18.3)
+    command->set_enabled(true);
+    const SemanticNode node = item.semantic_node();
+    ASSERT_TRUE(node.invoke("activate"));
+    // assert the semantic route ran the command the pointer would run (§10.1, §18.3)
+    EXPECT_EQ(invocations, 1U);
+    EXPECT_EQ(source, InvocationSource::Accessibility);
+}
+
+TEST(MenuChecks, AHiddenCommandRemovesItsRowFromTheMenuLayout) {
+    // arrange a menu of three rows, where the middle one can be hidden by its command (§18.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    CommandRegistry registry;
+    std::unique_ptr<Command> first = registry.declare("file.open", "Open");
+    std::unique_ptr<Command> second = registry.declare("file.recent", "Recent");
+    std::unique_ptr<Command> third = registry.declare("file.quit", "Quit");
+    Menu menu(&engine, &text_engine);
+    MenuItem& middle = menu.add_item(*second);
+    menu.add_item(*first);
+    menu.add_item(*third);
+    Size before{};
+    menu.measure(SizeConstraints::unconstrained(), before);
+    // act
+    second->set_visible(false);
+    Size after{};
+    menu.measure(SizeConstraints::unconstrained(), after);
+    // assert the invisible row is gone from layout and the visible rows are still menued (§18.2)
+    EXPECT_FALSE(middle.visible());
+    EXPECT_LT(after.height, before.height);
+    EXPECT_TRUE(menu.visible());
+}
+
+TEST(MenuChecks, ADisabledRowStaysInPlaceAndLeavesFocusTraversal) {
+    // arrange a menu whose second row is disabled, which must stay visible and unreachable by arrows (§18.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    CommandRegistry registry;
+    std::unique_ptr<Command> first = registry.declare("edit.copy", "Copy");
+    std::unique_ptr<Command> second = registry.declare("edit.paste", "Paste");
+    Menu menu(&engine, &text_engine);
+    MenuItem& copy = menu.add_item(*first);
+    MenuItem& paste = menu.add_item(*second);
+    Size unused{};
+    menu.measure(SizeConstraints::unconstrained(), unused);
+    menu.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 80.0f}));
+    second->set_enabled(false);
+    copy.set_focused(true);
+    // act the down arrow asks for the next focus stop (§8.3)
+    Event down{.kind = EventKind::KeyDown, .key = Key::ArrowDown};
+    menu.dispatch_event(down);
+    // assert the disabled row keeps its place but is skipped by traversal (§18.2)
+    EXPECT_TRUE(paste.visible());
+    EXPECT_GT(paste.bounds().height, 0.0f);
+    EXPECT_FALSE(paste.focused());
+    EXPECT_TRUE(copy.focused());
+    EXPECT_TRUE(down.handled);
+}
+
+TEST(MenuChecks, AToolBarPlacesItsVisibleControlsInARow) {
+    // arrange a strip with two controls, which is the container shape a shell hosts (§8)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ToolBar bar(&engine);
+    bar.add_child(std::make_unique<Button>(&engine, &text_engine, "One"));
+    bar.add_child(std::make_unique<Button>(&engine, &text_engine, "Two"));
+    Size measured{};
+    // act
+    bar.measure(SizeConstraints::unconstrained(), measured);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, measured));
+    // assert both controls measure and sit side by side in one strip (§8.2)
+    auto* first = dynamic_cast<Button*>(bar.child_at(0));
+    auto* second = dynamic_cast<Button*>(bar.child_at(1));
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    EXPECT_GT(measured.width, first->measured_size().width);
+    EXPECT_GE(second->bounds().x, first->bounds().x + first->bounds().width);
+}
+
+TEST(MenuChecks, ADestroyedRowLeavesNoCommandObserver) {
+    // arrange a command-bound row that is destroyed before the command (§18.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    CommandRegistry registry;
+    std::unique_ptr<Command> command = registry.declare("view.temporary", "Temporary");
+    auto row = std::make_unique<MenuItem>(&engine, &text_engine);
+    row->set_command(command.get());
+    EXPECT_EQ(command->observer_count(), 1U);
+    // act
+    row.reset();
+    // assert the observer left with the row, so a publish cannot reach freed memory (§18.1)
+    EXPECT_EQ(command->observer_count(), 0U);
+    command->set_enabled(false);
+}
+
+TEST(MenuChecks, AHiddenRowLeavesTheSemanticTree) {
+    // arrange a menu whose second command hides its row (§18.2, §10.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    CommandRegistry registry;
+    std::unique_ptr<Command> first = registry.declare("view.grid", "Grid");
+    std::unique_ptr<Command> second = registry.declare("view.rulers", "Rulers");
+    Menu menu(&engine, &text_engine);
+    MenuItem& shown = menu.add_item(*first);
+    MenuItem& hidden = menu.add_item(*second);
+    shown.set_explicit_id("shown_row");
+    hidden.set_explicit_id("hidden_row");
+    second->set_visible(false);
+    // act
+    const SemanticTree tree = build_semantic_tree(menu);
+    // assert the hidden row is absent, because a reader must not reach what the layout removed (§10.1)
+    bool shown_found = false;
+    bool hidden_found = false;
+    for (std::size_t index = 0; index < tree.size(); index++) {
+        shown_found = shown_found || tree.at(index)->explicit_id() == "shown_row";
+        hidden_found = hidden_found || tree.at(index)->explicit_id() == "hidden_row";
+    }
+    EXPECT_TRUE(shown_found);
+    EXPECT_FALSE(hidden_found);
+}
+
+TEST(MenuChecks, AFocusedRowThatBecomesDisabledLosesTheFocus) {
+    // arrange a menu focused on its first row, which is then disabled (§18.2, §8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    CommandRegistry registry;
+    std::unique_ptr<Command> first = registry.declare("view.first", "First");
+    std::unique_ptr<Command> second = registry.declare("view.second", "Second");
+    Menu menu(&engine, &text_engine);
+    MenuItem& disabled = menu.add_item(*first);
+    MenuItem& next = menu.add_item(*second);
+    Size unused{};
+    menu.measure(SizeConstraints::unconstrained(), unused);
+    menu.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 80.0f}));
+    disabled.set_focused(true);
+    first->set_enabled(false);
+    // act the next arrow asks for the next stop (§8.3)
+    Event down{.kind = EventKind::KeyDown, .key = Key::ArrowDown};
+    menu.dispatch_event(down);
+    // assert the stale row dropped its ring and the next enabled row took it (§8.3)
+    EXPECT_FALSE(disabled.focused());
+    EXPECT_TRUE(next.focused());
+    EXPECT_TRUE(down.handled);
+}
+
+TEST(MenuChecks, ASeparatorIsAbsentFromTheSemanticTree) {
+    // arrange a menu with one row and a separator, which carries no meaning to a reader (§18.2, §10.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    CommandRegistry registry;
+    std::unique_ptr<Command> command = registry.declare("view.only", "Only");
+    Menu menu(&engine, &text_engine);
+    menu.add_item(*command);
+    menu.add_separator();
+    // act
+    const SemanticTree tree = build_semantic_tree(menu);
+    // assert the separator is skipped instead of becoming an unnamed unknown element (§10.1)
+    EXPECT_EQ(tree.count_role(SemanticRole::None), 0U);
+}
+
+TEST(SemanticWalkChecks, AContainerWithoutAProviderWalksItsSubtree) {
+    // arrange a panel whose only child is a plain layout holding a button, which is how a composed page is built (§10.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Panel panel(&engine);
+    auto column = std::make_unique<ColumnLayout>();
+    auto button = std::make_unique<Button>(&engine, &text_engine, "Deep");
+    button->set_explicit_id("deep_button");
+    column->add_child(std::move(button));
+    panel.add_child(std::move(column));
+    // act the semantic walk starts at the panel, which is a provider itself (§10.1, AD-09)
+    const SemanticTree tree = build_semantic_tree(panel);
+    // assert the button is reachable through the layout rather than hidden behind a role none leaf (§10.1)
+    const SemanticNode* found = nullptr;
+    for (std::size_t index = 0; index < tree.size(); index++)
+        if (tree.at(index)->explicit_id() == "deep_button")
+            found = tree.at(index);
+    ASSERT_NE(found, nullptr);
+    EXPECT_EQ(found->role(), SemanticRole::Button);
+    EXPECT_EQ(found->name(), "Deep");
 }
