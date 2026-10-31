@@ -403,6 +403,19 @@ namespace albor::compiler
         SourceSpan span;
     };
 
+    // a command the component declares once, which every actionable child binds by name (§18, AD-15)
+    struct CommandDeclaration
+    {
+        // the name the `.ui` body writes where it binds the command (§18)
+        std::string name;
+
+        // the label a menu item or a button shows, which one declaration shares across every consumer (§18)
+        std::string label;
+
+        // where the declaration was written (§18)
+        SourceSpan span;
+    };
+
     // one parameter of a function, which names a value its body reads (§11.1)
     struct FunctionParameter
     {
@@ -657,6 +670,9 @@ namespace albor::compiler
 
         // the signals the component declares (§11.1)
         std::vector<SignalDeclaration> signals;
+
+        // the commands the component declares, which its children bind by name (§18, AD-15)
+        std::vector<CommandDeclaration> commands;
 
         // the root element of the component, which is empty when the component declares none (§11.1)
         std::unique_ptr<TreeNode> root;

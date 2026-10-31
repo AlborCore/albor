@@ -30,6 +30,9 @@ namespace albor::compiler
         // the keyword that introduces a property declaration, which carries the direction (§11.1)
         constexpr std::string_view PROPERTY_KEYWORD = "property";
 
+        // the keyword that introduces a command declaration, which names one shared action (§18, AD-15)
+        constexpr std::string_view COMMAND_KEYWORD = "command";
+
         // the keyword that introduces a signal declaration (§11.1)
         constexpr std::string_view SIGNAL_KEYWORD = "signal";
 
@@ -521,6 +524,11 @@ namespace albor::compiler
             parse_signal_declaration(component);
             return;
         }
+        // a command is a declaration, which every actionable child then binds by name (§18, AD-15)
+        if (at_keyword(COMMAND_KEYWORD)) {
+            parse_command_declaration(component);
+            return;
+        }
         // anything else at this level is an element of the body, which the shape below decides (§11.1)
         if (peek().kind == Token::Kind::Identifier) {
             // a derived component takes content elements, because several may fill the one slot (§11.1)
@@ -613,6 +621,30 @@ namespace albor::compiler
         declaration.span.end = last_consumed_end();
         // the signal is kept, because it is what a handler resolves against (§11.1)
         component.signals.push_back(std::move(declaration));
+    }
+
+    void Parser::parse_command_declaration(ComponentDeclaration& component) {
+        // the declaration is assembled locally, because a broken one is dropped rather than kept (§18)
+        CommandDeclaration declaration;
+        // the span starts at the keyword, so a diagnostic points at the whole declaration (§18)
+        declaration.span.start = peek().span.start;
+        // the keyword is consumed, because the caller has already matched it (§18)
+        advance();
+        // the name is required, because a child binds the command by it (§18)
+        declaration.name = expect_identifier();
+        // a quoted label follows, which is what every consumer shows (§18)
+        if (peek().kind == Token::Kind::String) {
+            // the label is kept as written, because the command owns the one label (§18)
+            declaration.label = peek().value;
+            // the label is consumed, because it is read exactly once (§18)
+            advance();
+        }
+        // the declaration ends at the terminator, which is required (§18)
+        expect_punctuation(";");
+        // the span ends at the terminator, which the reader has already consumed (§18)
+        declaration.span.end = last_consumed_end();
+        // the command is kept, because it is what a child resolves against (§18, AD-15)
+        component.commands.push_back(std::move(declaration));
     }
 
     std::unique_ptr<TreeNode> Parser::parse_tree_node() {

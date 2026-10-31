@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -10,6 +11,9 @@
 
 namespace albor
 {
+    // the retained image a button draws beside or instead of its label, declared ahead for the public header (§6.4)
+    class ImageResource;
+
     // the widget that performs an action when it is pressed, which is a push control (§8)
     class Button final : public Widget
     {
@@ -40,6 +44,18 @@ namespace albor
 
         // hand out the drawn label (§10.1)
         [[nodiscard]] const std::string& label() const;
+
+        // replace the retained icon, where an empty handle returns the text-only plate (§6.4, §8.2)
+        void set_icon(std::shared_ptr<const ImageResource> icon);
+
+        // hand out the retained icon, which is empty on a text-only button (§6.4)
+        [[nodiscard]] const std::shared_ptr<const ImageResource>& icon() const;
+
+        // replace the square extent the icon draws at, where zero follows the theme default (§8.2)
+        void set_icon_size(float size);
+
+        // hand out the square extent the icon draws at (§8.2)
+        [[nodiscard]] float icon_size() const;
 
         // replace the work a press performs, which is what the activate action and the click path both run (§8.3, §10.1)
         void set_on_click(std::function<void()> handler);
@@ -79,6 +95,12 @@ namespace albor
         // the drawn label, which is also the accessible name (§10.1)
         std::string m_label;
 
+        // the retained icon, which is empty on a text-only button (§6.4)
+        std::shared_ptr<const ImageResource> m_icon;
+
+        // the square extent the icon draws at, where zero follows the theme default (§8.2)
+        float m_icon_size = 0.0f;
+
         // the work a press performs (§8.3)
         std::function<void()> m_on_click;
 
@@ -99,5 +121,8 @@ namespace albor
 
         // the size the label is measured at, which the theme typography owns when one is installed (§8.4, §9.1)
         [[nodiscard]] float label_font_size() const;
+
+        // the square extent the icon draws at, which the author or the default decides (§8.2)
+        [[nodiscard]] float resolved_icon_size() const;
     };
 } // namespace albor

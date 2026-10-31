@@ -13,7 +13,7 @@
 
 namespace albor
 {
-    // the window events a platform backend raises into the framework, which is how a native window stays free of framework types (§5.3)
+    // the window events a platform backend raises, which keeps a native window free of framework types (§5.3)
     class PlatformWindowListener
     {
     public:
@@ -64,6 +64,9 @@ namespace albor
 
         // hand out the native object a renderer backend attaches to, which is opaque here (§3.5, AD-05)
         [[nodiscard]] virtual NativeWindowHandle native_handle() const = 0;
+
+        // hand out the native window itself, which an owned popup uses as its parent (§5.1)
+        [[nodiscard]] virtual NativeWindowHandle native_window_handle() const { return NativeWindowHandle{}; }
 
         // read the appearance the system renders with, which a theme follows (§5.3, §8.4)
         [[nodiscard]] virtual SystemAppearance system_appearance() const {

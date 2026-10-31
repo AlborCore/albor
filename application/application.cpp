@@ -42,6 +42,8 @@ namespace albor
 
     Application::Application(std::unique_ptr<PlatformEventLoop> event_loop) :
         m_event_loop(std::move(event_loop)) {
+        // the host is pushed on the process stack, so a later application restores a live one, not a dead one (§5.1)
+        push_window_popup_host(this);
         // an application without a native loop still pumps tasks and timers, but it can never run (§4.1)
         if (m_event_loop) {
             // the loop pumps the ui thread, which is what turns posted work into execution (§4.1)
@@ -55,6 +57,8 @@ namespace albor
     Application::~Application() {
         // an application that was never run still releases what it wired, in the same order (§4.1)
         shutdown();
+        // a widget that outlives the application must not reach a dead host, so the live stack top returns (§5.1)
+        remove_window_popup_host(this);
         // the pacing source is stopped last, so no frame tick arrives after the windows are gone (§4.3)
         if (m_event_loop)
             m_event_loop->stop_frame_pacing();
@@ -82,6 +86,25 @@ namespace albor
     }
 
     void Application::shutdown() {
+        // a native popup is released before the main stages, because its control owns the native handle it names (§5.1)
+        std::vector<WindowHandle> popups;
+        for (const std::pair<const std::uint64_t, std::unique_ptr<WindowStage>>& entry : m_stages) {
+            // the stage belongs to a window, which is the only place the role is recorded (§5.1)
+            const WindowHandle handle = WindowHandle::from_id(entry.first);
+            const Window* window = m_windows.find(handle);
+            // a popup has no application stage in the main tree, so it is the one released early (§5.1)
+            if (window != nullptr && window->options().role == WindowRole::Popup)
+                popups.push_back(handle);
+        }
+        // the popup stages drop before their native windows, so each surface precedes its drawable (§5.1, §6.1)
+        for (const WindowHandle popup : popups) {
+            // the stage is released for the same reason an ordinary close releases it first (§5.1)
+            release_stage(popup);
+            // the owner entry goes with the surface, which keeps the map exact until the application dies (§5.1)
+            m_popup_owners.erase(popup.id());
+            // the native popup is closed without a notification, because the application is going away (§5.2)
+            (void)m_windows.destroy(popup);
+        }
         // the stages release their surfaces before their windows are dropped, so a layer outlives its drawable (§6.1)
         m_stages.clear();
         // every window closes before the native loop goes away, because a window raises events into the loop (§5.2)
@@ -116,15 +139,23 @@ namespace albor
         // the registry builds the native window, and the hook binds the listeners before the window is shown (§5.3)
         return m_windows.create(options, [this](Window& created) {
             // the application becomes the listener while the window is still off screen, so no event is missed (§5.3)
-            bind_window(created.handle(), created);
+            bind_window(created.handle(), created, {}, false);
         });
     }
 
     WindowHandle Application::create_window(const WindowOptions& options, RootBuilder builder) { return create_window(options, std::move(builder), MainWindowConfig{}); }
 
     WindowHandle Application::create_window(const WindowOptions& options, RootBuilder builder, const MainWindowConfig& config) {
+        // an ordinary window has no native close hook beyond the application's own notification (§5.2)
+        return create_window_impl(options, std::move(builder), config, {}, false);
+    }
+
+    WindowHandle Application::create_window_impl(const WindowOptions& options, RootBuilder builder, const MainWindowConfig& config, std::function<void()> on_native_closed, bool keep_on_native_close) {
         // the window joins the registry with the listeners every window carries, which keeps its events routed (§5.3)
-        const WindowHandle handle = create_window(options);
+        const WindowHandle handle = m_windows.create(options, [this, on_native_closed = std::move(on_native_closed), keep_on_native_close](Window& created) {
+            // the application becomes the listener while the window is still off screen, so no event is missed (§5.3)
+            bind_window(created.handle(), created, on_native_closed, keep_on_native_close);
+        });
         // the invalid handle only means the platform refused the window (§5.1)
         if (!handle.valid())
             return handle;
@@ -147,6 +178,97 @@ namespace albor
         // the stage lives as long as its window, which the closed notification drops (§6.1)
         m_stages[handle.id()] = std::move(stage);
         return handle;
+    }
+
+    WindowHandle Application::open_popup(const UiNode& anchor, Rect anchor_rect, Size size, PopupRootBuilder builder, Color background, std::function<void()> on_closed) {
+        // a popup without an owner has no parent window to float over, so it is refused quietly (§5.1)
+        const WindowHandle owner = window_for_node(anchor);
+        if (!owner.valid())
+            return WindowHandle{};
+        const Window* owner_window = m_windows.find(owner);
+        if (owner_window == nullptr)
+            return WindowHandle{};
+        // the popup is a borderless transient owned by the trigger window, which is the native role of §5.1
+        WindowOptions options;
+        options.role = WindowRole::Popup;
+        options.title = "Albor Popup";
+        options.size = size;
+        options.visible = false;
+        options.resizable = false;
+        options.parent = owner;
+        options.anchor = anchor_rect;
+        // the surface clears with the control's plate colour, because the popup owns no window background (§6.1, §8.4)
+        MainWindowConfig config;
+        config.background = background;
+        // a popup keeps its tree when the native surface dismisses itself, so the control can reopen it (§5.1)
+        const WindowHandle popup = create_window_impl(options, std::move(builder), config, std::move(on_closed), true);
+        if (!popup.valid())
+            return popup;
+        // the owner is remembered, because a window teardown has to destroy the surfaces it anchors (§5.1)
+        m_popup_owners[popup.id()] = owner;
+        // a popup that was built off screen is shown once its first tree is ready, which avoids a blank flash (§5.1)
+        if (Window* native = m_windows.find(popup))
+            native->show();
+        return popup;
+    }
+
+    void Application::show_popup(WindowHandle popup) {
+        // only a transient surface has a show, so an ordinary window is left alone (§5.1)
+        Window* window = m_windows.find(popup);
+        if (window == nullptr || window->options().role != WindowRole::Popup)
+            return;
+        // the stage and its tree survived the dismissal, so showing is the whole reopen (§5.1)
+        window->show();
+    }
+
+    void Application::close_popup(WindowHandle popup) {
+        // only a transient surface has a dismissal, so an ordinary window is left alone (§5.1)
+        Window* window = m_windows.find(popup);
+        if (window == nullptr || window->options().role != WindowRole::Popup)
+            return;
+        // a press may be closing the surface, so the popup stage drops any capture before it hides (§8.3)
+        if (WindowStage* closing_stage = this->stage(popup))
+            closing_stage->cancel_pointer_capture();
+        // hiding keeps the stage and its tree alive, which is what makes reopening cheap and safe (§5.1)
+        window->hide();
+    }
+
+    void Application::destroy_popup(WindowHandle popup) {
+        // only a transient surface is destroyed here, so an ordinary window is never closed by mistake (§5.1)
+        const Window* window = m_windows.find(popup);
+        if (window == nullptr || window->options().role != WindowRole::Popup)
+            return;
+        // the owner entry goes with the surface, because a stale owner would name a dead handle (§5.1)
+        m_popup_owners.erase(popup.id());
+        // an explicit teardown releases the stage before the native window, like any other window (§5.2, §6.1)
+        destroy_window(popup);
+    }
+
+    void Application::destroy_owned_popups(WindowHandle owner) {
+        // the owned surfaces are collected before any is destroyed, because the map changes during teardown (§5.1)
+        std::vector<WindowHandle> owned;
+        for (const std::pair<const std::uint64_t, WindowHandle>& entry : m_popup_owners) {
+            // only a surface anchored to this owner is part of its teardown (§5.1)
+            if (entry.second == owner)
+                owned.push_back(WindowHandle::from_id(entry.first));
+        }
+        // every owned surface is destroyed before the owner loses its native window (§5.1)
+        for (const WindowHandle popup : owned)
+            destroy_popup(popup);
+    }
+
+    WindowHandle Application::window_for_node(const UiNode& node) const {
+        // the tree walks to its root, which is the node every stage owns (§8.1)
+        const UiNode* root = &node;
+        while (root->parent() != nullptr)
+            root = root->parent();
+        // the stage that owns the root names the window a popup is parented to (§5.1)
+        for (const std::pair<const std::uint64_t, std::unique_ptr<WindowStage>>& entry : m_stages) {
+            if (&entry.second->root() == root)
+                return WindowHandle::from_id(entry.first);
+        }
+        // a node that belongs to no stage has no owner window (§5.1)
+        return WindowHandle{};
     }
 
     CommandRegistry& Application::commands() {
@@ -189,13 +311,21 @@ namespace albor
             m_deferred.push_back(handle);
             return true;
         }
+        // a transient surface never outlives the window that owns it, so its teardown comes first (§5.1)
+        destroy_owned_popups(handle);
+        // the window's role decides whether its close is an application notification or a popup teardown (§5.1)
+        const Window* closing = m_windows.find(handle);
+        const bool popup = closing != nullptr && closing->options().role == WindowRole::Popup;
+        // a popup destroyed by the caller directly still drops its owner entry, which is what keeps the map exact (§5.1)
+        if (popup)
+            m_popup_owners.erase(handle.id());
         // the window's stage is dropped first, so its surface outlives no layer (§6.1)
         release_stage(handle);
         // the registry closes the native window before it drops the framework window (§5.2)
         if (!m_windows.destroy(handle))
             return false;
-        // the teardown finished, so the Closed notification of §5.2 reaches the application
-        if (m_closed_handler)
+        // the teardown finished, so the Closed notification of §5.2 reaches the application for a window it owns
+        if (!popup && m_closed_handler)
             m_closed_handler(handle);
         // an application that drained its last window ends its own run, which is the default lifetime (§4.1)
         end_run_when_no_windows();
@@ -329,7 +459,7 @@ namespace albor
         return m_event_loop->running();
     }
 
-    void Application::bind_window(WindowHandle handle, Window& window) {
+    void Application::bind_window(WindowHandle handle, Window& window, std::function<void()> on_native_closed, bool keep_on_native_close) {
         // a window whose close is vetoed by the application stays alive, so the request only ends there (§5.2)
         window.set_close_handler([this, handle] {
             // without an application handler the framework grants the close, which is the default (§5.2)
@@ -369,7 +499,7 @@ namespace albor
             m_frame_handler();
         });
 
-        // a normalized input event of a window reaches the application input handler, which is where routing belongs (§8.3)
+        // a normalized input event reaches the application input handler, where routing belongs (§8.3)
         window.set_input_handler([this, handle](const Event& event) {
             // a main window routes into its own tree, which is where the widgets answer (§8.3)
             const std::map<std::uint64_t, std::unique_ptr<WindowStage>>::const_iterator stage = m_stages.find(handle.id());
@@ -399,9 +529,20 @@ namespace albor
         });
 
         // a native window close reaches the application as the Closed notification of §5.2
-        window.set_closed_handler([this, handle] {
+        window.set_closed_handler([this, handle, on_native_closed = std::move(on_native_closed), keep_on_native_close] {
+            // a popup dismisses itself without ending its tree, so the owner is told and the stage stays alive (§5.1)
+            if (keep_on_native_close) {
+                // the native surface left the screen, so its input does not keep a stale drag (§8.3)
+                if (WindowStage* dismissed = this->stage(handle))
+                    dismissed->cancel_pointer_capture();
+                if (on_native_closed)
+                    on_native_closed();
+                return;
+            }
             // the teardown is never cancelled, because the window goes away whether or not the task runs (§5.2)
             [[maybe_unused]] const TaskHandle teardown = m_tasks.post([this, handle] {
+                // the transient surfaces anchored to this window go before its stage, so none is orphaned (§5.1)
+                destroy_owned_popups(handle);
                 // the stage is dropped before the native window is, so its surface outlives no layer (§6.1)
                 release_stage(handle);
                 // the window was already torn down by an explicit destroy, which notified on its own (§5.2)

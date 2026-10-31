@@ -1,7 +1,10 @@
 #include "compiler/type_checker.h"
 
 #include <algorithm>
+#include <optional>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 namespace albor::compiler
 {
@@ -45,6 +48,13 @@ namespace albor::compiler
                 // the name decides, so a reference resolves to exactly one declaration (§11.1)
                 if (property.name == name)
                     return property.type;
+            }
+        // a command is a component declaration too, so a child resolves it by name (§18, AD-15)
+        if (commands != nullptr)
+            for (const CheckedCommand& command : *commands) {
+                // the name decides, so a binding resolves to exactly one command (§18)
+                if (command.name == name)
+                    return scalar(TypeKind::Command);
             }
         // the module-scoped values are consulted last, because a component's own declarations shadow them (§11.1)
         if (globals != nullptr)
@@ -91,6 +101,47 @@ namespace albor::compiler
 
     namespace
     {
+        // what one draw argument carries, which the primitive signature fixes (§6.4)
+        enum class DrawArgumentKind
+        {
+            // a coordinate, an extent or a width
+            Number,
+
+            // the final colour a primitive fills or strokes with
+            Color,
+
+            // a text run a primitive shapes
+            Text,
+
+            // an embedded image a primitive composites
+            Image,
+        };
+
+        // the arguments a declared primitive takes, or empty when the vocabulary does not name it (§6.4)
+        std::optional<std::vector<DrawArgumentKind>> draw_primitive_arguments(std::string_view primitive) {
+            // the table is read as data, so a primitive and its arity cannot drift apart (§6.4)
+            if (primitive == "fill_rect")
+                return std::vector<DrawArgumentKind>{DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Color};
+            if (primitive == "stroke_rect")
+                return std::vector<DrawArgumentKind>{DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Color};
+            if (primitive == "fill_rounded_rect")
+                return std::vector<DrawArgumentKind>{DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Color};
+            if (primitive == "stroke_rounded_rect")
+                return std::vector<DrawArgumentKind>{DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Color};
+            if (primitive == "stroke_line")
+                return std::vector<DrawArgumentKind>{DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Color};
+            if (primitive == "fill_circle")
+                return std::vector<DrawArgumentKind>{DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Color};
+            if (primitive == "stroke_circle")
+                return std::vector<DrawArgumentKind>{DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Color};
+            if (primitive == "draw_text")
+                return std::vector<DrawArgumentKind>{DrawArgumentKind::Text, DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Color};
+            if (primitive == "draw_image")
+                return std::vector<DrawArgumentKind>{DrawArgumentKind::Image, DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Number, DrawArgumentKind::Color};
+            // a name outside the vocabulary reports nothing, which the caller turns into a diagnostic (§6.4)
+            return std::nullopt;
+        }
+
         // copy a checked subtree, because a derived body must not disturb the base's own checked tree (§11.1)
         std::shared_ptr<CheckedNode> clone_node(const CheckedNode& source) {
             // the copy takes the shallow member set, because the expressions are shared rather than owned (§11.1)
@@ -177,6 +228,8 @@ namespace albor::compiler
     CheckedFile TypeChecker::check(const SourceFile& file) {
         // the file is assembled as the components are checked, so one mistake costs one component (§11.1)
         CheckedFile checked;
+        // the command usage starts empty, because the pass rebuilds it for this file (§18)
+        m_used_commands.clear();
         // the imports name the manifest modules, which is what a record header path is built from (§11.1, AD-17)
         for (const ImportDeclaration& imported : file.imports)
             if (!imported.module.empty())
@@ -234,6 +287,11 @@ namespace albor::compiler
         publish_component_types(checked.components, inherited);
         // the trees are resolved bases first, because a derived body splices into the checked tree of its base (§11.1)
         resolve_component_trees(file, checked.components);
+        // a command no binding names is reported, because a declaration no consumer shares is dead weight (§18)
+        for (const ComponentDeclaration& declaration : file.components)
+            for (const CommandDeclaration& command : declaration.commands)
+                if (std::find(m_used_commands.begin(), m_used_commands.end(), command.name) == m_used_commands.end())
+                    m_diagnostics.add(Diagnostic::Severity::Warning, command.span, "W0405", "the command '" + command.name + "' is declared but no element binds it");
         // a graph of component elements that instantiates itself is rejected, because it would build forever (§11.1)
         detect_instantiation_cycles(checked.components);
         // an empty children slot is dropped from every tree, because a base used directly shows no content point (§11.1)
@@ -250,6 +308,8 @@ namespace albor::compiler
         m_globals = nullptr;
         // the component index is cleared with the rest, because it names positions in this file alone (§11.1)
         m_component_index.clear();
+        // the command usage is cleared too, because it names declarations in this file alone (§18)
+        m_used_commands.clear();
         // the published element types are cleared with it, because they were rebuilt for this file (§11.1)
         m_file_component_types.clear();
         // the imported interfaces are cleared too, because a later check supplies its own set (§11.1)
@@ -280,6 +340,8 @@ namespace albor::compiler
         // the inherited members come first, because a redeclaration overrides one but never reorders the set (§11.1)
         std::vector<CheckedProperty> properties = base.properties;
         std::vector<CheckedSignal> signals = base.signals;
+        // the base's commands are inherited too, because a derived body may bind the same action (§18)
+        std::vector<CheckedCommand> commands = base.commands;
         // each of the derived component's own properties is laid over the inherited set (§11.1)
         for (const CheckedProperty& own : derived.properties) {
             // the search finds an inherited property of the same name, which a redeclaration overrides (§11.1)
@@ -322,9 +384,31 @@ namespace albor::compiler
             for (const CheckedProperty& property : base.properties)
                 if (own.name == property.name)
                     m_diagnostics.add(Diagnostic::Severity::Error, own.span, "E0401", "'" + own.name + "' is declared more than once in this component");
+        // each of the derived component's own commands joins the inherited set, because a command is shared (§18)
+        for (const CheckedCommand& own : derived.commands) {
+            // an inherited command of the same name is a duplicate, because one name selects one action (§18)
+            const bool duplicate = std::any_of(commands.begin(), commands.end(), [&own](const CheckedCommand& command) { return command.name == own.name; });
+            if (duplicate) {
+                // the collision is reported against the later one, because the base one is what the author meant (§18)
+                m_diagnostics.add(Diagnostic::Severity::Error, own.span, "E0401", "'" + own.name + "' is declared more than once in this component");
+                continue;
+            }
+            // the command is kept, because the merged body binds it by name (§18)
+            commands.push_back(own);
+        }
+        // a derived command that collides with an inherited member duplicates, because a name means one thing (§18)
+        for (const CheckedCommand& own : derived.commands) {
+            for (const CheckedProperty& property : base.properties)
+                if (own.name == property.name)
+                    m_diagnostics.add(Diagnostic::Severity::Error, own.span, "E0401", "'" + own.name + "' is declared more than once in this component");
+            for (const CheckedSignal& signal : base.signals)
+                if (own.name == signal.name)
+                    m_diagnostics.add(Diagnostic::Severity::Error, own.span, "E0401", "'" + own.name + "' is declared more than once in this component");
+        }
         // the merged sets replace the derived component's own, because that is what its body resolves against (§11.1)
         derived.properties = std::move(properties);
         derived.signals = std::move(signals);
+        derived.commands = std::move(commands);
         // the derived defaults are typed against the merged list, because an inherited name may appear in one (§11.1)
         type_own_defaults(component, derived);
         return true;
@@ -332,7 +416,7 @@ namespace albor::compiler
 
     void TypeChecker::type_own_defaults(const ComponentDeclaration& component, CheckedComponent& out) {
         // the scope is the merged list, because an inherited name may appear in a default (§11.1)
-        const Scope scope{.properties = &out.properties, .repeat = nullptr, .globals = m_globals};
+        const Scope scope{.properties = &out.properties, .repeat = nullptr, .globals = m_globals, .commands = &out.commands};
         for (const PropertyDeclaration& declaration : component.properties) {
             // the checked property is found by name, because the merge moved the list out of written order (§11.1)
             CheckedProperty* property = nullptr;
@@ -711,7 +795,7 @@ namespace albor::compiler
                 if (!out.properties.at(index).has_default)
                     continue;
                 // the scope is the whole declaration list, because the default may read any of it (§11.1)
-                const Scope scope{.properties = &out.properties, .repeat = nullptr, .globals = m_globals};
+                const Scope scope{.properties = &out.properties, .repeat = nullptr, .globals = m_globals, .commands = &out.commands};
                 // the dependencies come from the same walk, because a default is a binding (§7.3, AD-04a)
                 const ValueType value_type = type_expression(*out.properties.at(index).default_value, scope, out.properties.at(index).default_dependencies);
                 // the value must match the property, because nothing widens implicitly (§11.1)
@@ -742,6 +826,32 @@ namespace albor::compiler
             }
             // a signal is kept, because a handler resolves against it (§11.1)
             out.signals.push_back(std::move(signal));
+        }
+        // the duplicate check runs over everything the component declares, because a name means one thing (§11.1)
+        for (const CommandDeclaration& declaration : component.commands) {
+            // the declaration is resolved locally, because one mistake must not hide the rest (§18)
+            CheckedCommand command;
+            // the name and the span come straight from the declaration (§18)
+            command.name = declaration.name;
+            command.span = declaration.span;
+            // the label is the one every consumer shows, and the name stands in when none was written (§18)
+            command.label = declaration.label.empty() ? declaration.name : declaration.label;
+            // the name is recorded, because a later cycle report points at a declaration (§18)
+            m_declared.emplace_back(command.name, command.span);
+            // a command shares the component namespace with a property and a signal (§18, §11.1)
+            for (const CheckedProperty& property : out.properties)
+                if (property.name == command.name)
+                    report_duplicate(command.name, command.span);
+            // the same rule applies to a signal of the same name, because a binding could not tell them apart (§18)
+            for (const CheckedSignal& signal : out.signals)
+                if (signal.name == command.name)
+                    report_duplicate(command.name, command.span);
+            // an earlier command of the same name collides for the same reason (§18)
+            for (const CheckedCommand& earlier : out.commands)
+                if (earlier.name == command.name)
+                    report_duplicate(command.name, command.span);
+            // the command is kept, because a child binds it by name (§18, AD-15)
+            out.commands.push_back(std::move(command));
         }
         // the duplicate check runs over everything the component declares, because a name means one thing (§11.1)
         for (std::size_t index = 0; index < out.properties.size(); index++) {
@@ -799,7 +909,7 @@ namespace albor::compiler
 
     void TypeChecker::resolve_tree(const ComponentDeclaration& component, CheckedComponent& out, const CheckedComponent* base) {
         // the scope a reference resolves in is the component's own declarations (§11.1)
-        const Scope scope{.properties = &out.properties, .repeat = nullptr, .globals = m_globals};
+        const Scope scope{.properties = &out.properties, .repeat = nullptr, .globals = m_globals, .commands = &out.commands};
         // a derived component supplies content instead of a root, which fills the base's children slot (§11.1)
         if (!component.base.empty()) {
             // a base that failed its merge has no tree to fill, because the merge pass already reported it (§11.1)
@@ -922,7 +1032,7 @@ namespace albor::compiler
         // a repeat with no body was already reported by the parser (§11.1)
         if (node.repeat_body != nullptr) {
             // the body sees the component declarations and its own item binding (§11.1)
-            const Scope inner{.properties = scope.properties, .repeat = out.get(), .globals = scope.globals};
+            const Scope inner{.properties = scope.properties, .repeat = out.get(), .handler_signal = scope.handler_signal, .function_parameters = scope.function_parameters, .globals = scope.globals, .commands = scope.commands, .in_draw = scope.in_draw};
             // the body is checked against that scope, which is what makes the item resolvable (§11.1)
             out->repeat_body = resolve_node(*node.repeat_body, inner);
         }
@@ -962,8 +1072,14 @@ namespace albor::compiler
             m_diagnostics.add(Diagnostic::Severity::Error, node.span, "E0601", "'" + type.name + "' does not draw; only a canvas writes a draw block");
             return;
         }
+        // a draw block inside a repeat has no row draw body yet, so it is refused rather than silently blank (§6.4)
+        if (scope.repeat != nullptr) {
+            // the problem points at the node, because the author must move it out of the repeat (§6.4)
+            m_diagnostics.add(Diagnostic::Severity::Error, node.span, "E0607", "a canvas inside a repeat is not supported; use a retained chart outside the repeat");
+            return;
+        }
         // the canvas extent is readable inside the block, because a drawing is laid out in it (§6.4)
-        const Scope draw_scope{.properties = scope.properties, .repeat = scope.repeat, .in_draw = true};
+        const Scope draw_scope{.properties = scope.properties, .repeat = scope.repeat, .handler_signal = scope.handler_signal, .function_parameters = scope.function_parameters, .globals = scope.globals, .commands = scope.commands, .in_draw = true};
         // each call resolves on its own, because one mistake must not hide the rest (§6.4)
         for (const DrawCall& call : node.draw_calls) {
             // the call is assembled locally, because the primitive decides its arity (§6.4)
@@ -971,22 +1087,16 @@ namespace albor::compiler
             // the name and the span come straight from the written call (§6.4)
             out_call.primitive = call.primitive;
             out_call.span = call.span;
-            // the vocabulary decides how many arguments the primitive takes (§6.4)
-            std::size_t expected = 0;
-            bool known = true;
-            // the arity is checked here, because a primitive with the wrong count cannot be emitted (§6.4)
-            if (call.primitive == "fill_rect" || call.primitive == "fill_rounded_rect")
-                expected = call.primitive == "fill_rect" ? 5u : 6u;
-            else
-                known = false;
-            if (!known) {
+            // the vocabulary decides how many arguments the primitive takes and what each one is (§6.4)
+            const std::optional<std::vector<DrawArgumentKind>> signature = draw_primitive_arguments(call.primitive);
+            if (!signature.has_value()) {
                 // the problem names the primitive, because the vocabulary is closed (§6.4)
-                m_diagnostics.add(Diagnostic::Severity::Error, call.span, "E0602", "'" + call.primitive + "' is not a drawing primitive; the vocabulary is fill_rect and fill_rounded_rect");
+                m_diagnostics.add(Diagnostic::Severity::Error, call.span, "E0602", "'" + call.primitive + "' is not a drawing primitive");
                 continue;
             }
-            if (call.arguments.size() != expected) {
+            if (call.arguments.size() != signature->size()) {
                 // the problem points at the call, because that is what the author must fix (§6.4)
-                m_diagnostics.add(Diagnostic::Severity::Error, call.span, "E0603", "'" + call.primitive + "' takes " + std::to_string(expected) + " arguments");
+                m_diagnostics.add(Diagnostic::Severity::Error, call.span, "E0603", "'" + call.primitive + "' takes " + std::to_string(signature->size()) + " arguments");
                 continue;
             }
             // each argument is typed in the draw scope, which reads the canvas extent (§6.4)
@@ -995,13 +1105,31 @@ namespace albor::compiler
             for (const ExpressionPtr& argument : call.arguments) {
                 // the argument shares the parsed expression, because the tree owns it (§11.1)
                 SharedExpression shared(argument.get(), [](const Expression*) {});
-                // the colour argument is the only one that is not a number (§6.4)
-                const bool colour = index + 1 == expected;
                 // the type is checked against what the primitive expects, because nothing converts implicitly (§11.1)
                 const ValueType actual = type_expression(*shared, draw_scope, out_call.dependencies);
+                // the expected kind is the entry at this position, which the arity check made addressable (§6.4)
+                const DrawArgumentKind expected = signature->at(index);
                 // a whole number is a coordinate, because a drawing is measured in pixels and no scale applies (§6.4)
-                const bool measure_ok = actual.is(TypeKind::Int) && !colour;
-                if (!actual.is_error() && !measure_ok && !assignable(actual, colour ? scalar(TypeKind::Color) : scalar(TypeKind::Float)))
+                bool accepted = false;
+                switch (expected) {
+                case DrawArgumentKind::Number:
+                    // an integer, a float and a length are all numbers, because a drawing measures in pixels (§6.4)
+                    accepted = actual.is(TypeKind::Int) || actual.is(TypeKind::Length) || assignable(actual, scalar(TypeKind::Float));
+                    break;
+                case DrawArgumentKind::Color:
+                    // the colour is exact, because the paint takes no other value (§6.2)
+                    accepted = assignable(actual, scalar(TypeKind::Color));
+                    break;
+                case DrawArgumentKind::Text:
+                    // a text run is a string, which the engine measures and shapes (§9.1)
+                    accepted = assignable(actual, scalar(TypeKind::String));
+                    break;
+                case DrawArgumentKind::Image:
+                    // an image is an embedded handle, which the asset macro produced (§6.4)
+                    accepted = assignable(actual, scalar(TypeKind::Image));
+                    break;
+                }
+                if (!actual.is_error() && !accepted)
                     arguments_ok = false;
                 // the argument is kept, because the codegen emits it into the body (§6.4)
                 out_call.arguments.push_back(shared);
@@ -1009,7 +1137,7 @@ namespace albor::compiler
             }
             if (!arguments_ok) {
                 // the problem points at the call, because the mismatch is in one of its arguments (§6.4)
-                m_diagnostics.add(Diagnostic::Severity::Error, call.span, "E0604", "'" + call.primitive + "' takes numbers and a final colour");
+                m_diagnostics.add(Diagnostic::Severity::Error, call.span, "E0604", "'" + call.primitive + "' received an argument of the wrong type");
                 continue;
             }
             // the call is kept, because the codegen emits it into the draw body (§6.4)
@@ -1554,6 +1682,11 @@ namespace albor::compiler
             report_unknown_name(reference, reference.name);
             return error_type();
         }
+        // a reference to a declared command is recorded, because an unbound declaration is reported later (§18)
+        if (found->is(TypeKind::Command) && scope.commands != nullptr)
+            for (const CheckedCommand& command : *scope.commands)
+                if (command.name == reference.name && std::find(m_used_commands.begin(), m_used_commands.end(), reference.name) == m_used_commands.end())
+                    m_used_commands.push_back(reference.name);
         // a repeat binding is not a component property, so it registers no dependency (§7.3, AD-04a)
         bool is_component_property = false;
         // the declarations are scanned, because only they are a dependency, and a function scope holds none (§11.1)
@@ -1623,6 +1756,30 @@ namespace albor::compiler
                 // a call to a declared function carries the declared return type (§11.1)
                 return function.return_type;
             }
+        // a draw block can measure a run before placing it, which is what lays declarative text out (§6.4, §9.1)
+        if (scope.in_draw && call.function == "measure_text") {
+            // the measure takes the text and its font size, because those are what the extent depends on (§9.1)
+            if (call.arguments.size() != 2) {
+                // the report names the builtin and the expected count (§6.4)
+                m_diagnostics.add(Diagnostic::Severity::Error, call.location(), "E0605", "measure_text takes the text and a font size");
+                return error_type();
+            }
+            // the text is typed first, so the dependency list follows the written order (§7.3, AD-04a)
+            const ValueType text = type_expression(*call.arguments.at(0), scope, dependencies);
+            // the font size is typed second, for the same reason (§6.4)
+            const ValueType size = type_expression(*call.arguments.at(1), scope, dependencies);
+            // an argument that failed suppresses the rule, because its type is not known (§11.1)
+            if (text.is_error() || size.is_error())
+                return error_type();
+            // the text must be a string and the size a number, because the engine takes nothing else (§9.1)
+            if (!assignable(text, scalar(TypeKind::String)) || !(size.is(TypeKind::Int) || size.is(TypeKind::Length) || assignable(size, scalar(TypeKind::Float)))) {
+                // the problem points at the call, because one of its arguments is wrong (§6.4)
+                m_diagnostics.add(Diagnostic::Severity::Error, call.location(), "E0606", "measure_text takes a string and a font size");
+                return error_type();
+            }
+            // the measured width is a number, which lay the next run beside the first (§6.4)
+            return scalar(TypeKind::Float);
+        }
         // a call the language does not define has no type, which the report names (§11.1)
         if (call.function != "transparentize" && call.function != "alpha" && call.function != "alpha_set") {
             // the report names the name, because that is what the author has to change (§11.1)

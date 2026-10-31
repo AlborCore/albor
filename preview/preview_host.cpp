@@ -10,6 +10,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "compiler/ast.h"
 #include "compiler/codegen/codegen.h"
@@ -31,10 +32,12 @@
 #include "widgets/button.h"
 #include "widgets/canvas.h"
 #include "widgets/checkbox.h"
+#include "widgets/combo_box.h"
 #include "widgets/image.h"
 #include "widgets/label.h"
 #include "widgets/list_box.h"
 #include "widgets/numeric_stepper.h"
+#include "widgets/panel.h"
 #include "widgets/progress_bar.h"
 #include "widgets/radio_button.h"
 #include "widgets/radio_group.h"
@@ -164,6 +167,96 @@ namespace albor::preview
             return static_text(expression, text) ? text : std::string{};
         }
 
+        // the static strings an array carries, which is what a combo box lists (§12.2)
+        std::vector<std::string> strings_of(const compiler::Expression& expression) {
+            // a value that is not an array has no list, so the caller keeps the empty result (§12.2)
+            const auto* array = dynamic_cast<const compiler::ArrayExpression*>(&expression);
+            // the result accumulates in declaration order (§8)
+            std::vector<std::string> values;
+            // a value outside an array is no list at all (§12.2)
+            if (array == nullptr)
+                return values;
+            for (const compiler::ExpressionPtr& element : array->elements) {
+                // a translated option carries its source text, which is the default a preview shows (§9.2)
+                if (const auto* translation = dynamic_cast<const compiler::TranslationExpression*>(element.get())) {
+                    // the source text is the option the preview can show without a catalog (§9.2)
+                    values.push_back(translation->text);
+                    // the element is consumed without reading it as a literal (§12.2)
+                    continue;
+                }
+                // a non string element is not an option the preview can show, so it is skipped (§12.2)
+                const auto* literal = dynamic_cast<const compiler::LiteralExpression*>(element.get());
+                // a literal string is the option text (§8)
+                if (literal != nullptr && literal->kind == compiler::LiteralExpression::Kind::String)
+                    values.push_back(literal->text);
+            }
+            // the static options are returned in display order (§8)
+            return values;
+        }
+
+        // turn a written decoration list into the ranges the field paints (§9.1, §12.2)
+        std::vector<TextDecoration> decorations_of(const compiler::Expression& expression) {
+            // a value outside an array carries no ranges, so the caller keeps the empty result (§9.1)
+            const auto* array = dynamic_cast<const compiler::ArrayExpression*>(&expression);
+            // the result accumulates in declaration order, which is the paint order (§9.1)
+            std::vector<TextDecoration> values;
+            // a value outside an array is no list at all (§9.1)
+            if (array == nullptr)
+                return values;
+            // every element is a record construction, because a decoration has named fields (§9.1)
+            for (const compiler::ExpressionPtr& element : array->elements) {
+                // a non decoration element is skipped, which leaves the preview usable (§12.2)
+                const auto* record = dynamic_cast<const compiler::RecordConstructionExpression*>(element.get());
+                // a record of another type is not a decoration (§9.1)
+                if (record == nullptr || record->type_name != "TextDecoration")
+                    continue;
+                // the range starts at zero until the author names a field (§9.1)
+                TextDecoration decoration;
+                // the fields are read by name, because omission keeps the widget default (§9.1)
+                for (const compiler::ConstructionField& field : record->fields) {
+                    // the field value is static, because a preview evaluates no binding (§12.2)
+                    const auto* literal = dynamic_cast<const compiler::LiteralExpression*>(field.value.get());
+                    // a computed field is left at its default rather than guessed (§12.2)
+                    if (literal == nullptr)
+                        continue;
+                    // the two offsets are written as integers (§9.1)
+                    if (field.name == "start" || field.name == "end") {
+                        // a written integer is parsed without a locale, because it is a byte index (§9.1)
+                        const int index = std::max(0, std::atoi(literal->text.c_str()));
+                        // the offset fills its field (§9.1)
+                        if (field.name == "start")
+                            decoration.start = static_cast<std::size_t>(index);
+                        else
+                            decoration.end = static_cast<std::size_t>(index);
+                    }
+                    // a foreground is a colour literal, which the preview resolves to the same channels (§9.1)
+                    else if (field.name == "foreground" || field.name == "background") {
+                        // a colour literal is six hexadecimal digits (§11.1)
+                        if (literal->kind != compiler::LiteralExpression::Kind::Color || literal->text.size() != 6)
+                            continue;
+                        // the channels are read in order, because the position is the channel (§11.1)
+                        const auto channel = [](std::string_view pair) { return static_cast<float>(std::strtol(std::string(pair).c_str(), nullptr, 16)) / 255.0f; };
+                        // the colour is opaque, which is what the literal carries (§11.1)
+                        const Color colour = Color::rgb(channel(literal->text.substr(0, 2)), channel(literal->text.substr(2, 2)), channel(literal->text.substr(4, 2)));
+                        // the named field receives the colour (§9.1)
+                        if (field.name == "foreground")
+                            decoration.foreground = colour;
+                        else
+                            decoration.background = colour;
+                    }
+                    // an underline is a truth word, which the language writes as one (§9.1)
+                    else if (field.name == "underline" && literal->kind == compiler::LiteralExpression::Kind::Boolean) {
+                        // the word is the written state (§9.1)
+                        decoration.underline = literal->text == "true";
+                    }
+                }
+                // the range joins the list in declaration order (§9.1)
+                values.push_back(decoration);
+            }
+            // the ranges are returned in paint order (§9.1)
+            return values;
+        }
+
         // resolve an embedded asset beside the source, which is where a saved ui file keeps its images (§12.2, §6.4)
         std::filesystem::path asset_path(const compiler::ImageExpression& image, const std::filesystem::path& source_path) {
             // the literal path is locale independent, because it arrived as utf-8 bytes (§6.4)
@@ -190,6 +283,8 @@ namespace albor::preview
                 built = std::make_unique<StackLayout>();
             else if (node.element_type == "Grid")
                 built = std::make_unique<GridLayout>();
+            else if (node.element_type == "Panel" || node.element_type == "Card")
+                built = std::make_unique<Panel>(&engine);
             // a widget takes the engine, and text taking widgets take the text engine too (§9.1, AD-14)
             else if (node.element_type == "Label")
                 built = std::make_unique<Label>(&engine, text_engine);
@@ -211,6 +306,8 @@ namespace albor::preview
                 built = std::make_unique<ListBox>(&engine);
             else if (node.element_type == "TextField")
                 built = std::make_unique<TextField>(&engine, text_engine);
+            else if (node.element_type == "ComboBox")
+                built = std::make_unique<ComboBox>(&engine, text_engine);
             else if (node.element_type == "TabView")
                 built = std::make_unique<TabView>(&engine);
             else if (node.element_type == "Tab")
@@ -251,6 +348,20 @@ namespace albor::preview
                 // a physical length is skipped, because the checker refuses one (§8.2, AD-27)
                 if (physical(assignment))
                     continue;
+                // a text field takes its styled ranges before the other text properties apply (§9.1)
+                if (auto* field = dynamic_cast<TextField*>(built.get()); field != nullptr && assignment.name == "decorations") {
+                    // the static ranges are what the preview paints, because it evaluates no binding (§12.2)
+                    field->set_decorations(decorations_of(*assignment.value));
+                    // the decoration list is consumed, so the text paths below do not see it (§12.2)
+                    continue;
+                }
+                // a combo box takes its options before the selected index is applied (§8)
+                if (auto* combo = dynamic_cast<ComboBox*>(built.get()); combo != nullptr && assignment.name == "items") {
+                    // the static string list is what the preview can show, because a binding is not evaluated (§12.2)
+                    combo->set_items(strings_of(*assignment.value));
+                    // the option list is consumed, so the numeric paths below do not see it (§12.2)
+                    continue;
+                }
                 // a written number is read once, because every numeric property goes through it (§12.2)
                 const auto* numeric = dynamic_cast<const compiler::LiteralExpression*>(assignment.value.get());
                 // the spacing a column or row was written with, which is what the layout metrics hold (§8.2)
@@ -270,6 +381,9 @@ namespace albor::preview
                     // a radio group takes its gap between choices (§8.2)
                     else if (auto* group = dynamic_cast<RadioGroup*>(built.get()))
                         group->set_spacing(static_cast<float>(number_of(*numeric)));
+                    // a panel takes the gap between its stacked children (§8.2)
+                    else if (auto* panel = dynamic_cast<Panel*>(built.get()))
+                        panel->set_spacing(static_cast<float>(number_of(*numeric)));
                 }
                 // the padding a container was written with, which wraps its children (§8.2)
                 else if (assignment.name == "padding") {
@@ -282,6 +396,9 @@ namespace albor::preview
                     // a column takes its padding as an inset around the children (§8.2)
                     else if (auto* column = dynamic_cast<ColumnLayout*>(built.get()))
                         column->set_padding(static_cast<float>(number_of(*numeric)));
+                    // a panel takes the inset between its face and its children (§8.2)
+                    else if (auto* panel = dynamic_cast<Panel*>(built.get()))
+                        panel->set_padding(static_cast<float>(number_of(*numeric)));
                 }
                 // a written run, which a label shows and a button carries (§9.1, §8)
                 else if (assignment.name == "text") {
@@ -291,6 +408,17 @@ namespace albor::preview
                     // a button carries the written run as its label (§8)
                     else if (auto* button = dynamic_cast<Button*>(built.get()))
                         button->set_label(text_of(*assignment.value));
+                }
+                // a button icon and its square, which the preview resolves beside the source (§6.4)
+                else if (assignment.name == "icon" && dynamic_cast<Button*>(built.get()) != nullptr) {
+                    // only a static embedded asset can be resolved, because the preview evaluates no binding (§12.2)
+                    if (const compiler::ImageExpression* embedded = compiler::static_image(*assignment.value); embedded != nullptr)
+                        static_cast<Button*>(built.get())->set_icon(resources::ImageRegistry::load_file(asset_path(*embedded, source_path)));
+                }
+                else if (assignment.name == "icon_size" && numeric != nullptr) {
+                    // the button is the widget that carries the icon square (§8.2)
+                    if (auto* button = dynamic_cast<Button*>(built.get()))
+                        button->set_icon_size(static_cast<float>(number_of(*numeric)));
                 }
                 // the size a run was written at, which a label and a field both carry (§9.1)
                 else if (assignment.name == "font_size" && numeric != nullptr) {
@@ -363,6 +491,8 @@ namespace albor::preview
                         tabs->set_selected(static_cast<int>(number));
                     else if (auto* group = dynamic_cast<RadioGroup*>(built.get()))
                         group->set_selected(static_cast<int>(number));
+                    else if (auto* combo = dynamic_cast<ComboBox*>(built.get()))
+                        combo->set_selected(static_cast<int>(number));
                 }
                 // a vertical strip or group, which a preview shows as the author wrote it (§8)
                 else if (assignment.name == "vertical" && numeric != nullptr) {
@@ -387,6 +517,8 @@ namespace albor::preview
                         disabled_radio->set_disabled(numeric->text == "true");
                     else if (auto* disabled_stepper = dynamic_cast<NumericStepper*>(built.get()))
                         disabled_stepper->set_disabled(numeric->text == "true");
+                    else if (auto* disabled_combo = dynamic_cast<ComboBox*>(built.get()))
+                        disabled_combo->set_disabled(numeric->text == "true");
                 }
                 // a checked state, which a preview shows as the author wrote it (§8)
                 else if (assignment.name == "checked" && numeric != nullptr) {
@@ -403,6 +535,15 @@ namespace albor::preview
                             field->set_value(text_of(*assignment.value));
                         else
                             field->set_placeholder(text_of(*assignment.value));
+                    }
+                    // a combo box carries the hint and the selected value in the same declarative form (§8)
+                    else if (auto* combo = dynamic_cast<ComboBox*>(built.get()); combo != nullptr && assignment.name == "placeholder") {
+                        // the hint is what an empty combo box shows (§8)
+                        combo->set_placeholder(text_of(*assignment.value));
+                    }
+                    else if (auto* labelled = dynamic_cast<ComboBox*>(built.get()); labelled != nullptr && assignment.name == "label") {
+                        // the label is the stable accessible name, not the current value (§10.1)
+                        labelled->set_label(text_of(*assignment.value));
                     }
                 }
                 // a read only state, which a preview shows as written (§8)
@@ -476,6 +617,8 @@ namespace albor::preview
         }
         // the generator runs too, because a diagnostic may come only from codegen (§11.3)
         compiler::CodeGenerator generator(diagnostics);
+        // the catalog is what tells the generator a native record is generatable (§11.2, AD-17)
+        generator.set_catalog(&catalog);
         // a saved source resolves its assets beside itself, which is what the build does (§12.2, §6.4)
         if (!source_path.empty())
             generator.set_source_path(source_path);

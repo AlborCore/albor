@@ -7,7 +7,7 @@ file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 add_library(albor-runtime STATIC ${CPP_SOURCES})
 
 # the reactive types are header visible, because every component declares properties of them (§3.5)
-target_include_directories(albor-runtime PUBLIC ${ALBOR_SOURCE_DIR})
+target_include_directories(albor-runtime PUBLIC $<BUILD_INTERFACE:${ALBOR_SOURCE_DIR}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_compile_features(albor-runtime PUBLIC cxx_std_23)
 
 # the reactive module needs the shared value types and nothing else, so it sits below application (§3.2)

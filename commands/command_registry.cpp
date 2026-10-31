@@ -118,18 +118,41 @@ namespace albor
 
     UndoStack& CommandRegistry::undo_stack() { return m_undo_stack; }
 
-    UndoCommand& CommandRegistry::undo_command() {
-        // the command is declared once, because a second one would publish a second answer (§18.4)
-        if (!m_undo_command.has_value())
-            m_undo_command.emplace(m_undo_stack);
+    UndoCommand& CommandRegistry::undo_command() { return declare_undo(); }
+
+    UndoCommand& CommandRegistry::declare_undo(std::string explicit_id, std::string label) {
+        // a command already declared is handed back unchanged, because one history has one reversal (§18.4)
+        if (m_undo_command.has_value())
+            return *m_undo_command;
+        // the command is built with the author identity, which is what a menu and a selector present (§18.1, AD-11)
+        m_undo_command.emplace(m_undo_stack, std::move(explicit_id), std::move(label));
+        // the command joins the index, so command.list reaches it under the id the author assigned (§18.1)
+        join(m_undo_command->command());
         return *m_undo_command;
     }
 
-    RedoCommand& CommandRegistry::redo_command() {
-        // the command is declared once, because a second one would publish a second answer (§18.4)
-        if (!m_redo_command.has_value())
-            m_redo_command.emplace(m_undo_stack);
+    RedoCommand& CommandRegistry::redo_command() { return declare_redo(); }
+
+    RedoCommand& CommandRegistry::declare_redo(std::string explicit_id, std::string label) {
+        // a command already declared is handed back unchanged, because one history has one replay (§18.4)
+        if (m_redo_command.has_value())
+            return *m_redo_command;
+        // the command is built with the author identity, which is what a menu and a selector present (§18.1, AD-11)
+        m_redo_command.emplace(m_undo_stack, std::move(explicit_id), std::move(label));
+        // the command joins the index, so command.list reaches it under the id the author assigned (§18.1)
+        join(m_redo_command->command());
         return *m_redo_command;
+    }
+
+    bool CommandRegistry::bind_shortcut(Shortcut shortcut, std::string_view explicit_id) {
+        // the author assigned id is the selector, because the runtime identity is never one (§18.1, AD-11)
+        Command* command = find(explicit_id);
+        // an id no command carries binds nothing, which a refusal states rather than inventing a target (§18.5)
+        if (command == nullptr)
+            return false;
+        // the accelerator routes to the resolved command, which is the same object a button binds (§18.5)
+        m_shortcuts.bind(shortcut, command->id());
+        return true;
     }
 
     ShortcutTable& CommandRegistry::shortcuts() { return m_shortcuts; }

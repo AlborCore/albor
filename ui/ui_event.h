@@ -300,6 +300,9 @@ namespace albor
 
         // whether a handler claimed the event, which stops the walk at this node (§8.3)
         bool handled = false;
+
+        // how many clicks the press belongs to, where a double click carries two and a triple carries three (§8.3)
+        int click_count = 1;
     };
 
     // the identifier of a UI node inside one tree, where zero names no node

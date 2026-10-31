@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "commands/command.h"
+#include "render/image_resource.h"
 #include "text/text_engine.h"
 
 namespace albor
@@ -35,10 +36,16 @@ namespace albor
         }
         // the minimum comes from the theme when one is installed, so a sizing decision is configured in one place (§8.2)
         const ControlMetrics& metrics = theme() != nullptr ? theme()->metrics() : default_metrics();
-        // a padded control insets its label on both sides, which is what a native push control measures to (§8.2)
-        const float padding = m_label_layout.empty() ? 0.0f : 2.0f * metrics.button_padding_horizontal;
-        // a push control stays grabbable, so the label plus its padding drives the plate (§8.2)
-        Size content{.width = std::max(m_label_layout.size.width + padding, metrics.button_minimum.width), .height = std::max(m_label_layout.size.height, metrics.button_minimum.height)};
+        // an icon sits in its own square, so the label is not the only content the plate sizes by (§6.4, §8.2)
+        const bool has_icon = m_icon != nullptr;
+        // the icon and label are separated when both are present, because two glyphs must not touch (§8.2)
+        const float icon_gap = has_icon && !m_label_layout.empty() ? 6.0f : 0.0f;
+        // the content width is the icon, the gap and the label, or just the label on the text-only path (§8.2)
+        const float content_width = (has_icon ? resolved_icon_size() : 0.0f) + icon_gap + m_label_layout.size.width;
+        // a padded control insets its content on both sides, which is what a native push control measures to (§8.2)
+        const float padding = (has_icon || !m_label_layout.empty()) ? 2.0f * metrics.button_padding_horizontal : 0.0f;
+        // a push control stays grabbable, so its content plus padding drives the plate (§8.2)
+        Size content{.width = std::max(content_width + padding, metrics.button_minimum.width), .height = std::max(std::max(m_label_layout.size.height, has_icon ? resolved_icon_size() : 0.0f), metrics.button_minimum.height)};
         // the children are measured too, because a widget is a component and they are part of its content (§8.1, §8.2)
         Size children{};
         UiNode::measure(constraints, children);
@@ -58,15 +65,40 @@ namespace albor
     }
 
     void Button::paint_content(RenderContext& context) {
-        // an empty label draws no run, because a button may carry no text at all (§6.2)
+        // a text-only button keeps the original centred label path, so its output is byte compatible (§6.2)
+        if (m_icon == nullptr) {
+            // an empty label draws no run, because a button may carry no text at all (§6.2)
+            if (m_label_layout.empty())
+                return;
+            // the label colour resolves by state, so a hover and a press read differently without a second literal (§6.1)
+            const Color label_color = resolve(label_colors(), Color{0.96f, 0.97f, 0.99f, 1.0f});
+            // the run is centred on the plate as a box, where every line places its baseline (§6.1, §9.1)
+            const Point origin{.x = bounds().x + (bounds().width - m_label_layout.size.width) * 0.5f, .y = bounds().y + (bounds().height - m_label_layout.size.height) * 0.5f};
+            // the run is recorded over the plate, which is the last thing the frame draws for this button (§6.1)
+            context.draw_text(m_label_layout, origin, {.fill = label_color});
+            return;
+        }
+        // the icon square is the first half of the content group, which the plate centres (§6.4, §8.2)
+        const float side = resolved_icon_size();
+        // the gap sits between the icon and the label, while an icon-only button has no gap (§8.2)
+        const float gap = m_label_layout.empty() ? 0.0f : 6.0f;
+        // the group is what the plate centres, because an icon-only button centres its square alone (§8.2)
+        const float group_width = side + gap + m_label_layout.size.width;
+        // the group starts at the left edge the centred extent leaves (§8.2)
+        const float group_x = bounds().x + (bounds().width - group_width) * 0.5f;
+        // the icon hangs at the content's vertical centre, which is where a push control reads (§8.2)
+        const Rect icon_rect = Rect::from_origin_size(Point{.x = group_x, .y = bounds().y + (bounds().height - side) * 0.5f}, Size{.width = side, .height = side});
+        // the image is recorded under the plate's content, which the renderer samples into the square (§6.4)
+        context.draw_image(m_icon, icon_rect, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+        // an icon-only button has no label to draw after the square (§8.2)
         if (m_label_layout.empty())
             return;
-        // the label colour resolves by state, so a hover and a press read differently without a second literal (§6.1)
+        // the label colour resolves by state, like the text-only path (§6.1)
         const Color label_color = resolve(label_colors(), Color{0.96f, 0.97f, 0.99f, 1.0f});
-        // the run is centred on the plate as a box, where every line places its baseline (§6.1, §9.1)
-        const Point origin{.x = bounds().x + (bounds().width - m_label_layout.size.width) * 0.5f, .y = bounds().y + (bounds().height - m_label_layout.size.height) * 0.5f};
-        // the run is recorded over the plate, which is the last thing the frame draws for this button (§6.1)
-        context.draw_text(m_label_layout, origin, {.fill = label_color});
+        // the label sits to the right of the icon, centred on the plate height (§8.2)
+        const Point label_origin{.x = group_x + side + gap, .y = bounds().y + (bounds().height - m_label_layout.size.height) * 0.5f};
+        // the run is recorded after the icon, which is the visible order of the group (§6.1)
+        context.draw_text(m_label_layout, label_origin, {.fill = label_color});
     }
 
     bool Button::hit_test(Point logical_point) const {
@@ -126,12 +158,14 @@ namespace albor
         SemanticNode node{SemanticRole::Button};
         // the author assigned id travels with the node, because automation selects by it and by nothing else (AD-11)
         node.set_explicit_id(identity().explicit_id);
-        // the accessible name is the label, because that is what a screen reader must speak (§10.1)
-        node.set_name(m_label);
+        // the name is the label, then the author id, then the role word for an icon-only control (§10.1, AD-11)
+        node.set_name(m_label.empty() ? (identity().explicit_id.empty() ? std::string("Button") : identity().explicit_id) : m_label);
         // the bounds travel with the node, because an adapter places the announcement where it was drawn (§10.1)
         node.set_bounds(bounds());
         // a disabled button reports the disabled state, which is what refuses activation (§10.1)
         node.set_disabled(disabled());
+        // the focus flag is part of the announced state, so an adapter can follow the ring (§10.1)
+        node.set_focused(focused());
         // a button is not checkable, so the check state stays not checkable (§10.1)
         node.set_check(CheckState::NotCheckable);
         // the activate action runs the same handler a press does, and its identifier is discarded because a widget names actions by label (§10.1) the action body carries no disabled guard, because SemanticNode::invoke refuses every action while the node it belongs to is disabled, which is where that rule belongs (§10.1)
@@ -159,6 +193,46 @@ namespace albor
     const std::string& Button::label() const {
         // the label is what the semantic node announces as the name (§10.1)
         return m_label;
+    }
+
+    void Button::set_icon(std::shared_ptr<const ImageResource> icon) {
+        // an unchanged handle redraws nothing, because the button shows the same picture (§6.4)
+        if (m_icon == icon)
+            return;
+        // the handle is stored first, so the invalidation walks a button that already carries it (§6.4)
+        m_icon = std::move(icon);
+        // an icon changes the content extent, so the layout passes must run again (§8.2)
+        invalidate_layout();
+    }
+
+    const std::shared_ptr<const ImageResource>& Button::icon() const {
+        // the retained handle is what the paint records (§6.4)
+        return m_icon;
+    }
+
+    void Button::set_icon_size(float size) {
+        // a negative size is no size at all, so it follows the default like zero (§8.2)
+        const float clamped = std::max(0.0f, size);
+        // an unchanged size remeasures nothing, because the icon square did not move (§8.2)
+        if (m_icon_size == clamped)
+            return;
+        // the size is stored first, so the invalidation walks a button that already carries it (§8.2)
+        m_icon_size = clamped;
+        // a new icon square changes the content extent, so the layout passes must run again (§8.2)
+        invalidate_layout();
+    }
+
+    float Button::icon_size() const {
+        // the resolved square is the explicit size or the compact default (§8.2)
+        return resolved_icon_size();
+    }
+
+    float Button::resolved_icon_size() const {
+        // an explicit size wins, because the author named it for this button (§8.2)
+        if (m_icon_size > 0.0f)
+            return m_icon_size;
+        // the default square is the tool control icon rhythm, which keeps icon-only buttons compact (§8.2)
+        return 16.0f;
     }
 
     void Button::set_on_click(std::function<void()> handler) {

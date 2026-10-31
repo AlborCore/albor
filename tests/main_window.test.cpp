@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include "application/application.h"
+#include "application/window_stage.h"
 #include "core/dev_hook.h"
 #include "layout/column_layout.h"
 #include "platform/headless/headless_event_loop.h"
@@ -50,6 +51,48 @@ namespace
     albor::RootBuilder empty_form() {
         return [](albor::BindingEngine&, albor::TextEngine&) { return std::make_unique<albor::ColumnLayout>(); };
     }
+    // the leaf that closes its own popup on a press, which models a list row committing a choice (§8.3, §5.1)
+    class PopupClosingLeaf final : public albor::UiNode
+    {
+    public:
+        // build the leaf over the application and handle it closes, which the test reads back (§5.1)
+        PopupClosingLeaf(albor::Application& application, albor::WindowHandle& popup, int& deliveries) :
+            m_application(application), m_popup(popup), m_deliveries(deliveries) {}
+
+        void measure(const albor::SizeConstraints& constraints, albor::Size& out_size) override {
+            // the leaf fills the offer, because the extent is not what this suite is about (§8.2)
+            out_size = constraints.constrain(albor::Size{10.0f, 10.0f});
+            m_measured_size = out_size;
+        }
+
+        [[nodiscard]] bool hit_test(albor::Point) const override {
+            // every press lands on the leaf, which is the popup row under test (§8.3)
+            return true;
+        }
+
+        void dispatch_event(albor::Event& event) override {
+            // only a press commits, because that is the row callback the list raises (§8.3)
+            if (event.kind != albor::EventKind::PointerDown)
+                return;
+            // the press is counted before the hide, so the test sees it exactly once (§8.3)
+            m_deliveries++;
+            // the row claims the press, which is what arms the capture before the hide (§8.3)
+            event.handled = true;
+            // the popup leaves the screen from inside its own dispatch, which is the regression (§5.1)
+            m_application.close_popup(m_popup);
+        }
+
+    private:
+        // the application that owns the transient surface (§5.1)
+        albor::Application& m_application;
+
+        // the handles the leaf closes, which the test keeps alive across the dispatch (§5.1)
+        albor::WindowHandle& m_popup;
+
+        // how many presses reached the leaf, which proves the next one was not swallowed (§8.3)
+        int& m_deliveries;
+    };
+
     // the leaf that schedules one repeating animation the first time it is measured (§7.3)
     class AnimatedLeaf final : public albor::UiNode
     {
@@ -617,6 +660,55 @@ TEST(MainWindow, AWindowAddedWhileTheLoopRunsJoinsTheRun) {
     EXPECT_EQ(application.window_count(), 0u);
 }
 
+TEST(MainWindow, APopupPressThatClosesTheSurfaceDoesNotKeepTheNextPress) {
+    // arrange a main window and a popup whose own press hides it (§5.1, §8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    const albor::WindowHandle handle = application.create_window(albor::WindowOptions{}, empty_form());
+    ASSERT_TRUE(handle.valid());
+    albor::WindowHandle popup;
+    int deliveries = 0;
+    albor::RootBuilder builder = [&application, &popup, &deliveries](albor::BindingEngine&, albor::TextEngine&) { return std::make_unique<PopupClosingLeaf>(application, popup, deliveries); };
+    popup = application.open_popup(*application.root(handle), albor::Rect::from_origin_size(albor::Point{10.0f, 20.0f}, albor::Size{120.0f, 30.0f}), albor::Size{240.0f, 120.0f}, std::move(builder), albor::Color::rgb(0.1f, 0.1f, 0.1f), [] {});
+    ASSERT_TRUE(popup.valid());
+    albor::WindowStage* stage = application.stage(popup);
+    ASSERT_NE(stage, nullptr);
+    // act press the popup, which commits and hides the surface from inside its dispatch (§8.3)
+    albor::Event press{.kind = albor::EventKind::PointerDown, .position = albor::Point{5.0f, 5.0f}};
+    stage->deliver(press);
+    // assert the press closed the surface and did not leave a capture behind (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_EQ(deliveries, 1);
+    EXPECT_FALSE(application.window(popup)->visible());
+    // act reopen and press again, which a stale capture would swallow (§8.3)
+    application.show_popup(popup);
+    albor::Event second{.kind = albor::EventKind::PointerDown, .position = albor::Point{6.0f, 6.0f}};
+    stage->deliver(second);
+    // assert the reopened surface accepted the second press (§8.3)
+    EXPECT_TRUE(second.handled);
+    EXPECT_EQ(deliveries, 2);
+    // cleanup the popup and the owner (§5.1)
+    application.destroy_popup(popup);
+    EXPECT_TRUE(application.destroy_window(handle));
+}
+
+TEST(MainWindow, AStalePortableParentIsRefusedRatherThanMadeTopLevel) {
+    // arrange a window whose owner is destroyed before the child is requested (§5.1)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    const albor::WindowHandle owner = application.create_window(albor::WindowOptions{}, empty_form());
+    ASSERT_TRUE(owner.valid());
+    ASSERT_TRUE(application.destroy_window(owner));
+    albor::WindowOptions child;
+    child.title = "stale-parent-child";
+    child.parent = owner;
+    // act create the child through the portable parent handle, which now names nothing (§5.1)
+    const albor::WindowHandle stale = application.create_window(child, empty_form());
+    // assert the orphan was refused instead of being created as a top level window (§5.1)
+    EXPECT_FALSE(stale.valid());
+    EXPECT_EQ(application.window_count(), 0u);
+}
+
 TEST(MainWindow, AWindowClosedDuringAFrameIsTornDownAfterThePass) {
     // arrange the factories and one main window whose tree closes itself on its first measure (§4.2, §6.1)
     InstalledScope scope;
@@ -631,4 +723,79 @@ TEST(MainWindow, AWindowClosedDuringAFrameIsTornDownAfterThePass) {
     EXPECT_EQ(application.window(self_closing), nullptr);
     EXPECT_EQ(application.window_count(), 0u);
     EXPECT_EQ(application.stage(self_closing), nullptr);
+}
+
+TEST(MainWindow, ANativePopupOpensOverItsOwnerAndReopens) {
+    // arrange a main window whose root anchors a native popup (§5.1)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    const albor::WindowHandle handle = application.create_window(albor::WindowOptions{}, empty_form());
+    ASSERT_TRUE(handle.valid());
+    ASSERT_NE(application.root(handle), nullptr);
+    int dismissals = 0;
+    // act open a transient surface with its own empty tree (§5.1)
+    const albor::WindowHandle popup = application.open_popup(*application.root(handle), albor::Rect::from_origin_size(albor::Point{10.0f, 20.0f}, albor::Size{120.0f, 30.0f}), albor::Size{240.0f, 120.0f}, [](albor::BindingEngine&, albor::TextEngine&) { return std::make_unique<albor::ColumnLayout>(); }, albor::Color::rgb(0.1f, 0.1f, 0.1f), [&dismissals] { dismissals++; });
+    ASSERT_TRUE(popup.valid());
+    ASSERT_NE(application.window(popup), nullptr);
+    // assert the surface is a popup over the owner, sized and anchored as the control asked (§5.1)
+    EXPECT_EQ(application.window(popup)->options().role, albor::WindowRole::Popup);
+    EXPECT_EQ(application.window(popup)->options().parent, handle);
+    EXPECT_EQ(application.window(popup)->options().native_parent, application.window(handle)->native_window_handle());
+    EXPECT_FLOAT_EQ(application.window(popup)->options().size.width, 240.0f);
+    EXPECT_FLOAT_EQ(application.window(popup)->options().size.height, 120.0f);
+    EXPECT_FLOAT_EQ(application.window(popup)->options().anchor.x, 10.0f);
+    EXPECT_FLOAT_EQ(application.window(popup)->options().anchor.y, 20.0f);
+    EXPECT_TRUE(application.window(popup)->visible());
+    EXPECT_EQ(application.window_count(), 2u);
+    // act hide and show the retained surface, which is the cheap reopen path (§5.1)
+    application.close_popup(popup);
+    EXPECT_FALSE(application.window(popup)->visible());
+    EXPECT_EQ(dismissals, 0);
+    application.show_popup(popup);
+    EXPECT_TRUE(application.window(popup)->visible());
+    // act report a native dismissal, which hides the surface but keeps its tree (§5.1)
+    application.window(popup)->on_platform_closed();
+    EXPECT_EQ(dismissals, 1);
+    EXPECT_NE(application.window(popup), nullptr);
+    EXPECT_FALSE(application.window(popup)->visible());
+    // assert the retained surface is still reopenable after the dismissal (§5.1)
+    application.show_popup(popup);
+    EXPECT_TRUE(application.window(popup)->visible());
+    // cleanup the popup and owner are both released (§5.1)
+    application.destroy_popup(popup);
+    EXPECT_EQ(application.window(popup), nullptr);
+    EXPECT_TRUE(application.destroy_window(handle));
+    EXPECT_EQ(application.window_count(), 0u);
+}
+
+TEST(MainWindow, DestroyingAWindowDestroysThePopupsItOwns) {
+    // arrange a main window and a native popup anchored inside it (§5.1)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    const albor::WindowHandle handle = application.create_window(albor::WindowOptions{}, empty_form());
+    ASSERT_TRUE(handle.valid());
+    const albor::WindowHandle popup = application.open_popup(*application.root(handle), albor::Rect{}, albor::Size{100.0f, 80.0f}, [](albor::BindingEngine&, albor::TextEngine&) { return std::make_unique<albor::ColumnLayout>(); }, albor::Color::rgb(0.1f, 0.1f, 0.1f), [] {});
+    ASSERT_TRUE(popup.valid());
+    ASSERT_EQ(application.window_count(), 2u);
+    // act destroy the owner, which must not leave the transient surface behind (§5.1)
+    EXPECT_TRUE(application.destroy_window(handle));
+    // assert the popup is gone with its owner, because a transient surface has no life of its own (§5.1)
+    EXPECT_EQ(application.window(popup), nullptr);
+    EXPECT_EQ(application.window_count(), 0u);
+}
+
+TEST(MainWindow, ShutdownClosesAnOpenPopupBeforeTheMainTree) {
+    // arrange a local application with a popup still open, and a dismissal observer (§5.1)
+    InstalledScope scope;
+    int dismissals = 0;
+    {
+        albor::Application application;
+        const albor::WindowHandle handle = application.create_window(albor::WindowOptions{}, empty_form());
+        ASSERT_TRUE(handle.valid());
+        const albor::WindowHandle popup = application.open_popup(*application.root(handle), albor::Rect{}, albor::Size{100.0f, 80.0f}, [](albor::BindingEngine&, albor::TextEngine&) { return std::make_unique<albor::ColumnLayout>(); }, albor::Color::rgb(0.1f, 0.1f, 0.1f), [&dismissals] { dismissals++; });
+        ASSERT_TRUE(popup.valid());
+        // act the local application is destroyed with the popup still open (§5.1)
+    }
+    // assert the shutdown was quiet, because its own teardown is not an outside dismissal (§5.1)
+    EXPECT_EQ(dismissals, 0);
 }

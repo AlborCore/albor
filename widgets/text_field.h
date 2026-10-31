@@ -12,11 +12,29 @@
 #include "core/clipboard.h"
 #include "text/text_engine.h"
 #include "ui/caret_target.h"
-#include "ui/focus_target.h"
 #include "widgets/widget.h"
 
 namespace albor
 {
+    // one styled byte range over a field's shaped run, which is what syntax highlighting and diagnostics paint (§9.1)
+    struct TextDecoration
+    {
+        // the first byte the decoration covers, which is inclusive (§9.1)
+        std::size_t start = 0;
+
+        // the byte the decoration stops before, which is the half open end (§9.1)
+        std::size_t end = 0;
+
+        // the colour the covered glyphs take, where a transparent colour keeps the field colour (§9.1)
+        Color foreground = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f);
+
+        // the band under the covered glyphs, where a transparent colour draws no band (§9.1)
+        Color background = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f);
+
+        // whether the range carries a one pixel underline, which is what a diagnostic uses (§9.1)
+        bool underline = false;
+    };
+
     // the widget that edits one or more lines of text, which is what a form field or a search box is (§8)
     class TextField final : public Widget, public CaretTarget, public TextInputTarget
     {
@@ -195,6 +213,15 @@ namespace albor
         // move the offset to an absolute place, clamped into the range, which a programmatic scroll is (§8.2)
         void scroll_to(float offset);
 
+        // replace the styled ranges over the shaped value, which syntax highlighting and diagnostics paint (§9.1)
+        void set_decorations(std::vector<TextDecoration> decorations);
+
+        // hand out the styled ranges the field paints (§9.1)
+        [[nodiscard]] const std::vector<TextDecoration>& decorations() const;
+
+        // remove every styled range, which restores the single colour path (§9.1)
+        void clear_decorations();
+
     private:
         // replace the bytes of a span with the text given, which is what every mutation goes through to signal once (§8)
         void replace_range(std::size_t start, std::size_t end, std::string_view text);
@@ -216,6 +243,18 @@ namespace albor
 
         // move the caret without collapsing the selection, which is what a drag or a shift key does (§8.3)
         void extend_caret(std::size_t byte);
+
+        // select the word under a byte, which is what a double click does (§8.3)
+        void select_word_at(std::size_t byte, bool extend);
+
+        // select the line under a byte, which is what a triple click does (§8.3)
+        void select_line_at(std::size_t byte, bool extend);
+
+        // publish a range while keeping the anchor, which is what a shift double click extends (§8.3)
+        void select_range(std::size_t first, std::size_t last, bool extend);
+
+        // report whether a byte starts a line break, which selects the line rather than the word (§8.3)
+        [[nodiscard]] bool is_line_break_byte(std::size_t byte) const;
 
         // hand out the byte one caret step lands before the given one, which crosses a line break (§9.1)
         [[nodiscard]] std::size_t step_backward_byte(std::size_t byte) const;
@@ -274,6 +313,18 @@ namespace albor
         // paint the selection over the value, which the value paints over (§6.1)
         void paint_selection(RenderContext& context);
 
+        // paint the background bands of the styled ranges, which sit under the value (§9.1)
+        void paint_decoration_backgrounds(RenderContext& context, const TextLayout& displayed, Point origin, float draw_y) const;
+
+        // paint the foreground glyphs of the styled ranges over the base run (§9.1)
+        void paint_decoration_foregrounds(RenderContext& context, const TextLayout& displayed, Point origin, float draw_y) const;
+
+        // paint the underlines of the styled ranges, which mark a diagnostic or a spelling error (§9.1)
+        void paint_decoration_underlines(RenderContext& context, const TextLayout& displayed, Point origin, float draw_y) const;
+
+        // build the glyph subset one range covers, which keeps the range on the field's existing shaped run (§9.1)
+        [[nodiscard]] TextLayout decoration_layout(const TextLayout& displayed, const TextDecoration& decoration) const;
+
         // paint the underline a composition marks its provisional string with (§8.3)
         void paint_mark_underline(RenderContext& context);
 
@@ -309,6 +360,9 @@ namespace albor
 
         // the run the value was measured at (§9.1)
         TextLayout m_layout;
+
+        // the styled ranges over the value, which paint over the shaped run without reshaping it (§9.1)
+        std::vector<TextDecoration> m_decorations;
 
         // the run the placeholder was measured at, which an empty field draws instead (§9.1)
         TextLayout m_placeholder_layout;

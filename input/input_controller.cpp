@@ -122,9 +122,14 @@ namespace albor
             // a second press while a drag is alive interrupts nothing, so it is dropped (§8.3)
             if (m_capture != nullptr)
                 return;
+            // the sequence is read before dispatch, because a press may close the surface it lands on (§8.3)
+            const std::uint64_t generation = m_capture_generation;
             InputDispatcher::dispatch(*m_root, event);
             // only a claimed press moves the caret, because an unclaimed one is empty space (§8.3)
             if (!event.handled)
+                return;
+            // a hide during dispatch already ended the drag, so it must not be armed again (§8.3)
+            if (generation != m_capture_generation)
                 return;
             // the deepest focusable node under the press takes the caret (§8.3)
             UiNode* target = focusable_under(*m_root, event.position);
@@ -154,7 +159,16 @@ namespace albor
     void InputController::deliver_key(Event& event) {
         // the escape key cancels a drag before anything else, which is the abort path of §8.3
         if (event.kind == EventKind::KeyDown && event.key == Key::Escape) {
-            m_capture = nullptr;
+            // a live drag is the first escape target, because it owns the pointer until it aborts (§8.3)
+            if (m_capture != nullptr) {
+                m_capture = nullptr;
+                event.handled = true;
+                return;
+            }
+            // the focused control sees escape first, because a popup must close before focus is cleared (§8.3)
+            if (UiNode* focused = m_focus.focused())
+                InputDispatcher::dispatch_to_focused(*m_root, event, focused);
+            // escape is consumed even when the control did not use it, which keeps it from reaching the dialog (§8.3)
             event.handled = true;
             return;
         }
@@ -212,6 +226,13 @@ namespace albor
     bool InputController::capturing() const {
         // a capture exists exactly while a drag is alive (§8.3)
         return m_capture != nullptr;
+    }
+
+    void InputController::cancel_pointer_capture() {
+        // the next dispatch must not arm a surface that went away, so the sequence advances with the drop (§8.3)
+        m_capture_generation++;
+        // a hidden window owns no drag, so the stale node is cleared with it (§8.3)
+        m_capture = nullptr;
     }
 
     void InputController::set_command_registry(CommandRegistry* registry) {

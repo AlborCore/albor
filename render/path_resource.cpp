@@ -30,6 +30,12 @@ namespace albor
             // a move and a line each take the next point (§6.4)
             if (verb == PathVerb::MoveTo || verb == PathVerb::LineTo)
                 demand++;
+            // a quadratic consumes one control point and one end point (§6.4)
+            else if (verb == PathVerb::QuadraticTo)
+                demand += 2;
+            // a cubic consumes two control points and one end point (§6.4)
+            else if (verb == PathVerb::CubicTo)
+                demand += 3;
             // a close takes no point (§6.4)
             else if (verb == PathVerb::Close)
                 continue;

@@ -1,5 +1,7 @@
 #include "semantics/semantic_node.h"
 
+#include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace albor
@@ -98,6 +100,23 @@ namespace albor
         m_states.value = std::move(value);
     }
 
+    std::size_t SemanticNode::selection_start() const {
+        // a node with no selection reports the collapsed range, which is the default (§10.1)
+        return m_states.selection_start;
+    }
+
+    std::size_t SemanticNode::selection_end() const {
+        // the end is the half open end, matching the range the field paints (§10.1)
+        return m_states.selection_end;
+    }
+
+    void SemanticNode::set_selection(std::size_t start, std::size_t end) {
+        // the lower end is stored as the start, because the range is unordered at the gesture level (§10.1)
+        m_states.selection_start = std::min(start, end);
+        // the upper end is stored as the end, which is what a client reads back (§10.1)
+        m_states.selection_end = std::max(start, end);
+    }
+
     bool SemanticNode::read_only() const {
         // read only is announced separately from disabled, because a read only node still takes focus (§10.1)
         return m_states.read_only;
@@ -116,6 +135,60 @@ namespace albor
     void SemanticNode::set_multiline(bool multiline) {
         // the state is independent of the value, because a read only node may still span lines (§10.1)
         m_states.multiline = multiline;
+    }
+
+    bool SemanticNode::expanded() const {
+        // the expanded state is what a popup announces while its list is open (§10.1)
+        return m_states.expanded;
+    }
+
+    void SemanticNode::set_expanded(bool expanded) {
+        // the state is independent of selection, because a closed combo box still carries a chosen value (§10.1)
+        m_states.expanded = expanded;
+    }
+
+    bool SemanticNode::has_range() const {
+        // only a control that published a write carries a range, because a number nobody can change is no range (§10.1)
+        return m_has_range;
+    }
+
+    const SemanticRange& SemanticNode::range() const {
+        // the range is read by a platform pattern, which never mutates it (§10.1, §10.2)
+        return m_range;
+    }
+
+    void SemanticNode::set_range(SemanticRange range, SemanticRangeAction on_write) {
+        // a range that does not ascend or a write that cannot run names nothing, so both are refused (§10.1)
+        if (!(range.maximum >= range.minimum) || !on_write) {
+            m_has_range = false;
+            m_on_range_write = nullptr;
+            return;
+        }
+        // the range is stored as written, while the value is clamped into it (§10.1)
+        range.value = std::clamp(range.value, range.minimum, range.maximum);
+        // the step is positive, because a negative step would reverse the two directions (§10.1)
+        range.step = std::abs(range.step);
+        m_range = range;
+        m_on_range_write = std::move(on_write);
+        m_has_range = true;
+    }
+
+    bool SemanticNode::set_range_value(double value) const {
+        // a node without a range or a write refuses the request, which the platform reports (§10.1)
+        if (!m_has_range || !m_on_range_write)
+            return false;
+        // a disabled control refuses every action, including a range write (§10.1)
+        if (m_states.disabled)
+            return false;
+        // a non finite target has no position in the range, so it is refused rather than clamped (§10.1)
+        if (!std::isfinite(value))
+            return false;
+        // the target is clamped, because a platform may ask outside the range (§10.1, §10.2)
+        const double clamped = std::clamp(value, m_range.minimum, m_range.maximum);
+        m_on_range_write(clamped);
+        // the published value follows the write, so an immediate read answers the number a client just set (§10.2)
+        m_range.value = clamped;
+        return true;
     }
 
     const Rect& SemanticNode::bounds() const {
@@ -180,6 +253,6 @@ namespace albor
 
     bool operator==(const SemanticNode& lhs, const SemanticNode& rhs) {
         // the comparison covers what an adapter observes, which is role, name, states and bounds (§10.1)
-        return lhs.m_role == rhs.m_role && lhs.m_name == rhs.m_name && lhs.m_states == rhs.m_states && lhs.m_bounds == rhs.m_bounds;
+        return lhs.m_role == rhs.m_role && lhs.m_name == rhs.m_name && lhs.m_states == rhs.m_states && lhs.m_bounds == rhs.m_bounds && lhs.m_has_range == rhs.m_has_range && (!lhs.m_has_range || lhs.m_range == rhs.m_range);
     }
 } // namespace albor

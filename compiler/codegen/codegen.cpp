@@ -573,15 +573,23 @@ namespace albor::compiler
                 {"Padding", {.header = "layout/padding_layout.h", .class_name = "PaddingLayout", .needs_engine = false, .needs_text_engine = false}},
                 {"Stack", {.header = "layout/stack_layout.h", .class_name = "StackLayout", .needs_engine = false, .needs_text_engine = false}},
                 {"Grid", {.header = "layout/grid_layout.h", .class_name = "GridLayout", .needs_engine = false, .needs_text_engine = false}},
+                {"Panel", {.header = "widgets/panel.h", .class_name = "Panel", .needs_engine = true, .needs_text_engine = false}},
+                {"Card", {.header = "widgets/panel.h", .class_name = "Panel", .needs_engine = true, .needs_text_engine = false}},
                 {"Label", {.header = "widgets/label.h", .class_name = "Label", .needs_engine = true, .needs_text_engine = true}},
                 {"Button", {.header = "widgets/button.h", .class_name = "Button", .needs_engine = true, .needs_text_engine = true}},
                 {"Slider", {.header = "widgets/slider.h", .class_name = "Slider", .needs_engine = true, .needs_text_engine = false}},
                 {"ProgressBar", {.header = "widgets/progress_bar.h", .class_name = "ProgressBar", .needs_engine = true, .needs_text_engine = false}},
                 {"CheckBox", {.header = "widgets/checkbox.h", .class_name = "CheckBox", .needs_engine = true, .needs_text_engine = false}},
-                {"Canvas", {.header = "widgets/canvas.h", .class_name = "Canvas", .needs_engine = true, .needs_text_engine = false}},
+                {"Canvas", {.header = "widgets/canvas.h", .class_name = "Canvas", .needs_engine = true, .needs_text_engine = true}},
+                {"Menu", {.header = "widgets/menu.h", .class_name = "Menu", .needs_engine = true, .needs_text_engine = true}},
+                {"MenuItem", {.header = "widgets/menu_item.h", .class_name = "MenuItem", .needs_engine = true, .needs_text_engine = true}},
+                {"MenuSeparator", {.header = "widgets/menu.h", .class_name = "MenuSeparator", .needs_engine = true, .needs_text_engine = false}},
+                {"MenuBar", {.header = "widgets/menu_bar.h", .class_name = "MenuBar", .needs_engine = true, .needs_text_engine = false}},
+                {"ToolBar", {.header = "widgets/tool_bar.h", .class_name = "ToolBar", .needs_engine = true, .needs_text_engine = false}},
                 {"Image", {.header = "widgets/image.h", .class_name = "Image", .needs_engine = true, .needs_text_engine = false}},
                 {"ScrollView", {.header = "widgets/scroll_view.h", .class_name = "ScrollView", .needs_engine = true, .needs_text_engine = false}},
                 {"ListBox", {.header = "widgets/list_box.h", .class_name = "ListBox", .needs_engine = true, .needs_text_engine = false}},
+                {"ComboBox", {.header = "widgets/combo_box.h", .class_name = "ComboBox", .needs_engine = true, .needs_text_engine = true}},
                 {"TabView", {.header = "widgets/tab_view.h", .class_name = "TabView", .needs_engine = true, .needs_text_engine = false}},
                 {"Tab", {.header = "widgets/tab_page.h", .class_name = "TabPage", .needs_engine = true, .needs_text_engine = true}},
                 {"TabTitle", {.header = "widgets/tab_title.h", .class_name = "TabTitle", .needs_engine = true, .needs_text_engine = false}},
@@ -727,6 +735,9 @@ namespace albor::compiler
 
             // find a declared property by name, which the type walk resolves against (§11.3)
             const CheckedProperty* property_named(std::string_view name) const;
+
+            // find a declared command by name, which an actionable child binds (§18, AD-15)
+            const CheckedCommand* command_named(std::string_view name) const;
 
             // find a module-scoped value by name, which a read outside the properties resolves against (§11.1)
             const CheckedGlobal* global_named(std::string_view name) const;
@@ -956,6 +967,9 @@ namespace albor::compiler
             // whether the body being emitted is a draw block, which is what exposes the canvas extent (§6.4)
             bool m_draw_extent = false;
 
+            // the canvas whose draw body is being emitted, which a text measure reads through (§6.4, §9.1)
+            std::size_t m_draw_node_index = 0;
+
             // the object the generated expressions read through, which is self in the functions (§13.3)
             std::string m_object;
 
@@ -1097,18 +1111,34 @@ namespace albor::compiler
                 {"Row.spacing", "set_gap"},
                 {"Padding.padding", "set_padding"},
                 {"Grid.spacing", "set_gap"},
+                {"Panel.padding", "set_padding"},
+                {"Panel.spacing", "set_spacing"},
+                {"Panel.background", "set_background"},
+                {"Panel.corner_radius", "set_corner_radius"},
+                {"Panel.border_width", "set_border_width"},
+                {"Panel.border_color", "set_border_color"},
+                {"Card.padding", "set_padding"},
+                {"Card.spacing", "set_spacing"},
+                {"Card.background", "set_background"},
+                {"Card.corner_radius", "set_corner_radius"},
+                {"Card.border_width", "set_border_width"},
+                {"Card.border_color", "set_border_color"},
                 {"Label.text", "set_text"},
                 {"Label.foreground", "set_foreground"},
                 {"Label.font_size", "set_font_size"},
                 {"Button.text", "set_label"},
+                {"Button.icon", "set_icon"},
+                {"Button.icon_size", "set_icon_size"},
                 {"Button.background", "set_background"},
                 {"Button.disabled", "set_disabled"},
                 {"Button.action", "set_command"},
+                {"Button.command", "set_command"},
                 {"Slider.value", "set_value"},
                 {"Slider.disabled", "set_disabled"},
                 {"Slider.track_color", "set_track_color"},
                 {"Slider.thumb_color", "set_thumb_color"},
                 {"Slider.action", "set_command"},
+                {"Slider.command", "set_command"},
                 {"ProgressBar.value", "set_value"},
                 {"ProgressBar.disabled", "set_disabled"},
                 {"ProgressBar.track_color", "set_track_color"},
@@ -1118,6 +1148,7 @@ namespace albor::compiler
                 {"CheckBox.outline", "set_outline"},
                 {"CheckBox.check_fill", "set_check_fill"},
                 {"CheckBox.action", "set_command"},
+                {"CheckBox.command", "set_command"},
                 {"Image.source", "set_source"},
                 {"Image.description", "set_description"},
                 {"Image.width", "set_width"},
@@ -1130,6 +1161,27 @@ namespace albor::compiler
                 {"ListBox.scrollbar", "set_scrollbar_visibility"},
                 {"ListBox.overscan", "set_overscan"},
                 {"ListBox.disabled", "set_disabled"},
+                {"ComboBox.items", "set_items"},
+                {"ComboBox.selected", "set_selected"},
+                {"ComboBox.label", "set_label"},
+                {"ComboBox.placeholder", "set_placeholder"},
+                {"ComboBox.disabled", "set_disabled"},
+                {"Menu.spacing", "set_spacing"},
+                {"Menu.padding", "set_padding"},
+                {"Menu.background", "set_background"},
+                {"Menu.corner_radius", "set_corner_radius"},
+                {"MenuItem.text", "set_label"},
+                {"MenuItem.command", "set_command"},
+                {"MenuItem.shortcut", "set_shortcut_text"},
+                {"MenuItem.disabled", "set_disabled"},
+                {"MenuBar.spacing", "set_spacing"},
+                {"MenuBar.padding", "set_padding"},
+                {"MenuBar.background", "set_background"},
+                {"MenuBar.corner_radius", "set_corner_radius"},
+                {"ToolBar.spacing", "set_spacing"},
+                {"ToolBar.padding", "set_padding"},
+                {"ToolBar.background", "set_background"},
+                {"ToolBar.corner_radius", "set_corner_radius"},
                 {"TabView.selected", "set_selected"},
                 {"TabView.vertical", "set_vertical"},
                 {"Tab.label", "set_label"},
@@ -1156,6 +1208,7 @@ namespace albor::compiler
                 {"TextField.font_family", "set_font_family"},
                 {"TextField.font_weight", "set_font_weight"},
                 {"TextField.font_fallback", "set_font_fallback"},
+                {"TextField.decorations", "set_decorations"},
             };
             // the lookup is a ready made key, because the pair is the identity (§11.3)
             const auto found = setters.find(key);
@@ -1187,7 +1240,7 @@ namespace albor::compiler
             const std::string key = std::string(element) + "." + std::string(signal);
             // the signal to setter map is the closed catalogue of §8 (§11.3)
             static const std::unordered_map<std::string, std::string_view> setters{
-                {"Button.clicked", "set_on_click"}, {"Slider.changed", "set_on_change"}, {"CheckBox.toggled", "set_on_toggle"}, {"ScrollView.scrolled", "set_on_scroll"}, {"ListBox.selection_changed", "set_on_selection_changed"}, {"ListBox.activated", "set_on_activate"}, {"TabView.selection_changed", "set_on_selection_changed"}, {"RadioGroup.selection_changed", "set_on_selection_changed"}, {"NumericStepper.changed", "set_on_change"}, {"TextField.changed", "set_on_change"}, {"TextField.committed", "set_on_commit"},
+                {"Button.clicked", "set_on_click"}, {"Slider.changed", "set_on_change"}, {"CheckBox.toggled", "set_on_toggle"}, {"ScrollView.scrolled", "set_on_scroll"}, {"ListBox.selection_changed", "set_on_selection_changed"}, {"ListBox.activated", "set_on_activate"}, {"ComboBox.selection_changed", "set_on_selection_changed"}, {"TabView.selection_changed", "set_on_selection_changed"}, {"RadioGroup.selection_changed", "set_on_selection_changed"}, {"NumericStepper.changed", "set_on_change"}, {"TextField.changed", "set_on_change"}, {"TextField.committed", "set_on_commit"},
             };
             // the lookup is a ready made key, because the pair is the identity (§11.3)
             const auto found = setters.find(key);
@@ -1248,6 +1301,9 @@ namespace albor::compiler
             // a list activation carries the identity text of the activated row, which is what the handler reads (§18.1)
             if (element == "ListBox" && signal == "activated")
                 return {{"std::string", "key"}};
+            // a combo box selection carries the chosen index, which is what the handler reads (§8.3)
+            if (element == "ComboBox" && signal == "selection_changed")
+                return {{"int", "index"}};
             // a tab selection carries the index the view moved to, which the handler reads (§8.3)
             if (element == "TabView" && signal == "selection_changed")
                 return {{"int", "index"}};
@@ -1342,6 +1398,13 @@ namespace albor::compiler
                     for (const RecordFieldType& field : record->fields)
                         if (carries_image(field.type))
                             m_uses_image = true;
+                    return;
+                }
+                // the styled range is a portable builtin declared beside the field that consumes it (§9.1)
+                if (record->name == "TextDecoration") {
+                    // the field header declares it, so the facade includes that rather than inventing one (§9.1)
+                    if (std::find(m_record_headers.begin(), m_record_headers.end(), std::string("widgets/text_field.h")) == m_record_headers.end())
+                        m_record_headers.push_back("widgets/text_field.h");
                     return;
                 }
                 // each imported module is searched, because the record lives in exactly one of them (§11.1, §11.2, AD-17)
@@ -1797,6 +1860,17 @@ namespace albor::compiler
             return nullptr;
         }
 
+        const CheckedCommand* ComponentEmitter::command_named(std::string_view name) const {
+            // the declarations are scanned, because a component holds only a handful of them (§18)
+            for (const CheckedCommand& command : m_component.commands) {
+                // the name decides, so a binding resolves to exactly one command (§18)
+                if (command.name == name)
+                    return &command;
+            }
+            // a name that is not declared is a checker defect, because the checker already resolved it (§18)
+            return nullptr;
+        }
+
         const CheckedGlobal* ComponentEmitter::global_named(std::string_view name) const {
             // the module values are scanned, because a file holds only a handful of them (§11.1)
             if (m_globals != nullptr)
@@ -1860,6 +1934,9 @@ namespace albor::compiler
                 const CheckedProperty* property = property_named(reference->name);
                 if (property != nullptr)
                     return property->type;
+                // a declared command types as the command it names, which a child binds (§18, AD-15)
+                if (command_named(reference->name) != nullptr)
+                    return scalar(TypeKind::Command);
                 // a name no property declares may still be a module-scoped value, which types as its declaration (§11.1)
                 const CheckedGlobal* global = global_named(reference->name);
                 // a name neither declares is a checker defect, because the checker already resolved it (§11.3)
@@ -2012,6 +2089,14 @@ namespace albor::compiler
                 line(2, "void set_" + name + "(" + cpp_type(property.type) + " value);");
                 line(0, "");
             }
+            // every command contributes the pointer a host binds its work to, which every child shares (§18.1, AD-15)
+            for (const CheckedCommand& command : m_component.commands) {
+                // the accessor name is the sanitised declaration name behind the command (§18)
+                const std::string& name = sanitize(command.name);
+                line(2, "// hand out the " + command.name + " command, which every bound child shares (§18.1, AD-15)");
+                line(2, "[[nodiscard]] Command* command_" + name + "() const;");
+                line(0, "");
+            }
             // every signal contributes a slot, which is how a host receives an invocation (§8.3)
             for (const CheckedSignal& signal : m_component.signals) {
                 // the slot name is the shared C++ name of the signal (§14.1)
@@ -2121,6 +2206,9 @@ namespace albor::compiler
                 line(0, "#include <functional>");
             // the owning pointers need the memory header, which the builder uses (§8.1)
             line(0, "#include <memory>");
+            // a canvas line primitive names a span, which the generated unit includes itself (§6.4)
+            if (m_uses_canvas)
+                line(0, "#include <span>");
             // the text types need the string header, which every generated file uses (§14.1)
             line(0, "#include <string>");
             // the move calls need the utility header, which the setters use (§14.1)
@@ -2294,6 +2382,14 @@ namespace albor::compiler
                 }
                 line(0, "");
             }
+            // each command becomes an owned object, which every bound child shares (§18.1, AD-15)
+            for (const CheckedCommand& command : m_component.commands) {
+                // the member name is the sanitised declaration name behind the accessor (§18)
+                const std::string& name = sanitize(command.name);
+                line(2, "// the " + command.name + " command, which every consumer binds rather than copies (§18.1)");
+                line(2, "std::unique_ptr<Command> m_command_" + name + ";");
+                line(0, "");
+            }
             // each widget becomes an owned pointer member, which the evaluators write through (§8.1)
             for (const NodeSlot& slot : m_nodes) {
                 // the class name is the constructed type, which decides the pointer type (§8.1)
@@ -2464,7 +2560,7 @@ namespace albor::compiler
                 line(2, "// no label reads the engine, so the parameter stays unused (§9.1)");
                 line(2, "(void)text_engine;");
             }
-            line(2, "// the tree and the bindings are installed exactly once, at construction (§14.1)");
+            line(2, "// the tree and bindings are installed once, at construction (§14.1)");
             line(2, "m_impl->build();");
             line(1, "}");
             line(0, "");
@@ -2487,6 +2583,16 @@ namespace albor::compiler
                 line(1, "void " + m_class + "::set_" + name + "(" + cpp_type(property.type) + " value) {");
                 line(2, "// the imperative write drives the bindings that read it, which the engine settles (§7.1)");
                 line(2, "m_impl->m_" + name + ".set(std::move(value));");
+                line(1, "}");
+            }
+            // each command hands out the object its consumers share, which the host installs work on (§18.1, AD-15)
+            for (const CheckedCommand& command : m_component.commands) {
+                // the accessor name is the sanitised declaration name behind the command (§18)
+                const std::string& name = sanitize(command.name);
+                line(0, "");
+                line(1, "Command* " + m_class + "::command_" + name + "() const {");
+                line(2, "// the body owns the command, so the accessor hands out the pointer every child holds (§18.1)");
+                line(2, "return m_impl->m_command_" + name + ".get();");
                 line(1, "}");
             }
             // each signal contributes its slot, which the host wires (§8.3)
@@ -2525,6 +2631,13 @@ namespace albor::compiler
                 const std::string& name = m_names.at(property.name);
                 line(2, "// the property joins the component scope, which gives it a unique id (§7.2)");
                 line(2, "owner->register_property(m_" + name + ");");
+            }
+            // every command is built before the widgets that bind it (§18.1, AD-15)
+            for (const CheckedCommand& command : m_component.commands) {
+                // the member name is the sanitised declaration name behind the accessor (§18)
+                const std::string& name = sanitize(command.name);
+                line(2, "// the " + command.name + " command is built once, so every consumer shares one label and enablement (§18.1)");
+                line(2, "m_command_" + name + " = std::make_unique<Command>(" + emit_string_literal(m_class + "." + command.name) + ", " + emit_string_literal(command.label) + ");");
             }
             // every sink joins the scope too, which the binding engine keys on (§13.3)
             for (const NodeSlot& slot : m_nodes) {
@@ -3617,7 +3730,7 @@ namespace albor::compiler
                                     line(3, "if (index >= 0 && index < static_cast<int>(list.size()))");
                                     line(4, "list.erase(list.begin() + index);");
                                 }
-                                // the element at the index is replaced, which keeps the collection size (§11.1)
+                                // the element at the index is replaced, which keeps the size (§11.1)
                                 else if (statement.method == "set") {
                                     line(3, "// the element is replaced when the index is in range, which keeps the size (§11.1)");
                                     line(3, "if (index >= 0 && index < static_cast<int>(list.size()))");
@@ -3688,49 +3801,85 @@ namespace albor::compiler
                 m_object = "self";
                 // the extent names resolve inside the body, because that is where the layout answers (§6.4)
                 m_draw_extent = true;
+                // the canvas index lets a measure call reach the node that owns the text engine (§6.4, §9.1)
+                m_draw_node_index = slot.index;
                 // the paint is declared once, because a block fills and then draws with it (§6.2)
                 bool painted = false;
-                // each call emits one primitive, which is the vocabulary the checker matched (§6.4)
-                for (const CheckedDrawCall& call : slot.node->draw_calls) {
-                    // the colour is the last argument, because every primitive ends with its paint (§6.4)
-                    std::string arguments;
-                    for (std::size_t index = 0; index + 1 < call.arguments.size(); index++)
-                        arguments += (arguments.empty() ? "" : ", ") + emit_expression(*call.arguments[index]);
-                    const std::string colour = emit_expression(*call.arguments.back());
-                    // the numbers split into origin and size, which the rect builds from (§6.4)
-                    std::vector<std::string> numbers;
-                    std::string current;
-                    for (const char character : arguments) {
-                        // a comma closes one number, because the list is written flat (§6.4)
-                        if (character == ',') {
-                            numbers.push_back(current);
-                            current.clear();
-                            continue;
-                        }
-                        // every other character belongs to the number being read (§6.4)
-                        if (character != ' ')
-                            current.push_back(character);
-                    }
-                    if (!current.empty())
-                        numbers.push_back(current);
-                    // the origin is the canvas corner plus the written offset, because the scene is absolute (§6.2)
-                    const std::string rect_value = numbers.size() >= 4 ? "Rect::from_origin_size(Point{canvas_origin.x + " + numbers[0] + ", canvas_origin.y + " + numbers[1] + "}, Size{" + numbers[2] + ", " + numbers[3] + "})" : "Rect::from_origin_size(canvas_origin, Size{0, 0})";
-                    // the paint is declared once for the block, because a primitive fills and then draws (§6.2)
-                    if (!painted) {
-                        // the declaration reads before the first primitive, which is where the paint lives (§6.2)
-                        line(2, "// the paint every primitive records, which the draw block writes (§6.2)");
+                // each call emits one primitive, which the vocabulary the checker matched (§6.4)
+                for (std::size_t call_index = 0; call_index < slot.node->draw_calls.size(); call_index++) {
+                    // the call is read by name, because the line primitive needs a stable local (§6.4)
+                    const CheckedDrawCall& call = slot.node->draw_calls.at(call_index);
+                    // the paint is declared for the first primitive that records one (§6.2)
+                    if (!painted && call.primitive != "stroke_line") {
+                        line(2, "// the paint every filled or composited primitive records (§6.2)");
                         line(2, "Paint paint;");
                         painted = true;
                     }
-                    line(2, "// the " + call.primitive + " primitive records its rect and paint (§6.4)");
-                    line(2, "paint.fill = " + colour + ";");
+                    // the arguments render in written order, which the primitive layout below names (§6.4)
+                    std::vector<std::string> values;
+                    values.reserve(call.arguments.size());
+                    for (const SharedExpression& argument : call.arguments)
+                        values.push_back(emit_expression(*argument));
+                    // the origin is the canvas corner plus the written offset, because the scene is absolute (§6.2)
+                    const auto x = [&values](std::size_t index) { return "canvas_origin.x + " + values.at(index); };
+                    // the vertical coordinate follows the same origin, because both axes are node relative (§6.2)
+                    const auto y = [&values](std::size_t index) { return "canvas_origin.y + " + values.at(index); };
+                    // the rectangle is built from the first four numbers, which every rectangular primitive shares (§6.4)
+                    const auto rect = [&x, &y, &values] { return "Rect::from_origin_size(Point{" + x(0) + ", " + y(1) + "}, Size{" + values.at(2) + ", " + values.at(3) + "})"; };
+                    // the final argument is the colour, because every primitive that paints ends with one (§6.4)
+                    const std::string& colour = values.back();
+                    line(2, "// the " + call.primitive + " primitive records what it draws into the context (§6.4)");
                     if (call.primitive == "fill_rect") {
-                        line(2, "context.draw_rect(" + rect_value + ", paint);");
+                        line(2, "paint = Paint{};");
+                        line(2, "paint.fill = " + colour + ";");
+                        line(2, "context.draw_rect(" + rect() + ", paint);");
+                    }
+                    else if (call.primitive == "stroke_rect") {
+                        line(2, "paint = Paint{};");
+                        line(2, "paint.stroke = " + colour + ";");
+                        line(2, "paint.stroke_width = " + values.at(4) + ";");
+                        line(2, "context.draw_rect(" + rect() + ", paint);");
+                    }
+                    else if (call.primitive == "fill_rounded_rect") {
+                        line(2, "paint = Paint{};");
+                        line(2, "paint.fill = " + colour + ";");
+                        line(2, "context.draw_rounded_rect(" + rect() + ", " + values.at(4) + ", paint);");
+                    }
+                    else if (call.primitive == "stroke_rounded_rect") {
+                        line(2, "paint = Paint{};");
+                        line(2, "paint.stroke = " + colour + ";");
+                        line(2, "paint.stroke_width = " + values.at(5) + ";");
+                        line(2, "context.draw_rounded_rect(" + rect() + ", " + values.at(4) + ", paint);");
+                    }
+                    else if (call.primitive == "stroke_line") {
+                        line(2, "const Point line_" + std::to_string(call_index) + "[] = {Point{" + x(0) + ", " + y(1) + "}, Point{" + x(2) + ", " + y(3) + "}};");
+                        line(2, "context.draw_polyline(std::span<const Point>(line_" + std::to_string(call_index) + "), StrokeStyle{" + colour + ", " + values.at(4) + "});");
+                    }
+                    else if (call.primitive == "fill_circle" || call.primitive == "stroke_circle") {
+                        // a circle is a square whose corner radius is half its side (§6.4)
+                        const std::string diameter = "(" + values.at(2) + " * 2.0f)";
+                        const std::string circle_rect = "Rect::from_origin_size(Point{" + x(0) + " - " + values.at(2) + ", " + y(1) + " - " + values.at(2) + "}, Size{" + diameter + ", " + diameter + "})";
+                        line(2, "paint = Paint{};");
+                        if (call.primitive == "fill_circle") {
+                            line(2, "paint.fill = " + colour + ";");
+                        }
+                        else {
+                            line(2, "paint.stroke = " + colour + ";");
+                            line(2, "paint.stroke_width = " + values.at(3) + ";");
+                        }
+                        line(2, "context.draw_rounded_rect(" + circle_rect + ", " + values.at(2) + ", paint);");
+                    }
+                    else if (call.primitive == "draw_text") {
+                        line(2, "paint = Paint{};");
+                        line(2, "paint.fill = " + colour + ";");
+                        line(2, "context.draw_text(self->m_node_" + std::to_string(slot.index) + "->measure_text(" + values.at(0) + ", " + values.at(3) + "), Point{" + x(1) + ", " + y(2) + "}, paint);");
                     }
                     else {
-                        // the radius is the fifth number, because the rounded primitive takes one more (§6.4)
-                        const std::string radius = numbers.size() >= 5 ? numbers[4] : "0.0f";
-                        line(2, "context.draw_rounded_rect(" + rect_value + ", " + radius + ", paint);");
+                        // the last vocabulary entry is an image, which the context composites into its destination (§6.4)
+                        const std::string image_rect = "Rect::from_origin_size(Point{" + x(1) + ", " + y(2) + "}, Size{" + values.at(3) + ", " + values.at(4) + "})";
+                        line(2, "paint = Paint{};");
+                        line(2, "paint.fill = " + colour + ";");
+                        line(2, "context.draw_image(" + values.at(0) + ", " + image_rect + ", paint);");
                     }
                 }
                 m_draw_extent = false;
@@ -3846,10 +3995,13 @@ namespace albor::compiler
                     if (parameter.first == reference->name)
                         return sanitize(parameter.first);
                 }
+                // a declared command is handed out as the pointer a widget binds, because the body owns it (§18, AD-15)
+                if (command_named(reference->name) != nullptr)
+                    return m_object.empty() ? "m_command_" + sanitize(reference->name) + ".get()" : m_object + "->m_command_" + sanitize(reference->name) + ".get()";
                 // a name no property declares may still be a module-scoped value, which is the file-level static (§11.1)
-                if (property_named(reference->name) == nullptr && global_named(reference->name) != nullptr)
+                if (global_named(reference->name) != nullptr)
                     return sanitize(reference->name);
-                return m_object + "->m_" + sanitize(reference->name) + ".get()";
+                return m_object.empty() ? "m_" + sanitize(reference->name) + ".get()" : m_object + "->m_" + sanitize(reference->name) + ".get()";
             }
             // a conversion renders through its operand, which the operand type decides (§11.3)
             if (const auto* conversion = dynamic_cast<const ConversionExpression*>(&expression))
@@ -3945,6 +4097,9 @@ namespace albor::compiler
                 // the list is closed, which is what a call needs (§11.1)
                 return out + ")";
             }
+            // a draw block measures a run through its canvas, which is the only node that owns a text engine (§6.4, §9.1)
+            if (m_draw_extent && call.function == "measure_text")
+                return "self->m_node_" + std::to_string(m_draw_node_index) + "->measure_text(" + emit_expression(*call.arguments.at(0)) + ", " + emit_expression(*call.arguments.at(1)) + ").size.width";
             // the colour renders first, because every operation is a method on it (§6.1)
             const std::string colour = emit_expression(*call.arguments.at(0));
             // the amount renders second, because it is the fraction or alpha the operation works by (§6.1)
@@ -4157,6 +4312,9 @@ namespace albor::compiler
             // a command slot or an action binding names the command type, which the header then forwards (§18.1, AD-15)
             for (const CheckedProperty& property : m_component.properties)
                 m_uses_command = m_uses_command || property.type.is(TypeKind::Command);
+            // a declared command is built and handed out by the facade, so its definition is needed (§18.1, AD-15)
+            if (!m_component.commands.empty())
+                m_uses_command = true;
             // an action assignment binds a command to a widget, so it carries the same need (§18.1, AD-15)
             for (const NodeSlot& slot : m_nodes)
                 for (const CheckedAssignment& assignment : slot.node->assignments)

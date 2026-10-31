@@ -1,7 +1,7 @@
 # Components
 
-The `.ui` language ships twenty-one elements: eleven containers that arrange children, and ten
-leaves that draw or edit. Every element also carries the three common properties below, and
+The `.ui` language ships twenty-nine elements: sixteen containers that arrange children, and
+thirteen leaves that draw or edit. Every element also carries the seven common properties below, and
 every element may carry an `id`.
 
 ## Catalogue
@@ -13,14 +13,22 @@ every element may carry an `id`.
 | [Padding](padding.md) | container | insets its child |
 | [Stack](stack.md) | container | overlays its children |
 | [Grid](grid.md) | container | equal cells in a grid |
+| [Panel](panel.md) | container | a themed section with padding, face and border |
+| [Card](panel.md) | container | the same themed section under the card spelling |
 | [ScrollView](scroll-view.md) | container | a scrollable viewport over one content child |
 | [ListBox](list-box.md) | container | a virtualized list of rows under one selection |
 | [TabView](tab-view.md) | container | one page at a time under a tab strip |
 | [Tab](tab-view.md#tab) | container | one page inside a TabView, labelled by the strip |
 | [TabTitle](tab-view.md#tabtitle) | container | the icon or composed run a tab draws in the strip |
 | [RadioGroup](radio-group.md) | container | one choice among radio buttons in a row or column |
+| [MenuBar](menu.md) | container | the top strip that hosts menu items or menus |
+| [Menu](menu.md) | container | an ordered set of menu items and separators |
+| [ToolBar](menu.md#toolbar) | container | a horizontal strip that hosts controls |
 | [Label](label.md) | leaf | a run of text |
 | [Button](button.md) | leaf | a push control with a click signal |
+| [MenuItem](menu.md#menuitem) | leaf | one menu row that invokes a shared command |
+| [MenuSeparator](menu.md#menuseparator) | leaf | the rule between menu groups |
+| [ComboBox](combo-box.md) | leaf | a compact single choice with a popup list |
 | [TextField](text-field.md) | leaf | an editable text field |
 | [Slider](slider.md) | leaf | a continuous value the user drags |
 | [ProgressBar](progress-bar.md) | leaf | a read-only fraction of task progress |
@@ -32,13 +40,17 @@ every element may carry an `id`.
 
 ## Common properties
 
-Every element exposes these three, in addition to its own:
+Every element exposes these seven, in addition to its own:
 
 | property | type | effect |
 | --- | --- | --- |
 | `horizontal_align` | `align` | `Align.start`, `Align.center`, `Align.end`, `Align.stretch` on the horizontal screen axis |
 | `vertical_align` | `align` | the same set on the vertical screen axis |
 | `visible` | `bool` | hide in place, keeping identity, bindings and state ([control flow](../ui-language/control-flow.md#visible-hide-in-place)) |
+| `opacity` | `float` | dims the node and its subtree, where `1.0` is opaque |
+| `border_width` | `float` | strokes a border around the node |
+| `border_color` | `color` | the border stroke colour |
+| `drop_shadow` | `Shadow` | a `Shadow { color, offset: Point { x, y }, blur }` cast under the node |
 
 The alignment axes are screen axes — horizontal is always horizontal — and neither one is
 the parent's main axis. `stretch` is the spacer idiom that absorbs leftover space; the

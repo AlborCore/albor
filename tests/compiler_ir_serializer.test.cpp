@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -214,6 +215,35 @@ TEST(IrSerializerChecks, AHandlerIsDroppedBecauseTheIrCarriesNoCode) {
     ASSERT_EQ(ir->properties.size(), 1u);
     EXPECT_EQ(ir->properties.front().name, "text");
     EXPECT_EQ(ir->properties.front().value, "Run");
+}
+
+TEST(IrSerializerChecks, AStringArrayIsWrittenAsJson) {
+    // arrange a combo box whose options are static strings, which the IR carries as one line (§12.1)
+    DiagnosticList diagnostics;
+    const SourceFile file = parse(R"(component Panel { ComboBox { items: ["Alpha", "Beta"]; } })", diagnostics);
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    // act
+    const std::optional<devrt::IrNode> ir = serialize_component(file.components.front());
+    // assert the option list survives as a json array, which the runtime setter parses (§12.1)
+    ASSERT_TRUE(ir.has_value());
+    ASSERT_EQ(ir->properties.size(), 1u);
+    EXPECT_EQ(ir->properties.front().name, "items");
+    EXPECT_EQ(ir->properties.front().value, R"(["Alpha","Beta"])");
+}
+
+TEST(IrSerializerChecks, ADecorationArrayIsWrittenAsJsonObjects) {
+    // arrange a field whose byte ranges carry a colour and an underline (§9.1)
+    DiagnosticList diagnostics;
+    const SourceFile file = parse(R"(component Panel { TextField { decorations: [TextDecoration { start: 0, end: 4, foreground: #FF0000, underline: true }]; } })", diagnostics);
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    // act
+    const std::optional<devrt::IrNode> ir = serialize_component(file.components.front());
+    // assert the range survives as one json object the runtime setter parses (§12.1)
+    ASSERT_TRUE(ir.has_value());
+    const auto found = std::find_if(ir->properties.begin(), ir->properties.end(), [](const devrt::IrProperty& property) { return property.name == "decorations"; });
+    ASSERT_NE(found, ir->properties.end());
+    EXPECT_NE(found->value.find("\"start\""), std::string::npos);
+    EXPECT_NE(found->value.find("\"underline\""), std::string::npos);
 }
 
 TEST(IrSerializerChecks, AComponentWithoutARootSerializesToNothing) {

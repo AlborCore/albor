@@ -66,6 +66,9 @@ namespace albor
         // hand out the native object a renderer backend attaches to (§3.5)
         [[nodiscard]] NativeWindowHandle native_handle() const;
 
+        // hand out the native window itself, which an owned popup uses as its parent (§5.1)
+        [[nodiscard]] NativeWindowHandle native_window_handle() const;
+
         // read the appearance the system renders with, which the platform is the authority on (§5.3, §8.4)
         [[nodiscard]] SystemAppearance system_appearance() const;
 

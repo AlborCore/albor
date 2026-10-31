@@ -1,0 +1,115 @@
+// the shared form page of the first vertical slice, which exercises every control the shell needs (§14)
+
+component SliceForm {
+    inout property<string> name: "netlist.sp";
+    inout property<int> choice: 0;
+    inout property<float> stage: 2.0;
+    inout property<int> mode: 0;
+    inout property<bool> armed: false;
+    inout property<float> level: 0.4;
+    in property<float> progress: 0.65;
+
+    Panel {
+        padding: 12px;
+
+        Column {
+            spacing: 10px;
+
+            Label {
+                text: "Run settings";
+                font_size: 18px;
+            }
+
+            TextField {
+                id: slice_name;
+                value: name;
+                placeholder: "netlist";
+            }
+
+            ComboBox {
+                id: slice_solver;
+                items: ["Tran", "AC", "DC"];
+                selected: choice;
+                label: "Analysis";
+            }
+
+            Row {
+                spacing: 8px;
+
+                Label {
+                    text: "Stages";
+                    vertical_align: Align.center;
+                }
+
+                NumericStepper {
+                    id: slice_stage;
+                    value: stage;
+                    min: 1.0;
+                    max: 8.0;
+                    step: 1.0;
+                }
+            }
+
+            RadioGroup {
+                selected: mode;
+                spacing: 8px;
+
+                RadioButton { value: 0; label: "Fast"; }
+                RadioButton { value: 1; label: "Balanced"; }
+                RadioButton { value: 2; label: "Accurate"; }
+            }
+
+            Row {
+                spacing: 8px;
+
+                CheckBox {
+                    id: slice_armed;
+                    checked: armed;
+                }
+
+                Label {
+                    text: "Arm the run";
+                    vertical_align: Align.center;
+                }
+            }
+
+            Slider {
+                id: slice_level;
+                value: level;
+                min: 0.0;
+                max: 1.0;
+            }
+
+            Row {
+                spacing: 8px;
+
+                Label {
+                    text: "Progress";
+                    vertical_align: Align.center;
+                }
+
+                ProgressBar {
+                    id: slice_progress;
+                    value: progress;
+                }
+            }
+
+            Row {
+                spacing: 8px;
+
+                Image {
+                    id: slice_icon;
+                    source: @image("icon.png");
+                    description: "waveform";
+                    width: 24px;
+                    height: 24px;
+                }
+
+                Label {
+                    text: "Waveform preview";
+                    vertical_align: Align.center;
+                }
+            }
+        }
+    }
+}

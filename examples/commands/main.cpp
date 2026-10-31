@@ -87,11 +87,15 @@ namespace
         // the selection is three rows wide, which the source reports on demand rather than caching (§18.3)
         commands.set_selection_source([] { return albor::SelectionSpan{.first = 2, .last = 5}; });
 
+        // the history commands are declared by name, so a menu, a button and a key bind the one shared object (§18.4)
+        albor::UndoCommand& undo_command = commands.declare_undo("edit.undo", "Undo");
+        albor::RedoCommand& redo_command = commands.declare_redo("edit.redo", "Redo");
+
         // the accelerators route into the same objects, which is what a keyboard equivalent is (§18.5)
-        commands.shortcuts().bind(albor::Shortcut{.key = albor::Key::S, .modifiers = albor::Modifiers{.command = true}}, save.id());
-        commands.shortcuts().bind(albor::Shortcut{.key = albor::Key::E, .modifiers = albor::Modifiers{.command = true}}, erase.id());
+        (void)commands.bind_shortcut(albor::Shortcut{.key = albor::Key::S, .modifiers = albor::Modifiers{.command = true}}, "file.save");
+        (void)commands.bind_shortcut(albor::Shortcut{.key = albor::Key::E, .modifiers = albor::Modifiers{.command = true}}, "row.erase");
         // the undo command publishes the stack's own answer as its enablement, so it needs no polling (§18.4)
-        commands.shortcuts().bind(albor::Shortcut{.key = albor::Key::Z, .modifiers = albor::Modifiers{.command = true}}, commands.undo_command().command().id());
+        (void)commands.bind_shortcut(albor::Shortcut{.key = albor::Key::Z, .modifiers = albor::Modifiers{.command = true}}, "edit.undo");
 
         // the scene is a column, because the demonstration reads top to bottom (§8.2)
         auto column = std::make_unique<albor::ColumnLayout>();
@@ -107,11 +111,11 @@ namespace
         toolbar->add_child(std::move(save_button));
         // the undo button is a command like any other, whose enablement is the history's answer (§18.4)
         auto undo_button = std::make_unique<albor::Button>(&engine, &text, std::string{}, "toolbar_undo");
-        undo_button->set_command(&commands.undo_command().command());
+        undo_button->set_command(&undo_command.command());
         toolbar->add_child(std::move(undo_button));
         // the redo button completes the pair, and both follow the same stack (§18.4)
         auto redo_button = std::make_unique<albor::Button>(&engine, &text, std::string{}, "toolbar_redo");
-        redo_button->set_command(&commands.redo_command().command());
+        redo_button->set_command(&redo_command.command());
         toolbar->add_child(std::move(redo_button));
         column->add_child(std::move(toolbar));
 

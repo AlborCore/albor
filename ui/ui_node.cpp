@@ -23,6 +23,9 @@ namespace albor
         // the children are owned, so detaching them here keeps a partially destroyed subtree consistent (§8.1)
         for (auto& child : m_children)
             child->m_parent = nullptr;
+        // the overlays are owned too, so their parent link is cleared before the vectors unwind (§8.3)
+        for (auto& overlay : m_overlays)
+            overlay->m_parent = nullptr;
     }
 
     UiNode* UiNode::parent() const {
@@ -97,6 +100,49 @@ namespace albor
         return removed;
     }
 
+    const std::vector<std::unique_ptr<UiNode>>& UiNode::overlays() const {
+        // the overlays are handed out in addition order, which is the paint and hit order (§8.3)
+        return m_overlays;
+    }
+
+    UiNode& UiNode::add_overlay(std::unique_ptr<UiNode> overlay) {
+        // a null overlay is refused rather than stored, so a failed allocation cannot become a dangling entry (§8.3)
+        if (!overlay)
+            return *this;
+        // the overlay learns its parent before it is stored, so an event walk finds the tree it joined (§8.3)
+        overlay->m_parent = this;
+        // the overlay borrows the engine of the subtree it joined, because it may animate a dismissal (§7.3)
+        overlay->set_animation_engine(m_animations);
+        // a fresh overlay has never drawn, so it starts dirty (§6.1)
+        overlay->m_render_dirty = true;
+        overlay->m_measure_dirty = true;
+        overlay->m_arrange_dirty = true;
+        // the overlay is stored above the ordinary children, which is what makes it a layer (§8.3)
+        m_overlays.push_back(std::move(overlay));
+        // an overlay changes what the root draws, so the frame is requested (§6.1)
+        invalidate_layout();
+        return *this;
+    }
+
+    std::unique_ptr<UiNode> UiNode::remove_overlay(UiNode* overlay) {
+        // the overlay is located by identity, because the tree owns the pointers (§8.3)
+        const auto found = std::find_if(m_overlays.begin(), m_overlays.end(), [overlay](const std::unique_ptr<UiNode>& candidate) { return candidate.get() == overlay; });
+        // a node that is not an overlay is not removed (§8.3)
+        if (found == m_overlays.end())
+            return nullptr;
+        // the observer is told first, while the overlay is still alive and still in the tree (§8.3)
+        notify_detaching(overlay);
+        // the pointer is moved out of the owning vector (§8.3)
+        std::unique_ptr<UiNode> removed = std::move(*found);
+        // the entry leaves the overlay list (§8.3)
+        m_overlays.erase(found);
+        // the detached overlay is a root again, so a later walk up does not reach a dying parent (§8.3)
+        removed->m_parent = nullptr;
+        // the overlay left the tree, so the root asks for a frame (§6.1)
+        invalidate_layout();
+        return removed;
+    }
+
     void UiNode::measure(const SizeConstraints& constraints, Size& out_size) {
         // a container measures itself as the largest of its children, which is the measure phase of §8.2
         Size total{};
@@ -126,6 +172,17 @@ namespace albor
     void UiNode::render(RenderContext& context) {
         // the node opacity goes on first, because every child below draws inside it (§6.1)
         push_opacity(context);
+        // a plain container still records its common border and cast here (§6.1, §8.4)
+        if (!m_bounds.empty()) {
+            // the cast goes down first, because a shadow sits behind the shape that throws it (§6.2)
+            if (!m_drop_shadow.empty())
+                context.draw_shadow(m_bounds, 0.0f, m_drop_shadow);
+            // the border is an outline with no fill, because a layout container has no face of its own (§6.1)
+            const Paint border{.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), .stroke = m_border_color, .stroke_width = m_border_width};
+            // a zero width or transparent stroke records nothing, which keeps an unstyled container free (§6.2)
+            if (border.strokes())
+                context.draw_rect(m_bounds, border);
+        }
         // the children are recorded under that opacity, which is the whole of what this node draws (§6.1)
         render_children(context);
         // the opacity comes off last, so a sibling draws at the state this node found (§6.1)
@@ -139,6 +196,13 @@ namespace albor
             if (!child->visible())
                 continue;
             child->render(context);
+        }
+        // overlays draw after the ordinary children, which is what puts a popup above its siblings (§8.3)
+        for (const auto& overlay : m_overlays) {
+            // a hidden overlay is not visited, so a dismissed popup leaves no commands (§6.1)
+            if (!overlay->visible())
+                continue;
+            overlay->render(context);
         }
     }
 
@@ -164,6 +228,10 @@ namespace albor
         // a hidden node and every descendant below it are out of reach, which keeps a hidden page inert (§8.3)
         if (!visible_in_tree())
             return false;
+        // the overlays are hit tested first, because a popup is the topmost thing on screen (§8.3)
+        for (auto position = m_overlays.size(); position > 0; position--)
+            if (m_overlays[position - 1]->hit_test(logical_point))
+                return true;
         // the children are hit tested last added first, because the topmost one wins (§8.3)
         for (auto position = m_children.size(); position > 0; position--)
             if (m_children[position - 1]->hit_test(logical_point))

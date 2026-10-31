@@ -1,6 +1,42 @@
 # the shared build rules for generated components, which the examples and the fixtures use (§14.2, §14.3)
 include_guard(GLOBAL)
 
+# resolve one codegen driver, which the build tree carries as a target and an installed package ships beside its libraries (AD-19)
+function(_albor_driver out_command out_dependency tool_name)
+    # a documented per-tool pin answers before everything else, which hermetic builders and sysroots use (AD-19)
+    string(TOUPPER "${tool_name}" tool_upper)
+    string(REPLACE "-" "_" tool_upper "${tool_upper}")
+    if(DEFINED ${tool_upper}_EXECUTABLE)
+        # an override that names nothing is a mistake, which is reported rather than silently accepted (AD-19)
+        if(NOT EXISTS "${${tool_upper}_EXECUTABLE}")
+            message(FATAL_ERROR "albor component helpers: the override ${tool_upper}_EXECUTABLE points at '${${tool_upper}_EXECUTABLE}', which does not exist")
+        endif()
+        set(${out_command} "${${tool_upper}_EXECUTABLE}" PARENT_SCOPE)
+        set(${out_dependency} "${${tool_upper}_EXECUTABLE}" PARENT_SCOPE)
+        return()
+    endif()
+    # the framework's own build tree owns the fresh tool, which the generator expression names and the build orders on (§14.2)
+    if(TARGET "${tool_name}")
+        set(${out_command} "$<TARGET_FILE:${tool_name}>" PARENT_SCOPE)
+        set(${out_dependency} "${tool_name}" PARENT_SCOPE)
+        return()
+    endif()
+    # the installed package's config defines ALBOR_TOOL_DIR, its tools prefix beside the libraries the code links (AD-19)
+    if(NOT EXISTS "${ALBOR_TOOL_DIR}")
+        message(FATAL_ERROR "albor component helpers: '${tool_name}' is neither a build target (is tools/ registered before this directory?) nor an installed tool (ALBOR_TOOL_DIR)")
+    endif()
+    # the search is bound to the prefix, because a different tool from PATH would compile generated code against a foreign package (AD-19)
+    string(MAKE_C_IDENTIFIER "${tool_name}" driver)
+    find_program(${driver}_EXECUTABLE NAMES "${tool_name}" PATHS "${ALBOR_TOOL_DIR}" NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH NO_CACHE)
+    # a missing executable after a bounded search is a broken package, which is reported at configure rather than at build (AD-19)
+    if(NOT ${driver}_EXECUTABLE)
+        message(FATAL_ERROR "albor component helpers: the package's tools prefix '${ALBOR_TOOL_DIR}' does not provide '${tool_name}'")
+    endif()
+    # the executable itself joins the dependency graph, so a package upgrade regenerates every unit it touched (AD-19)
+    set(${out_command} "${${driver}_EXECUTABLE}" PARENT_SCOPE)
+    set(${out_dependency} "${${driver}_EXECUTABLE}" PARENT_SCOPE)
+endfunction()
+
 # the snake case unit stem of a component class, which is how the generated files are named (§11.3)
 function(albor_component_stem out_var class_name)
     # an upper case letter after text starts a word, which the underscore marks (§11.3)
@@ -75,15 +111,17 @@ function(albor_build_font_assets target)
     endforeach()
     # the target carries the declaration for the ui component helper, which passes the same list to codegen (§11.1, §11.3)
     set_target_properties(${target} PROPERTIES ALBOR_FONT_ASSETS "${font_args}" ALBOR_DEFAULT_FONT_FAMILY "${FONT_DEFAULT}")
+    # the stamp records that the tool ran, because an unchanged file is not rewritten and would leave the rule older (§14.2)
+    set(stamp "${generated_dir}/albor_embedded_fonts.stamp")
+    # the font command resolves from the build tree's target or the installed package's tools (AD-19)
+    _albor_driver(font_command font_dependency albor-font-embed)
     # the generated files are the output of the embedding tool, which writes only when content changed (§14.2)
     set(units "${generated_dir}/albor_embedded_fonts.h" "${generated_dir}/albor_embedded_fonts.cpp")
-    # a stamp records that the tool ran, because an unchanged file is not rewritten and would leave the rule older (§14.2)
-    set(stamp "${generated_dir}/albor_embedded_fonts.stamp")
     add_custom_command(
         OUTPUT ${units} "${stamp}"
-        COMMAND $<TARGET_FILE:albor-font-embed> --output "${generated_dir}" --default-family "${FONT_DEFAULT}" ${font_args}
+        COMMAND ${font_command} --output "${generated_dir}" --default-family "${FONT_DEFAULT}" ${font_args}
         COMMAND "${CMAKE_COMMAND}" -E touch "${stamp}"
-        DEPENDS ${font_files} albor-font-embed
+        DEPENDS ${font_files} ${font_dependency}
         COMMENT "${target}: embedding ${FONT_DEFAULT} fonts"
         VERBATIM
     )
@@ -184,12 +222,14 @@ function(albor_build_ui_component target ui_source)
     if(font_args)
         list(APPEND font_flags --default-font-family "${default_family}" ${font_args})
     endif()
+    # the codegen command resolves from the build tree's target or the installed package's tools (AD-19)
+    _albor_driver(codegen_command codegen_dependency albor-codegen)
     # the driver compiles the ui file into the units, which write only when their content changed (§14.2, AD-03a)
     add_custom_command(
         OUTPUT ${units}
-        COMMAND $<TARGET_FILE:albor-codegen> --input "${ui_source}" --output "${generated_dir}" --depfile "${depfile}" ${codegen_args} ${font_flags}
+        COMMAND ${codegen_command} --input "${ui_source}" --output "${generated_dir}" --depfile "${depfile}" ${codegen_args} ${font_flags}
         DEPFILE "${depfile}"
-        DEPENDS "${ui_source}" ${import_units} albor-codegen
+        DEPENDS "${ui_source}" ${import_units} ${codegen_dependency}
         COMMENT "${target}: generating ${stem} from ${ui_source}"
         VERBATIM
     )
@@ -210,12 +250,14 @@ function(albor_build_native_record target manifest_source)
     # the record names are only known once the manifest is parsed, so the build tracks a stamp rather than the headers (§11.2)
     # the headers reach the compile through the includes a generated facade writes, so they need not be listed as sources (§11.2, AD-17)
     set(stamp "${generated_dir}/records.stamp")
+    # the glue command resolves from the build tree's target or the installed package's tools (AD-19)
+    _albor_driver(glue_command glue_dependency albor-manifest-glue)
     # the driver compiles the manifest into the struct headers, which write only when their content changed (§11.2, AD-17)
     add_custom_command(
         OUTPUT "${stamp}"
-        COMMAND $<TARGET_FILE:albor-manifest-glue> --input "${manifest_source}" --output "${generated_dir}"
+        COMMAND ${glue_command} --input "${manifest_source}" --output "${generated_dir}"
         COMMAND "${CMAKE_COMMAND}" -E touch "${stamp}"
-        DEPENDS "${manifest_source}" albor-manifest-glue
+        DEPENDS "${manifest_source}" ${glue_dependency}
         COMMENT "${target}: generating records from ${manifest_source}"
         VERBATIM
     )
@@ -235,11 +277,13 @@ function(albor_build_native_component target manifest_source class_name)
     albor_component_stem(stem "${class_name}")
     # the facade header and its implementation unit are the outputs, which the build orders on (§14.2)
     set(units "${generated_dir}/${module}/${stem}.h" "${generated_dir}/${module}/${stem}.cpp")
+    # the glue command resolves from the build tree's target or the installed package's tools (AD-19)
+    _albor_driver(glue_command glue_dependency albor-manifest-glue)
     # the glue driver compiles the manifest into the units, which write only when their content changed (§14.2, AD-17)
     add_custom_command(
         OUTPUT ${units}
-        COMMAND $<TARGET_FILE:albor-manifest-glue> --input "${manifest_source}" --output "${generated_dir}"
-        DEPENDS "${manifest_source}" albor-manifest-glue
+        COMMAND ${glue_command} --input "${manifest_source}" --output "${generated_dir}"
+        DEPENDS "${manifest_source}" ${glue_dependency}
         COMMENT "${target}: generating ${class_name} from ${manifest_source}"
         VERBATIM
     )

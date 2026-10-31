@@ -80,5 +80,12 @@ albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/dual_
 
 # the image facade carries an embedded asset through both engines, so a retained picture agrees too (§16, AD-25)
 albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/dual_engine_image.ui")
+
+# the p0 facade proves the panel, combo box, icon button and styled field compile into one unit (§8, §9.1, §11.3)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/p0_widgets.ui")
+
+# the netlist facade proves the token ranges and multiline field compile into a fixture (§9.1)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/netlist_editor.ui")
+
 # the generated header reaches the test binary, because the suite includes the facade it exercises (§11.3)
 target_include_directories(albor-tests PRIVATE "${CMAKE_BINARY_DIR}/generated/albor-vector-fixture")

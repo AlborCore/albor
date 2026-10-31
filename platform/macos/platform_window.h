@@ -51,6 +51,9 @@ namespace albor
         // override: hand out the metal layer a renderer backend attaches to (§3.5)
         [[nodiscard]] NativeWindowHandle native_handle() const override;
 
+        // override: hand out the appkit window an owned popup attaches to (§5.1)
+        [[nodiscard]] NativeWindowHandle native_window_handle() const override;
+
         // override: read the appearance the system renders with, which appkit is the authority on (§5.3, §8.4)
         [[nodiscard]] SystemAppearance system_appearance() const override;
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
 #include "core/geometry.h"
@@ -43,6 +44,9 @@ namespace albor
 
         // report whether a pointer drag is captured, which the tests assert on (§8.3)
         [[nodiscard]] bool capturing() const;
+
+        // drop a capture whose window is leaving the screen, which ends the drag without a release (§8.3)
+        void cancel_pointer_capture();
 
         // report the node the pointer is over, which is the innermost hovered node (§8.3)
         [[nodiscard]] UiNode* hovered() const;
@@ -92,6 +96,9 @@ namespace albor
 
         // the node dragging, which claims the moves until the button comes up (§8.3)
         UiNode* m_capture = nullptr;
+
+        // the capture sequence, which tells a dispatch that a hide ended the drag (§8.3)
+        std::uint64_t m_capture_generation = 0;
 
         // the nodes the pointer is currently over, deepest first, which the transitions are diffed against (§8.3)
         std::vector<UiNode*> m_hover_chain;

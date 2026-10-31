@@ -1,7 +1,12 @@
+# the build evidence rides pulls and main pushes; branch pushes carry nothing, because a review is what
+# a change needs and the merge re-runs everything it affects, which is what keeps a per-commit cost
+# from being paid twice (AD-16, AD-19). The debug presets measure the test suites and belong to the
+# main pushes; a review builds release on both platforms.
 name: build
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -14,29 +19,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check-pr:
-    if: github.event_name == 'push' && github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      has_pr: ${{ steps.check.outputs.has_pr }}
-    steps:
-      - name: check for an open pull request
-        id: check
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          response=$(curl -skf -H "Authorization: token $GITHUB_TOKEN" "${GITHUB_API_URL}/repos/${{ github.repository }}/pulls?head=${{ github.repository_owner }}:${{ github.ref_name }}&state=open&per_page=1")
-          count=$(echo "$response" | grep -c '"number"' || true)
-          echo "has_pr=$( [ "$count" -gt 0 ] && echo true || echo false )" >> "$GITHUB_OUTPUT"
-
   # the shader artifact is committed, so this job is the only place the metal toolchain runs
   shaders-macos:
     name: shaders (macos)
-    needs: [check-pr]
-    if: |-
-      !cancelled() &&
-      (github.event_name != 'push' || github.ref == 'refs/heads/main' || needs.check-pr.outputs.has_pr != 'true')
     runs-on: macos-15
     timeout-minutes: 15
     defaults:
@@ -55,10 +40,6 @@ jobs:
   # the direct3d artifact is committed too, so this job is the only place fxc runs
   shaders-windows:
     name: shaders (windows)
-    needs: [check-pr]
-    if: |-
-      !cancelled() &&
-      (github.event_name != 'push' || github.ref == 'refs/heads/main' || needs.check-pr.outputs.has_pr != 'true')
     runs-on: windows-latest
     timeout-minutes: 15
     defaults:
@@ -71,10 +52,6 @@ jobs:
 
   build:
     name: build (${{ matrix.name }})
-    needs: [check-pr]
-    if: |-
-      !cancelled() &&
-      (github.event_name != 'push' || github.ref == 'refs/heads/main' || needs.check-pr.outputs.has_pr != 'true')
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -116,7 +93,8 @@ jobs:
               sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
           - name: macos-coverage
             os: macos-15
-            enable: ${{ github.repository == 'AlborCore/albor' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+            # the coverage build is the deepest leg, which a review does not need; main pushes carry it (AD-16)
+            enable: ${{ github.event_name == 'push' }}
             preset: coverage
             vcpkg-root: /usr/local/share/vcpkg
             setup: |
@@ -139,7 +117,8 @@ jobs:
               choco install ccache --no-progress -y
           - name: windows-debug
             os: windows-latest
-            enable: true
+            # the debug suite is the test authority, which main pushes carry and a review skips (AD-16)
+            enable: ${{ github.event_name == 'push' }}
             preset: debug
             vcpkg-root: C:\vcpkg
             setup: |

@@ -245,10 +245,16 @@ namespace albor
         node.set_bounds(bounds());
         // a disabled slider reports the disabled state, which is what refuses adjustment (§10.1)
         node.set_disabled(disabled());
+        // the focus flag is part of the announced state, so an adapter can follow the ring (§10.1)
+        node.set_focused(focused());
         // a slider is not checkable, so the check state stays not checkable (§10.1)
         node.set_check(CheckState::NotCheckable);
         // the name carries the value, because the numeric value is what a screen reader must speak (§10.1)
         node.set_name(identity().explicit_id + " " + std::to_string(m_value));
+        // the value travels as text as well, which a platform value query reads (§10.1, §10.2)
+        node.set_value(std::to_string(m_value));
+        // the range is what a platform range pattern exposes, and a write clamps into it (§10.1, §10.2)
+        node.set_range(SemanticRange{.value = m_value, .minimum = m_minimum, .maximum = m_maximum, .step = STEP}, [control = mutable_owner(this)](double value) { control->set_value(static_cast<float>(value)); });
         // the step actions move by one step because a semantic action carries no value, and their identifiers are discarded (§10.1) the action bodies carry no disabled guard, because SemanticNode::invoke refuses every action while the node it belongs to is disabled, which is where that rule belongs (§10.1)
         (void)node.add_action("increment", [control = mutable_owner(this)] {
             // the value moves up by one step, which is what a key press on a focused slider does (§8.3)

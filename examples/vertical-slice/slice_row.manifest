@@ -1,0 +1,6 @@
+// the row shape the vertical slice table repeats, which is a keyed record because a list reconciles by identity (§11.2, AD-13)
+
+record SliceRow {
+    key: string;
+    title: string;
+}

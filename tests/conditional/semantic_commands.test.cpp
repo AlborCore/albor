@@ -80,6 +80,31 @@ namespace
         std::unique_ptr<SemanticProvider> semantic_child(std::size_t) const override { return nullptr; }
     };
 
+    // the text field the scene publishes, which carries a value and a selection beside it (§10.1)
+    class FieldNode final : public SemanticProvider
+    {
+    public:
+        SemanticNode semantic_node() const override {
+            // the role is an editable field, which is what a client reads a selection from (§10.1)
+            SemanticNode node{SemanticRole::TextField};
+            // the id is the author written one, because that is the only selector automation offers (§18.1, AD-11)
+            node.set_explicit_id("netlist");
+            // the name is what a reader announces for the field (§10.1)
+            node.set_name("Netlist");
+            // the value is the text the field edits, which the selection is relative to (§10.1)
+            node.set_value("alpha beta");
+            // the selection is the half open byte range a double click leaves behind (§8.3, §10.1)
+            node.set_selection(0, 5);
+            // the field edits more than one line, which a reader announces (§10.1)
+            node.set_multiline(true);
+            return node;
+        }
+
+        std::size_t semantic_child_count() const override { return 0; }
+
+        std::unique_ptr<SemanticProvider> semantic_child(std::size_t) const override { return nullptr; }
+    };
+
     // the provider a suite drives, which publishes a button and a label with author ids (§10.1, AD-11)
     class SceneProvider final : public SemanticProvider
     {
@@ -98,7 +123,7 @@ namespace
             return node;
         }
 
-        std::size_t semantic_child_count() const override { return 3; }
+        std::size_t semantic_child_count() const override { return 4; }
 
         std::unique_ptr<SemanticProvider> semantic_child(std::size_t index) const override {
             // the first child is the identified button, which is what most commands target (§18.1, AD-11)
@@ -110,6 +135,9 @@ namespace
             // the third child is the viewport, which a reader reaches by its own role (§10.1)
             if (index == 2)
                 return std::make_unique<ViewportNode>();
+            // the fourth child is the text field, whose selection a client reads beside its value (§10.1)
+            if (index == 3)
+                return std::make_unique<FieldNode>();
             // an index past the end names no child (§10.1)
             return nullptr;
         }
@@ -161,10 +189,20 @@ TEST(SemanticCommands, ATreeDumpNamesEveryNodeWithItsRoleAndId) {
     Fixture fixture;
     // act
     const AutomationResult result = fixture.run("semantic.tree");
-    // assert the dump carries the root and both children, in depth first order (§10.1, §10.3)
+    // assert the dump carries the root and its children, in depth first order (§10.1, §10.3)
     ASSERT_TRUE(result.ok);
     EXPECT_NE(result.payload.find("group root window"), std::string::npos);
     EXPECT_NE(result.payload.find("button save_button Save"), std::string::npos);
+}
+
+TEST(SemanticCommands, ATextFieldDumpsItsSelectionBesideItsValue) {
+    // arrange
+    Fixture fixture;
+    // act
+    const AutomationResult result = fixture.run("semantic.tree");
+    // assert a client reads the edited range the same way it reads the value (§8.3, §10.1)
+    ASSERT_TRUE(result.ok);
+    EXPECT_NE(result.payload.find("textfield netlist Netlist value=alpha beta selection=0:5 multiline"), std::string::npos);
 }
 
 TEST(SemanticCommands, ANodeWithNoAuthorIdIsDumpedButNotAddressable) {
@@ -328,6 +366,25 @@ TEST(SemanticCommands, AViewportAppearsInTheTreeDumpWithItsRole) {
     // assert the dump reaches the viewport, because a reader walks the same tree (§10.1, §10.3)
     ASSERT_TRUE(result.ok);
     EXPECT_NE(result.payload.find("scroll_view log_view Log"), std::string::npos);
+}
+
+TEST(SemanticCommands, AMenuItemAppearsInTheTreeDumpWithItsRole) {
+    // arrange a tree whose root is a menu row, which is what a reader reaches through the strip (§10.1, §18.2)
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::MenuItem});
+    tree.mutable_at(0)->set_explicit_id("menu_save");
+    tree.mutable_at(0)->set_name("Save");
+    tree.mutable_at(0)->set_value("Cmd+S");
+    AutomationRegistry registry;
+    register_semantic_commands(registry, [&tree] { return &tree; });
+    registry.allow("semantic.tree");
+    AutomationSession session(registry);
+    (void)session.handle(encode_handshake(session.token()));
+    // act
+    const AutomationResult result = session.handle("semantic.tree");
+    // assert the row is named as a menu item and keeps its accelerator beside it (§10.3, §18.5)
+    ASSERT_TRUE(result.ok);
+    EXPECT_NE(result.payload.find("menu_item menu_save Save value=Cmd+S"), std::string::npos);
 }
 
 TEST(SemanticCommands, AnEditableNodeAppearsInTheDumpWithTheValueItPublishes) {

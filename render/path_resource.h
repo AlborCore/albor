@@ -18,6 +18,12 @@ namespace albor
         // draw a line from the current position to the next point
         LineTo,
 
+        // draw a quadratic curve from the current position through the next two points
+        QuadraticTo,
+
+        // draw a cubic curve from the current position through the next three points
+        CubicTo,
+
         // close the current contour back to its start, which consumes no point
         Close,
     };

@@ -532,6 +532,39 @@ TEST(CommandRegistry, TheHistoryFeedsTheUndoAndRedoCommands) {
     EXPECT_EQ(undo.command().state().label, "First");
 }
 
+TEST(CommandRegistry, DeclaringUndoTwiceYieldsOneNamedCommand) {
+    // arrange
+    CommandRegistry registry;
+    // act
+    UndoCommand& undo = registry.declare_undo("edit.undo", "Undo");
+    UndoCommand& again = registry.declare_undo("edit.undo", "Undo");
+    // assert the second declaration returns the one shared object, which is what a menu and a key bind (§18.4)
+    EXPECT_EQ(&undo, &again);
+    EXPECT_EQ(registry.size(), std::size_t{1});
+    EXPECT_EQ(registry.find("edit.undo"), &undo.command());
+    EXPECT_EQ(undo.command().state().label, "Undo");
+    // act and assert the named command publishes the stack's answer like any other history command (§18.4)
+    registry.undo_stack().push(UndoEntry{.label = "First"});
+    EXPECT_TRUE(undo.command().state().enabled);
+}
+
+TEST(CommandRegistry, AnAcceleratorBindsToTheNamedHistoryCommand) {
+    // arrange
+    CommandRegistry registry;
+    UndoCommand& undo = registry.declare_undo("edit.undo", "Undo");
+    RedoCommand& redo = registry.declare_redo("edit.redo", "Redo");
+    const Shortcut shortcut{.key = Key::Z, .modifiers = Modifiers{.command = true}};
+    // act
+    const bool bound = registry.bind_shortcut(shortcut, "edit.undo");
+    // assert the accelerator resolves by the author assigned id and routes to the shared object (§18.5, AD-11)
+    EXPECT_TRUE(bound);
+    EXPECT_EQ(registry.find_shortcut(shortcut), &undo.command());
+    EXPECT_EQ(registry.find("edit.redo"), &redo.command());
+    // act and assert an id no command carries binds nothing, rather than inventing a target (§18.5)
+    EXPECT_FALSE(registry.bind_shortcut(Shortcut{.key = Key::Y}, "edit.absent"));
+    EXPECT_FALSE(registry.shortcuts().bound(Shortcut{.key = Key::Y}));
+}
+
 TEST(ShortcutTable, AnAcceleratorRoutesToItsCommand) {
     // arrange
     CommandRegistry registry;

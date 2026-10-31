@@ -228,6 +228,157 @@ TEST(TypeChecker, ReportsADuplicateSignalName) {
     EXPECT_EQ(first(diagnostics).code, "E0401");
 }
 
+TEST(TypeChecker, ResolvesADeclaredCommandAndBindsIt) {
+    // arrange, act a component declares one command and binds it to an actionable child (§18, AD-15)
+    const CheckedFile file = check("component C { command save \"Save\"; Button { command: save; } }");
+    // assert the declaration reaches the checked component with the one label every consumer shows (§18)
+    const CheckedComponent& component = only(file);
+    ASSERT_EQ(component.commands.size(), 1U);
+    EXPECT_EQ(component.commands.at(0).name, "save");
+    EXPECT_EQ(component.commands.at(0).label, "Save");
+    // assert the binding is typed as the command it names, which the codegen hands to set_command (§18)
+    ASSERT_NE(component.root, nullptr);
+    ASSERT_EQ(component.root->assignments.size(), 1U);
+    EXPECT_EQ(component.root->assignments.at(0).name, "command");
+    EXPECT_TRUE(component.root->assignments.at(0).type.is(TypeKind::Command));
+}
+
+TEST(TypeChecker, ACommandWithoutALabelUsesItsName) {
+    // arrange, act a command may omit its label, because the name already says what it does (§18)
+    const CheckedFile file = check("component C { command save; Button { command: save; } }");
+    // assert the checked command carries the name as its label, so no consumer shows an empty caption (§18)
+    ASSERT_EQ(only(file).commands.size(), 1U);
+    EXPECT_EQ(only(file).commands.at(0).label, "save");
+}
+
+TEST(TypeChecker, ReportsABindingToAnUndeclaredCommand) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act a child binds a name the component never declares as a command (§18)
+    check("component C { Button { command: missing; } }", diagnostics);
+    // assert the unresolved name is reported rather than reaching codegen (§11.1, §18)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0409");
+}
+
+TEST(TypeChecker, ReportsACommandThatCollidesWithAProperty) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act the command shares the component namespace with a property (§18)
+    check("component C { in property<int> save; command save \"Save\"; Column {} }", diagnostics);
+    // assert the collision is reported against the later declaration (§18, §11.1)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0401");
+}
+
+TEST(TypeChecker, ReportsADuplicateCommandName) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act the same command is declared twice, which would build two objects (§18)
+    check("component C { command save \"Save\"; command save \"Again\"; Column {} }", diagnostics);
+    // assert the collision is reported once (§18)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0401");
+}
+
+TEST(TypeChecker, AcceptsTheExtendedCanvasDrawVocabulary) {
+    // arrange, act a canvas draws lines, circles, text and a measured extent, which a plot needs (§6.4)
+    const CheckedFile file = check(R"(component C {
+        Canvas {
+            width: 100px;
+            height: 100px;
+            draw: {
+                stroke_rect(0, 0, 10, 10, 1, #FFFFFF);
+                stroke_line(0, 0, 20, 20, 1, #000000);
+                fill_circle(8, 8, 4, #FF0000);
+                stroke_circle(8, 8, 4, 1, #00FF00);
+                draw_text("axis", 0, 20, 12, #FFFFFF);
+                fill_rect(measure_text("axis", 12), 0, 10, 10, #FFFFFF);
+            }
+        }
+    })");
+    // assert every call is kept, because the checker matched the extended vocabulary (§6.4)
+    ASSERT_NE(only(file).root, nullptr);
+    EXPECT_EQ(only(file).root->draw_calls.size(), 6U);
+}
+
+TEST(TypeChecker, ReportsADrawPrimitiveOutsideTheVocabulary) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act a draw block names a primitive the vocabulary does not carry (§6.4)
+    check("component C { Canvas { width: 10px; height: 10px; draw: { fill_triangle(0, 0, 1, 1, #FFFFFF); } } }", diagnostics);
+    // assert the name is reported rather than reaching codegen (§6.4)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0602");
+}
+
+TEST(TypeChecker, ReportsAMeasureOutsideADrawBlock) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act a binding calls the draw-only measure, which has no meaning outside a canvas (§6.4)
+    check("component C { inout property<float> width: measure_text(\"x\", 12); Column {} }", diagnostics);
+    // assert the call is refused as an ordinary unknown function (§6.4, §11.1)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0416");
+}
+
+TEST(TypeChecker, ReportsADrawTextWhoseFirstArgumentIsNotText) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act draw_text is handed a number where the shaped run belongs (§6.4, §9.1)
+    check("component C { Canvas { width: 10px; height: 10px; draw: { draw_text(1, 0, 0, 12, #FFFFFF); } } }", diagnostics);
+    // assert the argument mismatch is reported (§6.4)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0604");
+}
+
+TEST(TypeChecker, ReportsACommandNoElementBinds) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act a command is declared but no child carries it (§18)
+    check("component C { command save \"Save\"; Column {} }", diagnostics);
+    // assert the dead declaration is reported as a warning rather than silently kept (§18)
+    ASSERT_EQ(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "W0405");
+    EXPECT_EQ(first(diagnostics).severity, Diagnostic::Severity::Warning);
+}
+
+TEST(TypeChecker, ACommandInsideARepeatBodyResolves) {
+    // arrange, act a repeated row binds the component command, which must survive the repeat scope (§18, AD-13)
+    const CheckedFile file = check("component C { command save \"Save\"; in property<vector<string>> rows: [\"a\"]; Column { Repeat(row in rows) { Button { text: row; command: save; } } } }");
+    // assert the command is used and no unused declaration warning follows (§18)
+    ASSERT_EQ(only(file).commands.size(), 1U);
+    EXPECT_EQ(only(file).commands.at(0).label, "Save");
+}
+
+TEST(TypeChecker, ADrawBlockReadsAModuleGlobal) {
+    // arrange, act a draw coordinate comes from a module constant, which the draw scope must carry (§6.4)
+    const CheckedFile file = check("global pad: float = 4.0; component C { Canvas { width: 20px; height: 20px; draw: { fill_rect(pad, pad, 10, 10, #FFFFFF); } } }");
+    // assert the call is kept rather than refused as an unknown name (§6.4)
+    ASSERT_NE(only(file).root, nullptr);
+    EXPECT_EQ(only(file).root->draw_calls.size(), 1U);
+}
+
+TEST(TypeChecker, RefusesACanvasInsideARepeat) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act a repeated canvas would need a row draw body the codegen does not emit (§6.4)
+    check("component C { in property<vector<string>> rows: [\"a\"]; Column { Repeat(row in rows) { Canvas { width: 10px; height: 10px; draw: { fill_rect(0, 0, 1, 1, #FFFFFF); } } } } }", diagnostics);
+    // assert it is refused rather than silently blank (§6.4)
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0607");
+}
+
+TEST(TypeChecker, ACommandNameCollidingWithAGlobalStillBindsTheCommand) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act the command and the global share a name, which the checker resolves to the command (§18)
+    const CheckedFile file = check("global save: int = 3; component C { command save \"Save\"; Column { Button { text: \"Save\"; command: save; } } }", diagnostics);
+    // assert no diagnostic follows, because the command is the nearer declaration (§18)
+    EXPECT_TRUE(diagnostics.diagnostics().empty());
+    ASSERT_EQ(only(file).root->children.size(), 1U);
+}
+
 TEST(TypeChecker, ReportsAComponentWithNoRoot) {
     // arrange
     DiagnosticList diagnostics;

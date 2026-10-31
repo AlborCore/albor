@@ -95,6 +95,13 @@ namespace albor
             theme.set_numeric_stepper_extent(Size{120.0f, 30.0f});
             theme.set_numeric_stepper_button_width(28.0f);
             theme.set_numeric_stepper_padding(8.0f);
+            // a card sits on the surface with a twelve point inset and a small corner (§8.2)
+            theme.set_panel_padding(12.0f);
+            theme.set_panel_radius(6.0f);
+            theme.set_panel_border_width(1.0f);
+            // a compact popup row is twenty eight tall and bounded by a short list (§8.2)
+            theme.set_combo_box_item_height(28.0f);
+            theme.set_combo_box_popup_max_height(240.0f);
             // the ring stands one away and rounds with the plate it surrounds (§6.1, §6.2)
             theme.set_focus_ring_offset(1.0f);
             theme.set_focus_ring_radius(6.0f);
@@ -150,6 +157,13 @@ namespace albor
             theme.set_numeric_stepper_extent(Size{140.0f, 32.0f});
             theme.set_numeric_stepper_button_width(32.0f);
             theme.set_numeric_stepper_padding(8.0f);
+            // a fluent card uses the same inset with the fluent corner (§8.2)
+            theme.set_panel_padding(12.0f);
+            theme.set_panel_radius(4.0f);
+            theme.set_panel_border_width(1.0f);
+            // a fluent popup row is thirty two tall (§8.2)
+            theme.set_combo_box_item_height(32.0f);
+            theme.set_combo_box_popup_max_height(256.0f);
             theme.set_focus_ring_offset(1.0f);
             theme.set_focus_ring_radius(5.0f);
             // the hierarchy resolves at the sizes the system font is set at (§8.4)
@@ -197,6 +211,13 @@ namespace albor
             theme.set_numeric_stepper_extent(Size{120.0f, 28.0f});
             theme.set_numeric_stepper_button_width(24.0f);
             theme.set_numeric_stepper_padding(6.0f);
+            // a tool card is compact, with the tool inset and corner (§8.2)
+            theme.set_panel_padding(8.0f);
+            theme.set_panel_radius(4.0f);
+            theme.set_panel_border_width(1.0f);
+            // a tool popup row is compact (§8.2)
+            theme.set_combo_box_item_height(28.0f);
+            theme.set_combo_box_popup_max_height(224.0f);
             theme.set_focus_ring_offset(1.0f);
             theme.set_focus_ring_radius(5.0f);
             // the hierarchy resolves at the reading sizes a tool screen carries (§8.4)
@@ -236,6 +257,17 @@ namespace albor
             theme.set_canvas_background(ControlState::Pressed, ThemeBuilder::darken(face, 0.06f));
             theme.set_canvas_background(ControlState::Disabled, Color::rgba(face.red, face.green, face.blue, 0.5f));
             theme.set_canvas_background(ControlState::Focused, face);
+            // a card face lifts like a control and keeps the hairline that separates it from the surface (§8.4)
+            theme.set_panel_background(ControlState::Normal, face);
+            theme.set_panel_background(ControlState::Hovered, ThemeBuilder::lighten(face, 0.03f));
+            theme.set_panel_background(ControlState::Pressed, ThemeBuilder::darken(face, 0.04f));
+            theme.set_panel_background(ControlState::Disabled, Color::rgba(face.red, face.green, face.blue, 0.5f));
+            theme.set_panel_background(ControlState::Focused, face);
+            theme.set_panel_border(ControlState::Normal, hairline);
+            theme.set_panel_border(ControlState::Hovered, hairline);
+            theme.set_panel_border(ControlState::Pressed, hairline);
+            theme.set_panel_border(ControlState::Disabled, Color::rgba(hairline.red, hairline.green, hairline.blue, 0.12f));
+            theme.set_panel_border(ControlState::Focused, hairline);
             // a macos groove is a light grey line, which is what a native track reads as (§8.4)
             theme.set_slider_track(ControlState::Normal, scheme == ColorScheme::Dark ? ThemeBuilder::lighten(surface, 0.16f) : Color::rgb(0.70f, 0.71f, 0.74f));
             theme.set_slider_track(ControlState::Hovered, scheme == ColorScheme::Dark ? ThemeBuilder::lighten(surface, 0.20f) : Color::rgb(0.76f, 0.77f, 0.80f));
@@ -274,6 +306,17 @@ namespace albor
             theme.set_canvas_background(ControlState::Pressed, scheme == ColorScheme::Dark ? ThemeBuilder::darken(face, 0.04f) : face);
             theme.set_canvas_background(ControlState::Disabled, Color::rgba(face.red, face.green, face.blue, 0.5f));
             theme.set_canvas_background(ControlState::Focused, face);
+            // a fluent card keeps the face and the one point line of the control surface (§8.4)
+            theme.set_panel_background(ControlState::Normal, face);
+            theme.set_panel_background(ControlState::Hovered, face);
+            theme.set_panel_background(ControlState::Pressed, scheme == ColorScheme::Dark ? ThemeBuilder::darken(face, 0.04f) : face);
+            theme.set_panel_background(ControlState::Disabled, Color::rgba(face.red, face.green, face.blue, 0.5f));
+            theme.set_panel_background(ControlState::Focused, face);
+            theme.set_panel_border(ControlState::Normal, line);
+            theme.set_panel_border(ControlState::Hovered, line);
+            theme.set_panel_border(ControlState::Pressed, line);
+            theme.set_panel_border(ControlState::Disabled, Color::rgba(line.red, line.green, line.blue, 0.18f));
+            theme.set_panel_border(ControlState::Focused, line);
             // a fluent groove is a mid grey line, which is what the language draws (§8.4)
             theme.set_slider_track(ControlState::Normal, scheme == ColorScheme::Dark ? ThemeBuilder::lighten(surface, 0.14f) : Color::rgb(0.60f, 0.60f, 0.62f));
             theme.set_slider_track(ControlState::Hovered, scheme == ColorScheme::Dark ? ThemeBuilder::lighten(surface, 0.18f) : Color::rgb(0.66f, 0.66f, 0.68f));
@@ -307,6 +350,14 @@ namespace albor
             theme.set_canvas_background(ControlState::Pressed, ThemeBuilder::darken(face, 0.08f));
             theme.set_canvas_background(ControlState::Disabled, Color::rgba(face.red, face.green, face.blue, 0.5f));
             theme.set_canvas_background(ControlState::Focused, ThemeBuilder::lighten(face, 0.02f));
+            // a tool card separates through contrast, like every other tool face (§8.4)
+            theme.set_panel_background(ControlState::Normal, face);
+            theme.set_panel_background(ControlState::Hovered, ThemeBuilder::lighten(face, 0.03f));
+            theme.set_panel_background(ControlState::Pressed, ThemeBuilder::darken(face, 0.06f));
+            theme.set_panel_background(ControlState::Disabled, Color::rgba(face.red, face.green, face.blue, 0.5f));
+            theme.set_panel_background(ControlState::Focused, face);
+            for (const ControlState state : {ControlState::Normal, ControlState::Hovered, ControlState::Pressed, ControlState::Disabled, ControlState::Focused})
+                theme.set_panel_border(state, Color::rgba(0.0f, 0.0f, 0.0f, 0.0f));
         }
 
         // the dual layer ring states, where the halo carries the ring colour at a lower alpha (§8.4)
@@ -765,6 +816,51 @@ namespace albor
     void Theme::set_canvas_background(ControlState state, Color value) {
         // the entry is written by its state index, which is what the resolver reads (§6.1)
         m_palette.canvas_background[state_index(state)] = value;
+    }
+
+    void Theme::set_panel_background(Color value) {
+        // the normal state is the common case, which is the shorthand (§6.1)
+        m_palette.panel_background[state_index(ControlState::Normal)] = value;
+    }
+
+    void Theme::set_panel_background(ControlState state, Color value) {
+        // the entry is written by its state index, which is what the resolver reads (§6.1)
+        m_palette.panel_background[state_index(state)] = value;
+    }
+
+    void Theme::set_panel_border(Color value) {
+        // the normal state is the common case, which is the shorthand (§8.4)
+        m_palette.panel_border[state_index(ControlState::Normal)] = value;
+    }
+
+    void Theme::set_panel_border(ControlState state, Color value) {
+        // the entry is written by its state index, which is what the resolver reads (§8.4)
+        m_palette.panel_border[state_index(state)] = value;
+    }
+
+    void Theme::set_panel_padding(float value) {
+        // the inset is one value because a panel frames its content evenly (§8.2)
+        m_metrics.panel_padding = value;
+    }
+
+    void Theme::set_panel_radius(float value) {
+        // the radius is one value because a panel has one corner shape (§6.2)
+        m_metrics.panel_radius = value;
+    }
+
+    void Theme::set_panel_border_width(float value) {
+        // the width is one value because a panel strokes evenly on every side (§8.4)
+        m_metrics.panel_border_width = value;
+    }
+
+    void Theme::set_combo_box_item_height(float value) {
+        // the row height is one value because every item is one line (§8.2)
+        m_metrics.combo_box_item_height = value;
+    }
+
+    void Theme::set_combo_box_popup_max_height(float value) {
+        // the popup ceiling is one value because it bounds the whole list (§8.2)
+        m_metrics.combo_box_popup_max_height = value;
     }
 
     void Theme::set_focus_ring_width(float value) {

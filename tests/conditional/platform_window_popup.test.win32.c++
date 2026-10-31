@@ -4,6 +4,8 @@
 #define NOMINMAX
 #include <windows.h>
 
+#include <cmath>
+#include <functional>
 #include <memory>
 
 #include <gtest/gtest.h>
@@ -27,7 +29,15 @@ namespace
 
         void on_platform_frame() override { frames++; }
 
-        void on_platform_event(const Event& event) override { last_event = event; }
+        void on_platform_event(const Event& event) override {
+            // the last event is kept for the ordinary assertions, while a test may react to the press (§5.3)
+            last_event = event;
+            if (on_event)
+                on_event(event);
+        }
+
+        // the reaction a test installs, which opens a popup during the owner press (§5.1)
+        std::function<void(const Event&)> on_event;
 
         void on_platform_appearance_changed(const SystemAppearance&) override { appearance_changed++; }
 
@@ -104,6 +114,200 @@ TEST(Win32PopupWindow, ANormalWindowKeepsTheTitledStyle) {
     platform->show();
     // assert the ordinary show path still marks the window visible, which the activating branch sets (§5.3)
     EXPECT_TRUE(platform->visible());
+}
+
+TEST(Win32PopupWindow, ThePopupIsOwnedByItsAnchorWindowAndSitsBelowTheAnchor) {
+    // arrange an owner window placed at a known screen point, which makes the anchor predictable (§5.1)
+    WindowOptions owner_options;
+    owner_options.title = "popup-anchor-owner";
+    owner_options.size = Size{320.0f, 240.0f};
+    std::unique_ptr<Win32PlatformWindow> owner = Win32PlatformWindow::create(owner_options);
+    ASSERT_NE(owner, nullptr);
+    HWND owner_window = static_cast<HWND>(const_cast<void*>(owner->native_window_handle().object()));
+    ASSERT_NE(owner_window, nullptr);
+    owner->show();
+    SetWindowPos(owner_window, nullptr, 100, 100, 320, 240, SWP_NOZORDER | SWP_NOACTIVATE);
+    const Rect anchor = Rect::from_origin_size(Point{20.0f, 30.0f}, Size{100.0f, 24.0f});
+    // act create and show a popup anchored in that owner (§5.1)
+    WindowOptions popup_options;
+    popup_options.role = WindowRole::Popup;
+    popup_options.title = "popup-anchor";
+    popup_options.size = Size{180.0f, 80.0f};
+    popup_options.native_parent = owner->native_window_handle();
+    popup_options.anchor = anchor;
+    std::unique_ptr<Win32PlatformWindow> platform = Win32PlatformWindow::create(popup_options);
+    ASSERT_NE(platform, nullptr);
+    HWND popup = static_cast<HWND>(const_cast<void*>(platform->native_window_handle().object()));
+    ASSERT_NE(popup, nullptr);
+    platform->show();
+    // assert win32 owns the popup through the trigger window, which keeps it above its owner (§5.1)
+    EXPECT_EQ(GetWindow(popup, GW_OWNER), owner_window);
+    // assert the popup hangs below the anchor, scaled by the owner dpi (§5.1, AD-27)
+    const float scale = static_cast<float>(GetDpiForWindow(owner_window)) / 96.0f;
+    POINT anchor_screen{static_cast<LONG>(std::lround(static_cast<double>(anchor.x) * scale)), static_cast<LONG>(std::lround(static_cast<double>(anchor.y) * scale))};
+    ASSERT_NE(ClientToScreen(owner_window, &anchor_screen), 0);
+    RECT frame{};
+    ASSERT_NE(GetWindowRect(popup, &frame), 0);
+    EXPECT_EQ(frame.left, anchor_screen.x);
+    EXPECT_EQ(frame.top, anchor_screen.y + static_cast<LONG>(std::lround(static_cast<double>(anchor.height) * scale)));
+    EXPECT_EQ(frame.right - frame.left, static_cast<LONG>(std::lround(static_cast<double>(popup_options.size.width) * scale)));
+    EXPECT_EQ(frame.bottom - frame.top, static_cast<LONG>(std::lround(static_cast<double>(popup_options.size.height) * scale)));
+}
+
+TEST(Win32PopupWindow, AClickOnTheAnchorIsForwardedWithoutDismissingThePopup) {
+    // arrange an owner and a shown popup, both under listeners so the forwarding is observable (§5.1, §8.3)
+    WindowOptions owner_options;
+    owner_options.title = "popup-anchor-click-owner";
+    owner_options.size = Size{320.0f, 240.0f};
+    std::unique_ptr<Win32PlatformWindow> owner = Win32PlatformWindow::create(owner_options);
+    ASSERT_NE(owner, nullptr);
+    HWND owner_window = static_cast<HWND>(const_cast<void*>(owner->native_window_handle().object()));
+    ASSERT_NE(owner_window, nullptr);
+    RecordingListener owner_listener;
+    owner->set_listener(&owner_listener);
+    owner->show();
+    SetWindowPos(owner_window, nullptr, 100, 100, 320, 240, SWP_NOZORDER | SWP_NOACTIVATE);
+    const Rect anchor = Rect::from_origin_size(Point{20.0f, 30.0f}, Size{100.0f, 24.0f});
+    WindowOptions popup_options;
+    popup_options.role = WindowRole::Popup;
+    popup_options.title = "popup-anchor-click";
+    popup_options.size = Size{180.0f, 80.0f};
+    popup_options.native_parent = owner->native_window_handle();
+    popup_options.anchor = anchor;
+    std::unique_ptr<Win32PlatformWindow> platform = Win32PlatformWindow::create(popup_options);
+    ASSERT_NE(platform, nullptr);
+    HWND popup = static_cast<HWND>(const_cast<void*>(platform->native_window_handle().object()));
+    ASSERT_NE(popup, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    platform->show();
+    // act a press lands on the trigger, which the captured popup forwards to its owner (§5.1)
+    const float scale = static_cast<float>(GetDpiForWindow(owner_window)) / 96.0f;
+    POINT trigger{static_cast<LONG>(std::lround(static_cast<double>(anchor.x + anchor.width * 0.5f) * scale)), static_cast<LONG>(std::lround(static_cast<double>(anchor.y + anchor.height * 0.5f) * scale))};
+    ASSERT_NE(ClientToScreen(owner_window, &trigger), 0);
+    POINT in_popup = trigger;
+    ASSERT_NE(ScreenToClient(popup, &in_popup), 0);
+    (void)SendMessageW(popup, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(in_popup.x, in_popup.y));
+    MSG message{};
+    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE) != 0) {
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
+    // assert the click reached the owner as a pointer press, which is the toggle path (§5.1, §8.3)
+    EXPECT_EQ(owner_listener.last_event.kind, EventKind::PointerDown);
+    // assert the popup itself was not dismissed, because the trigger owns the toggle (§5.1)
+    EXPECT_EQ(listener.closed, 0);
+    EXPECT_TRUE(platform->visible());
+}
+
+TEST(Win32PopupWindow, ADialogIsOwnedByItsParent) {
+    // arrange an owner window and a dialog that names it as parent (§5.1)
+    WindowOptions owner_options;
+    owner_options.title = "dialog-parent-owner";
+    owner_options.size = Size{320.0f, 240.0f};
+    std::unique_ptr<Win32PlatformWindow> owner = Win32PlatformWindow::create(owner_options);
+    ASSERT_NE(owner, nullptr);
+    HWND owner_window = static_cast<HWND>(const_cast<void*>(owner->native_window_handle().object()));
+    ASSERT_NE(owner_window, nullptr);
+    owner->show();
+    WindowOptions dialog_options;
+    dialog_options.role = WindowRole::Dialog;
+    dialog_options.title = "dialog-parent";
+    dialog_options.size = Size{180.0f, 120.0f};
+    dialog_options.native_parent = owner->native_window_handle();
+    // act create and show the dialog, which win32 owns through the creation owner (§5.1)
+    std::unique_ptr<Win32PlatformWindow> dialog = Win32PlatformWindow::create(dialog_options);
+    ASSERT_NE(dialog, nullptr);
+    HWND dialog_window = static_cast<HWND>(const_cast<void*>(dialog->native_window_handle().object()));
+    ASSERT_NE(dialog_window, nullptr);
+    dialog->show();
+    // assert the dialog reports the owner, which keeps it above and minimized with it (§5.1)
+    EXPECT_EQ(GetWindow(dialog_window, GW_OWNER), owner_window);
+}
+
+TEST(Win32PopupWindow, MovingTheOwnerMovesThePopupWithIt) {
+    // arrange an owner at a known screen point and a popup anchored inside it (§5.1)
+    WindowOptions owner_options;
+    owner_options.title = "popup-follow-owner";
+    owner_options.size = Size{320.0f, 240.0f};
+    std::unique_ptr<Win32PlatformWindow> owner = Win32PlatformWindow::create(owner_options);
+    ASSERT_NE(owner, nullptr);
+    HWND owner_window = static_cast<HWND>(const_cast<void*>(owner->native_window_handle().object()));
+    ASSERT_NE(owner_window, nullptr);
+    owner->show();
+    SetWindowPos(owner_window, nullptr, 100, 100, 320, 240, SWP_NOZORDER | SWP_NOACTIVATE);
+    WindowOptions popup_options;
+    popup_options.role = WindowRole::Popup;
+    popup_options.title = "popup-follow";
+    popup_options.size = Size{180.0f, 80.0f};
+    popup_options.native_parent = owner->native_window_handle();
+    popup_options.anchor = Rect::from_origin_size(Point{20.0f, 30.0f}, Size{100.0f, 24.0f});
+    std::unique_ptr<Win32PlatformWindow> platform = Win32PlatformWindow::create(popup_options);
+    ASSERT_NE(platform, nullptr);
+    HWND popup = static_cast<HWND>(const_cast<void*>(platform->native_window_handle().object()));
+    ASSERT_NE(popup, nullptr);
+    platform->show();
+    RECT before{};
+    ASSERT_NE(GetWindowRect(popup, &before), 0);
+    // act move the owner, which win32 does not move an owned window for on its own (§5.1)
+    SetWindowPos(owner_window, nullptr, 300, 200, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    RECT after{};
+    ASSERT_NE(GetWindowRect(popup, &after), 0);
+    // assert the popup followed by the owner delta, because the anchor did not change (§5.1)
+    EXPECT_EQ(after.left - before.left, 200);
+    EXPECT_EQ(after.top - before.top, 100);
+}
+
+TEST(Win32PopupWindow, AShowInsideTheOwnerPressLeavesTheReleaseAndThenArmsDismissal) {
+    // arrange an owner whose press opens a popup, which is the real combo box sequence (§5.1)
+    WindowOptions owner_options;
+    owner_options.title = "popup-open-press-owner";
+    owner_options.size = Size{320.0f, 240.0f};
+    std::unique_ptr<Win32PlatformWindow> owner = Win32PlatformWindow::create(owner_options);
+    ASSERT_NE(owner, nullptr);
+    HWND owner_window = static_cast<HWND>(const_cast<void*>(owner->native_window_handle().object()));
+    ASSERT_NE(owner_window, nullptr);
+    RecordingListener owner_listener;
+    owner->set_listener(&owner_listener);
+    owner->show();
+    SetWindowPos(owner_window, nullptr, 100, 100, 320, 240, SWP_NOZORDER | SWP_NOACTIVATE);
+    WindowOptions popup_options;
+    popup_options.role = WindowRole::Popup;
+    popup_options.title = "popup-open-press";
+    popup_options.size = Size{180.0f, 80.0f};
+    popup_options.native_parent = owner->native_window_handle();
+    popup_options.anchor = Rect::from_origin_size(Point{20.0f, 30.0f}, Size{100.0f, 24.0f});
+    std::unique_ptr<Win32PlatformWindow> platform = Win32PlatformWindow::create(popup_options);
+    ASSERT_NE(platform, nullptr);
+    HWND popup = static_cast<HWND>(const_cast<void*>(platform->native_window_handle().object()));
+    ASSERT_NE(popup, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    owner_listener.on_event = [&platform](const Event& event) {
+        // the trigger opens its list on the press, which is the control path (§8.3)
+        if (event.kind == EventKind::PointerDown)
+            platform->show();
+    };
+    // act press the owner trigger, which opens the popup while the owner still holds the capture (§5.1)
+    const float scale = static_cast<float>(GetDpiForWindow(owner_window)) / 96.0f;
+    const int trigger_x = static_cast<int>(std::lround(static_cast<double>(20.0f + 50.0f) * scale));
+    const int trigger_y = static_cast<int>(std::lround(static_cast<double>(30.0f + 12.0f) * scale));
+    (void)SendMessageW(owner_window, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(trigger_x, trigger_y));
+    // assert the popup left the capture with the owner, so the matching release still reaches it (§5.1)
+    EXPECT_TRUE(platform->visible());
+    EXPECT_EQ(GetCapture(), owner_window);
+    // act release the press on the owner, which is where win32 routes it through the owner capture (§5.1)
+    (void)SendMessageW(owner_window, WM_LBUTTONUP, 0, MAKELPARAM(trigger_x, trigger_y));
+    // assert the owner saw its release, which clears the framework capture and completes the press (§8.3)
+    EXPECT_EQ(owner_listener.last_event.kind, EventKind::PointerUp);
+    // assert the popup now holds the capture, which is what routes the next outside click to it (§5.1)
+    EXPECT_EQ(GetCapture(), popup);
+    // act click outside the popup, which the captured popup must dismiss (§5.1)
+    (void)SendMessageW(popup, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(-10, -10));
+    // assert the popup closed and released the capture, which ends the press sequence (§5.1)
+    EXPECT_EQ(listener.closed, 1);
+    EXPECT_FALSE(platform->visible());
+    EXPECT_NE(GetCapture(), popup);
 }
 
 TEST(Win32PopupWindow, AnOutsideClickDismissesThePopupAndReportsClosed) {

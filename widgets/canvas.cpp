@@ -2,10 +2,15 @@
 
 #include "widgets/canvas.h"
 
+#include "text/text_engine.h"
+
 namespace albor
 {
     Canvas::Canvas(BindingEngine* engine, std::string explicit_id) :
         Widget(engine, std::move(explicit_id)) {}
+
+    Canvas::Canvas(BindingEngine* engine, TextEngine* text_engine, std::string explicit_id) :
+        Widget(engine, std::move(explicit_id)), m_text_engine(text_engine) {}
 
     void Canvas::measure(const SizeConstraints& constraints, Size& out_size) {
         // the declared extent is what the canvas offers, because a callback cannot be asked what it will draw (§8.2)
@@ -100,6 +105,24 @@ namespace albor
     Size Canvas::intrinsic_size() const {
         // the declared extent is what the measure pass used (§8.2)
         return m_intrinsic_size;
+    }
+
+    void Canvas::set_text_engine(TextEngine* text_engine) {
+        // the engine is borrowed rather than owned, because the composition root outlives the canvas (§9.1)
+        m_text_engine = text_engine;
+    }
+
+    TextEngine* Canvas::text_engine() const {
+        // a canvas whose host installed no engine reports that, which the draw block checks (§9.1)
+        return m_text_engine;
+    }
+
+    TextLayout Canvas::measure_text(std::string_view text, float font_size) const {
+        // without an engine nothing can be shaped, so the empty layout stands in rather than guessing (§9.1)
+        if (m_text_engine == nullptr)
+            return {};
+        // the run is measured unbounded, because a draw block places each run itself (§9.1)
+        return m_text_engine->measure(text, TextEngine::UNBOUNDED_WIDTH, font_size);
     }
 
     std::uint64_t Canvas::draw_count() const {

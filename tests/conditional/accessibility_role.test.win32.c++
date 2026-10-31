@@ -274,6 +274,137 @@ TEST(Win32AccessibilityRole, ACheckboxStillAnnouncesItsCheckStateAsItsToggleStat
     EXPECT_EQ(state, ToggleState_On);
 }
 
+TEST(Win32AccessibilityRole, ACheckboxPatternRunsThePortableToggleAction) {
+    // arrange a checkable node with the toggle action the portable table declares (§10.1, §10.2)
+    WindowFixture fixture;
+    ASSERT_NE(fixture.window(), nullptr);
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::Checkbox});
+    std::size_t toggles = 0;
+    (void)tree.mutable_at(0)->add_action("toggle", [&toggles] { toggles++; });
+    // act
+    fixture.adapter().publish(tree);
+    // assert the toggle pattern is offered and runs the action the node registered (§10.2)
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> root = fixture.announced_fragment();
+    ASSERT_NE(root.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> announced;
+    ASSERT_HRESULT_SUCCEEDED(root->Navigate(NavigateDirection_FirstChild, announced.GetAddressOf()));
+    ASSERT_NE(announced.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple = WindowFixture::simple_of(announced.Get());
+    ASSERT_NE(simple.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IUnknown> pattern;
+    ASSERT_HRESULT_SUCCEEDED(simple->GetPatternProvider(UIA_TogglePatternId, pattern.GetAddressOf()));
+    ASSERT_NE(pattern.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IToggleProvider> toggle;
+    ASSERT_HRESULT_SUCCEEDED(pattern.As(&toggle));
+    ASSERT_HRESULT_SUCCEEDED(toggle->Toggle());
+    EXPECT_EQ(toggles, 1u);
+}
+
+TEST(Win32AccessibilityRole, ASliderExposesTheRangeItsNodePublished) {
+    // arrange a slider with a bounded value and a write that records the clamped target (§10.1, §10.2)
+    WindowFixture fixture;
+    ASSERT_NE(fixture.window(), nullptr);
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::Slider});
+    double written = 0.0;
+    tree.mutable_at(0)->set_range(SemanticRange{.value = 2.5, .minimum = 0.0, .maximum = 10.0, .step = 0.5}, [&written](double value) { written = value; });
+    // act
+    fixture.adapter().publish(tree);
+    // assert the range pattern is offered for the role the table names as incrementable (§10.2)
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> root = fixture.announced_fragment();
+    ASSERT_NE(root.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> announced;
+    ASSERT_HRESULT_SUCCEEDED(root->Navigate(NavigateDirection_FirstChild, announced.GetAddressOf()));
+    ASSERT_NE(announced.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple = WindowFixture::simple_of(announced.Get());
+    ASSERT_NE(simple.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IUnknown> pattern;
+    ASSERT_HRESULT_SUCCEEDED(simple->GetPatternProvider(UIA_RangeValuePatternId, pattern.GetAddressOf()));
+    ASSERT_NE(pattern.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRangeValueProvider> range;
+    ASSERT_HRESULT_SUCCEEDED(pattern.As(&range));
+    // assert the current value, bounds and step reach ui automation unchanged (§10.2)
+    double value = 0.0;
+    double minimum = 0.0;
+    double maximum = 0.0;
+    double step = 0.0;
+    ASSERT_HRESULT_SUCCEEDED(range->get_Value(&value));
+    ASSERT_HRESULT_SUCCEEDED(range->get_Minimum(&minimum));
+    ASSERT_HRESULT_SUCCEEDED(range->get_Maximum(&maximum));
+    ASSERT_HRESULT_SUCCEEDED(range->get_SmallChange(&step));
+    EXPECT_DOUBLE_EQ(value, 2.5);
+    EXPECT_DOUBLE_EQ(minimum, 0.0);
+    EXPECT_DOUBLE_EQ(maximum, 10.0);
+    EXPECT_DOUBLE_EQ(step, 0.5);
+    // act a reader writes a new value through the pattern (§10.2)
+    ASSERT_HRESULT_SUCCEEDED(range->SetValue(7.5));
+    // assert the node's write ran, which is how a screen reader moves a slider (§10.1)
+    EXPECT_DOUBLE_EQ(written, 7.5);
+}
+
+TEST(Win32AccessibilityRole, ADisabledSliderReportsItsRangeReadOnly) {
+    // arrange a disabled slider with a published range and a write that must not run (§10.1, §10.2)
+    WindowFixture fixture;
+    ASSERT_NE(fixture.window(), nullptr);
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::Slider});
+    double written = 0.0;
+    tree.mutable_at(0)->set_range(SemanticRange{.value = 2.5, .minimum = 0.0, .maximum = 10.0, .step = 0.5}, [&written](double value) { written = value; });
+    tree.mutable_at(0)->set_disabled(true);
+    // act
+    fixture.adapter().publish(tree);
+    // assert the range pattern is offered and reports the disabled control as read only (§10.2)
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> root = fixture.announced_fragment();
+    ASSERT_NE(root.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> announced;
+    ASSERT_HRESULT_SUCCEEDED(root->Navigate(NavigateDirection_FirstChild, announced.GetAddressOf()));
+    ASSERT_NE(announced.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple = WindowFixture::simple_of(announced.Get());
+    ASSERT_NE(simple.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IUnknown> pattern;
+    ASSERT_HRESULT_SUCCEEDED(simple->GetPatternProvider(UIA_RangeValuePatternId, pattern.GetAddressOf()));
+    ASSERT_NE(pattern.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRangeValueProvider> range;
+    ASSERT_HRESULT_SUCCEEDED(pattern.As(&range));
+    BOOL read_only = FALSE;
+    ASSERT_HRESULT_SUCCEEDED(range->get_IsReadOnly(&read_only));
+    EXPECT_EQ(read_only, TRUE);
+    // act assert the write is refused and no callback runs (§10.2)
+    EXPECT_EQ(range->SetValue(4.0), UIA_E_ELEMENTNOTAVAILABLE);
+    EXPECT_DOUBLE_EQ(written, 0.0);
+}
+
+TEST(Win32AccessibilityRole, AComboBoxExposesExpandAndCollapse) {
+    // arrange a combo box with the two popup actions the portable table names (§10.1, §10.2)
+    WindowFixture fixture;
+    ASSERT_NE(fixture.window(), nullptr);
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::ComboBox});
+    bool expanded = false;
+    (void)tree.mutable_at(0)->add_action("expand", [&expanded] { expanded = true; });
+    (void)tree.mutable_at(0)->add_action("collapse", [&expanded] { expanded = false; });
+    // act
+    fixture.adapter().publish(tree);
+    // assert the expand collapse pattern is offered and drives the actions the node registered (§10.2)
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> root = fixture.announced_fragment();
+    ASSERT_NE(root.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> announced;
+    ASSERT_HRESULT_SUCCEEDED(root->Navigate(NavigateDirection_FirstChild, announced.GetAddressOf()));
+    ASSERT_NE(announced.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple = WindowFixture::simple_of(announced.Get());
+    ASSERT_NE(simple.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IUnknown> pattern;
+    ASSERT_HRESULT_SUCCEEDED(simple->GetPatternProvider(UIA_ExpandCollapsePatternId, pattern.GetAddressOf()));
+    ASSERT_NE(pattern.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IExpandCollapseProvider> popup;
+    ASSERT_HRESULT_SUCCEEDED(pattern.As(&popup));
+    ASSERT_HRESULT_SUCCEEDED(popup->Expand());
+    EXPECT_TRUE(expanded);
+    ASSERT_HRESULT_SUCCEEDED(popup->Collapse());
+    EXPECT_FALSE(expanded);
+}
+
 TEST(Win32AccessibilityRole, AListAnnouncesAsAList) {
     // arrange a tree whose root is a list, which is the role at issue (§10.1)
     WindowFixture fixture;
@@ -534,13 +665,14 @@ TEST(Win32AccessibilityRole, ARadioGroupAnnouncesItsChoicesAndSelection) {
 }
 
 TEST(Win32AccessibilityRole, ANumericStepperAnnouncesItsValue) {
-    // arrange a stepper carrying a number, which a reader speaks (§10.1)
+    // arrange a stepper carrying a number and a range, which a reader steps through (§10.1)
     WindowFixture fixture;
     ASSERT_NE(fixture.window(), nullptr);
     SemanticTree tree;
     tree.add(SemanticNode{SemanticRole::NumericStepper});
     tree.mutable_at(0)->set_name("Effort");
     tree.mutable_at(0)->set_value("3.5");
+    tree.mutable_at(0)->set_range(SemanticRange{.value = 3.5, .minimum = 0.0, .maximum = 10.0, .step = 0.5}, [](double) {});
     // act
     fixture.adapter().publish(tree);
     // assert the stepper announces as a spinner, which is the control type a reader steps in (§10.2)
@@ -556,22 +688,51 @@ TEST(Win32AccessibilityRole, ANumericStepperAnnouncesItsValue) {
     ASSERT_EQ(control_type.vt, VT_I4);
     EXPECT_EQ(control_type.lVal, UIA_SpinnerControlTypeId);
     VariantClear(&control_type);
-    // assert the number reaches the value pattern, because the bridge carries it read only (§10.2)
+    // assert the number reaches the range value property, because the stepper exposes a bounded value (§10.2)
     VARIANT value{};
-    ASSERT_HRESULT_SUCCEEDED(simple->GetPropertyValue(UIA_ValueValuePropertyId, &value));
-    ASSERT_EQ(value.vt, VT_BSTR);
-    EXPECT_STREQ(value.bstrVal, L"3.5");
+    ASSERT_HRESULT_SUCCEEDED(simple->GetPropertyValue(UIA_RangeValueValuePropertyId, &value));
+    ASSERT_EQ(value.vt, VT_R8);
+    EXPECT_DOUBLE_EQ(value.dblVal, 3.5);
     VariantClear(&value);
     Microsoft::WRL::ComPtr<IUnknown> pattern;
-    ASSERT_HRESULT_SUCCEEDED(simple->GetPatternProvider(UIA_ValuePatternId, pattern.GetAddressOf()));
+    ASSERT_HRESULT_SUCCEEDED(simple->GetPatternProvider(UIA_RangeValuePatternId, pattern.GetAddressOf()));
     ASSERT_NE(pattern.Get(), nullptr);
-    Microsoft::WRL::ComPtr<IValueProvider> provider;
+    Microsoft::WRL::ComPtr<IRangeValueProvider> provider;
     ASSERT_HRESULT_SUCCEEDED(pattern.As(&provider));
-    BSTR read_value = nullptr;
+    double read_value = 0.0;
     ASSERT_HRESULT_SUCCEEDED(provider->get_Value(&read_value));
-    ASSERT_NE(read_value, nullptr);
-    EXPECT_STREQ(read_value, L"3.5");
-    SysFreeString(read_value);
+    EXPECT_DOUBLE_EQ(read_value, 3.5);
+}
+
+TEST(Win32AccessibilityRole, AMenuItemAnnouncesItsControlType) {
+    // arrange a menu row with an author id and a name, which is what a reader selects (§10.1, §18.2)
+    WindowFixture fixture;
+    ASSERT_NE(fixture.window(), nullptr);
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::MenuItem});
+    tree.mutable_at(0)->set_explicit_id("menu_save");
+    tree.mutable_at(0)->set_name("Save");
+    // act
+    fixture.adapter().publish(tree);
+    // assert the row announces the menu item control type rather than a generic custom element (§10.2)
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> root = fixture.announced_fragment();
+    ASSERT_NE(root.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> announced;
+    ASSERT_HRESULT_SUCCEEDED(root->Navigate(NavigateDirection_FirstChild, announced.GetAddressOf()));
+    ASSERT_NE(announced.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple = WindowFixture::simple_of(announced.Get());
+    ASSERT_NE(simple.Get(), nullptr);
+    VARIANT control_type{};
+    ASSERT_HRESULT_SUCCEEDED(simple->GetPropertyValue(UIA_ControlTypePropertyId, &control_type));
+    ASSERT_EQ(control_type.vt, VT_I4);
+    EXPECT_EQ(control_type.lVal, UIA_MenuItemControlTypeId);
+    VariantClear(&control_type);
+    // assert the name is the row's label, which a reader announces (§10.1)
+    VARIANT name{};
+    ASSERT_HRESULT_SUCCEEDED(simple->GetPropertyValue(UIA_NamePropertyId, &name));
+    ASSERT_EQ(name.vt, VT_BSTR);
+    EXPECT_STREQ(name.bstrVal, L"Save");
+    VariantClear(&name);
 }
 
 TEST(Win32AccessibilityRole, AnImageAnnouncesItsControlTypeNameAndEnabledState) {

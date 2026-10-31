@@ -1,6 +1,7 @@
 #include "widgets/widget.h"
 
 #include "commands/command.h"
+#include "ui/semantic_tree_builder.h"
 
 namespace albor
 {
@@ -60,6 +61,12 @@ namespace albor
     Widget::Widget(BindingEngine* engine, std::string explicit_id) :
         Component(engine, std::move(explicit_id)) {}
 
+    Widget::~Widget() {
+        // the consumer leaves before its storage is gone, so a later publish cannot reach freed memory (§18.1)
+        if (m_command != nullptr && m_command_observer != 0)
+            (void)m_command->unbind(m_command_observer);
+    }
+
     float Widget::corner_radius() const {
         // without a theme the plate is a hard rectangle, because nothing asked for a radius (§6.2)
         if (m_theme == nullptr)
@@ -116,20 +123,35 @@ namespace albor
     }
 
     std::size_t Widget::semantic_child_count() const {
-        // the semantic walk visits the same children the layout walks, so the two counts agree (§10.1, AD-09)
-        return child_count();
+        // the semantic walk visits only what the layout shows, so a hidden child is not announced (§10.1, AD-09)
+        std::size_t visible = 0;
+        for (std::size_t index = 0; index < child_count(); index++) {
+            const UiNode* child = child_at(index);
+            if (child != nullptr && child->visible())
+                visible++;
+        }
+        return visible;
     }
 
     std::unique_ptr<SemanticProvider> Widget::semantic_child(std::size_t index) const {
-        // an index past the end names no child, which is what the lazy walk expects (§10.1, AD-09)
-        UiNode* child = child_at(index);
-        if (child == nullptr)
-            return nullptr;
-        // a child that exposes semantics is watched rather than copied, so the ui tree stays the only owner (§10.1, AD-09)
-        if (const auto* provider = dynamic_cast<const SemanticProvider*>(child))
-            return std::make_unique<SemanticProviderView>(provider);
-        // a child with no semantics is announced as a node that carries no meaning, so the walk still has a shape (§10.1, AD-09)
-        return std::make_unique<SemanticNodeProvider>(SemanticNode{SemanticRole::None});
+        // the position counts only visible children (§10.1)
+        std::size_t position = 0;
+        for (std::size_t child_index = 0; child_index < child_count(); child_index++) {
+            UiNode* child = child_at(child_index);
+            if (child == nullptr || !child->visible())
+                continue;
+            if (position != index) {
+                position++;
+                continue;
+            }
+            // a child that exposes semantics is watched, so the tree stays its only owner (§10.1)
+            if (const auto* provider = dynamic_cast<const SemanticProvider*>(child))
+                return std::make_unique<SemanticProviderView>(provider);
+            // a child with no semantics is walked as a subtree (§10.1)
+            return make_node_semantic_provider(*child);
+        }
+        // an index past the visible children names no child, which is what the lazy walk expects (§10.1, AD-09)
+        return nullptr;
     }
 
     void Widget::set_theme(const Theme* theme) {
@@ -208,8 +230,12 @@ namespace albor
         // the new command replaces the old one, which the widget reads from here on (§18.1)
         m_command = command;
         // a widget with no command owns its own state again, which is what unbinding restores (§18.7)
-        if (m_command == nullptr)
+        if (m_command == nullptr) {
+            // the widget repaints because the published label and applicability no longer drive it (§18.7)
+            invalidate();
+            invalidate_layout();
             return;
+        }
         // the widget subscribes, and binding hands it the current state at once so it never starts stale (§18.1)
         m_command_observer = m_command->bind_static(&Widget::command_observer, this);
     }

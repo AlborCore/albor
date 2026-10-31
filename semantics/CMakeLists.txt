@@ -7,7 +7,7 @@ file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 add_library(albor-semantics STATIC ${CPP_SOURCES})
 
 # the semantic model is header visible, because every custom node implements its provider (§3.5)
-target_include_directories(albor-semantics PUBLIC ${ALBOR_SOURCE_DIR})
+target_include_directories(albor-semantics PUBLIC $<BUILD_INTERFACE:${ALBOR_SOURCE_DIR}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_compile_features(albor-semantics PUBLIC cxx_std_23)
 
 # the semantic module needs the shared value types for its bounds and nothing else (§3.2)

@@ -94,6 +94,9 @@ namespace albor
             event.handled = true;
             // the row under the pointer takes the focus and the selection, which is what a click means (§18.3)
             jump_to(*index);
+            // a chooser hears the press even when the row was already selected, so a click can commit it (§8.3)
+            if (m_on_item_pressed)
+                m_on_item_pressed(*index);
             return;
         }
         // a modified key belongs to the application, so the list only answers an unmodified key down (§8.3)
@@ -369,6 +372,11 @@ namespace albor
     void ListBox::set_on_activate(std::function<void(const std::string&)> handler) {
         // the work is swapped in place, because a later activation must reach the new work (§18.1)
         m_on_activate = std::move(handler);
+    }
+
+    void ListBox::set_on_item_pressed(std::function<void(std::size_t)> handler) {
+        // the press work is swapped in place, because a later press must reach the new chooser (§8.3)
+        m_on_item_pressed = std::move(handler);
     }
 
     void ListBox::set_disabled(bool disabled) {

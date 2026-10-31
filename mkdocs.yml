@@ -55,6 +55,7 @@ nav:
       - Overview: components/index.md
       - Label: components/label.md
       - Button: components/button.md
+      - ComboBox: components/combo-box.md
       - TextField: components/text-field.md
       - Slider: components/slider.md
       - ProgressBar: components/progress-bar.md
@@ -69,6 +70,7 @@ nav:
       - Column: components/column.md
       - Row: components/row.md
       - Padding: components/padding.md
+      - Panel and Card: components/panel.md
       - Stack: components/stack.md
       - Grid: components/grid.md
   - Tooling: tooling.md

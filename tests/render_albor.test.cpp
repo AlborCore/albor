@@ -31,6 +31,67 @@
 using namespace albor;
 using namespace albor::render;
 
+TEST(ContourChecks, CountsThePointsCurveVerbsConsume) {
+    // arrange a stream that mixes every verb, which the demand must match to the point list (§6.4)
+    const PathVerb verbs[6] = {PathVerb::MoveTo, PathVerb::QuadraticTo, PathVerb::CubicTo, PathVerb::LineTo, PathVerb::Close, PathVerb::MoveTo};
+    // act
+    const std::size_t demand = PathResource::point_demand(verbs);
+    // assert a quadratic consumes two points and a cubic three, which is what a factory validates (§6.4)
+    EXPECT_EQ(demand, 8U);
+}
+
+TEST(ContourChecks, FlattensAQuadraticCurveIntoAContour) {
+    // arrange a quadratic arc from the origin through a raised control to a level end (§6.4)
+    const PathVerb verbs[2] = {PathVerb::MoveTo, PathVerb::QuadraticTo};
+    const Point points[3] = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 5.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 0.0f}};
+    // act
+    const std::vector<Contour> contours = build_contours(verbs, points);
+    // assert the curve is tessellated into several segments that reach the written end point (§6.4)
+    ASSERT_EQ(contours.size(), 1U);
+    EXPECT_GT(contours[0].points.size(), 10U);
+    EXPECT_FLOAT_EQ(contours[0].points.back().position.x, 10.0f);
+    EXPECT_FLOAT_EQ(contours[0].points.back().position.y, 0.0f);
+}
+
+TEST(ContourChecks, FlattensACubicCurveIntoAContour) {
+    // arrange a cubic arc with two control points, which a spline through samples needs (§6.4)
+    const PathVerb verbs[2] = {PathVerb::MoveTo, PathVerb::CubicTo};
+    const Point points[4] = {Point{.x = 0.0f, .y = 0.0f}, Point{.x = 2.0f, .y = 10.0f}, Point{.x = 8.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 0.0f}};
+    // act
+    const std::vector<Contour> contours = build_contours(verbs, points);
+    // assert the curve is tessellated and reaches the written end point (§6.4)
+    ASSERT_EQ(contours.size(), 1U);
+    EXPECT_GT(contours[0].points.size(), 10U);
+    EXPECT_FLOAT_EQ(contours[0].points.back().position.x, 10.0f);
+    EXPECT_FLOAT_EQ(contours[0].points.back().position.y, 0.0f);
+}
+
+TEST(ContourChecks, AQuadraticWithoutAMoveStartsAtTheOrigin) {
+    // arrange a curve that opens without a move, whose current point is the origin (§6.4)
+    const PathVerb verbs[1] = {PathVerb::QuadraticTo};
+    const Point points[2] = {Point{.x = 10.0f, .y = 10.0f}, Point{.x = 20.0f, .y = 0.0f}};
+    // act
+    const std::vector<Contour> contours = build_contours(verbs, points);
+    // assert the first sample leaves the origin rather than the control point (§6.4)
+    ASSERT_EQ(contours.size(), 1U);
+    ASSERT_FALSE(contours[0].points.empty());
+    EXPECT_LT(contours[0].points.front().position.x, 2.0f);
+    EXPECT_LT(contours[0].points.front().position.y, 2.0f);
+}
+
+TEST(ContourChecks, ACurveAfterCloseStartsAtTheContourStart) {
+    // arrange a closed triangle and a curve that follows it, which continues from the contour start (§6.4)
+    const PathVerb verbs[4] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::Close, PathVerb::QuadraticTo};
+    const Point points[5] = {Point{.x = 10.0f, .y = 10.0f}, Point{.x = 20.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 0.0f}, Point{.x = 10.0f, .y = 20.0f}, Point{.x = 20.0f, .y = 20.0f}};
+    // act
+    const std::vector<Contour> contours = build_contours(verbs, points);
+    // assert the curve leaves the closed contour's start, not its last point (§6.4)
+    ASSERT_FALSE(contours.empty());
+    ASSERT_GT(contours[0].points.size(), 3U);
+    EXPECT_NEAR(contours[0].points[3].position.x, 10.0f, 2.0f);
+    EXPECT_NEAR(contours[0].points[3].position.y, 10.0f, 2.0f);
+}
+
 TEST(ContourChecks, BuildsOneClosedContourFromAClosedSquare) {
     // arrange
     const PathVerb verbs[4] = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};

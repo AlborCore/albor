@@ -14,6 +14,9 @@ add_subdirectory(form)
 # the shared action object, which shows one command bound across a toolbar, a menu row and the keyboard (§14, §18)
 add_subdirectory(commands)
 
+# the first vertical slice, which assembles the shared pages, the shell strip and the declarative chart (§14)
+add_subdirectory(vertical-slice)
+
 # the hello world application using all rendering backends
 add_subdirectory(hello-world)
 

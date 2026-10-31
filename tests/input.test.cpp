@@ -32,6 +32,9 @@ namespace
         // whether this node claims the events it is offered (§8.3)
         bool claims = false;
 
+        // the controller a press cancels, which models a surface hiding during its own press (§8.3)
+        InputController* cancelling_controller = nullptr;
+
         // whether this node reports itself as visible, because a hidden node is not a hit (§8.3)
         bool shown = true;
 
@@ -72,6 +75,9 @@ namespace
             // a claiming node marks the event handled, which stops the walk (§8.3)
             if (claims)
                 event.handled = true;
+            // a press may take its surface off screen, which ends any drag the controller would arm (§8.3)
+            if (cancelling_controller != nullptr && event.kind == EventKind::PointerDown)
+                cancelling_controller->cancel_pointer_capture();
         }
     };
     // the focus tracking test double, which records what the manager told it (§8.3)
@@ -889,6 +895,28 @@ TEST(InputControllerChecks, AClaimedPressMovesTheCaret) {
     EXPECT_TRUE(press.handled);
     EXPECT_EQ(controller.focus().focused(), &root);
     EXPECT_TRUE(controller.capturing());
+}
+
+TEST(InputControllerChecks, APressThatHidesItsSurfaceDoesNotArmCapture) {
+    // arrange a node whose press hides the native surface, which is a popup row that commits a choice (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.cancelling_controller = &controller;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    Event press{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    // act
+    controller.deliver(press);
+    // assert the hidden surface armed no capture, because its release may never arrive (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_FALSE(controller.capturing());
+    EXPECT_EQ(controller.focus().focused(), nullptr);
+    // act press again, which must route rather than be swallowed by a stale drag (§8.3)
+    Event second{.kind = EventKind::PointerDown, .position = Point{12.0f, 12.0f}};
+    controller.deliver(second);
+    // assert the second press reached the tree, so reopening the surface accepts a click (§8.3)
+    EXPECT_EQ(root.deliveries, 2u);
 }
 
 TEST(InputControllerChecks, AnUnclaimedPressFocusesNothing) {

@@ -1,0 +1,14 @@
+// the netlist editor fixture, which declares the three token ranges the reference application paints (§9.1)
+
+component NetlistEditor {
+    TextField {
+        id: netlist;
+        multiline: true;
+        value: "RESISTOR 10 // comment";
+        decorations: [
+            TextDecoration { start: 0, end: 8, foreground: #2E86DE },
+            TextDecoration { start: 9, end: 11, foreground: #E67E22 },
+            TextDecoration { start: 12, end: 22, foreground: #27AE60, underline: true }
+        ];
+    }
+}

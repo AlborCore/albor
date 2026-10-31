@@ -74,6 +74,19 @@ TEST(CommandCommands, AnUnnamedCommandIsDumpedButNotSelectable) {
     EXPECT_FALSE(invoked.ok);
 }
 
+TEST(CommandCommands, TheNamedHistoryCommandIsDumpedUnderItsAuthorId) {
+    // arrange
+    Fixture fixture;
+    // the declaration joins the registry, which is what the dump below reads (§18.1, §18.4)
+    const UndoCommand& undo = fixture.commands.declare_undo("edit.undo", "Undo");
+    (void)undo;
+    // act
+    const AutomationResult result = fixture.run("command.list");
+    // assert the history command joins the same dump under the id its author assigned (§18.1, §18.4)
+    ASSERT_TRUE(result.ok);
+    EXPECT_NE(result.payload.find("edit.undo disabled visible Undo"), std::string::npos);
+}
+
 TEST(CommandCommands, OneCommandReportsItsOwnState) {
     // arrange
     Fixture fixture;

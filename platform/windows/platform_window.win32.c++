@@ -8,6 +8,7 @@
 #include <imm.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <memory>
 #include <string>
@@ -36,8 +37,29 @@ namespace albor
         // whether the window is currently on screen, which win32 does not track for the framework (§5.1)
         bool visible = false;
 
+        // whether a left press is held, which tells a popup shown from that press to leave the capture alone (§5.1)
+        bool mouse_down = false;
+
+        // how many clicks the last press belongs to, which a double or triple click selection reads (§8.3)
+        int click_count = 0;
+
+        // the tick the last press arrived at, which the double click window is measured against (§8.3)
+        ULONGLONG last_click_time = 0;
+
+        // the client point the last press landed at, which the double click slop is measured against (§8.3)
+        POINT last_click_point{};
+
         // whether the window is a popup, which the show path and the dismissal monitor consult (§5.1)
         bool popup = false;
+
+        // the owner a transient surface follows, which the anchor test reads (§5.1)
+        HWND owner = nullptr;
+
+        // the trigger rectangle the popup is anchored to, in the owner's logical client space (§5.1)
+        Rect anchor{};
+
+        // the logical extent the popup presents, which every placement scales into the frame (§5.1)
+        Size popup_size{};
 
         // the caret rect the framework pushed, which the candidate window is placed by (§8.3)
         Rect text_anchor;
@@ -62,6 +84,24 @@ namespace albor
     {
         // the name the window class is registered under, which is one per process (§5.3)
         constexpr const wchar_t* WINDOW_CLASS = L"AlborWindow";
+
+        // count a left press against the previous one, which is how win32 reports a triple click (§8.3)
+        int click_count_for(Win32WindowState& state, int x, int y) {
+            // the time and the slop both come from the system, because the double click is its gesture (§8.3)
+            const ULONGLONG now = GetTickCount64();
+            // each axis is measured without a sign, because the press may land either side (§8.3)
+            const int dx = x >= state.last_click_point.x ? x - state.last_click_point.x : state.last_click_point.x - x;
+            // the y axis is measured the same way, because the slop is a rectangle (§8.3)
+            const int dy = y >= state.last_click_point.y ? y - state.last_click_point.y : state.last_click_point.y - y;
+            // a press inside the window and the slop continues the sequence, which is what a multi click is (§8.3)
+            const bool continues = state.click_count > 0 && now - state.last_click_time <= static_cast<ULONGLONG>(GetDoubleClickTime()) && dx <= GetSystemMetrics(SM_CXDOUBLECLK) / 2 && dy <= GetSystemMetrics(SM_CYDOUBLECLK) / 2;
+            // the count advances on a continued sequence and starts over otherwise (§8.3)
+            state.click_count = continues ? state.click_count + 1 : 1;
+            // the press is remembered, because the next one is measured against it (§8.3)
+            state.last_click_time = now;
+            state.last_click_point = POINT{.x = x, .y = y};
+            return state.click_count;
+        }
 
         // the scale factor the window reports, which separates logical pixels from physical ones (AD-27)
         float scale_of(HWND window) {
@@ -213,6 +253,12 @@ namespace albor
             return 0;
         }
 
+        // place a popup under its owner's anchor and keep it inside the monitor work area (§5.1)
+        void position_popup(HWND popup, HWND owner, Rect anchor, Size size);
+
+        // reposition every shown popup an owner anchors, because a moved owner must not leave its list behind (§5.1)
+        void reposition_owned_popups(HWND owner);
+
         // report whether a client point names a spot outside the window frame, which capture delivers (§5.1)
         bool point_is_outside(HWND window, int x, int y) {
             // the point is opened up to the screen space the frame is measured in (§5.1)
@@ -222,6 +268,26 @@ namespace albor
             RECT frame{};
             GetWindowRect(window, &frame);
             return PtInRect(&frame, point) == FALSE;
+        }
+
+        // report whether a screen point lands on the trigger an owned popup hangs from (§5.1)
+        bool point_in_anchor(const Win32WindowState* state, POINT screen) {
+            // a popup without an owner has no anchor, so the point is never inside one (§5.1)
+            if (state->owner == nullptr)
+                return false;
+            // the screen point is converted to the owner's client space, where the anchor was recorded (§5.1)
+            POINT client = screen;
+            if (!ScreenToClient(state->owner, &client))
+                return false;
+            // the owner dpi turns the logical anchor into the physical coordinates of that client space (§5.3, AD-27)
+            const float scale = static_cast<float>(GetDpiForWindow(state->owner)) / 96.0f;
+            // the anchor is half open, which is the rectangle the control itself hit tests (§8.3)
+            const LONG left = static_cast<LONG>(std::lround(static_cast<double>(state->anchor.x) * scale));
+            const LONG top = static_cast<LONG>(std::lround(static_cast<double>(state->anchor.y) * scale));
+            const LONG right = static_cast<LONG>(std::lround(static_cast<double>(state->anchor.x + state->anchor.width) * scale));
+            const LONG bottom = static_cast<LONG>(std::lround(static_cast<double>(state->anchor.y + state->anchor.height) * scale));
+            // the point is inside when it falls in the half open trigger rectangle (§5.1)
+            return client.x >= left && client.x < right && client.y >= top && client.y < bottom;
         }
 
         // the dismissal a popup shares between its outside click monitor and its activation loss (§5.1, §8.4)
@@ -262,6 +328,33 @@ namespace albor
             }
         }
 
+        // hand the capture to a shown popup after the opening press ends, so outside clicks still dismiss it (§5.1)
+        void arm_owned_popup_capture(HWND owner) {
+            // the registry is pruned first, because a popup whose framework window is gone holds no capture (§5.1)
+            auto& popups = popup_registry();
+            popups.erase(std::remove_if(popups.begin(), popups.end(), [](const std::weak_ptr<Win32WindowState>& weak) { return weak.expired(); }), popups.end());
+            // the newest shown popup an owner anchors is the surface that receives the next outside press (§5.1)
+            for (auto entry = popups.rbegin(); entry != popups.rend(); ++entry) {
+                if (std::shared_ptr<Win32WindowState> locked = entry->lock(); locked && locked->popup && locked->visible && locked->owner == owner && locked->window != nullptr) {
+                    // the popup takes the capture after the owner received the release, not before it (§5.1)
+                    SetCapture(locked->window);
+                    return;
+                }
+            }
+        }
+
+        // reposition every shown popup an owner anchors, because a moved owner must not leave its list behind (§5.1)
+        void reposition_owned_popups(HWND owner) {
+            // the registry is pruned first, because a popup whose framework window is gone is not moved (§5.1)
+            auto& popups = popup_registry();
+            popups.erase(std::remove_if(popups.begin(), popups.end(), [](const std::weak_ptr<Win32WindowState>& weak) { return weak.expired(); }), popups.end());
+            // only a shown popup anchored to this owner follows it, because a hidden surface is placed on show (§5.1)
+            for (const std::weak_ptr<Win32WindowState>& weak : popups) {
+                if (std::shared_ptr<Win32WindowState> locked = weak.lock(); locked && locked->popup && locked->visible && locked->owner == owner)
+                    position_popup(locked->window, owner, locked->anchor, locked->popup_size);
+            }
+        }
+
         // the press the dismissal swallowed is forwarded, because the click still reaches what the user clicked (§5.1)
         void forward_press(const POINT& screen, UINT code, WPARAM wparam, LPARAM lparam) {
             // the window the press names sits under the screen point, which the capture had held (§5.1)
@@ -272,11 +365,35 @@ namespace albor
             // the forward reaches a window of this process, which is the only one a capture can take (§5.1)
             DWORD target_process = 0;
             GetWindowThreadProcessId(target, &target_process);
-            // a press on a window of another app was never ours to route, so the drop is the honest one (§5.1)
-            if (target_process != GetCurrentProcessId())
+            // a press on another application is offered activation, which is the click-through macOS gives (§5.1)
+            if (target_process != GetCurrentProcessId()) {
+                // the top level window is what activation names, because the click may land on a child (§5.1)
+                const HWND root = GetAncestor(target, GA_ROOT);
+                // the system may refuse a forced activation, which is why the click is only offered (§5.1)
+                SetForegroundWindow(root != nullptr ? root : target);
                 return;
+            }
+            // the point is translated into the target's client space, because the popup and the target differ (§5.1)
+            POINT target_point = screen;
+            if (!ScreenToClient(target, &target_point))
+                return;
+            // the translated point is what the target's hit test reads, because the original was popup space (§5.1)
+            const LPARAM translated = MAKELPARAM(target_point.x, target_point.y);
             // the message is posted, because a synchronous cross process send could block this thread (§5.1)
-            (void)PostMessageW(target, code, wparam, lparam);
+            (void)PostMessageW(target, code, wparam, translated);
+        }
+
+        // forward a click on the trigger instead of dismissing, so the trigger can toggle its own surface (§5.1)
+        bool forward_anchor_press(Win32WindowState* state, HWND popup, const POINT& screen, UINT code, WPARAM wparam, LPARAM lparam) {
+            // only a shown popup with a matching anchor takes this path (§5.1)
+            if (!state->popup || !state->visible || !point_in_anchor(state, screen))
+                return false;
+            // the capture is released first, because the owner must receive the forwarded press (§5.1)
+            if (GetCapture() == popup)
+                ReleaseCapture();
+            // the press is posted to the trigger, which is the control that owns the open list (§5.1)
+            forward_press(screen, code, wparam, lparam);
+            return true;
         }
 
         // the utf8 of one composition string the context carries, empty when it names none (§8.3)
@@ -302,8 +419,19 @@ namespace albor
             }
             // the state is the window's own, which the create message stored and every later message reads (§5.3)
             auto* state = reinterpret_cast<Win32WindowState*>(GetWindowLongPtrW(window, GWLP_USERDATA));
-            // a window with no state or no listener is past the framework, so the default window handles it (§4.2)
-            if (state == nullptr || state->listener == nullptr)
+            // a window with no state is past the framework, so the default window handles it (§4.2)
+            if (state == nullptr)
+                return DefWindowProcW(window, code, wparam, lparam);
+            // transient surfaces follow a moved owner before the listener gate, because placement is platform state (§5.1)
+            if (code == WM_WINDOWPOSCHANGED) {
+                // a moved owner moves its transient surfaces, which win32 does not do for an owned window (§5.1)
+                if (!state->popup)
+                    reposition_owned_popups(window);
+                // the default handling is kept, because the system still owns the window position state (§5.3)
+                return DefWindowProcW(window, code, wparam, lparam);
+            }
+            // a window with no listener is past the framework, so the default window handles it (§4.2)
+            if (state->listener == nullptr)
                 return DefWindowProcW(window, code, wparam, lparam);
             // the platform events are normalized below, one native message family at a time (§5.3, §8.3)
             switch (code) {
@@ -337,12 +465,23 @@ namespace albor
                 state->listener->on_platform_closed();
                 return 0;
             }
+            case WM_MOUSEACTIVATE: {
+                // a popup never takes activation from its owner, so the trigger stays focused (§5.1)
+                if (state->popup)
+                    return MA_NOACTIVATE;
+                // every ordinary window keeps the system activation policy (§5.3)
+                return DefWindowProcW(window, code, wparam, lparam);
+            }
+            case WM_LBUTTONDBLCLK:
             case WM_LBUTTONDOWN: {
                 // a press a shown popup receives dismisses it, which the click outside the frame is (§5.1)
                 if (state->popup && state->visible && point_is_outside(window, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam))) {
                     // the screen point is opened before the dismissal, which may tear the window down (§5.1)
                     POINT screen{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
                     ClientToScreen(window, &screen);
+                    // a click on the trigger belongs to the control, which toggles the popup itself (§5.1)
+                    if (forward_anchor_press(state, window, screen, code, wparam, lparam))
+                        return 0;
                     // the popups the click missed are dismissed, which is what every monitor of the reference takes (§5.1)
                     dismiss_registered_popups();
                     // the press is forwarded, because the click still reaches whatever the user actually clicked (§5.1)
@@ -351,9 +490,13 @@ namespace albor
                 }
                 // the capture keeps a drag alive outside the window, which a press started inside continues (§8.3)
                 SetCapture(window);
+                // a popup opened from this press must not steal the capture before the matching release (§5.1)
+                state->mouse_down = true;
                 Event message;
                 message.kind = EventKind::PointerDown;
                 message.position = logical_from_client(window, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
+                // the native sequence counts multiple clicks, which a text selection reads (§8.3)
+                message.click_count = click_count_for(*state, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
                 state->listener->on_platform_event(message);
                 return 0;
             }
@@ -374,6 +517,8 @@ namespace albor
                 return DefWindowProcW(window, code, wparam, lparam);
             }
             case WM_LBUTTONUP: {
+                // the press is over before the event runs, so a popup opened during it may take the capture next (§5.1)
+                state->mouse_down = false;
                 // the capture is released on the button that took it, because no drag is left to continue (§8.3)
                 if (GetCapture() == window)
                     ReleaseCapture();
@@ -381,6 +526,9 @@ namespace albor
                 message.kind = EventKind::PointerUp;
                 message.position = logical_from_client(window, GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam));
                 state->listener->on_platform_event(message);
+                // an owner that opened a popup on this press hands the capture to it after the release is delivered (§5.1)
+                if (!state->popup)
+                    arm_owned_popup_capture(window);
                 return 0;
             }
             case WM_MOUSEMOVE: {
@@ -529,7 +677,7 @@ namespace albor
             WNDCLASSEXW window_class{};
             window_class.cbSize = sizeof(window_class);
             // the class redraws on either axis resize, because every resize repaints the whole surface anyway (§5.3)
-            window_class.style = CS_HREDRAW | CS_VREDRAW;
+            window_class.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
             window_class.lpfnWndProc = &window_proc;
             // the arrow is the ordinary cursor, cast wide because this file builds without the unicode define (§5.3)
             window_class.hCursor = LoadCursorW(nullptr, reinterpret_cast<LPCWSTR>(IDC_ARROW));
@@ -567,6 +715,42 @@ namespace albor
         }
     } // namespace
 
+    namespace
+    {
+        // place a popup under its owner's anchor and keep it inside the monitor work area (§5.1)
+        void position_popup(HWND popup, HWND owner, Rect anchor_rect, Size size) {
+            // an owner that is gone cannot place a child, so the cascade position stands (§5.1)
+            if (owner == nullptr)
+                return;
+            // the owner dpi turns the logical anchor and popup extent into the physical frame (§5.3, AD-27)
+            const float scale = static_cast<float>(GetDpiForWindow(owner)) / 96.0f;
+            // the anchor is a client point, which the screen conversion needs before the popup is placed (§5.1)
+            POINT anchor{static_cast<LONG>(std::lround(static_cast<double>(anchor_rect.x) * scale)), static_cast<LONG>(std::lround(static_cast<double>(anchor_rect.y) * scale))};
+            // a failed conversion keeps the cascade position, which is a refused placement (§5.1)
+            if (!ClientToScreen(owner, &anchor))
+                return;
+            // the popup extent follows the owner scale, because the options size is logical (§5.3, AD-27)
+            const int width = static_cast<int>(std::lround(static_cast<double>(size.width) * scale));
+            const int height = static_cast<int>(std::lround(static_cast<double>(size.height) * scale));
+            // the monitor the owner occupies is the work area the popup must stay inside (§5.1)
+            MONITORINFO monitor{};
+            monitor.cbSize = sizeof monitor;
+            if (!GetMonitorInfoW(MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST), &monitor))
+                return;
+            // the popup hangs below the anchor first, which is the conventional dropdown position (§5.1)
+            int x = static_cast<int>(anchor.x);
+            int y = static_cast<int>(anchor.y) + static_cast<int>(std::lround(static_cast<double>(anchor_rect.height) * scale));
+            // the popup flips above the anchor when the work area has no room below (§5.1)
+            if (y + height > monitor.rcWork.bottom)
+                y = static_cast<int>(anchor.y) - height;
+            // the popup is clamped into the work area, so a trigger at an edge still shows the list (§5.1)
+            x = std::clamp(x, static_cast<int>(monitor.rcWork.left), std::max(static_cast<int>(monitor.rcWork.left), static_cast<int>(monitor.rcWork.right) - width));
+            y = std::clamp(y, static_cast<int>(monitor.rcWork.top), std::max(static_cast<int>(monitor.rcWork.top), static_cast<int>(monitor.rcWork.bottom) - height));
+            // the frame is applied without activation, which keeps the owner focused (§5.1)
+            SetWindowPos(popup, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE);
+        }
+    } // namespace
+
     std::unique_ptr<Win32PlatformWindow> Win32PlatformWindow::create(const WindowOptions& options) {
         // an option set the framework refuses is never handed to win32 (§5.1)
         if (!options.valid())
@@ -587,18 +771,32 @@ namespace albor
         state->style = style;
         // the popup flag is kept, which is what the show path and the dismissal consult (§5.1)
         state->popup = options.role == WindowRole::Popup;
+        // the owner and anchor are kept, because every dismissal needs to tell the trigger from the outside (§5.1)
+        if (state->popup) {
+            // the owner is the hwnd the options named, which is also passed as the create owner (§5.1)
+            state->owner = options.native_parent.valid() ? static_cast<HWND>(const_cast<void*>(options.native_parent.object())) : nullptr;
+            // the anchor is logical client space, which the dpi conversion reads on use (§5.1, AD-27)
+            state->anchor = options.anchor;
+            // the popup extent is logical too, because every placement scales it by the owner dpi (§5.3, AD-27)
+            state->popup_size = options.size;
+        }
         // a popup joins the registered set, which the deactivation message is forwarded across (§5.1, §8.4)
         if (state->popup)
             popup_registry().push_back(state);
         // the extended styles name the popup layer, which the composition floats over the ordinary windows (§5.1)
         const DWORD ex_style = ex_style_for(options);
-        // the window is created unowned and at the system cascade, so a second window does not stack on the first (§5.3)
-        HWND window = CreateWindowExW(ex_style, WINDOW_CLASS, wide_from_utf8(options.title).c_str(), style, CW_USEDEFAULT, CW_USEDEFAULT, frame.right - frame.left, frame.bottom - frame.top, nullptr, nullptr, GetModuleHandleW(nullptr), state.get());
+        // a popup is owned by its trigger window, while an ordinary window keeps the system cascade (§5.1)
+        HWND owner = options.native_parent.valid() ? static_cast<HWND>(const_cast<void*>(options.native_parent.object())) : nullptr;
+        // the window is created at the system cascade, and a popup is placed against its anchor below (§5.3)
+        HWND window = CreateWindowExW(ex_style, WINDOW_CLASS, wide_from_utf8(options.title).c_str(), style, CW_USEDEFAULT, CW_USEDEFAULT, frame.right - frame.left, frame.bottom - frame.top, owner, nullptr, GetModuleHandleW(nullptr), state.get());
         // a window win32 refused leaves the factory reporting no window, which is the quiet refusal of §5.1
         if (window == nullptr)
             return nullptr;
         // the state now names its window, which is what the metrics and the handle read (§5.3)
         state->window = window;
+        // a popup with an owner is placed under the anchor before it is ever shown (§5.1)
+        if (state->popup && owner != nullptr)
+            position_popup(window, owner, state->anchor, state->popup_size);
         // the framework shows the window itself, because the registry binds the listener before it appears (§5.3)
         return std::unique_ptr<Win32PlatformWindow>(new Win32PlatformWindow(std::move(state)));
     }
@@ -629,9 +827,18 @@ namespace albor
             return;
         // a popup is non activating, which is what the appkit show also avoids (§5.1)
         if (m_state->popup) {
+            // the owner may have moved since the last show, so the anchor is placed again (§5.1)
+            position_popup(m_state->window, m_state->owner, m_state->anchor, m_state->popup_size);
             ShowWindow(m_state->window, SW_SHOWNOACTIVATE);
-            // the capture is what routes clicks outside the frame into the dismissal, so it is taken at show (§5.1)
-            SetCapture(m_state->window);
+            // the owner state tells whether this show lands inside the press that opened the popup (§5.1)
+            bool owner_pressed = false;
+            if (m_state->owner != nullptr) {
+                const auto* owner_state = reinterpret_cast<Win32WindowState*>(GetWindowLongPtrW(m_state->owner, GWLP_USERDATA));
+                owner_pressed = owner_state != nullptr && owner_state->mouse_down;
+            }
+            // a popup opened by a press waits for the owner release, while a keyboard open takes the capture now (§5.1)
+            if (!owner_pressed)
+                SetCapture(m_state->window);
         }
         else {
             ShowWindow(m_state->window, SW_SHOW);
@@ -678,6 +885,14 @@ namespace albor
         if (m_state->window == nullptr)
             return WindowMetrics{};
         return metrics_of(m_state->window);
+    }
+
+    NativeWindowHandle Win32PlatformWindow::native_window_handle() const {
+        // a window that was destroyed hands out the invalid handle, which a popup refuses (§5.1)
+        if (m_state->window == nullptr)
+            return NativeWindowHandle{};
+        // the hwnd crosses as an opaque pointer, which no public header names (§3.5, AD-05)
+        return NativeWindowHandle::from_object(reinterpret_cast<const void*>(m_state->window));
     }
 
     NativeWindowHandle Win32PlatformWindow::native_handle() const {

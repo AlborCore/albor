@@ -1,5 +1,6 @@
 #include "devrt/element_table.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cerrno>
 #include <charconv>
@@ -11,6 +12,7 @@
 #include <vector>
 
 #include "core/align.h"
+#include "core/json.h"
 #include "core/paint.h"
 #include "devrt/ir.h"
 #include "layout/column_layout.h"
@@ -27,10 +29,12 @@
 #include "widgets/button.h"
 #include "widgets/canvas.h"
 #include "widgets/checkbox.h"
+#include "widgets/combo_box.h"
 #include "widgets/image.h"
 #include "widgets/label.h"
 #include "widgets/list_box.h"
 #include "widgets/numeric_stepper.h"
+#include "widgets/panel.h"
 #include "widgets/progress_bar.h"
 #include "widgets/radio_button.h"
 #include "widgets/radio_group.h"
@@ -199,6 +203,9 @@ namespace albor::devrt
                 {"Padding", [](std::string_view, BindingEngine&, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<PaddingLayout>()); }},
                 {"Stack", [](std::string_view, BindingEngine&, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<StackLayout>()); }},
                 {"Grid", [](std::string_view, BindingEngine&, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<GridLayout>()); }},
+                // a panel is a themed container, so it takes the engine that settles its properties (§8)
+                {"Panel", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<Panel>(&engine)); }},
+                {"Card", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<Panel>(&engine)); }},
                 // a label measures its text, so it takes both engines (§9.1)
                 {"Label", [](std::string_view, BindingEngine& engine, TextEngine& text) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<Label>(&engine, &text)); }},
                 // a button measures its label and reacts, so it takes both engines (§8.3, §9.1)
@@ -214,6 +221,8 @@ namespace albor::devrt
                 {"ListBox", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<ListBox>(&engine)); }},
                 // a field measures and edits text, so it takes both engines (§8, §9.1)
                 {"TextField", [](std::string_view, BindingEngine& engine, TextEngine& text) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<TextField>(&engine, &text)); }},
+                // a combo box measures its trigger and options, so it takes both engines (§8, §9.1)
+                {"ComboBox", [](std::string_view, BindingEngine& engine, TextEngine& text) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<ComboBox>(&engine, &text)); }},
                 // a tab view owns one selected page and draws its labels, so it takes the engine (§8)
                 {"TabView", [](std::string_view, BindingEngine& engine, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<TabView>(&engine)); }},
                 // a tab page measures its label, so it takes both engines (§8, §9.1)
@@ -270,6 +279,92 @@ namespace albor::devrt
                      node.set_padding(padding);
                      return true;
                  })},
+                // a panel presents the inset, gap, face and border of a card (§8.2, §8.4)
+                {"Panel.padding", setter<Panel>([](Panel& node, std::string_view value) {
+                     float padding = 0.0f;
+                     if (!read_float(value, padding))
+                         return false;
+                     node.set_padding(padding);
+                     return true;
+                 })},
+                {"Panel.spacing", setter<Panel>([](Panel& node, std::string_view value) {
+                     float spacing = 0.0f;
+                     if (!read_float(value, spacing))
+                         return false;
+                     node.set_spacing(spacing);
+                     return true;
+                 })},
+                {"Panel.background", setter<Panel>([](Panel& node, std::string_view value) {
+                     Color color;
+                     if (!read_color(value, color))
+                         return false;
+                     node.set_background(color);
+                     return true;
+                 })},
+                {"Panel.corner_radius", setter<Panel>([](Panel& node, std::string_view value) {
+                     float radius = 0.0f;
+                     if (!read_float(value, radius))
+                         return false;
+                     node.set_corner_radius(radius);
+                     return true;
+                 })},
+                {"Panel.border_width", setter<Panel>([](Panel& node, std::string_view value) {
+                     float width = 0.0f;
+                     if (!read_float(value, width))
+                         return false;
+                     node.set_border_width(width);
+                     return true;
+                 })},
+                {"Panel.border_color", setter<Panel>([](Panel& node, std::string_view value) {
+                     Color color;
+                     if (!read_color(value, color))
+                         return false;
+                     node.set_border_color(color);
+                     return true;
+                 })},
+                // a card is the same facade under the spelling a settings page uses (§8.2)
+                {"Card.padding", setter<Panel>([](Panel& node, std::string_view value) {
+                     float padding = 0.0f;
+                     if (!read_float(value, padding))
+                         return false;
+                     node.set_padding(padding);
+                     return true;
+                 })},
+                {"Card.spacing", setter<Panel>([](Panel& node, std::string_view value) {
+                     float spacing = 0.0f;
+                     if (!read_float(value, spacing))
+                         return false;
+                     node.set_spacing(spacing);
+                     return true;
+                 })},
+                {"Card.background", setter<Panel>([](Panel& node, std::string_view value) {
+                     Color color;
+                     if (!read_color(value, color))
+                         return false;
+                     node.set_background(color);
+                     return true;
+                 })},
+                {"Card.corner_radius", setter<Panel>([](Panel& node, std::string_view value) {
+                     float radius = 0.0f;
+                     if (!read_float(value, radius))
+                         return false;
+                     node.set_corner_radius(radius);
+                     return true;
+                 })},
+                {"Card.border_width", setter<Panel>([](Panel& node, std::string_view value) {
+                     float width = 0.0f;
+                     if (!read_float(value, width))
+                         return false;
+                     node.set_border_width(width);
+                     return true;
+                 })},
+                {"Card.border_color", setter<Panel>([](Panel& node, std::string_view value) {
+                     Color color;
+                     if (!read_color(value, color))
+                         return false;
+                     node.set_border_color(color);
+                     return true;
+                 })},
                 // a label presents text, so its properties are the text and the two type attributes of §9.1
                 {"Label.text", setter<Label>([](Label& node, std::string_view value) {
                      node.set_text(std::string(value));
@@ -292,6 +387,35 @@ namespace albor::devrt
                 // a button presents a label and a fill, which is what §8.4 styles (§8)
                 {"Button.text", setter<Button>([](Button& node, std::string_view value) {
                      node.set_label(std::string(value));
+                     return true;
+                 })},
+                {"Button.icon",
+                 [](UiNode& node, std::string_view value, const std::filesystem::path& asset_root) {
+                     // the dynamic type is the element the definition named, which keeps the key per element (§11.1)
+                     auto* button = dynamic_cast<Button*>(&node);
+                     if (button == nullptr)
+                         return false;
+                     // a plain string is not an asset, because the serializer marks every image value (§12.1)
+                     if (value.substr(0, IMAGE_VALUE_PREFIX.size()) != IMAGE_VALUE_PREFIX)
+                         return false;
+                     // the marker is removed so only the path reaches the registry (§12.1)
+                     value.remove_prefix(IMAGE_VALUE_PREFIX.size());
+                     // an empty path names no file, so the property keeps what it had (§6.4)
+                     if (value.empty())
+                         return false;
+                     // the registry decodes once and hands back a retained handle, which the button keeps alive (§6.4)
+                     std::shared_ptr<const ImageResource> source = resources::ImageRegistry::load_file(asset_path(value, asset_root));
+                     // a file that does not decode is refused, so a later reload may still fix it (§6.4)
+                     if (!source)
+                         return false;
+                     button->set_icon(std::move(source));
+                     return true;
+                 }},
+                {"Button.icon_size", setter<Button>([](Button& node, std::string_view value) {
+                     float size = 0.0f;
+                     if (!read_float(value, size))
+                         return false;
+                     node.set_icon_size(size);
                      return true;
                  })},
                 {"Button.background", setter<Button>([](Button& node, std::string_view value) {
@@ -634,6 +758,99 @@ namespace albor::devrt
                      node.set_font_size(size);
                      return true;
                  })},
+                // a text field paints declared byte ranges, which the serializer writes as json objects (§9.1)
+                {"TextField.decorations", setter<TextField>([](TextField& node, std::string_view value) {
+                     // the serialized array is parsed as json, because a decoration list is more than one value (§12.1)
+                     const std::optional<core::Json> parsed = core::Json::parse(value);
+                     // a malformed list is refused rather than partially applied (§12.1)
+                     if (!parsed || parsed->kind() != core::Json::Kind::Array)
+                         return false;
+                     // the ranges are built in declaration order, which is the paint order (§9.1)
+                     std::vector<TextDecoration> decorations;
+                     for (const core::Json& option : parsed->as_array()) {
+                         // each range is an object, because a decoration has named fields (§9.1)
+                         if (option.kind() != core::Json::Kind::Object)
+                             return false;
+                         // the range starts at zero until the object names a field (§9.1)
+                         TextDecoration decoration;
+                         // the start is an integer string the serializer wrote (§12.1)
+                         if (const core::Json* start = option.member("start"); start != nullptr) {
+                             long long index = 0;
+                             if (start->kind() != core::Json::Kind::String || !read_int(start->as_string(), index))
+                                 return false;
+                             decoration.start = static_cast<std::size_t>(std::max<long long>(0, index));
+                         }
+                         // the end is an integer string and must not precede the start (§12.1)
+                         if (const core::Json* end = option.member("end"); end != nullptr) {
+                             long long index = 0;
+                             if (end->kind() != core::Json::Kind::String || !read_int(end->as_string(), index))
+                                 return false;
+                             decoration.end = static_cast<std::size_t>(std::max<long long>(0, index));
+                         }
+                         // the foreground is the three channel spelling the colour reader takes (§6.1)
+                         if (const core::Json* foreground = option.member("foreground"); foreground != nullptr) {
+                             if (foreground->kind() != core::Json::Kind::String || !read_color(foreground->as_string(), decoration.foreground))
+                                 return false;
+                         }
+                         // the background is the same three channel spelling (§6.1)
+                         if (const core::Json* background = option.member("background"); background != nullptr) {
+                             if (background->kind() != core::Json::Kind::String || !read_color(background->as_string(), decoration.background))
+                                 return false;
+                         }
+                         // the underline is a boolean string, which is what the language wrote (§9.1)
+                         if (const core::Json* underline = option.member("underline"); underline != nullptr) {
+                             if (underline->kind() != core::Json::Kind::String || !read_bool(underline->as_string(), decoration.underline))
+                                 return false;
+                         }
+                         // the range joins the list only after every field parsed (§9.1)
+                         decorations.push_back(decoration);
+                     }
+                     // the runtime list is replaced only after the whole array parsed (§12.1)
+                     node.set_decorations(std::move(decorations));
+                     return true;
+                 })},
+                // a combo box chooses one option and carries its hint and disabled state (§8)
+                {"ComboBox.items", setter<ComboBox>([](ComboBox& node, std::string_view value) {
+                     // the serialized array is parsed as json, because an option list is more than one value (§12.1)
+                     const std::optional<core::Json> parsed = core::Json::parse(value);
+                     // a malformed list is refused rather than partially applied (§12.1)
+                     if (!parsed || parsed->kind() != core::Json::Kind::Array)
+                         return false;
+                     // the option strings are copied in display order, which is the order the array carried (§8)
+                     std::vector<std::string> items;
+                     for (const core::Json& option : parsed->as_array()) {
+                         // an option that is not a string is not a value the control can show (§12.1)
+                         if (option.kind() != core::Json::Kind::String)
+                             return false;
+                         // the string is the text the trigger and the popup draw (§8)
+                         items.push_back(option.as_string());
+                     }
+                     // the runtime list is replaced only after the whole array parsed (§12.1)
+                     node.set_items(std::move(items));
+                     return true;
+                 })},
+                {"ComboBox.selected", setter<ComboBox>([](ComboBox& node, std::string_view value) {
+                     long long index = 0;
+                     if (!read_int(value, index))
+                         return false;
+                     node.set_selected(static_cast<int>(index));
+                     return true;
+                 })},
+                {"ComboBox.label", setter<ComboBox>([](ComboBox& node, std::string_view value) {
+                     node.set_label(std::string(value));
+                     return true;
+                 })},
+                {"ComboBox.placeholder", setter<ComboBox>([](ComboBox& node, std::string_view value) {
+                     node.set_placeholder(std::string(value));
+                     return true;
+                 })},
+                {"ComboBox.disabled", setter<ComboBox>([](ComboBox& node, std::string_view value) {
+                     bool disabled = false;
+                     if (!read_bool(value, disabled))
+                         return false;
+                     node.set_disabled(disabled);
+                     return true;
+                 })},
                 // the two alignments every element declares, so they resolve for any element rather than per one (§8.2)
                 {"*.horizontal_align",
                  [](UiNode& node, std::string_view value, const std::filesystem::path& asset_root) {
@@ -693,7 +910,7 @@ namespace albor::devrt
     std::string_view element_of(const UiNode& node) {
         // the dynamic type decides, because a node is one element of the closed set and nothing else (§8)
         const std::pair<const UiNode*, std::string_view> elements[] = {
-            {dynamic_cast<const ColumnLayout*>(&node), "Column"}, {dynamic_cast<const RowLayout*>(&node), "Row"}, {dynamic_cast<const PaddingLayout*>(&node), "Padding"}, {dynamic_cast<const StackLayout*>(&node), "Stack"}, {dynamic_cast<const GridLayout*>(&node), "Grid"}, {dynamic_cast<const Label*>(&node), "Label"}, {dynamic_cast<const Button*>(&node), "Button"}, {dynamic_cast<const Slider*>(&node), "Slider"}, {dynamic_cast<const CheckBox*>(&node), "CheckBox"}, {dynamic_cast<const Canvas*>(&node), "Canvas"}, {dynamic_cast<const Image*>(&node), "Image"}, {dynamic_cast<const ScrollView*>(&node), "ScrollView"}, {dynamic_cast<const ListBox*>(&node), "ListBox"}, {dynamic_cast<const TabView*>(&node), "TabView"}, {dynamic_cast<const TabPage*>(&node), "Tab"}, {dynamic_cast<const TabTitle*>(&node), "TabTitle"}, {dynamic_cast<const RadioGroup*>(&node), "RadioGroup"}, {dynamic_cast<const RadioButton*>(&node), "RadioButton"}, {dynamic_cast<const NumericStepper*>(&node), "NumericStepper"}, {dynamic_cast<const TextField*>(&node), "TextField"},
+            {dynamic_cast<const ColumnLayout*>(&node), "Column"}, {dynamic_cast<const RowLayout*>(&node), "Row"}, {dynamic_cast<const PaddingLayout*>(&node), "Padding"}, {dynamic_cast<const StackLayout*>(&node), "Stack"}, {dynamic_cast<const GridLayout*>(&node), "Grid"}, {dynamic_cast<const Panel*>(&node), "Panel"}, {dynamic_cast<const Label*>(&node), "Label"}, {dynamic_cast<const Button*>(&node), "Button"}, {dynamic_cast<const Slider*>(&node), "Slider"}, {dynamic_cast<const CheckBox*>(&node), "CheckBox"}, {dynamic_cast<const Canvas*>(&node), "Canvas"}, {dynamic_cast<const Image*>(&node), "Image"}, {dynamic_cast<const ScrollView*>(&node), "ScrollView"}, {dynamic_cast<const ListBox*>(&node), "ListBox"}, {dynamic_cast<const ComboBox*>(&node), "ComboBox"}, {dynamic_cast<const TabView*>(&node), "TabView"}, {dynamic_cast<const TabPage*>(&node), "Tab"}, {dynamic_cast<const TabTitle*>(&node), "TabTitle"}, {dynamic_cast<const RadioGroup*>(&node), "RadioGroup"}, {dynamic_cast<const RadioButton*>(&node), "RadioButton"}, {dynamic_cast<const NumericStepper*>(&node), "NumericStepper"}, {dynamic_cast<const TextField*>(&node), "TextField"},
         };
         // the first match wins, because the widget types above are disjoint classes (§8)
         for (const std::pair<const UiNode*, std::string_view>& element : elements) {

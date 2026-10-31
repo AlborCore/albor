@@ -383,6 +383,32 @@ TEST(ElementCatalog, ExposesTheListBoxActivatedSignal) {
     EXPECT_EQ(activated->parameter_names.at(0), "key");
 }
 
+TEST(ElementCatalog, ExposesThePanelAndCardProperties) {
+    // arrange, act
+    const ElementCatalog catalog = ElementCatalog::with_builtins();
+    // assert the two surface spellings share the container shape (§8.2)
+    ASSERT_TRUE(catalog.find("Panel") != nullptr);
+    ASSERT_TRUE(catalog.find("Card") != nullptr);
+    EXPECT_TRUE(catalog.find("Panel")->accepts_children);
+    EXPECT_TRUE(catalog.find("Card")->accepts_children);
+    EXPECT_TRUE(catalog.find("Panel")->find_property("padding") != nullptr);
+    EXPECT_TRUE(catalog.find("Panel")->find_property("border_color") != nullptr);
+    EXPECT_TRUE(catalog.find("Card")->find_property("corner_radius") != nullptr);
+}
+
+TEST(ElementCatalog, ExposesTheComboBoxPropertiesAndSignal) {
+    // arrange, act
+    const ElementCatalog catalog = ElementCatalog::with_builtins();
+    // assert the options, chosen index and choose signal are the catalogue surface (§8)
+    ASSERT_TRUE(catalog.find("ComboBox") != nullptr);
+    EXPECT_TRUE(catalog.find("ComboBox")->find_property("items")->type.is(TypeKind::Vector));
+    EXPECT_TRUE(catalog.find("ComboBox")->find_property("selected")->type.is(TypeKind::Int));
+    const ElementSignal* changed = catalog.find("ComboBox")->find_signal("selection_changed");
+    ASSERT_NE(changed, nullptr);
+    ASSERT_EQ(changed->parameter_types.size(), 1U);
+    EXPECT_TRUE(changed->parameter_types.at(0).is(TypeKind::Int));
+}
+
 TEST(ElementCatalog, AddsANativeTypeFromAManifest) {
     // arrange
     ElementCatalog catalog = ElementCatalog::with_builtins();
@@ -393,14 +419,14 @@ TEST(ElementCatalog, AddsANativeTypeFromAManifest) {
     ASSERT_TRUE(catalog.find("WaveformView") != nullptr);
     EXPECT_TRUE(catalog.find("WaveformView")->find_property("line_color") != nullptr);
     EXPECT_TRUE(catalog.find("WaveformView")->find_signal("selection_changed") != nullptr);
-    EXPECT_EQ(catalog.types().size(), 22U);
+    EXPECT_EQ(catalog.types().size(), 30U);
 }
 
 TEST(ElementCatalog, StartsWithNothingBeyondTheBuiltins) {
     // arrange, act
     const ElementCatalog catalog = ElementCatalog::with_builtins();
     // assert
-    EXPECT_EQ(catalog.types().size(), 21U);
+    EXPECT_EQ(catalog.types().size(), 29U);
 }
 
 TEST(ElementCatalog, RefusesToShadowABuiltinWithAManifest) {
@@ -410,7 +436,7 @@ TEST(ElementCatalog, RefusesToShadowABuiltinWithAManifest) {
     catalog.add_native(ElementType{.name = "Label", .properties = {}, .signals = {}, .accepts_children = true});
     // assert
     EXPECT_FALSE(catalog.find("Label")->accepts_children);
-    EXPECT_EQ(catalog.types().size(), 21U);
+    EXPECT_EQ(catalog.types().size(), 29U);
 }
 
 TEST(ElementCatalog, RefusesToRedefineANativeDataType) {

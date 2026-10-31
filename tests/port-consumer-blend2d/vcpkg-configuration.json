@@ -1,0 +1,8 @@
+{
+  "overlay-ports": [
+    "../../ports/albor"
+  ],
+  "overlay-triplets": [
+    "../../.triplets"
+  ]
+}

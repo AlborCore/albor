@@ -345,6 +345,93 @@ TEST(AccessibilityRole, ANumericStepperAnnouncesItsValueAndStepping) {
     EXPECT_EQ(decrements, 1u);
 }
 
+TEST(AccessibilityRole, ACheckboxPressReachesItsToggleAction) {
+    // arrange a checkable node with the one action its portable table names (§10.1, §10.2)
+    WindowFixture fixture;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::Checkbox});
+    tree.mutable_at(0)->set_name("Show grid");
+    std::size_t toggles = 0;
+    (void)tree.mutable_at(0)->add_action("toggle", [&toggles] { toggles++; });
+    // act
+    fixture.adapter->publish(tree);
+    // assert the checkbox announces as a checkbox and its press runs the toggle the table declares (§10.2)
+    NSArray* children = announced_children(fixture.window);
+    ASSERT_EQ(children.count, 1U);
+    NSView* element = (NSView*)children.firstObject;
+    EXPECT_EQ(element.accessibilityRole, NSAccessibilityCheckBoxRole);
+    EXPECT_TRUE([(id)element accessibilityPerformPress]);
+    // assert the application's toggle ran exactly once, because the bridge routed press through the table (§10.1)
+    EXPECT_EQ(toggles, 1u);
+}
+
+TEST(AccessibilityRole, ASliderRangeWriteReachesItsNode) {
+    // arrange an enabled slider with a range and a write that records the target (§10.1, §10.2)
+    WindowFixture fixture;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::Slider});
+    SemanticNode* slider = tree.mutable_at(0);
+    slider->set_name("Gain");
+    double written = 0.0;
+    slider->set_range(SemanticRange{.value = 0.25, .minimum = 0.0, .maximum = 1.0, .step = 0.05}, [&written](double value) { written = value; });
+    // act
+    fixture.adapter->publish(tree);
+    // assert the page publishes the slider before a reader writes its value (§10.2)
+    NSArray* children = announced_children(fixture.window);
+    ASSERT_EQ(children.count, 1U);
+    NSView* element = (NSView*)children.firstObject;
+    [(id)element setAccessibilityValue:@(0.8)];
+    // assert the node's write ran with the target a reader asked for (§10.1, §10.2)
+    EXPECT_DOUBLE_EQ(written, 0.8);
+}
+
+TEST(AccessibilityRole, ADisabledSliderRefusesTheStepItsTableOffers) {
+    // arrange a disabled slider with a range and the two step actions (§10.1)
+    WindowFixture fixture;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::Slider});
+    SemanticNode* slider = tree.mutable_at(0);
+    slider->set_name("Gain");
+    slider->set_value("0.25");
+    slider->set_disabled(true);
+    std::size_t steps = 0;
+    slider->set_range(SemanticRange{.value = 0.25, .minimum = 0.0, .maximum = 1.0, .step = 0.05}, [](double) {});
+    (void)slider->add_action("increment", [&steps] { steps++; });
+    (void)slider->add_action("decrement", [&steps] { steps++; });
+    // act
+    fixture.adapter->publish(tree);
+    // assert the slider announces its bounded value, which the range pattern carries (§10.1, §10.2)
+    NSArray* children = announced_children(fixture.window);
+    ASSERT_EQ(children.count, 1U);
+    NSView* element = (NSView*)children.firstObject;
+    EXPECT_EQ(element.accessibilityRole, NSAccessibilitySliderRole);
+    NSNumber* value = (NSNumber*)element.accessibilityValue;
+    ASSERT_NE(value, nil);
+    EXPECT_DOUBLE_EQ(value.doubleValue, 0.25);
+    // act the bridge offers the step the table names, while the node is disabled (§10.2)
+    EXPECT_FALSE([(id)element accessibilityPerformIncrement]);
+    EXPECT_FALSE([(id)element accessibilityPerformDecrement]);
+    // assert no action ran, because a disabled node refuses every action in one place (§10.1)
+    EXPECT_EQ(steps, 0u);
+}
+
+TEST(AccessibilityRole, AMenuItemAnnouncesItsRoleAndName) {
+    // arrange a menu row with an author id and a label (§10.1, §18.2)
+    WindowFixture fixture;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::MenuItem});
+    tree.mutable_at(0)->set_explicit_id("menu_save");
+    tree.mutable_at(0)->set_name("Save");
+    // act
+    fixture.adapter->publish(tree);
+    // assert the row announces as a menu item, which is what assistive technology presents in a menu (§10.2)
+    NSArray* children = announced_children(fixture.window);
+    ASSERT_EQ(children.count, 1U);
+    NSView* element = (NSView*)children.firstObject;
+    EXPECT_EQ(element.accessibilityRole, NSAccessibilityMenuItemRole);
+    EXPECT_STREQ(element.accessibilityLabel.UTF8String, "Save");
+}
+
 TEST(AccessibilityRole, AnImageAnnouncesItsRoleNameAndDisabledState) {
     // arrange an image whose name and disabled state are what a reader announces (§10.1)
     WindowFixture fixture;

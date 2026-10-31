@@ -8,6 +8,7 @@ component WidgetForm {
     inout property<bool> armed: false;
     inout property<string> name: "";
     inout property<int> mode: 0;
+    inout property<int> plot: 0;
     inout property<float> effort: 30.0;
     inout property<vector<Todo>> todos: [];
 
@@ -111,6 +112,23 @@ component WidgetForm {
         Label {
             id: form_mode_value;
             text: "mode " + string(mode);
+        }
+
+        Label {
+            id: form_plot_label;
+            text: "plot " + string(plot);
+        }
+
+        ComboBox {
+            id: form_plot;
+            items: ["Waveform", "Spectrum", "Constellation"];
+            selected: plot;
+            label: "Plot view";
+            placeholder: "Choose a plot view";
+            disabled: armed;
+            on_selection_changed: {
+                plot = index;
+            }
         }
 
         Label {

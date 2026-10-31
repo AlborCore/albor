@@ -74,6 +74,9 @@ namespace albor
         // build a widget over the engine that settles its properties (§8.1, §7.2)
         explicit Widget(BindingEngine* engine, std::string explicit_id = {});
 
+        // release the command observer, because a destroyed consumer must never be published to (§18.1, AD-15)
+        ~Widget() override;
+
         // override: hand out the plate radius, which a theme sets and an unthemed widget leaves hard (§6.2)
         [[nodiscard]] float corner_radius() const override;
 

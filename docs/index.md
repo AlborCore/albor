@@ -35,11 +35,12 @@ every new feature lands here alongside its code.
 - **Components** — one section per element the language ships: containers
   ([Column](components/column.md), [Row](components/row.md),
   [Padding](components/padding.md), [Stack](components/stack.md),
-  [Grid](components/grid.md), [ScrollView](components/scroll-view.md),
-  [ListBox](components/list-box.md)) and leaves
+  [Grid](components/grid.md), [Panel](components/panel.md),
+  [ScrollView](components/scroll-view.md), [ListBox](components/list-box.md)) and leaves
   ([Label](components/label.md), [Button](components/button.md),
-  [TextField](components/text-field.md), [Slider](components/slider.md),
-  [CheckBox](components/checkbox.md), [Canvas](components/canvas.md)).
+  [ComboBox](components/combo-box.md), [TextField](components/text-field.md),
+  [Slider](components/slider.md), [CheckBox](components/checkbox.md),
+  [Canvas](components/canvas.md)).
 - **[Tooling](tooling.md)** — the codegen driver, the dev runtime, the language server,
   automation and how they are wired into a build.
 - **[Status and platforms](status.md)** — what is implemented, what is planned.

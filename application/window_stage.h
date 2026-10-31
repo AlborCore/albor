@@ -54,6 +54,9 @@ namespace albor
         // route one normalized event into the tree, which is where the widgets answer (§8.3)
         void deliver(Event& event);
 
+        // drop the pointer capture when the window leaves the screen, which ends a press that closed it (§8.3)
+        void cancel_pointer_capture();
+
         // hand out the root of the driven tree, which is what an application installs a theme over (§6.1, §8.4)
         [[nodiscard]] UiNode& root() const;
 

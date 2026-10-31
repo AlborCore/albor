@@ -13,6 +13,10 @@ Single-line by default; set `multiline` for a wrapping, scrolling editor.
 | `multiline` | `bool` | accepts line breaks, wraps, and scrolls its own viewport |
 | `disabled` | `bool` | refuses all interaction |
 | `font_size` | `float` | density-scaled; accepts `px` |
+| `decorations` | `vector<TextDecoration>` | styled byte ranges for syntax highlighting and diagnostics |
+
+`TextDecoration` carries `start` and `end` byte offsets, an optional `foreground` colour, an
+optional `background` colour and an `underline` flag.
 
 Plus the [common properties](index.md#common-properties).
 
@@ -87,6 +91,36 @@ From C++, the scroll is observable and drivable on any field:
 field->scroll_offset();          // how far the content is scrolled from its leading edge
 field->maximum_scroll_offset();  // zero while the text fits
 field->scroll_to(0.0f);          // clamped into [0, maximum_scroll_offset()]
+```
+
+## Styled ranges
+
+A decoration paints over the shaped run the field already owns; it does not reshape the value
+or introduce a second text engine. Byte offsets address the value, and the range shares the
+caret, selection and scroll geometry:
+
+```text
+TextField {
+    value: netlist_line;
+    decorations: [
+        TextDecoration {
+            start: 0,
+            end: 4,
+            foreground: #2E86DE,
+            underline: false
+        }
+    ];
+}
+```
+
+From C++ the same surface is available without a `.ui` declaration:
+
+```cpp
+field->set_decorations({
+    TextDecoration{.start = 0, .end = 4, .foreground = Color::rgb(0.18f, 0.52f, 0.87f)},
+    TextDecoration{.start = 9, .end = 14, .underline = true},
+});
+field->clear_decorations();
 ```
 
 ## Notes
