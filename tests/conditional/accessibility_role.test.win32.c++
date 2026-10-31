@@ -665,13 +665,14 @@ TEST(Win32AccessibilityRole, ARadioGroupAnnouncesItsChoicesAndSelection) {
 }
 
 TEST(Win32AccessibilityRole, ANumericStepperAnnouncesItsValue) {
-    // arrange a stepper carrying a number, which a reader speaks (§10.1)
+    // arrange a stepper carrying a number and a range, which a reader steps through (§10.1)
     WindowFixture fixture;
     ASSERT_NE(fixture.window(), nullptr);
     SemanticTree tree;
     tree.add(SemanticNode{SemanticRole::NumericStepper});
     tree.mutable_at(0)->set_name("Effort");
     tree.mutable_at(0)->set_value("3.5");
+    tree.mutable_at(0)->set_range(SemanticRange{.value = 3.5, .minimum = 0.0, .maximum = 10.0, .step = 0.5}, [](double) {});
     // act
     fixture.adapter().publish(tree);
     // assert the stepper announces as a spinner, which is the control type a reader steps in (§10.2)
@@ -687,22 +688,20 @@ TEST(Win32AccessibilityRole, ANumericStepperAnnouncesItsValue) {
     ASSERT_EQ(control_type.vt, VT_I4);
     EXPECT_EQ(control_type.lVal, UIA_SpinnerControlTypeId);
     VariantClear(&control_type);
-    // assert the number reaches the value pattern, because the bridge carries it read only (§10.2)
+    // assert the number reaches the range value property, because the stepper exposes a bounded value (§10.2)
     VARIANT value{};
-    ASSERT_HRESULT_SUCCEEDED(simple->GetPropertyValue(UIA_ValueValuePropertyId, &value));
-    ASSERT_EQ(value.vt, VT_BSTR);
-    EXPECT_STREQ(value.bstrVal, L"3.5");
+    ASSERT_HRESULT_SUCCEEDED(simple->GetPropertyValue(UIA_RangeValueValuePropertyId, &value));
+    ASSERT_EQ(value.vt, VT_R8);
+    EXPECT_DOUBLE_EQ(value.dblVal, 3.5);
     VariantClear(&value);
     Microsoft::WRL::ComPtr<IUnknown> pattern;
-    ASSERT_HRESULT_SUCCEEDED(simple->GetPatternProvider(UIA_ValuePatternId, pattern.GetAddressOf()));
+    ASSERT_HRESULT_SUCCEEDED(simple->GetPatternProvider(UIA_RangeValuePatternId, pattern.GetAddressOf()));
     ASSERT_NE(pattern.Get(), nullptr);
-    Microsoft::WRL::ComPtr<IValueProvider> provider;
+    Microsoft::WRL::ComPtr<IRangeValueProvider> provider;
     ASSERT_HRESULT_SUCCEEDED(pattern.As(&provider));
-    BSTR read_value = nullptr;
+    double read_value = 0.0;
     ASSERT_HRESULT_SUCCEEDED(provider->get_Value(&read_value));
-    ASSERT_NE(read_value, nullptr);
-    EXPECT_STREQ(read_value, L"3.5");
-    SysFreeString(read_value);
+    EXPECT_DOUBLE_EQ(read_value, 3.5);
 }
 
 TEST(Win32AccessibilityRole, AMenuItemAnnouncesItsControlType) {
