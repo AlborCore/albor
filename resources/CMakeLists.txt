@@ -7,7 +7,7 @@ file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 add_library(albor-resources STATIC ${CPP_SOURCES})
 
 # the registry is header visible, because generated code registers into it (§3.5, §11.3)
-target_include_directories(albor-resources PUBLIC ${ALBOR_SOURCE_DIR})
+target_include_directories(albor-resources PUBLIC $<BUILD_INTERFACE:${ALBOR_SOURCE_DIR}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_compile_features(albor-resources PUBLIC cxx_std_23)
 
 # the decoder asks libpng for the png container, which uses the same zlib the automation writer already depends on (§6.4)

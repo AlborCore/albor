@@ -17,6 +17,6 @@ add_subdirectory(alloc-probe)
 
 # the metal teardown repro, which reaches a metal api, so it is apple only and every other platform excludes the
 # directory without reading the file (§6.3, AD-26)
-if(APPLE)
+if(APPLE AND ALBOR_RENDERER_SKIA)
     add_subdirectory(metal_teardown_probe)
 endif()

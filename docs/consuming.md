@@ -61,6 +61,54 @@ The framework targets publish the framework include root, so a consumer does not
 `target_include_directories` for `application/application.h` or a generated component
 header.
 
+## The vcpkg package
+
+The published route names one dependency and consumes the installed package, which is how
+the registry consumer will run one day:
+
+```json
+{
+  "name": "my_app",
+  "dependencies": [{ "name": "albor" }]
+}
+```
+
+```cmake
+find_package(albor CONFIG REQUIRED)
+target_link_libraries(my_app PRIVATE albor)
+```
+
+`albor` installs the recommended runtime: platform adapter, HarfBuzz, widgets, layout,
+accessibility, i18n, resources and the in-repo GPU renderer. The portable renderer is a
+package feature rather than a default dependency — a plain install carries no Blend2D
+binaries, because the default umbrella needs none:
+
+| feature | what the package gains |
+| --- | --- |
+| *(none)* | `albor`, the recommended GPU runtime |
+| `blend2d` | `albor-blend2d`, the portable CPU renderer umbrella |
+
+The transitional skia reference is **not** shipped in the package: it is a source-tree
+backend that the conformance suites compare against, and the package drops it on the way
+to its retirement (issue 111). A package consumer chooses between the two shipped
+renderers; an expert composition that needs the skia reference builds from source.
+
+Until the framework sits in a vcpkg registry, the port ships inside the repository
+(`ports/albor/`) and a consumer wires it through an overlay:
+
+```json
+{
+  "overlay-ports": ["../albor/ports/albor"],
+  "overlay-triplets": ["../albor/.triplets"]
+}
+```
+
+The same overlay answers the pinned release once one exists — the port's `REF` names the
+release commit, which `build/check-port.sh` verifies — so an overlay consumer of a pinned
+release is not looser than a registry one. The `.ui` helpers and the codegen drivers land with the package, so `albor_build_ui_component`
+works in the installed mode exactly as in the source mode described below.
+
+
 ## Choosing the renderer
 
 This is the only renderer decision a normal application makes. Both targets carry the same
@@ -70,6 +118,11 @@ runtime, so switching renderers does not change application code.
 | --- | --- |
 | `albor` | the default: GPU rendering through the in-repo backend |
 | `albor-blend2d` | a portable CPU path, or a platform where the GPU backend is not the recommended default |
+
+In the vcpkg route the renderer choice is the package feature as well as the link target:
+`albor-blend2d` exists once the `blend2d` feature is installed; the skia reference is not a
+package surface. In the source route both backends build by default, and the CMake options
+`ALBOR_RENDERER_SKIA` and `ALBOR_RENDERER_BLEND2D` trim them for a smaller build.
 
 Do not link both, and do not add a second renderer target to an umbrella target. Backends
 install themselves at load through whole-archive registration; two renderers in one binary
@@ -152,7 +205,9 @@ The same rules apply to every composition:
 
 ## Using `.ui` files and fonts
 
-The shared CMake helpers are available after `FetchContent_MakeAvailable(albor)`:
+The shared CMake helpers are available after `FetchContent_MakeAvailable(albor)`, and the
+installed package loads the same helpers beside its package config, so `find_package(albor
+CONFIG REQUIRED)` provides them in exactly the same shape:
 
 ```cmake
 add_executable(my_app main.cpp)
@@ -213,18 +268,24 @@ design (AD-04, AD-10). See [Tooling](tooling.md#hot-reload) and
 
 - C++23 toolchain.
 - CMake 3.28 or newer, with Ninja.
-- vcpkg in manifest mode, with the dependencies pinned by the framework's `vcpkg.json`, or
-  by the consumer's own manifest naming the same packages.
+- vcpkg in manifest mode. In the package route the port declares the dependency closure
+  itself; in the source route the dependencies are pinned by the framework's `vcpkg.json`,
+  or by the consumer's own manifest naming the same packages.
 - macOS 13.3 or newer for the macOS targets; a supported Windows 10/11 toolchain and SDK for
   the Windows targets.
 - **No shader toolchain is needed to build.** The Metal `.metallib` and the Direct3D `.dxbc`
   are committed artifacts. Only a change to a shader source needs the matching compiler; see
   [Tooling](tooling.md#the-shaders).
-- A consumer that names its own deployment floor must use 13.3 or newer on macOS.
+- A consumer that names its own deployment floor must use 13.3 or newer on macOS; the
+  installed package config refuses a lower floor before it links.
 
-The current distribution is source/CMake through `FetchContent` or a vendored
-`add_subdirectory`. There is no installed `find_package(albor CONFIG)` package yet; use one
-of those two forms. A tag or commit is the supported pin, never a moving branch.
+The distribution is source/CMake through `FetchContent` or a vendored `add_subdirectory`,
+and the vcpkg package through the in-repository overlay port, whose dependency matrix and
+version the `build/check-port.sh` gate keeps identical to the project's. The package route
+is the one an official registry submission will carry, and the overlay is its rehearsal.
+The pin is the commit the portfile names; a git object carries it immutably, and the
+renewal per release is one line that the [release workflow](https://github.com/AlborCore/albor/blob/main/.github/workflows/release.yml)
+writes.
 
 ## One target, one artifact
 

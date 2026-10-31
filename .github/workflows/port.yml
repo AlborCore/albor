@@ -1,0 +1,216 @@
+# the port checks are cheap to run often and expensive to run wide: the drift gate and the staged-install
+# fixture accompany a review, while the full port matrix walks the dependency closure only on main pushes
+# and a nightly schedule, which keeps a per-review commit from paying it (AD-16, AD-19)
+name: port
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # the port never drifts from the project, which the fast gate checks before any build spends runners (AD-19)
+  consistency:
+    name: check-port
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - name: the checked drift gate
+        run: bash build/check-port.sh
+
+  # the staged install fixture, which consumes the default feature surface through find_package alone (§3.3, AD-19)
+  fixture:
+    name: fixture (${{ matrix.name }})
+    if: github.event_name != 'schedule'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos
+            os: macos-15
+            vcpkg-root: /usr/local/share/vcpkg
+            setup: |
+              # the vcpkg binary cache root must exist before vcpkg runs
+              mkdir -p .vcpkg-cache
+              # the compiler runs through ccache, which the runner image does not ship
+              HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
+              # ccache cuts the staged build to its misses after the first review (AD-16)
+              ccache --max-size 2G
+              # the preset is c++23, so take the newest xcode the image carries rather than its default
+              sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
+          - name: windows
+            os: windows-latest
+            vcpkg-root: C:\vcpkg
+            setup: |
+              # the vcpkg binary cache root must exist before vcpkg runs
+              mkdir -p .vcpkg-cache
+              # the compiler runs through ccache, which the runner image does not ship
+              choco install ccache --no-progress -y
+    env:
+      VCPKG_ROOT: ${{ matrix.vcpkg-root }}
+      MACOSX_DEPLOYMENT_TARGET: 13.3
+      VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+    steps:
+      - uses: actions/checkout@v7
+      - name: platform setup
+        run: ${{ matrix.setup }}
+      - name: msvc environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: restore the vcpkg binary cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ github.workspace }}/.vcpkg-cache
+          key: vcpkg-fixture-${{ runner.os }}-${{ hashFiles('tests/consumer/vcpkg.json', '.triplets/**') }}
+          restore-keys: |
+            vcpkg-fixture-${{ runner.os }}-
+      - name: restore the ccache directory
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-
+      - name: staging build with the port's default features
+        run: |
+          # the stage resolves its dependencies through the test bed's manifest, which the drift gate keeps
+          # equal to the port's default matrix, so no package job ever walks the skia closure (AD-26, issue 111)
+          cmake -S . -B .build-port-stage -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DVCPKG_MANIFEST_DIR="$PWD/tests/consumer" \
+            -DALBOR_EXAMPLES=OFF -DALBOR_TESTS=OFF \
+            -DALBOR_RENDERER_SKIA=OFF -DALBOR_RENDERER_BLEND2D=OFF
+          cmake --build .build-port-stage --parallel 4
+      - name: install the staged package
+        run: cmake --install .build-port-stage --prefix .build-port-stage/stage
+      - name: build the consumer against the stage
+        run: |
+          # the package is built in Release, which the consumer pins, because a mismatched MSVC runtime is a link error (AD-19)
+          cmake -S tests/consumer -B .build-port-fixture -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DVCPKG_INSTALLED_DIR="$(pwd)/.build-port-stage/vcpkg_installed" \
+            -DCMAKE_PREFIX_PATH="$(pwd)/.build-port-stage/stage"
+          cmake --build .build-port-fixture
+
+  # the overlay port consumption end to end, which walks the dependency closure and belongs to the evidence
+  # a main push or the nightly carries, not to every review (AD-16, AD-19)
+  port:
+    name: port (${{ matrix.name }})
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-default
+            os: macos-15
+            vcpkg-root: /usr/local/share/vcpkg
+            consumer: tests/port-consumer
+          - name: macos-blend2d
+            os: macos-15
+            vcpkg-root: /usr/local/share/vcpkg
+            consumer: tests/port-consumer-blend2d
+          - name: macos-pinned-release
+            os: macos-15
+            vcpkg-root: /usr/local/share/vcpkg
+            consumer: tests/port-consumer
+            pinned: true
+          - name: windows-default
+            os: windows-latest
+            vcpkg-root: C:\vcpkg
+            consumer: tests/port-consumer
+          - name: windows-blend2d
+            os: windows-latest
+            vcpkg-root: C:\vcpkg
+            consumer: tests/port-consumer-blend2d
+          - name: windows-pinned-release
+            os: windows-latest
+            vcpkg-root: C:\vcpkg
+            consumer: tests/port-consumer
+            pinned: true
+    # the pinned entries consume the release, which the portfile answers through its REF; their attempt cannot
+    # succeed before the first release merge exists, so their failure stays tolerated until then (AD-19)
+    env:
+      VCPKG_ROOT: ${{ matrix.vcpkg-root }}
+      MACOSX_DEPLOYMENT_TARGET: 13.3
+      VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
+      # the port builds the checked-out tree while the pinned commit predates the packaging, which the portfile announces (AD-19)
+      ALBOR_PORT_SOURCE_PATH: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: platform setup
+        run: |
+          # the vcpkg binary cache root must exist before vcpkg runs
+          mkdir -p .vcpkg-cache
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            # the compiler runs through ccache, which the runner image does not ship
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
+            # ccache cuts the port build to its misses after the first run (AD-16)
+            ccache --max-size 2G
+            # the preset is c++23, so take the newest xcode the image carries rather than its default
+            sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
+          else
+            choco install ccache --no-progress -y
+          fi
+      - name: msvc environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: restore the ccache directory
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-
+      - name: restore the vcpkg binary cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ github.workspace }}/.vcpkg-cache
+          key: vcpkg-port-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**', 'ports/albor/**') }}
+          restore-keys: |
+            vcpkg-port-${{ runner.os }}-
+      - name: consume the overlay port end to end
+        # the pinned entries fail by design until the first release merge exists, so their failure stays stage-scoped (AD-19)
+        continue-on-error: ${{ matrix.pinned == true }}
+        run: |
+          # the consumer's manifest would name a published version one day, which the overlay answers today (AD-19)
+          if [ "${{ matrix.pinned }}" != "true" ]; then
+            # a source-tree entry builds the working tree, which the portfile announces as unpinned (AD-19)
+            export ALBOR_PORT_SOURCE_PATH="${{ github.workspace }}"
+          else
+            # the pinned entry consumes the release, which vcpkg_from_git fetches from the pinned REF (AD-19)
+            unset ALBOR_PORT_SOURCE_PATH
+          fi
+          cmake -S ${{ matrix.consumer }} -B .build-port-consumer -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build .build-port-consumer

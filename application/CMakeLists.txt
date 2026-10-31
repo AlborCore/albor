@@ -7,7 +7,7 @@ file(GLOB_RECURSE CPP_SOURCES "./*.cpp")
 add_library(albor-application STATIC ${CPP_SOURCES})
 
 # the application interfaces are header visible, because every application names them (§3.5)
-target_include_directories(albor-application PUBLIC ${ALBOR_SOURCE_DIR})
+target_include_directories(albor-application PUBLIC $<BUILD_INTERFACE:${ALBOR_SOURCE_DIR}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 target_compile_features(albor-application PUBLIC cxx_std_23)
 
 # the host joins the window to the tree and the engines, so the wiring modules ride along (§2.2, issue 12)

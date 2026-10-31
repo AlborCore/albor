@@ -56,10 +56,41 @@ rules and the diagnostics are on [Fonts](ui-language/fonts.md).
 
 ## Use it from another project
 
-`FetchContent` — or `add_subdirectory` of a vendored copy — brings the framework in as a
-subtree. Its tests and examples stay off, because they belong to developing the framework,
-and every framework target publishes the framework's own include root, so `#include
-"application/application.h"` resolves from the consumer's sources.
+The vcpkg package is the published route: one dependency, and the installed package answers
+for the platform, the text engine, the renderer and the codegen tools.
+
+```json
+{
+  "dependencies": [{ "name": "albor" }]
+}
+```
+
+```cmake
+find_package(albor CONFIG REQUIRED)
+add_executable(my_app main.cpp)
+albor_build_ui_component(my_app "${CMAKE_CURRENT_SOURCE_DIR}/greeting_panel.ui")
+target_link_libraries(my_app PRIVATE albor)
+```
+
+Until a registry carries the framework, the port ships in the repository and the consumer
+wires it as an overlay:
+
+```json
+{
+  "overlay-ports": ["../albor/ports/albor"],
+  "overlay-triplets": ["../albor/.triplets"]
+}
+```
+
+The default install carries the recommended GPU runtime, and `albor[blend2d]` adds the
+portable CPU renderer; the transitional skia reference is not a package surface — it stays
+a source-tree backend for the conformance work and retires with issue 111. The detailed
+consumer map, advanced composition and troubleshooting are on [Consuming
+Albor](consuming.md).
+
+The source route names the framework as a subtree: `FetchContent` — or `add_subdirectory` of
+a vendored copy — and every framework target publishes the framework's own include root, so
+`#include "application/application.h"` resolves from the consumer's sources.
 
 ```cmake
 include(FetchContent)
@@ -74,23 +105,25 @@ target_link_libraries(my_app PRIVATE albor)
 
 The default target carries the platform, text engine, widgets, layout, accessibility, i18n
 and the recommended GPU renderer. Link `albor-blend2d` instead for the portable CPU
-renderer. The detailed target map, advanced composition and troubleshooting are on
-[Consuming Albor](consuming.md).
+renderer; both backends are CMake options there (`ALBOR_RENDERER_SKIA`,
+`ALBOR_RENDERER_BLEND2D`), whose defaults keep a source build complete.
 
-The dependencies come from vcpkg. A consumer in manifest mode lists the same packages in
-its own `vcpkg.json`, or points `VCPKG_MANIFEST_DIR` at the fetched sources so the pinned
-versions of the framework's manifest are the ones built — that needs the sources to exist at
-the first configure, so a vendored copy rather than a fetch that has not run yet. With the
-sources present, `VCPKG_OVERLAY_TRIPLETS` pointed at the framework's `.triplets` adds the
-framework's own triplets: the ports are stamped through the triplet itself, and a missing
-floor is a configure error rather than a link-time surprise.
+With the source route, the dependencies come from vcpkg: a consumer in manifest mode lists
+the same packages in its own `vcpkg.json`, or points `VCPKG_MANIFEST_DIR` at the fetched
+sources so the pinned versions of the framework's manifest are the ones built — that needs
+the sources to exist at the first configure, so a vendored copy rather than a fetch that has
+not run yet. With the sources present, `VCPKG_OVERLAY_TRIPLETS` pointed at the framework's
+`.triplets` adds the framework's own triplets: the ports are stamped through the triplet
+itself, and a missing floor is a configure error rather than a link-time surprise.
 
 The floor is the consumer's to declare, and it has to be in place before the first
 configure, because the install runs inside `project()` and inherits it from the environment:
 export `MACOSX_DEPLOYMENT_TARGET` with the application's floor — 13.3 at the lowest, higher
 when the application requires a newer system — and give `CMAKE_OSX_DEPLOYMENT_TARGET` the
 same value when naming it explicitly. A floor below 13.3 is rejected while the framework
-configures: the shipped shaders and the test suites do not cover it.
+configures: the shipped shaders and the test suites do not cover it. In the package route
+the same refusal runs inside `albor-config.cmake`, so an installed consumer is refused as
+early as a source one.
 
 ## A component from a `.ui` file
 
