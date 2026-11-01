@@ -17,9 +17,10 @@ fi
     cmake --version | sed -n '1p'
     ninja --version 2>/dev/null || true
     printf '%s\n%s\n' "$vcpkg_identity" "$vcpkg_version"
+    printf '%s\n' "${VCPKG_ABI_POLICY:-unknown-policy}"
+    # the pinned toolset and sdk are the Windows stability boundary, not the image's cl.exe
     if command -v cl >/dev/null 2>&1; then
-        cl 2>&1 | sed -n '1p' || true
-        printf '%s\n' "${WindowsSDKVersion:-unknown-sdk}"
+        printf '%s\n%s\n' "${MSVC_TOOLSET:-unknown-toolset}" "${WINDOWS_SDK:-unknown-sdk}"
     else
         c++ --version | sed -n '1p'
         xcodebuild -version 2>/dev/null | tr '\n' ' ' || true

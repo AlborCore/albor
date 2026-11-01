@@ -19,6 +19,9 @@ permissions:
 env:
   CMAKE_VERSION: 4.4.4
   NINJA_VERSION: 1.13.2
+  MSVC_TOOLSET: 14.51.36231
+  WINDOWS_SDK: 10.0.26100.0
+  VCPKG_ABI_POLICY: pinned-toolchain-v2
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -124,6 +127,9 @@ jobs:
       - name: msvc environment
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
+        with:
+          toolset: ${{ env.MSVC_TOOLSET }}
+          sdk: ${{ env.WINDOWS_SDK }}
       - name: pinned cmake
         uses: lukka/get-cmake@v4.4.4
         with:
@@ -163,6 +169,7 @@ jobs:
           # equal to the port's default matrix, so no package job ever walks the skia closure (AD-26, issue 111)
           cmake -S . -B .build-port-stage -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            ${{ runner.os == 'Windows' && '-DVCPKG_INSTALL_OPTIONS=--x-abi-tools-use-exact-versions' || '' }} \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_BUILD_TYPE=Release \
             -DVCPKG_MANIFEST_DIR="$PWD/tests/consumer" \
@@ -176,6 +183,7 @@ jobs:
           # the package is built in Release, which the consumer pins, because a mismatched MSVC runtime is a link error (AD-19)
           cmake -S tests/consumer -B .build-port-fixture -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            ${{ runner.os == 'Windows' && '-DVCPKG_INSTALL_OPTIONS=--x-abi-tools-use-exact-versions' || '' }} \
             -DCMAKE_BUILD_TYPE=Release \
             -DVCPKG_INSTALLED_DIR="$(pwd)/.build-port-stage/vcpkg_installed" \
             -DCMAKE_PREFIX_PATH="$(pwd)/.build-port-stage/stage"
@@ -255,6 +263,9 @@ jobs:
       - name: msvc environment
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
+        with:
+          toolset: ${{ env.MSVC_TOOLSET }}
+          sdk: ${{ env.WINDOWS_SDK }}
       - name: pinned cmake
         uses: lukka/get-cmake@v4.4.4
         with:
@@ -303,6 +314,7 @@ jobs:
           fi
           cmake -S ${{ matrix.consumer }} -B .build-port-consumer -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            ${{ runner.os == 'Windows' && '-DVCPKG_INSTALL_OPTIONS=--x-abi-tools-use-exact-versions' || '' }} \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_BUILD_TYPE=Release
           cmake --build .build-port-consumer
