@@ -15,6 +15,11 @@ permissions:
   contents: read
   pull-requests: read
 
+# the pinned tools are the ABI inputs vcpkg caches by; the vcpkg commit is per platform because each image seeds its own
+env:
+  CMAKE_VERSION: 4.4.4
+  NINJA_VERSION: 1.13.2
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -89,7 +94,7 @@ jobs:
         include:
           - name: macos
             os: macos-15
-            vcpkg-root: /usr/local/share/vcpkg
+            vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
             setup: |
               # the vcpkg binary cache root must exist before vcpkg runs
               mkdir -p .vcpkg-cache
@@ -101,14 +106,14 @@ jobs:
               sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
           - name: windows
             os: windows-latest
-            vcpkg-root: C:\vcpkg
+            vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
             setup: |
               # the vcpkg binary cache root must exist before vcpkg runs
               mkdir -p .vcpkg-cache
               # the compiler runs through ccache, which the runner image does not ship
               choco install ccache --no-progress -y
     env:
-      VCPKG_ROOT: ${{ matrix.vcpkg-root }}
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
       MACOSX_DEPLOYMENT_TARGET: 13.3
       VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
       CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -119,12 +124,31 @@ jobs:
       - name: msvc environment
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
+      - name: pinned cmake
+        uses: lukka/get-cmake@v4.4.4
+        with:
+          cmakeVersion: ${{ env.CMAKE_VERSION }}
+          ninjaVersion: ${{ env.NINJA_VERSION }}
+      - name: pinned vcpkg
+        uses: lukka/run-vcpkg@v11.6
+        with:
+          vcpkgDirectory: ${{ github.workspace }}/vcpkg
+          vcpkgGitCommitId: ${{ matrix.vcpkg-commit }}
+          vcpkgJsonGlob: tests/consumer/vcpkg.json
+          doNotCache: true
+      # the msvc action repoints VCPKG_ROOT at the image's bundled vcpkg, so the pinned checkout is restored here
+      - name: pin the vcpkg root
+        run: echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> "$GITHUB_ENV"
+      - name: toolchain fingerprint
+        id: toolchain
+        run: echo "fingerprint=$(bash build/toolchain-fingerprint.sh)" >> "$GITHUB_OUTPUT"
       - name: restore the vcpkg binary cache
         uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-fixture-${{ runner.os }}-${{ hashFiles('tests/consumer/vcpkg.json', '.triplets/**') }}
+          key: vcpkg-fixture-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('tests/consumer/vcpkg.json', 'tests/consumer/vcpkg-configuration.json', '.triplets/**') }}
           restore-keys: |
+            vcpkg-fixture-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-
             vcpkg-fixture-${{ runner.os }}-
       - name: restore the ccache directory
         uses: actions/cache/restore@v5
@@ -156,6 +180,12 @@ jobs:
             -DVCPKG_INSTALLED_DIR="$(pwd)/.build-port-stage/vcpkg_installed" \
             -DCMAKE_PREFIX_PATH="$(pwd)/.build-port-stage/stage"
           cmake --build .build-port-fixture
+      - name: save the vcpkg binary cache
+        if: success()
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ github.workspace }}/.vcpkg-cache
+          key: vcpkg-fixture-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('tests/consumer/vcpkg.json', 'tests/consumer/vcpkg-configuration.json', '.triplets/**') }}
 
   # the overlay port consumption end to end, which walks the dependency closure and belongs to the evidence
   # a main push, the nightly or a packaging review carries, not to every review (AD-16, AD-19)
@@ -174,34 +204,34 @@ jobs:
         include:
           - name: macos-default
             os: macos-15
-            vcpkg-root: /usr/local/share/vcpkg
             consumer: tests/port-consumer
+            vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
           - name: macos-blend2d
             os: macos-15
-            vcpkg-root: /usr/local/share/vcpkg
             consumer: tests/port-consumer-blend2d
+            vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
           - name: macos-pinned-release
             os: macos-15
-            vcpkg-root: /usr/local/share/vcpkg
             consumer: tests/port-consumer
+            vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
             pinned: true
           - name: windows-default
             os: windows-latest
-            vcpkg-root: C:\vcpkg
             consumer: tests/port-consumer
+            vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
           - name: windows-blend2d
             os: windows-latest
-            vcpkg-root: C:\vcpkg
             consumer: tests/port-consumer-blend2d
+            vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
           - name: windows-pinned-release
             os: windows-latest
-            vcpkg-root: C:\vcpkg
             consumer: tests/port-consumer
+            vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
             pinned: true
     # the pinned entries consume the release, which the portfile answers through its REF; their attempt cannot
     # succeed before the first release merge exists, so their failure stays tolerated until then (AD-19)
     env:
-      VCPKG_ROOT: ${{ matrix.vcpkg-root }}
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
       MACOSX_DEPLOYMENT_TARGET: 13.3
       VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
       # the port builds the checked-out tree while the pinned commit predates the packaging, which the portfile announces (AD-19)
@@ -225,6 +255,24 @@ jobs:
       - name: msvc environment
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
+      - name: pinned cmake
+        uses: lukka/get-cmake@v4.4.4
+        with:
+          cmakeVersion: ${{ env.CMAKE_VERSION }}
+          ninjaVersion: ${{ env.NINJA_VERSION }}
+      - name: pinned vcpkg
+        uses: lukka/run-vcpkg@v11.6
+        with:
+          vcpkgDirectory: ${{ github.workspace }}/vcpkg
+          vcpkgGitCommitId: ${{ matrix.vcpkg-commit }}
+          vcpkgJsonGlob: ${{ matrix.consumer }}/vcpkg.json
+          doNotCache: true
+      # the msvc action repoints VCPKG_ROOT at the image's bundled vcpkg, so the pinned checkout is restored here
+      - name: pin the vcpkg root
+        run: echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> "$GITHUB_ENV"
+      - name: toolchain fingerprint
+        id: toolchain
+        run: echo "fingerprint=$(bash build/toolchain-fingerprint.sh)" >> "$GITHUB_OUTPUT"
       - name: restore the ccache directory
         uses: actions/cache/restore@v5
         with:
@@ -236,8 +284,10 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-port-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**', 'ports/albor/**') }}
+          key: vcpkg-port-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-${{ matrix.consumer }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'tests/port-consumer/vcpkg.json', 'tests/port-consumer-blend2d/vcpkg.json', '.triplets/**', 'ports/albor/**') }}
           restore-keys: |
+            vcpkg-port-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-${{ matrix.consumer }}-
+            vcpkg-port-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-
             vcpkg-port-${{ runner.os }}-
       - name: consume the overlay port end to end
         # the pinned entries fail by design until the first release merge exists, so their failure stays stage-scoped (AD-19)
@@ -256,3 +306,9 @@ jobs:
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCMAKE_BUILD_TYPE=Release
           cmake --build .build-port-consumer
+      - name: save the vcpkg binary cache
+        if: success()
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ github.workspace }}/.vcpkg-cache
+          key: vcpkg-port-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-${{ matrix.consumer }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'tests/port-consumer/vcpkg.json', 'tests/port-consumer-blend2d/vcpkg.json', '.triplets/**', 'ports/albor/**') }}
