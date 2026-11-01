@@ -28,7 +28,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 endif()
 
 # the release package PR updates this default, and the port overrides it for a tagged package build (AD-19)
-set(ALBOR_VERSION "0.1.0" CACHE STRING "the albor release version")
+set(ALBOR_VERSION "0.2.0" CACHE STRING "the albor release version")
 
 project(albor VERSION ${ALBOR_VERSION} LANGUAGES CXX)
 
