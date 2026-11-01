@@ -155,8 +155,7 @@ jobs:
               choco install ccache --no-progress -y
           - name: windows-debug
             os: windows-latest
-            # the debug suite is the test authority, which main pushes carry and a review skips (AD-16)
-            enable: ${{ github.event_name == 'push' }}
+            enable: true
             preset: debug
             vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
             setup: |
