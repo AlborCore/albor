@@ -131,8 +131,8 @@ jobs:
               sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
           - name: macos-coverage
             os: macos-15
-            # the coverage build is the deepest leg, which a review does not need; main pushes carry it (AD-16)
-            enable: ${{ github.event_name == 'push' }}
+            # the coverage report belongs to a review, which is the only event that carries the PR context (AD-16)
+            enable: ${{ github.event_name == 'pull_request' }}
             preset: coverage
             vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
             setup: |
