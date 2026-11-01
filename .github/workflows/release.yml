@@ -1,160 +1,171 @@
 name: release
 
-# the release is made of two PRs a human reviews and merges at their own pace, and the automation only
-# prepares content: the dispatch opens the version PR; the merge of that PR triggers the tag on the merge
-# commit and the one-line pin PR. Nothing merges itself, and every PR carries the full CI like any change (AD-19)
+# publishing a GitHub release is the only automatic release trigger; the dispatch retries an existing
+# tag, and the workflow prepares the vcpkg package PR without creating a tag or merging anything (AD-19)
 on:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
-      version:
-        description: the release version without the v (for example 0.2.0)
+      tag:
+        description: an existing release tag, for example v0.2.0
         required: true
-  push:
-    branches: [main]
-    paths: [ports/albor/**]
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.event_name }}
+  group: release-package-${{ github.event.release.tag_name || inputs.tag }}
   cancel-in-progress: false
 
 jobs:
-  prepare:
-    if: github.event_name == 'workflow_dispatch'
+  package:
+    # drafts never run, and a prerelease is not a stable package whose version parses as CMake project VERSION
+    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: main
+          fetch-depth: 0
           token: ${{ secrets.RELEASE_PAT }}
 
-      - name: the dispatch is a release on main
-        run: '[ "${{ github.ref }}" = "refs/heads/main" ] || { echo "a release dispatches from main, not ${{ github.ref }}"; exit 1; }'
-
       - name: the release token exists
-        run: '[ -n "$RELEASE_PAT" ] || { echo "the RELEASE_PAT secret is unset; the automation drives its PRs with it, because events raised by GITHUB_TOKEN suppress the repository CI (AD-19)"; exit 1; }'
+        run: '[ -n "$RELEASE_PAT" ] || { echo "the RELEASE_PAT secret is unset; the release PR needs it because events raised by GITHUB_TOKEN suppress repository CI (AD-19)"; exit 1; }'
         env:
           RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
 
-      - name: the version is a greater semver and its tag is free
+      - name: the release tag is stable, on main and at least the packaged version
+        id: release
         env:
-          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
-          # the input enters the step through the environment, which a crafty value cannot escape before validation (AD-19)
-          if ! echo "$RELEASE_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
-            echo "the release version '$RELEASE_VERSION' is not semver form like 0.2.0"; exit 1
+          tag="$RELEASE_TAG"
+          # the tag enters the step through the environment, which a crafty value cannot escape before validation (AD-19)
+          if ! printf '%s\n' "$tag" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "the release tag '$tag' is not a stable semver form like v0.2.0"; exit 1
           fi
-          python3 - "$RELEASE_VERSION" <<'PYEOF'
-          import json, re, sys
-
-          version = sys.argv[1]
-          manifest = json.load(open("vcpkg.json"))
-          current = manifest.get("version-string", "")
-
+          version="${tag#v}"
+          git fetch --tags --force origin
+          if git rev-parse --verify "refs/tags/$tag^{commit}" >/dev/null 2>&1; then
+            source_tag="$tag"
+          elif git rev-parse --verify "refs/tags/v$version^{commit}" >/dev/null 2>&1; then
+            source_tag="v$version"
+          else
+            echo "the release tag '$tag' does not exist"; exit 1
+          fi
+          commit="$(git rev-parse --verify "refs/tags/$source_tag^{commit}")"
+          # a release belongs to main, whose commits are the only source the package pins (AD-19)
+          git fetch --no-tags --force origin main
+          if ! git merge-base --is-ancestor "$commit" FETCH_HEAD; then
+            echo "the tag $source_tag names $commit, which is not on main"; exit 1
+          fi
+          current="$(python3 -c "import json; print(json.load(open('ports/albor/vcpkg.json')).get('version-semver',''))")"
+          python3 - "$version" "$current" <<'PYEOF'
+          import re, sys
+          version, current = sys.argv[1:3]
           def parts(value):
-              return [int(part) for part in re.match(r"^([0-9]+\.[0-9]+\.[0-9]+)", value).group(1).split(".")]
-
-          if parts(version) <= parts(current):
-              print(f"the release version {version} is not greater than the released {current}"); sys.exit(1)
+              match = re.match(r"^([0-9]+)\.([0-9]+)\.([0-9]+)$", value)
+              if not match:
+                  sys.exit(f"the package version {value!r} is not stable semver")
+              return tuple(int(part) for part in match.groups())
+          if parts(version) < parts(current):
+              sys.exit(f"the release version {version} is older than the packaged {current}")
           print(f"{version} follows {current}")
           PYEOF
-          if gh api "repos/${{ github.repository }}/git/ref/tags/v$RELEASE_VERSION" >/dev/null 2>&1; then
-            echo "the tag v$RELEASE_VERSION already exists; delete it or choose a greater version"; exit 1
-          fi
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
 
-      - name: the version PR carries the three sites together
-        env:
-          RELEASE_VERSION: ${{ inputs.version }}
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
-        run: |
-          version="$RELEASE_VERSION"
-          sed -i.bak "s/\"version-string\": \"[^\"]*\"/\"version-string\": \"$version\"/" vcpkg.json
-          sed -i.bak -E "s/^([[:space:]]*project\([^)]*VERSION[[:space:]]+)[0-9]+\.[0-9]+\.[0-9]+/\\1$version/" CMakeLists.txt
-          sed -i.bak "s/\"version-semver\": \"[^\"]*\"/\"version-semver\": \"$version\"/" ports/albor/vcpkg.json
-          rm -f vcpkg.json.bak CMakeLists.txt.bak ports/albor/vcpkg.json.bak
-          grep -q "\"version-string\": \"$version\"" vcpkg.json
-          grep -qE "^([[:space:]]*project\([^)]*VERSION[[:space:]]+$version)" CMakeLists.txt
-          grep -q "\"version-semver\": \"$version\"" ports/albor/vcpkg.json
-          branch="release/v$version"
-          git config user.name "albor release bot"
-          git config user.email "release@albor.invalid"
-          git checkout -b "$branch"
-          git add vcpkg.json CMakeLists.txt ports/albor/vcpkg.json
-          git commit -m "release: v$version moves the three version sites together (AD-19)"
-          git push origin "$branch"
-          gh pr create --title "release: v$version" \
-            --body "the version sites move together for the release v$version; once this merges, the tag and the pinned REF follow without further steps (AD-19)." \
-            --head "$branch" --base main
-
-  finish:
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          token: ${{ secrets.RELEASE_PAT }}
-
-      - name: the release token exists
-        run: '[ -n "$RELEASE_PAT" ] || { echo "the RELEASE_PAT secret is unset; the automation drives its PRs with it, because events raised by GITHUB_TOKEN suppress the repository CI (AD-19)"; exit 1; }'
-        env:
-          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
-
-      - name: the current version is tagged, otherwise the finish records it
+      - name: the package state decides whether the PR is needed
+        id: package
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          VERSION: ${{ steps.release.outputs.version }}
+          COMMIT: ${{ steps.release.outputs.commit }}
         run: |
-          # the idempotence of the finish: a published tag means the release finished, and the job exits without work (AD-19)
-          version=$(python3 -c "import json,sys; print(json.load(open('ports/albor/vcpkg.json')).get('version-semver',''))")
-          [ -n "$version" ] || { echo "the port carries no release version"; exit 1; }
-          if gh api "repos/${{ github.repository }}/git/ref/tags/v$version" >/dev/null 2>&1; then
-            echo "the tag v$version already exists; the release is finished"; exit 0
-          fi
-          gh api -X POST "repos/${{ github.repository }}/git/refs" \
-            -f ref="refs/tags/v$version" -f sha="${{ github.sha }}"
-
-      - name: the pin PR pins the sources at the tagged merge
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
-        run: |
-          version=$(python3 -c "import json; print(json.load(open('ports/albor/vcpkg.json')).get('version-semver',''))")
-          ref="${{ github.sha }}"
-          # the state the release expects once every PR lands: the REF names the tagged merge, so the job audits rather than reworks (AD-19)
-          if grep -qE "^[[:space:]]*REF[[:space:]]+${ref}$" ports/albor/portfile.cmake; then
-            echo "the pinned REF already names the tagged merge; the release is finished"
+          branch="release/v$VERSION-package"
+          # a rerun after the merge is a no-op, and the published state is the whole release (AD-19)
+          if grep -qE "^[[:space:]]*REF[[:space:]]+$COMMIT$" ports/albor/portfile.cmake \
+            && grep -q "\"version-semver\": \"$VERSION\"" ports/albor/vcpkg.json \
+            && grep -qE "^set\(ALBOR_VERSION \"$VERSION\" CACHE STRING" CMakeLists.txt; then
+            echo "the package for v$VERSION already names $COMMIT; nothing to prepare"
+            echo "prepared=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # a pin PR that already exists is waiting for its review, which the job leaves untouched (AD-19)
-          state=$(gh pr view "release/v$version-pin" --json state --jq .state 2>/dev/null || echo ABSENT)
-          if [ "$state" = "OPEN" ] || [ "$state" = "MERGED" ]; then
-            echo "the pin PR release/v$version-pin is $state and waits for the human step"; exit 0
+          # an open PR waits for its human review, which a rerun leaves untouched (AD-19)
+          state="$(gh pr view "$branch" --json state,url --jq '[.state, .url] | @tsv' 2>/dev/null || true)"
+          if [ -n "$state" ]; then
+            state_name="${state%%$'\t'*}"
+            state_url="${state#*$'\t'}"
+            if [ "$state_name" = "OPEN" ]; then
+              echo "the package PR is open and waits for review: $state_url"
+              echo "prepared=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "the package PR is $state_name; main does not carry it, so delete $branch and rerun: $state_url"; exit 1
           fi
-          branch="release/v$version-pin"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "the branch $branch exists without a PR; delete it and rerun"; exit 1
+          fi
+          echo "prepared=true" >> "$GITHUB_OUTPUT"
+
+      - name: the package PR moves the version and pin together
+        if: steps.package.outputs.prepared == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          VERSION: ${{ steps.release.outputs.version }}
+          COMMIT: ${{ steps.release.outputs.commit }}
+        run: |
+          version="$VERSION"
+          commit="$COMMIT"
+          branch="release/v$version-package"
+          python3 - "$version" "$commit" <<'PYEOF'
+          import pathlib, re, sys
+
+          version, commit = sys.argv[1:3]
+
+          def replace(path, pattern, replacement):
+              file = pathlib.Path(path)
+              text = file.read_text()
+              updated, count = re.subn(pattern, replacement, text, count=1, flags=re.M)
+              if count != 1:
+                  sys.exit(f"{path} carries no line for the release update")
+              file.write_text(updated)
+
+          replace(
+              "CMakeLists.txt",
+              r'^(set\(ALBOR_VERSION ")[^"]*(" CACHE STRING[^\n]*)$',
+              rf'\g<1>{version}\g<2>',
+          )
+          replace(
+              "ports/albor/vcpkg.json",
+              r'("version-semver"\s*:\s*")[^"]*(")',
+              rf'\g<1>{version}\g<2>',
+          )
+          replace(
+              "ports/albor/portfile.cmake",
+              r'^(\s*REF\s+)[0-9a-f]{40}\b',
+              rf'\g<1>{commit}',
+          )
+          PYEOF
+          grep -qE "^set\(ALBOR_VERSION \"$version\" CACHE STRING" CMakeLists.txt
+          grep -q "\"version-semver\": \"$version\"" ports/albor/vcpkg.json
+          grep -qE "^[[:space:]]*REF[[:space:]]+$commit$" ports/albor/portfile.cmake
+          # the root development manifest is not a release version site and keeps the vcpkg cache key stable (AD-19)
+          git diff --quiet -- vcpkg.json
+          git diff --check
           git config user.name "albor release bot"
           git config user.email "release@albor.invalid"
           git checkout -b "$branch"
-          sed -i.bak -E "s/^([[:space:]]*REF[[:space:]]+)[0-9a-f]{40}\\b/\\1$ref/" ports/albor/portfile.cmake
-          rm -f ports/albor/portfile.cmake.bak
-          grep -qE "^[[:space:]]*REF[[:space:]]+$ref$" ports/albor/portfile.cmake
-          git add ports/albor/portfile.cmake
-          git commit -m "release: v$version pins its sources at the tagged merge commit (AD-19)"
+          git add CMakeLists.txt ports/albor/vcpkg.json ports/albor/portfile.cmake
+          git commit -m "release: v$version prepares the published package (AD-19)"
           git push origin "$branch"
-          gh pr create --title "release: v$version pins its sources" \
-            --body "the pinned REF now names the commit the tag v$version carries, so the package fetches exactly the released tree (AD-19)." \
-            --head "$branch" --base main
-
-      - name: what the finish recorded
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
-        run: |
-          version=$(python3 -c "import json; print(json.load(open('ports/albor/vcpkg.json')).get('version-semver',''))")
-          echo "tagged merge   : v$version at ${{ github.sha }}"
-          echo "pin pull req   : $(gh pr list --head "release/v$version-pin" --json url --jq '.[0].url' 2>/dev/null || echo 'none')"
+          pr_url="$(gh pr create --title "release: v$version package" \
+            --body "the published release v$version is prepared as the vcpkg package. The port's version is $version and its REF names the published tag commit $commit; the port passes ALBOR_VERSION to the build, so the installed CMake package reports the release version even though the tag predates this version commit. Automation creates no tag and merges nothing (AD-19)." \
+            --head "$branch" --base main)"
+          echo "package PR: $pr_url"

@@ -45,6 +45,8 @@ vcpkg_cmake_configure(
     OPTIONS
         ${FEATURE_OPTIONS}
         ${extra_options}
+        # the published tag may predate its version commit, so the port supplies the release version to the build (AD-19)
+        -DALBOR_VERSION=${VERSION}
         -DALBOR_EXAMPLES=OFF
         -DALBOR_TESTS=OFF
         # the source-tree default would build the skia reference, which the package writes out of itself (AD-26, issue 111)

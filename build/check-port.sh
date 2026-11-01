@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# the port never drifts from the project: the versions agree and the port's runtime matrix equals the manifest's minus gtest (AD-19)
+# the port never drifts from the project: the port version equals the project default and the port's
+# runtime matrix equals the manifest's minus gtest (AD-19)
 
 set -euo pipefail
 
@@ -60,21 +61,23 @@ if overrides:
         issue(f"{override_name} points at '{value}', which is not a framework checkout (the port fails the same way (AD-19))")
     print(f"{override_name} is set to a local checkout; the pinned REF is not exercised")
 
-# project version in CMakeLists, anchored to a real project(albor ...) line (AD-19)
+# project version in CMakeLists, which the release package PR updates and the port overrides for its build (AD-19)
 cmake = (root / "CMakeLists.txt").read_text()
-match = re.search(r"^\s*project\(\s*albor\s+VERSION\s+([^\s)]+)", cmake, re.M)
-if not match: issue("project(albor VERSION ...) missing from CMakeLists.txt")
+match = re.search(r'^\s*set\(ALBOR_VERSION\s+"([^"]+)"\s+CACHE STRING', cmake, re.M)
+if not match: issue('set(ALBOR_VERSION "..." CACHE STRING ...) missing from CMakeLists.txt')
 project_version = match.group(1)
+if not re.search(r"^\s*project\(\s*albor\s+VERSION\s+\$\{ALBOR_VERSION\}", cmake, re.M):
+    issue("project(albor VERSION ${ALBOR_VERSION} ...) missing from CMakeLists.txt")
 
 manifest = json.loads((root / "vcpkg.json").read_text())
 port = json.loads((root / "ports/albor/vcpkg.json").read_text())
 fixture = json.loads((root / "tests/consumer/vcpkg.json").read_text())
 
-manifest_version = version_of(manifest)
-if manifest_version != project_version:
-    issue(f"vcpkg.json version {manifest_version!r} != project(albor VERSION) {project_version!r}")
-if version_of(port) != manifest_version:
-    issue(f"ports/albor port version {version_of(port)!r} != manifest version {manifest_version!r}")
+# the root development manifest version is independent of releases, which keeps its vcpkg cache key stable (AD-19)
+if version_of(port) != project_version:
+    issue(f"ports/albor port version {version_of(port)!r} != project default {project_version!r}")
+if "-DALBOR_VERSION=${VERSION}" not in portfile:
+    issue("ports/albor/portfile.cmake does not pass the port version to the project")
 
 port_host = [dep.get("name") for dep in port.get("dependencies", []) if isinstance(dep, dict) and dep.get("host")]
 if "vcpkg-cmake" not in port_host or "vcpkg-cmake-config" not in port_host:
@@ -99,7 +102,7 @@ for name, entries in feature_entries.items():
     if not set(entries) <= set(manifest_entries):
         issue(f"{name} names dependencies the project manifest does not declare (AD-19)")
 
-print(f"port default matrix is a project subset and matches the fixture (%d entries, version %s)" % (len(port_entries), manifest_version))
+print(f"port default matrix is a project subset and matches the fixture (%d entries, version %s)" % (len(port_entries), project_version))
 
 if overrides:
     print(f"{override_name} is set to a local checkout; the pinned REF is not exercised")

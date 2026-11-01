@@ -283,9 +283,9 @@ The distribution is source/CMake through `FetchContent` or a vendored `add_subdi
 and the vcpkg package through the in-repository overlay port, whose dependency matrix and
 version the `build/check-port.sh` gate keeps identical to the project's. The package route
 is the one an official registry submission will carry, and the overlay is its rehearsal.
-The pin is the commit the portfile names; a git object carries it immutably, and the
-renewal per release is one line that the [release workflow](https://github.com/AlborCore/albor/blob/main/.github/workflows/release.yml)
-writes.
+Publishing a stable GitHub Release opens one package PR; the workflow never creates a tag. The pin is
+the commit the tag names, and the port passes the release version to the build, so the
+package reports the published version even though the tag predates the version commit.
 
 ## One target, one artifact
 
