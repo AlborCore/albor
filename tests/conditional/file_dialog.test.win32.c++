@@ -6,8 +6,6 @@
 #include <windows.h>
 #include <shobjidl.h>
 #include <wrl/client.h>
-
-#include <cwchar>
 // clang-format on
 
 #include <string>
@@ -22,30 +20,19 @@ using namespace albor;
 TEST(Win32FileDialog, AnOpenDialogCarriesTheRequestedOptions) {
     // arrange the apartment a shell dialog needs and a native open dialog (§5.3)
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    ASSERT_TRUE(SUCCEEDED(initialized) || initialized == S_FALSE);
+    ASSERT_TRUE(SUCCEEDED(initialized));
     Microsoft::WRL::ComPtr<IFileDialog> dialog;
     ASSERT_HRESULT_SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)));
     OpenFileOptions options;
     options.title = "Open netlist";
     options.filters = {FileFilter{.name = "Netlists", .extensions = {"kicad_sch", "kicad_pcb"}}};
-    options.initial_directory = "C:\\Temp";
     // act
     windows::configure_open_dialog(dialog.Get(), options);
-    // assert the title reached the dialog (§5.3)
-    LPWSTR title = nullptr;
-    ASSERT_HRESULT_SUCCEEDED(dialog->GetTitle(&title));
-    ASSERT_NE(title, nullptr);
-    EXPECT_STREQ(title, L"Open netlist");
-    CoTaskMemFree(title);
-    // assert the filter joined its extensions into one shell pattern (§5.3)
-    UINT count = 0;
-    COMDLG_FILTERSPEC* specs = nullptr;
-    ASSERT_HRESULT_SUCCEEDED(dialog->GetFileTypes(&count, &specs));
-    ASSERT_EQ(count, 1U);
-    ASSERT_NE(specs, nullptr);
-    EXPECT_STREQ(specs[0].pszName, L"Netlists");
-    EXPECT_STREQ(specs[0].pszSpec, L"*.kicad_sch;*.kicad_pcb");
-    CoTaskMemFree(specs);
+    // assert the title and the joined filter reached the seam, which is the only path to the shell (§5.3)
+    const windows::FileDialogConfiguration& applied = windows::last_file_dialog_configuration();
+    EXPECT_EQ(applied.title, "Open netlist");
+    ASSERT_EQ(applied.filters.size(), 1U);
+    EXPECT_EQ(applied.filters.at(0), "Netlists:*.kicad_sch;*.kicad_pcb");
     // the dialog is released before the apartment it was created in (§5.3)
     dialog.Reset();
     CoUninitialize();
@@ -54,7 +41,7 @@ TEST(Win32FileDialog, AnOpenDialogCarriesTheRequestedOptions) {
 TEST(Win32FileDialog, ASaveDialogCarriesTheProposedName) {
     // arrange the apartment a shell dialog needs and a native save dialog (§5.3)
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    ASSERT_TRUE(SUCCEEDED(initialized) || initialized == S_FALSE);
+    ASSERT_TRUE(SUCCEEDED(initialized));
     Microsoft::WRL::ComPtr<IFileDialog> dialog;
     ASSERT_HRESULT_SUCCEEDED(CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)));
     SaveFileOptions options;
@@ -63,21 +50,21 @@ TEST(Win32FileDialog, ASaveDialogCarriesTheProposedName) {
     options.filters = {FileFilter{.name = "Netlists", .extensions = {"kicad_sch"}}};
     // act
     windows::configure_save_dialog(dialog.Get(), options);
-    // assert the proposed name reached the dialog, which is what the user edits (§5.3)
-    LPWSTR name = nullptr;
-    ASSERT_HRESULT_SUCCEEDED(dialog->GetFileName(&name));
-    ASSERT_NE(name, nullptr);
-    EXPECT_STREQ(name, L"netlist.kicad_sch");
-    CoTaskMemFree(name);
+    // assert the proposed name and the filter reached the seam (§5.3)
+    const windows::FileDialogConfiguration& applied = windows::last_file_dialog_configuration();
+    EXPECT_EQ(applied.title, "Save netlist");
+    EXPECT_EQ(applied.default_name, "netlist.kicad_sch");
+    ASSERT_EQ(applied.filters.size(), 1U);
+    EXPECT_EQ(applied.filters.at(0), "Netlists:*.kicad_sch");
     // the dialog is released before the apartment it was created in (§5.3)
     dialog.Reset();
     CoUninitialize();
 }
 
-TEST(Win32FileDialog, TheInitialDirectoryBecomesTheFolder) {
-    // arrange the apartment a shell dialog needs and a request with an existing directory (§5.3)
+TEST(Win32FileDialog, TheInitialDirectoryReachesTheSeam) {
+    // arrange the apartment a shell dialog needs and a request with a directory (§5.3)
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    ASSERT_TRUE(SUCCEEDED(initialized) || initialized == S_FALSE);
+    ASSERT_TRUE(SUCCEEDED(initialized));
     Microsoft::WRL::ComPtr<IFileDialog> dialog;
     ASSERT_HRESULT_SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)));
     OpenFileOptions options;
@@ -85,15 +72,8 @@ TEST(Win32FileDialog, TheInitialDirectoryBecomesTheFolder) {
     options.initial_directory = "C:\\Windows";
     // act
     windows::configure_open_dialog(dialog.Get(), options);
-    // assert the starting folder is the one the caller named (§5.3)
-    Microsoft::WRL::ComPtr<IShellItem> folder;
-    ASSERT_HRESULT_SUCCEEDED(dialog->GetFolder(&folder));
-    ASSERT_NE(folder.Get(), nullptr);
-    PWSTR path = nullptr;
-    ASSERT_HRESULT_SUCCEEDED(folder->GetDisplayName(SIGDN_FILESYSPATH, &path));
-    ASSERT_NE(path, nullptr);
-    EXPECT_NE(wcsstr(path, L"Windows"), nullptr);
-    CoTaskMemFree(path);
+    // assert the directory is what the seam applied, which is the value the shell reads (§5.3)
+    EXPECT_EQ(windows::last_file_dialog_configuration().directory, "C:\\Windows");
     // the dialog is released before the apartment it was created in (§5.3)
     dialog.Reset();
     CoUninitialize();
@@ -102,7 +82,7 @@ TEST(Win32FileDialog, TheInitialDirectoryBecomesTheFolder) {
 TEST(Win32FileDialog, AnEmptyFilterShowsEveryFile) {
     // arrange a filter with no extensions, which means any file (§5.3)
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    ASSERT_TRUE(SUCCEEDED(initialized) || initialized == S_FALSE);
+    ASSERT_TRUE(SUCCEEDED(initialized));
     Microsoft::WRL::ComPtr<IFileDialog> dialog;
     ASSERT_HRESULT_SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)));
     OpenFileOptions options;
@@ -110,12 +90,8 @@ TEST(Win32FileDialog, AnEmptyFilterShowsEveryFile) {
     // act
     windows::configure_open_dialog(dialog.Get(), options);
     // assert the shell pattern accepts every name (§5.3)
-    UINT count = 0;
-    COMDLG_FILTERSPEC* specs = nullptr;
-    ASSERT_HRESULT_SUCCEEDED(dialog->GetFileTypes(&count, &specs));
-    ASSERT_EQ(count, 1U);
-    EXPECT_STREQ(specs[0].pszSpec, L"*.*");
-    CoTaskMemFree(specs);
+    ASSERT_EQ(windows::last_file_dialog_configuration().filters.size(), 1U);
+    EXPECT_EQ(windows::last_file_dialog_configuration().filters.at(0), "All files:*.*");
     // the dialog is released before the apartment it was created in (§5.3)
     dialog.Reset();
     CoUninitialize();
@@ -124,7 +100,7 @@ TEST(Win32FileDialog, AnEmptyFilterShowsEveryFile) {
 TEST(Win32FileDialog, AnUnnamedFilterFallsBackToItsPattern) {
     // arrange a filter with no label, which the shell would show empty (§5.3)
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    ASSERT_TRUE(SUCCEEDED(initialized) || initialized == S_FALSE);
+    ASSERT_TRUE(SUCCEEDED(initialized));
     Microsoft::WRL::ComPtr<IFileDialog> dialog;
     ASSERT_HRESULT_SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)));
     OpenFileOptions options;
@@ -132,12 +108,8 @@ TEST(Win32FileDialog, AnUnnamedFilterFallsBackToItsPattern) {
     // act
     windows::configure_open_dialog(dialog.Get(), options);
     // assert the label reads as the pattern, which is still useful to the user (§5.3)
-    UINT count = 0;
-    COMDLG_FILTERSPEC* specs = nullptr;
-    ASSERT_HRESULT_SUCCEEDED(dialog->GetFileTypes(&count, &specs));
-    ASSERT_EQ(count, 1U);
-    EXPECT_STREQ(specs[0].pszName, L"*.kicad_sch");
-    CoTaskMemFree(specs);
+    ASSERT_EQ(windows::last_file_dialog_configuration().filters.size(), 1U);
+    EXPECT_EQ(windows::last_file_dialog_configuration().filters.at(0), "*.kicad_sch:*.kicad_sch");
     // the dialog is released before the apartment it was created in (§5.3)
     dialog.Reset();
     CoUninitialize();

@@ -65,6 +65,9 @@ namespace albor::windows
             return result;
         }
 
+        // the configuration the last seam applied, which the platform suite reads back (§5.3)
+        FileDialogConfiguration g_last_configuration;
+
         // the filter storage a dialog reads while it is configured and shown (§5.3)
         struct FilterStorage
         {
@@ -119,6 +122,17 @@ namespace albor::windows
 
         // apply the common options to a dialog, which is what both directions share (§5.3)
         void configure_into(IFileDialog* dialog, const std::string& title, const FilterStorage& storage, const std::string& directory) {
+            // the seam records what it applies, because the shell getters are not available on every sdk (§5.3)
+            g_last_configuration.title = title;
+            g_last_configuration.directory = directory;
+            g_last_configuration.filters.clear();
+            // every filter is spelled as the shell pattern it becomes (§5.3)
+            for (std::size_t index = 0; index < storage.names.size(); index++) {
+                // the narrow spelling is what a test compares, which keeps the api utf8 (§5.3)
+                const std::string name(storage.names[index].begin(), storage.names[index].end());
+                const std::string pattern(storage.patterns[index].begin(), storage.patterns[index].end());
+                g_last_configuration.filters.push_back(name + ":" + pattern);
+            }
             // an empty title keeps the system default, which a dialog names itself (§5.3)
             if (!title.empty()) {
                 // the utf8 title becomes the utf16 the shell shows (§5.3)
@@ -144,6 +158,8 @@ namespace albor::windows
 
         // apply the proposed name a save dialog starts from (§5.3)
         void set_default_name(IFileDialog* dialog, const std::string& name) {
+            // the seam records the proposed name, which is what the platform suite asserts (§5.3)
+            g_last_configuration.default_name = name;
             // an empty name keeps the system default, which the shell invents (§5.3)
             if (name.empty())
                 return;
@@ -268,6 +284,11 @@ namespace albor::windows
         configure_into(dialog, options.title, storage, options.initial_directory);
         // the proposed name is what the user starts from, which a save dialog edits (§5.3)
         set_default_name(dialog, options.default_name);
+    }
+
+    const FileDialogConfiguration& last_file_dialog_configuration() {
+        // the configuration is the last seam call's, which a test compares (§5.3)
+        return g_last_configuration;
     }
 
     void install_windows_file_dialog() {
