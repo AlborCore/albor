@@ -44,6 +44,8 @@ TEST(Win32FileDialog, AnOpenDialogCarriesTheRequestedOptions) {
     EXPECT_STREQ(specs[0].pszName, L"Netlists");
     EXPECT_STREQ(specs[0].pszSpec, L"*.kicad_sch;*.kicad_pcb");
     CoTaskMemFree(specs);
+    // the dialog is released before the apartment it was created in (§5.3)
+    dialog.Reset();
     CoUninitialize();
 }
 
@@ -65,6 +67,8 @@ TEST(Win32FileDialog, ASaveDialogCarriesTheProposedName) {
     ASSERT_NE(name, nullptr);
     EXPECT_STREQ(name, L"netlist.kicad_sch");
     CoTaskMemFree(name);
+    // the dialog is released before the apartment it was created in (§5.3)
+    dialog.Reset();
     CoUninitialize();
 }
 
@@ -88,6 +92,8 @@ TEST(Win32FileDialog, TheInitialDirectoryBecomesTheFolder) {
     ASSERT_NE(path, nullptr);
     EXPECT_NE(wcsstr(path, L"Windows"), nullptr);
     CoTaskMemFree(path);
+    // the dialog is released before the apartment it was created in (§5.3)
+    dialog.Reset();
     CoUninitialize();
 }
 
@@ -108,6 +114,8 @@ TEST(Win32FileDialog, AnEmptyFilterShowsEveryFile) {
     ASSERT_EQ(count, 1U);
     EXPECT_STREQ(specs[0].pszSpec, L"*.*");
     CoTaskMemFree(specs);
+    // the dialog is released before the apartment it was created in (§5.3)
+    dialog.Reset();
     CoUninitialize();
 }
 
@@ -128,5 +136,7 @@ TEST(Win32FileDialog, AnUnnamedFilterFallsBackToItsPattern) {
     ASSERT_EQ(count, 1U);
     EXPECT_STREQ(specs[0].pszName, L"*.kicad_sch");
     CoTaskMemFree(specs);
+    // the dialog is released before the apartment it was created in (§5.3)
+    dialog.Reset();
     CoUninitialize();
 }
