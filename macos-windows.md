@@ -42,10 +42,23 @@ Both adapters implement the same `PlatformWindow` and `PlatformEventLoop` interf
 | Accessibility | NSAccessibility bridge, 20 tests | UI Automation bridge, 21 role tests + 1 client test | Parity |
 | Native file dialogs | `NSOpenPanel`/`NSSavePanel` as sheets | `IFileOpenDialog`/`IFileSaveDialog` owned by the parent | Parity, with filters unioned on macOS |
 
-Both popup suites now carry **15 tests**. They cover ownership, anchor placement, trigger-click forwarding,
-owner-move following, a parented dialog and re-activating a visible dialog. The AppKit-only `ThePopupLayerIsNonopaque` has no direct Win32
-equivalent, while Win32 adds the opening-press capture handoff that has no AppKit counterpart. A press that hides
-the surface from inside its own dispatch now drops the popup stage's capture, so the next open accepts its first click.
+The popup suites cover ownership, anchor placement, trigger-click forwarding, owner-move following, a parented
+dialog, re-activating a visible dialog and the parented-dialog teardown. The macOS suite carries 18 tests and the
+Windows suite 17, because each platform adds the teardown test its native mechanism needs: AppKit removes a closed
+child from its owner's child list, while Win32 lets the system destroy the owned window with its owner. The AppKit-only
+`ThePopupLayerIsNonopaque` has no direct Win32 equivalent, while Win32 adds the opening-press capture handoff that
+has no AppKit counterpart. A press that hides the surface from inside its own dispatch now drops the popup stage's
+capture, so the next open accepts its first click. A separate macOS suite drives a parented dialog end to end
+through `Application`, its key dispatch and its pump, which is the path issue #150 reported.
+
+Window teardown now follows one ordering on both platforms. A window is created with `releasedWhenClosed = NO`,
+because ARC already owns it and `close` must not send a second release; that extra release was the over-release the
+display cycle surfaced in the Touch Bar finder. A child is also detached from its owner before it is ordered out,
+closed or released, so the owner's child list never outlives the child. `close()` and the destructor both go
+through that detach, and the Win32 `close()` releases ownership before `DestroyWindow`, which is the same ordering
+in native terms. Because ARC owns the window and AppKit keeps a closed window in the application's list, the
+adapter does not force a deallocation at close; the application releases it later. The tests therefore assert the
+ordered-out and detached state rather than a deallocation, which is the accurate contract for an ARC-owned NSWindow.
 
 Windows now has dedicated integration tests for clipboard round-tripping, IME composition lifecycle, DPI metrics
 and the `WM_DPICHANGED` resize path, and frame-tick delivery. macOS still lacks the equivalent clipboard, IME,
@@ -221,9 +234,11 @@ The latest full Windows run, CI `40691294678` at `a8e019f`, recorded:
 
 `bash build/check-format.sh` passes, and `bash build/shaders.sh --d3d` reports that the committed DXBC artifact
 matches the six HLSL entry points. The Windows host cannot build the macOS bridge, so the macOS half of this
-pass runs in the macOS CI jobs: the debug suite runs **3,588 tests** with zero failures, including all 14 macOS
-popup tests, and the release suite runs 3,408 tests with zero failures. The 14 Win32 popup tests passed in both
-Windows configurations, including owner-move following, trigger-click forwarding and capture handoff.
+pass runs in the macOS CI jobs: the debug suite runs **3,588 tests** with zero failures, including all 18 macOS
+popup tests and the parented-dialog teardown suite, and the release suite runs 3,408 tests with zero failures. The
+17 Win32 popup tests passed in both Windows configurations, including owner-move following, trigger-click
+forwarding and capture handoff. The counts in this paragraph are the prior pass; the teardown change adds four
+macOS tests, one macOS application-level suite and two Win32 tests on top of them.
 
 The complete Windows suite has exactly **2 skips**:
 
@@ -254,7 +269,7 @@ job remains a tracked enhancement rather than a parity requirement.
 | Suite | macOS | Windows |
 | --- | ---: | ---: |
 | `render-albor` backend/parity | 73 | 73 |
-| Window popup | 14 | 14 |
+| Window popup | 18 | 17 |
 | Blend2D windowed | 3 | 3 |
 | Platform font resolver | 8 dedicated | 8 |
 | Accessibility roles | 18 | 20 (19 parity + 1 UI Automation client) |
@@ -306,7 +321,8 @@ job remains a tracked enhancement rather than a parity requirement.
   for cheap reopening, rebuilds it after a theme or type change, and commits when the already-selected row is
   pressed. The Escape path now reaches the focused control before the controller consumes it, the Win32 opening
   press hands capture to the popup only after the owner receives the release, and a press that hides its own
-  surface drops the popup capture instead of arming it against the next open. Both popup suites carry 15 tests.
+  surface drops the popup capture instead of arming it against the next open. The macOS popup suite carries 18
+  tests and the Windows one 17, and a macOS application-level suite drives the parented dialog teardown end to end.
 - Added the portable semantic action table. macOS and Windows now offer the same activate, toggle,
   increment, decrement, expand and collapse actions; bounded controls publish a range, macOS answers
   the value attribute write, and Windows implements `IRangeValueProvider` and `IExpandCollapseProvider`.

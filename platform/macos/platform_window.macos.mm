@@ -505,6 +505,15 @@ namespace albor
 
     namespace
     {
+        // detach a window from the owner appkit lists it under, which is the one child teardown of §5.1
+        void detach_from_owner(NSWindow* window) {
+            // a missing window and an unowned window have no child relation to clear (§5.1)
+            if (window == nil || window.parentWindow == nil)
+                return;
+            // the owner drops the child before it is ordered out or closed, which keeps its list clean (§5.1)
+            [window.parentWindow removeChildWindow:window];
+        }
+
         NSWindowStyleMask style_mask_for(const WindowOptions& options) {
             // a popup is a borderless transient surface, which appkit draws with no chrome at all (§5.1)
             if (options.role == WindowRole::Popup)
@@ -563,8 +572,7 @@ namespace albor
             // the panel is a child of its owner, so it follows the owner and stays above it (§5.1)
             if (popup.parentWindow != owner) {
                 // an old owner is detached first, because a window has one parent at a time (§5.1)
-                if (popup.parentWindow != nil)
-                    [popup.parentWindow removeChildWindow:popup];
+                detach_from_owner(popup);
                 // the current owner adopts it before the show, which is what makes the popup follow (§5.1)
                 [owner addChildWindow:popup ordered:NSWindowAbove];
             }
@@ -590,8 +598,7 @@ namespace albor
             if (state->window == nil || !state->visible)
                 return;
             // a child popup detaches before it is ordered out, so the relation does not outlive the surface (§5.1)
-            if (state->window.parentWindow != nil)
-                [state->window.parentWindow removeChildWindow:state->window];
+            detach_from_owner(state->window);
             // the popup is ordered out, which is the whole of a dismissal for a transient surface (§5.1)
             [state->window orderOut:nil];
             state->visible = false;
@@ -638,6 +645,8 @@ namespace albor
         }
         if (window == nil)
             return nullptr;
+        // arc owns the window, so appkit must not release it when it closes, which is the over release of #150 (§5.3)
+        window.releasedWhenClosed = NO;
         window.title = [NSString stringWithUTF8String:options.title.c_str()];
         // the content view carries the metal layer and translates the native events of §8.3
         AlborContentView* content = [[AlborContentView alloc] initWithFrame:window.contentView.frame];
@@ -767,6 +776,8 @@ namespace albor
             [[NSNotificationCenter defaultCenter] removeObserver:m_state->deactivate_observer];
             m_state->deactivate_observer = nil;
         }
+        // a child detaches before it closes, because a child left in the owner is the display cycle crash (§5.1)
+        detach_from_owner(m_state->window);
         // the native window is closed last, so the layer and its drawables die with it (§6.3)
         [m_state->window close];
         // the native objects are dropped with the state, which releases them under arc (§5.3)
@@ -802,8 +813,7 @@ namespace albor
             // an owned dialog attaches to its parent, which keeps it above and moving with the owner (§5.1)
             if (m_state->owner != nil && m_state->window.parentWindow != m_state->owner) {
                 // an old owner is detached first, because a window has one parent at a time (§5.1)
-                if (m_state->window.parentWindow != nil)
-                    [m_state->window.parentWindow removeChildWindow:m_state->window];
+                detach_from_owner(m_state->window);
                 // the owner adopts the dialog before the show, which is the native parent relation (§5.1)
                 [m_state->owner addChildWindow:m_state->window ordered:NSWindowAbove];
             }
@@ -826,8 +836,7 @@ namespace albor
         // an owned dialog attaches to its parent, which keeps it above the owner when it takes key (§5.1)
         if (m_state->owner != nil && m_state->window.parentWindow != m_state->owner) {
             // an old owner is detached first, because a window has one parent at a time (§5.1)
-            if (m_state->window.parentWindow != nil)
-                [m_state->window.parentWindow removeChildWindow:m_state->window];
+            detach_from_owner(m_state->window);
             // the owner adopts the dialog before it is keyed (§5.1)
             [m_state->owner addChildWindow:m_state->window ordered:NSWindowAbove];
         }
@@ -843,8 +852,7 @@ namespace albor
         if (m_state->window == nil)
             return;
         // a hidden child stops following its owner, which keeps the child list of the owner clean (§5.1)
-        if (m_state->window.parentWindow != nil)
-            [m_state->window.parentWindow removeChildWindow:m_state->window];
+        detach_from_owner(m_state->window);
         [m_state->window orderOut:nil];
         m_state->visible = false;
     }
@@ -941,6 +949,8 @@ namespace albor
         AlborContentView* content = static_cast<AlborContentView*>(m_state->content_view);
         if (content != nil)
             content.listener = nil;
+        // a child detaches before it closes, so the owner never releases a window appkit still lists (§5.1)
+        detach_from_owner(m_state->window);
         // the native window is closed without asking the framework, because the framework initiated this (§5.2)
         [m_state->window close];
         // a closed window has nothing left to draw (§4.3)

@@ -111,6 +111,8 @@ TEST(MacosPopupWindow, ANormalWindowKeepsTheTitledMask) {
             found = window;
     }
     ASSERT_NE(found, nil);
+    // assert appkit leaves the window release to arc, which every role carries (§5.3)
+    EXPECT_FALSE(found.releasedWhenClosed);
     // assert a normal window is not a panel, which keeps the popup surface out of the ordinary path (§5.1)
     EXPECT_FALSE([found isKindOfClass:[NSPanel class]]);
     // assert a normal window keeps the titled mask, which the non popup branch builds (§5.3)
@@ -470,4 +472,143 @@ TEST(MacosPopupWindow, ThePopupLayerIsNonopaque) {
     ASSERT_NE(content, nil);
     // assert the metal layer is non opaque, so the compositor may blend the popup over what lies beneath (§5.1)
     EXPECT_FALSE(content.layer.opaque);
+}
+
+TEST(MacosPopupWindow, ClosingAParentedDialogDetachesItFromTheOwner) {
+    // arrange an owner window and a dialog it owns, both shown (§5.1)
+    WindowOptions owner_options;
+    owner_options.title = "dialog-close-owner";
+    owner_options.size = albor::Size{320.0f, 240.0f};
+    std::unique_ptr<MacosPlatformWindow> owner = MacosPlatformWindow::create(owner_options);
+    ASSERT_NE(owner, nullptr);
+    owner->show();
+    NSWindow* owner_window = nil;
+    for (NSWindow* window in [NSApplication sharedApplication].windows) {
+        if ([window.title isEqualToString:@"dialog-close-owner"])
+            owner_window = window;
+    }
+    ASSERT_NE(owner_window, nil);
+    WindowOptions dialog_options;
+    dialog_options.role = WindowRole::Dialog;
+    dialog_options.title = "dialog-close";
+    dialog_options.size = albor::Size{180.0f, 120.0f};
+    dialog_options.native_parent = owner->native_window_handle();
+    std::unique_ptr<MacosPlatformWindow> dialog = MacosPlatformWindow::create(dialog_options);
+    ASSERT_NE(dialog, nullptr);
+    dialog->show();
+    NSWindow* dialog_window = nil;
+    for (NSWindow* window in [NSApplication sharedApplication].windows) {
+        if ([window.title isEqualToString:@"dialog-close"])
+            dialog_window = window;
+    }
+    ASSERT_NE(dialog_window, nil);
+    ASSERT_EQ(dialog_window.parentWindow, owner_window);
+    // assert appkit leaves the window release to arc, which is the over release of #150 (§5.3)
+    EXPECT_FALSE(dialog_window.releasedWhenClosed);
+    // a weak reference observes whether appkit released the window, which is the over release of #150 (§5.3)
+    __weak NSWindow* weak_dialog_window = dialog_window;
+    dialog_window = nil;
+    // act the framework closes the dialog, which is the close path the application takes (§5.2)
+    dialog->close();
+    // assert the closed window is ordered out and its child relation is gone, which the display cycle reads (§5.1)
+    EXPECT_FALSE(weak_dialog_window.isVisible);
+    EXPECT_EQ(weak_dialog_window.parentWindow, nil);
+    EXPECT_EQ(owner_window.childWindows.count, 0U);
+    // act the closed surface is destroyed, which is the path that crashed (#150)
+    dialog.reset();
+    // assert the owner survived the teardown untouched (§5.1)
+    EXPECT_TRUE(owner_window.isVisible);
+    owner->close();
+}
+
+TEST(MacosPopupWindow, DestroyingAParentedDialogLeavesNoChildInTheOwner) {
+    // arrange an owner window and a shown dialog it owns (§5.1)
+    WindowOptions owner_options;
+    owner_options.title = "dialog-destroy-owner";
+    owner_options.size = albor::Size{320.0f, 240.0f};
+    std::unique_ptr<MacosPlatformWindow> owner = MacosPlatformWindow::create(owner_options);
+    ASSERT_NE(owner, nullptr);
+    owner->show();
+    NSWindow* owner_window = nil;
+    for (NSWindow* window in [NSApplication sharedApplication].windows) {
+        if ([window.title isEqualToString:@"dialog-destroy-owner"])
+            owner_window = window;
+    }
+    ASSERT_NE(owner_window, nil);
+    WindowOptions dialog_options;
+    dialog_options.role = WindowRole::Dialog;
+    dialog_options.title = "dialog-destroy";
+    dialog_options.size = albor::Size{180.0f, 120.0f};
+    dialog_options.native_parent = owner->native_window_handle();
+    std::unique_ptr<MacosPlatformWindow> dialog = MacosPlatformWindow::create(dialog_options);
+    ASSERT_NE(dialog, nullptr);
+    dialog->show();
+    // act the dialog is destroyed without an explicit close, which is the destructor path of #150 (§5.1)
+    dialog.reset();
+    // the run loop is pumped over several display cycles, which is where the over release surfaced (#150)
+    for (int pass = 0; pass < 4; pass++) {
+        @autoreleasepool {
+            [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+        }
+    }
+    // assert the owner is still alive and lists no child, so no stale release remains (§5.1)
+    EXPECT_TRUE(owner_window.isVisible);
+    EXPECT_EQ(owner_window.childWindows.count, 0U);
+    owner->close();
+}
+
+TEST(MacosPopupWindow, DestroyingTheOwnerBeforeItsDialogIsQuiet) {
+    // arrange an owner window and a shown dialog it owns (§5.1)
+    WindowOptions owner_options;
+    owner_options.title = "dialog-owner-first-owner";
+    owner_options.size = albor::Size{320.0f, 240.0f};
+    std::unique_ptr<MacosPlatformWindow> owner = MacosPlatformWindow::create(owner_options);
+    ASSERT_NE(owner, nullptr);
+    owner->show();
+    NSWindow* owner_window = nil;
+    for (NSWindow* window in [NSApplication sharedApplication].windows) {
+        if ([window.title isEqualToString:@"dialog-owner-first-owner"])
+            owner_window = window;
+    }
+    ASSERT_NE(owner_window, nil);
+    WindowOptions dialog_options;
+    dialog_options.role = WindowRole::Dialog;
+    dialog_options.title = "dialog-owner-first";
+    dialog_options.size = albor::Size{180.0f, 120.0f};
+    dialog_options.native_parent = owner->native_window_handle();
+    std::unique_ptr<MacosPlatformWindow> dialog = MacosPlatformWindow::create(dialog_options);
+    ASSERT_NE(dialog, nullptr);
+    dialog->show();
+    NSWindow* dialog_window = nil;
+    for (NSWindow* window in [NSApplication sharedApplication].windows) {
+        if ([window.title isEqualToString:@"dialog-owner-first"])
+            dialog_window = window;
+    }
+    ASSERT_NE(dialog_window, nil);
+    ASSERT_EQ(dialog_window.parentWindow, owner_window);
+    // the weak references drop the strong locals, so a deallocation is observable rather than masked (§5.1)
+    __weak NSWindow* weak_owner = owner_window;
+    __weak NSWindow* weak_dialog = dialog_window;
+    owner_window = nil;
+    dialog_window = nil;
+    // act the owner is destroyed while its dialog is still shown, which appkit answers by closing the child (§5.1)
+    owner.reset();
+    // the run loop is pumped, because a surviving child would surface during the display cycle (#150)
+    for (int pass = 0; pass < 4; pass++) {
+        @autoreleasepool {
+            [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+        }
+    }
+    // assert the display cycle survived the owner teardown, which is the crash path of #150 (§5.1)
+    EXPECT_FALSE(weak_owner.isVisible);
+    EXPECT_FALSE(weak_dialog.isVisible);
+    // act the dialog is destroyed afterwards, which is the late teardown of #150 (§5.1)
+    dialog.reset();
+    for (int pass = 0; pass < 4; pass++) {
+        @autoreleasepool {
+            [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+        }
+    }
+    // assert the late teardown completed without a stale release, which is the regression of #150 (§5.1)
+    EXPECT_FALSE(weak_dialog.isVisible);
 }
