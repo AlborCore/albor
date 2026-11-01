@@ -20,8 +20,7 @@ concurrency:
 
 jobs:
   package:
-    # drafts never run, and a prerelease is not a stable package whose version parses as CMake project VERSION
-    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
+    # drafts never fire the published event; a prerelease still has to carry a stable vX.Y.Z tag
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:

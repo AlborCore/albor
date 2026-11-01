@@ -283,8 +283,8 @@ The distribution is source/CMake through `FetchContent` or a vendored `add_subdi
 and the vcpkg package through the in-repository overlay port, whose dependency matrix and
 version the `build/check-port.sh` gate keeps identical to the project's. The package route
 is the one an official registry submission will carry, and the overlay is its rehearsal.
-Publishing a stable GitHub Release opens one package PR; the workflow never creates a tag. The pin is
-the commit the tag names, and the port passes the release version to the build, so the
+Publishing a GitHub Release for a stable tag opens one package PR; the workflow never creates a
+tag. The pin is the commit the tag names, and the port passes the release version to the build, so the
 package reports the published version even though the tag predates the version commit.
 
 ## One target, one artifact

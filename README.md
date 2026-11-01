@@ -238,13 +238,15 @@ The consumer's manual, from a first window to renderer features, is
 
 ## Releases
 
-Merging a pull request never publishes a release. Publishing a **stable GitHub Release** is the only
-trigger that prepares the vcpkg package; the automation creates no tag and merges nothing.
+Merging a pull request never publishes a release. Publishing a **GitHub Release for a stable
+`vX.Y.Z` tag** is the only trigger that prepares the vcpkg package; the automation creates no tag
+and merges nothing.
 
 1. **Merge normal PRs** as needed. `build` and `port` run as usual, with no release side effects.
 
-2. **Publish a stable GitHub Release** for `vX.Y.Z` from `main`. A draft never runs; a prerelease is
-   skipped, because the package version must parse as a CMake project version.
+2. **Publish a GitHub Release** for `vX.Y.Z` from `main`. The tag itself must be stable
+   `vX.Y.Z`, because the package version must parse as a CMake project version. A draft never
+   runs; a published prerelease runs the same preparation when its tag is stable.
 
 3. **The package PR** — the [`release`](https://github.com/AlborCore/albor/blob/main/.github/workflows/release.yml)
    workflow opens one PR that:
