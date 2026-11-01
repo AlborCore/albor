@@ -8,6 +8,7 @@
 #include "animation/animation_engine.h"
 #include "application/main_window_config.h"
 #include "core/paint.h"
+#include "focus/focus_manager.h"
 #include "runtime/binding_engine.h"
 #include "text/text_engine.h"
 #include "ui/caret_target.h"
@@ -84,7 +85,22 @@ namespace albor
         // hand out the animation engine the frame tick advances, which a widget drives its animations on (§7.3, AD-04d)
         [[nodiscard]] AnimationEngine& animations();
 
+        // hand out the focus ring of the window's tree, which a dialog convention and automation move (§8.3)
+        [[nodiscard]] FocusManager& focus();
+
+        // install the callback an unclaimed escape reaches, which asks the application to close the dialog (§8.3)
+        void set_close_request(std::function<void()> handler);
+
     private:
+        // apply the dialog keyboard conventions to a key no control claimed (§8.3)
+        void apply_dialog_key(Event& event);
+
+        // press the control a dialog key names, reporting whether one was found and enabled (§8.3)
+        bool press_dialog_control(bool wants_default);
+
+        // focus the first control of a dialog once its tree is arranged (§8.3)
+        void apply_initial_focus();
+
         // the renderer that owns the surface, which the resize needs (§6.3)
         RendererBackend* m_renderer = nullptr;
 
@@ -117,6 +133,12 @@ namespace albor
 
         // the callback that runs between a built scene and stage two, which is where derived state lands (§6.1)
         std::function<void()> m_frame_hook;
+
+        // the callback an unclaimed escape reaches, which closes the dialog through the application veto (§8.3)
+        std::function<void()> m_close_request;
+
+        // whether a dialog still owes its tree the first focus, which is placed after the first arrange (§8.3)
+        bool m_pending_initial_focus = true;
 
         // the wiring, declared so the destructor releases the pipeline first and the surface last (§6.1)
         std::unique_ptr<RenderSurface> m_surface;

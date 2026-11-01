@@ -79,6 +79,12 @@ namespace albor::automation
     // encode bytes as base64, which is the only form a line or a json string can carry (§10.3)
     [[nodiscard]] std::string base64_encode(std::string_view bytes);
 
+    // escape one argument so the positional wire can carry a separator or a line break inside it (§10.3)
+    [[nodiscard]] std::string encode_argument(std::string_view argument);
+
+    // recover one argument from the wire, leaving a spelling that is not an escape as itself (§10.3)
+    [[nodiscard]] std::string decode_argument(std::string_view argument);
+
     // decode one wire line into a request, which the transport hands the session (§10.3)
     [[nodiscard]] AutomationRequest decode_request(std::string_view line);
 

@@ -22,7 +22,7 @@ target_compile_features(albor-platform-windows PUBLIC cxx_std_23)
 # the adapter needs the application loop it implements, and reaches the user32 window api, the input method editor
 # the text anchor excludes through, and the registry the system appearance reads from (AD-16)
 # albor-window arrives transitively through albor-application, so naming it again would duplicate the archive on the link line
-target_link_libraries(albor-platform-windows PUBLIC albor-application PRIVATE user32 imm32 advapi32)
+target_link_libraries(albor-platform-windows PUBLIC albor-application PRIVATE user32 imm32 advapi32 ole32 shell32 uuid)
 
 # the auto target links the archive whole, so the adapter installs itself at load without a call (§5.3, AD-16)
 add_library(albor-platform-windows-auto INTERFACE)

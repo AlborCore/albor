@@ -37,6 +37,22 @@ namespace albor
         ApplicationModal
     };
 
+    // the keyboard and focus conventions a dialog follows, which is what makes a dialog behave like one (§5.1, §8.3)
+    struct DialogConventions
+    {
+        // whether escape dismisses the dialog unless a child popup consumed it
+        bool escape_dismisses = true;
+
+        // whether return runs the default control when nothing claimed the key
+        bool return_invokes_default = true;
+
+        // whether the first focusable control takes focus once the tree is arranged
+        bool focus_first_control = true;
+
+        // compare two convention sets field by field
+        friend bool operator==(const DialogConventions& lhs, const DialogConventions& rhs) = default;
+    };
+
     // the creation time description of a window, which the platform turns into a native window (§5.1)
     struct WindowOptions
     {
@@ -51,6 +67,9 @@ namespace albor
 
         // the framework enforced modality
         Modality modality = Modality::None;
+
+        // the keyboard and focus conventions a dialog follows, which is default for every other role (§5.1, §8.3)
+        DialogConventions dialog{};
 
         // whether the user may resize the window
         bool resizable = true;

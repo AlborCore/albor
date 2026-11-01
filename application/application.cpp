@@ -101,7 +101,7 @@ namespace albor
             // the stage is released for the same reason an ordinary close releases it first (§5.1)
             release_stage(popup);
             // the owner entry goes with the surface, which keeps the map exact until the application dies (§5.1)
-            m_popup_owners.erase(popup.id());
+            m_owned_windows.erase(popup.id());
             // the native popup is closed without a notification, because the application is going away (§5.2)
             (void)m_windows.destroy(popup);
         }
@@ -137,10 +137,17 @@ namespace albor
 
     WindowHandle Application::create_window(const WindowOptions& options) {
         // the registry builds the native window, and the hook binds the listeners before the window is shown (§5.3)
-        return m_windows.create(options, [this](Window& created) {
+        const WindowHandle handle = m_windows.create(options, [this](Window& created) {
             // the application becomes the listener while the window is still off screen, so no event is missed (§5.3)
             bind_window(created.handle(), created, {}, false);
         });
+        // a child names its owner, which is what the cascade and the modal gate walk (§5.1)
+        if (handle.valid() && options.parent.valid())
+            m_owned_windows[handle.id()] = options.parent;
+        // a dialog takes the interaction when it opens, whether or not it drives a tree (§5.1)
+        if (handle.valid())
+            enter_dialog(handle, options);
+        return handle;
     }
 
     WindowHandle Application::create_window(const WindowOptions& options, RootBuilder builder) { return create_window(options, std::move(builder), MainWindowConfig{}); }
@@ -159,24 +166,38 @@ namespace albor
         // the invalid handle only means the platform refused the window (§5.1)
         if (!handle.valid())
             return handle;
+        // a child names its owner, which is what the cascade and the modal gate walk (§5.1)
+        if (options.parent.valid())
+            m_owned_windows[handle.id()] = options.parent;
         // the renderer and the engine come from the installed selection, which the first main window builds (§6.3, §9.1)
         if (!ensure_engines()) {
             // the selection failed, so the window that could draw or measure nothing never shows (§6.3)
             m_windows.destroy(handle);
+            // the failed window leaves no ownership entry behind (§5.1)
+            m_owned_windows.erase(handle.id());
             return WindowHandle{};
         }
         // the stage wires the window's surface, pipeline, render thread and input once (§6.1, §8.3)
         std::unique_ptr<WindowStage> stage = std::make_unique<WindowStage>(*m_windows.find(handle), *m_renderer, *m_text, std::move(builder), config);
         // the window routes keys through the application's commands, which is what one shared object means (§18.5)
         stage->set_command_registry(&m_commands);
+        // an unclaimed escape asks the application to close, which is the one veto path of §5.2 (§8.3)
+        stage->set_close_request([this, handle] {
+            // the close is posted, because the stage that asked for it is still on the dispatch stack (§4.2)
+            (void)m_tasks.post([this, handle] { (void)request_close(handle); });
+        });
         // a stage the backend refused leaves nothing behind, because half a window cannot draw (§6.3)
         if (!stage->wired()) {
             std::fprintf(stderr, "application: the main window did not come up\n");
             m_windows.destroy(handle);
+            // the failed window leaves no ownership entry behind (§5.1)
+            m_owned_windows.erase(handle.id());
             return WindowHandle{};
         }
         // the stage lives as long as its window, which the closed notification drops (§6.1)
         m_stages[handle.id()] = std::move(stage);
+        // a dialog takes the interaction when it opens, after its tree is wired and seeded (§5.1)
+        enter_dialog(handle, options);
         return handle;
     }
 
@@ -205,7 +226,7 @@ namespace albor
         if (!popup.valid())
             return popup;
         // the owner is remembered, because a window teardown has to destroy the surfaces it anchors (§5.1)
-        m_popup_owners[popup.id()] = owner;
+        m_owned_windows[popup.id()] = owner;
         // a popup that was built off screen is shown once its first tree is ready, which avoids a blank flash (§5.1)
         if (Window* native = m_windows.find(popup))
             native->show();
@@ -239,22 +260,146 @@ namespace albor
         if (window == nullptr || window->options().role != WindowRole::Popup)
             return;
         // the owner entry goes with the surface, because a stale owner would name a dead handle (§5.1)
-        m_popup_owners.erase(popup.id());
+        m_owned_windows.erase(popup.id());
         // an explicit teardown releases the stage before the native window, like any other window (§5.2, §6.1)
         destroy_window(popup);
     }
 
-    void Application::destroy_owned_popups(WindowHandle owner) {
-        // the owned surfaces are collected before any is destroyed, because the map changes during teardown (§5.1)
-        std::vector<WindowHandle> owned;
-        for (const std::pair<const std::uint64_t, WindowHandle>& entry : m_popup_owners) {
-            // only a surface anchored to this owner is part of its teardown (§5.1)
-            if (entry.second == owner)
-                owned.push_back(WindowHandle::from_id(entry.first));
+    void Application::destroy_owned_windows(WindowHandle owner) {
+        // the owned windows are collected before any is destroyed, because the map changes during teardown (§5.1)
+        std::vector<WindowHandle> transients;
+        std::vector<WindowHandle> children;
+        for (const std::pair<const std::uint64_t, WindowHandle>& entry : m_owned_windows) {
+            // only a window that names this owner is part of its teardown (§5.1)
+            if (entry.second != owner)
+                continue;
+            // a transient surface is anchored to the owner, so it goes before the window it floats over (§5.1)
+            const WindowHandle child = WindowHandle::from_id(entry.first);
+            const Window* window = m_windows.find(child);
+            if (window != nullptr && window->options().role == WindowRole::Popup)
+                transients.push_back(child);
+            else
+                children.push_back(child);
         }
-        // every owned surface is destroyed before the owner loses its native window (§5.1)
-        for (const WindowHandle popup : owned)
+        // every transient surface is destroyed before any dialog, because its anchor is gone with the owner (§5.1)
+        for (const WindowHandle popup : transients)
             destroy_popup(popup);
+        // every dialog is destroyed before the owner loses its native window, deepest first through its own cascade (§5.1)
+        for (const WindowHandle child : children)
+            destroy_window(child);
+    }
+
+    bool Application::descends_from(WindowHandle handle, WindowHandle ancestor) const {
+        // a window with no owner to compare has no ancestry (§5.1)
+        if (!ancestor.valid())
+            return false;
+        // the chain is walked from the window to the root, which is what nests a dialog under a dialog (§5.1)
+        WindowHandle current = handle;
+        while (current.valid()) {
+            // the ancestor itself is part of its own subtree, which every modal rule needs (§5.1)
+            if (current == ancestor)
+                return true;
+            // a window the map does not name is a root, so the chain ends there (§5.1)
+            const auto owner = m_owned_windows.find(current.id());
+            if (owner == m_owned_windows.end())
+                return false;
+            // the walk continues at the owner, which is one level up (§5.1)
+            current = owner->second;
+        }
+        return false;
+    }
+
+    bool Application::input_blocked(WindowHandle handle) const {
+        // a stale window receives no events, so there is nothing to block (§5.2)
+        if (m_windows.find(handle) == nullptr)
+            return false;
+        // the first modal that constrains the window decides, which is the one a client feels (§5.1)
+        bool blocked = false;
+        m_windows.for_each([this, &blocked, handle](Window& blocking) {
+            // a window already blocked by another modal needs no second answer (§5.1)
+            if (blocked)
+                return;
+            // a window is never blocked by itself (§5.1)
+            if (blocking.handle() == handle)
+                return;
+            // a transient surface never constrains another window, because it is not a top level surface (§5.1)
+            if (!blocking.options().is_top_level())
+                return;
+            // a window with no modality constrains nothing (§5.1)
+            if (blocking.options().modality == Modality::None)
+                return;
+            // a modal only constrains windows that predate it, which keeps the newest modal interactive (§5.1)
+            if (handle.id() > blocking.handle().id())
+                return;
+            // a modal never blocks itself or a window that descends from it, which is what nests dialogs (§5.1)
+            if (descends_from(handle, blocking.handle()))
+                return;
+            // an application modal window blocks every other window of the application (§5.1)
+            if (blocking.options().modality == Modality::ApplicationModal)
+                blocked = true;
+            // a window modal window blocks its parent and everything under that parent (§5.1)
+            else if (descends_from(handle, blocking.options().parent))
+                blocked = true;
+        });
+        return blocked;
+    }
+
+    void Application::enter_dialog(WindowHandle handle, const WindowOptions& options) {
+        // only a dialog takes the interaction on open, because an ordinary window does not steal focus (§5.1)
+        if (options.role != WindowRole::Dialog)
+            return;
+        // the parent control is remembered before the dialog takes the interaction (§8.3)
+        remember_invoking_focus(handle, options.parent);
+        // a hidden dialog is seeded before it is shown, so it takes key status when the application shows it (§5.1)
+        Window* dialog = m_windows.find(handle);
+        if (dialog != nullptr && dialog->visible())
+            dialog->activate();
+    }
+
+    void Application::remember_invoking_focus(WindowHandle dialog, WindowHandle parent) {
+        // a dialog with no parent has no control to give focus back to (§5.1)
+        WindowStage* parent_stage = stage(parent);
+        if (parent_stage == nullptr)
+            return;
+        // the focused control is what opened the dialog, which closing returns to (§8.3)
+        const UiNode* focused = parent_stage->focus().focused();
+        if (focused == nullptr)
+            return;
+        // the identity is what survives a rebuild of the parent tree, so a pointer is not remembered (AD-11)
+        const std::string& id = focused->identity().explicit_id;
+        if (id.empty())
+            return;
+        // the identity is remembered under the dialog, which is the key the close looks it up by (§5.1)
+        m_return_focus[dialog.id()] = id;
+    }
+
+    void Application::restore_invoking_focus(WindowHandle dialog, WindowHandle parent) {
+        // a dialog that remembered no control gives focus back to nothing (§5.1)
+        const auto stored = m_return_focus.find(dialog.id());
+        if (stored == m_return_focus.end())
+            return;
+        // the identity is taken before the entry is dropped, because the erase invalidates the iterator (§5.1)
+        const std::string id = stored->second;
+        m_return_focus.erase(stored);
+        // the parent stage owns the tree the control lives in (§6.1)
+        WindowStage* parent_stage = stage(parent);
+        if (parent_stage == nullptr)
+            return;
+        // the control is found again by identity, because the parent tree may have been rebuilt (§18.1)
+        UiNode* target = find_by_explicit_id(parent_stage->root(), id);
+        if (target != nullptr)
+            parent_stage->focus().request_focus(target);
+    }
+
+    UiNode* Application::find_by_explicit_id(UiNode& root, std::string_view id) {
+        // the first node carrying the identity is the control, because an author id is unique (AD-11)
+        UiNode* found = nullptr;
+        root.visit([&found, id](UiNode& node) {
+            // a match already found is not replaced, which keeps the first node in tree order (AD-11)
+            if (found == nullptr && node.identity().explicit_id == id)
+                found = &node;
+        });
+        return found;
     }
 
     WindowHandle Application::window_for_node(const UiNode& node) const {
@@ -306,30 +451,56 @@ namespace albor
     }
 
     bool Application::destroy_window(WindowHandle handle) {
-        // a close that arrives inside a frame pass is recorded rather than applied, because that pass is reading it (§4.2)
-        if (m_driving_frames) {
+        // a close inside a frame pass or an input dispatch is recorded, because that pass is reading it (§4.2)
+        if (m_driving_frames || m_dispatch_depth > 0) {
             m_deferred.push_back(handle);
             return true;
         }
-        // a transient surface never outlives the window that owns it, so its teardown comes first (§5.1)
-        destroy_owned_popups(handle);
-        // the window's role decides whether its close is an application notification or a popup teardown (§5.1)
+        // the teardown is bracketed, because a dialog destroyed with its owner must not reactivate it (§5.1)
+        m_teardown_depth++;
+        // a child window never outlives the window that owns it, so its teardown comes first (§5.1)
+        destroy_owned_windows(handle);
+        // the role and the owner are read before the window is dropped, because both die with it (§5.1)
         const Window* closing = m_windows.find(handle);
         const bool popup = closing != nullptr && closing->options().role == WindowRole::Popup;
-        // a popup destroyed by the caller directly still drops its owner entry, which is what keeps the map exact (§5.1)
-        if (popup)
-            m_popup_owners.erase(handle.id());
+        const bool dialog = closing != nullptr && closing->options().role == WindowRole::Dialog;
+        const WindowHandle parent = dialog ? closing->options().parent : WindowHandle{};
+        // the owner entry goes with the window, which keeps the map exact (§5.1)
+        m_owned_windows.erase(handle.id());
         // the window's stage is dropped first, so its surface outlives no layer (§6.1)
         release_stage(handle);
         // the registry closes the native window before it drops the framework window (§5.2)
-        if (!m_windows.destroy(handle))
+        if (!m_windows.destroy(handle)) {
+            m_teardown_depth--;
             return false;
+        }
+        // a dialog gives activation and focus back only when its owner is not the window being closed (§5.1, §8.3)
+        if (dialog && m_teardown_depth == 1) {
+            restore_invoking_focus(handle, parent);
+            // a hidden owner stays hidden, because a later show seeds it before it takes key status (§5.1)
+            if (Window* owner = m_windows.find(parent); owner != nullptr && owner->visible())
+                owner->activate();
+        }
         // the teardown finished, so the Closed notification of §5.2 reaches the application for a window it owns
         if (!popup && m_closed_handler)
             m_closed_handler(handle);
+        // the teardown is done before the run is asked whether it ended (§4.1)
+        m_teardown_depth--;
         // an application that drained its last window ends its own run, which is the default lifetime (§4.1)
         end_run_when_no_windows();
         return true;
+    }
+
+    bool Application::request_close(WindowHandle handle) {
+        // a stale handle has nothing to close (§5.2)
+        Window* window = m_windows.find(handle);
+        if (window == nullptr)
+            return false;
+        // the close handler may veto the request, which is the first step of §5.2
+        if (!window->on_platform_close_request())
+            return false;
+        // a granted request tears the window down through the one teardown path (§5.2)
+        return destroy_window(handle);
     }
 
     std::size_t Application::window_count() const {
@@ -379,7 +550,7 @@ namespace albor
     void Application::pump() {
         // the wake flag is cleared first, so a task posted during this pass wakes the loop again (§4.1)
         m_tasks.acknowledge_wake();
-        // queued work runs before timers, so a posted task observes the state of the current instant (§4.1)
+        // queued work runs before timers, so a posted task observes the current instant (§4.1)
         m_tasks.drain();
         // the due timers run next, because a timer callback may post further work (§4.2)
         m_timers.fire_due();
@@ -459,6 +630,24 @@ namespace albor
         return m_event_loop->running();
     }
 
+    bool Application::deliver_input(WindowHandle handle, Event& event) {
+        // a window an open modal constrains receives no input, whoever delivers it (§5.1, AD-08)
+        if (input_blocked(handle))
+            return false;
+        // a window without a stage has no tree to route into (§6.1)
+        WindowStage* routed_to = stage(handle);
+        if (routed_to == nullptr)
+            return false;
+        // the dispatch is bracketed, because a handler may ask to tear its window down (§4.2)
+        m_dispatch_depth++;
+        routed_to->deliver(event);
+        m_dispatch_depth--;
+        // a teardown a handler requested is applied now, which is after the stage returned (§4.2)
+        if (m_dispatch_depth == 0)
+            drain_deferred_stages();
+        return true;
+    }
+
     void Application::bind_window(WindowHandle handle, Window& window, std::function<void()> on_native_closed, bool keep_on_native_close) {
         // a window whose close is vetoed by the application stays alive, so the request only ends there (§5.2)
         window.set_close_handler([this, handle] {
@@ -501,12 +690,13 @@ namespace albor
 
         // a normalized input event reaches the application input handler, where routing belongs (§8.3)
         window.set_input_handler([this, handle](const Event& event) {
+            // a window an open modal constrains receives no input at all, which is what modality means (§5.1, AD-08)
+            if (input_blocked(handle))
+                return;
             // a main window routes into its own tree, which is where the widgets answer (§8.3)
-            const std::map<std::uint64_t, std::unique_ptr<WindowStage>>::const_iterator stage = m_stages.find(handle.id());
-            if (stage != m_stages.end()) {
-                // the routed copy carries what the tree decided, which is what the host below observes (§8.3)
-                Event routed = event;
-                stage->second->deliver(routed);
+            Event routed = event;
+            // a window with a stage routes through the bracketed delivery, which defers a handler's teardown (§4.2)
+            if (deliver_input(handle, routed)) {
                 // a main window is observed too, because a host reacts to what its tree answered (§8.3, AD-24)
                 if (m_input_handler)
                     m_input_handler(handle, routed);
@@ -541,18 +731,8 @@ namespace albor
             }
             // the teardown is never cancelled, because the window goes away whether or not the task runs (§5.2)
             [[maybe_unused]] const TaskHandle teardown = m_tasks.post([this, handle] {
-                // the transient surfaces anchored to this window go before its stage, so none is orphaned (§5.1)
-                destroy_owned_popups(handle);
-                // the stage is dropped before the native window is, so its surface outlives no layer (§6.1)
-                release_stage(handle);
-                // the window was already torn down by an explicit destroy, which notified on its own (§5.2)
-                if (!m_windows.destroy(handle))
-                    return;
-                // the teardown finished first, so the Closed notification follows it (§5.2)
-                if (m_closed_handler)
-                    m_closed_handler(handle);
-                // an application that drained its last window ends its own run, which is the default lifetime (§4.1)
-                end_run_when_no_windows();
+                // the one teardown cascades to the children, restores the parent and notifies (§5.1, §5.2)
+                (void)destroy_window(handle);
             });
         });
     }

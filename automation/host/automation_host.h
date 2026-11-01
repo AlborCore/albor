@@ -11,6 +11,11 @@
 #include "automation/host/host_state.h"
 #include "semantics/semantic_provider.h"
 
+namespace albor
+{
+    class UiNode;
+}
+
 namespace albor::automation
 {
     // the process lifetime host that serves the standard MCP surface without application wiring (§10.3, AD-20)
@@ -56,6 +61,9 @@ namespace albor::automation
 
         // read the last frame the active window presented, which is the window most recently bound (§6.3, §10.3)
         [[nodiscard]] CapturedFrame capture_frame();
+
+        // hand out the tree of the active window, which the typing command focuses through (§8.3, §10.3)
+        [[nodiscard]] UiNode* active_root();
 
         // an app supplied tree the semantic commands read as-is, or null when the bound tree is used (§10.3)
         SemanticTree* m_external_tree = nullptr;

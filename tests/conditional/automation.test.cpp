@@ -52,6 +52,51 @@ TEST(AutomationProtocol, ALineWithNoArgumentsDecodesToACommandAlone) {
     EXPECT_TRUE(request.arguments.empty());
 }
 
+TEST(AutomationProtocol, AnEscapedArgumentKeepsTheSpacesItCarries) {
+    // act a path with a space, which the positional wire can only carry escaped (§10.3)
+    const AutomationRequest request = decode_request("semantic.set_value field C:%5CProgram%20Files%5Cxyce.exe");
+    // assert the separator did not split the value and the escape was recovered (§10.3)
+    ASSERT_EQ(request.arguments.size(), 2U);
+    EXPECT_EQ(request.arguments.at(1), "C:\\Program Files\\xyce.exe");
+}
+
+TEST(AutomationProtocol, AnArgumentThatIsNotAnEscapeKeepsItsPercent) {
+    // act a value holding a percent that does not open a hex escape (§10.3)
+    const AutomationRequest request = decode_request("probe 100% ready");
+    // assert the percent is the byte it was, because only a two digit escape is decoded (§10.3)
+    ASSERT_EQ(request.arguments.size(), 2U);
+    EXPECT_EQ(request.arguments.at(0), "100%");
+    EXPECT_EQ(request.arguments.at(1), "ready");
+}
+
+TEST(AutomationProtocol, AnArgumentRoundTripsThroughItsEscape) {
+    // arrange the bytes a path, a sentence and a control character share (§10.3)
+    const std::string original = "50% of C:\\Program Files\\a\tb\nc";
+    // act
+    const AutomationRequest request = decode_request("probe " + encode_argument(original));
+    // assert the recovered argument is the original byte for byte (§10.3)
+    ASSERT_EQ(request.arguments.size(), 1U);
+    EXPECT_EQ(request.arguments.at(0), original);
+}
+
+TEST(AutomationProtocol, AnEmptyTrailingArgumentSurvivesTheWire) {
+    // act a call whose last argument is empty, which a clear-value write needs (§10.3)
+    const AutomationRequest request = decode_request("semantic.set_value field ");
+    // assert the trailing separator named an empty second argument rather than none (§10.3)
+    ASSERT_EQ(request.arguments.size(), 2U);
+    EXPECT_EQ(request.arguments.at(0), "field");
+    EXPECT_EQ(request.arguments.at(1), "");
+}
+
+TEST(AutomationProtocol, TwoTrailingEmptyArgumentsSurviveTheWire) {
+    // act a call whose last two arguments are empty, which the empty encoding produces (§10.3)
+    const AutomationRequest request = decode_request("probe  ");
+    // assert both separators each named an empty argument (§10.3)
+    ASSERT_EQ(request.arguments.size(), 2U);
+    EXPECT_EQ(request.arguments.at(0), "");
+    EXPECT_EQ(request.arguments.at(1), "");
+}
+
 TEST(AutomationProtocol, AnAnswerAndARefusalEncodeDifferently) {
     // assert the prefixes differ, because a client must never read a refusal as an answer (§10.3, AD-10)
     EXPECT_EQ(encode_result(AutomationResult::answered("yes")), "!ok text yes");

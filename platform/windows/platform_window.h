@@ -36,6 +36,9 @@ namespace albor
         // override: put the native window on screen
         void show() override;
 
+        // override: bring the window forward and give it key status (§5.1)
+        void activate() override;
+
         // override: take the native window off screen
         void hide() override;
 

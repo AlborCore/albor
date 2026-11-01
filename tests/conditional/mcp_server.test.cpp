@@ -379,6 +379,48 @@ TEST(McpServer, TheCaptureFormatLandsInThePositionTheLayerExpects) {
     EXPECT_EQ(received, "raw");
 }
 
+TEST(McpServer, TheSetValueSchemaNamesItsTwoParameters) {
+    // arrange a layer permitting the value write, which is what puts it in the listing (§10.3, AD-10)
+    AutomationRegistry registry;
+    registry.register_command("semantic.set_value", [](const AutomationRequest&) { return AutomationResult::answered(""); });
+    registry.allow("semantic.set_value");
+    McpRoute route;
+    route.permitted_commands = [&registry] { return registry.allowed_commands(); };
+    route.run = [](std::string_view) { return AutomationResult::answered(""); };
+    McpServer server(std::move(route));
+    // act
+    const std::string line = *server.handle_line(R"({"jsonrpc":"2.0","id":31,"method":"tools/list"})");
+    // assert the schema names both arguments, because a named call cannot place what the schema omits (§10.3)
+    const std::optional<core::Json> reply = core::Json::parse(line);
+    ASSERT_TRUE(reply.has_value());
+    const core::Json* tools = reply->member("result")->member("tools");
+    ASSERT_NE(tools, nullptr);
+    ASSERT_EQ(tools->as_array().size(), 1U);
+    const core::Json* properties = tools->as_array().at(0).member("inputSchema")->member("properties");
+    ASSERT_NE(properties, nullptr);
+    ASSERT_NE(properties->member("id"), nullptr);
+    ASSERT_NE(properties->member("value"), nullptr);
+}
+
+TEST(McpServer, ASetValueNamedCallCarriesASpaceToTheLayer) {
+    // arrange a layer that decodes what it received, which is how the adapter's escaping is observed (§10.3)
+    AutomationRegistry registry;
+    std::string received;
+    registry.register_command("semantic.set_value", [&received](const AutomationRequest& request) {
+        received = request.arguments.size() > 1 ? request.arguments.at(1) : std::string();
+        return AutomationResult::answered("");
+    });
+    registry.allow("semantic.set_value");
+    McpRoute route;
+    route.permitted_commands = [&registry] { return registry.allowed_commands(); };
+    route.run = [&registry](std::string_view line) { return registry.dispatch(decode_request(line)); };
+    McpServer server(std::move(route));
+    // act a client names a value holding a space, which the adapter must escape rather than split (§10.3)
+    (void)server.handle_line(R"({"jsonrpc":"2.0","id":32,"method":"tools/call","params":{"name":"semantic.set_value","arguments":{"id":"f","value":"a b"}}})");
+    // assert the space reached the layer as part of the value, which a naive join would have dropped (§10.3)
+    EXPECT_EQ(received, "a b");
+}
+
 TEST(McpServer, AnUnsupportedCaptureFormatReachesTheClientAsTheLayersRefusal) {
     // arrange the real capture command behind the adapter, which is the path AD-20 describes (§10.3)
     AutomationRegistry registry;

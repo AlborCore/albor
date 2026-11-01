@@ -23,7 +23,7 @@ namespace
         // the default double reports nothing, which is what a test that only drives the pump needs
         TestEventLoop() = default;
 
-        // the double reports its stop through a flag the test also holds, because the double is destroyed with the application and its own member would not survive to be read
+        // the double reports its stop through a flag the test holds, which outlives the application
         explicit TestEventLoop(std::shared_ptr<bool> stop_flag) :
             m_stop_flag(std::move(stop_flag)) {}
 
@@ -73,18 +73,18 @@ namespace
     class TestPlatformWindow final : public PlatformWindow
     {
     public:
-        // the default double counts nothing, which is what a test that only forwards calls needs
-        TestPlatformWindow() = default;
-
-        // the double counts its closes into a counter the test also holds, because the double is destroyed together with the window and its flag would not survive to be read
-        explicit TestPlatformWindow(std::shared_ptr<int> close_counter) :
-            m_close_counter(std::move(close_counter)) {}
+        // the double counts closes and activations into counters the test holds, which outlive the window
+        explicit TestPlatformWindow(std::shared_ptr<int> close_counter = {}, std::shared_ptr<std::size_t> activation_counter = {}) :
+            m_close_counter(std::move(close_counter)), m_activation_counter(std::move(activation_counter)) {}
 
         // the listener the framework attached, which the double raises events into
         PlatformWindowListener* listener = nullptr;
 
         // how many times the native window was shown
         std::size_t show_count = 0;
+
+        // how many times the native window was asked to take key status (§5.1)
+        std::size_t activations = 0;
 
         // how many times the native window was hidden
         std::size_t hide_count = 0;
@@ -111,6 +111,15 @@ namespace
         WindowMetrics reported = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
 
         void set_listener(PlatformWindowListener* attached) override { listener = attached; }
+
+        void activate() override {
+            // the activation is counted, which is how a test observes focus moving (§5.1)
+            activations++;
+            // the shared counter survives the double, which a cascade test reads after the window is gone (§5.1)
+            if (m_activation_counter)
+                (*m_activation_counter)++;
+            is_visible = true;
+        }
 
         void show() override {
             show_count++;
@@ -153,6 +162,9 @@ namespace
     private:
         // the counter the double reports its close into, which the test also holds
         std::shared_ptr<int> m_close_counter;
+
+        // the counter the double reports its activation into, which outlives the window a cascade destroyed (§5.1)
+        std::shared_ptr<std::size_t> m_activation_counter;
     };
 } // namespace
 
@@ -1585,4 +1597,263 @@ TEST(TaskQueue, AnUnknownHandleIsNotQueued) {
     TaskQueue queue;
     // act, assert
     EXPECT_FALSE(queue.queued(999u));
+}
+
+TEST(ApplicationModality, AWindowModalDialogBlocksOnlyItsParent) {
+    // arrange a parent, a sibling and a window modal dialog, which is the issue's reproduction (§5.1)
+    auto loop = std::make_unique<TestEventLoop>();
+    Application application(std::move(loop));
+    set_platform_window_factory([](const WindowOptions&) -> std::unique_ptr<PlatformWindow> { return std::make_unique<TestPlatformWindow>(); });
+    WindowOptions parent_options;
+    parent_options.title = "parent";
+    const WindowHandle parent = application.create_window(parent_options);
+    WindowOptions sibling_options;
+    sibling_options.title = "sibling";
+    const WindowHandle sibling = application.create_window(sibling_options);
+    WindowOptions dialog_options;
+    dialog_options.role = WindowRole::Dialog;
+    dialog_options.modality = Modality::WindowModal;
+    dialog_options.title = "dialog";
+    dialog_options.parent = parent;
+    const WindowHandle dialog = application.create_window(dialog_options);
+    ASSERT_TRUE(dialog.valid());
+    // arrange the observer that records what the application forwarded (§8.3)
+    std::vector<WindowHandle> delivered;
+    application.set_input_handler([&delivered](WindowHandle handle, const Event&) { delivered.push_back(handle); });
+    // act a key reaches every window, as a native adapter would deliver it (§8.3)
+    Event event{.kind = EventKind::KeyDown, .key = Key::A};
+    application.window(parent)->on_platform_event(event);
+    application.window(sibling)->on_platform_event(event);
+    application.window(dialog)->on_platform_event(event);
+    // assert the parent dropped the input and the other two windows received it (§5.1)
+    ASSERT_EQ(delivered.size(), 2U);
+    EXPECT_EQ(delivered.at(0), sibling);
+    EXPECT_EQ(delivered.at(1), dialog);
+    // cleanup
+    EXPECT_TRUE(application.destroy_window(parent));
+    EXPECT_TRUE(application.destroy_window(sibling));
+}
+
+TEST(ApplicationModality, AnApplicationModalDialogBlocksEveryOtherWindow) {
+    // arrange two plain windows and an application modal dialog over one of them (§5.1)
+    auto loop = std::make_unique<TestEventLoop>();
+    Application application(std::move(loop));
+    set_platform_window_factory([](const WindowOptions&) -> std::unique_ptr<PlatformWindow> { return std::make_unique<TestPlatformWindow>(); });
+    WindowOptions first_options;
+    first_options.title = "first";
+    const WindowHandle first = application.create_window(first_options);
+    WindowOptions second_options;
+    second_options.title = "second";
+    const WindowHandle second = application.create_window(second_options);
+    WindowOptions dialog_options;
+    dialog_options.role = WindowRole::Dialog;
+    dialog_options.modality = Modality::ApplicationModal;
+    dialog_options.title = "modal";
+    dialog_options.parent = first;
+    const WindowHandle dialog = application.create_window(dialog_options);
+    ASSERT_TRUE(dialog.valid());
+    // arrange the observer, which must see only the modal window (§8.3)
+    std::vector<WindowHandle> delivered;
+    application.set_input_handler([&delivered](WindowHandle handle, const Event&) { delivered.push_back(handle); });
+    // act
+    Event event{.kind = EventKind::KeyDown, .key = Key::A};
+    application.window(first)->on_platform_event(event);
+    application.window(second)->on_platform_event(event);
+    application.window(dialog)->on_platform_event(event);
+    // assert every other window dropped the input, not only the parent (§5.1)
+    ASSERT_EQ(delivered.size(), 1U);
+    EXPECT_EQ(delivered.front(), dialog);
+    // cleanup
+    EXPECT_TRUE(application.destroy_window(first));
+    EXPECT_TRUE(application.destroy_window(second));
+}
+
+TEST(ApplicationModality, ANestedDialogStillReceivesInput) {
+    // arrange a window modal dialog and a window modal child of that dialog (§5.1)
+    auto loop = std::make_unique<TestEventLoop>();
+    Application application(std::move(loop));
+    set_platform_window_factory([](const WindowOptions&) -> std::unique_ptr<PlatformWindow> { return std::make_unique<TestPlatformWindow>(); });
+    WindowOptions parent_options;
+    parent_options.title = "parent";
+    const WindowHandle parent = application.create_window(parent_options);
+    WindowOptions dialog_options;
+    dialog_options.role = WindowRole::Dialog;
+    dialog_options.modality = Modality::WindowModal;
+    dialog_options.title = "dialog";
+    dialog_options.parent = parent;
+    const WindowHandle dialog = application.create_window(dialog_options);
+    WindowOptions nested_options;
+    nested_options.role = WindowRole::Dialog;
+    nested_options.modality = Modality::WindowModal;
+    nested_options.title = "nested";
+    nested_options.parent = dialog;
+    const WindowHandle nested = application.create_window(nested_options);
+    ASSERT_TRUE(nested.valid());
+    // arrange the observer
+    std::vector<WindowHandle> delivered;
+    application.set_input_handler([&delivered](WindowHandle handle, const Event&) { delivered.push_back(handle); });
+    // act
+    Event event{.kind = EventKind::KeyDown, .key = Key::A};
+    application.window(dialog)->on_platform_event(event);
+    application.window(nested)->on_platform_event(event);
+    // assert the modal blocks its own parent but never the window that descends from it (§5.1)
+    ASSERT_EQ(delivered.size(), 1U);
+    EXPECT_EQ(delivered.front(), nested);
+    // cleanup
+    EXPECT_TRUE(application.destroy_window(parent));
+}
+
+TEST(ApplicationModality, ClosingTheParentClosesItsOwnedWindows) {
+    // arrange a parent with a dialog and a transient surface, which both name it as owner (§5.1)
+    auto loop = std::make_unique<TestEventLoop>();
+    Application application(std::move(loop));
+    set_platform_window_factory([](const WindowOptions&) -> std::unique_ptr<PlatformWindow> { return std::make_unique<TestPlatformWindow>(); });
+    WindowOptions parent_options;
+    parent_options.title = "parent";
+    const WindowHandle parent = application.create_window(parent_options);
+    WindowOptions dialog_options;
+    dialog_options.role = WindowRole::Dialog;
+    dialog_options.modality = Modality::WindowModal;
+    dialog_options.title = "dialog";
+    dialog_options.parent = parent;
+    const WindowHandle dialog = application.create_window(dialog_options);
+    WindowOptions popup_options;
+    popup_options.role = WindowRole::Popup;
+    popup_options.title = "popup";
+    popup_options.parent = parent;
+    popup_options.visible = false;
+    const WindowHandle popup = application.create_window(popup_options);
+    ASSERT_TRUE(dialog.valid());
+    ASSERT_TRUE(popup.valid());
+    // act
+    EXPECT_TRUE(application.destroy_window(parent));
+    // assert the owner and both children are gone, because a child never outlives its owner (§5.1)
+    EXPECT_EQ(application.window(parent), nullptr);
+    EXPECT_EQ(application.window(dialog), nullptr);
+    EXPECT_EQ(application.window(popup), nullptr);
+}
+
+TEST(ApplicationModality, AVetoedParentCloseLeavesTheChildrenOpen) {
+    // arrange a parent and a dialog, with a close handler that vetoes the first request (§5.2)
+    auto loop = std::make_unique<TestEventLoop>();
+    Application application(std::move(loop));
+    set_platform_window_factory([](const WindowOptions&) -> std::unique_ptr<PlatformWindow> { return std::make_unique<TestPlatformWindow>(); });
+    WindowOptions parent_options;
+    parent_options.title = "parent";
+    const WindowHandle parent = application.create_window(parent_options);
+    WindowOptions dialog_options;
+    dialog_options.role = WindowRole::Dialog;
+    dialog_options.modality = Modality::WindowModal;
+    dialog_options.title = "dialog";
+    dialog_options.parent = parent;
+    const WindowHandle dialog = application.create_window(dialog_options);
+    application.set_close_handler([](WindowHandle) { return false; });
+    // act
+    const bool closed = application.request_close(parent);
+    // assert the veto left the parent and the dialog open (§5.2, §5.1)
+    EXPECT_FALSE(closed);
+    EXPECT_NE(application.window(parent), nullptr);
+    EXPECT_NE(application.window(dialog), nullptr);
+    // cleanup a granted close cascades (§5.1)
+    application.set_close_handler({});
+    EXPECT_TRUE(application.request_close(parent));
+    EXPECT_EQ(application.window(dialog), nullptr);
+}
+
+TEST(ApplicationModality, ANewDialogTakesActivationAndClosingItReturnsIt) {
+    // arrange a factory that keeps the doubles, so a test reads what the framework asked them to do (§5.3)
+    auto loop = std::make_unique<TestEventLoop>();
+    Application application(std::move(loop));
+    std::vector<TestPlatformWindow*> created;
+    set_platform_window_factory([&created](const WindowOptions&) -> std::unique_ptr<PlatformWindow> {
+        // the double is kept alive by its window, so the raw pointer is valid until the window is destroyed (§5.3)
+        auto window = std::make_unique<TestPlatformWindow>();
+        created.push_back(window.get());
+        return window;
+    });
+    WindowOptions parent_options;
+    parent_options.title = "parent";
+    const WindowHandle parent = application.create_window(parent_options);
+    ASSERT_EQ(created.size(), 1U);
+    EXPECT_EQ(created.at(0)->activations, 0U);
+    // act a dialog opens, which takes key status on the window that opened it (§5.1)
+    WindowOptions dialog_options;
+    dialog_options.role = WindowRole::Dialog;
+    dialog_options.modality = Modality::WindowModal;
+    dialog_options.title = "dialog";
+    dialog_options.parent = parent;
+    const WindowHandle dialog = application.create_window(dialog_options);
+    ASSERT_EQ(created.size(), 2U);
+    EXPECT_EQ(created.at(1)->activations, 1U);
+    // act the dialog closes, which gives key status back to the parent (§5.1)
+    EXPECT_TRUE(application.destroy_window(dialog));
+    EXPECT_EQ(created.at(0)->activations, 1U);
+    // cleanup
+    EXPECT_TRUE(application.destroy_window(parent));
+}
+
+TEST(ApplicationModality, ClosingAParentDoesNotActivateIt) {
+    // arrange a factory whose activation counters outlive the doubles, which a cascade destroys (§5.1)
+    auto loop = std::make_unique<TestEventLoop>();
+    Application application(std::move(loop));
+    auto parent_activations = std::make_shared<std::size_t>(0);
+    auto dialog_activations = std::make_shared<std::size_t>(0);
+    set_platform_window_factory([&](const WindowOptions& options) -> std::unique_ptr<PlatformWindow> {
+        // a dialog counts on its own counter, so the parent's count is read after both are gone (§5.1)
+        const bool dialog = options.role == WindowRole::Dialog;
+        return std::make_unique<TestPlatformWindow>(nullptr, dialog ? dialog_activations : parent_activations);
+    });
+    WindowOptions parent_options;
+    parent_options.title = "parent";
+    const WindowHandle parent = application.create_window(parent_options);
+    WindowOptions dialog_options;
+    dialog_options.role = WindowRole::Dialog;
+    dialog_options.modality = Modality::WindowModal;
+    dialog_options.title = "dialog";
+    dialog_options.parent = parent;
+    const WindowHandle dialog = application.create_window(dialog_options);
+    ASSERT_TRUE(dialog.valid());
+    EXPECT_EQ(*dialog_activations, 1U);
+    EXPECT_EQ(*parent_activations, 0U);
+    // act the owner closes, which tears the dialog down first (§5.1)
+    EXPECT_TRUE(application.destroy_window(parent));
+    // assert the dialog did not reactivate the owner it was destroyed with (§5.1)
+    EXPECT_EQ(*parent_activations, 0U);
+    EXPECT_EQ(*dialog_activations, 1U);
+}
+
+TEST(ApplicationModality, TheNewestSiblingModalKeepsTheInteraction) {
+    // arrange a parent with two window modal dialogs, where the second is newer (§5.1)
+    auto loop = std::make_unique<TestEventLoop>();
+    Application application(std::move(loop));
+    set_platform_window_factory([](const WindowOptions&) -> std::unique_ptr<PlatformWindow> { return std::make_unique<TestPlatformWindow>(); });
+    WindowOptions parent_options;
+    parent_options.title = "parent";
+    const WindowHandle parent = application.create_window(parent_options);
+    WindowOptions first_options;
+    first_options.role = WindowRole::Dialog;
+    first_options.modality = Modality::WindowModal;
+    first_options.title = "first";
+    first_options.parent = parent;
+    const WindowHandle first = application.create_window(first_options);
+    WindowOptions second_options;
+    second_options.role = WindowRole::Dialog;
+    second_options.modality = Modality::WindowModal;
+    second_options.title = "second";
+    second_options.parent = parent;
+    const WindowHandle second = application.create_window(second_options);
+    ASSERT_TRUE(first.valid());
+    ASSERT_TRUE(second.valid());
+    // arrange the observer
+    std::vector<WindowHandle> delivered;
+    application.set_input_handler([&delivered](WindowHandle handle, const Event&) { delivered.push_back(handle); });
+    // act a key reaches both dialogs, as a native adapter would deliver it (§8.3)
+    Event event{.kind = EventKind::KeyDown, .key = Key::A};
+    application.window(first)->on_platform_event(event);
+    application.window(second)->on_platform_event(event);
+    // assert only the newest modal is interactive, because the older one is what it blocks (§5.1)
+    ASSERT_EQ(delivered.size(), 1U);
+    EXPECT_EQ(delivered.front(), second);
+    // cleanup the parent cascade closes both dialogs (§5.1)
+    EXPECT_TRUE(application.destroy_window(parent));
 }

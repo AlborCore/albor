@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -160,6 +161,22 @@ namespace albor::accessibility::platform
             if (text.empty())
                 return SysAllocStringLen(nullptr, 0);
             return SysAllocStringLen(text.data(), static_cast<UINT>(text.size()));
+        }
+
+        // build the utf8 text a semantic node writes from the utf16 a value pattern hands over (§10.2)
+        std::optional<std::string> utf8_from_wide(std::wstring_view text) {
+            // an empty text converts to an empty string, because there is nothing to encode (§10.2)
+            if (text.empty())
+                return std::string{};
+            // the length is measured in bytes, because the api answers the measure before the copy (§10.2)
+            const int bytes = WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+            // a text that does not convert is refused rather than written as an empty value (§10.2)
+            if (bytes <= 0)
+                return std::nullopt;
+            // the buffer is sized before the conversion writes into it, which is the two step api (§10.2)
+            std::string result(static_cast<std::size_t>(bytes), '\0');
+            WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), bytes, nullptr, nullptr);
+            return result;
         }
 
         // set a variant to a boolean, which ui automation reads as a property value (§10.2)
@@ -1109,9 +1126,20 @@ namespace albor::accessibility::platform
             }
 
             // hand a new text value to the application, which the value pattern contract asks (§10.1, §10.2)
-            HRESULT STDMETHODCALLTYPE SetValue(LPCWSTR) override {
-                // the bridge holds a read only copy, so it cannot edit the application's text (§10.2)
-                return UIA_E_ELEMENTNOTAVAILABLE;
+            HRESULT STDMETHODCALLTYPE SetValue(LPCWSTR value) override {
+                // a missing value cannot be written, which the pointer contract refuses (§10.2)
+                if (value == nullptr)
+                    return E_INVALIDARG;
+                // a node that was never published has nothing to write (§10.2)
+                const SemanticNode* published = node();
+                if (published == nullptr)
+                    return UIA_E_ELEMENTNOTAVAILABLE;
+                // a text the platform cannot encode is refused rather than clearing the field (§10.2)
+                const std::optional<std::string> text = utf8_from_wide(value);
+                if (!text)
+                    return E_INVALIDARG;
+                // the write runs through the control's value action, which is its real edit path (§10.2)
+                return published->write_value(*text) ? S_OK : UIA_E_ELEMENTNOTAVAILABLE;
             }
 
             // read the text value an editable field announces, which is the value pattern contract (§10.1, §10.2)
@@ -1130,13 +1158,18 @@ namespace albor::accessibility::platform
                 // a missing result cannot be written, which the pointer contract refuses (§10.2)
                 if (result == nullptr)
                     return E_POINTER;
-                // a bounded control is writeable unless it is disabled, which is the range contract (§10.2)
+                // a text field is writable when it carries a value write and is neither disabled nor read only (§10.2)
                 const SemanticNode* published = node();
+                if (published != nullptr && published->has_value_action()) {
+                    *result = (published->disabled() || published->read_only()) ? TRUE : FALSE;
+                    return S_OK;
+                }
+                // a bounded control is writeable unless it is disabled, which is the range contract (§10.2)
                 if (published != nullptr && published->has_range() && role_supports_action(published->role(), SemanticActionKind::Increment)) {
                     *result = published->disabled() ? TRUE : FALSE;
                     return S_OK;
                 }
-                // a text field still refuses an edit, because the bridge carries no text write yet (§10.2)
+                // a node with no write is read only, which is the contract every other role carries (§10.2)
                 *result = TRUE;
                 return S_OK;
             }

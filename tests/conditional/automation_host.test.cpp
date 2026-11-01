@@ -276,12 +276,12 @@ TEST(AutomationHost, AScreenshotCrossesTheSocketAsAnImage) {
     const std::optional<albor::core::Json> init_reply = albor::core::Json::parse(initialized);
     ASSERT_TRUE(init_reply.has_value());
     EXPECT_EQ(init_reply->member("error"), nullptr);
-    // assert the default surface lists twelve tools, which is what the host permits (§10.3, AD-10)
+    // assert the default surface lists fourteen tools, which is what the host permits (§10.3, AD-10)
     const std::optional<albor::core::Json> list_reply = albor::core::Json::parse(listing);
     ASSERT_TRUE(list_reply.has_value());
     const albor::core::Json* tools = list_reply->member("result")->member("tools");
     ASSERT_NE(tools, nullptr);
-    EXPECT_EQ(tools->as_array().size(), 12U);
+    EXPECT_EQ(tools->as_array().size(), 14U);
     // assert the capture answered an image block, which is what a png is on this protocol (§10.3)
     const std::optional<albor::core::Json> call_reply = albor::core::Json::parse(answered);
     ASSERT_TRUE(call_reply.has_value());

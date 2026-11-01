@@ -931,6 +931,48 @@ TEST(ButtonChecks, SpaceActivatesTheButton) {
     EXPECT_TRUE(event.handled);
 }
 
+TEST(ButtonChecks, AButtonReportsTheDialogRolesItWasGiven) {
+    // arrange a button, which carries no dialog role by default (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "OK");
+    // act
+    button.set_default(true);
+    button.set_cancel(true);
+    // assert both roles are read back, which is what a dialog key consults (§8.3)
+    EXPECT_TRUE(button.is_default());
+    EXPECT_TRUE(button.is_cancel());
+}
+
+TEST(ButtonChecks, APressRunsTheClickHandlerLikeAKey) {
+    // arrange a button with a counted click (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "OK");
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
+    std::size_t clicks = 0;
+    button.set_on_click([&clicks] { clicks++; });
+    // act
+    button.press();
+    // assert the press runs the one activation path a click and a key both run (§8.3)
+    EXPECT_EQ(clicks, 1u);
+}
+
+TEST(ButtonChecks, ADisabledButtonPerformsNoPress) {
+    // arrange a disabled button with a counted click (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "OK");
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
+    std::size_t clicks = 0;
+    button.set_on_click([&clicks] { clicks++; });
+    button.set_disabled(true);
+    // act
+    button.press();
+    // assert a disabled control performs nothing, which is what a click on it means (§8.3)
+    EXPECT_EQ(clicks, 0u);
+}
+
 TEST(ButtonChecks, AModifiedKeyDoesNotActivateTheButton) {
     // arrange
     BindingEngine engine;

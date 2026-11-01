@@ -675,3 +675,15 @@ TEST(HeadlessFocusRingChecks, AFocusedButtonRastersARingOutsideItsPlate) {
     EXPECT_FALSE(painted);
     EXPECT_FALSE(button.semantic_node().focused());
 }
+
+TEST(HeadlessPipelineChecks, AHeadlessWindowCountsItsActivations) {
+    // arrange
+    WindowOptions options;
+    const std::unique_ptr<headless::HeadlessPlatformWindow> window = headless::HeadlessPlatformWindow::create(options);
+    ASSERT_NE(window, nullptr);
+    // act
+    window->activate();
+    window->activate();
+    // assert every request is counted, which is how a modality test observes key status (§5.1)
+    EXPECT_EQ(window->activation_count(), 2u);
+}

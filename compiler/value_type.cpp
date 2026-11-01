@@ -345,8 +345,8 @@ namespace albor::compiler
         // a container lays its children out in a grid, which is what a table is (§8.2)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Grid",
-                                              // the gap between cells is a length, which the surface scales (§8.2, AD-27)
-                                              .properties = {ElementProperty{.name = "spacing", .type = scalar(TypeKind::Float), .assignable = true}},
+                                              // the gap is a scaled length and the two counts are the shape (§8.2, AD-27)
+                                              .properties = {ElementProperty{.name = "spacing", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "columns", .type = scalar(TypeKind::Int), .assignable = true}, ElementProperty{.name = "rows", .type = scalar(TypeKind::Int), .assignable = true}},
                                               // a grid raises no signal of its own (§8.2)
                                               .signals = {},
                                               // a grid is a container, so it accepts children (§8.2)
@@ -462,7 +462,7 @@ namespace albor::compiler
         // a leaf performs an action when it is pressed, which is a push control (§8)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Button", // the label, icon, plate and disabled state are what a button exposes (§8)
-                                              .properties = {ElementProperty{.name = "text", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "icon", .type = scalar(TypeKind::Image), .assignable = true}, ElementProperty{.name = "icon_size", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "background", .type = scalar(TypeKind::Color), .assignable = true}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "action", .type = scalar(TypeKind::Command), .assignable = true}, ElementProperty{.name = "command", .type = scalar(TypeKind::Command), .assignable = true}},
+                                              .properties = {ElementProperty{.name = "text", .type = scalar(TypeKind::String), .assignable = true}, ElementProperty{.name = "icon", .type = scalar(TypeKind::Image), .assignable = true}, ElementProperty{.name = "icon_size", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "background", .type = scalar(TypeKind::Color), .assignable = true}, ElementProperty{.name = "disabled", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "default", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "cancel", .type = scalar(TypeKind::Bool), .assignable = true}, ElementProperty{.name = "action", .type = scalar(TypeKind::Command), .assignable = true}, ElementProperty{.name = "command", .type = scalar(TypeKind::Command), .assignable = true}},
                                               // a button raises a click when it is pressed (§8)
                                               .signals = {ElementSignal{.name = "clicked", .parameter_types = {}, .parameter_names = {}}},
                                               // a button is a leaf, so it takes no children (§8)

@@ -721,9 +721,9 @@ TEST(TextFieldChecks, EnterFiresTheCommitHandler) {
     Event event{.kind = EventKind::KeyDown, .key = Key::Return};
     // act
     field.dispatch_event(event);
-    // assert the commit carries the value the field holds (§8)
+    // assert the commit carries the value the field holds and the key is left for a dialog (§8, §8.3)
     EXPECT_EQ(committed, "Albor");
-    EXPECT_TRUE(event.handled);
+    EXPECT_FALSE(event.handled);
 }
 
 TEST(TextFieldChecks, AReturnDoesNotFireTheChangeHandler) {
@@ -816,9 +816,9 @@ TEST(TextFieldChecks, AReadOnlyFieldStillCommits) {
     Event event{.kind = EventKind::KeyDown, .key = Key::Return};
     // act
     field.dispatch_event(event);
-    // assert a commit is a signal, not an edit, so a read only field still raises it (§8)
+    // assert a commit is a signal, not an edit, so a read only field still raises it and leaves the key (§8, §8.3)
     EXPECT_EQ(committed, "Albor");
-    EXPECT_TRUE(event.handled);
+    EXPECT_FALSE(event.handled);
 }
 
 TEST(TextFieldChecks, AReadOnlyFieldIsStillFocusable) {
@@ -3223,4 +3223,133 @@ TEST(TextFieldScrollChecks, ADragPastTheEdgeKeepsTheDraggedEndInView) {
     const Rect caret = field.caret_rect();
     EXPECT_GE(caret.y, 0.0f);
     EXPECT_LE(caret.y + caret.height, 20.0f + 0.001f);
+}
+
+TEST(TextFieldSemanticChecks, AValueWriteReplacesTheWholeValueThroughTheEditPath) {
+    // arrange a field with a selection, a bound stack and a change observer (§10.2, §18)
+    EditingTextEngine engine;
+    UndoStack stack;
+    TextField field(nullptr, &engine, "alpha beta");
+    field.bind_undo_stack(&stack);
+    field.set_selection(6, 10);
+    std::string changed;
+    field.set_on_change([&changed](const std::string& text) { changed = text; });
+    const SemanticNode node = field.semantic_node();
+    // act
+    const bool accepted = node.write_value("gamma");
+    // assert a set value is the whole text, not an insertion at the caret (§10.2)
+    EXPECT_TRUE(accepted);
+    EXPECT_EQ(field.value(), "gamma");
+    EXPECT_EQ(changed, "gamma");
+    EXPECT_EQ(field.caret(), 5u);
+    EXPECT_EQ(stack.depth(), 1u);
+}
+
+TEST(TextFieldSemanticChecks, AValueWritePublishesTheWholeFieldText) {
+    // arrange a field whose published node is what an adapter reads after a write (§10.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "alpha beta");
+    field.set_selection(6, 10);
+    SemanticNode node = field.semantic_node();
+    // act
+    const bool accepted = node.write_value("gamma");
+    // assert the publication is the text the control holds, not the text it was asked for (§10.2)
+    EXPECT_TRUE(accepted);
+    EXPECT_EQ(node.value(), field.value());
+    EXPECT_EQ(node.value(), "gamma");
+    // assert the caret the publication reports is the caret the field shows (§10.1)
+    EXPECT_EQ(node.selection_start(), field.caret());
+    EXPECT_EQ(node.selection_end(), field.caret());
+}
+
+TEST(TextFieldSemanticChecks, AValueWriteStripsBreaksOnASingleLineField) {
+    // arrange a single line field, which edits one line (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "before");
+    SemanticNode node = field.semantic_node();
+    // act a value the control cannot hold as written (§8.3)
+    const bool accepted = node.write_value("a\nb");
+    // assert the field and its publication agree on the stripped text (§10.2)
+    EXPECT_TRUE(accepted);
+    EXPECT_EQ(field.value(), "ab");
+    EXPECT_EQ(node.value(), "ab");
+}
+
+TEST(TextFieldSemanticChecks, AValueWriteIntoAMultilineFieldKeepsItsBreaks) {
+    // arrange a multi line field, which edits a document (§8)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "one\ntwo");
+    field.set_multiline(true);
+    SemanticNode node = field.semantic_node();
+    // act
+    const bool accepted = node.write_value("one\nmore\ntwo");
+    // assert the break is a character a multi line field keeps (§8)
+    EXPECT_TRUE(accepted);
+    EXPECT_EQ(field.value(), "one\nmore\ntwo");
+    EXPECT_EQ(node.value(), field.value());
+}
+
+TEST(TextFieldSemanticChecks, AValueWriteIsRefusedByAReadOnlyField) {
+    // arrange a read only field, which a client may copy but not edit (§10.1)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "fixed");
+    field.set_read_only(true);
+    const SemanticNode node = field.semantic_node();
+    // act
+    const bool accepted = node.write_value("changed");
+    // assert the field kept its text and the published node says why (§10.1)
+    EXPECT_FALSE(accepted);
+    EXPECT_EQ(field.value(), "fixed");
+    EXPECT_TRUE(node.read_only());
+}
+
+TEST(TextFieldSemanticChecks, AValueWriteIsRefusedByADisabledField) {
+    // arrange a disabled field, which refuses every action (§10.1)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "fixed");
+    field.set_disabled(true);
+    const SemanticNode node = field.semantic_node();
+    // act
+    const bool accepted = node.write_value("changed");
+    // assert the field kept its text, because a disabled control takes no edit (§10.1)
+    EXPECT_FALSE(accepted);
+    EXPECT_EQ(field.value(), "fixed");
+}
+
+TEST(TextFieldSemanticChecks, TheValueWriteIsPublishedOnlyByAnEditableNode) {
+    // arrange the semantic node a field publishes (§10.1)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "text");
+    // act
+    const SemanticNode node = field.semantic_node();
+    // assert the node carries a write, which is what an adapter offers a client (§10.1, §10.2)
+    EXPECT_TRUE(node.has_value_action());
+}
+
+TEST(TextFieldKeyboardChecks, ASingleLineReturnCommitsAndLeavesTheKey) {
+    // arrange a single line field with a commit observer (§8)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "value");
+    std::string committed;
+    field.set_on_commit([&committed](const std::string& text) { committed = text; });
+    Event event{.kind = EventKind::KeyDown, .key = Key::Return};
+    // act
+    field.dispatch_event(event);
+    // assert the field committed and left the key, so a dialog default can follow (§8.3)
+    EXPECT_EQ(committed, "value");
+    EXPECT_FALSE(event.handled);
+}
+
+TEST(TextFieldKeyboardChecks, AMultilineReturnInsertsABreakAndClaimsTheKey) {
+    // arrange a multi line field with the caret inside its text (§8)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "value");
+    field.set_multiline(true);
+    field.set_caret(3);
+    Event event{.kind = EventKind::KeyDown, .key = Key::Return};
+    // act
+    field.dispatch_event(event);
+    // assert the break is the edit the key asked for, which is what claims it (§8.3)
+    EXPECT_TRUE(event.handled);
+    EXPECT_EQ(field.value(), "val\nue");
 }

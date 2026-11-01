@@ -38,10 +38,16 @@ namespace albor
         // set the number of columns and rows, which a change remeasures because the cells move (§8.2)
         void set_columns(std::size_t columns, std::size_t rows);
 
-        // hand out the number of columns the grid divides into (§8.2)
+        // set the column count the author wrote, where zero derives it from the rows or the child count (§8.2)
+        void set_columns(int columns);
+
+        // set the row count the author wrote, where zero derives it from the columns or the child count (§8.2)
+        void set_rows(int rows);
+
+        // hand out the number of columns, which is the derived count when the author wrote none (§8.2)
         [[nodiscard]] std::size_t columns() const;
 
-        // hand out the number of rows the grid divides into (§8.2)
+        // hand out the number of rows, which is the derived count when the author wrote none (§8.2)
         [[nodiscard]] std::size_t rows() const;
 
         // set the span of the child at an index, which is what makes a child occupy several cells (§8.2)
@@ -57,6 +63,15 @@ namespace albor
         [[nodiscard]] float gap() const;
 
     private:
+        // the column count the grid divides into, derived when the author wrote none (§8.2)
+        [[nodiscard]] std::size_t effective_columns() const;
+
+        // the row count the grid divides into, derived when the author wrote none (§8.2)
+        [[nodiscard]] std::size_t effective_rows() const;
+
+        // the cells the children claim through their spans, which a derived axis counts (§8.2)
+        [[nodiscard]] std::size_t claimed_cells() const;
+
         // the size of the cell at an index, which is the assigned extent divided by the count (§8.2)
         [[nodiscard]] Size cell_size(const Rect& bounds) const;
 
@@ -74,6 +89,12 @@ namespace albor
 
         // how many rows the grid divides into (§8.2)
         std::size_t m_rows = 1;
+
+        // whether the column count is derived rather than written (§8.2)
+        bool m_columns_auto = true;
+
+        // whether the row count is derived rather than written (§8.2)
+        bool m_rows_auto = true;
 
         // the space between two cells in logical pixels (§8.2)
         float m_gap = 0.0f;

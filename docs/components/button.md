@@ -12,6 +12,8 @@ to `action` makes the button follow that command's label, enablement and click t
 | `icon_size` | `float` | the square icon extent; defaults to 16 logical pixels |
 | `background` | `color` | the plate colour; defaults to the theme |
 | `disabled` | `bool` | refuses interaction while true |
+| `default` | `bool` | in a dialog, a plain Return runs this button when nothing else claimed it |
+| `cancel` | `bool` | in a dialog, a plain Escape runs this button when nothing else claimed it |
 | `action` | `command` | binds a shared command; the command's state drives the control |
 
 Plus the [common properties](index.md#common-properties).
@@ -66,3 +68,7 @@ component Toolbar {
 - An icon-only button uses its author `id` as the accessible name, because a screen reader has no
   caption to speak. An icon-plus-label button keeps the caption as its name.
 - A button with no `icon` keeps the exact text-only measurement and paint path.
+- In a `Dialog` window, `default: true` marks the control a plain Return runs, and
+  `cancel: true` marks the control a plain Escape runs. A key the focused control claimed is
+  never overridden, so a multi-line field still inserts its break. See
+  [Windows and dialogs](../consuming.md#windows-and-dialogs).

@@ -423,10 +423,10 @@ namespace albor
                 // a read only multi line field takes no break, because a break is an edit (§8.3)
                 if (m_multiline && m_read_only)
                     return;
-                // the event is claimed, because the key answers either way from here (§8.3)
-                event.handled = true;
-                // a multi line field inserts the break the line count needs, which plain return means there (§8)
+                // a multi line field inserts the break the line count needs, which claims the key (§8)
                 if (m_multiline) {
+                    // the event is claimed, because the break is the edit the key asked for (§8.3)
+                    event.handled = true;
                     // the break replaces the selection when one is active, and splits at the caret when none is (§8.3)
                     const std::size_t start = has_selection() ? selection_start() : m_caret;
                     const std::size_t end = has_selection() ? selection_end() : m_caret;
@@ -434,12 +434,10 @@ namespace albor
                     replace_range(start, end, "\n");
                     return;
                 }
-                // a read only multi line field takes no break, because a break is an edit (§8.3)
-                if (m_multiline)
-                    return;
                 // the handler runs only when one was installed, because a bare field commits to nothing (§8)
                 if (m_on_commit)
                     m_on_commit(m_value);
+                // a single line field commits but leaves the key, so a dialog default can follow (§8.3)
                 return;
             }
             // a read only field still moves its caret and still commits, but it refuses every edit (§8.3)
@@ -607,6 +605,20 @@ namespace albor
         node.set_read_only(m_read_only);
         // the multi line state travels beside the value, because a reader announces a document (§10.1)
         node.set_multiline(m_multiline);
+        // the value write is the text a client typed, which replaces the whole value through the edit path (§10.1, §10.2)
+        node.set_value_action([this](std::string_view text, SemanticValueState& written) {
+            // the field refuses the write while it is read only or disabled, which the node already announces (§10.1)
+            TextField* field = mutable_owner(this);
+            if (field->m_read_only || field->disabled())
+                return false;
+            // the whole value is replaced, because a set value means the text a client wrote (§10.2)
+            field->replace_range(0, field->m_value.size(), text);
+            // the state the control now holds is what the publication follows, not the text it was asked for (§10.2)
+            written.value = field->m_value;
+            written.selection_start = field->selection_start();
+            written.selection_end = field->selection_end();
+            return true;
+        });
         // the select all action is the selection a reader can ask for, which the keyboard reaches the same way (§10.1)
         (void)node.add_action("select_all", [this] {
             // the action body carries no read only guard, because the state belongs to the node it belongs to (§10.1)

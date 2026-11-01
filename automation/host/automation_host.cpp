@@ -9,6 +9,7 @@
 #include "automation/capture_commands.h"
 #include "automation/command_commands.h"
 #include "automation/host/capture_target.h"
+#include "automation/host/input_commands.h"
 #include "automation/mcp_connection.h"
 #include "automation/mcp_server.h"
 #include "automation/semantic_commands.h"
@@ -120,6 +121,8 @@ namespace albor::automation
         register_command_commands(*m_registry, [] { return &Application::instance().commands(); });
         // the capture reads the active window on demand, which is the only handle a command has (§10.3, §6.3)
         register_capture_commands(*m_registry, [this] { return capture_frame(); });
+        // the typing command focuses a control and delivers the text the way a keyboard does (§8.3, §10.3)
+        register_input_commands(*m_registry, [this] { return active_root(); });
         // the standard surface is permitted explicitly, because registration alone is not consent (§10.3, AD-10)
         for (const std::string& name : semantic_command_names()) {
             // a name this build did not register is skipped, because the allow list may only name a live command (§10.3)
@@ -134,6 +137,12 @@ namespace albor::automation
         }
         // the capture surface is permitted the same way, which is what lets a client ask for a frame (§10.3, AD-10)
         for (const std::string& name : capture_command_names()) {
+            // a name this build did not register is skipped, because the allow list may only name a live command (§10.3)
+            if (m_registry->knows(name))
+                m_registry->allow(name);
+        }
+        // the typing surface is permitted the same way, which is what lets a client fill a field (§10.3, AD-10)
+        for (const std::string& name : input_command_names()) {
             // a name this build did not register is skipped, because the allow list may only name a live command (§10.3)
             if (m_registry->knows(name))
                 m_registry->allow(name);
@@ -236,6 +245,16 @@ namespace albor::automation
         m_tree = build_semantic_tree(*static_cast<const UiNode*>(active->root));
         // the rebuilt tree is what every semantic command reads and writes for this line (§10.3)
         return &m_tree;
+    }
+
+    UiNode* AutomationHost::active_root() {
+        // the active tree is the newest window that carries one, which is what a client drives (§10.3)
+        const HostBinding* active = m_bindings.active_tree();
+        // a host with no active tree has nothing to focus, which the command refuses (§10.3)
+        if (active == nullptr)
+            return nullptr;
+        // the binding lends the root, which the window owns and outlives the command (§8.1, §10.3)
+        return static_cast<UiNode*>(active->root);
     }
 
     CapturedFrame AutomationHost::capture_frame() {

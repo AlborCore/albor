@@ -601,12 +601,187 @@ TEST(GridLayoutChecks, AGridWithNoCellsMeasuresAsNothing) {
     EXPECT_FLOAT_EQ(measured.height, 0.0f);
 }
 
-TEST(GridLayoutChecks, DefaultsToASingleCell) {
+TEST(GridLayoutChecks, AnEmptyGridIsASingleCell) {
     // arrange
     GridLayout grid;
-    // act / assert the default divides into one cell, which places a child at the whole of the bounds (§8.2)
+    // act / assert an empty grid divides into one cell, so a measure has a divisor (§8.2)
     EXPECT_EQ(grid.columns(), 1u);
     EXPECT_EQ(grid.rows(), 1u);
+}
+
+TEST(GridLayoutChecks, ADerivedColumnCountStacksTheChildren) {
+    // arrange a grid whose author wrote no shape, which is the derived default (§8.2)
+    GridLayout grid;
+    auto first = std::make_unique<LayoutTestNode>();
+    auto second = std::make_unique<LayoutTestNode>();
+    LayoutTestNode* second_ptr = second.get();
+    grid.add_child(std::move(first));
+    grid.add_child(std::move(second));
+    // act
+    grid.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 40.0f}));
+    // assert the children stack in one column of two rows, which is what a shape the author did not write means (§8.2)
+    EXPECT_EQ(grid.columns(), 1u);
+    EXPECT_EQ(grid.rows(), 2u);
+    EXPECT_FLOAT_EQ(second_ptr->bounds().x, 0.0f);
+    EXPECT_FLOAT_EQ(second_ptr->bounds().y, 20.0f);
+}
+
+TEST(GridLayoutChecks, ATwoColumnShapePlacesChildrenSideBySide) {
+    // arrange a two column grid whose rows are derived from the children (§8.2)
+    GridLayout grid;
+    grid.set_columns(2);
+    auto first = std::make_unique<LayoutTestNode>();
+    auto second = std::make_unique<LayoutTestNode>();
+    LayoutTestNode* first_ptr = first.get();
+    LayoutTestNode* second_ptr = second.get();
+    grid.add_child(std::move(first));
+    grid.add_child(std::move(second));
+    // act
+    grid.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{40.0f, 20.0f}));
+    // assert both children land in adjacent cells of the single derived row (§8.2)
+    EXPECT_EQ(grid.rows(), 1u);
+    EXPECT_FLOAT_EQ(first_ptr->bounds().x, 0.0f);
+    EXPECT_FLOAT_EQ(first_ptr->bounds().width, 20.0f);
+    EXPECT_FLOAT_EQ(second_ptr->bounds().x, 20.0f);
+    EXPECT_FLOAT_EQ(second_ptr->bounds().y, 0.0f);
+}
+
+TEST(GridLayoutChecks, AColumnCountDerivesTheRows) {
+    // arrange a two column grid holding five children (§8.2)
+    GridLayout grid;
+    grid.set_columns(2);
+    for (int index = 0; index < 5; index++)
+        grid.add_child(std::make_unique<LayoutTestNode>());
+    // act / assert three rows are what two columns need for five children (§8.2)
+    EXPECT_EQ(grid.columns(), 2u);
+    EXPECT_EQ(grid.rows(), 3u);
+}
+
+TEST(GridLayoutChecks, ARowCountDerivesTheColumns) {
+    // arrange a two row grid holding five children (§8.2)
+    GridLayout grid;
+    grid.set_rows(2);
+    for (int index = 0; index < 5; index++)
+        grid.add_child(std::make_unique<LayoutTestNode>());
+    // act / assert three columns are what two rows need for five children (§8.2)
+    EXPECT_EQ(grid.columns(), 3u);
+    EXPECT_EQ(grid.rows(), 2u);
+}
+
+TEST(GridLayoutChecks, AShapeWrittenInEitherOrderIsTheSame) {
+    // arrange the same explicit shape written columns first and rows first (§8.2)
+    GridLayout columns_first;
+    columns_first.set_columns(2);
+    columns_first.set_rows(3);
+    GridLayout rows_first;
+    rows_first.set_rows(3);
+    rows_first.set_columns(2);
+    // act / assert the two declaration orders resolve to the same grid (§8.2)
+    EXPECT_EQ(columns_first.columns(), 2u);
+    EXPECT_EQ(columns_first.rows(), 3u);
+    EXPECT_EQ(rows_first.columns(), 2u);
+    EXPECT_EQ(rows_first.rows(), 3u);
+}
+
+TEST(GridLayoutChecks, ADerivedShapeFollowsTheChildCount) {
+    // arrange a two column grid with two children, which need one row (§8.2)
+    GridLayout grid;
+    grid.set_columns(2);
+    grid.add_child(std::make_unique<LayoutTestNode>());
+    grid.add_child(std::make_unique<LayoutTestNode>());
+    EXPECT_EQ(grid.rows(), 1u);
+    // act
+    grid.add_child(std::make_unique<LayoutTestNode>());
+    // assert the derived row count grew with the child, which is what a dynamic body needs (§8.2, AD-13)
+    EXPECT_EQ(grid.rows(), 2u);
+}
+
+TEST(GridLayoutChecks, ANegativeShapeIsRefused) {
+    // arrange a grid with a written column count (§8.2)
+    GridLayout grid;
+    grid.set_columns(2);
+    // act
+    grid.set_rows(-1);
+    // assert the derived row count stands, because a negative row count names no shape (§8.2)
+    EXPECT_EQ(grid.columns(), 2u);
+    EXPECT_EQ(grid.rows(), 1u);
+}
+
+TEST(GridLayoutChecks, AWrittenZeroShapeReturnsToTheDerivedCounts) {
+    // arrange an explicit shape over five children (§8.2)
+    GridLayout grid;
+    grid.set_columns(3);
+    grid.set_rows(4);
+    for (int index = 0; index < 5; index++)
+        grid.add_child(std::make_unique<LayoutTestNode>());
+    EXPECT_EQ(grid.columns(), 3u);
+    EXPECT_EQ(grid.rows(), 4u);
+    // act a zero on each axis, which asks the grid to derive again (§8.2)
+    grid.set_columns(0);
+    grid.set_rows(0);
+    // assert the grid is one derived column again, which is the default shape (§8.2)
+    EXPECT_EQ(grid.columns(), 1u);
+    EXPECT_EQ(grid.rows(), 5u);
+}
+
+TEST(GridLayoutChecks, AnUnchangedWrittenShapeDoesNotInvalidate) {
+    // arrange a grid whose explicit shape is settled, with no pending layout work (§8.2)
+    GridLayout grid;
+    grid.set_columns(2, 2);
+    grid.clear_dirty();
+    // act writing the same column count again (§8.2)
+    grid.set_columns(2);
+    // assert nothing moved, so no frame is requested for a shape that did not change (§8.2)
+    EXPECT_FALSE(grid.layout_dirty());
+    EXPECT_EQ(grid.columns(), 2u);
+    EXPECT_EQ(grid.rows(), 2u);
+}
+
+TEST(GridLayoutChecks, ASpanOnADerivedAxisDoesNotOverlap) {
+    // arrange a default grid whose row count is derived from two children (§8.2)
+    GridLayout grid;
+    auto first = std::make_unique<LayoutTestNode>();
+    auto second = std::make_unique<LayoutTestNode>();
+    LayoutTestNode* first_ptr = first.get();
+    LayoutTestNode* second_ptr = second.get();
+    grid.add_child(std::move(first));
+    grid.add_child(std::move(second));
+    // act a span the derived row count must grow around (§8.2)
+    ASSERT_TRUE(grid.set_span(0, GridSpan{.columns = 1, .rows = 2}));
+    grid.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 60.0f}));
+    // assert the derived rows account for the span, so the second child does not land under it (§8.2)
+    EXPECT_EQ(grid.rows(), 3u);
+    EXPECT_FLOAT_EQ(first_ptr->bounds().height, 40.0f);
+    EXPECT_FLOAT_EQ(second_ptr->bounds().y, 40.0f);
+}
+
+TEST(GridLayoutChecks, ATwoColumnShapePlacesFourChildrenInTwoRows) {
+    // arrange four children in a two column grid, which needs two derived rows (§8.2)
+    GridLayout grid;
+    grid.set_columns(2);
+    auto first = std::make_unique<LayoutTestNode>();
+    auto second = std::make_unique<LayoutTestNode>();
+    auto third = std::make_unique<LayoutTestNode>();
+    auto fourth = std::make_unique<LayoutTestNode>();
+    LayoutTestNode* first_ptr = first.get();
+    LayoutTestNode* second_ptr = second.get();
+    LayoutTestNode* third_ptr = third.get();
+    LayoutTestNode* fourth_ptr = fourth.get();
+    grid.add_child(std::move(first));
+    grid.add_child(std::move(second));
+    grid.add_child(std::move(third));
+    grid.add_child(std::move(fourth));
+    // act
+    grid.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{40.0f, 40.0f}));
+    // assert every child lands in its own cell, in source order (§8.2)
+    EXPECT_FLOAT_EQ(first_ptr->bounds().x, 0.0f);
+    EXPECT_FLOAT_EQ(first_ptr->bounds().y, 0.0f);
+    EXPECT_FLOAT_EQ(second_ptr->bounds().x, 20.0f);
+    EXPECT_FLOAT_EQ(second_ptr->bounds().y, 0.0f);
+    EXPECT_FLOAT_EQ(third_ptr->bounds().x, 0.0f);
+    EXPECT_FLOAT_EQ(third_ptr->bounds().y, 20.0f);
+    EXPECT_FLOAT_EQ(fourth_ptr->bounds().x, 20.0f);
+    EXPECT_FLOAT_EQ(fourth_ptr->bounds().y, 20.0f);
 }
 
 TEST(GridLayoutChecks, AGridWithNoChildMeasuresAsNothing) {

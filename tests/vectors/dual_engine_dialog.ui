@@ -1,0 +1,16 @@
+// the compiled half of the AD-25 dialog corpus, which proves the two dialog key roles agree (§16, AD-25)
+component DualEngineDialog {
+    Row {
+        spacing: 8px;
+        Button {
+            id: cancel;
+            text: "Cancel";
+            cancel: true;
+        }
+        Button {
+            id: ok;
+            text: "OK";
+            default: true;
+        }
+    }
+}

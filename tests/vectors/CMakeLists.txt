@@ -81,6 +81,12 @@ albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/dual_
 # the image facade carries an embedded asset through both engines, so a retained picture agrees too (§16, AD-25)
 albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/dual_engine_image.ui")
 
+# the grid facade proves the written shape and the four cells agree through both engines (§8.2, §16, AD-25)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/dual_engine_grid.ui")
+
+# the dialog facade proves the two dialog key roles agree through both engines (§8.3, §16, AD-25)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/dual_engine_dialog.ui")
+
 # the p0 facade proves the panel, combo box, icon button and styled field compile into one unit (§8, §9.1, §11.3)
 albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/p0_widgets.ui")
 

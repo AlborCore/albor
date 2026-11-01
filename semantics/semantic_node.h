@@ -162,6 +162,22 @@ namespace albor
     // the work a range write performs, which is what a platform SetValue asks for (§10.2)
     using SemanticRangeAction = std::function<void(double)>;
 
+    // the state an editable control reports after a write, which is what the publication follows (§10.2)
+    struct SemanticValueState
+    {
+        // the text the control holds after the write, which may differ from the text it was asked for (§10.2)
+        std::string value;
+
+        // the byte the resulting selection begins at (§10.1)
+        std::size_t selection_start = 0;
+
+        // the byte the resulting selection ends at (§10.1)
+        std::size_t selection_end = 0;
+    };
+
+    // the work a text write performs, which reports the text the control now holds (§10.1, §10.2)
+    using SemanticValueAction = std::function<bool(std::string_view, SemanticValueState&)>;
+
     // one node of the unified semantic tree, which is what assistive technology consumes (§10.1, AD-09)
     class SemanticNode
     {
@@ -268,6 +284,15 @@ namespace albor
         // write the range through the registered work, which returns false while the node is disabled (§10.1, §10.2)
         bool set_range_value(double value) const;
 
+        // publish the work a text write performs, where an empty action leaves the value unwritable (§10.1)
+        void set_value_action(SemanticValueAction on_write);
+
+        // report whether the node accepts a text write, which an adapter reads before offering one (§10.1)
+        [[nodiscard]] bool has_value_action() const;
+
+        // write the text through the registered work, refusing while disabled or read only (§10.1, §10.2)
+        bool write_value(std::string_view value) const;
+
         // hand out the bounds the node occupies in logical pixels (§10.1)
         [[nodiscard]] const Rect& bounds() const;
 
@@ -305,8 +330,8 @@ namespace albor
         // the accessible name a screen reader speaks (§10.1)
         std::string m_name;
 
-        // the current states of the node (§10.1)
-        SemanticStates m_states;
+        // the current states of the node, which a const write updates the way the range does (§10.1, §10.2)
+        mutable SemanticStates m_states;
 
         // the bounds the node occupies in logical pixels (§10.1)
         Rect m_bounds;
@@ -319,6 +344,9 @@ namespace albor
 
         // the work a range write performs, which stays empty when the node has no range (§10.2)
         SemanticRangeAction m_on_range_write;
+
+        // the work a text write performs, which stays empty when the node accepts no text (§10.1)
+        SemanticValueAction m_on_value_write;
 
         // one registered action, with the name assistive technology and automation select it by (§10.1)
         struct Action

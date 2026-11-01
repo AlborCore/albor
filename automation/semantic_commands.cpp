@@ -126,7 +126,7 @@ namespace albor::automation
 
     std::vector<std::string> semantic_command_names() {
         // the names are fixed rather than discovered, because a host allow-lists before any tree exists (§10.3, AD-10)
-        return {std::string(FAMILY) + "tree", std::string(FAMILY) + "find", std::string(FAMILY) + "invoke", std::string(FAMILY) + "actions", std::string(FAMILY) + "set_focused"};
+        return {std::string(FAMILY) + "tree", std::string(FAMILY) + "find", std::string(FAMILY) + "invoke", std::string(FAMILY) + "actions", std::string(FAMILY) + "set_value", std::string(FAMILY) + "set_focused"};
     }
 
     void register_semantic_commands(AutomationRegistry& registry, SemanticSnapshot snapshot) {
@@ -153,6 +153,9 @@ namespace albor::automation
                 // an editable node appends the text it carries, which is what a client reads back (§10.1)
                 if (!node->value().empty())
                     out << " value=" << escape_for_line(node->value());
+                // a writable node marks itself, because a client must know a write is offered (§10.1, §10.3)
+                if (node->has_value_action() && !node->disabled() && !node->read_only())
+                    out << " writable";
                 // a selection appends its half open byte range, which a client reads beside the value (§10.1)
                 if (node->selection_start() != node->selection_end())
                     out << " selection=" << node->selection_start() << ':' << node->selection_end();
@@ -259,6 +262,41 @@ namespace albor::automation
             if (!node->invoke(*action))
                 return AutomationResult::refused("no such action: " + *action);
             // an invoked action reports nothing, because its effect is what the client observes (§10.3)
+            return AutomationResult::answered("");
+        });
+
+        // the value command writes the text an editable node edits, which a fill operation needs (§10.1, §10.3)
+        registry.register_command(std::string(FAMILY) + "set_value", [snapshot](const AutomationRequest& request) {
+            // a host that supplied no snapshot cannot answer, which is refused rather than answered empty (§10.3)
+            if (!snapshot)
+                return AutomationResult::refused("the host supplied no semantic snapshot");
+            // the id is required, because a write targets one node (§10.3, AD-11)
+            const auto id = argument_at(request, 0);
+            // a missing id is refused rather than defaulted (§10.3, AD-11)
+            if (!id)
+                return AutomationResult::refused("set_value needs an id");
+            // the value is required, and an empty value is a value a client may have meant (§10.3)
+            const auto value = argument_at(request, 1);
+            // a missing value is refused, because guessing one would write text nobody asked for (§10.3)
+            if (!value)
+                return AutomationResult::refused("set_value needs a value");
+            // a value that was not escaped arrives as extra arguments, which is refused rather than truncated (§10.3)
+            if (request.arguments.size() > 2)
+                return AutomationResult::refused("set_value takes an id and a value");
+            // the tree is taken once, because the application may rebuild it between lines (§10.3)
+            SemanticTree& tree = *snapshot();
+            // the node is looked up by identity, which is the only selector automation offers (§18.1, AD-11)
+            SemanticNode* node = node_by_id(tree, *id);
+            // an absent id is refused with its name, so a client knows which selector failed (§10.3)
+            if (node == nullptr)
+                return AutomationResult::refused("no node with id: " + *id);
+            // a node with no write carries no editable value, which is refused rather than silently ignored (§10.1)
+            if (!node->has_value_action())
+                return AutomationResult::refused("no writable value on node: " + *id);
+            // the write runs, and the control decides whether it accepted the text (§10.1)
+            if (!node->write_value(*value))
+                return AutomationResult::refused("the node refused the value: " + *id);
+            // the write reports nothing, because its effect is what the client observes in the next dump (§10.3)
             return AutomationResult::answered("");
         });
 

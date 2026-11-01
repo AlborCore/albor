@@ -95,7 +95,8 @@ follow-ups; they do not block the desktop port.
   role-to-action table. Both expose activate, toggle, increment, decrement, expand and collapse;
   bounded controls announce a range and accept a value write. macOS exposes the stepper increment
   and decrement and the radio-group selection; Windows exposes Toggle, ExpandCollapse and
-  RangeValue patterns. Text value writing remains read-only on both (`macos-windows.md`).
+  RangeValue patterns. Text value writing reaches the field's own edit path on both
+  (`macos-windows.md`).
 - **Popup surfaces:** a ComboBox opens an owned native `WindowRole::Popup` list when an
   application installs a `PopupHost`, falling back to the in-tree overlay for detached trees. The
   popup is hidden rather than destroyed, follows its owner, and dismisses on outside press or

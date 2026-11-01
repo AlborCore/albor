@@ -24,7 +24,7 @@ target_compile_options(albor-platform-macos PRIVATE -fobjc-arc)
 
 # the adapter needs the application loop it implements, and reaches appkit and core video directly (AD-16)
 # albor-window arrives transitively through albor-application, so naming it again would duplicate the archive on the link line
-target_link_libraries(albor-platform-macos PUBLIC albor-application PRIVATE "-framework AppKit" "-framework QuartzCore" "-framework CoreVideo" "-framework Foundation")
+target_link_libraries(albor-platform-macos PUBLIC albor-application PRIVATE "-framework AppKit" "-framework QuartzCore" "-framework CoreVideo" "-framework Foundation" "-framework UniformTypeIdentifiers")
 
 # the auto target links the archive whole, so the adapter installs itself at load without a call (§5.3, AD-16)
 add_library(albor-platform-macos-auto INTERFACE)

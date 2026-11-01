@@ -130,5 +130,7 @@ field->clear_decorations();
   ([Slider](slider.md) uses the same one).
 - Use `on_committed` for work that should not run per keystroke — validation on Enter,
   a search executed when the field is done.
+- A single-line field commits on Enter and leaves the key unhandled, so a dialog's default button
+  follows. A multi-line field inserts the break and claims the key instead.
 - `read_only` keeps the text selectable and focusable while refusing edits; `disabled`
   refuses everything and drops out of focus traversal.

@@ -2037,6 +2037,87 @@ component LogPanel {
     EXPECT_FALSE(contains(unit, "set_items(value)"));
 }
 
+TEST(Codegen, AGridInsideARepeatEmitsItsShapeInEveryRowPath) {
+    // arrange a grid inside a keyed row, whose shape both the build and the update path write (§8.2, §18.1)
+    const std::string source = R"(import task;
+component LogPanel {
+    inout property<vector<Task>> items;
+    ScrollView {
+        row_height: 20px;
+        Repeat(task in items) {
+            Grid {
+                columns: 2;
+                Label { text: task.title; }
+                Label { text: task.id; }
+            }
+        }
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // the record carries the key a row is matched on, which the manifest declares (§18.1, AD-13)
+    catalog.add_record(RecordType{.name = "Task", .fields = {RecordFieldType{.name = "id", .type = scalar(TypeKind::String), .is_key = true}, RecordFieldType{.name = "title", .type = scalar(TypeKind::String), .is_key = false}}});
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert the row build and the row update both reshape the grid, because a row shows another item (§18.1)
+    ASSERT_EQ(diagnostics.count(), 0U);
+    const std::string unit = file_named(files, "log_panel.cpp").content;
+    std::size_t occurrences = 0;
+    for (std::size_t at = unit.find("set_columns(2)"); at != std::string::npos; at = unit.find("set_columns(2)", at + 1))
+        occurrences++;
+    EXPECT_EQ(occurrences, 2U);
+}
+
+TEST(Codegen, ButtonDialogRolesReachTheButton) {
+    // arrange two buttons marked as the keys a dialog runs (§8.3)
+    const std::string_view source = R"(
+component D {
+    Column {
+        Button {
+            id: ok;
+            text: "OK";
+            default: true;
+        }
+        Button {
+            id: cancel;
+            text: "Cancel";
+            cancel: true;
+        }
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert both roles reach the button, which is what a dialog consults (§8.3, §11.3)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const GeneratedFile& cpp = file_named(files, "d.cpp");
+    EXPECT_TRUE(contains(cpp.content, "->set_default(true)"));
+    EXPECT_TRUE(contains(cpp.content, "->set_cancel(true)"));
+}
+
+TEST(Codegen, ABoundGridRowsReachesTheLayoutOnEveryChange) {
+    // arrange a grid row count bound to a component property (§8.2, §13.3)
+    const std::string_view source = R"(
+component C {
+    in property<int> rows_count: 2;
+    Grid {
+        rows: rows_count;
+        Label { text: "A"; }
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the evaluator pushes the computed count through the same setter a constant uses (§13.3)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "evaluate_0_rows"));
+    EXPECT_TRUE(contains(cpp.content, "->set_rows(value)"));
+}
+
 TEST(Codegen, AListBoxWindowsItsRepeatIntoItsInternalViewport) {
     // arrange a list whose rows the author repeats, which is what a declarative list is (§11.1, §18.3)
     const std::string source = R"(import task;
@@ -3031,6 +3112,73 @@ component C {
     EXPECT_TRUE(contains(cpp.content, "->set_corner_radius(5.0f)"));
     EXPECT_TRUE(contains(cpp.content, "->set_border_width(2.0f)"));
     EXPECT_TRUE(contains(cpp.content, "->set_border_color("));
+}
+
+TEST(Codegen, GridShapePropertiesReachTheLayout) {
+    // arrange a grid whose shape and gap the author wrote (§8.2)
+    const std::string_view source = R"(
+component C {
+    Grid {
+        spacing: 6px;
+        columns: 2;
+        rows: 0;
+        Label { text: "A"; }
+        Label { text: "B"; }
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the grid is constructed and every written shape value reaches its setter (§8.2, §11.3)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "#include \"layout/grid_layout.h\""));
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<GridLayout>()"));
+    EXPECT_TRUE(contains(cpp.content, "->set_gap(6.0f)"));
+    EXPECT_TRUE(contains(cpp.content, "->set_columns(2)"));
+    EXPECT_TRUE(contains(cpp.content, "->set_rows(0)"));
+}
+
+TEST(Codegen, AGridWithoutAShapeKeepsTheDerivedDefault) {
+    // arrange a grid whose author wrote no shape, which the layout derives from the children (§8.2)
+    const std::string_view source = R"(
+component C {
+    Grid {
+        Label { text: "A"; }
+        Label { text: "B"; }
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert no shape setter is emitted, because the layout's derived default is the shape (§8.2)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_FALSE(contains(cpp.content, "set_columns"));
+    EXPECT_FALSE(contains(cpp.content, "set_rows"));
+}
+
+TEST(Codegen, ABoundGridShapeReachesTheLayoutOnEveryChange) {
+    // arrange a grid shape bound to a component property (§8.2, §13.3)
+    const std::string_view source = R"(
+component C {
+    in property<int> columns_count: 2;
+    Grid {
+        columns: columns_count;
+        Label { text: "A"; }
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the evaluator pushes the computed count through the same setter a constant uses (§13.3)
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "evaluate_0_columns"));
+    EXPECT_TRUE(contains(cpp.content, "->set_columns(value)"));
 }
 
 TEST(Codegen, ComboBoxPropertiesReachTheChoiceControl) {

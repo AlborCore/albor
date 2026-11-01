@@ -19,6 +19,10 @@ int main() {
         return 1;
     }
 
+    // the file dialog surface is part of the installed package, so the fixture names both symbols (§5.3, AD-19)
+    [[maybe_unused]] const auto open_dialog = &albor::Application::open_file;
+    [[maybe_unused]] const auto save_dialog = &albor::Application::save_file;
+
     // the framework's recommended runtime answered the link, which is what the package verifies (§3.3, AD-19)
     return application.run();
 }

@@ -2,6 +2,7 @@
 
 #include <optional>
 
+#include "automation/automation_protocol.h"
 #include "automation/capture_commands.h"
 #include "core/json.h"
 
@@ -69,6 +70,12 @@ namespace albor::automation
             // a state change names the node and the value it takes (§10.3)
             if (command == "semantic.set_focused")
                 return {"id", "value"};
+            // a text write names the node and the text it takes (§10.3)
+            if (command == "semantic.set_value")
+                return {"id", "value"};
+            // a typing command names the node and the text it types (§10.3)
+            if (command == "input.type")
+                return {"id", "text"};
             // a dump takes nothing, because it reports the whole tree (§10.3)
             if (command == "semantic.tree")
                 return {};
@@ -162,7 +169,7 @@ namespace albor::automation
                 // the separator is a space, which the protocol decodes back (§10.3)
                 line.push_back(' ');
                 // the argument joins the line, in the order the client wrote them (§10.3)
-                line += argument;
+                line += encode_argument(argument);
             }
             // the line is returned whole, which is what the layer decodes (§10.3)
             return line;

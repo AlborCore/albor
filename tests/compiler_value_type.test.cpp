@@ -372,6 +372,37 @@ TEST(ElementCatalog, ExposesTheListBoxProperties) {
     EXPECT_TRUE(catalog.find("ListBox")->find_property("viewport_height")->type.is(TypeKind::Float));
 }
 
+TEST(ElementCatalog, ExposesTheButtonDialogRoles) {
+    // arrange, act
+    const ElementCatalog catalog = ElementCatalog::with_builtins();
+    // assert the author can mark the two controls a dialog key runs (§8.3)
+    const ElementType* button = catalog.find("Button");
+    ASSERT_NE(button, nullptr);
+    ASSERT_NE(button->find_property("default"), nullptr);
+    ASSERT_NE(button->find_property("cancel"), nullptr);
+    EXPECT_TRUE(button->find_property("default")->type.is(TypeKind::Bool));
+    EXPECT_TRUE(button->find_property("cancel")->type.is(TypeKind::Bool));
+    EXPECT_TRUE(button->find_property("default")->assignable);
+    EXPECT_TRUE(button->find_property("cancel")->assignable);
+}
+
+TEST(ElementCatalog, ExposesTheGridShapeProperties) {
+    // arrange, act
+    const ElementCatalog catalog = ElementCatalog::with_builtins();
+    // assert the gap and the two cell counts are what a grid declares (§8.2)
+    const ElementType* grid = catalog.find("Grid");
+    ASSERT_NE(grid, nullptr);
+    ASSERT_NE(grid->find_property("spacing"), nullptr);
+    ASSERT_NE(grid->find_property("columns"), nullptr);
+    ASSERT_NE(grid->find_property("rows"), nullptr);
+    // assert both counts are integers, because a cell count is a whole number (§8.2)
+    EXPECT_TRUE(grid->find_property("columns")->type.is(TypeKind::Int));
+    EXPECT_TRUE(grid->find_property("rows")->type.is(TypeKind::Int));
+    // assert an author may write both, because the shape is what makes a grid a grid (§8.2)
+    EXPECT_TRUE(grid->find_property("columns")->assignable);
+    EXPECT_TRUE(grid->find_property("rows")->assignable);
+}
+
 TEST(ElementCatalog, ExposesTheListBoxActivatedSignal) {
     // arrange, act
     const ElementCatalog catalog = ElementCatalog::with_builtins();

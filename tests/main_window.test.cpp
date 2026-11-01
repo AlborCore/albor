@@ -11,6 +11,8 @@
 #include "platform/headless/headless_event_loop.h"
 #include "render/render-software/software_renderer_backend.h"
 #include "text/text_engine.h"
+#include "widgets/button.h"
+#include "widgets/text_field.h"
 #include "window/platform_window_factory.h"
 
 namespace
@@ -50,6 +52,41 @@ namespace
     // the builder that hands the application an empty column, which the pipeline owns on the window's behalf (§8.1)
     albor::RootBuilder empty_form() {
         return [](albor::BindingEngine&, albor::TextEngine&) { return std::make_unique<albor::ColumnLayout>(); };
+    }
+
+    // the dialog form the keyboard checks drive: one field, a default and a cancel button (§8.3)
+    albor::RootBuilder dialog_form(int& accepted, int& dismissed) {
+        return [&accepted, &dismissed](albor::BindingEngine& engine, albor::TextEngine& text) {
+            // the column stacks the field and the two keys, which is the shape of a form dialog (§8.2)
+            auto column = std::make_unique<albor::ColumnLayout>();
+            // the field is first, so it is where the caret enters when the dialog opens (§8.3)
+            auto field = std::make_unique<albor::TextField>(&engine, &text);
+            // the identity is what the initial focus check reads back (AD-11)
+            field->set_explicit_id("name");
+            // the field joins the column, which is the dialog root (§8.1)
+            column->add_child(std::move(field));
+            // the default button is the one a plain return runs (§8.3)
+            auto accept = std::make_unique<albor::Button>(&engine, &text, "OK");
+            // the identity names the control the key runs (AD-11)
+            accept->set_explicit_id("ok");
+            // the role is what makes the button the dialog default (§8.3)
+            accept->set_default(true);
+            // the click is counted, which is how the test observes the key (§8.3)
+            accept->set_on_click([&accepted] { accepted++; });
+            // the button joins the column (§8.1)
+            column->add_child(std::move(accept));
+            // the cancel button is the one a plain escape runs (§8.3)
+            auto cancel = std::make_unique<albor::Button>(&engine, &text, "Cancel");
+            // the identity names the control the key runs (AD-11)
+            cancel->set_explicit_id("cancel");
+            // the role is what makes the button the dialog cancel (§8.3)
+            cancel->set_cancel(true);
+            // the click is counted, which is how the test observes the key (§8.3)
+            cancel->set_on_click([&dismissed] { dismissed++; });
+            // the button joins the column (§8.1)
+            column->add_child(std::move(cancel));
+            return column;
+        };
     }
     // the leaf that closes its own popup on a press, which models a list row committing a choice (§8.3, §5.1)
     class PopupClosingLeaf final : public albor::UiNode
@@ -798,4 +835,526 @@ TEST(MainWindow, ShutdownClosesAnOpenPopupBeforeTheMainTree) {
     }
     // assert the shutdown was quiet, because its own teardown is not an outside dismissal (§5.1)
     EXPECT_EQ(dismissals, 0);
+}
+
+TEST(MainWindow, ClosingADialogGivesFocusBackToTheControlThatOpenedIt) {
+    // arrange the factories and a parent whose tree owns the control that opens the dialog (§5.3, §8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::RootBuilder opener = [](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column owns one identifiable button, which is the invoking control of §8.3
+        auto column = std::make_unique<albor::ColumnLayout>();
+        // the button measures through the engine, because it carries a caption (§9.1)
+        auto button = std::make_unique<albor::Button>(&engine, &text, "Open");
+        // the identity is what survives a rebuild, so it is what the dialog remembers (AD-11)
+        button->set_explicit_id("open_button");
+        // the button hangs under the column, which is the window tree (§8.1)
+        column->add_child(std::move(button));
+        return column;
+    };
+    albor::WindowOptions parent_options;
+    parent_options.title = "Parent";
+    const albor::WindowHandle parent = application.create_window(parent_options, opener);
+    ASSERT_TRUE(parent.valid());
+    // the frame arranges the tree, which is what gives the button bounds to focus (§8.2, §8.3)
+    application.pump();
+    // the invoking control is located by identity, which is how the framework finds it again (AD-11)
+    albor::UiNode* button = nullptr;
+    application.root(parent)->visit([&button](albor::UiNode& node) {
+        if (button == nullptr && node.identity().explicit_id == "open_button")
+            button = &node;
+    });
+    ASSERT_NE(button, nullptr);
+    application.stage(parent)->focus().request_focus(button);
+    ASSERT_EQ(application.stage(parent)->focus().focused(), button);
+    // act a window modal dialog opens, which remembers the control that opened it (§5.1)
+    albor::WindowOptions dialog_options;
+    dialog_options.role = albor::WindowRole::Dialog;
+    dialog_options.modality = albor::Modality::WindowModal;
+    dialog_options.title = "Dialog";
+    dialog_options.parent = parent;
+    const albor::WindowHandle dialog = application.create_window(dialog_options, empty_form());
+    ASSERT_TRUE(dialog.valid());
+    // the parent loses its focus while the dialog owns the interaction, which deactivation models (§5.1)
+    application.stage(parent)->focus().clear_focus();
+    EXPECT_EQ(application.stage(parent)->focus().focused(), nullptr);
+    // act the dialog closes, which is what returns the focus to the invoking control (§8.3)
+    EXPECT_TRUE(application.destroy_window(dialog));
+    // assert the parent is still open and its focus returned to the control that opened the dialog (§5.1)
+    EXPECT_NE(application.window(parent), nullptr);
+    EXPECT_EQ(application.stage(parent)->focus().focused(), button);
+    // cleanup
+    EXPECT_TRUE(application.destroy_window(parent));
+}
+
+TEST(MainWindow, ADialogOpensWithFocusOnItsFirstField) {
+    // arrange a parent and a form dialog, which is the shape the conventions describe (§8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::WindowOptions parent_options;
+    parent_options.title = "Parent";
+    const albor::WindowHandle parent = application.create_window(parent_options, empty_form());
+    ASSERT_TRUE(parent.valid());
+    int accepted = 0;
+    int dismissed = 0;
+    albor::WindowOptions dialog_options;
+    dialog_options.role = albor::WindowRole::Dialog;
+    dialog_options.modality = albor::Modality::WindowModal;
+    dialog_options.title = "Dialog";
+    dialog_options.parent = parent;
+    const albor::WindowHandle dialog = application.create_window(dialog_options, dialog_form(accepted, dismissed));
+    ASSERT_TRUE(dialog.valid());
+    // act the first frame arranges the tree, which is when focus has bounds to accept (§8.2, §8.3)
+    application.pump();
+    // assert the first field holds the focus, not the default or the cancel key (§8.3)
+    albor::UiNode* focused = application.stage(dialog)->focus().focused();
+    ASSERT_NE(focused, nullptr);
+    EXPECT_EQ(focused->identity().explicit_id, "name");
+    // cleanup
+    EXPECT_TRUE(application.destroy_window(dialog));
+    EXPECT_TRUE(application.destroy_window(parent));
+}
+
+TEST(MainWindow, ReturnRunsTheDialogDefault) {
+    // arrange a form dialog whose field holds the focus (§8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::WindowOptions parent_options;
+    parent_options.title = "Parent";
+    const albor::WindowHandle parent = application.create_window(parent_options, empty_form());
+    ASSERT_TRUE(parent.valid());
+    int accepted = 0;
+    int dismissed = 0;
+    albor::WindowOptions dialog_options;
+    dialog_options.role = albor::WindowRole::Dialog;
+    dialog_options.modality = albor::Modality::WindowModal;
+    dialog_options.title = "Dialog";
+    dialog_options.parent = parent;
+    const albor::WindowHandle dialog = application.create_window(dialog_options, dialog_form(accepted, dismissed));
+    ASSERT_TRUE(dialog.valid());
+    application.pump();
+    // act the field commits and leaves return, so the dialog default runs (§8.3)
+    albor::Event event{.kind = albor::EventKind::KeyDown, .key = albor::Key::Return};
+    application.window(dialog)->on_platform_event(event);
+    // assert the default ran once and the cancel did not (§8.3)
+    EXPECT_EQ(accepted, 1);
+    EXPECT_EQ(dismissed, 0);
+    // cleanup
+    EXPECT_TRUE(application.destroy_window(dialog));
+    EXPECT_TRUE(application.destroy_window(parent));
+}
+
+TEST(MainWindow, EscapeRunsTheDialogCancel) {
+    // arrange a form dialog whose field holds the focus (§8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::WindowOptions parent_options;
+    parent_options.title = "Parent";
+    const albor::WindowHandle parent = application.create_window(parent_options, empty_form());
+    ASSERT_TRUE(parent.valid());
+    int accepted = 0;
+    int dismissed = 0;
+    albor::WindowOptions dialog_options;
+    dialog_options.role = albor::WindowRole::Dialog;
+    dialog_options.modality = albor::Modality::WindowModal;
+    dialog_options.title = "Dialog";
+    dialog_options.parent = parent;
+    const albor::WindowHandle dialog = application.create_window(dialog_options, dialog_form(accepted, dismissed));
+    ASSERT_TRUE(dialog.valid());
+    application.pump();
+    // act escape reaches the dialog, because the field declines it (§8.3)
+    albor::Event event{.kind = albor::EventKind::KeyDown, .key = albor::Key::Escape};
+    application.window(dialog)->on_platform_event(event);
+    // assert the cancel key ran once and the default did not (§8.3)
+    EXPECT_EQ(dismissed, 1);
+    EXPECT_EQ(accepted, 0);
+    // cleanup
+    EXPECT_TRUE(application.destroy_window(dialog));
+    EXPECT_TRUE(application.destroy_window(parent));
+}
+
+TEST(MainWindow, ADialogCanOptOutOfItsKeyConventions) {
+    // arrange a dialog that declines both conventions (§8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::WindowOptions parent_options;
+    parent_options.title = "Parent";
+    const albor::WindowHandle parent = application.create_window(parent_options, empty_form());
+    ASSERT_TRUE(parent.valid());
+    int accepted = 0;
+    int dismissed = 0;
+    albor::WindowOptions dialog_options;
+    dialog_options.role = albor::WindowRole::Dialog;
+    dialog_options.modality = albor::Modality::WindowModal;
+    dialog_options.title = "Dialog";
+    dialog_options.parent = parent;
+    dialog_options.dialog.return_invokes_default = false;
+    dialog_options.dialog.escape_dismisses = false;
+    const albor::WindowHandle dialog = application.create_window(dialog_options, dialog_form(accepted, dismissed));
+    ASSERT_TRUE(dialog.valid());
+    application.pump();
+    // act both keys reach the dialog and nothing consumes them (§8.3)
+    albor::Event accept{.kind = albor::EventKind::KeyDown, .key = albor::Key::Return};
+    application.window(dialog)->on_platform_event(accept);
+    albor::Event dismiss{.kind = albor::EventKind::KeyDown, .key = albor::Key::Escape};
+    application.window(dialog)->on_platform_event(dismiss);
+    // assert neither key ran a control, which is what opting out means (§8.3)
+    EXPECT_EQ(accepted, 0);
+    EXPECT_EQ(dismissed, 0);
+    EXPECT_NE(application.window(dialog), nullptr);
+    // cleanup
+    EXPECT_TRUE(application.destroy_window(dialog));
+    EXPECT_TRUE(application.destroy_window(parent));
+}
+
+TEST(MainWindow, ADialogWithoutACancelAsksToCloseOnEscape) {
+    // arrange a dialog whose only key is the default, so escape has no control to run (§8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::WindowOptions parent_options;
+    parent_options.title = "Parent";
+    const albor::WindowHandle parent = application.create_window(parent_options, empty_form());
+    ASSERT_TRUE(parent.valid());
+    int accepted = 0;
+    albor::RootBuilder accept_only = [&accepted](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column stacks the field and one default key (§8.2)
+        auto column = std::make_unique<albor::ColumnLayout>();
+        // the field is the control the dialog opens on (§8.3)
+        auto field = std::make_unique<albor::TextField>(&engine, &text);
+        // the identity is what the focus check reads back (AD-11)
+        field->set_explicit_id("name");
+        // the field joins the column (§8.1)
+        column->add_child(std::move(field));
+        // the default key is the only control the dialog names (§8.3)
+        auto accept = std::make_unique<albor::Button>(&engine, &text, "OK");
+        // the identity names the control (AD-11)
+        accept->set_explicit_id("ok");
+        // the role makes return run it (§8.3)
+        accept->set_default(true);
+        // the click is counted (§8.3)
+        accept->set_on_click([&accepted] { accepted++; });
+        // the key joins the column (§8.1)
+        column->add_child(std::move(accept));
+        return column;
+    };
+    albor::WindowOptions dialog_options;
+    dialog_options.role = albor::WindowRole::Dialog;
+    dialog_options.modality = albor::Modality::WindowModal;
+    dialog_options.title = "Dialog";
+    dialog_options.parent = parent;
+    const albor::WindowHandle dialog = application.create_window(dialog_options, accept_only);
+    ASSERT_TRUE(dialog.valid());
+    application.pump();
+    // act escape reaches the dialog, which asks the application to close it (§8.3)
+    albor::Event event{.kind = albor::EventKind::KeyDown, .key = albor::Key::Escape};
+    application.window(dialog)->on_platform_event(event);
+    // assert the close is posted, because the stage that asked is still on the stack (§4.2)
+    EXPECT_NE(application.window(dialog), nullptr);
+    application.pump();
+    // assert the dialog closed and no default ran (§8.3)
+    EXPECT_EQ(application.window(dialog), nullptr);
+    EXPECT_EQ(accepted, 0);
+    // cleanup
+    EXPECT_TRUE(application.destroy_window(parent));
+}
+
+TEST(MainWindow, AVetoedEscapeLeavesTheDialogOpen) {
+    // arrange a dialog with no cancel key and a close handler that vetoes it (§5.2, §8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::WindowOptions parent_options;
+    parent_options.title = "Parent";
+    const albor::WindowHandle parent = application.create_window(parent_options, empty_form());
+    ASSERT_TRUE(parent.valid());
+    albor::WindowOptions dialog_options;
+    dialog_options.role = albor::WindowRole::Dialog;
+    dialog_options.modality = albor::Modality::WindowModal;
+    dialog_options.title = "Dialog";
+    dialog_options.parent = parent;
+    const albor::WindowHandle dialog = application.create_window(dialog_options, empty_form());
+    ASSERT_TRUE(dialog.valid());
+    application.set_close_handler([dialog](albor::WindowHandle handle) { return handle != dialog; });
+    application.pump();
+    // act escape asks to close, and the handler vetoes it (§5.2)
+    albor::Event event{.kind = albor::EventKind::KeyDown, .key = albor::Key::Escape};
+    application.window(dialog)->on_platform_event(event);
+    application.pump();
+    // assert the dialog is still open, because the veto is what a dirty form relies on (§5.2)
+    EXPECT_NE(application.window(dialog), nullptr);
+    // cleanup
+    application.set_close_handler({});
+    EXPECT_TRUE(application.destroy_window(dialog));
+    EXPECT_TRUE(application.destroy_window(parent));
+}
+
+TEST(MainWindow, ADialogWhoseFirstFocusableIsCancelFocusesTheDefault) {
+    // arrange a dialog whose cancel key is authored before its default, which is the conventional macOS order (§8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::WindowOptions parent_options;
+    parent_options.title = "Parent";
+    const albor::WindowHandle parent = application.create_window(parent_options, empty_form());
+    ASSERT_TRUE(parent.valid());
+    int accepted = 0;
+    int dismissed = 0;
+    albor::RootBuilder keys = [&accepted, &dismissed](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column holds the two keys, with cancel first (§8.2)
+        auto column = std::make_unique<albor::ColumnLayout>();
+        // the cancel key is authored first, so a naive walk would focus it (§8.3)
+        auto cancel = std::make_unique<albor::Button>(&engine, &text, "Cancel");
+        // the identity names the control (AD-11)
+        cancel->set_explicit_id("cancel");
+        // the role makes escape run it (§8.3)
+        cancel->set_cancel(true);
+        // the click is counted (§8.3)
+        cancel->set_on_click([&dismissed] { dismissed++; });
+        // the key joins the column (§8.1)
+        column->add_child(std::move(cancel));
+        // the default key follows it (§8.3)
+        auto accept = std::make_unique<albor::Button>(&engine, &text, "OK");
+        // the identity names the control (AD-11)
+        accept->set_explicit_id("ok");
+        // the role makes return run it (§8.3)
+        accept->set_default(true);
+        // the click is counted (§8.3)
+        accept->set_on_click([&accepted] { accepted++; });
+        // the key joins the column (§8.1)
+        column->add_child(std::move(accept));
+        return column;
+    };
+    albor::WindowOptions dialog_options;
+    dialog_options.role = albor::WindowRole::Dialog;
+    dialog_options.modality = albor::Modality::WindowModal;
+    dialog_options.title = "Dialog";
+    dialog_options.parent = parent;
+    const albor::WindowHandle dialog = application.create_window(dialog_options, keys);
+    ASSERT_TRUE(dialog.valid());
+    // act the first frame arranges the tree and places the focus (§8.3)
+    application.pump();
+    // assert the default holds the focus, because focusing cancel would make return cancel (§8.3)
+    albor::UiNode* focused = application.stage(dialog)->focus().focused();
+    ASSERT_NE(focused, nullptr);
+    EXPECT_EQ(focused->identity().explicit_id, "ok");
+    // assert return runs the default and not the cancel (§8.3)
+    albor::Event event{.kind = albor::EventKind::KeyDown, .key = albor::Key::Return};
+    application.window(dialog)->on_platform_event(event);
+    EXPECT_EQ(accepted, 1);
+    EXPECT_EQ(dismissed, 0);
+    // cleanup
+    EXPECT_TRUE(application.destroy_window(dialog));
+    EXPECT_TRUE(application.destroy_window(parent));
+}
+
+TEST(MainWindow, EscapeDoesNotCloseWhenTheCancelControlIsDisabled) {
+    // arrange a dialog whose cancel key exists but refuses the press (§8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::WindowOptions parent_options;
+    parent_options.title = "Parent";
+    const albor::WindowHandle parent = application.create_window(parent_options, empty_form());
+    ASSERT_TRUE(parent.valid());
+    int dismissed = 0;
+    albor::RootBuilder keys = [&dismissed](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column holds the disabled cancel and a default (§8.2)
+        auto column = std::make_unique<albor::ColumnLayout>();
+        // the cancel key refuses the press while a save is in flight (§8.3)
+        auto cancel = std::make_unique<albor::Button>(&engine, &text, "Cancel");
+        // the identity names the control (AD-11)
+        cancel->set_explicit_id("cancel");
+        // the role makes escape run it, even while disabled (§8.3)
+        cancel->set_cancel(true);
+        // the click is counted, which must stay zero (§8.3)
+        cancel->set_on_click([&dismissed] { dismissed++; });
+        // the key refuses input (§8.3)
+        cancel->set_disabled(true);
+        // the key joins the column (§8.1)
+        column->add_child(std::move(cancel));
+        // the default key follows it (§8.3)
+        auto accept = std::make_unique<albor::Button>(&engine, &text, "OK");
+        // the identity names the control (AD-11)
+        accept->set_explicit_id("ok");
+        // the role makes return run it (§8.3)
+        accept->set_default(true);
+        // the key joins the column (§8.1)
+        column->add_child(std::move(accept));
+        return column;
+    };
+    albor::WindowOptions dialog_options;
+    dialog_options.role = albor::WindowRole::Dialog;
+    dialog_options.modality = albor::Modality::WindowModal;
+    dialog_options.title = "Dialog";
+    dialog_options.parent = parent;
+    const albor::WindowHandle dialog = application.create_window(dialog_options, keys);
+    ASSERT_TRUE(dialog.valid());
+    application.pump();
+    // act escape reaches the dialog, whose cancel is disabled (§8.3)
+    albor::Event event{.kind = albor::EventKind::KeyDown, .key = albor::Key::Escape};
+    application.window(dialog)->on_platform_event(event);
+    // assert the dialog stays open, because the authored cancel owns the key even while it refuses (§8.3)
+    EXPECT_NE(application.window(dialog), nullptr);
+    EXPECT_EQ(dismissed, 0);
+    // cleanup
+    EXPECT_TRUE(application.destroy_window(dialog));
+    EXPECT_TRUE(application.destroy_window(parent));
+}
+
+TEST(MainWindow, ClosingTheDialogFromItsControlHandlerDoesNotUseTheStage) {
+    // arrange a dialog whose cancel handler closes the dialog, which is the normal application pattern (§8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::WindowOptions parent_options;
+    parent_options.title = "Parent";
+    const albor::WindowHandle parent = application.create_window(parent_options, empty_form());
+    ASSERT_TRUE(parent.valid());
+    albor::WindowHandle dialog_handle;
+    albor::RootBuilder keys = [&application, &dialog_handle](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column holds the cancel and a default (§8.2)
+        auto column = std::make_unique<albor::ColumnLayout>();
+        // the cancel key closes the dialog through the one veto path (§5.2)
+        auto cancel = std::make_unique<albor::Button>(&engine, &text, "Cancel");
+        // the identity names the control (AD-11)
+        cancel->set_explicit_id("cancel");
+        // the role makes escape run it (§8.3)
+        cancel->set_cancel(true);
+        // the handler closes the window it belongs to, which must not free the stage mid dispatch (§4.2)
+        cancel->set_on_click([&application, &dialog_handle] { (void)application.request_close(dialog_handle); });
+        // the key joins the column (§8.1)
+        column->add_child(std::move(cancel));
+        // the default key follows it (§8.3)
+        auto accept = std::make_unique<albor::Button>(&engine, &text, "OK");
+        // the identity names the control (AD-11)
+        accept->set_explicit_id("ok");
+        // the role makes return run it (§8.3)
+        accept->set_default(true);
+        // the key joins the column (§8.1)
+        column->add_child(std::move(accept));
+        return column;
+    };
+    albor::WindowOptions dialog_options;
+    dialog_options.role = albor::WindowRole::Dialog;
+    dialog_options.modality = albor::Modality::WindowModal;
+    dialog_options.title = "Dialog";
+    dialog_options.parent = parent;
+    dialog_handle = application.create_window(dialog_options, keys);
+    ASSERT_TRUE(dialog_handle.valid());
+    application.pump();
+    // act escape presses cancel, whose handler asks to close the dialog (§8.3)
+    albor::Event event{.kind = albor::EventKind::KeyDown, .key = albor::Key::Escape};
+    application.window(dialog_handle)->on_platform_event(event);
+    // assert the teardown ran after the dispatch returned, so the stage was never read after release (§4.2)
+    EXPECT_EQ(application.window(dialog_handle), nullptr);
+    // cleanup
+    EXPECT_TRUE(application.destroy_window(parent));
+}
+
+TEST(MainWindow, MultilineReturnDoesNotRunTheDialogDefault) {
+    // arrange a dialog whose focused field edits a document (§8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::WindowOptions parent_options;
+    parent_options.title = "Parent";
+    const albor::WindowHandle parent = application.create_window(parent_options, empty_form());
+    ASSERT_TRUE(parent.valid());
+    int accepted = 0;
+    albor::TextField* notes = nullptr;
+    albor::RootBuilder form = [&accepted, &notes](albor::BindingEngine& engine, albor::TextEngine& text) {
+        // the column holds the multi line field and the default key (§8.2)
+        auto column = std::make_unique<albor::ColumnLayout>();
+        // the field edits a document, so return inserts a break (§8)
+        auto field = std::make_unique<albor::TextField>(&engine, &text, "line");
+        // the identity names the control (AD-11)
+        field->set_explicit_id("notes");
+        // the field edits more than one line (§8)
+        field->set_multiline(true);
+        // the caret stands past the seeded text, which is where a seeded field continues (§8.3)
+        field->set_caret(4);
+        // the test reads the value back through the control (§8.3)
+        notes = field.get();
+        // the field joins the column (§8.1)
+        column->add_child(std::move(field));
+        // the default key follows it (§8.3)
+        auto accept = std::make_unique<albor::Button>(&engine, &text, "OK");
+        // the identity names the control (AD-11)
+        accept->set_explicit_id("ok");
+        // the role makes return run it when nothing claimed the key (§8.3)
+        accept->set_default(true);
+        // the click is counted, which must stay zero (§8.3)
+        accept->set_on_click([&accepted] { accepted++; });
+        // the key joins the column (§8.1)
+        column->add_child(std::move(accept));
+        return column;
+    };
+    albor::WindowOptions dialog_options;
+    dialog_options.role = albor::WindowRole::Dialog;
+    dialog_options.modality = albor::Modality::WindowModal;
+    dialog_options.title = "Dialog";
+    dialog_options.parent = parent;
+    const albor::WindowHandle dialog = application.create_window(dialog_options, form);
+    ASSERT_TRUE(dialog.valid());
+    application.pump();
+    // act return reaches the focused field, which inserts a break (§8.3)
+    albor::Event event{.kind = albor::EventKind::KeyDown, .key = albor::Key::Return};
+    application.window(dialog)->on_platform_event(event);
+    // assert the break is the edit and the default did not run (§8.3)
+    ASSERT_NE(notes, nullptr);
+    EXPECT_EQ(notes->value(), "line\n");
+    EXPECT_EQ(accepted, 0);
+    // cleanup
+    EXPECT_TRUE(application.destroy_window(dialog));
+    EXPECT_TRUE(application.destroy_window(parent));
+}
+
+TEST(MainWindow, InitialFocusIsNotPlacedBeforeTheFirstFrame) {
+    // arrange a dialog whose tree has not been arranged yet (§8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::WindowOptions parent_options;
+    parent_options.title = "Parent";
+    const albor::WindowHandle parent = application.create_window(parent_options, empty_form());
+    ASSERT_TRUE(parent.valid());
+    int accepted = 0;
+    int dismissed = 0;
+    albor::WindowOptions dialog_options;
+    dialog_options.role = albor::WindowRole::Dialog;
+    dialog_options.modality = albor::Modality::WindowModal;
+    dialog_options.title = "Dialog";
+    dialog_options.parent = parent;
+    const albor::WindowHandle dialog = application.create_window(dialog_options, dialog_form(accepted, dismissed));
+    ASSERT_TRUE(dialog.valid());
+    // assert focus needs bounds, so it is not placed before the arrange pass (§8.2, §8.3)
+    EXPECT_EQ(application.stage(dialog)->focus().focused(), nullptr);
+    // act
+    application.pump();
+    // assert the first frame placed it (§8.3)
+    EXPECT_NE(application.stage(dialog)->focus().focused(), nullptr);
+    // cleanup
+    EXPECT_TRUE(application.destroy_window(dialog));
+    EXPECT_TRUE(application.destroy_window(parent));
+}
+
+TEST(MainWindow, FocusFirstControlOffLeavesTheFocusWhereItWas) {
+    // arrange a dialog that declines the initial focus convention (§8.3)
+    InstalledScope scope;
+    albor::Application& application = albor::Application::instance();
+    albor::WindowOptions parent_options;
+    parent_options.title = "Parent";
+    const albor::WindowHandle parent = application.create_window(parent_options, empty_form());
+    ASSERT_TRUE(parent.valid());
+    int accepted = 0;
+    int dismissed = 0;
+    albor::WindowOptions dialog_options;
+    dialog_options.role = albor::WindowRole::Dialog;
+    dialog_options.modality = albor::Modality::WindowModal;
+    dialog_options.title = "Dialog";
+    dialog_options.parent = parent;
+    dialog_options.dialog.focus_first_control = false;
+    const albor::WindowHandle dialog = application.create_window(dialog_options, dialog_form(accepted, dismissed));
+    ASSERT_TRUE(dialog.valid());
+    // act
+    application.pump();
+    // assert nothing took the focus, which is what the convention flag controls (§8.3)
+    EXPECT_EQ(application.stage(dialog)->focus().focused(), nullptr);
+    // cleanup
+    EXPECT_TRUE(application.destroy_window(dialog));
+    EXPECT_TRUE(application.destroy_window(parent));
 }

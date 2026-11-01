@@ -429,6 +429,176 @@ TEST(SemanticCommands, AnEditableNodeWithNoValueCarriesNoValueToken) {
     EXPECT_NE(result.payload.find("textfield field Notes"), std::string::npos);
 }
 
+TEST(SemanticCommands, SettingAValueWritesThroughTheControl) {
+    // arrange a field whose write records the text a client sets (§10.1, §10.3)
+    AutomationRegistry registry;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::TextField});
+    tree.mutable_at(0)->set_explicit_id("field");
+    tree.mutable_at(0)->set_name("Notes");
+    tree.mutable_at(0)->set_value("before");
+    std::string written;
+    tree.mutable_at(0)->set_value_action([&written](std::string_view text, SemanticValueState& state) {
+        written = std::string(text);
+        state.value = written;
+        return true;
+    });
+    register_semantic_commands(registry, [&tree] { return &tree; });
+    for (const std::string& name : semantic_command_names())
+        registry.allow(name);
+    AutomationSession session(registry);
+    (void)session.handle(encode_handshake(session.token()));
+    // act
+    const AutomationResult result = session.handle("semantic.set_value field after");
+    // assert the command reached the control, which is the real edit path (§10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_EQ(written, "after");
+    // assert the next dump reads the text a client just wrote and marks the node writable (§10.2, §10.3)
+    const AutomationResult dump = session.handle("semantic.tree");
+    ASSERT_TRUE(dump.ok);
+    EXPECT_NE(dump.payload.find("textfield field Notes value=after writable"), std::string::npos);
+}
+
+TEST(SemanticCommands, SettingAValueCarriesASpaceThroughTheWire) {
+    // arrange a field whose write records the text, which a path makes long enough to hold spaces (§10.3)
+    AutomationRegistry registry;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::TextField});
+    tree.mutable_at(0)->set_explicit_id("path");
+    std::string written;
+    tree.mutable_at(0)->set_value_action([&written](std::string_view text, SemanticValueState& state) {
+        written = std::string(text);
+        state.value = written;
+        return true;
+    });
+    register_semantic_commands(registry, [&tree] { return &tree; });
+    for (const std::string& name : semantic_command_names())
+        registry.allow(name);
+    AutomationSession session(registry);
+    (void)session.handle(encode_handshake(session.token()));
+    // act a value the positional wire can only carry escaped (§10.3)
+    const AutomationResult result = session.handle("semantic.set_value path C:%5CProgram%20Files%5Cxyce.exe");
+    // assert the space survived the transport and reached the control (§10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_EQ(written, "C:\\Program Files\\xyce.exe");
+}
+
+TEST(SemanticCommands, SettingAValueWithoutAWriteIsRefused) {
+    // arrange a label that carries text but accepts no write (§10.1)
+    AutomationRegistry registry;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::Label});
+    tree.mutable_at(0)->set_explicit_id("caption");
+    tree.mutable_at(0)->set_value("fixed");
+    register_semantic_commands(registry, [&tree] { return &tree; });
+    for (const std::string& name : semantic_command_names())
+        registry.allow(name);
+    AutomationSession session(registry);
+    (void)session.handle(encode_handshake(session.token()));
+    // act
+    const AutomationResult result = session.handle("semantic.set_value caption changed");
+    // assert the refusal names the selector, because a client must know which node it could not write (§10.3)
+    EXPECT_FALSE(result.ok);
+    EXPECT_NE(result.error.find("no writable value on node: caption"), std::string::npos);
+}
+
+TEST(SemanticCommands, SettingAValueOnAReadOnlyFieldIsRefused) {
+    // arrange a read only field whose write would run if the state allowed it (§10.1)
+    AutomationRegistry registry;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::TextField});
+    tree.mutable_at(0)->set_explicit_id("field");
+    tree.mutable_at(0)->set_read_only(true);
+    bool ran = false;
+    tree.mutable_at(0)->set_value_action([&ran](std::string_view, SemanticValueState&) {
+        ran = true;
+        return true;
+    });
+    register_semantic_commands(registry, [&tree] { return &tree; });
+    for (const std::string& name : semantic_command_names())
+        registry.allow(name);
+    AutomationSession session(registry);
+    (void)session.handle(encode_handshake(session.token()));
+    // act
+    const AutomationResult result = session.handle("semantic.set_value field changed");
+    // assert a read only control refuses the edit, which the command reports rather than ignores (§10.1, §10.3)
+    EXPECT_FALSE(result.ok);
+    EXPECT_FALSE(ran);
+}
+
+TEST(SemanticCommands, SettingAnEmptyValueClearsTheField) {
+    // arrange a field whose write records the text and reports what it now holds (§10.2)
+    AutomationRegistry registry;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::TextField});
+    tree.mutable_at(0)->set_explicit_id("field");
+    tree.mutable_at(0)->set_value("before");
+    std::string written;
+    tree.mutable_at(0)->set_value_action([&written](std::string_view text, SemanticValueState& state) {
+        written = std::string(text);
+        state.value = written;
+        return true;
+    });
+    register_semantic_commands(registry, [&tree] { return &tree; });
+    for (const std::string& name : semantic_command_names())
+        registry.allow(name);
+    AutomationSession session(registry);
+    (void)session.handle(encode_handshake(session.token()));
+    // act the trailing empty argument, which the wire now carries (§10.3)
+    const AutomationResult result = session.handle("semantic.set_value field ");
+    // assert the empty text reached the control and cleared the published value (§10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_EQ(written, "");
+    const AutomationResult dump = session.handle("semantic.tree");
+    ASSERT_TRUE(dump.ok);
+    EXPECT_EQ(dump.payload.find("value="), std::string::npos);
+}
+
+TEST(SemanticCommands, SettingAValueOnADisabledFieldIsRefused) {
+    // arrange a disabled field whose write would run if the state allowed it (§10.1)
+    AutomationRegistry registry;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::TextField});
+    tree.mutable_at(0)->set_explicit_id("field");
+    tree.mutable_at(0)->set_disabled(true);
+    bool ran = false;
+    tree.mutable_at(0)->set_value_action([&ran](std::string_view, SemanticValueState&) {
+        ran = true;
+        return true;
+    });
+    register_semantic_commands(registry, [&tree] { return &tree; });
+    for (const std::string& name : semantic_command_names())
+        registry.allow(name);
+    AutomationSession session(registry);
+    (void)session.handle(encode_handshake(session.token()));
+    // act
+    const AutomationResult result = session.handle("semantic.set_value field changed");
+    // assert a disabled control refuses the edit, which the command reports rather than ignores (§10.1, §10.3)
+    EXPECT_FALSE(result.ok);
+    EXPECT_FALSE(ran);
+}
+
+TEST(SemanticCommands, SettingAValueNeedsAnIdAndAValue) {
+    // arrange a permitted tree with one field (§10.3)
+    AutomationRegistry registry;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::TextField});
+    tree.mutable_at(0)->set_explicit_id("field");
+    register_semantic_commands(registry, [&tree] { return &tree; });
+    for (const std::string& name : semantic_command_names())
+        registry.allow(name);
+    AutomationSession session(registry);
+    (void)session.handle(encode_handshake(session.token()));
+    // act
+    const AutomationResult no_id = session.handle("semantic.set_value");
+    const AutomationResult no_value = session.handle("semantic.set_value field");
+    // assert each refusal names the argument it was missing, because guessing one selects the wrong node (§10.3)
+    EXPECT_FALSE(no_id.ok);
+    EXPECT_FALSE(no_value.ok);
+    EXPECT_NE(no_id.error.find("needs an id"), std::string::npos);
+    EXPECT_NE(no_value.error.find("needs a value"), std::string::npos);
+}
+
 TEST(SemanticCommands, TheEditableStatesAppearInTheDumpWhenTheyHold) {
     // arrange a tree whose field is read only and spans lines (§10.1)
     AutomationRegistry registry;

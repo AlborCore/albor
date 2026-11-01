@@ -372,6 +372,8 @@ The tool schema currently names parameters only for the semantic pack. With the 
 
 | command | parameter names |
 | --- | --- |
+| `semantic.set_value` | `id`, `value` |
+| `input.type` | `id`, `text` |
 | `command.list` | none |
 | `command.get` | `id` |
 | `command.invoke` | `id`, `argument` (optional) |
@@ -397,14 +399,25 @@ The transport must still return `false` only for listener-level failure; a dead 
 
 The host explicitly allows exactly these registered commands:
 
-- semantic: `semantic.tree`, `semantic.find`, `semantic.invoke`, `semantic.actions`, `semantic.set_focused`;
+- semantic: `semantic.tree`, `semantic.find`, `semantic.invoke`, `semantic.actions`, `semantic.set_value`, `semantic.set_focused`;
+- input: `input.type`;
 - command: `command.list`, `command.get`, `command.invoke`, `command.can_undo`, `command.undo`, `command.redo`;
 - capture: `capture.screenshot`.
 
 An answer states its shape. The wire writes `!ok <kind> <payload>` with `text`, `number`,
 `boolean`, `json`, `image` or `binary`; a scalar payload escapes its newlines so one reply stays
-one line, and an `image` or `binary` payload is base64. `capture.screenshot` takes an optional
-`format`, answers `png` (an `image`) by default and `raw` (a `binary` frame whose 24-byte
+one line, and an `image` or `binary` payload is base64. A request is `command argument ...`,
+positional and space separated, and an argument that must carry a space, a tab, a carriage return
+or a newline percent-escapes it (`%20`, `%09`, `%0D`, `%0A`, and `%25` for a literal percent). The
+MCP adapter performs the same escape when it renders a named call, so a value such as
+`C:\Program Files\xyce.exe` reaches `semantic.set_value` intact. A raw client that previously sent a
+literal `%20` must now write `%2520`, because `%XX` is an escape on every argument. `semantic.set_value` takes the
+node `id` and the text to write, and it writes through the control's own edit path: the write
+records one undo entry, fires `on_change`, and replaces the whole value. It is not an
+insertion at the caret. `input.type` is the typing path: it focuses the node and delivers one
+`TextInput` event per code point through the window stage, so a client exercises the same path a
+keyboard does. A `semantic.tree` line marks a node a client may write with ` writable`. `capture.screenshot` takes an
+optional `format`, answers `png` (an `image`) by default and `raw` (a `binary` frame whose 24-byte
 `ALBRSHOT` header names the extent, stride and premultiplied rgba8 layout) when asked. A capture
 flushes the render executor and returns the last frame the window presented; it never rebuilds
 one, so a mutation issued in the same transport pass is visible only to a later capture.
@@ -570,7 +583,7 @@ The test:
 4. reads `$TMPDIR/albor-mcp/<pid>/host.json` and the token;
 5. connects to the socket and sends MCP `initialize` with `_meta["albor/token"]`;
 6. sends `notifications/initialized` and asserts no reply is required;
-7. calls `tools/list` and asserts all twelve standard tools are present;
+7. calls `tools/list` and asserts all fourteen standard tools are present;
 8. calls `semantic.tree` and asserts the `root` id is reported;
 9. calls `command.invoke` by named `id` and asserts the action ran on the UI thread;
 10. calls `tools/list` before authentication in a second connection, after closing the first, and asserts refusal;
@@ -687,7 +700,7 @@ Add a "Transparent host baseline" section to the issue body:
 
 - the sample application runs the embedded host through `albor-devrt-auto` / `albor-automation-auto`, with no `Drivable` wiring;
 - the reference test discovers `host.json`, reads the token, initializes MCP with `_meta["albor/token"]`, and drives the app over the local transport;
-- the test asserts the default twelve-tool surface, semantic lookup/invoke, command lookup/invoke, capture refusal, token refusal, and endpoint cleanup;
+- the test asserts the default fourteen-tool surface, semantic lookup/invoke, command lookup/invoke, capture refusal, token refusal, and endpoint cleanup;
 - keep the existing requirements for layout bounds, input, capture, and a real sample application;
 - name `albor-form` as the intended sample once it migrates to the transparent host.
 
@@ -723,7 +736,7 @@ Update the issue from "raw automation protocol client" to "MCP client over the l
 
 - A fresh external Dev application sets `ALBOR_DEV=ON`, `ALBOR_AUTOMATION=ON`, links `albor-devrt-auto`, and writes no automation code; its MCP host starts when its first window is created.
 - `host.json`, `token`, and `mcp.sock` exist with the stated names, locations, and permissions.
-- An MCP client authenticates with the token from `initialize.params._meta["albor/token"]`, lists all twelve standard tools, drives the semantic tree, invokes an application command by explicit id, and reads a screenshot.
+- An MCP client authenticates with the token from `initialize.params._meta["albor/token"]`, lists all fourteen standard tools, drives the semantic tree, invokes an application command by explicit id, and reads a screenshot.
 - A wrong or missing token is refused; a tool call before initialization is refused.
 - Closing the last tree removes the endpoint directory; opening another tree starts a new host with a new token.
 - An application that links `albor-devrt-auto` with `ALBOR_AUTOMATION=OFF` still gets hot reload and no automation symbols.

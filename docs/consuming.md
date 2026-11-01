@@ -203,6 +203,40 @@ The same rules apply to every composition:
 - The debug/test build configurations use different registrations; keep the matching
   configuration for every target in one application.
 
+## Windows and dialogs
+
+A window is created through `Application::create_window`. `WindowOptions` names its role
+(`Normal`, `Dialog`, `Tool`, `Popup`), its modality (`None`, `WindowModal`, `ApplicationModal`)
+and the parent it belongs to. Role and modality are separate (AD-08): the role is the native
+window style, the modality is a framework constraint enforced before any event reaches a stage.
+
+- `WindowModal` blocks its parent window; `ApplicationModal` blocks every other window that was
+  already open. A modal never blocks a newer window or one that descends from it, which is what
+  keeps the newest dialog interactive.
+- A child window closes with its owner. The owner's own close is vetoable once through
+  `Application::set_close_handler`; a granted close cascades, a vetoed one leaves the subtree open.
+- A `Dialog` also follows `WindowOptions::dialog`, a `DialogConventions` record with
+  `escape_dismisses`, `return_invokes_default` and `focus_first_control`. Escape runs the control
+  marked `cancel: true` or, when the tree names none, asks to close through the same veto path.
+  Return runs the control marked `default: true` when the focused control declined the key.
+  Declaring a non-default record on another role is refused by validation.
+- A dialog created with `visible: false` is not activated when it is created, which is how a host
+  seeds it before the first frame; `Window::show()` activates it afterwards.
+- `Application` installs every per-window handler when it creates a window, so an application
+  observes through `set_close_handler`, `set_closed_handler`, `set_input_handler` and the other
+  application setters. Replacing a `Window`'s own handlers after creation disables routing.
+- `Application::request_close(handle)` is the close that consults the veto; `destroy_window` is the
+  unconditional teardown the host uses on shutdown.
+
+`Application::open_file` and `Application::save_file` run a native panel owned by the window the
+options name, and answer `std::optional<std::filesystem::path>` where `nullopt` is a cancel. A
+filter names a label and bare extensions (`{"kicad_sch", "kicad_pcb"}`), the save options carry a
+proposed name, and an initial directory is UTF-8. The label is the Windows filter row; macOS
+unions the extensions and offers no per-filter choice. Both calls are synchronous and UI-thread
+only: the platform panel runs its own native loop, so framework frames do not present while it is
+up. The headless backend answers from a scripted queue, which is what lets automation exercise the
+calling flow without a window server.
+
 ## Using `.ui` files and fonts
 
 The shared CMake helpers are available after `FetchContent_MakeAvailable(albor)`, and the

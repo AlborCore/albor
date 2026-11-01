@@ -225,6 +225,33 @@ TEST(Win32PopupWindow, ADialogIsOwnedByItsParent) {
     EXPECT_EQ(GetWindow(dialog_window, GW_OWNER), owner_window);
 }
 
+TEST(Win32PopupWindow, ActivatingADialogKeepsItFocused) {
+    // arrange an owner and a dialog owned by it (§5.1)
+    WindowOptions owner_options;
+    owner_options.title = "dialog-activate-owner";
+    owner_options.size = Size{320.0f, 240.0f};
+    std::unique_ptr<Win32PlatformWindow> owner = Win32PlatformWindow::create(owner_options);
+    ASSERT_NE(owner, nullptr);
+    HWND owner_window = static_cast<HWND>(const_cast<void*>(owner->native_window_handle().object()));
+    ASSERT_NE(owner_window, nullptr);
+    owner->show();
+    WindowOptions dialog_options;
+    dialog_options.role = WindowRole::Dialog;
+    dialog_options.title = "dialog-activate";
+    dialog_options.size = Size{180.0f, 120.0f};
+    dialog_options.native_parent = owner->native_window_handle();
+    std::unique_ptr<Win32PlatformWindow> dialog = Win32PlatformWindow::create(dialog_options);
+    ASSERT_NE(dialog, nullptr);
+    HWND dialog_window = static_cast<HWND>(const_cast<void*>(dialog->native_window_handle().object()));
+    ASSERT_NE(dialog_window, nullptr);
+    dialog->show();
+    // act the framework brings an already visible dialog back, which is what closing another one needs (§5.1)
+    dialog->activate();
+    // assert the dialog holds the thread focus and stays owned by its parent (§5.1)
+    EXPECT_EQ(GetFocus(), dialog_window);
+    EXPECT_EQ(GetWindow(dialog_window, GW_OWNER), owner_window);
+}
+
 TEST(Win32PopupWindow, MovingTheOwnerMovesThePopupWithIt) {
     // arrange an owner at a known screen point and a popup anchored inside it (§5.1)
     WindowOptions owner_options;

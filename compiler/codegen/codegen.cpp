@@ -1111,6 +1111,8 @@ namespace albor::compiler
                 {"Row.spacing", "set_gap"},
                 {"Padding.padding", "set_padding"},
                 {"Grid.spacing", "set_gap"},
+                {"Grid.columns", "set_columns"},
+                {"Grid.rows", "set_rows"},
                 {"Panel.padding", "set_padding"},
                 {"Panel.spacing", "set_spacing"},
                 {"Panel.background", "set_background"},
@@ -1131,6 +1133,8 @@ namespace albor::compiler
                 {"Button.icon_size", "set_icon_size"},
                 {"Button.background", "set_background"},
                 {"Button.disabled", "set_disabled"},
+                {"Button.default", "set_default"},
+                {"Button.cancel", "set_cancel"},
                 {"Button.action", "set_command"},
                 {"Button.command", "set_command"},
                 {"Slider.value", "set_value"},
@@ -3430,8 +3434,8 @@ namespace albor::compiler
                 line(2, cls + "* const n" + std::to_string(slot.index) + " = static_cast<" + cls + "*>(row_root);");
                 return;
             }
-            // the parent is the node one step up, because preorder guarantees it was reached already (§8.1, §18.1)
-            const std::size_t parent = slot.row_path.at(slot.row_path.size() - 2);
+            // the parent is the slot that adopted this node, which preorder reached already (§8.1, §18.1)
+            const std::size_t parent = slot.parent;
             // the step is the child position under the parent, which the walk recorded (§8.1, §18.1)
             const std::size_t position = slot.row_path.back();
             // the node is reached by its child position, which keeps the shape the author wrote (§18.1)

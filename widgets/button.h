@@ -7,6 +7,7 @@
 
 #include "commands/command_invocation.h"
 #include "text/text_engine.h"
+#include "ui/dialog_control.h"
 #include "widgets/widget.h"
 
 namespace albor
@@ -15,7 +16,7 @@ namespace albor
     class ImageResource;
 
     // the widget that performs an action when it is pressed, which is a push control (§8)
-    class Button final : public Widget
+    class Button final : public Widget, public DialogControl
     {
     public:
         // build a button over the engines it reads, with a default plate and an empty label (§8, AD-14)
@@ -59,6 +60,21 @@ namespace albor
 
         // replace the work a press performs, which is what the activate action and the click path both run (§8.3, §10.1)
         void set_on_click(std::function<void()> handler);
+
+        // mark the button as the dialog's default, which return runs when nothing claimed it (§8.3)
+        void set_default(bool is_default);
+
+        // report whether the button is the dialog's default (§8.3)
+        [[nodiscard]] bool is_default() const override;
+
+        // mark the button as the dialog's cancel, which escape runs when nothing claimed it (§8.3)
+        void set_cancel(bool is_cancel);
+
+        // report whether the button is the dialog's cancel (§8.3)
+        [[nodiscard]] bool is_cancel() const override;
+
+        // run the same activation a click runs, which is what a dialog key asks for (§8.3)
+        void press() override;
 
         // refuse or accept input, which redraws and changes what a press does (§8.3)
         void set_disabled(bool disabled);
@@ -109,6 +125,12 @@ namespace albor
 
         // whether the button refuses input (§8.3)
         bool m_disabled = false;
+
+        // whether the button is the dialog's default control (§8.3)
+        bool m_default = false;
+
+        // whether the button is the dialog's cancel control (§8.3)
+        bool m_cancel = false;
 
         // the plate colours the button resolves through, which are the installed palette when a theme is present (§6.1)
         [[nodiscard]] const Color* plate_colors() const;

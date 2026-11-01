@@ -1,7 +1,6 @@
 #include "automation/automation_protocol.h"
 
 #include <cstdint>
-#include <sstream>
 #include <utility>
 
 namespace albor::automation
@@ -16,6 +15,21 @@ namespace albor::automation
 
         // the prefix an answer carries, because a client reads it rather than guessing (§10.3)
         constexpr std::string_view ANSWER = "!ok ";
+
+        // the value one hexadecimal digit stands for, or -1 when the byte is not a digit (§10.3)
+        int hex_value(char digit) {
+            // a decimal digit is its own value, which is the first half of every escape (§10.3)
+            if (digit >= '0' && digit <= '9')
+                return digit - '0';
+            // an upper case letter continues after nine, which the encoder writes (§10.3)
+            if (digit >= 'A' && digit <= 'F')
+                return digit - 'A' + 10;
+            // a lower case letter is accepted too, because a hand written client may spell it (§10.3)
+            if (digit >= 'a' && digit <= 'f')
+                return digit - 'a' + 10;
+            // anything else is not a hex digit, so it is copied as itself (§10.3)
+            return -1;
+        }
 
         // append a payload with one line of framing intact, which escapes the three bytes that would break it (§10.3)
         void append_escaped(std::string& out, std::string_view payload) {
@@ -108,19 +122,93 @@ namespace albor::automation
         return out;
     }
 
+    std::string encode_argument(std::string_view argument) {
+        // the escaped form is built once and only grows when a byte needs it (§10.3)
+        std::string escaped;
+        escaped.reserve(argument.size());
+        // every byte is walked, because an ordinary path byte passes through as itself (§10.3)
+        for (const char byte : argument) {
+            // a percent starts an escape, so it is escaped first (§10.3)
+            if (byte == '%') {
+                escaped += "%25";
+                continue;
+            }
+            // a separator would split the argument, which is the whole reason for the escape (§10.3)
+            if (byte == ' ') {
+                escaped += "%20";
+                continue;
+            }
+            // a tab, a carriage return and a newline would frame the line wrongly, so each is escaped (§10.3)
+            if (byte == '\t') {
+                escaped += "%09";
+                continue;
+            }
+            if (byte == '\n') {
+                escaped += "%0A";
+                continue;
+            }
+            if (byte == '\r') {
+                escaped += "%0D";
+                continue;
+            }
+            // every other byte is the byte itself, so plain text stays byte identical (§10.3)
+            escaped += byte;
+        }
+        return escaped;
+    }
+
+    std::string decode_argument(std::string_view argument) {
+        // the recovered form is built once, because a plain argument costs one copy (§10.3)
+        std::string decoded;
+        decoded.reserve(argument.size());
+        // the scan walks the argument and consumes one escape at a time (§10.3)
+        for (std::size_t index = 0; index < argument.size(); index++) {
+            // a percent that does not open a two digit escape is the byte itself (§10.3)
+            if (argument[index] != '%' || index + 2 >= argument.size()) {
+                decoded += argument[index];
+                continue;
+            }
+            // both digits must be hexadecimal, or the percent was literal text (§10.3)
+            const int high = hex_value(argument[index + 1]);
+            const int low = hex_value(argument[index + 2]);
+            if (high < 0 || low < 0) {
+                decoded += argument[index];
+                continue;
+            }
+            // the two digits spell one byte, which is what the encoder wrote (§10.3)
+            decoded += static_cast<char>((high << 4) | low);
+            index += 2;
+        }
+        return decoded;
+    }
+
     AutomationRequest decode_request(std::string_view line) {
         // the request is assembled as it is read, because one malformed field costs one field (§10.3)
         AutomationRequest request;
-        // the stream splits on the separator, which is what the wire format is (§10.3)
-        std::istringstream stream{std::string(line)};
-        // the command comes first, because it is what the session dispatches on (§10.3)
-        std::string field;
-        // the command is read first, because everything else qualifies it (§10.3)
-        if (std::getline(stream, field, SEPARATOR))
-            request.command = field;
-        // the arguments follow in order, because the order is the call's shape (§10.3)
-        while (std::getline(stream, field, SEPARATOR))
-            request.arguments.push_back(field);
+        // every separator ends one field, and a trailing separator names an empty one (§10.3)
+        std::size_t start = 0;
+        // the command is the first field, because it is what the session dispatches on (§10.3)
+        bool command_read = false;
+        for (;;) {
+            // the next separator is where this field ends, or the line ends the field (§10.3)
+            const std::size_t separator = line.find(SEPARATOR, start);
+            // the field is what stands between the previous separator and this one (§10.3)
+            const std::string_view field = line.substr(start, separator == std::string_view::npos ? std::string_view::npos : separator - start);
+            // the first field names the command, which the session dispatches by (§10.3)
+            if (!command_read) {
+                request.command = std::string(field);
+                command_read = true;
+            }
+            // every later field is an argument, which the escape restores (§10.3)
+            else {
+                request.arguments.push_back(decode_argument(field));
+            }
+            // a field the line ended is the last one, whether it is empty or not (§10.3)
+            if (separator == std::string_view::npos)
+                break;
+            // the scan resumes past the separator, which keeps a trailing empty field (§10.3)
+            start = separator + 1;
+        }
         // the request is returned whole, because the session decides what it means (§10.3)
         return request;
     }
