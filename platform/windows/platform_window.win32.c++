@@ -253,6 +253,15 @@ namespace albor
             return 0;
         }
 
+        // detach a window from the owner win32 lists it under, which is the one child teardown of §5.1
+        void detach_from_owner(HWND window) {
+            // a missing window and an unowned window have no owner relation to clear (§5.1)
+            if (window == nullptr || GetWindow(window, GW_OWNER) == nullptr)
+                return;
+            // the owner drops the child before it is destroyed, which keeps the owned window list clean (§5.1)
+            (void)SetWindowLongPtrW(window, GWLP_HWNDPARENT, 0);
+        }
+
         // place a popup under its owner's anchor and keep it inside the monitor work area (§5.1)
         void position_popup(HWND popup, HWND owner, Rect anchor, Size size);
 
@@ -430,6 +439,19 @@ namespace albor
                 // the default handling is kept, because the system still owns the window position state (§5.3)
                 return DefWindowProcW(window, code, wparam, lparam);
             }
+            // a destroyed window drops its handle before the listener gate, because the handle outlives it (§4.2)
+            if (code == WM_DESTROY) {
+                // a child releases its owner on the destroy path, which covers an external close too (§5.1)
+                detach_from_owner(window);
+                // the handle is dropped first, because a destroy of a recycled handle would hit another window (§4.2)
+                state->window = nullptr;
+                // a window with no listener still closed natively, which the default handling leaves alone (§4.2)
+                if (state->listener == nullptr)
+                    return DefWindowProcW(window, code, wparam, lparam);
+                // the native window reports that it closed, which is the closed notification of §5.2
+                state->listener->on_platform_closed();
+                return 0;
+            }
             // a window with no listener is past the framework, so the default window handles it (§4.2)
             if (state->listener == nullptr)
                 return DefWindowProcW(window, code, wparam, lparam);
@@ -456,13 +478,6 @@ namespace albor
                 // the native close request asks the framework first, which may veto it (§5.2)
                 if (state->listener->on_platform_close_request())
                     DestroyWindow(window);
-                return 0;
-            }
-            case WM_DESTROY: {
-                // the handle is dropped first, because a destroy of a recycled handle would hit another window (§4.2)
-                state->window = nullptr;
-                // the native window reports that it closed, which is the closed notification of §5.2
-                state->listener->on_platform_closed();
                 return 0;
             }
             case WM_MOUSEACTIVATE: {
@@ -807,6 +822,8 @@ namespace albor
         // the capture a popup took at show is released, because the teardown of the window ends it (§5.1)
         if (m_state->window != nullptr && GetCapture() == m_state->window)
             ReleaseCapture();
+        // a child releases its owner before it is destroyed, which is the win32 half of the appkit detach (§5.1)
+        detach_from_owner(m_state->window);
         // the native window is destroyed last, so its window procedure never sees a dead framework window (§4.2)
         if (m_state->window != nullptr) {
             DestroyWindow(m_state->window);
@@ -983,6 +1000,8 @@ namespace albor
         // the capture a popup took at show is released, because the closing of the window ends it (§5.1)
         if (GetCapture() == m_state->window)
             ReleaseCapture();
+        // a child releases its owner before it is destroyed, which is the win32 half of the appkit detach (§5.1)
+        detach_from_owner(m_state->window);
         // the native window is destroyed without asking the framework, because the framework initiated this (§5.2)
         DestroyWindow(m_state->window);
         m_state->window = nullptr;

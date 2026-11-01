@@ -133,6 +133,11 @@ if(APPLE)
     set_source_files_properties("./conditional/platform_window_popup.test.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(albor-tests PRIVATE albor-platform-macos)
 
+    # the dialog teardown suite drives a parented dialog end to end, because the appkit display cycle crash of #150
+    # only reproduces through the application, its pump and the real window factory (§5.1, §5.2, AD-16)
+    target_sources(albor-tests PRIVATE "./conditional/platform_window_dialog.test.macos.mm")
+    set_source_files_properties("./conditional/platform_window_dialog.test.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+
     # the platform font suite drives the core text resolver and the sfnt it hands over, which is the apple half (§9.1, AD-28)
     target_sources(albor-tests PRIVATE "./conditional/text_platform_font.test.macos.mm")
 
@@ -205,7 +210,8 @@ if(NOT ALBOR_CONFIGURATION STREQUAL "Release")
     target_sources(albor-tests PRIVATE "./conditional/allocation_release_blind.test.cpp")
 endif()
 
-# the test binary is executed directly rather than through ctest, so it never needs a display (§2.2)
+# the test binary is executed directly rather than through ctest, so a suite that needs no display runs without one;
+# the appkit window and file-dialog suites do need a window server session, which the macos ci job provides (§2.2)
 include(GoogleTest)
 # a test that presents into a window is bounded, so a compositor that stops draining fails the run instead of hanging it (§6.3)
 gtest_discover_tests(albor-tests DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 900)

@@ -463,3 +463,84 @@ TEST(Win32PopupWindow, ANormalWindowIsNotClosedByDeactivation) {
     // assert the ordinary window stays on screen, which a deactivation leaves it (§5.3)
     EXPECT_TRUE(platform->visible());
 }
+
+TEST(Win32PopupWindow, ClosingADialogLeavesTheOwnerIntact) {
+    // arrange an owner window and a dialog that names it as parent, both shown (§5.1)
+    WindowOptions owner_options;
+    owner_options.title = "dialog-close-owner";
+    owner_options.size = Size{320.0f, 240.0f};
+    std::unique_ptr<Win32PlatformWindow> owner = Win32PlatformWindow::create(owner_options);
+    ASSERT_NE(owner, nullptr);
+    RecordingListener owner_listener;
+    owner->set_listener(&owner_listener);
+    HWND owner_window = static_cast<HWND>(const_cast<void*>(owner->native_window_handle().object()));
+    ASSERT_NE(owner_window, nullptr);
+    owner->show();
+    WindowOptions dialog_options;
+    dialog_options.role = WindowRole::Dialog;
+    dialog_options.title = "dialog-close";
+    dialog_options.size = Size{180.0f, 120.0f};
+    dialog_options.native_parent = owner->native_window_handle();
+    std::unique_ptr<Win32PlatformWindow> dialog = Win32PlatformWindow::create(dialog_options);
+    ASSERT_NE(dialog, nullptr);
+    RecordingListener dialog_listener;
+    dialog->set_listener(&dialog_listener);
+    HWND dialog_window = static_cast<HWND>(const_cast<void*>(dialog->native_window_handle().object()));
+    ASSERT_NE(dialog_window, nullptr);
+    dialog->show();
+    ASSERT_EQ(GetWindow(dialog_window, GW_OWNER), owner_window);
+    // act the framework closes the dialog, which destroys its native window (§5.2)
+    dialog->close();
+    // assert the dialog is gone while the owner survived, which is the win32 half of #150 (§5.1)
+    EXPECT_FALSE(IsWindow(dialog_window));
+    EXPECT_TRUE(IsWindow(owner_window));
+    EXPECT_FALSE(dialog->native_window_handle().valid());
+    // assert the framework close reported nothing back, because the framework already knew (§5.2)
+    EXPECT_EQ(dialog_listener.closed, 0);
+    EXPECT_EQ(owner_listener.closed, 0);
+    // act the closed surface is destroyed and the owner closes afterwards (§5.1)
+    dialog.reset();
+    owner->close();
+    // assert both native windows are gone without a duplicate closed report (§5.1)
+    EXPECT_FALSE(IsWindow(owner_window));
+    EXPECT_EQ(owner_listener.closed, 0);
+}
+
+TEST(Win32PopupWindow, DestroyingTheOwnerBeforeItsDialogIsQuiet) {
+    // arrange an owner window and a dialog that names it as parent, both shown (§5.1)
+    WindowOptions owner_options;
+    owner_options.title = "dialog-owner-first-owner";
+    owner_options.size = Size{320.0f, 240.0f};
+    std::unique_ptr<Win32PlatformWindow> owner = Win32PlatformWindow::create(owner_options);
+    ASSERT_NE(owner, nullptr);
+    RecordingListener owner_listener;
+    owner->set_listener(&owner_listener);
+    HWND owner_window = static_cast<HWND>(const_cast<void*>(owner->native_window_handle().object()));
+    ASSERT_NE(owner_window, nullptr);
+    owner->show();
+    WindowOptions dialog_options;
+    dialog_options.role = WindowRole::Dialog;
+    dialog_options.title = "dialog-owner-first";
+    dialog_options.size = Size{180.0f, 120.0f};
+    dialog_options.native_parent = owner->native_window_handle();
+    std::unique_ptr<Win32PlatformWindow> dialog = Win32PlatformWindow::create(dialog_options);
+    ASSERT_NE(dialog, nullptr);
+    RecordingListener dialog_listener;
+    dialog->set_listener(&dialog_listener);
+    HWND dialog_window = static_cast<HWND>(const_cast<void*>(dialog->native_window_handle().object()));
+    ASSERT_NE(dialog_window, nullptr);
+    dialog->show();
+    // act the owner is destroyed while its dialog is shown, which win32 answers by destroying it (§5.1)
+    owner.reset();
+    // assert the system took the owned dialog down with its owner, which the destroy message reports (§5.2)
+    EXPECT_FALSE(IsWindow(owner_window));
+    EXPECT_FALSE(IsWindow(dialog_window));
+    EXPECT_EQ(dialog_listener.closed, 1);
+    // assert the destroyed window already dropped its handle, so a late teardown cannot touch a recycled one (§4.2)
+    EXPECT_FALSE(dialog->native_window_handle().valid());
+    // act the dialog is destroyed afterwards, which is the late teardown of #150 (§5.1)
+    dialog->close();
+    // assert the late close touched no native window and reported nothing twice (§5.2)
+    EXPECT_EQ(dialog_listener.closed, 1);
+    dialog.reset();
+}
