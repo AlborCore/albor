@@ -6,6 +6,8 @@
 #include <windows.h>
 #include <shobjidl.h>
 #include <wrl/client.h>
+
+#include <cwchar>
 // clang-format on
 
 #include <string>
@@ -21,7 +23,7 @@ TEST(Win32FileDialog, AnOpenDialogCarriesTheRequestedOptions) {
     // arrange the apartment a shell dialog needs and a native open dialog (§5.3)
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     ASSERT_TRUE(SUCCEEDED(initialized) || initialized == S_FALSE);
-    Microsoft::WRL::ComPtr<IFileOpenDialog> dialog;
+    Microsoft::WRL::ComPtr<IFileDialog> dialog;
     ASSERT_HRESULT_SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)));
     OpenFileOptions options;
     options.title = "Open netlist";
@@ -53,7 +55,7 @@ TEST(Win32FileDialog, ASaveDialogCarriesTheProposedName) {
     // arrange the apartment a shell dialog needs and a native save dialog (§5.3)
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     ASSERT_TRUE(SUCCEEDED(initialized) || initialized == S_FALSE);
-    Microsoft::WRL::ComPtr<IFileSaveDialog> dialog;
+    Microsoft::WRL::ComPtr<IFileDialog> dialog;
     ASSERT_HRESULT_SUCCEEDED(CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)));
     SaveFileOptions options;
     options.title = "Save netlist";
@@ -76,7 +78,7 @@ TEST(Win32FileDialog, TheInitialDirectoryBecomesTheFolder) {
     // arrange the apartment a shell dialog needs and a request with an existing directory (§5.3)
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     ASSERT_TRUE(SUCCEEDED(initialized) || initialized == S_FALSE);
-    Microsoft::WRL::ComPtr<IFileOpenDialog> dialog;
+    Microsoft::WRL::ComPtr<IFileDialog> dialog;
     ASSERT_HRESULT_SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)));
     OpenFileOptions options;
     options.title = "Open netlist";
@@ -101,7 +103,7 @@ TEST(Win32FileDialog, AnEmptyFilterShowsEveryFile) {
     // arrange a filter with no extensions, which means any file (§5.3)
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     ASSERT_TRUE(SUCCEEDED(initialized) || initialized == S_FALSE);
-    Microsoft::WRL::ComPtr<IFileOpenDialog> dialog;
+    Microsoft::WRL::ComPtr<IFileDialog> dialog;
     ASSERT_HRESULT_SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)));
     OpenFileOptions options;
     options.filters = {FileFilter{.name = "All files", .extensions = {}}};
@@ -123,7 +125,7 @@ TEST(Win32FileDialog, AnUnnamedFilterFallsBackToItsPattern) {
     // arrange a filter with no label, which the shell would show empty (§5.3)
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     ASSERT_TRUE(SUCCEEDED(initialized) || initialized == S_FALSE);
-    Microsoft::WRL::ComPtr<IFileOpenDialog> dialog;
+    Microsoft::WRL::ComPtr<IFileDialog> dialog;
     ASSERT_HRESULT_SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)));
     OpenFileOptions options;
     options.filters = {FileFilter{.name = "", .extensions = {"kicad_sch"}}};
