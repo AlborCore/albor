@@ -353,6 +353,8 @@ TEST(AlborRendererBackendChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) 
         ASSERT_TRUE(executor.submit(*surface, scene));
         executor.flush();
     }
+    // arrange a read back, which waits for the queue so no frame target stays in flight across the measurement (§6.3)
+    ASSERT_EQ(surface->read_pixels().size(), 1600u * 1200u * 4u);
     // arrange the footprint the stream settles at, which is the baseline the bound is judged against (§2.2)
     task_vm_info_data_t before{};
     mach_msg_type_number_t before_count = TASK_VM_INFO_COUNT;
@@ -362,6 +364,8 @@ TEST(AlborRendererBackendChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) 
         ASSERT_TRUE(executor.submit(*surface, scene));
         executor.flush();
     }
+    // arrange a read back, which waits for the queue so no frame target stays in flight across the measurement (§6.3)
+    ASSERT_EQ(surface->read_pixels().size(), 1600u * 1200u * 4u);
     // arrange the footprint the steady state left behind, which one leaked command buffer per frame lifts by 93 KB (§2.2)
     task_vm_info_data_t after{};
     mach_msg_type_number_t after_count = TASK_VM_INFO_COUNT;

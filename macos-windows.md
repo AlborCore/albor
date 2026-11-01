@@ -215,7 +215,8 @@ collection-font and accessibility skips are gone: those paths now assert.
 
 The macOS configuration still excludes `metal_teardown.test.cpp` from Release at link time (issue 29) and the
 Metal footprint test skips when coverage instrumentation is active. Those are macOS-specific, intentional, and
-unrelated to Windows.
+unrelated to Windows. Both the Metal and Direct3D footprint probes drain the present queue before each
+measurement, so a frame still in flight is not counted as retained growth.
 
 The radio-group, radio-button, numeric-stepper, Image and dual-engine suites are included in the macOS count,
 but not in the Windows counts above, because this host cannot build Windows. The pushed CI run is the
