@@ -642,9 +642,9 @@ namespace albor
         m_dispatch_depth++;
         routed_to->deliver(event);
         m_dispatch_depth--;
-        // a teardown a handler requested is applied now, which is after the stage returned (§4.2)
-        if (m_dispatch_depth == 0)
-            drain_deferred_stages();
+        // a teardown a handler requested is posted, because the window that raised the event is still on its stack (§4.2)
+        if (m_dispatch_depth == 0 && !m_deferred.empty())
+            (void)m_tasks.post([this] { drain_deferred_stages(); });
         return true;
     }
 

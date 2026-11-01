@@ -1241,7 +1241,10 @@ TEST(MainWindow, ClosingTheDialogFromItsControlHandlerDoesNotUseTheStage) {
     // act escape presses cancel, whose handler asks to close the dialog (§8.3)
     albor::Event event{.kind = albor::EventKind::KeyDown, .key = albor::Key::Escape};
     application.window(dialog_handle)->on_platform_event(event);
-    // assert the teardown ran after the dispatch returned, so the stage was never read after release (§4.2)
+    // assert the teardown was posted, because the window is still on its own dispatch stack (§4.2)
+    EXPECT_NE(application.window(dialog_handle), nullptr);
+    application.pump();
+    // assert the posted teardown ran on the next pass, so the stage was never read after release (§4.2)
     EXPECT_EQ(application.window(dialog_handle), nullptr);
     // cleanup
     EXPECT_TRUE(application.destroy_window(parent));

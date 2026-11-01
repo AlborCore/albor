@@ -316,7 +316,10 @@ TEST(InputCommands, ATypingChangeThatClosesTheWindowDoesNotFreeTheStage) {
     (void)session.handle(albor::automation::encode_handshake(session.token()));
     // act typing the first code point fires the change that closes the window (§8.3)
     const albor::automation::AutomationResult result = session.handle("input.type notes abc");
-    // assert the command survived and the teardown was applied after the dispatch returned (§4.2)
+    // assert the command survived, because the teardown is posted rather than run on the dispatch stack (§4.2)
     EXPECT_TRUE(result.ok);
+    EXPECT_NE(application.window(handle), nullptr);
+    application.pump();
+    // assert the posted teardown ran on the next pass (§4.2)
     EXPECT_EQ(application.window(handle), nullptr);
 }
