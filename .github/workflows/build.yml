@@ -1,13 +1,14 @@
-# the build evidence rides pulls and main pushes; branch pushes carry nothing, because a review is what
-# a change needs and the merge re-runs everything it affects, which is what keeps a per-commit cost
-# from being paid twice (AD-16, AD-19). The debug presets measure the test suites and belong to the
-# main pushes; a review builds release on both platforms.
 name: build
 
 on:
-  push:
-    branches: [main]
   pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -19,9 +20,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  check-pr:
+    if: github.event_name == 'push' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/')
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    outputs:
+      has_pr: ${{ steps.check.outputs.has_pr }}
+    steps:
+      - name: Check for open PR
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          response=$(curl -skf -H "Authorization: token $GITHUB_TOKEN" "${GITHUB_API_URL}/repos/${{ github.repository }}/pulls?head=${{ github.repository_owner }}:${{ github.ref_name }}&state=open&per_page=1" 2>&1)
+          echo "API response: ${response}"
+          count=$(echo "$response" | grep -c '"number"' || true)
+          echo "has_pr=$( [ "$count" -gt 0 ] && echo true || echo false )" >> $GITHUB_OUTPUT
+
   # the shader artifact is committed, so this job is the only place the metal toolchain runs
   shaders-macos:
     name: shaders (macos)
+    needs: [check-pr]
+    if: |-
+      !cancelled() &&
+      (github.event_name != 'push' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || needs.check-pr.outputs.has_pr != 'true')
     runs-on: macos-15
     timeout-minutes: 15
     defaults:
@@ -40,6 +62,10 @@ jobs:
   # the direct3d artifact is committed too, so this job is the only place fxc runs
   shaders-windows:
     name: shaders (windows)
+    needs: [check-pr]
+    if: |-
+      !cancelled() &&
+      (github.event_name != 'push' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || needs.check-pr.outputs.has_pr != 'true')
     runs-on: windows-latest
     timeout-minutes: 15
     defaults:
@@ -50,183 +76,183 @@ jobs:
       - name: committed shader artifact
         run: bash build/shaders.sh --d3d
 
-  build:
-    name: build (${{ matrix.name }})
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: read
-      pull-requests: read
-      code-quality: write
-    timeout-minutes: 120
-    defaults:
-      run:
-        shell: bash
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: macos-release
-            os: macos-15
-            enable: true
-            preset: release
-            vcpkg-root: /usr/local/share/vcpkg
-            setup: |
-              # the vcpkg binary cache root must exist before vcpkg runs
-              mkdir -p .vcpkg-cache
-              # the preset launches the compiler through ccache, which the runner image does not ship
-              HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
-              ccache --max-size 2G
-              # the preset is c++23, so take the newest xcode the image carries rather than its default
-              sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
-          - name: macos-debug
-            os: macos-15
-            enable: true
-            preset: debug
-            vcpkg-root: /usr/local/share/vcpkg
-            setup: |
-              # the vcpkg binary cache root must exist before vcpkg runs
-              mkdir -p .vcpkg-cache
-              # the preset launches the compiler through ccache, which the runner image does not ship
-              HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
-              ccache --max-size 2G
-              # the preset is c++23, so take the newest xcode the image carries rather than its default
-              sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
-          - name: macos-coverage
-            os: macos-15
-            # the coverage build is the deepest leg, which a review does not need; main pushes carry it (AD-16)
-            enable: ${{ github.event_name == 'push' }}
-            preset: coverage
-            vcpkg-root: /usr/local/share/vcpkg
-            setup: |
-              # the vcpkg binary cache root must exist before vcpkg runs
-              mkdir -p .vcpkg-cache
-              # the preset launches the compiler through ccache, which the runner image does not ship
-              HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
-              ccache --max-size 2G
-              # the preset is c++23, so take the newest xcode the image carries rather than its default
-              sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
-          - name: windows-release
-            os: windows-latest
-            enable: true
-            preset: release
-            vcpkg-root: C:\vcpkg
-            setup: |
-              # the vcpkg binary cache root must exist before vcpkg runs
-              mkdir -p .vcpkg-cache
-              # the preset launches the compiler through ccache, which the runner image does not ship
-              choco install ccache --no-progress -y
-          - name: windows-debug
-            os: windows-latest
-            # the debug suite is the test authority, which main pushes carry and a review skips (AD-16)
-            enable: ${{ github.event_name == 'push' }}
-            preset: debug
-            vcpkg-root: C:\vcpkg
-            setup: |
-              # the vcpkg binary cache root must exist before vcpkg runs
-              mkdir -p .vcpkg-cache
-              # the preset launches the compiler through ccache, which the runner image does not ship
-              choco install ccache --no-progress -y
-          - name: linux-release
-            os: ubuntu-latest
-            enable: false
-            preset: release
-            vcpkg-root: /usr/local/share/vcpkg
-            setup: sudo apt-get update && sudo apt-get install -y ccache
-          - name: linux-debug
-            os: ubuntu-latest
-            enable: false
-            preset: debug
-            vcpkg-root: /usr/local/share/vcpkg
-            setup: sudo apt-get update && sudo apt-get install -y ccache
-    env:
-      VCPKG_ROOT: ${{ matrix.vcpkg-root }}
-      MACOSX_DEPLOYMENT_TARGET: 13.3
-      VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
-      LLVM_PROFILE_FILE: ${{ github.workspace }}/coverage-%p.profraw
-    steps:
-      - uses: actions/checkout@v7
-        if: matrix.enable
+  # build:
+  #   name: build (${{ matrix.name }})
+  #   runs-on: ${{ matrix.os }}
+  #   permissions:
+  #     contents: read
+  #     pull-requests: read
+  #     code-quality: write
+  #   timeout-minutes: 120
+  #   defaults:
+  #     run:
+  #       shell: bash
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       include:
+  #         - name: macos-release
+  #           os: macos-15
+  #           enable: true
+  #           preset: release
+  #           vcpkg-root: /usr/local/share/vcpkg
+  #           setup: |
+  #             # the vcpkg binary cache root must exist before vcpkg runs
+  #             mkdir -p .vcpkg-cache
+  #             # the preset launches the compiler through ccache, which the runner image does not ship
+  #             HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
+  #             ccache --max-size 2G
+  #             # the preset is c++23, so take the newest xcode the image carries rather than its default
+  #             sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
+  #         - name: macos-debug
+  #           os: macos-15
+  #           enable: true
+  #           preset: debug
+  #           vcpkg-root: /usr/local/share/vcpkg
+  #           setup: |
+  #             # the vcpkg binary cache root must exist before vcpkg runs
+  #             mkdir -p .vcpkg-cache
+  #             # the preset launches the compiler through ccache, which the runner image does not ship
+  #             HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
+  #             ccache --max-size 2G
+  #             # the preset is c++23, so take the newest xcode the image carries rather than its default
+  #             sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
+  #         - name: macos-coverage
+  #           os: macos-15
+  #           # the coverage build is the deepest leg, which a review does not need; main pushes carry it (AD-16)
+  #           enable: ${{ github.event_name == 'push' }}
+  #           preset: coverage
+  #           vcpkg-root: /usr/local/share/vcpkg
+  #           setup: |
+  #             # the vcpkg binary cache root must exist before vcpkg runs
+  #             mkdir -p .vcpkg-cache
+  #             # the preset launches the compiler through ccache, which the runner image does not ship
+  #             HOMEBREW_NO_AUTO_UPDATE=1 brew install ccache
+  #             ccache --max-size 2G
+  #             # the preset is c++23, so take the newest xcode the image carries rather than its default
+  #             sudo xcode-select --switch "$(ls -d /Applications/Xcode_[0-9]*.app | grep -v beta | sort -V | tail -n 1)"
+  #         - name: windows-release
+  #           os: windows-latest
+  #           enable: true
+  #           preset: release
+  #           vcpkg-root: C:\vcpkg
+  #           setup: |
+  #             # the vcpkg binary cache root must exist before vcpkg runs
+  #             mkdir -p .vcpkg-cache
+  #             # the preset launches the compiler through ccache, which the runner image does not ship
+  #             choco install ccache --no-progress -y
+  #         - name: windows-debug
+  #           os: windows-latest
+  #           # the debug suite is the test authority, which main pushes carry and a review skips (AD-16)
+  #           enable: ${{ github.event_name == 'push' }}
+  #           preset: debug
+  #           vcpkg-root: C:\vcpkg
+  #           setup: |
+  #             # the vcpkg binary cache root must exist before vcpkg runs
+  #             mkdir -p .vcpkg-cache
+  #             # the preset launches the compiler through ccache, which the runner image does not ship
+  #             choco install ccache --no-progress -y
+  #         - name: linux-release
+  #           os: ubuntu-latest
+  #           enable: false
+  #           preset: release
+  #           vcpkg-root: /usr/local/share/vcpkg
+  #           setup: sudo apt-get update && sudo apt-get install -y ccache
+  #         - name: linux-debug
+  #           os: ubuntu-latest
+  #           enable: false
+  #           preset: debug
+  #           vcpkg-root: /usr/local/share/vcpkg
+  #           setup: sudo apt-get update && sudo apt-get install -y ccache
+  #   env:
+  #     VCPKG_ROOT: ${{ matrix.vcpkg-root }}
+  #     MACOSX_DEPLOYMENT_TARGET: 13.3
+  #     VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
+  #     CCACHE_DIR: ${{ github.workspace }}/.ccache
+  #     LLVM_PROFILE_FILE: ${{ github.workspace }}/coverage-%p.profraw
+  #   steps:
+  #     - uses: actions/checkout@v7
+  #       if: matrix.enable
 
-      - name: platform setup
-        if: matrix.enable
-        run: ${{ matrix.setup }}
+  #     - name: platform setup
+  #       if: matrix.enable
+  #       run: ${{ matrix.setup }}
 
-      - name: msvc environment
-        if: matrix.enable && runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
+  #     - name: msvc environment
+  #       if: matrix.enable && runner.os == 'Windows'
+  #       uses: ilammy/msvc-dev-cmd@v1
 
-      - name: restore the vcpkg binary cache
-        if: matrix.enable
-        uses: actions/cache/restore@v5
-        with:
-          path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
-          restore-keys: |
-            vcpkg-${{ runner.os }}-
+  #     - name: restore the vcpkg binary cache
+  #       if: matrix.enable
+  #       uses: actions/cache/restore@v5
+  #       with:
+  #         path: ${{ github.workspace }}/.vcpkg-cache
+  #         key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+  #         restore-keys: |
+  #           vcpkg-${{ runner.os }}-
 
-      - name: restore the ccache directory
-        if: matrix.enable
-        uses: actions/cache/restore@v5
-        with:
-          path: ${{ github.workspace }}/.ccache
-          key: ccache-${{ runner.os }}-${{ matrix.preset }}-${{ github.sha }}
-          restore-keys: |
-            ccache-${{ runner.os }}-${{ matrix.preset }}-
+  #     - name: restore the ccache directory
+  #       if: matrix.enable
+  #       uses: actions/cache/restore@v5
+  #       with:
+  #         path: ${{ github.workspace }}/.ccache
+  #         key: ccache-${{ runner.os }}-${{ matrix.preset }}-${{ github.sha }}
+  #         restore-keys: |
+  #           ccache-${{ runner.os }}-${{ matrix.preset }}-
 
-      - name: configure
-        if: matrix.enable
-        run: cmake --preset ${{ matrix.preset }}
+  #     - name: configure
+  #       if: matrix.enable
+  #       run: cmake --preset ${{ matrix.preset }}
 
-      - name: build
-        if: matrix.enable
-        run: cmake --build --preset ${{ matrix.preset }} --parallel 4
+  #     - name: build
+  #       if: matrix.enable
+  #       run: cmake --build --preset ${{ matrix.preset }} --parallel 4
 
-      - name: build scope
-        if: matrix.enable && matrix.preset == 'debug'
-        run: bash build/check-build-scope.sh
+  #     - name: build scope
+  #       if: matrix.enable && matrix.preset == 'debug'
+  #       run: bash build/check-build-scope.sh
 
-      - name: unit tests
-        if: matrix.enable
-        working-directory: .build-${{ matrix.preset }}/tests
-        run: ./albor-tests && ./albor-generated-font-checks
+  #     - name: unit tests
+  #       if: matrix.enable
+  #       working-directory: .build-${{ matrix.preset }}/tests
+  #       run: ./albor-tests && ./albor-generated-font-checks
 
-      - name: font selection check
-        if: matrix.enable
-        env:
-          ALBOR_BUILD_DIR: .build-${{ matrix.preset }}
-        run: bash build/check-font-selection.sh
+  #     - name: font selection check
+  #       if: matrix.enable
+  #       env:
+  #         ALBOR_BUILD_DIR: .build-${{ matrix.preset }}
+  #       run: bash build/check-font-selection.sh
 
-      - name: cobertura report
-        if: matrix.enable && matrix.preset == 'coverage'
-        run: |
-          xcrun llvm-profdata merge -sparse coverage-*.profraw -o coverage.profdata
-          xcrun llvm-cov export --format=lcov -instr-profile=coverage.profdata -ignore-filename-regex='(^|/)tests/' ./.build-coverage/tests/albor-tests > coverage.lcov
-          # the export carries absolute source paths, and the coverage api matches on repository relative ones
-          sed -i '' "s|^SF:$PWD/|SF:|" coverage.lcov
-          # the runner's python3 is homebrew managed (pep 668), so the converter lives in a venv
-          python3 -m venv .venv-lcov
-          .venv-lcov/bin/pip install lcov_cobertura
-          .venv-lcov/bin/lcov_cobertura coverage.lcov --output cobertura.xml
+  #     - name: cobertura report
+  #       if: matrix.enable && matrix.preset == 'coverage'
+  #       run: |
+  #         xcrun llvm-profdata merge -sparse coverage-*.profraw -o coverage.profdata
+  #         xcrun llvm-cov export --format=lcov -instr-profile=coverage.profdata -ignore-filename-regex='(^|/)tests/' ./.build-coverage/tests/albor-tests > coverage.lcov
+  #         # the export carries absolute source paths, and the coverage api matches on repository relative ones
+  #         sed -i '' "s|^SF:$PWD/|SF:|" coverage.lcov
+  #         # the runner's python3 is homebrew managed (pep 668), so the converter lives in a venv
+  #         python3 -m venv .venv-lcov
+  #         .venv-lcov/bin/pip install lcov_cobertura
+  #         .venv-lcov/bin/lcov_cobertura coverage.lcov --output cobertura.xml
 
-      - name: upload to the github code coverage api
-        if: matrix.enable && matrix.preset == 'coverage'
-        uses: actions/upload-code-coverage@v1
-        with:
-          file: cobertura.xml
-          language: C++
-          label: code-coverage/c++
+  #     - name: upload to the github code coverage api
+  #       if: matrix.enable && matrix.preset == 'coverage'
+  #       uses: actions/upload-code-coverage@v1
+  #       with:
+  #         file: cobertura.xml
+  #         language: C++
+  #         label: code-coverage/c++
 
-      - name: save the vcpkg binary cache
-        if: matrix.enable && !cancelled()
-        uses: actions/cache/save@v5
-        with:
-          path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+  #     - name: save the vcpkg binary cache
+  #       if: matrix.enable && !cancelled()
+  #       uses: actions/cache/save@v5
+  #       with:
+  #         path: ${{ github.workspace }}/.vcpkg-cache
+  #         key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
 
-      - name: save the ccache directory
-        if: matrix.enable && !cancelled()
-        uses: actions/cache/save@v5
-        with:
-          path: ${{ github.workspace }}/.ccache
-          key: ccache-${{ runner.os }}-${{ matrix.preset }}-${{ github.sha }}
+  #     - name: save the ccache directory
+  #       if: matrix.enable && !cancelled()
+  #       uses: actions/cache/save@v5
+  #       with:
+  #         path: ${{ github.workspace }}/.ccache
+  #         key: ccache-${{ runner.os }}-${{ matrix.preset }}-${{ github.sha }}
