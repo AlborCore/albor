@@ -244,6 +244,8 @@ jobs:
       VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
       # the port builds the checked-out tree while the pinned commit predates the packaging, which the portfile announces (AD-19)
       ALBOR_PORT_SOURCE_PATH: ${{ github.workspace }}
+      # vcpkg's clean port environment keeps these variables without adding them to the ABI
+      VCPKG_KEEP_ENV_VARS: 'ALBOR_PORT_SOURCE_PATH;PATH'
     steps:
       - uses: actions/checkout@v7
       - name: platform setup
