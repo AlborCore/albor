@@ -2345,6 +2345,8 @@ TEST(AlborRendererBackendChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) 
         ASSERT_TRUE(executor.submit(*surface, scene));
         executor.flush();
     }
+    // arrange a read back, which waits for the queue so no frame target stays in flight across the measurement (§6.3)
+    ASSERT_EQ(surface->read_pixels().size(), 1600u * 1200u * 4u);
     // arrange the private commit the stream settles at, which is the baseline the bound is judged against (§2.2)
     PROCESS_MEMORY_COUNTERS_EX before{};
     before.cb = sizeof(before);
@@ -2354,6 +2356,8 @@ TEST(AlborRendererBackendChecks, AStreamOfPresentedFramesKeepsTheFootprintFlat) 
         ASSERT_TRUE(executor.submit(*surface, scene));
         executor.flush();
     }
+    // arrange a read back, which waits for the queue so no frame target stays in flight across the measurement (§6.3)
+    ASSERT_EQ(surface->read_pixels().size(), 1600u * 1200u * 4u);
     // arrange the private commit the stream left behind, which one leaked target per frame lifts by a gigabyte (§2.2)
     PROCESS_MEMORY_COUNTERS_EX after{};
     after.cb = sizeof(after);

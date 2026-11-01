@@ -1,4 +1,4 @@
-name: build
+name: nightly-cache
 
 on:
   workflow_dispatch:
@@ -7,6 +7,14 @@ on:
 
 permissions:
   contents: read
+
+# the pinned tools are the ABI inputs vcpkg caches by; the vcpkg commit is per platform because each image seeds its own
+env:
+  CMAKE_VERSION: 4.4.4
+  NINJA_VERSION: 1.13.2
+  MSVC_TOOLSET: 14.51.36231
+  WINDOWS_SDK: 10.0.26100.0
+  VCPKG_ABI_POLICY: pinned-toolchain-v2
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -28,7 +36,7 @@ jobs:
             os: macos-15
             enable: true
             preset: release
-            vcpkg-root: /usr/local/share/vcpkg
+            vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
             setup: |
               # the vcpkg binary cache root must exist before vcpkg runs
               mkdir -p .vcpkg-cache
@@ -41,7 +49,7 @@ jobs:
             os: windows-latest
             enable: true
             preset: release
-            vcpkg-root: C:\vcpkg
+            vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
             setup: |
               # the vcpkg binary cache root must exist before vcpkg runs
               mkdir -p .vcpkg-cache
@@ -51,10 +59,10 @@ jobs:
             os: ubuntu-latest
             enable: false
             preset: release
-            vcpkg-root: /usr/local/share/vcpkg
+            vcpkg-commit: 866e9e258a76437074a5cf02d4c2d71b53bff2f8
             setup: sudo apt-get update && sudo apt-get install -y ccache
     env:
-      VCPKG_ROOT: ${{ matrix.vcpkg-root }}
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
       MACOSX_DEPLOYMENT_TARGET: 13.3
       VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
       CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -69,14 +77,44 @@ jobs:
       - name: msvc environment
         if: matrix.enable && runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
+        with:
+          toolset: ${{ env.MSVC_TOOLSET }}
+          sdk: ${{ env.WINDOWS_SDK }}
+
+      - name: pinned cmake
+        if: matrix.enable
+        uses: lukka/get-cmake@v4.4.4
+        with:
+          cmakeVersion: ${{ env.CMAKE_VERSION }}
+          ninjaVersion: ${{ env.NINJA_VERSION }}
+
+      - name: pinned vcpkg
+        if: matrix.enable
+        uses: lukka/run-vcpkg@v11.6
+        with:
+          vcpkgDirectory: ${{ github.workspace }}/vcpkg
+          vcpkgGitCommitId: ${{ matrix.vcpkg-commit }}
+          vcpkgJsonGlob: vcpkg.json
+          doNotCache: true
+
+      # the msvc action repoints VCPKG_ROOT at the image's bundled vcpkg, so the pinned checkout is restored here
+      - name: pin the vcpkg root
+        if: matrix.enable
+        run: echo "VCPKG_ROOT=${{ github.workspace }}/vcpkg" >> "$GITHUB_ENV"
+
+      - name: toolchain fingerprint
+        id: toolchain
+        if: matrix.enable
+        run: echo "fingerprint=$(bash build/toolchain-fingerprint.sh)" >> "$GITHUB_OUTPUT"
 
       - name: restore the vcpkg binary cache
         if: matrix.enable
         uses: actions/cache@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
+          key: vcpkg-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', '.triplets/**') }}
           restore-keys: |
+            vcpkg-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-
             vcpkg-${{ runner.os }}-
 
       - name: restore the ccache directory
@@ -90,7 +128,7 @@ jobs:
 
       - name: configure
         if: matrix.enable
-        run: cmake --preset ${{ matrix.preset }}
+        run: cmake --preset ${{ matrix.preset }} ${{ runner.os == 'Windows' && '-DVCPKG_INSTALL_OPTIONS=--x-abi-tools-use-exact-versions' || '' }}
 
       - name: build
         if: matrix.enable

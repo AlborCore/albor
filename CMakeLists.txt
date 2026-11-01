@@ -20,11 +20,17 @@ if(APPLE AND CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         # an empty cache value means no opinion, so the environment falls back to the floor
         set(ENV{MACOSX_DEPLOYMENT_TARGET} "${ALBOR_OSX_MINIMUM}")
     endif()
-    # the local triplets shadow the builtin ones of the same name, so the selected triplet does not change
+endif()
+
+# the local triplets shadow the builtin ones of the same name for the framework's own build
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     set(VCPKG_OVERLAY_TRIPLETS "${ALBOR_SOURCE_DIR}/.triplets" CACHE STRING "the local triplets that stamp the dependencies with the floor")
 endif()
 
-project(albor VERSION 0.1.0 LANGUAGES CXX)
+# the release package PR updates this default, and the port overrides it for a tagged package build (AD-19)
+set(ALBOR_VERSION "0.1.0" CACHE STRING "the albor release version")
+
+project(albor VERSION ${ALBOR_VERSION} LANGUAGES CXX)
 
 # a consumer inherits the framework's targets rather than its cache, so the floor is applied to them after the project
 if(APPLE)
