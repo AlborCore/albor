@@ -236,16 +236,15 @@ jobs:
             consumer: tests/port-consumer
             vcpkg-commit: 8c5c88430ac864cf4fe8de4be61f69f003d23ffe
             pinned: true
-    # the pinned entries consume the release, which the portfile answers through its REF; their attempt cannot
-    # succeed before the first release merge exists, so their failure stays tolerated until then (AD-19)
+    # the pinned entries consume the release, which the portfile answers through its REF (AD-19)
     env:
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg
       MACOSX_DEPLOYMENT_TARGET: 13.3
       VCPKG_BINARY_SOURCES: 'clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite'
       # the port builds the checked-out tree while the pinned commit predates the packaging, which the portfile announces (AD-19)
       ALBOR_PORT_SOURCE_PATH: ${{ github.workspace }}
-      # vcpkg's clean port environment keeps these variables without adding them to the ABI
-      VCPKG_KEEP_ENV_VARS: 'ALBOR_PORT_SOURCE_PATH;PATH'
+      # vcpkg's clean port environment keeps this variable without adding it to the ABI
+      VCPKG_KEEP_ENV_VARS: ALBOR_PORT_SOURCE_PATH
     steps:
       - uses: actions/checkout@v7
       - name: platform setup
@@ -303,8 +302,6 @@ jobs:
             vcpkg-port-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-
             vcpkg-port-${{ runner.os }}-
       - name: consume the overlay port end to end
-        # the pinned entries fail by design until the first release merge exists, so their failure stays stage-scoped (AD-19)
-        continue-on-error: ${{ matrix.pinned == true }}
         run: |
           # the consumer's manifest would name a published version one day, which the overlay answers today (AD-19)
           if [ "${{ matrix.pinned }}" != "true" ]; then
