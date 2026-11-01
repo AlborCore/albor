@@ -2,6 +2,7 @@
 
 #include <utility>
 
+#include "platform/headless/file_dialog.h"
 #include "platform/headless/headless_platform_window.h"
 #include "window/platform_window_factory.h"
 
@@ -59,5 +60,7 @@ namespace albor::headless
             // the factory returns the concrete window as the hal, so no headless type escapes the module (§3.5)
             return HeadlessPlatformWindow::create(options);
         });
+        // the file dialog backend answers from the scripted queue, which is how a test drives the calling flow (§5.3)
+        install_headless_file_dialog();
     }
 } // namespace albor::headless

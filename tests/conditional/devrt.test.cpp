@@ -21,10 +21,13 @@
 #include "devrt/reload_adapter.h"
 #include "dual_engine_choices.h"
 #include "dual_engine_controls.h"
+#include "dual_engine_dialog.h"
+#include "dual_engine_grid.h"
 #include "dual_engine_image.h"
 #include "dual_engine_panel.h"
 #include "dual_engine_tabs.h"
 #include "layout/column_layout.h"
+#include "layout/grid_layout.h"
 #include "layout/row_layout.h"
 #include "render/image_resource.h"
 #include "runtime/binding_engine.h"
@@ -125,6 +128,9 @@ namespace
         // a selected value is an integer, which the tab and radio groups share (§8)
         if (property == "selected")
             return "1";
+        // a grid shape is an integer cell count, which the author writes as a number (§8.2)
+        if (property == "columns" || property == "rows")
+            return "2";
         // everything left is a flag, which the language writes as one of two words (§11.1)
         return "true";
     }
@@ -250,7 +256,7 @@ TEST(DevElementChecks, EveryDeclaredPropertyLandsOnItsOwnElement) {
     TestTextEngine text;
     // the closed catalogue of §8, paired with a value each property holds, which is what a definition writes (§11.1)
     const std::vector<std::pair<std::string, std::string>> assignments{
-        {"Column", "spacing"}, {"Column", "padding"}, {"Row", "spacing"}, {"Grid", "spacing"}, {"Padding", "padding"}, {"Panel", "padding"}, {"Panel", "spacing"}, {"Panel", "background"}, {"Panel", "corner_radius"}, {"Panel", "border_width"}, {"Panel", "border_color"}, {"Card", "padding"}, {"Card", "spacing"}, {"Card", "background"}, {"Card", "corner_radius"}, {"Card", "border_width"}, {"Card", "border_color"}, {"Label", "text"}, {"Label", "foreground"}, {"Label", "font_size"}, {"Button", "text"}, {"Button", "background"}, {"Button", "disabled"}, {"Slider", "value"}, {"Slider", "disabled"}, {"Slider", "track_color"}, {"Slider", "thumb_color"}, {"CheckBox", "checked"}, {"CheckBox", "disabled"}, {"CheckBox", "outline"}, {"CheckBox", "check_fill"}, {"RadioGroup", "selected"}, {"RadioGroup", "vertical"}, {"RadioGroup", "spacing"}, {"RadioButton", "value"}, {"RadioButton", "label"}, {"RadioButton", "disabled"}, {"NumericStepper", "value"}, {"NumericStepper", "min"}, {"NumericStepper", "max"}, {"NumericStepper", "step"}, {"NumericStepper", "disabled"}, {"Image", "source"}, {"Image", "description"}, {"Image", "width"}, {"Image", "height"}, {"ScrollView", "overscan"}, {"ScrollView", "scrollbar"}, {"ScrollView", "row_height"}, {"TextField", "value"}, {"TextField", "placeholder"}, {"TextField", "read_only"}, {"TextField", "multiline"}, {"TextField", "disabled"}, {"TextField", "font_size"}, {"ComboBox", "selected"}, {"ComboBox", "placeholder"}, {"ComboBox", "disabled"},
+        {"Column", "spacing"}, {"Column", "padding"}, {"Row", "spacing"}, {"Grid", "spacing"}, {"Grid", "columns"}, {"Grid", "rows"}, {"Padding", "padding"}, {"Panel", "padding"}, {"Panel", "spacing"}, {"Panel", "background"}, {"Panel", "corner_radius"}, {"Panel", "border_width"}, {"Panel", "border_color"}, {"Card", "padding"}, {"Card", "spacing"}, {"Card", "background"}, {"Card", "corner_radius"}, {"Card", "border_width"}, {"Card", "border_color"}, {"Label", "text"}, {"Label", "foreground"}, {"Label", "font_size"}, {"Button", "text"}, {"Button", "background"}, {"Button", "disabled"}, {"Button", "default"}, {"Button", "cancel"}, {"Slider", "value"}, {"Slider", "disabled"}, {"Slider", "track_color"}, {"Slider", "thumb_color"}, {"CheckBox", "checked"}, {"CheckBox", "disabled"}, {"CheckBox", "outline"}, {"CheckBox", "check_fill"}, {"RadioGroup", "selected"}, {"RadioGroup", "vertical"}, {"RadioGroup", "spacing"}, {"RadioButton", "value"}, {"RadioButton", "label"}, {"RadioButton", "disabled"}, {"NumericStepper", "value"}, {"NumericStepper", "min"}, {"NumericStepper", "max"}, {"NumericStepper", "step"}, {"NumericStepper", "disabled"}, {"Image", "source"}, {"Image", "description"}, {"Image", "width"}, {"Image", "height"}, {"ScrollView", "overscan"}, {"ScrollView", "scrollbar"}, {"ScrollView", "row_height"}, {"TextField", "value"}, {"TextField", "placeholder"}, {"TextField", "read_only"}, {"TextField", "multiline"}, {"TextField", "disabled"}, {"TextField", "font_size"}, {"ComboBox", "selected"}, {"ComboBox", "placeholder"}, {"ComboBox", "disabled"},
     };
     // assert each assignment lands, because a setter the table names but never runs is a table that lies (§11.1)
     for (const std::pair<std::string, std::string>& assignment : assignments) {
@@ -262,6 +268,54 @@ TEST(DevElementChecks, EveryDeclaredPropertyLandsOnItsOwnElement) {
         const std::string value = value_for(element, property);
         EXPECT_TRUE(apply_property(*node, element, property, value)) << element << "." << property;
     }
+}
+
+TEST(DevElementChecks, AGridShapeLandsOnTheGrid) {
+    // arrange the engines a window owns, which is what a rebuilt node is built over (§8.1, §9.1)
+    BindingEngine engine;
+    TestTextEngine text;
+    std::unique_ptr<UiNode> node = create_node("Grid", engine, text);
+    ASSERT_NE(node, nullptr);
+    auto* grid = dynamic_cast<GridLayout*>(node.get());
+    ASSERT_NE(grid, nullptr);
+    // act the definition writes both counts, which is what a form with aligned columns writes (§8.2)
+    const bool columns = apply_property(*node, "Grid", "columns", "2");
+    const bool rows = apply_property(*node, "Grid", "rows", "3");
+    // assert the counts reached the layout rather than only the setter table (§8.2)
+    EXPECT_TRUE(columns);
+    EXPECT_TRUE(rows);
+    EXPECT_EQ(grid->columns(), 2u);
+    EXPECT_EQ(grid->rows(), 3u);
+}
+
+TEST(DevElementChecks, ANegativeGridShapeIsRefused) {
+    // arrange a grid whose derived shape is settled (§8.2)
+    BindingEngine engine;
+    TestTextEngine text;
+    std::unique_ptr<UiNode> node = create_node("Grid", engine, text);
+    ASSERT_NE(node, nullptr);
+    // act a negative count, which names no cell (§8.2)
+    const bool applied = apply_property(*node, "Grid", "columns", "-1");
+    // assert the assignment is refused rather than reported as landed (§11.1, §8.2)
+    EXPECT_FALSE(applied);
+}
+
+TEST(DevElementChecks, AButtonDialogRoleLandsOnTheButton) {
+    // arrange a button, which carries no dialog role until the definition writes one (§8.3)
+    BindingEngine engine;
+    TestTextEngine text;
+    std::unique_ptr<UiNode> node = create_node("Button", engine, text);
+    ASSERT_NE(node, nullptr);
+    auto* button = dynamic_cast<Button*>(node.get());
+    ASSERT_NE(button, nullptr);
+    // act
+    const bool is_default = apply_property(*node, "Button", "default", "true");
+    const bool is_cancel = apply_property(*node, "Button", "cancel", "true");
+    // assert both roles reached the control rather than only the setter table (§8.3)
+    EXPECT_TRUE(is_default);
+    EXPECT_TRUE(is_cancel);
+    EXPECT_TRUE(button->is_default());
+    EXPECT_TRUE(button->is_cancel());
 }
 
 TEST(DevElementChecks, AComboBoxOptionArrayLandsAsAStaticList) {
@@ -312,7 +366,7 @@ TEST(DevElementChecks, EveryTypedPropertyRefusesAValueItCannotHold) {
     TestTextEngine text;
     // the closed catalogue of the typed properties, each with a value of the wrong shape (§11.1)
     const std::vector<std::tuple<std::string, std::string, std::string>> refusals{
-        {"Column", "spacing", "wide"}, {"Column", "padding", "wide"}, {"Row", "spacing", "wide"}, {"Grid", "spacing", "wide"}, {"Padding", "padding", "wide"}, {"Panel", "padding", "wide"}, {"Panel", "spacing", "wide"}, {"Panel", "background", "blue"}, {"Panel", "corner_radius", "wide"}, {"Panel", "border_width", "wide"}, {"Card", "padding", "wide"}, {"Card", "background", "blue"}, {"Label", "foreground", "blue"}, {"Label", "font_size", "big"}, {"Button", "background", "blue"}, {"Button", "disabled", "yes"}, {"Slider", "value", "half"}, {"Slider", "disabled", "yes"}, {"Slider", "track_color", "blue"}, {"Slider", "thumb_color", "blue"}, {"CheckBox", "checked", "yes"}, {"CheckBox", "disabled", "yes"}, {"CheckBox", "outline", "blue"}, {"CheckBox", "check_fill", "blue"}, {"Image", "source", "icon.png"}, {"Image", "width", "wide"}, {"Image", "height", "tall"}, {"ScrollView", "overscan", "some"}, {"ScrollView", "scrollbar", "sometimes"}, {"ScrollView", "row_height", "tall"}, {"TextField", "read_only", "yes"}, {"TextField", "multiline", "yes"}, {"TextField", "disabled", "yes"}, {"TextField", "font_size", "big"}, {"ComboBox", "selected", "first"}, {"ComboBox", "disabled", "yes"}, {"Label", "horizontal_align", "middle"}, {"Label", "vertical_align", "middle"},
+        {"Column", "spacing", "wide"}, {"Column", "padding", "wide"}, {"Row", "spacing", "wide"}, {"Grid", "spacing", "wide"}, {"Grid", "columns", "wide"}, {"Grid", "rows", "wide"}, {"Padding", "padding", "wide"}, {"Panel", "padding", "wide"}, {"Panel", "spacing", "wide"}, {"Panel", "background", "blue"}, {"Panel", "corner_radius", "wide"}, {"Panel", "border_width", "wide"}, {"Card", "padding", "wide"}, {"Card", "background", "blue"}, {"Label", "foreground", "blue"}, {"Label", "font_size", "big"}, {"Button", "background", "blue"}, {"Button", "disabled", "yes"}, {"Button", "default", "yes"}, {"Button", "cancel", "yes"}, {"Slider", "value", "half"}, {"Slider", "disabled", "yes"}, {"Slider", "track_color", "blue"}, {"Slider", "thumb_color", "blue"}, {"CheckBox", "checked", "yes"}, {"CheckBox", "disabled", "yes"}, {"CheckBox", "outline", "blue"}, {"CheckBox", "check_fill", "blue"}, {"Image", "source", "icon.png"}, {"Image", "width", "wide"}, {"Image", "height", "tall"}, {"ScrollView", "overscan", "some"}, {"ScrollView", "scrollbar", "sometimes"}, {"ScrollView", "row_height", "tall"}, {"TextField", "read_only", "yes"}, {"TextField", "multiline", "yes"}, {"TextField", "disabled", "yes"}, {"TextField", "font_size", "big"}, {"ComboBox", "selected", "first"}, {"ComboBox", "disabled", "yes"}, {"Label", "horizontal_align", "middle"}, {"Label", "vertical_align", "middle"},
     };
     // assert each setter refuses rather than half applying, because a refused value leaves the node as it was (§11.1)
     for (const std::tuple<std::string, std::string, std::string>& refusal : refusals) {
@@ -1139,4 +1193,90 @@ TEST(DevReloadChecks, ACompiledImageFormAndTheDevIrAgreeOnTheSameUi) {
     EXPECT_EQ(again.preserved, 1U);
     EXPECT_EQ(find_by_id(root, "logo"), ir_image);
     EXPECT_EQ(ir_image->source(), before);
+}
+
+TEST(DevReloadChecks, ACompiledGridFormAndTheDevIrAgreeOnTheSameUi) {
+    // arrange the same ui source compiled into a facade and serialized into the dev ir (§16, AD-25)
+    std::ifstream file(ALBOR_DUAL_ENGINE_GRID_UI, std::ios::binary);
+    ASSERT_TRUE(file.good());
+    const std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    albor::compiler::DiagnosticList diagnostics;
+    const std::vector<albor::compiler::Token> tokens = albor::compiler::Lexer(source, diagnostics).tokenize();
+    const albor::compiler::SourceFile parsed = albor::compiler::Parser(tokens, diagnostics).parse();
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const std::optional<IrNode> definition = albor::compiler::serialize_component(parsed.components.front());
+    ASSERT_TRUE(definition.has_value());
+    // the compiled path builds the facade, which is the production output (§11.3)
+    BindingEngine engine;
+    TestTextEngine text;
+    DualEngineGrid grid(&engine, &text);
+    // the dev path applies the serialized definition onto a matching root (§12.1)
+    GridLayout root;
+    ReloadFixture fixture;
+    const ReloadReport report = apply_reload(root, *definition, fixture.context);
+    EXPECT_EQ(report.added, 4U);
+    // assert both trees carry the same written shape, which is what AD-25 claims (§16)
+    UiNode& compiled_grid = *static_cast<UiNode&>(grid).child_at(0);
+    ASSERT_EQ(compiled_grid.child_count(), root.child_count());
+    const auto* compiled = dynamic_cast<const GridLayout*>(&compiled_grid);
+    const auto* ir = dynamic_cast<const GridLayout*>(&root);
+    ASSERT_NE(compiled, nullptr);
+    ASSERT_NE(ir, nullptr);
+    EXPECT_EQ(compiled->columns(), ir->columns());
+    EXPECT_EQ(compiled->rows(), ir->rows());
+    EXPECT_FLOAT_EQ(compiled->gap(), ir->gap());
+    // act both trees are arranged at the same extent, which is where the shape decides the cells (§8.2)
+    compiled_grid.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{80.0f, 80.0f}));
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{80.0f, 80.0f}));
+    // assert every child lands in the same cell, so the two engines resolve one shape (§8.2, §16)
+    ASSERT_EQ(compiled_grid.child_count(), 4U);
+    for (std::size_t index = 0; index < 4; index++) {
+        const Rect& compiled_bounds = compiled_grid.child_at(index)->bounds();
+        const Rect& ir_bounds = root.child_at(index)->bounds();
+        EXPECT_FLOAT_EQ(compiled_bounds.x, ir_bounds.x);
+        EXPECT_FLOAT_EQ(compiled_bounds.y, ir_bounds.y);
+        EXPECT_FLOAT_EQ(compiled_bounds.width, ir_bounds.width);
+        EXPECT_FLOAT_EQ(compiled_bounds.height, ir_bounds.height);
+    }
+}
+
+TEST(DevReloadChecks, ACompiledDialogFormAndTheDevIrAgreeOnTheSameUi) {
+    // arrange the same ui source compiled into a facade and serialized into the dev ir (§16, AD-25)
+    std::ifstream file(ALBOR_DUAL_ENGINE_DIALOG_UI, std::ios::binary);
+    ASSERT_TRUE(file.good());
+    const std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    albor::compiler::DiagnosticList diagnostics;
+    const std::vector<albor::compiler::Token> tokens = albor::compiler::Lexer(source, diagnostics).tokenize();
+    const albor::compiler::SourceFile parsed = albor::compiler::Parser(tokens, diagnostics).parse();
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const std::optional<IrNode> definition = albor::compiler::serialize_component(parsed.components.front());
+    ASSERT_TRUE(definition.has_value());
+    // the compiled path builds the facade, which is the production output (§11.3)
+    BindingEngine engine;
+    TestTextEngine text;
+    DualEngineDialog dialog(&engine, &text);
+    // the dev path applies the serialized definition onto a matching root (§12.1)
+    RowLayout root;
+    ReloadFixture fixture;
+    const ReloadReport report = apply_reload(root, *definition, fixture.context);
+    EXPECT_EQ(report.added, 2U);
+    // assert both trees carry the same two dialog key roles, which is what AD-25 claims (§16)
+    const UiNode& compiled_row = *static_cast<UiNode&>(dialog).child_at(0);
+    ASSERT_EQ(compiled_row.child_count(), root.child_count());
+    const auto* compiled_cancel = dynamic_cast<const Button*>(compiled_row.child_at(0));
+    const auto* ir_cancel = dynamic_cast<const Button*>(root.child_at(0));
+    ASSERT_NE(compiled_cancel, nullptr);
+    ASSERT_NE(ir_cancel, nullptr);
+    EXPECT_TRUE(compiled_cancel->is_cancel());
+    EXPECT_TRUE(ir_cancel->is_cancel());
+    EXPECT_FALSE(compiled_cancel->is_default());
+    EXPECT_FALSE(ir_cancel->is_default());
+    const auto* compiled_default = dynamic_cast<const Button*>(compiled_row.child_at(1));
+    const auto* ir_default = dynamic_cast<const Button*>(root.child_at(1));
+    ASSERT_NE(compiled_default, nullptr);
+    ASSERT_NE(ir_default, nullptr);
+    EXPECT_TRUE(compiled_default->is_default());
+    EXPECT_TRUE(ir_default->is_default());
+    EXPECT_FALSE(compiled_default->is_cancel());
+    EXPECT_FALSE(ir_default->is_cancel());
 }

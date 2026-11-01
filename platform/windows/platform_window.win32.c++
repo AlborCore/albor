@@ -849,6 +849,20 @@ namespace albor
         m_state->visible = true;
     }
 
+    void Win32PlatformWindow::activate() {
+        // a window that was destroyed has nothing to bring forward (§5.3)
+        if (m_state->window == nullptr)
+            return;
+        // a popup never takes activation from its owner, because it is non activating (§5.1)
+        if (m_state->popup)
+            return;
+        // the window is shown and focused, which is the key status a dialog needs (§5.1)
+        ShowWindow(m_state->window, SW_SHOW);
+        SetForegroundWindow(m_state->window);
+        SetFocus(m_state->window);
+        m_state->visible = true;
+    }
+
     void Win32PlatformWindow::hide() {
         // a window that was destroyed was never on screen (§5.3)
         if (m_state->window == nullptr)

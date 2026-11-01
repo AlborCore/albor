@@ -11,6 +11,11 @@
 #include "core/native_window_handle.h"
 #include "semantics/semantic_provider.h"
 
+// the settable query belongs to the informal accessibility protocol, which appkit routes a value write through (§10.2)
+@interface NSObject (AlborAccessibilityValueSettable)
+- (BOOL)accessibilityIsValueAttributeSettable;
+@end
+
 using namespace albor;
 
 namespace
@@ -205,6 +210,58 @@ TEST(AccessibilityRole, ATextFieldAnnouncesItsValue) {
     NSString* value = (NSString*)element.accessibilityValue;
     // assert the value reaches the element rather than only the tree it was published from (§10.2)
     EXPECT_STREQ(value.UTF8String, "Albor");
+}
+
+TEST(AccessibilityRole, ATextFieldAcceptsAValueWrite) {
+    // arrange a field whose published write records the text a reader sets (§10.1, §10.2)
+    WindowFixture fixture;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::TextField});
+    SemanticNode* field = tree.mutable_at(0);
+    field->set_value("before");
+    std::string written;
+    field->set_value_action([&written](std::string_view text, SemanticValueState& state) {
+        written = std::string(text);
+        state.value = written;
+        return true;
+    });
+    // act
+    fixture.adapter->publish(tree);
+    // assert the field offers the value attribute as settable, which is what makes it editable (§10.2)
+    NSArray* children = announced_children(fixture.window);
+    ASSERT_EQ(children.count, 1U);
+    id element = children.firstObject;
+    EXPECT_TRUE([element accessibilityIsValueAttributeSettable]);
+    // act
+    [element setAccessibilityValue:@"after"];
+    // assert the write reached the control and the publication follows it (§10.2)
+    EXPECT_EQ(written, "after");
+    EXPECT_STREQ(((NSString*)[element accessibilityValue]).UTF8String, "after");
+}
+
+TEST(AccessibilityRole, AReadOnlyTextFieldRefusesAValueWrite) {
+    // arrange a read only field whose write would run if the state allowed it (§10.1)
+    WindowFixture fixture;
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::TextField});
+    SemanticNode* field = tree.mutable_at(0);
+    field->set_value("before");
+    field->set_read_only(true);
+    bool ran = false;
+    field->set_value_action([&ran](std::string_view, SemanticValueState&) {
+        ran = true;
+        return true;
+    });
+    // act
+    fixture.adapter->publish(tree);
+    // assert the attribute is not settable and the write did not run (§10.2)
+    NSArray* children = announced_children(fixture.window);
+    ASSERT_EQ(children.count, 1U);
+    id element = children.firstObject;
+    EXPECT_FALSE([element accessibilityIsValueAttributeSettable]);
+    [element setAccessibilityValue:@"after"];
+    EXPECT_FALSE(ran);
+    EXPECT_STREQ(((NSString*)[element accessibilityValue]).UTF8String, "before");
 }
 
 TEST(AccessibilityRole, ACheckboxStillAnnouncesItsCheckStateAsItsValue) {

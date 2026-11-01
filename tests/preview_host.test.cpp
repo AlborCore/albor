@@ -427,6 +427,30 @@ TEST(PreviewHostChecks, EveryElementThisBuildKnowsIsInstantiated) {
     EXPECT_NE(find_first(*scroller, [](UiNode& node) { return dynamic_cast<Label*>(&node) != nullptr; }), nullptr);
 }
 
+TEST(PreviewHostChecks, AGridShapeReachesThePreview) {
+    // arrange a two column grid whose row count is derived from three children (§8.2)
+    const std::string source = R"UI(component GridForm {
+    Grid {
+        columns: 2;
+        Label { text: "A"; }
+        Label { text: "B"; }
+        Label { text: "C"; }
+    }
+})UI";
+    BindingEngine engine;
+    // act
+    preview::PreviewResult result = preview::build(source, engine);
+    // assert the preview built the shape rather than the class default, which is one column (§8.2, §12.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    UiNode* found = find_first(*result.root, [](UiNode& node) { return dynamic_cast<GridLayout*>(&node) != nullptr; });
+    ASSERT_NE(found, nullptr);
+    auto* grid = dynamic_cast<GridLayout*>(found);
+    ASSERT_NE(grid, nullptr);
+    EXPECT_EQ(grid->columns(), 2u);
+    EXPECT_EQ(grid->rows(), 2u);
+}
+
 TEST(PreviewHostChecks, EveryWrittenPropertyReachesTheWidgetItNames) {
     // arrange a source writing each property onto the container that owns it (§8.2)
     const std::string rich = R"UI(component Rich {

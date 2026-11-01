@@ -248,6 +248,42 @@ TEST(MacosPopupWindow, ADialogAttachesToItsParent) {
     EXPECT_EQ(dialog_window.parentWindow, nil);
 }
 
+TEST(MacosPopupWindow, ActivatingADialogKeepsItVisibleAndAttached) {
+    // arrange an owner and a dialog attached to it (§5.1)
+    WindowOptions owner_options;
+    owner_options.title = "dialog-activate-owner";
+    owner_options.size = albor::Size{320.0f, 240.0f};
+    std::unique_ptr<MacosPlatformWindow> owner = MacosPlatformWindow::create(owner_options);
+    ASSERT_NE(owner, nullptr);
+    owner->show();
+    NSWindow* owner_window = nil;
+    for (NSWindow* window in [NSApplication sharedApplication].windows) {
+        if ([window.title isEqualToString:@"dialog-activate-owner"])
+            owner_window = window;
+    }
+    ASSERT_NE(owner_window, nil);
+    WindowOptions dialog_options;
+    dialog_options.role = WindowRole::Dialog;
+    dialog_options.title = "dialog-activate";
+    dialog_options.size = albor::Size{180.0f, 120.0f};
+    dialog_options.native_parent = owner->native_window_handle();
+    std::unique_ptr<MacosPlatformWindow> dialog = MacosPlatformWindow::create(dialog_options);
+    ASSERT_NE(dialog, nullptr);
+    dialog->show();
+    NSWindow* dialog_window = nil;
+    for (NSWindow* window in [NSApplication sharedApplication].windows) {
+        if ([window.title isEqualToString:@"dialog-activate"])
+            dialog_window = window;
+    }
+    ASSERT_NE(dialog_window, nil);
+    // act the framework brings an already visible dialog back, which is what closing another one needs (§5.1)
+    dialog->activate();
+    // assert the dialog is still visible and a child of its owner, which is the native ownership relation (§5.1)
+    EXPECT_TRUE(dialog_window.isVisible);
+    EXPECT_EQ(dialog_window.parentWindow, owner_window);
+    dialog->hide();
+}
+
 TEST(MacosPopupWindow, MovingTheOwnerKeepsThePopupAttached) {
     // arrange a shown popup attached to an owner, which appkit moves as one surface (§5.1)
     WindowOptions owner_options;

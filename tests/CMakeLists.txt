@@ -68,6 +68,12 @@ target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_TABS_UI="${CMAK
 target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_CHOICES_UI="${CMAKE_CURRENT_SOURCE_DIR}/vectors/dual_engine_choices.ui")
 target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_IMAGE_UI="${CMAKE_CURRENT_SOURCE_DIR}/vectors/dual_engine_image.ui")
 
+# the grid corpus proves the written shape resolves the same way through the compiled and dev paths (§8.2, §16)
+target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_GRID_UI="${CMAKE_CURRENT_SOURCE_DIR}/vectors/dual_engine_grid.ui")
+
+# the dialog corpus proves the two dialog key roles resolve the same way through both paths (§8.3, §16)
+target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_DIALOG_UI="${CMAKE_CURRENT_SOURCE_DIR}/vectors/dual_engine_dialog.ui")
+
 # the asset fixtures live together, so a generator suite resolves an embedded image from a carried png (§6.4)
 target_compile_definitions(albor-tests PRIVATE ALBOR_TEST_VECTORS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/vectors")
 
@@ -130,6 +136,11 @@ if(APPLE)
     # the platform font suite drives the core text resolver and the sfnt it hands over, which is the apple half (§9.1, AD-28)
     target_sources(albor-tests PRIVATE "./conditional/text_platform_font.test.macos.mm")
 
+    # the file dialog suite asserts the panel configuration without showing it, which is the apple half of §5.3 (AD-16)
+    target_sources(albor-tests PRIVATE "./conditional/file_dialog.test.macos.mm")
+    set_source_files_properties("./conditional/file_dialog.test.macos.mm" PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(albor-tests PRIVATE "-framework UniformTypeIdentifiers")
+
     # the backend lifecycle suite destroys a second gpu context in one process, which the metal driver traps on
     # after ganesh has used it. the trap kills the process, so no release run could finish while the suite is in,
     # and issue 29 tracks the driver defect rather than this repository. the suite is held out of the release
@@ -159,6 +170,9 @@ if(WIN32)
     # the backend suite drives the direct3d device directly, which is the one module the portable suites never reach
     # (AD-16). the binary already names the backend, so the suite adds no second link of it (§3.2)
     target_sources(albor-tests PRIVATE "./conditional/render_albor_d3d.test.win32.c++")
+    # the file dialog suite asserts the shell configuration without showing it, which is the win32 half of §5.3 (AD-16)
+    target_sources(albor-tests PRIVATE "./conditional/file_dialog.test.win32.c++")
+    target_link_libraries(albor-tests PRIVATE ole32 shell32)
 endif()
 
 
@@ -169,6 +183,8 @@ if(ALBOR_AUTOMATION)
     target_sources(albor-tests PRIVATE "./conditional/semantic_commands.test.cpp")
     target_sources(albor-tests PRIVATE "./conditional/command_commands.test.cpp")
     target_sources(albor-tests PRIVATE "./conditional/capture_commands.test.cpp" "./conditional/png_writer.test.cpp")
+    # the typing command is a host unit the stage suite exercises directly, so it compiles into the runner (§10.3)
+    target_sources(albor-tests PRIVATE "./conditional/input_commands.test.cpp" "${ALBOR_SOURCE_DIR}/automation/host/input_commands.cpp")
     if(APPLE)
         target_sources(albor-tests PRIVATE "./conditional/automation_transport.test.cpp")
     endif()

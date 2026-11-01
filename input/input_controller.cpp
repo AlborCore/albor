@@ -168,8 +168,7 @@ namespace albor
             // the focused control sees escape first, because a popup must close before focus is cleared (§8.3)
             if (UiNode* focused = m_focus.focused())
                 InputDispatcher::dispatch_to_focused(*m_root, event, focused);
-            // escape is consumed even when the control did not use it, which keeps it from reaching the dialog (§8.3)
-            event.handled = true;
+            // an escape the control declined is left unhandled, so a dialog can dismiss on it (§8.3)
             return;
         }
         // a key up carries no traversal and no activation, so it is left alone (§8.3)

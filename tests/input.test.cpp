@@ -1035,6 +1035,36 @@ TEST(InputControllerChecks, EscapeCancelsACapture) {
     EXPECT_FALSE(controller.capturing());
 }
 
+TEST(InputControllerChecks, AnEscapeTheControlDeclinedStaysUnhandled) {
+    // arrange a tree whose root claims nothing, which is what a plain container does (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    controller.focus().request_focus(&root);
+    Event escape{.kind = EventKind::KeyDown, .key = Key::Escape};
+    // act
+    controller.deliver(escape);
+    // assert the key is left for the window, which is what lets a dialog dismiss on it (§8.3)
+    EXPECT_FALSE(escape.handled);
+    EXPECT_EQ(root.deliveries, 1u);
+}
+
+TEST(InputControllerChecks, AnEscapeTheControlClaimsIsHandled) {
+    // arrange a control that claims the key, which is what a popup does (§8.3)
+    InputController controller;
+    RecordingNode root;
+    root.claims = true;
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    controller.attach(root);
+    controller.focus().request_focus(&root);
+    Event escape{.kind = EventKind::KeyDown, .key = Key::Escape};
+    // act
+    controller.deliver(escape);
+    // assert the claim reaches the window, so a dialog does not also act on it (§8.3)
+    EXPECT_TRUE(escape.handled);
+}
+
 TEST(InputControllerChecks, TabMovesTheCaretForward) {
     // arrange
     InputController controller;

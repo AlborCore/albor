@@ -191,6 +191,37 @@ namespace albor
         return true;
     }
 
+    void SemanticNode::set_value_action(SemanticValueAction on_write) {
+        // the write is stored as published, which is what an adapter invokes for a client (§10.1)
+        m_on_value_write = std::move(on_write);
+    }
+
+    bool SemanticNode::has_value_action() const {
+        // a node carries a write exactly when the editable control registered one (§10.1)
+        return static_cast<bool>(m_on_value_write);
+    }
+
+    bool SemanticNode::write_value(std::string_view value) const {
+        // a node without a write refuses the request, which the platform reports (§10.1)
+        if (!m_on_value_write)
+            return false;
+        // a disabled control refuses every action, including a text write (§10.1)
+        if (m_states.disabled)
+            return false;
+        // a read only control takes focus and a copy but refuses an edit, so the request is refused (§10.1)
+        if (m_states.read_only)
+            return false;
+        // the write runs, and the control reports what it now holds (§10.2)
+        SemanticValueState written;
+        if (!m_on_value_write(value, written))
+            return false;
+        // the publication follows the control rather than the request, because an edit may change the text (§10.2)
+        m_states.value = std::move(written.value);
+        m_states.selection_start = written.selection_start;
+        m_states.selection_end = written.selection_end;
+        return true;
+    }
+
     const Rect& SemanticNode::bounds() const {
         // the bounds let an adapter place the accessibility frame (§10.1)
         return m_bounds;

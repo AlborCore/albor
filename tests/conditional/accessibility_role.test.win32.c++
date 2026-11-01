@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include <gtest/gtest.h>
 
@@ -373,6 +374,78 @@ TEST(Win32AccessibilityRole, ADisabledSliderReportsItsRangeReadOnly) {
     // act assert the write is refused and no callback runs (§10.2)
     EXPECT_EQ(range->SetValue(4.0), UIA_E_ELEMENTNOTAVAILABLE);
     EXPECT_DOUBLE_EQ(written, 0.0);
+}
+
+TEST(Win32AccessibilityRole, ATextFieldAcceptsAValueWrite) {
+    // arrange a field whose published write records the text a reader sets (§10.1, §10.2)
+    WindowFixture fixture;
+    ASSERT_NE(fixture.window(), nullptr);
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::TextField});
+    std::string written;
+    tree.mutable_at(0)->set_value("before");
+    tree.mutable_at(0)->set_value_action([&written](std::string_view text, SemanticValueState& state) {
+        written = std::string(text);
+        state.value = written;
+        return true;
+    });
+    // act
+    fixture.adapter().publish(tree);
+    // assert the value pattern is offered and reports the field writable (§10.2)
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> root = fixture.announced_fragment();
+    ASSERT_NE(root.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> announced;
+    ASSERT_HRESULT_SUCCEEDED(root->Navigate(NavigateDirection_FirstChild, announced.GetAddressOf()));
+    ASSERT_NE(announced.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple = WindowFixture::simple_of(announced.Get());
+    ASSERT_NE(simple.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IUnknown> pattern;
+    ASSERT_HRESULT_SUCCEEDED(simple->GetPatternProvider(UIA_ValuePatternId, pattern.GetAddressOf()));
+    ASSERT_NE(pattern.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IValueProvider> value;
+    ASSERT_HRESULT_SUCCEEDED(pattern.As(&value));
+    BOOL read_only = TRUE;
+    ASSERT_HRESULT_SUCCEEDED(value->get_IsReadOnly(&read_only));
+    EXPECT_EQ(read_only, FALSE);
+    // act
+    ASSERT_HRESULT_SUCCEEDED(value->SetValue(L"after"));
+    // assert the write reached the control, which is the real edit path (§10.2)
+    EXPECT_EQ(written, "after");
+}
+
+TEST(Win32AccessibilityRole, AReadOnlyTextFieldRefusesAValueWrite) {
+    // arrange a read only field whose write would run if the state allowed it (§10.1)
+    WindowFixture fixture;
+    ASSERT_NE(fixture.window(), nullptr);
+    SemanticTree tree;
+    tree.add(SemanticNode{SemanticRole::TextField});
+    tree.mutable_at(0)->set_value("before");
+    tree.mutable_at(0)->set_read_only(true);
+    bool ran = false;
+    tree.mutable_at(0)->set_value_action([&ran](std::string_view, SemanticValueState&) {
+        ran = true;
+        return true;
+    });
+    // act
+    fixture.adapter().publish(tree);
+    // assert the pattern reports the field read only and refuses the write (§10.2)
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> root = fixture.announced_fragment();
+    ASSERT_NE(root.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderFragment> announced;
+    ASSERT_HRESULT_SUCCEEDED(root->Navigate(NavigateDirection_FirstChild, announced.GetAddressOf()));
+    ASSERT_NE(announced.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IRawElementProviderSimple> simple = WindowFixture::simple_of(announced.Get());
+    ASSERT_NE(simple.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IUnknown> pattern;
+    ASSERT_HRESULT_SUCCEEDED(simple->GetPatternProvider(UIA_ValuePatternId, pattern.GetAddressOf()));
+    ASSERT_NE(pattern.Get(), nullptr);
+    Microsoft::WRL::ComPtr<IValueProvider> value;
+    ASSERT_HRESULT_SUCCEEDED(pattern.As(&value));
+    BOOL read_only = FALSE;
+    ASSERT_HRESULT_SUCCEEDED(value->get_IsReadOnly(&read_only));
+    EXPECT_EQ(read_only, TRUE);
+    EXPECT_EQ(value->SetValue(L"after"), UIA_E_ELEMENTNOTAVAILABLE);
+    EXPECT_FALSE(ran);
 }
 
 TEST(Win32AccessibilityRole, AComboBoxExposesExpandAndCollapse) {

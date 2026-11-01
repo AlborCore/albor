@@ -37,6 +37,11 @@ namespace albor::headless
         m_visible = true;
     }
 
+    void HeadlessPlatformWindow::activate() {
+        // there is no screen to take key on, so the activation is counted (§5.1, §5.3)
+        m_activations++;
+    }
+
     void HeadlessPlatformWindow::hide() {
         // an already hidden window records nothing new, because a repeated hide has no effect (§5.3)
         if (!m_visible)
@@ -156,6 +161,11 @@ namespace albor::headless
     const std::string& HeadlessPlatformWindow::title() const {
         // the title is stored, so a headless report can assert on what was set (§5.3)
         return m_title;
+    }
+
+    std::size_t HeadlessPlatformWindow::activation_count() const {
+        // the count is how many times the framework asked the window to take key status (§5.1)
+        return m_activations;
     }
 
     bool HeadlessPlatformWindow::resize_pending() const {

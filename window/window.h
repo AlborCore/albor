@@ -45,6 +45,9 @@ namespace albor
         // put the window on screen
         void show();
 
+        // bring the window to the front and give it key status, which a dialog open and close needs (§5.1)
+        void activate();
+
         // take the window off screen
         void hide();
 

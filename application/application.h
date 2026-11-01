@@ -1,12 +1,15 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <type_traits>
 #include <vector>
 
+#include "application/file_dialog.h"
 #include "application/main_window_config.h"
 #include "application/task_queue.h"
 #include "application/timer.h"
@@ -103,8 +106,17 @@ namespace albor
         // post a guarded task, which is dropped when its token expired before the task ran (§4.2)
         TaskHandle post(Task task, const LifetimeToken& guard);
 
-        // create a window on the UI thread and hand out the handle that names it (§4.1)
+        // create a window on the UI thread and hand out the handle, installing every per-window handler (§4.1, §5.3)
         WindowHandle create_window(const WindowOptions& options);
+
+        // run a native open panel on the ui thread, owned by the window the options name (§5.3)
+        [[nodiscard]] std::optional<std::filesystem::path> open_file(const OpenFileOptions& options);
+
+        // run a native save panel on the ui thread, owned by the window the options name (§5.3)
+        [[nodiscard]] std::optional<std::filesystem::path> save_file(const SaveFileOptions& options);
+
+        // route one normalized event into a window on the ui thread, which brackets the dispatch against teardown (§4.2)
+        bool deliver_input(WindowHandle handle, Event& event);
 
         // create a main window whose tree the builder builds, wired for rendering (§6.1, §8.1)
         WindowHandle create_window(const WindowOptions& options, RootBuilder builder);
@@ -158,11 +170,20 @@ namespace albor
         // hand out the tree a main window drives, returning null when the handle is stale or has no tree (§6.1, §8.4)
         [[nodiscard]] UiNode* root(WindowHandle handle);
 
+        // find the window whose stage owns a node, which is what anchors a popup and a typing command (§5.1, §10.3)
+        [[nodiscard]] WindowHandle window_for_node(const UiNode& node) const;
+
         // replace the colour a window's scene clears with, which a themed surface writes (§6.1, §8.4)
         void set_window_background(WindowHandle handle, Color background);
 
         // destroy the window a handle names, which closes its native window first (§5.2)
         bool destroy_window(WindowHandle handle);
+
+        // ask to close a window, which consults the application close handler before it tears down (§5.2)
+        bool request_close(WindowHandle handle);
+
+        // report whether an open modal constrains the window's input, which is what modality means (§5.1, AD-08)
+        [[nodiscard]] bool input_blocked(WindowHandle handle) const;
 
         // hand out the number of open windows
         [[nodiscard]] std::size_t window_count() const;
@@ -242,17 +263,32 @@ namespace albor
         // attach the framework listeners to a window, which is what makes its events reach the application (§5.3)
         void bind_window(WindowHandle handle, Window& window, std::function<void()> on_native_closed, bool keep_on_native_close);
 
-        // find the window whose stage owns a node, which is what anchors a popup to its trigger (§5.1)
-        [[nodiscard]] WindowHandle window_for_node(const UiNode& node) const;
-
         // build the renderer and the engine the main windows share, which only the first one pays for (§6.3, §9.1)
         bool ensure_engines();
 
         // drop the stage of a closed window, since nothing may touch its surface afterwards (§6.1)
         void release_stage(WindowHandle handle);
 
-        // destroy the transient surfaces a window owns, because an owner never leaves an orphan popup (§5.1)
-        void destroy_owned_popups(WindowHandle owner);
+        // destroy the child windows a window owns, transients first and dialogs deepest first (§5.1)
+        void destroy_owned_windows(WindowHandle owner);
+
+        // report whether a window descends from another through the ownership map (§5.1)
+        [[nodiscard]] bool descends_from(WindowHandle handle, WindowHandle ancestor) const;
+
+        // give the focus of a closed dialog back to the parent control that opened it (§5.1, §8.3)
+        void restore_invoking_focus(WindowHandle dialog, WindowHandle parent);
+
+        // remember the focused control of the parent, which a closing dialog gives focus back to (§5.1, §8.3)
+        void remember_invoking_focus(WindowHandle dialog, WindowHandle parent);
+
+        // give a new dialog the interaction, after remembering the parent control it returns focus to (§5.1, §8.3)
+        void enter_dialog(WindowHandle handle, const WindowOptions& options);
+
+        // find a node by author identity, which the remembered invoking control is restored through (AD-11)
+        [[nodiscard]] static UiNode* find_by_explicit_id(UiNode& root, std::string_view id);
+
+        // resolve the native owner a file panel is parented to, reporting false for a stale handle (§5.1)
+        [[nodiscard]] bool resolve_file_dialog_parent(WindowHandle handle, NativeWindowHandle& parent) const;
 
         // apply the teardowns that arrived while a frame pass was walking the stages (§4.2)
         void drain_deferred_stages();
@@ -285,14 +321,23 @@ namespace albor
         // the registry that owns every open window (§4.1)
         WindowRegistry m_windows;
 
-        // the owner of every native transient surface, because a popup never outlives its trigger window (§5.1)
-        std::map<std::uint64_t, WindowHandle> m_popup_owners;
+        // the owner of every native window that names one, because a child never outlives its owner (§5.1)
+        std::map<std::uint64_t, WindowHandle> m_owned_windows;
+
+        // the author identity of the control that opened a dialog, which focus returns to on close (§5.1, AD-11)
+        std::map<std::uint64_t, std::string> m_return_focus;
 
         // the windows whose teardown was deferred by a close that arrived mid frame, so the walk stays valid (§4.2)
         std::vector<WindowHandle> m_deferred;
 
         // whether a frame pass is walking the stages, which is what makes a teardown defer itself (§4.2)
         bool m_driving_frames = false;
+
+        // how deep the current input dispatch is, which keeps a handler from releasing the stage it is on (§4.2)
+        std::size_t m_dispatch_depth = 0;
+
+        // how deep the current window teardown is, which tells a dialog whether its owner is closing (§5.1)
+        std::size_t m_teardown_depth = 0;
 
         // the callback every frame tick reaches (§6.1)
         std::function<void()> m_frame_handler;

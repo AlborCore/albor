@@ -1,25 +1,25 @@
 # Windows vs. macOS parity analysis
 
 **Scope:** comparison of the Windows platform and rendering work with the macOS reference, including test coverage.
-**Date:** 2026-10-30, after the P1 accessibility action table and menu widgets.
+**Date:** 2026-11-01, after the Xyce Studio readiness plan and the native file dialogs.
 
 ## Verdict
 
 Windows is now at functional parity with macOS for windowing, input, clipboard, IME, DPI, event-loop pacing,
 Blend2D, shaped text, the `render-albor` D3D backend, the named-pipe automation transport, and the accessibility
 bridge. The Windows accessibility bridge is a real UI Automation provider, not a stub; the macOS role suite
-carries **18 tests**, the Windows suite carries **19 role tests**, and Windows adds a real UI Automation client test.
+carries **20 tests**, the Windows suite carries **21 role tests**, and Windows adds a real UI Automation client test.
 
 The per-abstraction support table is maintained in [`docs/status.md`](docs/status.md#windows-support).
 
 The remaining differences are shared or process gaps rather than Windows implementation gaps:
 
-- Modality is validated but not enforced on either platform.
+- Modality is enforced by the application on both platforms; the gate drops input before dispatch, so no
+  platform adapter has to disable an owner window.
 - macOS has no equivalent of the Windows clipboard/IME/DPI/event-loop integration suite yet.
 - Windows has no code-coverage job comparable to `macos-coverage`.
-- `IValueProvider::SetValue` is read-only because a `SemanticAction` carries no value argument; a
-  bounded control still accepts a write through the macOS value attribute and the Windows
-  `IRangeValueProvider`.
+- `IValueProvider::SetValue` accepts a text write, because a `SemanticNode` now publishes a value
+  action beside its range action; the same write reaches both platforms.
 - Windows maps a radio group to a group without a selection provider, while macOS exposes the group
   selection. This is the remaining accessibility capability gap in this pass.
 
@@ -39,10 +39,11 @@ Both adapters implement the same `PlatformWindow` and `PlatformEventLoop` interf
 | Event loop pacing | CVDisplayLink | Waitable timer thread, tested | Different mechanism, same contract |
 | System appearance | AppKit appearance | Registry-based appearance | Parity |
 | Automation local transport | Unix domain socket | Named pipe, tested | Parity |
-| Accessibility | NSAccessibility bridge, 18 tests | UI Automation bridge, 19 role tests + 1 client test | Parity |
+| Accessibility | NSAccessibility bridge, 20 tests | UI Automation bridge, 21 role tests + 1 client test | Parity |
+| Native file dialogs | `NSOpenPanel`/`NSSavePanel` as sheets | `IFileOpenDialog`/`IFileSaveDialog` owned by the parent | Parity, with filters unioned on macOS |
 
-Both popup suites now carry **14 tests**. They cover ownership, anchor placement, trigger-click forwarding,
-owner-move following and a parented dialog. The AppKit-only `ThePopupLayerIsNonopaque` has no direct Win32
+Both popup suites now carry **15 tests**. They cover ownership, anchor placement, trigger-click forwarding,
+owner-move following, a parented dialog and re-activating a visible dialog. The AppKit-only `ThePopupLayerIsNonopaque` has no direct Win32
 equivalent, while Win32 adds the opening-press capture handoff that has no AppKit counterpart. A press that hides
 the surface from inside its own dispatch now drops the popup stage's capture, so the next open accepts its first click.
 
@@ -61,8 +62,29 @@ an owned child. Two native differences remain recorded rather than claimed away:
 owner move while a Win32 owned dialog does not, and a Win32 popup that holds capture offers activation to another
 application instead of synthesizing a cross-process click, while the AppKit monitor returns the event directly.
 
-The remaining shared gap is modality: it is validated in `window_options.cpp`, but no platform or application code
-enforces `WindowModal` or `ApplicationModal` on either platform.
+Modality is now enforced by the application for both platforms. `Application::input_blocked` drops every pointer,
+wheel, key, text and composition event a modal window constrains before the stage dispatches it, so accelerators,
+commands and the host observer never see it. `WindowModal` blocks its parent and the parent's other children;
+`ApplicationModal` blocks every other window; a modal never blocks a window that descends from it, which is what
+nests dialogs. A window modal window without a live parent is refused by `WindowOptions::validation_error`.
+
+The cascade is shared too: closing a window destroys the transients and dialogs that name it as owner, deepest
+first, and a vetoed close leaves the whole subtree open. Opening a dialog activates it and remembers the focused
+parent control by author id; closing it activates the parent and restores that control.
+
+One native difference remains recorded rather than claimed away: the gate is framework level, so a click on a
+window a modal constrains can still move native key status on either platform before the event is dropped. No
+adapter disables an owner window, because the specification makes modality a framework constraint (AD-08) rather
+than an OS window style.
+
+Native file dialogs are at parity on the options both platforms can honour. The appkit backend runs a sheet when
+the request names a visible parent, with a nested `NSModalPanelRunLoopMode` loop because the application runs its
+own loop, and a plain modal panel otherwise. The win32 backend runs the shell dialog owned by the parent. Both
+answer `std::filesystem::path`; the headless backend answers from a scripted queue so automation can drive the
+calling flow. Two recorded differences remain: macOS unions the filter extensions and has no per-filter label, and
+neither platform can disable the overwrite confirmation, so `SaveFileOptions` carries no such flag. The platform
+suites assert the panel configuration without showing a panel; the `Show`/sheet run path is exercised by the
+application, not by CI.
 
 ## 2. Text and shaped-run parity
 
@@ -154,15 +176,15 @@ tree:
   node's published range, which clamps the target and refuses a disabled control.
 - The provider reads an immutable publication snapshot, so a rebuild cannot invalidate an element a reader holds.
   Structure changes are raised with `UiaRaiseStructureChangedEvent`.
-- `IValueProvider::SetValue` still returns `UIA_E_ELEMENTNOTAVAILABLE` for text, because the bridge has no
-  channel to carry a new string into the application; reading the value is supported.
+- `IValueProvider::SetValue` writes text through the node's value action, and `get_IsReadOnly`
+  reports a disabled or read-only field as read only; reading the value is unchanged.
 
-The **19 Windows role tests** mirror the macOS role suite: root role, child hierarchy, empty publication, detach,
+The **21 Windows role tests** mirror the macOS role suite: root role, child hierarchy, empty publication, detach,
 text-field value, checkbox toggle state, list role, tab group and tab selection, radio group and choice selection,
 numeric-stepper value, image role with its name and disabled state, selected row, unselected row, a plain label
-with no value, checkbox toggle invocation, slider range read/write, disabled slider read-only, combo-box
-expand/collapse and menu-item control type. The suite also sends `WM_GETOBJECT` and asserts the window returns a
-provider key. A twentieth test drives a real `IUIAutomation` client through `ElementFromHandle` and `FindFirst`,
+with no value, checkbox toggle invocation, slider range read/write, disabled slider read-only, text value
+read/write, read-only text refusal, combo-box expand/collapse and menu-item control type. The suite also sends `WM_GETOBJECT` and asserts the window returns a
+provider key. A twenty-second test drives a real `IUIAutomation` client through `ElementFromHandle` and `FindFirst`,
 which proves UI Automation reaches the published root rather than only the direct provider interfaces. The
 providers are reached through the platform-only `accessibility/accessibility_platform.win32.h` accessor, which is
 the Windows analogue of reading the AppKit hierarchy directly.
@@ -284,7 +306,7 @@ job remains a tracked enhancement rather than a parity requirement.
   for cheap reopening, rebuilds it after a theme or type change, and commits when the already-selected row is
   pressed. The Escape path now reaches the focused control before the controller consumes it, the Win32 opening
   press hands capture to the popup only after the owner receives the release, and a press that hides its own
-  surface drops the popup capture instead of arming it against the next open. Both popup suites carry 14 tests.
+  surface drops the popup capture instead of arming it against the next open. Both popup suites carry 15 tests.
 - Added the portable semantic action table. macOS and Windows now offer the same activate, toggle,
   increment, decrement, expand and collapse actions; bounded controls publish a range, macOS answers
   the value attribute write, and Windows implements `IRangeValueProvider` and `IExpandCollapseProvider`.
@@ -309,9 +331,7 @@ job remains a tracked enhancement rather than a parity requirement.
 
 ## 9. Remaining priorities
 
-1. **Enforce window modality** in the window manager; it affects both platforms.
-2. **Add macOS equivalents** of the Windows clipboard, IME, DPI and event-loop integration tests.
-3. **Carry text edits through the UI Automation value pattern** once a semantic action can receive the new value.
-4. **Add a Windows coverage job** once a Windows instrumentation toolchain and exclusion policy are chosen.
-5. **Validate the UIA bridge with a third-party assistive-technology client** on an interactive Windows desktop; the
+1. **Add macOS equivalents** of the Windows clipboard, IME, DPI and event-loop integration tests.
+2. **Add a Windows coverage job** once a Windows instrumentation toolchain and exclusion policy are chosen.
+3. **Validate the UIA bridge with a third-party assistive-technology client** on an interactive Windows desktop; the
    role and UI Automation client tests cover the hierarchy and patterns, but not a screen reader's navigation.

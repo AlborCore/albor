@@ -385,6 +385,20 @@ namespace albor::preview
                     else if (auto* panel = dynamic_cast<Panel*>(built.get()))
                         panel->set_spacing(static_cast<float>(number_of(*numeric)));
                 }
+                // the shape a grid was written with, which decides how many cells it divides into (§8.2)
+                else if (assignment.name == "columns" || assignment.name == "rows") {
+                    // a non numeric count is skipped, because the checker already reported it (§12.2)
+                    if (numeric == nullptr)
+                        continue;
+                    // only a grid carries a shape, so every other element ignores the name (§8.2)
+                    if (auto* grid = dynamic_cast<GridLayout*>(built.get())) {
+                        // the column count and the row count are each written on their own axis (§8.2)
+                        if (assignment.name == "columns")
+                            grid->set_columns(static_cast<int>(number_of(*numeric)));
+                        else
+                            grid->set_rows(static_cast<int>(number_of(*numeric)));
+                    }
+                }
                 // the padding a container was written with, which wraps its children (§8.2)
                 else if (assignment.name == "padding") {
                     // a non numeric padding is skipped, because the checker already reported it (§12.2)

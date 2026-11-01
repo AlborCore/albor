@@ -814,6 +814,30 @@ namespace albor
         m_state->visible = true;
     }
 
+    void MacosPlatformWindow::activate() {
+        // a window with no native window has nothing to bring forward (§5.3)
+        if (m_state->window == nil)
+            return;
+        // a popup is non activating by design, so it is never made key (§5.1)
+        if (m_state->popup) {
+            [m_state->window orderFront:nil];
+            return;
+        }
+        // an owned dialog attaches to its parent, which keeps it above the owner when it takes key (§5.1)
+        if (m_state->owner != nil && m_state->window.parentWindow != m_state->owner) {
+            // an old owner is detached first, because a window has one parent at a time (§5.1)
+            if (m_state->window.parentWindow != nil)
+                [m_state->window.parentWindow removeChildWindow:m_state->window];
+            // the owner adopts the dialog before it is keyed (§5.1)
+            [m_state->owner addChildWindow:m_state->window ordered:NSWindowAbove];
+        }
+        // the window takes key status, which is what moves the caret into it (§5.1)
+        [m_state->window makeKeyAndOrderFront:nil];
+        // the application is activated, because a dialog must take focus from whatever the user was in (§4.1)
+        [[NSApplication sharedApplication] activateIgnoringOtherApps:YES];
+        m_state->visible = true;
+    }
+
     void MacosPlatformWindow::hide() {
         // a window with no native window was never on screen (§5.3)
         if (m_state->window == nil)

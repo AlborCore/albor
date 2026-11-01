@@ -6,6 +6,7 @@
 
 #include <vector>
 
+#include "platform/windows/file_dialog.h"
 #include "platform/windows/platform_window.h"
 #include "window/platform_window_factory.h"
 
@@ -252,5 +253,7 @@ namespace albor::windows
             // the factory returns the concrete window as the hal, so no win32 type escapes the module (§3.5)
             return Win32PlatformWindow::create(options);
         });
+        // the file dialog backend runs the shell dialogs, which a consumer opens through the application (§5.3)
+        install_windows_file_dialog();
     }
 } // namespace albor::windows

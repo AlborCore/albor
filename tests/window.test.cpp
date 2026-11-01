@@ -1,5 +1,6 @@
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -37,6 +38,9 @@ namespace
         // how many times the native window was shown
         std::size_t show_count = 0;
 
+        // how many times the native window was asked to take key status (§5.1)
+        std::size_t activations = 0;
+
         // how many times the native window was hidden
         std::size_t hide_count = 0;
 
@@ -63,6 +67,12 @@ namespace
             // a test that only watches the detach never reads the member, because the double dies with the window
             if (attached == nullptr && m_detached_flag)
                 *m_detached_flag = true;
+        }
+
+        void activate() override {
+            // the activation is counted, which is how a test observes focus moving (§5.1)
+            activations++;
+            is_visible = true;
         }
 
         void show() override {
@@ -267,6 +277,49 @@ TEST(WindowOptions, AModalDialogIsAccepted) {
     options.modality = Modality::ApplicationModal;
     // act, assert
     EXPECT_TRUE(options.valid());
+}
+
+TEST(WindowOptions, AWindowModalDialogNeedsAParent) {
+    // arrange a window modal dialog that names no owner (§5.1)
+    WindowOptions options;
+    options.role = WindowRole::Dialog;
+    options.modality = Modality::WindowModal;
+    // act
+    const char* error = options.validation_error();
+    // assert the modal is refused, because there is no window to block (§5.1)
+    ASSERT_NE(error, nullptr);
+    EXPECT_NE(std::string_view(error).find("needs a parent"), std::string_view::npos);
+}
+
+TEST(WindowOptions, AWindowModalDialogWithAParentIsAccepted) {
+    // arrange a window modal dialog that names the window it blocks (§5.1)
+    WindowOptions options;
+    options.role = WindowRole::Dialog;
+    options.modality = Modality::WindowModal;
+    options.parent = WindowHandle::from_id(1);
+    // act, assert
+    EXPECT_TRUE(options.valid());
+}
+
+TEST(WindowOptions, ADialogAcceptsTheDialogConventions) {
+    // arrange a dialog that opts out of the escape convention (§8.3)
+    WindowOptions options;
+    options.role = WindowRole::Dialog;
+    options.dialog.escape_dismisses = false;
+    // act, assert the conventions describe a dialog, so a dialog may change them (§8.3)
+    EXPECT_TRUE(options.valid());
+}
+
+TEST(WindowOptions, ANormalWindowRefusesTheDialogConventions) {
+    // arrange a normal window that asks for a dialog focus policy (§8.3)
+    WindowOptions options;
+    options.role = WindowRole::Normal;
+    options.dialog.focus_first_control = false;
+    // act
+    const char* error = options.validation_error();
+    // assert the conventions are refused loudly rather than silently ignored (§5.1)
+    ASSERT_NE(error, nullptr);
+    EXPECT_NE(std::string_view(error).find("dialog conventions"), std::string_view::npos);
 }
 
 TEST(WindowOptions, ANormalWindowIsTopLevel) {
@@ -1143,4 +1196,40 @@ TEST(Window, AWindowWithoutANativeWindowReportsTheDefaultAppearance) {
     Window window(WindowHandle::from_id(1u), WindowOptions{}, nullptr);
     // act, assert the default appearance is what the query reports (§8.4)
     EXPECT_TRUE(window.system_appearance() == SystemAppearance{});
+}
+
+TEST(Window, ActivateForwardsToThePlatform) {
+    // arrange a window over the double, which counts the activation (§5.1, §5.3)
+    auto platform = std::make_unique<TestPlatformWindow>();
+    TestPlatformWindow* observed = platform.get();
+    Window window(WindowHandle::from_id(1u), WindowOptions{}, std::move(platform));
+    // act
+    window.activate();
+    // assert the platform took the request and the window records that it is on screen (§5.1)
+    EXPECT_EQ(observed->activations, 1u);
+    EXPECT_TRUE(window.visible());
+}
+
+TEST(WindowRegistry, HandlesListsTheOpenWindowsInOrder) {
+    // arrange a registry with two windows over the double (§5.2)
+    set_platform_window_factory([](const WindowOptions&) -> std::unique_ptr<PlatformWindow> { return std::make_unique<TestPlatformWindow>(); });
+    WindowRegistry registry;
+    const WindowHandle first = registry.create(WindowOptions{});
+    const WindowHandle second = registry.create(WindowOptions{});
+    ASSERT_TRUE(first.valid());
+    ASSERT_TRUE(second.valid());
+    // act
+    const std::vector<WindowHandle> open = registry.handles();
+    // assert every open window is listed in creation order (§5.2)
+    ASSERT_EQ(open.size(), 2U);
+    EXPECT_EQ(open.at(0), first);
+    EXPECT_EQ(open.at(1), second);
+    // act a window is destroyed, which leaves a hole rather than a handle (§5.2)
+    EXPECT_TRUE(registry.destroy(first));
+    const std::vector<WindowHandle> after = registry.handles();
+    // assert the hole is skipped and the survivor keeps its order (§5.2)
+    ASSERT_EQ(after.size(), 1U);
+    EXPECT_EQ(after.at(0), second);
+    // cleanup
+    set_platform_window_factory(nullptr);
 }

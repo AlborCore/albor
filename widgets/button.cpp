@@ -240,6 +240,34 @@ namespace albor
         m_on_click = std::move(handler);
     }
 
+    void Button::set_default(bool is_default) {
+        // the flag is a dialog convention, so no pixel changes with it (§8.3)
+        m_default = is_default;
+    }
+
+    bool Button::is_default() const {
+        // the default role is what return consults (§8.3)
+        return m_default;
+    }
+
+    void Button::set_cancel(bool is_cancel) {
+        // the flag is a dialog convention, so no pixel changes with it (§8.3)
+        m_cancel = is_cancel;
+    }
+
+    bool Button::is_cancel() const {
+        // the cancel role is what escape consults (§8.3)
+        return m_cancel;
+    }
+
+    void Button::press() {
+        // a hidden or disabled control performs nothing, which is what a click on it means (§8.3)
+        if (!visible() || disabled())
+            return;
+        // the press runs the same activation a click runs, with the keyboard as its source (§8.3)
+        activate(InvocationSource::Keyboard);
+    }
+
     void Button::set_disabled(bool disabled) {
         // an unchanged state redraws nothing, because the button looks the same (§6.1)
         if (m_disabled == disabled)

@@ -3,6 +3,7 @@
 #import <AppKit/AppKit.h>
 #import <CoreVideo/CoreVideo.h>
 
+#include "platform/macos/file_dialog.h"
 #include "platform/macos/platform_window.h"
 #include "window/platform_window_factory.h"
 
@@ -161,6 +162,8 @@ namespace albor::macos
             // the factory returns the concrete window as the hal, so no appkit type escapes the module (§3.5)
             return MacosPlatformWindow::create(options);
         });
+        // the file dialog backend runs the appkit panels, which a consumer opens through the application (§5.3)
+        install_macos_file_dialog();
     }
 } // namespace albor::macos
 

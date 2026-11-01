@@ -272,6 +272,22 @@ namespace albor::devrt
                      node.set_gap(gap);
                      return true;
                  })},
+                // the column count is the shape the author wrote, where zero derives it (§8.2)
+                {"Grid.columns", setter<GridLayout>([](GridLayout& node, std::string_view value) {
+                     long long columns = 0;
+                     if (!read_int(value, columns) || columns < 0)
+                         return false;
+                     node.set_columns(static_cast<int>(columns));
+                     return true;
+                 })},
+                // the row count is the shape the author wrote, where zero derives it (§8.2)
+                {"Grid.rows", setter<GridLayout>([](GridLayout& node, std::string_view value) {
+                     long long rows = 0;
+                     if (!read_int(value, rows) || rows < 0)
+                         return false;
+                     node.set_rows(static_cast<int>(rows));
+                     return true;
+                 })},
                 {"Padding.padding", setter<PaddingLayout>([](PaddingLayout& node, std::string_view value) {
                      float padding = 0.0f;
                      if (!read_float(value, padding))
@@ -430,6 +446,22 @@ namespace albor::devrt
                      if (!read_bool(value, disabled))
                          return false;
                      node.set_disabled(disabled);
+                     return true;
+                 })},
+                // a button marked default is the one return runs in a dialog (§8.3)
+                {"Button.default", setter<Button>([](Button& node, std::string_view value) {
+                     bool is_default = false;
+                     if (!read_bool(value, is_default))
+                         return false;
+                     node.set_default(is_default);
+                     return true;
+                 })},
+                // a button marked cancel is the one escape runs in a dialog (§8.3)
+                {"Button.cancel", setter<Button>([](Button& node, std::string_view value) {
+                     bool is_cancel = false;
+                     if (!read_bool(value, is_cancel))
+                         return false;
+                     node.set_cancel(is_cancel);
                      return true;
                  })},
                 // a slider presents a value and two fills, which is what its track and thumb are painted with (§8)

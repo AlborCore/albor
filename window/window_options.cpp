@@ -20,6 +20,12 @@ namespace albor
         // a tool window is a utility surface, so it never participates in window modality (AD-08, §5.1)
         if (role == WindowRole::Tool && modality != Modality::None)
             return "a tool window cannot be modal";
+        // a window modal window blocks its parent, so it names one (§5.1)
+        if (modality == Modality::WindowModal && !parent.valid())
+            return "a window modal window needs a parent";
+        // the dialog conventions describe a dialog, so no other role carries a non default set (§5.1, §8.3)
+        if (role != WindowRole::Dialog && dialog != DialogConventions{})
+            return "dialog conventions apply to a dialog window";
         // every creatable option set is valid once the rules above hold
         return nullptr;
     }

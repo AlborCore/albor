@@ -45,6 +45,12 @@ namespace albor
         // destroy every registered window, which application shutdown does
         void destroy_all();
 
+        // hand out the handle of every open window, which a lifecycle rule iterates (§5.2)
+        [[nodiscard]] std::vector<WindowHandle> handles() const;
+
+        // visit every open window in identifier order, which the input gate walks without allocating (§5.1)
+        void for_each(const std::function<void(Window&)>& visitor) const;
+
         // hand out the number of registered windows
         [[nodiscard]] std::size_t size() const;
 

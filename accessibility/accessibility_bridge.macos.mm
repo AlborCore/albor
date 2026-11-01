@@ -165,12 +165,18 @@ typedef NSArray* (^AlborAccessibilityChildren)(std::size_t);
     return published == nullptr ? NO : published->node.selected();
 }
 
-// override: report whether the value is writable, which a range control accepts and a text field does not (§10.2)
+// override: report whether the value is writable, which an editable field and a range control accept (§10.2)
 - (BOOL)accessibilityIsValueAttributeSettable {
     // the publication this element names is the one the bridge assigned (§10.2)
     const Published* published = static_cast<const Published*>(self.publication);
+    // an element with no publication writes nothing, which is the quiet default (§10.2)
+    if (published == nullptr)
+        return NO;
+    // an editable field accepts the text a reader writes, which is the value write of §10.2
+    if (published->node.has_value_action())
+        return published->node.disabled() || published->node.read_only() ? NO : YES;
     // only a role the portable table names as incrementable carries a range a reader may write (§10.2)
-    return published != nullptr && published->node.has_range() && !published->node.disabled() && albor::role_supports_action(published->node.role(), albor::SemanticActionKind::Increment);
+    return published->node.has_range() && !published->node.disabled() && albor::role_supports_action(published->node.role(), albor::SemanticActionKind::Increment);
 }
 
 // override: answer the generic settable query, which application kit routes the value attribute through (§10.2)
@@ -182,14 +188,23 @@ typedef NSArray* (^AlborAccessibilityChildren)(std::size_t);
     return [super accessibilityIsAttributeSettable:attribute];
 }
 
-// override: write the bounded number a slider or stepper carries, which is the range write (§10.2)
+// override: write the bounded number a slider or stepper carries, or the text an editable field edits (§10.2)
 - (void)setAccessibilityValue:(id)value {
     // the publication this element names is the one the bridge assigned (§10.2)
     const Published* published = static_cast<const Published*>(self.publication);
-    // a non number has no position in the range, so it is ignored rather than coerced (§10.2)
-    if (published == nullptr || ![value isKindOfClass:[NSNumber class]])
+    // an element with no publication writes nothing, which is the quiet default (§10.2)
+    if (published == nullptr)
         return;
-    // the node clamps the target and refuses it while disabled, which is the one write rule (§10.2)
+    // a text value is the editable field's write, which the bridge hands to the control's own edit path (§10.2)
+    if (published->node.has_value_action() && [value isKindOfClass:[NSString class]]) {
+        const char* text = [(NSString*)value UTF8String];
+        (void)published->node.write_value(text != nullptr ? text : "");
+        return;
+    }
+    // a non number has no position in the range, so it is ignored rather than coerced (§10.2)
+    if (![value isKindOfClass:[NSNumber class]])
+        return;
+    // the node clamps the target and refuses it while disabled, which is the one range write rule (§10.2)
     (void)published->node.set_range_value([(NSNumber*)value doubleValue]);
 }
 

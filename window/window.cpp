@@ -47,6 +47,16 @@ namespace albor
         m_visible = true;
     }
 
+    void Window::activate() {
+        // a window without a native window has no key status to take (§5.1)
+        if (!m_platform)
+            return;
+        // the platform owns activation, because key status is a native fact (§5.1, §5.3)
+        m_platform->activate();
+        // an activation puts the window on screen, which is what the native call does (§5.1)
+        m_visible = true;
+    }
+
     void Window::hide() {
         // a window without a native window was never on screen (§5.1)
         if (!m_platform)

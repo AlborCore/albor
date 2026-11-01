@@ -30,7 +30,7 @@ those configurations (AD-10); **Not supported** means there is no Windows implem
 | --- | --- | --- |
 | Application, event loop, tasks, timers | Full | Win32 message loop and waitable timer pacing |
 | Window roles and close request | Full | Normal, Dialog, Tool, Popup; close veto |
-| Window modality and parent windows | Partial | a portable parent resolves to a live native owner, a stale one is refused, and a popup anchor is carried; modality is validated but not enforced (§5.1) |
+| Window modality and parent windows | Full | WindowModal and ApplicationModal are enforced before dispatch; an owned dialog closes with its parent; opening activates it and closing restores the parent control (§5.1) |
 | Window events | Full | resize, DPI, close, pointer, keyboard, wheel, appearance |
 | Clipboard | Full | native Win32 clipboard; 2 integration tests |
 | IME and text composition | Full | `WM_IME_*`, candidate anchor and document selection; lifecycle test |
@@ -38,6 +38,7 @@ those configurations (AD-10); **Not supported** means there is no Windows implem
 | Event-loop frame pacing | Full | waitable timer thread; live tick test |
 | System appearance | Full | registry-backed light/dark scheme and accent |
 | Input normalization and focus | Full | shared input/focus controllers with Win32 event mapping |
+| Native file dialogs | Full | `IFileOpenDialog`/`IFileSaveDialog`; owned by the parent window |
 | Layout, measure, arrange | Full | shared layout module |
 | Animation and scheduling | Full | shared animation core |
 | Headless platform | Full | test and CI surface |
@@ -68,7 +69,7 @@ those configurations (AD-10); **Not supported** means there is no Windows implem
 | Dev runtime and hot swap | Dev/Test | excluded from Release at link time |
 | LSP, preview host and inspector | Dev/Test | excluded from Release at link time |
 | Automation core and MCP server | Dev/Test | named-pipe transport; 10 transport tests and a host MCP exchange test |
-| Accessibility | Full with gaps | UI Automation; 19 role tests and 1 client test; range writes and expand/collapse patterns exposed; radio-group selection is not exposed |
+| Accessibility | Full with gaps | UI Automation; 21 role tests and 1 client test; range and text writes and expand/collapse patterns exposed; radio-group selection is not exposed |
 | Examples (`hello-world`, `form`, `vertical-slice`) | Full | all build on macOS; the vertical slice is driven end to end through the MCP automation host and captures PNG frames |
 
 Windows has no code-coverage job comparable to `macos-coverage`; the existing
@@ -80,6 +81,7 @@ Windows has no code-coverage job comparable to `macos-coverage`; the existing
 | --- | --- | --- |
 | Application, event loop, tasks, timers | `application/` | shipped |
 | Window roles, modality, close request | `window/` | shipped |
+| Native file dialogs | `application/`, `platform/` | shipped — appkit panels, shell dialogs and a scripted headless backend |
 | Platform abstraction (macOS, Windows, headless) | `platform/` | shipped |
 | Render surface, metrics, scale factor | `render/` | shipped |
 | Frame pipeline, two-stage frame | `render/` | shipped |

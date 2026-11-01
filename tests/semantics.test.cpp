@@ -907,3 +907,81 @@ TEST(SemanticNode, ARangeWriteClampsThePublishedValue) {
     EXPECT_TRUE(accepted);
     EXPECT_DOUBLE_EQ(node.range().value, 1.0);
 }
+
+TEST(SemanticNode, AValueWriteRunsTheActionAndPublishesTheText) {
+    // arrange an editable node whose write records the text a client set (§10.1, §10.2)
+    SemanticNode node(SemanticRole::TextField);
+    std::string written;
+    node.set_value("before");
+    node.set_value_action([&written](std::string_view text, SemanticValueState& state) {
+        written = std::string(text);
+        state.value = written;
+        state.selection_start = written.size();
+        state.selection_end = written.size();
+        return true;
+    });
+    // act
+    const bool accepted = node.write_value("after");
+    // assert the callback ran and the publication reads the text a client just wrote (§10.2)
+    EXPECT_TRUE(accepted);
+    EXPECT_EQ(written, "after");
+    EXPECT_EQ(node.value(), "after");
+    // assert the caret stands past the written text, which is where an edit leaves it (§10.1)
+    EXPECT_EQ(node.selection_start(), 5u);
+    EXPECT_EQ(node.selection_end(), 5u);
+}
+
+TEST(SemanticNode, AValueWriteIsRefusedWhileDisabled) {
+    // arrange a disabled node with a write that would record the text (§10.1)
+    SemanticNode node(SemanticRole::TextField);
+    bool ran = false;
+    node.set_value_action([&ran](std::string_view, SemanticValueState&) {
+        ran = true;
+        return true;
+    });
+    node.set_disabled(true);
+    // act
+    const bool accepted = node.write_value("after");
+    // assert a disabled control refuses every action, including a text write (§10.1)
+    EXPECT_FALSE(accepted);
+    EXPECT_FALSE(ran);
+}
+
+TEST(SemanticNode, AValueWriteIsRefusedWhileReadOnly) {
+    // arrange a read only node with a write so the refusal is the state rather than the absence (§10.1)
+    SemanticNode node(SemanticRole::TextField);
+    bool ran = false;
+    node.set_value_action([&ran](std::string_view, SemanticValueState&) {
+        ran = true;
+        return true;
+    });
+    node.set_read_only(true);
+    // act
+    const bool accepted = node.write_value("after");
+    // assert a read only control takes focus and a copy but refuses an edit (§10.1)
+    EXPECT_FALSE(accepted);
+    EXPECT_FALSE(ran);
+}
+
+TEST(SemanticNode, AValueWriteNeedsAPublishedWrite) {
+    // arrange a node that carries a value but no write, which a label does (§10.1)
+    SemanticNode node(SemanticRole::Label);
+    node.set_value("caption");
+    // act
+    const bool accepted = node.write_value("after");
+    // assert a node with no write refuses the request rather than replacing its published text (§10.1)
+    EXPECT_FALSE(accepted);
+    EXPECT_EQ(node.value(), "caption");
+}
+
+TEST(SemanticNode, ARefusedValueWriteLeavesThePublishedText) {
+    // arrange a node whose control refuses the text it was handed (§10.1)
+    SemanticNode node(SemanticRole::TextField);
+    node.set_value("before");
+    node.set_value_action([](std::string_view, SemanticValueState&) { return false; });
+    // act
+    const bool accepted = node.write_value("after");
+    // assert the publication still reads the text the control kept, because the write did not run (§10.2)
+    EXPECT_FALSE(accepted);
+    EXPECT_EQ(node.value(), "before");
+}

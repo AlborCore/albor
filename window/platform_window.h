@@ -50,6 +50,9 @@ namespace albor
         // put the native window on screen
         virtual void show() = 0;
 
+        // bring the window to the front and give it key status, which a dialog open and close needs (§5.1)
+        virtual void activate() = 0;
+
         // take the native window off screen
         virtual void hide() = 0;
 

@@ -7,6 +7,8 @@
 #include "render/frame_profile.h"
 #include "render/frame_scene.h"
 #include "render/render_executor.h"
+#include "ui/dialog_control.h"
+#include "ui/focus_target.h"
 #include "ui/frame_pipeline.h"
 #include "ui/ui_node.h"
 #include "window/window.h"
@@ -40,6 +42,8 @@ namespace albor
         m_pipeline->set_frame_request([&window] { window.request_frame(); });
         // the first delta is measured from now, because no frame has been built yet (§7.3)
         m_last_frame = std::chrono::steady_clock::now();
+        // only a dialog owes the first focus, because an ordinary window does not steal the caret (§8.3)
+        m_pending_initial_focus = window.options().role == WindowRole::Dialog;
         // the controller routes the normalized events into the tree (§8.3)
         m_input = std::make_unique<InputController>();
         m_input->attach(m_pipeline->root());
@@ -107,6 +111,8 @@ namespace albor
         // a retained tree that found nothing dirty produces no scene, so the tick presents nothing (§6.1)
         if (!scene)
             return;
+        // a dialog takes its first focus after the arrange pass, because focus needs bounds (§8.3)
+        apply_initial_focus();
         // whatever an application derived from the settled graph is refreshed before the scene is presented (§6.1, §10.1)
         if (m_frame_hook)
             m_frame_hook();
@@ -137,12 +143,19 @@ namespace albor
         m_input->cancel_pointer_capture();
     }
 
+    void WindowStage::set_close_request(std::function<void()> handler) {
+        // the callback is borrowed from the application, which owns the window lifetime (§5.2, §8.3)
+        m_close_request = std::move(handler);
+    }
+
     void WindowStage::deliver(Event& event) {
         // an unwired stage has no input to deliver, which the window betrayed at creation time (§8.3)
         if (!m_input)
             return;
         // the event routes first, which is what the caret the anchor follows answers (§8.3)
         m_input->deliver(event);
+        // a dialog applies its keyboard conventions to a key no control claimed (§8.3)
+        apply_dialog_key(event);
         // the focused node is where the caret lives, which the anchor is read against (§8.3)
         const UiNode* focused = m_input->focus().focused();
         const CaretTarget* target = dynamic_cast<const CaretTarget*>(focused);
@@ -203,5 +216,116 @@ namespace albor
     AnimationEngine& WindowStage::animations() {
         // the engine is a member, so a widget holding this reference never sees it replaced (§7.3)
         return m_animations;
+    }
+
+    FocusManager& WindowStage::focus() {
+        // the ring belongs to the input controller, which is the one path the keyboard walks (§8.3)
+        return m_input->focus();
+    }
+
+    void WindowStage::apply_dialog_key(Event& event) {
+        // a claimed key belongs to the control, which is what keeps a field's return out of the default (§8.3)
+        if (event.handled || event.kind != EventKind::KeyDown || m_window == nullptr)
+            return;
+        // the conventions describe a dialog, so no other role carries them (§8.3)
+        const WindowOptions& options = m_window->options();
+        if (options.role != WindowRole::Dialog)
+            return;
+        // return runs the control the author marked as the dialog default (§8.3)
+        if (event.key == Key::Return && options.dialog.return_invokes_default) {
+            event.handled = press_dialog_control(true);
+            return;
+        }
+        // escape runs the cancel control, or asks the application to close when none is named (§8.3)
+        if (event.key == Key::Escape && options.dialog.escape_dismisses) {
+            // a named cancel owns the key even while it refuses, so a disabled cancel blocks dismissal (§8.3)
+            if (press_dialog_control(false)) {
+                event.handled = true;
+                return;
+            }
+            // a dialog that names no cancel asks the application to close it (§8.3)
+            if (m_close_request) {
+                m_close_request();
+                event.handled = true;
+            }
+        }
+    }
+
+    bool WindowStage::press_dialog_control(bool wants_default) {
+        // the control is found in the tree, because the author marks it in the source (§8.3)
+        UiNode* target = nullptr;
+        m_pipeline->root().visit([&target, wants_default](UiNode& node) {
+            // a control already found is not replaced, because the first one in tree order is the authored one (§8.3)
+            if (target != nullptr)
+                return;
+            // only a control declares the two roles, which a container never does (§8.3)
+            auto* control = dynamic_cast<DialogControl*>(&node);
+            if (control == nullptr)
+                return;
+            // the key selects one role, and a control may hold either (§8.3)
+            if (wants_default ? !control->is_default() : !control->is_cancel())
+                return;
+            // the control is the authored one even while it refuses, which is what a disabled cancel means (§8.3)
+            target = &node;
+        });
+        // a dialog that names no such control leaves the key to the application (§8.3)
+        if (target == nullptr)
+            return false;
+        // a hidden or disabled control performs nothing, but the dialog still owns the key (§8.3)
+        if (!target->visible_in_tree() || target->disabled())
+            return true;
+        // the press runs the same activation a click runs (§8.3)
+        dynamic_cast<DialogControl*>(target)->press();
+        return true;
+    }
+
+    void WindowStage::apply_initial_focus() {
+        // the focus is placed once, because moving it later would undo what the user chose (§8.3)
+        if (!m_pending_initial_focus || m_window == nullptr)
+            return;
+        // only a dialog carries the convention, and only when it asked for it (§8.3)
+        const WindowOptions& options = m_window->options();
+        if (options.role != WindowRole::Dialog || !options.dialog.focus_first_control)
+            return;
+        // the tree is arranged by the frame that just built, so focus has bounds to accept (§8.2, §8.3)
+        m_pending_initial_focus = false;
+        // an application that focused a control itself is not overridden (§8.3)
+        if (m_input->focus().focused() != nullptr)
+            return;
+        // the first ordinary control wins, and the default is the fallback when every control is a dialog key (§8.3)
+        UiNode* first = nullptr;
+        UiNode* default_control = nullptr;
+        UiNode* cancel_control = nullptr;
+        m_pipeline->root().visit([&first, &default_control, &cancel_control](UiNode& node) {
+            // a control already found is not replaced, because tree order is the focus order (§8.3)
+            if (first != nullptr)
+                return;
+            // only a focus target is a control, because a container is not a caret stop (§8.3)
+            if (dynamic_cast<const FocusTarget*>(&node) == nullptr)
+                return;
+            // the default is the first fallback, because return must reach it from an empty dialog (§8.3)
+            auto* control = dynamic_cast<DialogControl*>(&node);
+            if (control != nullptr && control->is_default()) {
+                if (default_control == nullptr && FocusManager::focusable(node))
+                    default_control = &node;
+                return;
+            }
+            // the cancel key is the last fallback, because focusing it would make return cancel (§8.3)
+            if (control != nullptr && control->is_cancel()) {
+                if (cancel_control == nullptr && FocusManager::focusable(node))
+                    cancel_control = &node;
+                return;
+            }
+            // the first focusable ordinary control is where the caret enters (§8.3)
+            if (FocusManager::focusable(node))
+                first = &node;
+        });
+        // an ordinary control wins, then the default, and only then the cancel key (§8.3)
+        UiNode* target = first != nullptr ? first : default_control;
+        if (target == nullptr)
+            target = cancel_control;
+        // a tree with nothing focusable leaves the focus where it was (§8.3)
+        if (target != nullptr)
+            m_input->focus().request_focus(target);
     }
 } // namespace albor

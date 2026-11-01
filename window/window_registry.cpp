@@ -86,6 +86,32 @@ namespace albor
         m_windows.clear();
     }
 
+    std::vector<WindowHandle> WindowRegistry::handles() const {
+        // the open windows are collected in identifier order, which is creation order (§5.2)
+        std::vector<WindowHandle> open;
+        // the slots are walked, because a destroyed window leaves a hole behind (§5.2)
+        for (std::size_t slot = 0; slot < m_windows.size(); slot++) {
+            // a hole names no window, so it contributes no handle (§5.2)
+            if (!m_windows[slot])
+                continue;
+            // the identifier is the slot plus one, because the first window took slot zero (§5.2)
+            open.push_back(WindowHandle::from_id(static_cast<std::uint64_t>(slot) + 1));
+        }
+        return open;
+    }
+
+    void WindowRegistry::for_each(const std::function<void(Window&)>& visitor) const {
+        // a caller with no visitor asks for nothing, which the empty callback refuses (§5.2)
+        if (!visitor)
+            return;
+        // the slots are walked in identifier order, because that is creation order (§5.2)
+        for (const std::unique_ptr<Window>& window : m_windows) {
+            // a destroyed window leaves a hole behind, which no visitor sees (§5.2)
+            if (window)
+                visitor(*window.get());
+        }
+    }
+
     std::size_t WindowRegistry::size() const {
         std::size_t open = 0;
         // a destroyed window leaves an empty slot behind, which is not an open window (§5.2)

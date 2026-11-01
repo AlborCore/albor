@@ -27,6 +27,9 @@ namespace albor::headless
         // override: put the window on screen, which here only records that it is (§5.3)
         void show() override;
 
+        // override: record that the window was asked to take key status (§5.1, §5.3)
+        void activate() override;
+
         // override: take the window off screen, which here only records that it is not (§5.3)
         void hide() override;
 
@@ -75,6 +78,9 @@ namespace albor::headless
         // hand out the title, which a headless test asserts on because nothing is drawn (§5.3)
         [[nodiscard]] const std::string& title() const;
 
+        // hand out how many times the window was activated, which a modality test asserts on (§5.1)
+        [[nodiscard]] std::size_t activation_count() const;
+
         // report whether a resize is waiting to be drawn, which is what a test synchronizes on (§5.3)
         [[nodiscard]] bool resize_pending() const;
 
@@ -102,5 +108,8 @@ namespace albor::headless
 
         // the appearance this window reports, which is synthetic and owned here (§5.3, §8.4)
         SystemAppearance m_appearance;
+
+        // how many times the window was asked to take key status, which a modality test reads (§5.1)
+        std::size_t m_activations = 0;
     };
 } // namespace albor::headless

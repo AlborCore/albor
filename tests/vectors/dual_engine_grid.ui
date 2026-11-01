@@ -1,0 +1,23 @@
+// the compiled half of the AD-25 grid corpus, which proves the compiled shape agrees with the dev ir (§16, AD-25)
+component DualEngineGrid {
+    Grid {
+        spacing: 4px;
+        columns: 2;
+        Label {
+            id: cell_a;
+            text: "a";
+        }
+        Label {
+            id: cell_b;
+            text: "b";
+        }
+        Label {
+            id: cell_c;
+            text: "c";
+        }
+        Label {
+            id: cell_d;
+            text: "d";
+        }
+    }
+}
