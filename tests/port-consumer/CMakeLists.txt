@@ -13,6 +13,11 @@ find_package(albor CONFIG REQUIRED)
 
 add_executable(albor-port-consumer main.cpp)
 
+# a pinned release that predates the albor/ folder is named by the workflow, so the source spells that layout (AD-19)
+if(ALBOR_CONSUMER_RELEASED_INCLUDES)
+    target_compile_definitions(albor-port-consumer PRIVATE ALBOR_CONSUMER_RELEASED_INCLUDES=1)
+endif()
+
 # the helper drives the installed codegen executable, which is what the tool prefix contract exists for (AD-19)
 albor_build_ui_component(albor-port-consumer "${CMAKE_CURRENT_SOURCE_DIR}/consumer_panel.ui")
 

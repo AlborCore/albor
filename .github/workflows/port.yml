@@ -304,17 +304,21 @@ jobs:
       - name: consume the overlay port end to end
         run: |
           # the consumer's manifest would name a published version one day, which the overlay answers today (AD-19)
+          released_includes=OFF
           if [ "${{ matrix.pinned }}" != "true" ]; then
             # a source-tree entry builds the working tree, which the portfile announces as unpinned (AD-19)
             export ALBOR_PORT_SOURCE_PATH="${{ github.workspace }}"
           else
             # the pinned entry consumes the release, which vcpkg_from_git fetches from the pinned REF (AD-19)
             unset ALBOR_PORT_SOURCE_PATH
+            # a release cut before the albor/ folder exports the bare module paths, which the source names explicitly (AD-19)
+            released_includes=ON
           fi
           cmake -S ${{ matrix.consumer }} -B .build-port-consumer -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
             ${{ runner.os == 'Windows' && '-DVCPKG_INSTALL_OPTIONS=--x-abi-tools-use-exact-versions' || '' }} \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DALBOR_CONSUMER_RELEASED_INCLUDES=$released_includes \
             -DCMAKE_BUILD_TYPE=Release
           cmake --build .build-port-consumer
       - name: save the vcpkg binary cache
