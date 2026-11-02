@@ -296,11 +296,10 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-port-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-${{ matrix.consumer }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'tests/port-consumer/vcpkg.json', 'tests/port-consumer-blend2d/vcpkg.json', '.triplets/**', 'ports/albor/**') }}
+          key: vcpkg-port-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-${{ matrix.name }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'tests/port-consumer/vcpkg.json', 'tests/port-consumer-blend2d/vcpkg.json', '.triplets/**', 'ports/albor/**') }}
+          # the entry restores only its own lineage, because the released source and the working tree share an ABI (AD-19)
           restore-keys: |
-            vcpkg-port-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-${{ matrix.consumer }}-
-            vcpkg-port-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-
-            vcpkg-port-${{ runner.os }}-
+            vcpkg-port-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-${{ matrix.name }}-
       - name: consume the overlay port end to end
         run: |
           # the consumer's manifest would name a published version one day, which the overlay answers today (AD-19)
@@ -326,4 +325,4 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-port-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-${{ matrix.consumer }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'tests/port-consumer/vcpkg.json', 'tests/port-consumer-blend2d/vcpkg.json', '.triplets/**', 'ports/albor/**') }}
+          key: vcpkg-port-${{ runner.os }}-${{ steps.toolchain.outputs.fingerprint }}-${{ matrix.name }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'tests/port-consumer/vcpkg.json', 'tests/port-consumer-blend2d/vcpkg.json', '.triplets/**', 'ports/albor/**') }}
