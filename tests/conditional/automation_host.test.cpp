@@ -14,15 +14,15 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-#include "automation/host/automation_host.h"
-#include "automation/host/host_state.h"
-#include "core/dev_hook.h"
-#include "core/json.h"
-#include "core/paint.h"
-#include "render/render-software/software_renderer_backend.h"
-#include "render/render_context.h"
-#include "render/render_executor.h"
-#include "window/window_metrics.h"
+#include "albor/automation/host/automation_host.h"
+#include "albor/automation/host/host_state.h"
+#include "albor/core/dev_hook.h"
+#include "albor/core/json.h"
+#include "albor/core/paint.h"
+#include "albor/render/render-software/software_renderer_backend.h"
+#include "albor/render/render_context.h"
+#include "albor/render/render_executor.h"
+#include "albor/window/window_metrics.h"
 
 TEST(AutomationHost, AHostStartsWhenBound) {
     // arrange a dummy root, which the host only checks for null before it starts the server (§10.3)

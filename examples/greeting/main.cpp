@@ -1,12 +1,12 @@
 #include <chrono>
 #include <cstdio>
 
-#include "application/application.h"
+#include "albor/application/application.h"
+#include "albor/style/theme.h"
+#include "albor/widgets/theme_controller.h"
+#include "albor/window/window.h"
 #include "drivability.h"
 #include "greeting_panel.h"
-#include "style/theme.h"
-#include "widgets/theme_controller.h"
-#include "window/window.h"
 
 namespace
 {

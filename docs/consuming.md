@@ -57,9 +57,9 @@ target_link_libraries(my_app PRIVATE albor)
 `ALBOR_EXAMPLES` and `ALBOR_TESTS` already default to off when Albor is not the top-level
 project, so the explicit settings above are optional; they document the choice.
 
-The framework targets publish the framework include root, so a consumer does not add
-`target_include_directories` for `application/application.h` or a generated component
-header.
+The framework targets publish the include root the public headers live under, so a consumer
+does not add `target_include_directories` for `albor/application/application.h` or a generated
+component header.
 
 ## The vcpkg package
 

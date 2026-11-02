@@ -11,17 +11,17 @@
 #include <utility>
 #include <vector>
 
-#include "compiler/codegen/codegen.h"
-#include "compiler/diagnostic.h"
-#include "compiler/font_catalog.h"
-#include "compiler/font_usage.h"
-#include "compiler/lexer.h"
-#include "compiler/parser.h"
-#include "compiler/type_checker.h"
-#include "compiler/ui_loader.h"
-#include "compiler/value_type.h"
-#include "manifest/font_embed.h"
-#include "manifest/manifest.h"
+#include "albor/compiler/codegen/codegen.h"
+#include "albor/compiler/diagnostic.h"
+#include "albor/compiler/font_catalog.h"
+#include "albor/compiler/font_usage.h"
+#include "albor/compiler/lexer.h"
+#include "albor/compiler/parser.h"
+#include "albor/compiler/type_checker.h"
+#include "albor/compiler/ui_loader.h"
+#include "albor/compiler/value_type.h"
+#include "albor/manifest/font_embed.h"
+#include "albor/manifest/manifest.h"
 #include "tools/albor-codegen/depfile.h"
 
 namespace

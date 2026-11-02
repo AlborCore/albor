@@ -6,14 +6,14 @@
 
 #include <gtest/gtest.h>
 
-#include "commands/command.h"
-#include "core/clipboard.h"
-#include "focus/focus_manager.h"
+#include "albor/commands/command.h"
+#include "albor/core/clipboard.h"
+#include "albor/focus/focus_manager.h"
+#include "albor/render/frame_scene.h"
+#include "albor/runtime/binding_engine.h"
+#include "albor/ui/scene_builder.h"
+#include "albor/widgets/text_field.h"
 #include "netlist_editor.h"
-#include "render/frame_scene.h"
-#include "runtime/binding_engine.h"
-#include "ui/scene_builder.h"
-#include "widgets/text_field.h"
 
 using namespace albor;
 

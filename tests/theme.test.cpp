@@ -4,10 +4,10 @@
 
 #include <memory>
 
-#include "style/theme.h"
-#include "style/theme_builder.h"
-#include "widgets/slider.h"
-#include "widgets/widget.h"
+#include "albor/style/theme.h"
+#include "albor/style/theme_builder.h"
+#include "albor/widgets/slider.h"
+#include "albor/widgets/widget.h"
 
 namespace albor
 {

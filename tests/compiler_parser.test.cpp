@@ -4,8 +4,8 @@
 #include <string_view>
 #include <vector>
 
-#include "compiler/lexer.h"
-#include "compiler/parser.h"
+#include "albor/compiler/lexer.h"
+#include "albor/compiler/parser.h"
 
 using namespace albor::compiler;
 

@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "compiler/codegen/codegen.h"
+#include "albor/compiler/codegen/codegen.h"
 
 namespace albor::codegen
 {

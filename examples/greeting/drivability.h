@@ -3,8 +3,8 @@
 #include <memory>
 #include <string>
 
-#include "semantics/semantic_provider.h"
-#include "ui/ui_node.h"
+#include "albor/semantics/semantic_provider.h"
+#include "albor/ui/ui_node.h"
 
 namespace albor::example
 {

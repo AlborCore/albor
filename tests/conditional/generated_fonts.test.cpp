@@ -4,15 +4,15 @@
 #include <memory>
 #include <string>
 
+#include "albor/layout/column_layout.h"
+#include "albor/resources/embedded_font.h"
+#include "albor/runtime/binding_engine.h"
+#include "albor/text/font_spec.h"
+#include "albor/text/text-harfbuzz/harfbuzz_text_engine.h"
+#include "albor/text/text_engine.h"
+#include "albor/widgets/label.h"
 #include "albor_embedded_fonts.h"
 #include "font_panel.h"
-#include "layout/column_layout.h"
-#include "resources/embedded_font.h"
-#include "runtime/binding_engine.h"
-#include "text/font_spec.h"
-#include "text/text-harfbuzz/harfbuzz_text_engine.h"
-#include "text/text_engine.h"
-#include "widgets/label.h"
 
 using namespace albor;
 

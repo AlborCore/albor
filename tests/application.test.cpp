@@ -3,14 +3,14 @@
 
 #include <gtest/gtest.h>
 
-#include "application/application.h"
-#include "application/lifetime_token.h"
-#include "application/task_queue.h"
-#include "application/timer.h"
-#include "application/ui_timer.h"
-#include "ui/ui_event.h"
-#include "window/platform_window_factory.h"
-#include "window/popup_host.h"
+#include "albor/application/application.h"
+#include "albor/application/lifetime_token.h"
+#include "albor/application/task_queue.h"
+#include "albor/application/timer.h"
+#include "albor/application/ui_timer.h"
+#include "albor/ui/ui_event.h"
+#include "albor/window/platform_window_factory.h"
+#include "albor/window/popup_host.h"
 
 using namespace albor;
 

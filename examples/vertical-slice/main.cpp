@@ -1,11 +1,11 @@
 #include <cstdio>
 
-#include "application/application.h"
-#include "commands/command.h"
-#include "style/theme.h"
+#include "albor/application/application.h"
+#include "albor/commands/command.h"
+#include "albor/style/theme.h"
+#include "albor/widgets/theme_controller.h"
+#include "albor/window/system_appearance.h"
 #include "vertical_slice.h"
-#include "widgets/theme_controller.h"
-#include "window/system_appearance.h"
 
 namespace
 {

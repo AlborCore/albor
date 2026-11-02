@@ -4,8 +4,8 @@
 
 #include <gtest/gtest.h>
 
-#include "model/item_key.h"
-#include "model/selection_model.h"
+#include "albor/model/item_key.h"
+#include "albor/model/selection_model.h"
 
 using namespace albor;
 using namespace albor::model;

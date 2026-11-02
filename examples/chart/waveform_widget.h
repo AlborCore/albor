@@ -3,8 +3,8 @@
 #include <memory>
 #include <string>
 
+#include "albor/core/paint.h"
 #include "chart/waveform_view.h"
-#include "core/paint.h"
 #include "examples/chart/waveform_data.h"
 
 namespace albor

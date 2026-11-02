@@ -3,13 +3,13 @@
 
 #include <gtest/gtest.h>
 
-#include "compiler/lexer.h"
-#include "compiler/parser.h"
-#include "compiler/translation_extractor.h"
-#include "compiler/type_checker.h"
-#include "compiler/value_type.h"
-#include "i18n/catalog.h"
-#include "i18n/locale.h"
+#include "albor/compiler/lexer.h"
+#include "albor/compiler/parser.h"
+#include "albor/compiler/translation_extractor.h"
+#include "albor/compiler/type_checker.h"
+#include "albor/compiler/value_type.h"
+#include "albor/i18n/catalog.h"
+#include "albor/i18n/locale.h"
 
 using namespace albor;
 

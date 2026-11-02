@@ -4,11 +4,11 @@
 #include <string_view>
 #include <vector>
 
-#include "compiler/codegen/codegen.h"
-#include "compiler/diagnostic.h"
-#include "compiler/lexer.h"
-#include "manifest/glue.h"
-#include "manifest/manifest.h"
+#include "albor/compiler/codegen/codegen.h"
+#include "albor/compiler/diagnostic.h"
+#include "albor/compiler/lexer.h"
+#include "albor/manifest/glue.h"
+#include "albor/manifest/manifest.h"
 
 using namespace albor::manifest;
 using namespace albor::compiler;
@@ -97,9 +97,9 @@ TEST(ManifestGlue, AReferenceManifestEmitsItsFacadeHeader) {
     EXPECT_TRUE(contains(header.content, "#include <functional>"));
     EXPECT_TRUE(contains(header.content, "#include <memory>"));
     EXPECT_TRUE(contains(header.content, "#include <string_view>"));
-    EXPECT_TRUE(contains(header.content, "#include \"core/paint.h\""));
-    EXPECT_TRUE(contains(header.content, "#include \"ui/component.h\""));
-    EXPECT_TRUE(contains(header.content, "#include \"widgets/widget.h\""));
+    EXPECT_TRUE(contains(header.content, "#include \"albor/core/paint.h\""));
+    EXPECT_TRUE(contains(header.content, "#include \"albor/ui/component.h\""));
+    EXPECT_TRUE(contains(header.content, "#include \"albor/widgets/widget.h\""));
 }
 
 TEST(ManifestGlue, AReferenceManifestEmitsItsImplementationSource) {
@@ -429,7 +429,7 @@ record Task {
     // act
     const std::vector<GeneratedFile> files = generate(source);
     // assert the framework colour type lives in the paint header, which the struct must include (AD-05)
-    EXPECT_NE(files.at(0).content.find("#include \"core/paint.h\""), std::string::npos);
+    EXPECT_NE(files.at(0).content.find("#include \"albor/core/paint.h\""), std::string::npos);
     EXPECT_NE(files.at(0).content.find("Color tint;"), std::string::npos);
 }
 
@@ -446,7 +446,7 @@ native component Picture {
     // assert the facade names the handle and includes its complete type (§6.4, AD-05)
     const GeneratedFile& header = file_named(files, "chart/picture.h");
     EXPECT_TRUE(contains(header.content, "#include <memory>"));
-    EXPECT_TRUE(contains(header.content, "#include \"render/image_resource.h\""));
+    EXPECT_TRUE(contains(header.content, "#include \"albor/render/image_resource.h\""));
     EXPECT_TRUE(contains(header.content, "virtual void set_source(std::shared_ptr<const ImageResource> value) = 0;"));
     EXPECT_TRUE(contains(header.content, "[[nodiscard]] virtual std::shared_ptr<const ImageResource> source() const = 0;"));
     EXPECT_TRUE(contains(header.content, "void set_on_picked(std::function<void(std::shared_ptr<const ImageResource>)> handler);"));
@@ -486,7 +486,7 @@ record Picture {
     // assert the member names the handle and includes its complete type, while the path default is dropped (§6.4, AD-05)
     EXPECT_NE(files.at(0).content.find("#include <memory>"), std::string::npos);
     EXPECT_LT(files.at(0).content.find("#include <memory>"), files.at(0).content.find("#include <string>"));
-    EXPECT_NE(files.at(0).content.find("#include \"render/image_resource.h\""), std::string::npos);
+    EXPECT_NE(files.at(0).content.find("#include \"albor/render/image_resource.h\""), std::string::npos);
     EXPECT_NE(files.at(0).content.find("std::shared_ptr<const ImageResource> icon;"), std::string::npos);
     EXPECT_EQ(files.at(0).content.find("ignored.png"), std::string::npos);
 }

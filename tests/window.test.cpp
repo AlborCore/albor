@@ -5,13 +5,13 @@
 
 #include <gtest/gtest.h>
 
-#include "ui/ui_event.h"
-#include "window/platform_window_factory.h"
-#include "window/window.h"
-#include "window/window_handle.h"
-#include "window/window_metrics.h"
-#include "window/window_options.h"
-#include "window/window_registry.h"
+#include "albor/ui/ui_event.h"
+#include "albor/window/platform_window_factory.h"
+#include "albor/window/window.h"
+#include "albor/window/window_handle.h"
+#include "albor/window/window_metrics.h"
+#include "albor/window/window_options.h"
+#include "albor/window/window_registry.h"
 
 using namespace albor;
 

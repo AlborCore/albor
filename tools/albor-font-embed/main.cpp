@@ -1,7 +1,7 @@
 #include <string_view>
 #include <vector>
 
-#include "manifest/font_embed.h"
+#include "albor/manifest/font_embed.h"
 
 int main(int argc, char** argv) {
     // the driver takes the flags after the program name, which is what the runner receives (§14.2)

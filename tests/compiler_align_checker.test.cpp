@@ -3,10 +3,10 @@
 #include <string>
 #include <vector>
 
-#include "compiler/lexer.h"
-#include "compiler/parser.h"
-#include "compiler/type_checker.h"
-#include "compiler/value_type.h"
+#include "albor/compiler/lexer.h"
+#include "albor/compiler/parser.h"
+#include "albor/compiler/type_checker.h"
+#include "albor/compiler/value_type.h"
 
 using namespace albor::compiler;
 

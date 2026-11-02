@@ -8,10 +8,10 @@
 
 #include <gtest/gtest.h>
 
-#include "core/content_hash.h"
-#include "render/image_resource.h"
-#include "render/resource_factory.h"
-#include "resources/embedded_image.h"
+#include "albor/core/content_hash.h"
+#include "albor/render/image_resource.h"
+#include "albor/render/resource_factory.h"
+#include "albor/resources/embedded_image.h"
 
 TEST(EmbeddedImageChecks, DecodesEmbeddedBytesOnceAndSharesTheHandle) {
     // arrange

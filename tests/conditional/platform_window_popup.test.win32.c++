@@ -10,8 +10,8 @@
 
 #include <gtest/gtest.h>
 
-#include "platform/windows/platform_window.h"
-#include "window/window_options.h"
+#include "albor/platform/windows/platform_window.h"
+#include "albor/window/window_options.h"
 
 using namespace albor;
 

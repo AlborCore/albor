@@ -12,11 +12,11 @@
 
 #include <gtest/gtest.h>
 
-#include "core/clipboard.h"
-#include "platform/windows/clipboard.h"
-#include "platform/windows/event_loop.h"
-#include "platform/windows/platform_window.h"
-#include "window/window_options.h"
+#include "albor/core/clipboard.h"
+#include "albor/platform/windows/clipboard.h"
+#include "albor/platform/windows/event_loop.h"
+#include "albor/platform/windows/platform_window.h"
+#include "albor/window/window_options.h"
 
 using namespace albor;
 

@@ -45,7 +45,7 @@ sha256_of() {
 }
 
 check_metal() {
-    local SOURCE=render/render-albor/albor_shaders.metal ARTIFACT=render/render-albor/albor_shaders.metallib STAMP=render/render-albor/albor_shaders.metal.sha256
+    local SOURCE=albor/render/render-albor/albor_shaders.metal ARTIFACT=albor/render/render-albor/albor_shaders.metallib STAMP=albor/render/render-albor/albor_shaders.metal.sha256
 
     # the language and the system floor the artifact is built for, which a consumer cannot raise by accident
     # metal 3.0 is the language the 13.3 floor provides, and the oldest one this shader needs (AD-16)
@@ -137,7 +137,7 @@ check_metal() {
 }
 
 check_d3d() {
-    local SOURCE=render/render-albor/albor_shaders.hlsl ARTIFACT=render/render-albor/albor_shaders.dxbc STAMP=render/render-albor/albor_shaders.hlsl.sha256
+    local SOURCE=albor/render/render-albor/albor_shaders.hlsl ARTIFACT=albor/render/render-albor/albor_shaders.dxbc STAMP=albor/render/render-albor/albor_shaders.hlsl.sha256
 
     # the entry points and the profiles the artifact stitches, which the backend loads in this exact order (§6.3)
     # one container section is a uint32 little endian length followed by that entry point's compiled blob

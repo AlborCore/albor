@@ -7,18 +7,18 @@
 
 #include <gtest/gtest.h>
 
-#include "application/application.h"
-#include "application/window_stage.h"
-#include "automation/automation_protocol.h"
-#include "automation/automation_session.h"
-#include "automation/host/input_commands.h"
-#include "layout/column_layout.h"
-#include "platform/headless/headless_event_loop.h"
-#include "render/render-software/software_renderer_backend.h"
-#include "text/text_engine.h"
-#include "widgets/label.h"
-#include "widgets/text_field.h"
-#include "window/platform_window_factory.h"
+#include "albor/application/application.h"
+#include "albor/application/window_stage.h"
+#include "albor/automation/automation_protocol.h"
+#include "albor/automation/automation_session.h"
+#include "albor/automation/host/input_commands.h"
+#include "albor/layout/column_layout.h"
+#include "albor/platform/headless/headless_event_loop.h"
+#include "albor/render/render-software/software_renderer_backend.h"
+#include "albor/text/text_engine.h"
+#include "albor/widgets/label.h"
+#include "albor/widgets/text_field.h"
+#include "albor/window/platform_window_factory.h"
 
 namespace
 {

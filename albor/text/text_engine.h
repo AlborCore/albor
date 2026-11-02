@@ -1,0 +1,99 @@
+#pragma once
+
+#include <functional>
+#include <memory>
+#include <string>
+#include <string_view>
+
+#include "albor/render/glyph_outline.h"
+#include "albor/render/text_layout.h"
+#include "albor/text/font_spec.h"
+
+namespace albor
+{
+    // the reading direction a run is shaped in, which is a declared input rather than an ambient one (§9.2, §15)
+    enum class TextDirection
+    {
+        // the direction is derived from the text's own script, which is what a call site that names none gets (§9.2)
+        Inherit,
+
+        // left to right, the direction Latin, Cyrillic and Greek read in (§9.2)
+        Ltr,
+
+        // right to left, the direction Hebrew and Arabic read in (§9.2)
+        Rtl,
+    };
+
+    // the text half of the framework, which every shaping backend implements, naming no platform type (§9.1, §3.5, AD-19)
+    class TextEngine
+    {
+    public:
+        virtual ~TextEngine() = default;
+
+        // measure a run at the default font size, which is what a call site that does not care uses (§9.1)
+        [[nodiscard]] virtual TextLayout measure(std::string_view text, float max_width) const = 0;
+
+        // measure a run at an explicit font size, which the standard widgets use for their label (§9.1)
+        [[nodiscard]] virtual TextLayout measure(std::string_view text, float max_width, float font_size) const = 0;
+
+        // measure a run with an explicit font selection, which a backend that resolves families overrides (§9.1, AD-34)
+        [[nodiscard]] virtual TextLayout measure(std::string_view text, float max_width, float font_size, const FontSpec& spec) const {
+            // a backend that does not resolve a family yet measures exactly as before, so no behavior changes (§9.1)
+            (void)spec;
+            return measure(text, max_width, font_size);
+        }
+
+        // measure a run in a declared base direction, whose mixed-direction reordering is ICU's and deferred (§9.2, §15)
+        [[nodiscard]] virtual TextLayout measure(std::string_view text, float max_width, float font_size, const FontSpec& spec, TextDirection direction) const {
+            // a backend that does not shape directionally yet measures as before, so direction is the only addition (§9.2)
+            (void)direction;
+            return measure(text, max_width, font_size, spec);
+        }
+
+        // report whether the engine resolves a family or weight beyond its default face (§9.1)
+        [[nodiscard]] virtual bool resolves_font_selection() const { return false; }
+
+        // the resolver embedded text draws through, which an engine that draws outlines provides (§6.4, AD-34)
+        [[nodiscard]] virtual GlyphOutlineResolver glyph_outline_resolver() const { return {}; }
+
+        // report whether the engine can measure at all, which a caller checks before it sizes a scene (§9.1)
+        [[nodiscard]] virtual bool ready() const = 0;
+
+        // the font size a call site gets when it does not name one, in logical pixels (§9.1)
+        static constexpr float DEFAULT_FONT_SIZE = 16.0f;
+
+        // the width an unbounded run is measured against, because a call site may ask for no ceiling (§8.2)
+        static constexpr float UNBOUNDED_WIDTH = 1000000.0f;
+
+        // the family the framework measures with when the composition root names none (§11.3, AD-34)
+        static constexpr std::string_view DEFAULT_FONT_FAMILY = "Albor Sans";
+    };
+
+    // the signature a text engine implements to build itself (§9.1)
+    using TextEngineFactory = std::function<std::unique_ptr<TextEngine>()>;
+
+    // the state the installed factory lives in, heap held behind a constant initialized pointer (§9.1)
+    struct TextEngineFactoryState
+    {
+        // the installed factory, which is empty until a backend installs one (§9.1)
+        TextEngineFactory factory;
+
+        // the family the installed engine measures with, which the composition root names before the first window (§4.1)
+        std::string font_family;
+    };
+
+    // install the text engine the framework measures with, which a backend calls once at startup (§9.1)
+    void set_text_engine_factory(TextEngineFactory factory);
+
+    // hand out the installed factory, which is empty until a backend installs one (§9.1)
+    [[nodiscard]] const TextEngineFactory& text_engine_factory();
+
+    // build the installed engine, returning null when no backend is installed (§9.1)
+    [[nodiscard]] std::unique_ptr<TextEngine> create_text_engine();
+
+    // name the family the installed engine measures with, which the composition root sets before the first window (§4.1)
+    void set_installed_font_family(std::string family);
+
+    // hand out the family the installed engine measures with, which a factory reads (§11.3, AD-34)
+    [[nodiscard]] std::string installed_font_family();
+} // namespace albor

@@ -2,7 +2,7 @@
 
 #include <gtest/gtest.h>
 
-#include "core/json.h"
+#include "albor/core/json.h"
 
 using namespace albor::core;
 

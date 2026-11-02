@@ -4,7 +4,7 @@
 
 #include <gtest/gtest.h>
 
-#include "render/aged_cache.h"
+#include "albor/render/aged_cache.h"
 
 using namespace albor;
 

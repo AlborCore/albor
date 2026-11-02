@@ -4,9 +4,9 @@
 
 #include <gtest/gtest.h>
 
-#include "automation/automation_session.h"
-#include "automation/semantic_commands.h"
-#include "semantics/semantic_provider.h"
+#include "albor/automation/automation_session.h"
+#include "albor/automation/semantic_commands.h"
+#include "albor/semantics/semantic_provider.h"
 
 using namespace albor;
 using namespace albor::automation;

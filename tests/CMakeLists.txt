@@ -77,6 +77,9 @@ target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_DIALOG_UI="${CM
 # the asset fixtures live together, so a generator suite resolves an embedded image from a carried png (§6.4)
 target_compile_definitions(albor-tests PRIVATE ALBOR_TEST_VECTORS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/vectors")
 
+# the exported include root, so a generator suite proves an emitted include names the folder it resolves through (§3.5, AD-19)
+target_compile_definitions(albor-tests PRIVATE ALBOR_FRAMEWORK_INCLUDE_DIR="${PROJECT_SOURCE_DIR}/albor")
+
 # the tests link the framework modules and nothing platform specific, so they run without a window server (§3.2)
 #
 # only the modules that are not already re-exported are named here. albor-preview publishes albor-widgets,
@@ -189,7 +192,7 @@ if(ALBOR_AUTOMATION)
     target_sources(albor-tests PRIVATE "./conditional/command_commands.test.cpp")
     target_sources(albor-tests PRIVATE "./conditional/capture_commands.test.cpp" "./conditional/png_writer.test.cpp")
     # the typing command is a host unit the stage suite exercises directly, so it compiles into the runner (§10.3)
-    target_sources(albor-tests PRIVATE "./conditional/input_commands.test.cpp" "${ALBOR_SOURCE_DIR}/automation/host/input_commands.cpp")
+    target_sources(albor-tests PRIVATE "./conditional/input_commands.test.cpp" "${ALBOR_SOURCE_DIR}/albor/automation/host/input_commands.cpp")
     if(APPLE)
         target_sources(albor-tests PRIVATE "./conditional/automation_transport.test.cpp")
     endif()
@@ -304,3 +307,6 @@ add_subdirectory(scope)
 # the row model it repeats over arrives through albor-widgets, which albor-preview publishes (§18.3, AD-13)
 add_subdirectory(vectors)
 target_link_libraries(albor-tests PRIVATE albor-vector-fixture)
+
+# the include folder consumer compiles beside a decoy consumer core root, which locks the albor/ resolution (#152, §3.5)
+add_subdirectory(include-folder-consumer)

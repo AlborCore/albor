@@ -6,11 +6,11 @@
 #include <string_view>
 #include <vector>
 
-#include "compiler/codegen/codegen.h"
-#include "compiler/diagnostic.h"
-#include "compiler/lexer.h"
-#include "manifest/glue.h"
-#include "manifest/manifest.h"
+#include "albor/compiler/codegen/codegen.h"
+#include "albor/compiler/diagnostic.h"
+#include "albor/compiler/lexer.h"
+#include "albor/manifest/glue.h"
+#include "albor/manifest/manifest.h"
 
 namespace
 {

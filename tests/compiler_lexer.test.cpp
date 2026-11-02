@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-#include "compiler/lexer.h"
+#include "albor/compiler/lexer.h"
 
 using namespace albor::compiler;
 

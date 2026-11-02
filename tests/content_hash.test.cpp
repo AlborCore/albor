@@ -2,8 +2,8 @@
 
 #include <gtest/gtest.h>
 
-#include "core/content_hash.h"
-#include "resources/embedded_font.h"
+#include "albor/core/content_hash.h"
+#include "albor/resources/embedded_font.h"
 
 TEST(ContentHashChecks, HashIsOverTheBytesAndIsStable) {
     // arrange

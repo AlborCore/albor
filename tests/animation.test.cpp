@@ -3,13 +3,13 @@
 
 #include <gtest/gtest.h>
 
-#include "animation/animation_engine.h"
-#include "animation/lerp.h"
-#include "runtime/binding_engine.h"
-#include "runtime/property.h"
-#include "ui/frame_pipeline.h"
-#include "ui/ui_node.h"
-#include "window/window_metrics.h"
+#include "albor/animation/animation_engine.h"
+#include "albor/animation/lerp.h"
+#include "albor/runtime/binding_engine.h"
+#include "albor/runtime/property.h"
+#include "albor/ui/frame_pipeline.h"
+#include "albor/ui/ui_node.h"
+#include "albor/window/window_metrics.h"
 
 using namespace albor;
 

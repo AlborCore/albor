@@ -81,7 +81,7 @@ include(build/AlborComponent.cmake)
 # the installed package names its directories through gnu conventions, which every install rule below shares (AD-19)
 include(GNUInstallDirs)
 
-# include paths are relative to the framework root, which the targets publish to their consumers (§3.5, AD-05)
+# include paths resolve through the albor/ folder under the framework root, which the targets publish (§3.5, AD-05)
 include_directories("${ALBOR_SOURCE_DIR}")
 
 # a configuration is Release when neither the dev runtime extension nor the test extras are enabled (§2.2)
@@ -161,81 +161,81 @@ endif()
 enable_testing()
 
 # the shared value types every other module includes (§3.2)
-add_subdirectory(core)
+add_subdirectory(albor/core)
 
 # window roles, modality, handles and the window registry (§3.2)
-add_subdirectory(window)
+add_subdirectory(albor/window)
 
 # the reactive properties, the eager push engine and the immutable snapshots (§3.2, §7)
-add_subdirectory(runtime)
+add_subdirectory(albor/runtime)
 
 # the semantic tree that accessibility and automation consume (§3.2, §10.1)
-add_subdirectory(semantics)
+add_subdirectory(albor/semantics)
 
 # the platform accessibility bridge consumes the semantic tree, so it comes after it (§10.2)
-add_subdirectory(accessibility)
-add_subdirectory(i18n)
+add_subdirectory(albor/accessibility)
+add_subdirectory(albor/i18n)
 
 # the automation core exists only when it is explicitly enabled, and never in a release link (§10.3, AD-10)
 if(ALBOR_AUTOMATION)
-    add_subdirectory(automation)
+    add_subdirectory(albor/automation)
 endif()
 
 # the dev runtime extension is linked only in a Dev configuration, so a release carries no reload path (§12.1, AD-02)
 if(ALBOR_DEV)
-    add_subdirectory(devrt)
-    add_subdirectory(inspector)
+    add_subdirectory(albor/devrt)
+    add_subdirectory(albor/inspector)
 endif()
 
 # the rendering hal, the frame scene and the two stage pipeline (§3.2)
-add_subdirectory(render)
+add_subdirectory(albor/render)
 
 # application lifecycle, tasks, timers and lifetime tokens (§3.2)
-add_subdirectory(application)
+add_subdirectory(albor/application)
 
 # the ui tree, the component facade and the scene build stage (§3.2, §8.1)
-add_subdirectory(ui)
+add_subdirectory(albor/ui)
 
 # the two pass layout containers of §8.2, which measure and arrange the ui tree (§3.2)
-add_subdirectory(layout)
+add_subdirectory(albor/layout)
 
 # the text engine of §9.1, which measures a run so containers adapt to their content (§3.2)
-add_subdirectory(text)
-add_subdirectory(text/text-harfbuzz)
+add_subdirectory(albor/text)
+add_subdirectory(albor/text/text-harfbuzz)
 
 # the frame scheduler integrated animation core of §7.3, which drives properties through their presence channel (§3.2)
-add_subdirectory(animation)
+add_subdirectory(albor/animation)
 
 # the theme and style tokens of §6.1, which the widgets resolve their paint through (§3.2)
-add_subdirectory(style)
-add_subdirectory(resources)
+add_subdirectory(albor/style)
+add_subdirectory(albor/resources)
 
 # the shared action object of AD-15, whose accelerators, selection contract and undo history every consumer binds to (§3.2, §18)
-add_subdirectory(commands)
+add_subdirectory(albor/commands)
 
 # the standard widgets of §8, which are ui components that also expose semantics (§3.2)
-add_subdirectory(widgets)
+add_subdirectory(albor/widgets)
 
 # the input normalization and routing of §8.3, which turns platform events into tree deliveries (§3.2)
-add_subdirectory(input)
+add_subdirectory(albor/input)
 
 # the per window focus manager of §8.3, which owns which node holds the caret (§3.2)
-add_subdirectory(focus)
+add_subdirectory(albor/focus)
 
 # the model views that materialize keyed rows, which is what a repeater owns (§3.2, §18.1, AD-13)
-add_subdirectory(model)
+add_subdirectory(albor/model)
 
 # the recommended gpu backend the default runtime names, which builds on every platform with an adapter (§3.2, AD-05)
-add_subdirectory(render/render-albor)
+add_subdirectory(albor/render/render-albor)
 
 # the transitional skia reference, which only the renderer option carries (§6.3, AD-26)
 if(ALBOR_RENDERER_SKIA)
-    add_subdirectory(render/render-skia)
+    add_subdirectory(albor/render/render-skia)
 endif()
 
 # the cpu reference backend that the link line names when chosen, which is not a platform adapter (§3.2, AD-26)
 if(ALBOR_RENDERER_BLEND2D)
-    add_subdirectory(render/render-blend2d)
+    add_subdirectory(albor/render/render-blend2d)
 endif()
 
 # the software reference the unit tests test against, which is a test-only library (§2.2, AD-26)
@@ -243,23 +243,23 @@ if(ALBOR_TEST OR ALBOR_TESTS)
     if(NOT ALBOR_RENDERER_BLEND2D)
         message(FATAL_ERROR "albor: the test surfaces need ALBOR_RENDERER_BLEND2D=ON, because the software reference is built over its rasterization (AD-26)")
     endif()
-    add_subdirectory(render/render-software)
+    add_subdirectory(albor/render/render-software)
 endif()
 
 # the macos appkit adapter with its display link pacing (§3.2, AD-16)
-add_subdirectory(platform/macos)
-add_subdirectory(platform/headless)
+add_subdirectory(albor/platform/macos)
+add_subdirectory(albor/platform/headless)
 
 # the win32 adapter with its waitable timer pacing, which self registers when linked (§3.2, AD-16)
-add_subdirectory(platform/windows)
+add_subdirectory(albor/platform/windows)
 
 # the compiler frontend that turns .ui source into native c++ (§11.1)
-add_subdirectory(compiler)
-add_subdirectory(language-server)
-add_subdirectory(preview)
+add_subdirectory(albor/compiler)
+add_subdirectory(albor/language-server)
+add_subdirectory(albor/preview)
 
 # the manifest parser that declares the native types a ui file may use (§11.2, AD-17)
-add_subdirectory(manifest)
+add_subdirectory(albor/manifest)
 
 # the developer tools, which build against the compiler and never ship in the runtime (§2.1)
 add_subdirectory(tools)
@@ -378,10 +378,10 @@ if((APPLE AND NOT IOS) OR WIN32)
     endif()
 endif()
 
-# the modules' headers install with the module structure preserved, which is what the root-relative includes demand (§3.5, AD-05)
+# the modules' headers install under the albor/ folder with the module structure preserved, which is what the include paths demand (§3.5, AD-05)
 foreach(module core window runtime semantics accessibility i18n animation style resources commands input focus model layout widgets application ui text render platform)
     # the render backend subdirs stay private, which an anchored path regex covers without touching a lookalike checkout (AD-05)
-    install(DIRECTORY "${ALBOR_SOURCE_DIR}/${module}" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} FILES_MATCHING PATTERN "*.h" REGEX "(^|/)render-(software|skia|albor|blend2d)(/|$)" EXCLUDE)
+    install(DIRECTORY "${ALBOR_SOURCE_DIR}/albor/${module}" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/albor FILES_MATCHING PATTERN "*.h" REGEX "(^|/)render-(software|skia|albor|blend2d)(/|$)" EXCLUDE)
 endforeach()
 
 # the codegen drivers are executables a consumer build runs, which the installed helpers locate through their prefix (AD-19)

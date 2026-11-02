@@ -3,7 +3,7 @@
 
 #include <gtest/gtest.h>
 
-#include "language-server/lsp_transport.h"
+#include "albor/language-server/lsp_transport.h"
 
 using namespace albor;
 using namespace albor::language_server;

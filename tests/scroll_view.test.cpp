@@ -3,14 +3,14 @@
 
 #include <gtest/gtest.h>
 
-#include "commands/command.h"
-#include "core/constraints.h"
-#include "core/scrollable_content.h"
-#include "runtime/binding_engine.h"
-#include "semantics/semantic_node.h"
-#include "ui/ui_event.h"
-#include "ui/ui_node.h"
-#include "widgets/scroll_view.h"
+#include "albor/commands/command.h"
+#include "albor/core/constraints.h"
+#include "albor/core/scrollable_content.h"
+#include "albor/runtime/binding_engine.h"
+#include "albor/semantics/semantic_node.h"
+#include "albor/ui/ui_event.h"
+#include "albor/ui/ui_node.h"
+#include "albor/widgets/scroll_view.h"
 
 using namespace albor;
 

@@ -1,6 +1,11 @@
 #include <cstdio>
 
+// the working tree exports the albor/ folder, and only the pinned entry names a release that predates it (AD-19)
+#if defined(ALBOR_CONSUMER_RELEASED_INCLUDES)
 #include "application/application.h"
+#else
+#include "albor/application/application.h"
+#endif
 #include "consumer_panel.h"
 
 int main() {

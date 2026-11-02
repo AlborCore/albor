@@ -47,7 +47,7 @@ component Editor {
 The application declares its commands once, at startup, and keeps them alive:
 
 ```cpp
-#include "commands/command_registry.h"
+#include "albor/commands/command_registry.h"
 
 albor::CommandRegistry& commands = albor::Application::instance().commands();
 

@@ -12,6 +12,9 @@ Compile a .ui component at build time:
 
     albor_build_ui_component(main "${CMAKE_CURRENT_SOURCE_DIR}/panel.ui")
 
+The public headers install under an `albor/` folder, so consumer sources include
+`#include "albor/application/application.h"` and the paths match the `albor::` namespace.
+
 Exactly one platform adapter, one text engine and one renderer may be linked; the umbrella
 target carries them all, and the granular albor-*-auto targets are the expert surface.
 

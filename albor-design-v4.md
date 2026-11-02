@@ -3,15 +3,23 @@
 ## Architecture and Design Specification — Version 4
 
 **Status:** Implementation Specification  
-**Version:** 4.4
+**Version:** 4.5
 
-**Date:** 2026-10-05 (4.0) / 2026-10-08 (4.1, 4.2, 4.3) / 2026-10-23 (4.4)
+**Date:** 2026-10-05 (4.0) / 2026-10-08 (4.1, 4.2, 4.3) / 2026-10-23 (4.4) / 2026-11-01 (4.5)
 
 **Project:** AlborCore / Albor
 
 **Supersedes:** v3.0 (and closes Phase 0 exploratory prototyping)
 
 ### Revision Log
+
+**4.5 — the `albor/` include folder.** The framework's module directories moved under a top-level
+`albor/` folder, so every public header resolves as `albor/<module>/<header>.h` and the include
+paths match the `albor::` namespace. The installed package exports the headers under
+`include/albor/<module>/` and the targets publish the include root that carries the folder, so a
+consumer whose own tree publishes `core/` or `ui/` can no longer shadow a framework header through
+include order (§3.2, §3.5, AD-19, issue #152). Internal includes, generated code, the codegen
+registry, the examples and the docs use the same prefixed spelling; the namespace is unchanged.
 
 **4.4 — the public consumer build surface.** The framework now publishes `albor` and
 `albor-blend2d` as the only normal application targets. The platform adapter and text

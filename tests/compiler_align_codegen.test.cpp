@@ -4,11 +4,11 @@
 #include <string_view>
 #include <vector>
 
-#include "compiler/codegen/codegen.h"
-#include "compiler/lexer.h"
-#include "compiler/parser.h"
-#include "compiler/type_checker.h"
-#include "compiler/value_type.h"
+#include "albor/compiler/codegen/codegen.h"
+#include "albor/compiler/lexer.h"
+#include "albor/compiler/parser.h"
+#include "albor/compiler/type_checker.h"
+#include "albor/compiler/value_type.h"
 
 using namespace albor::compiler;
 
@@ -78,7 +78,7 @@ TEST(AlignCodegen, TheEnumeratorHeaderJoinsTheGeneratedSet) {
     // act
     const std::string_view unit = implementation(files).content;
     // assert the enumerator is declared by an included header rather than by a transitive one (§14.1, §8.2)
-    EXPECT_TRUE(contains(unit, "#include \"core/align.h\""));
+    EXPECT_TRUE(contains(unit, "#include \"albor/core/align.h\""));
 }
 
 TEST(AlignCodegen, AComponentWithoutAlignmentDoesNotPullTheHeader) {
@@ -87,7 +87,7 @@ TEST(AlignCodegen, AComponentWithoutAlignmentDoesNotPullTheHeader) {
     // act
     const std::string_view unit = implementation(files).content;
     // assert the include set only carries what the component reached (§14.1)
-    EXPECT_FALSE(contains(unit, "#include \"core/align.h\""));
+    EXPECT_FALSE(contains(unit, "#include \"albor/core/align.h\""));
 }
 
 TEST(AlignCodegen, TheToolbarPatternCompilesToASpacerCall) {

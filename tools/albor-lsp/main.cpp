@@ -4,9 +4,9 @@
 #include <string>
 #include <utility>
 
-#include "core/json.h"
-#include "language-server/lsp_server.h"
-#include "language-server/lsp_transport.h"
+#include "albor/core/json.h"
+#include "albor/language-server/lsp_server.h"
+#include "albor/language-server/lsp_transport.h"
 #include "tools/albor-lsp/stdio_mode.h"
 
 namespace

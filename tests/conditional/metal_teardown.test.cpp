@@ -2,7 +2,7 @@
 
 #include <gtest/gtest.h>
 
-#include "render/render-skia/skia_renderer_backend.h"
+#include "albor/render/render-skia/skia_renderer_backend.h"
 
 using namespace albor;
 

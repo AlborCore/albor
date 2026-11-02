@@ -3,13 +3,13 @@
 
 #include <gtest/gtest.h>
 
-#include "automation/automation_registry.h"
-#include "automation/automation_session.h"
-#include "automation/capture_commands.h"
-#include "automation/mcp_server.h"
-#include "automation/semantic_commands.h"
-#include "core/json.h"
-#include "semantics/semantic_provider.h"
+#include "albor/automation/automation_registry.h"
+#include "albor/automation/automation_session.h"
+#include "albor/automation/capture_commands.h"
+#include "albor/automation/mcp_server.h"
+#include "albor/automation/semantic_commands.h"
+#include "albor/core/json.h"
+#include "albor/semantics/semantic_provider.h"
 
 using namespace albor;
 using namespace albor::automation;

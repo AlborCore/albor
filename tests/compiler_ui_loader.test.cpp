@@ -5,10 +5,10 @@
 #include <optional>
 #include <string>
 
-#include "compiler/diagnostic.h"
-#include "compiler/type_checker.h"
-#include "compiler/ui_loader.h"
-#include "compiler/value_type.h"
+#include "albor/compiler/diagnostic.h"
+#include "albor/compiler/type_checker.h"
+#include "albor/compiler/ui_loader.h"
+#include "albor/compiler/value_type.h"
 
 using namespace albor::compiler;
 

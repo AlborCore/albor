@@ -7,9 +7,9 @@
 
 #include <gtest/gtest.h>
 
-#include "accessibility/accessibility_adapter.h"
-#include "core/native_window_handle.h"
-#include "semantics/semantic_provider.h"
+#include "albor/accessibility/accessibility_adapter.h"
+#include "albor/core/native_window_handle.h"
+#include "albor/semantics/semantic_provider.h"
 
 // the settable query belongs to the informal accessibility protocol, which appkit routes a value write through (§10.2)
 @interface NSObject (AlborAccessibilityValueSettable)

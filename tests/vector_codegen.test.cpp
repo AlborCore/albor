@@ -4,6 +4,12 @@
 
 #include <gtest/gtest.h>
 
+#include "albor/resources/embedded_image.h"
+#include "albor/runtime/binding_engine.h"
+#include "albor/text/text_engine.h"
+#include "albor/ui/scene_builder.h"
+#include "albor/widgets/label.h"
+#include "albor/window/window_metrics.h"
 #include "conditional_panel.h"
 #include "guarded_flat_repeat_panel.h"
 #include "guarded_repeat_panel.h"
@@ -12,16 +18,10 @@
 #include "nested_panel.h"
 #include "ordered_panel.h"
 #include "record_panel.h"
-#include "resources/embedded_image.h"
-#include "runtime/binding_engine.h"
 #include "scroll_log.h"
 #include "task/image_record.h"
 #include "task_list.h"
-#include "text/text_engine.h"
-#include "ui/scene_builder.h"
 #include "vector_panel.h"
-#include "widgets/label.h"
-#include "window/window_metrics.h"
 
 using namespace albor;
 

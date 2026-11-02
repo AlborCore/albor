@@ -3,7 +3,7 @@
 #include <utility>
 #include <vector>
 
-#include "compiler/diagnostic.h"
+#include "albor/compiler/diagnostic.h"
 
 using namespace albor::compiler;
 

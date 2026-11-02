@@ -2,9 +2,9 @@
 
 #include <gtest/gtest.h>
 
-#include "layout/column_layout.h"
-#include "layout/grid_layout.h"
-#include "layout/row_layout.h"
+#include "albor/layout/column_layout.h"
+#include "albor/layout/grid_layout.h"
+#include "albor/layout/row_layout.h"
 
 using namespace albor;
 

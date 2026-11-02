@@ -16,10 +16,10 @@
 // the sdk uuid expansion is the language extension token clang flags, so the diagnostic is silenced
 #pragma clang diagnostic ignored "-Wlanguage-extension-token"
 
-#include "resources/embedded_font.h"
-#include "text/text-harfbuzz/harfbuzz_platform_font.h"
-#include "text/text-harfbuzz/harfbuzz_text_engine.h"
-#include "text/text-harfbuzz/harfbuzz_typeface_resolver.h"
+#include "albor/resources/embedded_font.h"
+#include "albor/text/text-harfbuzz/harfbuzz_platform_font.h"
+#include "albor/text/text-harfbuzz/harfbuzz_text_engine.h"
+#include "albor/text/text-harfbuzz/harfbuzz_typeface_resolver.h"
 
 using namespace albor;
 

@@ -4,11 +4,11 @@
 #include <string>
 #include <string_view>
 
-#include "core/clipboard.h"
-#include "core/geometry.h"
-#include "core/native_window_handle.h"
-#include "core/paint.h"
-#include "core/text_range.h"
+#include "albor/core/clipboard.h"
+#include "albor/core/geometry.h"
+#include "albor/core/native_window_handle.h"
+#include "albor/core/paint.h"
+#include "albor/core/text_range.h"
 
 using namespace albor;
 

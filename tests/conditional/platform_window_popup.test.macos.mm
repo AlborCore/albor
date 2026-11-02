@@ -6,8 +6,8 @@
 
 #include <gtest/gtest.h>
 
-#include "platform/macos/platform_window.h"
-#include "window/window_options.h"
+#include "albor/platform/macos/platform_window.h"
+#include "albor/window/window_options.h"
 
 using namespace albor;
 

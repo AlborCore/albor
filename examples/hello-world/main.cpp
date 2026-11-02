@@ -2,9 +2,9 @@
 #include <memory>
 #include <vector>
 
-#include "application/application.h"
-#include "render/frame_scene.h"
-#include "text/text_engine.h"
+#include "albor/application/application.h"
+#include "albor/render/frame_scene.h"
+#include "albor/text/text_engine.h"
 
 namespace
 {

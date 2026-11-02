@@ -18,9 +18,9 @@
 
 #include <gtest/gtest.h>
 
-#include "accessibility/accessibility_adapter.h"
-#include "accessibility/accessibility_platform.win32.h"
-#include "semantics/semantic_provider.h"
+#include "albor/accessibility/accessibility_adapter.h"
+#include "albor/accessibility/accessibility_platform.win32.h"
+#include "albor/semantics/semantic_provider.h"
 
 using namespace albor;
 

@@ -4,10 +4,10 @@
 
 #include <gtest/gtest.h>
 
-#include "model/item_key.h"
-#include "model/keyed_view.h"
-#include "model/scrollable_rows.h"
-#include "ui/ui_node.h"
+#include "albor/model/item_key.h"
+#include "albor/model/keyed_view.h"
+#include "albor/model/scrollable_rows.h"
+#include "albor/ui/ui_node.h"
 
 using namespace albor;
 using namespace albor::model;

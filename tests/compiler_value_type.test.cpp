@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-#include "compiler/value_type.h"
+#include "albor/compiler/value_type.h"
 
 using namespace albor::compiler;
 

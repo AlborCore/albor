@@ -8,8 +8,8 @@
 #include <string_view>
 #include <vector>
 
-#include "compiler/diagnostic.h"
-#include "manifest/font_embed.h"
+#include "albor/compiler/diagnostic.h"
+#include "albor/manifest/font_embed.h"
 
 using namespace albor;
 using namespace albor::manifest;

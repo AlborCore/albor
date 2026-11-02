@@ -7,22 +7,22 @@
 
 #include <gtest/gtest.h>
 
-#include "render/draw_command.h"
-#include "render/line_batch.h"
-#include "render/picture_resource.h"
-#include "render/render-albor/albor_glyph_path.h"
-#include "render/render-software/software_glyph_atlas.h"
-#include "render/render-software/software_render_surface.h"
-#include "render/render-software/software_renderer_backend.h"
-#include "render/screenshot.h"
-#include "render/shaped_run.h"
-#include "resources/embedded_font.h"
-#include "text/text-harfbuzz/embedded_glyph_provider.h"
-#include "text/text-harfbuzz/harfbuzz_font_face.h"
-#include "text/text-harfbuzz/harfbuzz_text_engine.h"
-#include "ui/frame_pipeline.h"
-#include "ui/scene_builder.h"
-#include "window/window_metrics.h"
+#include "albor/render/draw_command.h"
+#include "albor/render/line_batch.h"
+#include "albor/render/picture_resource.h"
+#include "albor/render/render-albor/albor_glyph_path.h"
+#include "albor/render/render-software/software_glyph_atlas.h"
+#include "albor/render/render-software/software_render_surface.h"
+#include "albor/render/render-software/software_renderer_backend.h"
+#include "albor/render/screenshot.h"
+#include "albor/render/shaped_run.h"
+#include "albor/resources/embedded_font.h"
+#include "albor/text/text-harfbuzz/embedded_glyph_provider.h"
+#include "albor/text/text-harfbuzz/harfbuzz_font_face.h"
+#include "albor/text/text-harfbuzz/harfbuzz_text_engine.h"
+#include "albor/ui/frame_pipeline.h"
+#include "albor/ui/scene_builder.h"
+#include "albor/window/window_metrics.h"
 
 using namespace albor;
 
