@@ -89,8 +89,8 @@ consumer map, advanced composition and troubleshooting are on [Consuming
 Albor](consuming.md).
 
 The source route names the framework as a subtree: `FetchContent` — or `add_subdirectory` of
-a vendored copy — and every framework target publishes the framework's own include root, so
-`#include "application/application.h"` resolves from the consumer's sources.
+a vendored copy — and every framework target publishes the include root the public headers
+live under, so `#include "albor/application/application.h"` resolves from the consumer's sources.
 
 ```cmake
 include(FetchContent)
@@ -197,7 +197,7 @@ construction — no abstract base, no virtual dispatch.
 ```cpp
 #include <cstdio>
 
-#include "application/application.h"
+#include "albor/application/application.h"
 #include "greeting_panel.h"
 
 int main() {

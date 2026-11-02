@@ -10,15 +10,15 @@
 
 #include <gtest/gtest.h>
 
-#include "core/geometry.h"
-#include "core/native_window_handle.h"
-#include "core/paint.h"
-#include "render/frame_scene.h"
-#include "render/render-blend2d/blend2d_renderer_backend.h"
-#include "render/render-blend2d/blend2d_window_surface.h"
-#include "render/render_executor.h"
-#include "render/renderer_backend.h"
-#include "window/window_metrics.h"
+#include "albor/core/geometry.h"
+#include "albor/core/native_window_handle.h"
+#include "albor/core/paint.h"
+#include "albor/render/frame_scene.h"
+#include "albor/render/render-blend2d/blend2d_renderer_backend.h"
+#include "albor/render/render-blend2d/blend2d_window_surface.h"
+#include "albor/render/render_executor.h"
+#include "albor/render/renderer_backend.h"
+#include "albor/window/window_metrics.h"
 
 // the suite only runs on apple, because it asserts the macos window half self installed at load (§5.3, AD-16)
 TEST(Blend2DAutoInstallChecks, TheWindowSurfaceFactoryInstallsItselfAtLoad) {

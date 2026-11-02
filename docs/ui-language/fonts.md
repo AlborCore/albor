@@ -56,7 +56,7 @@ The generated header names the default family and exposes the installer:
 #include <string>
 
 #include "albor_embedded_fonts.h"
-#include "text/text_engine.h"
+#include "albor/text/text_engine.h"
 
 int main() {
     albor::set_installed_font_family(std::string(albor::generated::DEFAULT_FAMILY));

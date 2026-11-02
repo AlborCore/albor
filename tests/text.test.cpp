@@ -7,8 +7,8 @@
 
 #include <gtest/gtest.h>
 
-#include "render/shaped_run.h"
-#include "text/text_engine.h"
+#include "albor/render/shaped_run.h"
+#include "albor/text/text_engine.h"
 
 using namespace albor;
 

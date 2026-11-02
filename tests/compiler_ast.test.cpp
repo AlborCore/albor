@@ -4,7 +4,7 @@
 #include <utility>
 #include <vector>
 
-#include "compiler/ast.h"
+#include "albor/compiler/ast.h"
 
 using namespace albor::compiler;
 

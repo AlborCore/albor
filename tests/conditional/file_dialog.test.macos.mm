@@ -7,8 +7,8 @@
 
 #include <gtest/gtest.h>
 
-#include "application/file_dialog.h"
-#include "platform/macos/file_dialog.macos.h"
+#include "albor/application/file_dialog.h"
+#include "albor/platform/macos/file_dialog.macos.h"
 
 using namespace albor;
 

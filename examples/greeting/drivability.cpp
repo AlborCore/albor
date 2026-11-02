@@ -2,11 +2,11 @@
 
 #include <cstdio>
 
-#include "accessibility/accessibility_adapter.h"
-#include "automation/automation_registry.h"
-#include "automation/automation_transport.h"
-#include "automation/semantic_commands.h"
-#include "ui/semantic_tree_builder.h"
+#include "albor/accessibility/accessibility_adapter.h"
+#include "albor/automation/automation_registry.h"
+#include "albor/automation/automation_transport.h"
+#include "albor/automation/semantic_commands.h"
+#include "albor/ui/semantic_tree_builder.h"
 
 namespace albor::example
 {

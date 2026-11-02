@@ -6,11 +6,11 @@
 #include <utility>
 #include <vector>
 
-#include "compiler/ast.h"
-#include "compiler/diagnostic.h"
-#include "compiler/font_catalog.h"
-#include "compiler/font_usage.h"
-#include "compiler/type_checker.h"
+#include "albor/compiler/ast.h"
+#include "albor/compiler/diagnostic.h"
+#include "albor/compiler/font_catalog.h"
+#include "albor/compiler/font_usage.h"
+#include "albor/compiler/type_checker.h"
 
 using namespace albor;
 using namespace albor::compiler;

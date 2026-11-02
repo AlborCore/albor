@@ -5,8 +5,8 @@
 
 #include <gtest/gtest.h>
 
-#include "automation/automation_registry.h"
-#include "automation/capture_commands.h"
+#include "albor/automation/automation_registry.h"
+#include "albor/automation/capture_commands.h"
 
 using namespace albor::automation;
 

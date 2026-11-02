@@ -7,7 +7,7 @@
 #include <gtest/gtest.h>
 #include <zlib.h>
 
-#include "automation/png_writer.h"
+#include "albor/automation/png_writer.h"
 
 using namespace albor::automation;
 

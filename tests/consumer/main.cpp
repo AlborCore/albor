@@ -1,6 +1,6 @@
 #include <cstdio>
 
-#include "application/application.h"
+#include "albor/application/application.h"
 #include "consumer_panel.h"
 
 int main() {

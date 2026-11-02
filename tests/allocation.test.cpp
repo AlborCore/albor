@@ -5,10 +5,10 @@
 
 #include <gtest/gtest.h>
 
-#include "render/frame_scene.h"
-#include "text/text-harfbuzz/harfbuzz_text_engine.h"
+#include "albor/render/frame_scene.h"
+#include "albor/text/text-harfbuzz/harfbuzz_text_engine.h"
+#include "albor/ui/scene_builder.h"
 #include "tools/alloc-probe/alloc_probe.h"
-#include "ui/scene_builder.h"
 
 using namespace albor;
 

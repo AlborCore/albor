@@ -5,17 +5,17 @@
 #include <string>
 #include <vector>
 
-#include "application/application.h"
-#include "commands/command_registry.h"
-#include "layout/column_layout.h"
-#include "layout/row_layout.h"
-#include "style/theme.h"
-#include "widgets/button.h"
-#include "widgets/checkbox.h"
-#include "widgets/label.h"
-#include "widgets/theme_controller.h"
-#include "widgets/widget.h"
-#include "window/system_appearance.h"
+#include "albor/application/application.h"
+#include "albor/commands/command_registry.h"
+#include "albor/layout/column_layout.h"
+#include "albor/layout/row_layout.h"
+#include "albor/style/theme.h"
+#include "albor/widgets/button.h"
+#include "albor/widgets/checkbox.h"
+#include "albor/widgets/label.h"
+#include "albor/widgets/theme_controller.h"
+#include "albor/widgets/widget.h"
+#include "albor/window/system_appearance.h"
 
 namespace
 {

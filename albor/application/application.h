@@ -1,0 +1,366 @@
+#pragma once
+
+#include <cstdint>
+#include <filesystem>
+#include <functional>
+#include <map>
+#include <memory>
+#include <optional>
+#include <type_traits>
+#include <vector>
+
+#include "albor/application/file_dialog.h"
+#include "albor/application/main_window_config.h"
+#include "albor/application/task_queue.h"
+#include "albor/application/timer.h"
+#include "albor/application/window_stage.h"
+#include "albor/commands/command_registry.h"
+#include "albor/core/paint.h"
+#include "albor/runtime/binding_engine.h"
+#include "albor/text/text_engine.h"
+#include "albor/ui/ui_event.h"
+#include "albor/ui/ui_node.h"
+#include "albor/window/popup_host.h"
+#include "albor/window/system_appearance.h"
+#include "albor/window/window.h"
+#include "albor/window/window_handle.h"
+#include "albor/window/window_options.h"
+#include "albor/window/window_registry.h"
+
+namespace albor
+{
+    // the native loop the application runs on, which a platform backend implements (§4.1, AD-16)
+    class PlatformEventLoop
+    {
+    public:
+        virtual ~PlatformEventLoop() = default;
+
+        // install the callback the loop invokes once per iteration, which is how the ui thread is pumped (§4.1)
+        virtual void set_pump_handler(Task pump) = 0;
+
+        // run the native loop until quit is called, which blocks the calling thread
+        virtual void run() = 0;
+
+        // ask the native loop to stop, which is thread safe (§4.1)
+        virtual void quit() = 0;
+
+        // report whether the native loop is running
+        [[nodiscard]] virtual bool running() const = 0;
+
+        // start the pacing source that raises frame ticks, which a display link drives (§4.3, AD-16)
+        virtual void start_frame_pacing() = 0;
+
+        // stop the pacing source, which a window teardown requires (§4.3)
+        virtual void stop_frame_pacing() = 0;
+    };
+
+    // the signature a platform backend implements to build the native loop
+    using PlatformEventLoopFactory = std::function<std::unique_ptr<PlatformEventLoop>()>;
+
+    // the state the installed factory lives in, heap held behind a constant initialized pointer (§4.1)
+    struct PlatformEventLoopFactoryState
+    {
+        // the installed factory, which is empty until a platform backend installs one (§4.1)
+        PlatformEventLoopFactory factory;
+    };
+
+    // install the factory the framework builds its native loop with
+    void set_platform_event_loop_factory(PlatformEventLoopFactory factory);
+
+    // hand out the installed factory, which is empty until a platform backend installs one
+    [[nodiscard]] const PlatformEventLoopFactory& platform_event_loop_factory();
+
+    class RendererBackend;
+    class TextEngine;
+
+    // the central singleton that owns the native loop, the window registry and the task dispatcher (§4.1)
+    class Application : public PopupHost
+    {
+    public:
+        // build an application over a native loop the caller owns, which a test substitutes (§4.1)
+        explicit Application(std::unique_ptr<PlatformEventLoop> event_loop);
+
+        // the default application uses the loop the installed factory builds (§4.1)
+        Application();
+
+        // stop the pacing source and close every window in a defined order (§4.1)
+        ~Application();
+
+        Application(const Application&) = delete;
+        Application& operator=(const Application&) = delete;
+        Application(Application&&) = delete;
+        Application& operator=(Application&&) = delete;
+
+        // hand out the process wide application, which the default constructor creates on first use (§4.1)
+        static Application& instance();
+
+        // run the native loop until quit is called and hand out the exit code (§4.1)
+        int run();
+
+        // request application termination, which is thread safe (§4.1)
+        void quit(int exit_code = 0);
+
+        // post a task to the UI thread, which is thread safe (§4.1)
+        TaskHandle post(Task task);
+
+        // post a guarded task, which is dropped when its token expired before the task ran (§4.2)
+        TaskHandle post(Task task, const LifetimeToken& guard);
+
+        // create a window on the UI thread and hand out the handle, installing every per-window handler (§4.1, §5.3)
+        WindowHandle create_window(const WindowOptions& options);
+
+        // run a native open panel on the ui thread, owned by the window the options name (§5.3)
+        [[nodiscard]] std::optional<std::filesystem::path> open_file(const OpenFileOptions& options);
+
+        // run a native save panel on the ui thread, owned by the window the options name (§5.3)
+        [[nodiscard]] std::optional<std::filesystem::path> save_file(const SaveFileOptions& options);
+
+        // route one normalized event into a window on the ui thread, which brackets the dispatch against teardown (§4.2)
+        bool deliver_input(WindowHandle handle, Event& event);
+
+        // create a main window whose tree the builder builds, wired for rendering (§6.1, §8.1)
+        WindowHandle create_window(const WindowOptions& options, RootBuilder builder);
+
+        // create a main window over the config, whose tree the builder builds, wired for rendering (§6.1, §8.1)
+        WindowHandle create_window(const WindowOptions& options, RootBuilder builder, const MainWindowConfig& config);
+
+        // open the native transient surface a control anchors, which is how a popup leaves the owner surface (§5.1)
+        [[nodiscard]] WindowHandle open_popup(const UiNode& anchor, Rect anchor_rect, Size size, PopupRootBuilder builder, Color background, std::function<void()> on_closed) override;
+
+        // hide a native transient surface without dropping its tree (§5.1)
+        void close_popup(WindowHandle popup) override;
+
+        // show a native transient surface whose tree is already built (§5.1)
+        void show_popup(WindowHandle popup) override;
+
+        // destroy a native transient surface and its tree (§5.1)
+        void destroy_popup(WindowHandle popup) override;
+
+        // create a main window whose tree is the named component, and hand the caller the facade it drives (§14.1)
+        template <class Root>
+        WindowHandle create_window(const WindowOptions& options, Root*& out) {
+            // the config is the documented default, so the window presents against the standard clear colour (§6.1)
+            return create_window(options, out, MainWindowConfig{});
+        }
+
+        // create a main window whose tree is the named component over the config, handing back the facade (§8.1)
+        template <class Root>
+        WindowHandle create_window(const WindowOptions& options, Root*& out, const MainWindowConfig& config) {
+            // the facade is only reachable once the stage built the tree, so the pointer starts empty (§14.1)
+            out = nullptr;
+            // the builder runs inside the stage, because the engines it needs belong to that window (§8.1)
+            return create_window(
+                options,
+                [&out](BindingEngine& engine, TextEngine& text) -> std::unique_ptr<UiNode> {
+                    // the component is built over the engines, choosing the constructor its shape declares (§8.1)
+                    std::unique_ptr<Root> node = build_root<Root>(engine, text);
+                    // the caller keeps the concrete facade, which is how a host drives its properties (§7.3, AD-24)
+                    out = node.get();
+                    return node;
+                },
+                config);
+        }
+
+        // find the window a handle names, returning null when the handle is stale (§5.2)
+        [[nodiscard]] Window* window(WindowHandle handle);
+
+        // find the window a handle names for reading, returning null when the handle is stale (§5.2)
+        [[nodiscard]] const Window* window(WindowHandle handle) const;
+
+        // hand out the tree a main window drives, returning null when the handle is stale or has no tree (§6.1, §8.4)
+        [[nodiscard]] UiNode* root(WindowHandle handle);
+
+        // find the window whose stage owns a node, which is what anchors a popup and a typing command (§5.1, §10.3)
+        [[nodiscard]] WindowHandle window_for_node(const UiNode& node) const;
+
+        // replace the colour a window's scene clears with, which a themed surface writes (§6.1, §8.4)
+        void set_window_background(WindowHandle handle, Color background);
+
+        // destroy the window a handle names, which closes its native window first (§5.2)
+        bool destroy_window(WindowHandle handle);
+
+        // ask to close a window, which consults the application close handler before it tears down (§5.2)
+        bool request_close(WindowHandle handle);
+
+        // report whether an open modal constrains the window's input, which is what modality means (§5.1, AD-08)
+        [[nodiscard]] bool input_blocked(WindowHandle handle) const;
+
+        // hand out the number of open windows
+        [[nodiscard]] std::size_t window_count() const;
+
+        // hand out how many frames a window's tree built, which a window without one never did (§6.1)
+        [[nodiscard]] std::uint64_t frame_count(WindowHandle handle) const;
+
+        // hand out the frame machinery of a main window, which is null for a window that has none (§6.1)
+        [[nodiscard]] WindowStage* stage(WindowHandle handle);
+
+        // install the callback that runs between a main window's build and its submit, which refreshes state (§6.1)
+        bool set_frame_hook(WindowHandle handle, std::function<void()> hook);
+
+        // hand out the task dispatcher, which an application posts work to
+        [[nodiscard]] TaskQueue& tasks();
+
+        // hand out the timer registry, which an application arms ui thread timers on (§4.2)
+        [[nodiscard]] TimerScheduler& timers();
+
+        // hand out the native loop the application runs on
+        [[nodiscard]] PlatformEventLoop& event_loop();
+
+        // pump the queued tasks, the due timers and the frame ticks once, which is one loop iteration (§4.1)
+        void pump();
+
+        // install the callback every frame tick reaches, which is how an application draws (§6.1)
+        void set_frame_handler(std::function<void()> handler);
+
+        // install the callback a native window resize reaches, which is how an application remeasures (§6.1)
+        void set_resize_handler(std::function<void(WindowHandle)> handler);
+
+        // install the callback a native close request reaches, which may veto the close (§5.2)
+        void set_close_handler(std::function<bool(WindowHandle)> handler);
+
+        // install the callback a Closed notification reaches, which is how an application hears a window is gone (§5.2)
+        void set_closed_handler(std::function<void(WindowHandle)> handler);
+
+        // install the callback a normalized input event reaches, which is how a window's input is driven (§8.3)
+        void set_input_handler(std::function<void(WindowHandle, const Event&)> handler);
+
+        // install the callback a system appearance change reaches, which is how a theme follows the system live (§8.4)
+        void set_appearance_handler(std::function<void(WindowHandle, const SystemAppearance&)> handler);
+
+        // report whether the application was asked to terminate
+        [[nodiscard]] bool quit_requested() const;
+
+        // hand out the exit code quit was called with
+        [[nodiscard]] int exit_code() const;
+
+        // report whether the application is currently running its loop
+        [[nodiscard]] bool running() const;
+
+        // hand out the commands this application shares across every window, which is one registry per run (§18.1)
+        [[nodiscard]] CommandRegistry& commands();
+
+    private:
+        // build the named component over the engines a stage owns, choosing the constructor its shape declares (§8.1)
+        template <class Root>
+        static std::unique_ptr<Root> build_root(BindingEngine& engine, TextEngine& text) {
+            // a component that measures text takes the text engine, and one that does not has no use for it (§9.1)
+            if constexpr (std::is_constructible_v<Root, BindingEngine*, TextEngine*>) {
+                return std::make_unique<Root>(&engine, &text);
+            }
+            // the remaining components are reactive only, so the text engine is never handed to them (§7.3)
+            else if constexpr (std::is_constructible_v<Root, BindingEngine*>) {
+                return std::make_unique<Root>(&engine);
+            }
+            // a container arranges children and declares no property, so it borrows no engine at all (§8.2)
+            else {
+                return std::make_unique<Root>();
+            }
+        }
+
+        // build a window and its stage, with the listener and the native close hook the caller needs (§5.3, §6.1)
+        WindowHandle create_window_impl(const WindowOptions& options, RootBuilder builder, const MainWindowConfig& config, std::function<void()> on_native_closed, bool keep_on_native_close);
+
+        // attach the framework listeners to a window, which is what makes its events reach the application (§5.3)
+        void bind_window(WindowHandle handle, Window& window, std::function<void()> on_native_closed, bool keep_on_native_close);
+
+        // build the renderer and the engine the main windows share, which only the first one pays for (§6.3, §9.1)
+        bool ensure_engines();
+
+        // drop the stage of a closed window, since nothing may touch its surface afterwards (§6.1)
+        void release_stage(WindowHandle handle);
+
+        // destroy the child windows a window owns, transients first and dialogs deepest first (§5.1)
+        void destroy_owned_windows(WindowHandle owner);
+
+        // report whether a window descends from another through the ownership map (§5.1)
+        [[nodiscard]] bool descends_from(WindowHandle handle, WindowHandle ancestor) const;
+
+        // give the focus of a closed dialog back to the parent control that opened it (§5.1, §8.3)
+        void restore_invoking_focus(WindowHandle dialog, WindowHandle parent);
+
+        // remember the focused control of the parent, which a closing dialog gives focus back to (§5.1, §8.3)
+        void remember_invoking_focus(WindowHandle dialog, WindowHandle parent);
+
+        // give a new dialog the interaction, after remembering the parent control it returns focus to (§5.1, §8.3)
+        void enter_dialog(WindowHandle handle, const WindowOptions& options);
+
+        // find a node by author identity, which the remembered invoking control is restored through (AD-11)
+        [[nodiscard]] static UiNode* find_by_explicit_id(UiNode& root, std::string_view id);
+
+        // resolve the native owner a file panel is parented to, reporting false for a stale handle (§5.1)
+        [[nodiscard]] bool resolve_file_dialog_parent(WindowHandle handle, NativeWindowHandle& parent) const;
+
+        // apply the teardowns that arrived while a frame pass was walking the stages (§4.2)
+        void drain_deferred_stages();
+
+        // end the run when no window and no stage is left, which is the default lifetime (§4.1)
+        void end_run_when_no_windows();
+
+        // release the stages, the windows and the engines in the order a layer outlives its drawable (§6.3)
+        void shutdown();
+
+        // the commands every window of this run shares, which is one registry and one history (§18.1)
+        CommandRegistry m_commands;
+
+        // the native loop the application pumps, which is never null for a live application
+        std::unique_ptr<PlatformEventLoop> m_event_loop;
+
+        // the renderer and the text engine the main windows share, which the installed selection built (§6.3, §9.1)
+        std::unique_ptr<RendererBackend> m_renderer;
+        std::unique_ptr<TextEngine> m_text;
+
+        // the frame machinery of every main window, keyed by the id of the window that owns it (§6.1, AD-18)
+        std::map<std::uint64_t, std::unique_ptr<WindowStage>> m_stages;
+
+        // the task queue that carries work from any thread to the ui thread (§4.1)
+        TaskQueue m_tasks;
+
+        // the registry that fires the due ui thread timers (§4.2)
+        TimerScheduler m_timers;
+
+        // the registry that owns every open window (§4.1)
+        WindowRegistry m_windows;
+
+        // the owner of every native window that names one, because a child never outlives its owner (§5.1)
+        std::map<std::uint64_t, WindowHandle> m_owned_windows;
+
+        // the author identity of the control that opened a dialog, which focus returns to on close (§5.1, AD-11)
+        std::map<std::uint64_t, std::string> m_return_focus;
+
+        // the windows whose teardown was deferred by a close that arrived mid frame, so the walk stays valid (§4.2)
+        std::vector<WindowHandle> m_deferred;
+
+        // whether a frame pass is walking the stages, which is what makes a teardown defer itself (§4.2)
+        bool m_driving_frames = false;
+
+        // how deep the current input dispatch is, which keeps a handler from releasing the stage it is on (§4.2)
+        std::size_t m_dispatch_depth = 0;
+
+        // how deep the current window teardown is, which tells a dialog whether its owner is closing (§5.1)
+        std::size_t m_teardown_depth = 0;
+
+        // the callback every frame tick reaches (§6.1)
+        std::function<void()> m_frame_handler;
+
+        // the callback a native window resize reaches (§6.1)
+        std::function<void(WindowHandle)> m_resize_handler;
+
+        // the callback a native close request reaches, which may veto the close (§5.2)
+        std::function<bool(WindowHandle)> m_close_handler;
+
+        // the callback a Closed notification reaches per window, which the bind window forwards (§5.2)
+        std::function<void(WindowHandle)> m_closed_handler;
+
+        // the callback a normalized input event reaches, which the bind window forwards per window (§8.3)
+        std::function<void(WindowHandle, const Event&)> m_input_handler;
+
+        // the callback a system appearance change reaches, which the bind window forwards per window (§8.4)
+        std::function<void(WindowHandle, const SystemAppearance&)> m_appearance_handler;
+
+        // the exit code quit was called with, which run hands back (§4.1)
+        int m_exit_code = 0;
+
+        // whether the application was asked to terminate
+        bool m_quit_requested = false;
+    };
+} // namespace albor

@@ -3,14 +3,14 @@
 #include <cstddef>
 #include <string>
 
-#include "core/constraints.h"
-#include "core/geometry.h"
-#include "core/paint.h"
-#include "render/render_context.h"
-#include "runtime/binding_engine.h"
-#include "runtime/property.h"
-#include "text/text_engine.h"
-#include "ui/component.h"
+#include "albor/core/constraints.h"
+#include "albor/core/geometry.h"
+#include "albor/core/paint.h"
+#include "albor/render/render_context.h"
+#include "albor/runtime/binding_engine.h"
+#include "albor/runtime/property.h"
+#include "albor/text/text_engine.h"
+#include "albor/ui/component.h"
 
 namespace albor
 {

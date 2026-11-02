@@ -1,12 +1,12 @@
 #include <cstdio>
 #include <vector>
 
-#include "application/application.h"
-#include "style/theme.h"
+#include "albor/application/application.h"
+#include "albor/style/theme.h"
+#include "albor/widgets/theme_controller.h"
+#include "albor/window/system_appearance.h"
 #include "todo/todo.h"
 #include "widget_form.h"
-#include "widgets/theme_controller.h"
-#include "window/system_appearance.h"
 
 namespace
 {

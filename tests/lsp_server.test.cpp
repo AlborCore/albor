@@ -9,14 +9,14 @@
 
 #include <gtest/gtest.h>
 
-#include "compiler/codegen/codegen.h"
-#include "compiler/diagnostic.h"
-#include "compiler/lexer.h"
-#include "compiler/parser.h"
-#include "compiler/type_checker.h"
-#include "compiler/value_type.h"
-#include "core/json.h"
-#include "language-server/lsp_server.h"
+#include "albor/compiler/codegen/codegen.h"
+#include "albor/compiler/diagnostic.h"
+#include "albor/compiler/lexer.h"
+#include "albor/compiler/parser.h"
+#include "albor/compiler/type_checker.h"
+#include "albor/compiler/value_type.h"
+#include "albor/core/json.h"
+#include "albor/language-server/lsp_server.h"
 
 using namespace albor;
 using namespace albor::language_server;

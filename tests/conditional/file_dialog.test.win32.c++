@@ -12,8 +12,8 @@
 
 #include <gtest/gtest.h>
 
-#include "application/file_dialog.h"
-#include "platform/windows/file_dialog.win32.h"
+#include "albor/application/file_dialog.h"
+#include "albor/platform/windows/file_dialog.win32.h"
 
 using namespace albor;
 

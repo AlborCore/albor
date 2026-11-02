@@ -6,10 +6,10 @@
 
 #include <gtest/gtest.h>
 
-#include "compiler/diagnostic.h"
-#include "compiler/ir_serializer.h"
-#include "compiler/lexer.h"
-#include "compiler/parser.h"
+#include "albor/compiler/diagnostic.h"
+#include "albor/compiler/ir_serializer.h"
+#include "albor/compiler/lexer.h"
+#include "albor/compiler/parser.h"
 
 using namespace albor;
 using namespace albor::compiler;

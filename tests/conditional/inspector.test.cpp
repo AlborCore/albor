@@ -4,12 +4,12 @@
 
 #include <gtest/gtest.h>
 
-#include "inspector/scene_inspector.h"
-#include "render/draw_command.h"
-#include "render/frame_scene.h"
-#include "render/render-software/software_render_surface.h"
-#include "render/render-software/software_renderer_backend.h"
-#include "render/screenshot.h"
+#include "albor/inspector/scene_inspector.h"
+#include "albor/render/draw_command.h"
+#include "albor/render/frame_scene.h"
+#include "albor/render/render-software/software_render_surface.h"
+#include "albor/render/render-software/software_renderer_backend.h"
+#include "albor/render/screenshot.h"
 
 using namespace albor;
 

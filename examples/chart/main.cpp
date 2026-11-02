@@ -3,7 +3,7 @@
 #include <memory>
 #include <vector>
 
-#include "application/application.h"
+#include "albor/application/application.h"
 #include "examples/chart/waveform_widget.h"
 
 int main() {

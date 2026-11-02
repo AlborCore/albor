@@ -7,14 +7,14 @@
 
 #include <gtest/gtest.h>
 
-#include "application/application.h"
-#include "layout/column_layout.h"
-#include "platform/macos/event_loop.h"
-#include "render/render-software/software_renderer_backend.h"
-#include "text/text_engine.h"
-#include "widgets/button.h"
-#include "window/platform_window_factory.h"
-#include "window/window.h"
+#include "albor/application/application.h"
+#include "albor/layout/column_layout.h"
+#include "albor/platform/macos/event_loop.h"
+#include "albor/render/render-software/software_renderer_backend.h"
+#include "albor/text/text_engine.h"
+#include "albor/widgets/button.h"
+#include "albor/window/platform_window_factory.h"
+#include "albor/window/window.h"
 
 using namespace albor;
 

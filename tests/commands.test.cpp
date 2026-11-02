@@ -5,11 +5,11 @@
 
 #include <gtest/gtest.h>
 
-#include "commands/command.h"
-#include "commands/command_registry.h"
-#include "commands/shortcut.h"
-#include "commands/undo_command.h"
-#include "commands/undo_stack.h"
+#include "albor/commands/command.h"
+#include "albor/commands/command_registry.h"
+#include "albor/commands/shortcut.h"
+#include "albor/commands/undo_command.h"
+#include "albor/commands/undo_stack.h"
 
 using namespace albor;
 

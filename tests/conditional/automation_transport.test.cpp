@@ -15,7 +15,7 @@
 
 #include <gtest/gtest.h>
 
-#include "automation/automation_transport.h"
+#include "albor/automation/automation_transport.h"
 
 using namespace albor::automation;
 

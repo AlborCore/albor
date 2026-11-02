@@ -3,7 +3,7 @@
 
 #include <gtest/gtest.h>
 
-#include "resources/png_decoder.h"
+#include "albor/resources/png_decoder.h"
 
 TEST(PngDecoderChecks, DecodesStraightRgbaAndPaletteTransparency) {
     // arrange

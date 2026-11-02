@@ -9,19 +9,19 @@
 
 #include <gtest/gtest.h>
 
-#include "render/custom_render_node.h"
-#include "render/font_face.h"
-#include "render/font_handle.h"
-#include "render/frame_scene.h"
-#include "render/glyph_outline.h"
-#include "render/image_resource.h"
-#include "render/line_batch.h"
-#include "render/path_resource.h"
-#include "render/picture_resource.h"
-#include "render/render_context.h"
-#include "render/render_executor.h"
-#include "render/renderer_backend.h"
-#include "render/resource_factory.h"
+#include "albor/render/custom_render_node.h"
+#include "albor/render/font_face.h"
+#include "albor/render/font_handle.h"
+#include "albor/render/frame_scene.h"
+#include "albor/render/glyph_outline.h"
+#include "albor/render/image_resource.h"
+#include "albor/render/line_batch.h"
+#include "albor/render/path_resource.h"
+#include "albor/render/picture_resource.h"
+#include "albor/render/render_context.h"
+#include "albor/render/render_executor.h"
+#include "albor/render/renderer_backend.h"
+#include "albor/render/resource_factory.h"
 
 using namespace albor;
 

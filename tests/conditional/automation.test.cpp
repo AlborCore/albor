@@ -7,12 +7,12 @@
 #include <gtest/gtest.h>
 #include <zlib.h>
 
-#include "automation/automation_platform.h"
-#include "automation/automation_protocol.h"
-#include "automation/automation_registry.h"
-#include "automation/automation_session.h"
-#include "automation/capture_commands.h"
-#include "automation/png_writer.h"
+#include "albor/automation/automation_platform.h"
+#include "albor/automation/automation_protocol.h"
+#include "albor/automation/automation_registry.h"
+#include "albor/automation/automation_session.h"
+#include "albor/automation/capture_commands.h"
+#include "albor/automation/png_writer.h"
 
 using namespace albor::automation;
 

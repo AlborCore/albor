@@ -126,7 +126,7 @@ target map and the advanced composition escape hatch are on
 [Consuming Albor](docs/consuming.md).
 
 ```cpp
-#include "application/application.h"
+#include "albor/application/application.h"
 #include "greeting_panel.h"
 
 int main() {

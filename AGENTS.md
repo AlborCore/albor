@@ -110,14 +110,16 @@ After editing:
 The layout follows §3.2. Module directories map to runtime modules and must stay synchronized with them.
 
 ```text
-core/ application/ ui/ layout/ input/ focus/ commands/ model/
-text/ style/ animation/ window/
-platform/ (macos/ windows/ linux/{wayland,x11}/ headless/)
-render/ render-skia/ render-software/ render-blend2d/ render-albor/ widgets/ semantics/ accessibility/
-services/ resources/ i18n/
-compiler/ manifest/ language-server/ preview/ dev-service/
-devrt/ automation/ inspector/
-tools/ examples/ tests/
+albor/ (every framework module lives under this include folder, so consumers
+        include "albor/<module>/<header>.h" and the paths match the albor:: namespace)
+├── core/ application/ ui/ layout/ input/ focus/ commands/ model/
+├── text/ style/ animation/ window/
+├── platform/ (macos/ windows/ headless/)
+├── render/ render-skia/ render-software/ render-blend2d/ render-albor/ widgets/ semantics/ accessibility/
+├── resources/ i18n/
+├── compiler/ manifest/ language-server/ preview/
+├── devrt/ automation/ inspector/
+build/ docs/ ports/ third-party/ tools/ examples/ tests/
 ```
 
 - Phase 0 prototype code lives exclusively on the `prototypes` git branch for historical reference. The implementation branch (branched out of `main`) contains only clean production modules and tests; no `prototypes/` directory exists here.

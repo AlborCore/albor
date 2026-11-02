@@ -6,11 +6,11 @@
 
 #include <gtest/gtest.h>
 
-#include "application/application.h"
-#include "application/file_dialog.h"
-#include "platform/headless/file_dialog.h"
-#include "platform/headless/headless_event_loop.h"
-#include "window/platform_window_factory.h"
+#include "albor/application/application.h"
+#include "albor/application/file_dialog.h"
+#include "albor/platform/headless/file_dialog.h"
+#include "albor/platform/headless/headless_event_loop.h"
+#include "albor/window/platform_window_factory.h"
 
 using namespace albor;
 

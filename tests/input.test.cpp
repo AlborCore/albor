@@ -2,15 +2,15 @@
 
 #include <gtest/gtest.h>
 
-#include "commands/command_registry.h"
-#include "commands/undo_stack.h"
-#include "focus/focus_manager.h"
-#include "input/event_filter.h"
-#include "input/input_controller.h"
-#include "input/input_dispatcher.h"
-#include "ui/focus_target.h"
-#include "ui/ui_event.h"
-#include "ui/ui_node.h"
+#include "albor/commands/command_registry.h"
+#include "albor/commands/undo_stack.h"
+#include "albor/focus/focus_manager.h"
+#include "albor/input/event_filter.h"
+#include "albor/input/input_controller.h"
+#include "albor/input/input_dispatcher.h"
+#include "albor/ui/focus_target.h"
+#include "albor/ui/ui_event.h"
+#include "albor/ui/ui_node.h"
 
 using namespace albor;
 

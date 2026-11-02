@@ -7,11 +7,11 @@
 
 #include <gtest/gtest.h>
 
-#include "core/paint.h"
-#include "runtime/binding_engine.h"
-#include "runtime/observable.h"
-#include "runtime/property.h"
-#include "runtime/property_id.h"
+#include "albor/core/paint.h"
+#include "albor/runtime/binding_engine.h"
+#include "albor/runtime/observable.h"
+#include "albor/runtime/property.h"
+#include "albor/runtime/property_id.h"
 
 using namespace albor;
 

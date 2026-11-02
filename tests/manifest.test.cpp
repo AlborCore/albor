@@ -4,7 +4,7 @@
 #include <string_view>
 #include <vector>
 
-#include "manifest/manifest.h"
+#include "albor/manifest/manifest.h"
 
 using namespace albor::manifest;
 using namespace albor::compiler;

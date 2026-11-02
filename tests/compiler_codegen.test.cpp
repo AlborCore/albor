@@ -6,11 +6,11 @@
 #include <utility>
 #include <vector>
 
-#include "compiler/codegen/codegen.h"
-#include "compiler/lexer.h"
-#include "compiler/parser.h"
-#include "compiler/type_checker.h"
-#include "compiler/value_type.h"
+#include "albor/compiler/codegen/codegen.h"
+#include "albor/compiler/lexer.h"
+#include "albor/compiler/parser.h"
+#include "albor/compiler/type_checker.h"
+#include "albor/compiler/value_type.h"
 
 using namespace albor::compiler;
 
@@ -225,10 +225,10 @@ component MainView {
     const GeneratedFile& source_file = file_named(files, "main_view.cpp");
     EXPECT_TRUE(contains(source_file.content, "#include \"main_view.h\""));
     // the layout and the widget headers reach the constructed classes (§11.3)
-    EXPECT_TRUE(contains(source_file.content, "#include \"layout/column_layout.h\""));
-    EXPECT_TRUE(contains(source_file.content, "#include \"layout/row_layout.h\""));
-    EXPECT_TRUE(contains(source_file.content, "#include \"widgets/button.h\""));
-    EXPECT_TRUE(contains(source_file.content, "#include \"widgets/label.h\""));
+    EXPECT_TRUE(contains(source_file.content, "#include \"albor/layout/column_layout.h\""));
+    EXPECT_TRUE(contains(source_file.content, "#include \"albor/layout/row_layout.h\""));
+    EXPECT_TRUE(contains(source_file.content, "#include \"albor/widgets/button.h\""));
+    EXPECT_TRUE(contains(source_file.content, "#include \"albor/widgets/label.h\""));
     // the properties initialise from their literals, which is what the facade presents at once (§7.1)
     EXPECT_TRUE(contains(source_file.content, "Property<std::string> m_user_name{std::string(\"World\")};"));
     EXPECT_TRUE(contains(source_file.content, "Property<int> m_click_count{0};"));
@@ -850,7 +850,7 @@ component Well {
     EXPECT_TRUE(contains(cpp.content, "std::function<void(int, int)> m_on_moved;"));
     EXPECT_TRUE(contains(cpp.content, "std::function<void(Color)> m_on_tinted;"));
     // the vertex colours pull the paint header, which a colour component needs (§14.1)
-    EXPECT_TRUE(contains(header.content, "#include \"core/paint.h\""));
+    EXPECT_TRUE(contains(header.content, "#include \"albor/core/paint.h\""));
     // the text conversion needs the hex helper, which prints the colour as text (§11.3)
     EXPECT_TRUE(contains(cpp.content, "#include <cstdio>"));
     EXPECT_TRUE(contains(cpp.content, "std::string well_color_to_hex(Color value) {"));
@@ -1196,7 +1196,7 @@ TEST(Codegen, ATextFieldIsConstructedOverBothEnginesAndOwnsItsHeader) {
     const GeneratedFile& cpp = file_named(files, "c.cpp");
     // assert the field is one of the engine and text engine widgets (§11.3)
     EXPECT_TRUE(contains(cpp.content, "std::make_unique<TextField>(engine, text_engine);"));
-    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/text_field.h\""));
+    EXPECT_TRUE(contains(cpp.content, "#include \"albor/widgets/text_field.h\""));
     // assert both runs reach the widget through the setters the catalog names (§11.3)
     EXPECT_TRUE(contains(cpp.content, "set_value("));
     EXPECT_TRUE(contains(cpp.content, "set_placeholder("));
@@ -1479,7 +1479,7 @@ TEST(Codegen, AProgressBarIsConstructedAndWired) {
     const GeneratedFile& cpp = file_named(files, "c.cpp");
     // assert the bar is constructed over the engine and uses the setters (§11.3)
     EXPECT_TRUE(contains(cpp.content, "std::make_unique<ProgressBar>(engine);"));
-    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/progress_bar.h\""));
+    EXPECT_TRUE(contains(cpp.content, "#include \"albor/widgets/progress_bar.h\""));
     EXPECT_TRUE(contains(cpp.content, "set_value("));
     EXPECT_TRUE(contains(cpp.content, "set_track_color("));
     EXPECT_TRUE(contains(cpp.content, "set_fill_color("));
@@ -1522,7 +1522,7 @@ component C {
     const GeneratedFile& cpp = file_named(generation.files, "c.cpp");
     // assert the widget takes the engine and receives each property through its setter (§11.3)
     EXPECT_TRUE(contains(cpp.content, "std::make_unique<Image>(engine);"));
-    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/image.h\""));
+    EXPECT_TRUE(contains(cpp.content, "#include \"albor/widgets/image.h\""));
     EXPECT_TRUE(contains(cpp.content, "m_node_0->set_source(value)"));
     EXPECT_TRUE(contains(cpp.content, "set_description(std::string(\"Company logo\"));"));
     EXPECT_TRUE(contains(cpp.content, "set_width(24.0f);"));
@@ -1598,9 +1598,9 @@ TEST(Codegen, ATabViewIsConstructedAndWired) {
     EXPECT_TRUE(contains(cpp.content, "std::make_unique<TabView>(engine);"));
     EXPECT_TRUE(contains(cpp.content, "std::make_unique<TabPage>(engine, text_engine);"));
     EXPECT_TRUE(contains(cpp.content, "std::make_unique<TabTitle>(engine);"));
-    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/tab_view.h\""));
-    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/tab_page.h\""));
-    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/tab_title.h\""));
+    EXPECT_TRUE(contains(cpp.content, "#include \"albor/widgets/tab_view.h\""));
+    EXPECT_TRUE(contains(cpp.content, "#include \"albor/widgets/tab_page.h\""));
+    EXPECT_TRUE(contains(cpp.content, "#include \"albor/widgets/tab_title.h\""));
     // assert the selection, the labels and the signal are wired through their setters (§8, §8.3)
     EXPECT_TRUE(contains(cpp.content, "set_selected("));
     EXPECT_TRUE(contains(cpp.content, "set_vertical(true)"));
@@ -1669,8 +1669,8 @@ TEST(Codegen, ARadioGroupIsConstructedAndWired) {
     // assert the group takes the engine and the choices take both engines they measure with (§11.3)
     EXPECT_TRUE(contains(cpp.content, "std::make_unique<RadioGroup>(engine);"));
     EXPECT_TRUE(contains(cpp.content, "std::make_unique<RadioButton>(engine, text_engine);"));
-    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/radio_group.h\""));
-    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/radio_button.h\""));
+    EXPECT_TRUE(contains(cpp.content, "#include \"albor/widgets/radio_group.h\""));
+    EXPECT_TRUE(contains(cpp.content, "#include \"albor/widgets/radio_button.h\""));
     // assert the selection, the orientation, the gap and the signal are wired through their setters (§8, §8.3)
     EXPECT_TRUE(contains(cpp.content, "set_selected("));
     EXPECT_TRUE(contains(cpp.content, "set_vertical(true)"));
@@ -1728,7 +1728,7 @@ TEST(Codegen, ANumericStepperIsConstructedAndWired) {
     const GeneratedFile& cpp = file_named(files, "c.cpp");
     // assert the stepper is constructed over both engines and uses the setters its catalog entry names (§11.3)
     EXPECT_TRUE(contains(cpp.content, "std::make_unique<NumericStepper>(engine, text_engine);"));
-    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/numeric_stepper.h\""));
+    EXPECT_TRUE(contains(cpp.content, "#include \"albor/widgets/numeric_stepper.h\""));
     EXPECT_TRUE(contains(cpp.content, "set_value("));
     EXPECT_TRUE(contains(cpp.content, "set_minimum("));
     EXPECT_TRUE(contains(cpp.content, "set_maximum("));
@@ -1910,7 +1910,7 @@ component LogPanel {
     // act
     const std::vector<GeneratedFile> files = generate(source);
     // assert the facade includes the widget header, which is what the constructed class needs (§14.1)
-    EXPECT_TRUE(contains(file_named(files, "log_panel.cpp").content, "#include \"widgets/scroll_view.h\""));
+    EXPECT_TRUE(contains(file_named(files, "log_panel.cpp").content, "#include \"albor/widgets/scroll_view.h\""));
 }
 
 TEST(Codegen, AListBoxIsConstructedAndItsPropertiesAreApplied) {
@@ -1929,7 +1929,7 @@ TEST(Codegen, AListBoxIsConstructedAndItsPropertiesAreApplied) {
     const GeneratedFile& cpp = file_named(files, "c.cpp");
     // assert the list is one of the engine widgets and owns its header (§11.3)
     EXPECT_TRUE(contains(cpp.content, "std::make_unique<ListBox>(engine)"));
-    EXPECT_TRUE(contains(cpp.content, "#include \"widgets/list_box.h\""));
+    EXPECT_TRUE(contains(cpp.content, "#include \"albor/widgets/list_box.h\""));
     // assert each run reaches the widget through the setter the catalog names (§11.3)
     EXPECT_TRUE(contains(cpp.content, "set_selected_index("));
     EXPECT_TRUE(contains(cpp.content, "set_row_height("));
@@ -2556,7 +2556,7 @@ component Editor {
     EXPECT_TRUE(contains(cpp.content, "if (Command* command = self->m_save.get())"));
     EXPECT_TRUE(contains(cpp.content, "(void)command->invoke();"));
     // the definition joins the unit, because a forward declaration cannot carry the invoke call (§14.1, §18.1)
-    EXPECT_TRUE(contains(cpp.content, "#include \"commands/command.h\""));
+    EXPECT_TRUE(contains(cpp.content, "#include \"albor/commands/command.h\""));
 }
 TEST(Codegen, EmitsAGlobalAsAGuardedFileStatic) {
     // arrange, act
@@ -2733,7 +2733,7 @@ component C {
     // the facade names the handle and includes its complete type (§6.4, AD-05)
     const GeneratedFile& header = file_named(generation.files, "c.h");
     EXPECT_TRUE(contains(header.content, "#include <memory>"));
-    EXPECT_TRUE(contains(header.content, "#include \"render/image_resource.h\""));
+    EXPECT_TRUE(contains(header.content, "#include \"albor/render/image_resource.h\""));
     EXPECT_TRUE(contains(header.content, "[[nodiscard]] std::shared_ptr<const ImageResource> icon() const;"));
     EXPECT_TRUE(contains(header.content, "void set_on_picked(std::function<void(std::shared_ptr<const ImageResource>)> handler);"));
     // the source includes the accessors and calls the first one for the default (§6.4)
@@ -2760,7 +2760,7 @@ TEST(Codegen, AnImageSignalParameterPullsTheHandleHeader) {
     // assert the handle header is included and the handler takes the handle (§6.4, AD-05)
     ASSERT_TRUE(diagnostics.diagnostics().empty());
     const GeneratedFile& header = file_named(files, "c.h");
-    EXPECT_TRUE(contains(header.content, "#include \"render/image_resource.h\""));
+    EXPECT_TRUE(contains(header.content, "#include \"albor/render/image_resource.h\""));
     EXPECT_TRUE(contains(header.content, "void set_on_picked(std::function<void(std::shared_ptr<const ImageResource>)> handler);"));
 }
 
@@ -2949,7 +2949,7 @@ component C {
     EXPECT_TRUE(contains(cpp.content, "image_panel_assets::image_0()"));
     EXPECT_TRUE(contains(cpp.content, "make_icon()"));
     const GeneratedFile& header = file_named(generation.files, "c.h");
-    EXPECT_TRUE(contains(header.content, "#include \"render/image_resource.h\""));
+    EXPECT_TRUE(contains(header.content, "#include \"albor/render/image_resource.h\""));
 }
 
 TEST(Codegen, AnImageParameterPullsTheHandleHeader) {
@@ -2961,7 +2961,7 @@ TEST(Codegen, AnImageParameterPullsTheHandleHeader) {
     // assert the facade includes the handle and spells the parameter with it (§6.4, AD-05)
     ASSERT_TRUE(diagnostics.diagnostics().empty());
     const GeneratedFile& header = file_named(files, "c.h");
-    EXPECT_TRUE(contains(header.content, "#include \"render/image_resource.h\""));
+    EXPECT_TRUE(contains(header.content, "#include \"albor/render/image_resource.h\""));
     const GeneratedFile& cpp = file_named(files, "c.cpp");
     EXPECT_TRUE(contains(cpp.content, "std::shared_ptr<const ImageResource> source"));
 }
@@ -3001,7 +3001,7 @@ component C {
     ASSERT_TRUE(diagnostics.diagnostics().empty());
     ASSERT_EQ(generation.paths.size(), 1U);
     const GeneratedFile& header = file_named(generation.files, "c.h");
-    EXPECT_TRUE(contains(header.content, "#include \"render/image_resource.h\""));
+    EXPECT_TRUE(contains(header.content, "#include \"albor/render/image_resource.h\""));
     const GeneratedFile& cpp = file_named(generation.files, "c.cpp");
     EXPECT_TRUE(contains(cpp.content, "image_panel_assets::image_0()"));
 }
@@ -3133,7 +3133,7 @@ component C {
     // assert the grid is constructed and every written shape value reaches its setter (§8.2, §11.3)
     ASSERT_TRUE(diagnostics.diagnostics().empty());
     const GeneratedFile& cpp = file_named(files, "c.cpp");
-    EXPECT_TRUE(contains(cpp.content, "#include \"layout/grid_layout.h\""));
+    EXPECT_TRUE(contains(cpp.content, "#include \"albor/layout/grid_layout.h\""));
     EXPECT_TRUE(contains(cpp.content, "std::make_unique<GridLayout>()"));
     EXPECT_TRUE(contains(cpp.content, "->set_gap(6.0f)"));
     EXPECT_TRUE(contains(cpp.content, "->set_columns(2)"));
@@ -3317,7 +3317,7 @@ component C {
     // assert the generated facade includes the header that declares TextDecoration (§11.3)
     ASSERT_TRUE(diagnostics.diagnostics().empty());
     const GeneratedFile& header = file_named(files, "c.h");
-    EXPECT_TRUE(contains(header.content, "#include \"widgets/text_field.h\""));
+    EXPECT_TRUE(contains(header.content, "#include \"albor/widgets/text_field.h\""));
     EXPECT_TRUE(contains(header.content, "std::vector<TextDecoration>"));
 }
 

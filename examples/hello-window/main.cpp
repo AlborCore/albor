@@ -2,8 +2,8 @@
 #include <memory>
 #include <vector>
 
-#include "application/application.h"
-#include "render/frame_scene.h"
+#include "albor/application/application.h"
+#include "albor/render/frame_scene.h"
 
 namespace
 {

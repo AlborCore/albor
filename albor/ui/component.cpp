@@ -1,0 +1,122 @@
+#include "albor/ui/component.h"
+
+namespace albor
+{
+    Component::Component(BindingEngine* engine, std::string explicit_id) :
+        m_engine(engine) {
+        // a detached component has no engine, so its properties never receive an identifier (§7.2)
+        if (m_engine != nullptr)
+            m_property_base = m_engine->begin_component();
+        // the author assigned id is stored as written, because it is the authoritative identity (AD-11)
+        set_explicit_id(std::move(explicit_id));
+    }
+
+    Component::~Component() = default;
+
+    BindingEngine* Component::engine() const {
+        // the engine settles the properties of this component (§7.2)
+        return m_engine;
+    }
+
+    std::uint32_t Component::property_base() const {
+        // the base offset is what every property identifier of this component carries (§7.2, AD-04b)
+        return m_property_base;
+    }
+
+    std::size_t Component::property_count() const {
+        // the count is what a component registers, which a test asserts on (§7.2)
+        return m_property_count;
+    }
+
+    void Component::measure(const SizeConstraints& constraints, Size& out_size) {
+        // the component measures as the largest of its children, which the node contract already implements (§8.2)
+        UiNode::measure(constraints, out_size);
+        // the preferred size is kept so a parent can query it without a second measure (§8.2)
+        m_preferred_size = out_size;
+    }
+
+    void Component::arrange(const Rect& bounds) {
+        // the component passes the same bounds down, which keeps a leaf component simple (§8.2)
+        UiNode::arrange(bounds);
+        // the arranged extent becomes the preferred one, because the parent has now decided (§8.2)
+        m_preferred_size = Size{.width = bounds.width, .height = bounds.height};
+    }
+
+    void Component::render(RenderContext& context) {
+        // the node opacity goes on first, because every phase below draws inside it (§6.1)
+        push_opacity(context);
+        // the background is drawn first, so the content lands on top of it (§6.1)
+        paint_background(context);
+        // the content is drawn over the background, because that is the order a composite paints in (§6.1)
+        paint_content(context);
+        // the children draw over both, in insertion order, which is what a composite tree needs (§6.1)
+        paint_children(context);
+        // the opacity comes off last, so a sibling draws at the state this node found (§6.1)
+        pop_opacity(context);
+    }
+
+    void Component::paint_children(RenderContext& context) {
+        // a component with no viewport of its own records its children as they are (§6.1)
+        render_children(context);
+    }
+
+    void Component::paint_content(RenderContext& context) {
+        // a component with no content of its own still draws its background and its children (§6.1)
+        (void)context;
+    }
+
+    bool Component::hit_test(Point logical_point) const {
+        // a hidden component and its children are out of reach, which keeps a hidden page inert (§8.3)
+        if (!visible_in_tree())
+            return false;
+        // the component body itself is a hit only where it has area (§8.3)
+        if (!bounds().empty() && logical_point.x >= bounds().x && logical_point.x < bounds().x + bounds().width && logical_point.y >= bounds().y && logical_point.y < bounds().y + bounds().height)
+            return true;
+        // a child under the point is also a hit, which is what a composite component needs (§8.3)
+        return UiNode::hit_test(logical_point);
+    }
+
+    void Component::paint_background(RenderContext& context) {
+        // a component with no area draws nothing, which keeps an unarranged component invisible (§6.2)
+        if (bounds().empty())
+            return;
+        // the cast goes down first, because a shadow sits behind the shape that throws it (§6.2)
+        paint_drop_shadow(context);
+        // the fill and the border are independent, so the paint carries both whatever each is set to (§6.1)
+        const Paint paint{.fill = background(), .stroke = border_color(), .stroke_width = border_width()};
+        // a background that neither fills nor strokes draws nothing, because there is nothing on it (§6.2)
+        if (!paint.fills() && !paint.strokes())
+            return;
+        // a radius means a rounded plate, which is what a themed control draws (§6.2)
+        if (corner_radius() > 0.0f) {
+            // the plate is rounded, so the corners take the radius rather than the fill (§6.2)
+            context.draw_rounded_rect(bounds(), corner_radius(), paint);
+            return;
+        }
+        // without a radius the background is a hard rectangle, which is what an unthemed component drew (§6.2)
+        context.draw_rect(bounds(), paint);
+    }
+
+    void Component::paint_drop_shadow(RenderContext& context) const {
+        // an empty cast records nothing, because a node casts nothing until it is told to (§6.2)
+        if (drop_shadow().empty())
+            return;
+        // the cast follows the plate it falls from, so a rounded plate casts a rounded shape (§6.2)
+        context.draw_shadow(bounds(), corner_radius(), drop_shadow());
+    }
+
+    Color Component::background() const {
+        // the default component is transparent, so a derived component decides whether it paints (§6.2)
+        return Color::rgba(0.0f, 0.0f, 0.0f, 0.0f);
+    }
+
+    float Component::corner_radius() const {
+        // the default component is a hard rectangle, because nothing asked for a radius (§6.2)
+        return 0.0f;
+    }
+
+    const Size& Component::preferred_size() const {
+        // the preferred size is the last measure result, which a parent queries (§8.2)
+        return m_preferred_size;
+    }
+} // namespace albor

@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "core/dev_hook.h"
+#include "albor/core/dev_hook.h"
 
 namespace
 {

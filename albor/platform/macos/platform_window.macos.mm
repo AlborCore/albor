@@ -1,0 +1,963 @@
+#include "albor/platform/macos/platform_window.h"
+
+#import <AppKit/AppKit.h>
+#import <QuartzCore/CAMetalLayer.h>
+
+#include <algorithm>
+#include <cstddef>
+#include <memory>
+#include <string>
+
+// the delegate the native window consults before it closes, which is the veto point of §5.2
+@interface AlborWindowDelegate : NSObject <NSWindowDelegate>
+
+// the framework listener the close request is forwarded to, which is null once the framework window is gone (§4.2)
+@property(nonatomic, assign) albor::PlatformWindowListener* listener;
+
+@end
+
+@implementation AlborWindowDelegate
+
+// the native close request asks the framework first, which may veto it (§5.2)
+- (BOOL)windowShouldClose:(NSWindow*)sender {
+    // a listener that is gone means the framework window is already destroyed, so the close proceeds (§4.2)
+    if (self.listener == nullptr)
+        return YES;
+
+    return self.listener->on_platform_close_request() ? YES : NO;
+}
+
+// the native window reports that it closed, which is the Closed notification of §5.2
+- (void)windowWillClose:(NSWindow*)sender {
+    // the sender is only the trigger, so it is not carried into the framework (§5.3)
+    (void)sender;
+    // a listener that is gone means the framework window is already destroyed, so nobody is left to notify (§4.2)
+    if (self.listener == nullptr)
+        return;
+
+    self.listener->on_platform_closed();
+}
+
+@end
+
+// the content view that translates native events into normalized ones, conforming NSTextInputClient (§8.3)
+@interface AlborContentView : NSView <NSTextInputClient>
+
+// the framework listener the events are forwarded to, which is null once the framework window is gone (§4.2)
+@property(nonatomic, assign) albor::PlatformWindowListener* listener;
+
+@end
+
+namespace
+{
+    // the portable key each ansi letter key code names, which the letters occupy as one contiguous range (§18.5)
+    constexpr albor::Key LETTER_KEYS[] = {albor::Key::A, albor::Key::S, albor::Key::D, albor::Key::F, albor::Key::H, albor::Key::G, albor::Key::Z, albor::Key::X, albor::Key::C, albor::Key::V, albor::Key::None, albor::Key::B, albor::Key::Q, albor::Key::W, albor::Key::E, albor::Key::R, albor::Key::Y, albor::Key::T};
+
+    // the portable key each ansi digit key code names, where two codes are punctuation and name nothing (§18.5)
+    constexpr albor::Key DIGIT_KEYS[] = {albor::Key::One, albor::Key::Two, albor::Key::Three, albor::Key::Four, albor::Key::Six, albor::Key::Five, albor::Key::None, albor::Key::Nine, albor::Key::Seven, albor::Key::None, albor::Key::Eight, albor::Key::Zero};
+
+    albor::Key key_from_nsevent(NSEvent* event) {
+        // the key code is narrowed once, because every table below and the switch both index on it (§8.3)
+        const int code = static_cast<int>(event.keyCode);
+        // the ansi letters occupy the first contiguous range, so one table names every one of them (§18.5)
+        if (code >= 0 && code <= 17)
+            return LETTER_KEYS[static_cast<std::size_t>(code)];
+        // the ansi digits occupy the range right after them, where two codes are punctuation (§18.5)
+        if (code >= 18 && code <= 29)
+            return DIGIT_KEYS[static_cast<std::size_t>(code - 18)];
+        // the named keys map one platform key code onto one portable name (§8.3)
+        switch (code) {
+        // tab
+        case 48:
+            return albor::Key::Tab;
+        // return and the keypad enter both activate
+        case 36:
+        case 76:
+            return albor::Key::Return;
+        // escape
+        case 53:
+            return albor::Key::Escape;
+        // the left arrow
+        case 123:
+            return albor::Key::ArrowLeft;
+        // the right arrow
+        case 124:
+            return albor::Key::ArrowRight;
+        // the down arrow
+        case 125:
+            return albor::Key::ArrowDown;
+        // the up arrow
+        case 126:
+            return albor::Key::ArrowUp;
+        // the space bar
+        case 49:
+            return albor::Key::Space;
+        // the backspace key removes before the caret, and the forward delete removes at it (§8.3)
+        case 51:
+            return albor::Key::Backspace;
+        // the forward delete key
+        case 117:
+            return albor::Key::Delete;
+        // the home key, which a scroll viewport answers with its start (§8.3)
+        case 115:
+            return albor::Key::Home;
+        // the page up key, which scrolls back one viewport (§8.3)
+        case 116:
+            return albor::Key::PageUp;
+        // the end key, which a scroll viewport answers with its end (§8.3)
+        case 119:
+            return albor::Key::End;
+        // the page down key, which scrolls forward one viewport (§8.3)
+        case 121:
+            return albor::Key::PageDown;
+        // the first function key
+        case 122:
+            return albor::Key::F1;
+        // the second function key
+        case 120:
+            return albor::Key::F2;
+        // the third function key
+        case 99:
+            return albor::Key::F3;
+        // the fourth function key
+        case 118:
+            return albor::Key::F4;
+        // the fifth function key
+        case 96:
+            return albor::Key::F5;
+        // the sixth function key
+        case 97:
+            return albor::Key::F6;
+        // the seventh function key
+        case 98:
+            return albor::Key::F7;
+        // the eighth function key
+        case 100:
+            return albor::Key::F8;
+        // the ninth function key
+        case 105:
+            return albor::Key::F9;
+        // the tenth function key
+        case 109:
+            return albor::Key::F10;
+        // the eleventh function key
+        case 103:
+            return albor::Key::F11;
+        // the twelfth function key
+        case 111:
+            return albor::Key::F12;
+        // every other key carries no portable name
+        default:
+            return albor::Key::None;
+        }
+    }
+
+    albor::Modifiers modifiers_from_nsevent(NSEvent* event) {
+        // the modifier flags map onto the portable set, one flag per key (§8.3)
+        albor::Modifiers modifiers;
+        const NSEventModifierFlags flags = event.modifierFlags;
+        modifiers.shift = (flags & NSEventModifierFlagShift) != 0;
+        modifiers.control = (flags & NSEventModifierFlagControl) != 0;
+        modifiers.option = (flags & NSEventModifierFlagOption) != 0;
+        modifiers.command = (flags & NSEventModifierFlagCommand) != 0;
+        return modifiers;
+    }
+
+    // read the appearance the system renders with, which is what a theme follows (§5.3, §8.4)
+    albor::SystemAppearance system_appearance_report() {
+        albor::SystemAppearance report;
+        // the appearance is the one the application resolves with, because albor does not override it (§5.3)
+        NSAppearance* appearance = [NSAppearance currentDrawingAppearance];
+        // the best match names dark aqua when the user picked dark, and the light one otherwise (§8.4)
+        NSString* best = [appearance bestMatchFromAppearancesWithNames:@[ NSAppearanceNameAqua, NSAppearanceNameDarkAqua ]];
+        report.scheme = [best isEqualToString:NSAppearanceNameDarkAqua] ? albor::ColorScheme::Dark : albor::ColorScheme::Light;
+        // the accent colour is the one the system highlights controls with, in the srgb space (§6.3)
+        NSColor* accent = [NSColor controlAccentColor];
+        // a nil colour means an appkit that carries no accent, which leaves the portable default in place (§5.3)
+        if (accent == nil)
+            return report;
+        NSColor* srgb = [accent colorUsingColorSpace:[NSColorSpace sRGBColorSpace]];
+        if (srgb == nil)
+            return report;
+        // the components are read through the srgb space, which is the one albor paints in (§6.3)
+        CGFloat red = 0.0;
+        CGFloat green = 0.0;
+        CGFloat blue = 0.0;
+        CGFloat alpha = 0.0;
+        [srgb getRed:&red green:&green blue:&blue alpha:&alpha];
+        report.accent = albor::Color::rgba(static_cast<float>(red), static_cast<float>(green), static_cast<float>(blue), static_cast<float>(alpha));
+        return report;
+    }
+} // namespace
+
+@implementation AlborContentView {
+    // the marked string a composition holds, which the queries of the protocol read back (§8.3)
+    NSString* m_marked;
+
+    // the range the mark spans, which the marked and selected queries hand out (§8.3)
+    NSRange m_marked_range;
+
+    // the caret rect the framework pushed, which the candidate query converts (§8.3)
+    NSRect m_anchor;
+
+    // whether an anchor was pushed at all, which the candidate query answers through (§8.3)
+    BOOL m_anchor_valid;
+
+    // the document selection the framework pushed, in the utf16 units the input system speaks (§8.3)
+    NSRange m_selection;
+
+    // whether a selection was pushed at all, which the selected query answers through (§8.3)
+    BOOL m_selection_valid;
+}
+
+// the view owns the caret, so it accepts first responder for the key events to reach it (§8.3)
+- (BOOL)acceptsFirstResponder {
+    return YES;
+}
+
+// the effective appearance of the window changed, which is the route appkit recommends for a theme flip (§8.4)
+- (void)viewDidChangeEffectiveAppearance {
+    // a gone listener drops the event, because the window died (§4.2)
+    if (self.listener == nullptr)
+        return;
+    // the framework receives the appearance the system now renders with (§8.4)
+    self.listener->on_platform_appearance_changed(system_appearance_report());
+}
+
+// a click on an inactive window reaches the view immediately, which is what a fast press needs (§8.3)
+- (BOOL)acceptsFirstMouse:(NSEvent*)event {
+    (void)event;
+    return YES;
+}
+
+// turn a native pointer position into the logical point of §8.3, flipping the y axis to the tree origin
+- (albor::Point)logicalPointOf:(NSEvent*)event {
+    const NSPoint in_view = [self convertPoint:event.locationInWindow fromView:nil];
+    const CGFloat height = self.bounds.size.height;
+    return albor::Point{static_cast<float>(in_view.x), static_cast<float>(height - in_view.y)};
+}
+
+- (void)mouseDown:(NSEvent*)event {
+    // a gone listener drops the event, because the window died (§4.2)
+    if (self.listener == nullptr)
+        return;
+    albor::Event message;
+    message.kind = albor::EventKind::PointerDown;
+    message.position = [self logicalPointOf:event];
+    // the platform counts multiple clicks, which a double or triple click selection reads (§8.3)
+    message.click_count = static_cast<int>(event.clickCount);
+    self.listener->on_platform_event(message);
+}
+
+- (void)mouseDragged:(NSEvent*)event {
+    // a gone listener drops the event, because the window died (§4.2)
+    if (self.listener == nullptr)
+        return;
+    albor::Event message;
+    message.kind = albor::EventKind::PointerMove;
+    message.position = [self logicalPointOf:event];
+    self.listener->on_platform_event(message);
+}
+
+- (void)mouseUp:(NSEvent*)event {
+    // a gone listener drops the event, because the window died (§4.2)
+    if (self.listener == nullptr)
+        return;
+    albor::Event message;
+    message.kind = albor::EventKind::PointerUp;
+    message.position = [self logicalPointOf:event];
+    self.listener->on_platform_event(message);
+}
+
+- (void)scrollWheel:(NSEvent*)event {
+    // a gone listener drops the event, because the window died (§4.2)
+    if (self.listener == nullptr)
+        return;
+    albor::Event message;
+    message.kind = albor::EventKind::Wheel;
+    message.position = [self logicalPointOf:event];
+    message.scroll = static_cast<float>(event.scrollingDeltaY);
+    // the unit travels with the delta, because a notched wheel counts notches and a trackpad counts points (§8.3)
+    message.precision = event.hasPreciseScrollingDeltas ? albor::ScrollPrecision::Point : albor::ScrollPrecision::Line;
+    self.listener->on_platform_event(message);
+}
+
+- (void)keyDown:(NSEvent*)event {
+    // a gone listener drops the event, because the window died (§4.2)
+    if (self.listener == nullptr)
+        return;
+    albor::Event message;
+    message.kind = albor::EventKind::KeyDown;
+    message.key = key_from_nsevent(event);
+    message.modifiers = modifiers_from_nsevent(event);
+    self.listener->on_platform_event(message);
+    // the interpret path is what composition, marked text and the committed text flow through (§8.3)
+    [self interpretKeyEvents:@[ event ]];
+}
+
+- (void)keyUp:(NSEvent*)event {
+    // a gone listener drops the event, because the window died (§4.2)
+    if (self.listener == nullptr)
+        return;
+    albor::Event message;
+    message.kind = albor::EventKind::KeyUp;
+    message.key = key_from_nsevent(event);
+    message.modifiers = modifiers_from_nsevent(event);
+    self.listener->on_platform_event(message);
+}
+
+// the committed text the input method finalised, which is what a commit REPLACED the mark with (§8.3)
+- (void)insertText:(id)string replacementRange:(NSRange)replacementRange {
+    // a gone listener drops the event, because the window died (§4.2)
+    if (self.listener == nullptr)
+        return;
+    // an attributed string hands its plain text over, which is what a mark resolved to (§8.3)
+    NSString* text = [string isKindOfClass:[NSString class]] ? (NSString*)string : [string string];
+    if (text.length == 0)
+        return;
+    const char* utf8 = text.UTF8String;
+    if (utf8 == nullptr)
+        return;
+    // the mark is gone, because a commit resolves it (§8.3)
+    m_marked = nil;
+    albor::Event message;
+    message.kind = albor::EventKind::TextInput;
+    message.text = std::string(utf8);
+    // a range the input system named travels with the event, so a reconversion replaces what it meant (§8.3)
+    if (replacementRange.location != NSNotFound)
+        message.replacement = albor::TextInputRange{static_cast<std::size_t>(replacementRange.location), static_cast<std::size_t>(replacementRange.length)};
+    self.listener->on_platform_event(message);
+}
+
+// the marked string a composition produces, which is what a candidate window edits before a commit (§8.3)
+- (void)setMarkedText:(id)string selectedRange:(NSRange)selectedRange replacementRange:(NSRange)replacementRange {
+    // the marked range is derived from the mark, which is the only thing this side of the protocol holds (§8.3)
+    (void)selectedRange;
+    // a gone listener drops the event, because the window died (§4.2)
+    if (self.listener == nullptr)
+        return;
+    // an attributed string hands its plain text over, which is what a composition holds (§8.3)
+    NSString* text = [string isKindOfClass:[NSString class]] ? (NSString*)string : [string string];
+    // the mark is stored, because the queries the input system makes read it back (§8.3)
+    m_marked = text;
+    // a length of zero is the unmark, which the caret the field holds stays at (§8.3)
+    m_marked_range = text.length > 0 ? NSMakeRange(0, text.length) : NSMakeRange(NSNotFound, 0);
+    // an empty utf8 stream is still an event, because clearing the mark is eventful (§8.3)
+    const char* utf8 = text.length > 0 ? text.UTF8String : "";
+    if (utf8 == nullptr)
+        return;
+    albor::Event message;
+    message.kind = albor::EventKind::Composing;
+    message.text = std::string(utf8);
+    // a range the input system named travels with the event, because a composition may replace a span (§8.3)
+    if (replacementRange.location != NSNotFound)
+        message.replacement = albor::TextInputRange{static_cast<std::size_t>(replacementRange.location), static_cast<std::size_t>(replacementRange.length)};
+    self.listener->on_platform_event(message);
+}
+
+// the mark the field renounces, which the committed text follows (§8.3)
+- (void)unmarkText {
+    // a mark that was never held renounces nothing (§8.3)
+    if (m_marked == nil || self.listener == nullptr)
+        return;
+    // the mark disappears, which the caret the field holds stays put under (§8.3)
+    m_marked_range = NSMakeRange(NSNotFound, 0);
+    NSString* text = m_marked;
+    m_marked = nil;
+    albor::Event message;
+    message.kind = albor::EventKind::Composing;
+    message.text = std::string("");
+    (void)text;
+    self.listener->on_platform_event(message);
+}
+
+// report whether a composition is active, which the input system queries between calls (§8.3)
+- (BOOL)hasMarkedText {
+    return m_marked != nil;
+}
+
+// hand out the range the mark spans, where no mark names not found (§8.3)
+- (NSRange)markedRange {
+    return m_marked_range;
+}
+
+// hand out the range the field edits, which sits where the mark held while one is alive (§8.3)
+- (NSRange)selectedRange {
+    // the mark is the edit the input system reads while one is alive (§8.3)
+    if (m_marked_range.location != NSNotFound)
+        return m_marked_range;
+    // the selection the framework pushed is the document range, which is what a reconversion replaces (§8.3)
+    if (m_selection_valid)
+        return m_selection;
+    // a field that published no selection reads as an empty selection at the origin (§8.3)
+    return NSMakeRange(0, 0);
+}
+
+// hand out the screen rect a candidate window anchors to, which the caret rect is (§8.3)
+- (NSRect)firstRectForCharacterRange:(NSRange)range actualRange:(NSRangePointer)actualRange {
+    // the range is unaddressable without the field's own byte map, which is what the anchor already resolves (§8.3)
+    (void)range;
+    (void)actualRange;
+    // an anchor the framework never sent anchors nothing, which is the quiet default (§8.3)
+    if (!m_anchor_valid)
+        return NSMakeRect(0.0, 0.0, 0.0, 0.0);
+    // the anchor travels in view coordinates with y growing downwards, which appkit reads upwards (§8.3)
+    const CGFloat height = self.bounds.size.height;
+    const NSRect native = NSMakeRect(m_anchor.origin.x, height - (m_anchor.origin.y + m_anchor.size.height), m_anchor.size.width, m_anchor.size.height);
+    // the screen is where the candidate window is placed by, which the window converts into (§8.3)
+    return [self.window convertRectToScreen:[self convertRect:native toView:nil]];
+}
+
+// hand out the byte index a screen point lands over, which a candidate placement reverses (§8.3)
+- (NSUInteger)characterIndexForPoint:(NSPoint)point {
+    // the point is unaddressable without the byte map, which is what the index stays out of reach for (§8.3)
+    (void)point;
+    return 0;
+}
+
+// hand out the attributes a mark may carry, which the underline the field paints is one of (§8.3)
+- (NSArray<NSAttributedStringKey>*)validAttributesForMarkedText {
+    // the field paints its own mark, so the plain text is all the system asks for (§8.3)
+    return @[];
+}
+
+// hand out the attributed run a range covers, which the mark alone decorates (§8.3)
+- (NSAttributedString*)attributedSubstringForProposedRange:(NSRange)range actualRange:(NSRangePointer)actualRange {
+    // the ranges are read, because the protocol contract names them (§8.3)
+    (void)range;
+    (void)actualRange;
+    return nil;
+}
+
+// the command the input system routed, which already travelled as a key event the framework answered (§18.5)
+- (void)doCommandBySelector:(SEL)selector {
+    // the commands are swallowed, because the key down was already normalized and answered (§8.3)
+    (void)selector;
+}
+
+// the anchor the framework pushes, which the candidate query answers through (§8.3)
+- (void)setTextAnchor:(NSRect)anchor {
+    m_anchor = anchor;
+    m_anchor_valid = YES;
+}
+
+// the document selection the framework pushed, which the selected query answers through (§8.3)
+- (void)setTextSelection:(NSRange)selection {
+    m_selection = selection;
+    m_selection_valid = YES;
+}
+
+@end
+
+namespace albor
+{
+    // the opaque appkit state, defined here so that no appkit type reaches a public header (§3.5, AD-05)
+    struct MacosWindowState
+    {
+        // the framework listener the native window raises events into (§5.3)
+        PlatformWindowListener* listener = nullptr;
+
+        // the native window itself, which is nil until the window is created
+        NSWindow* window = nil;
+
+        // the metal layer the renderer backend attaches to, which is the macos presentation path of AD-16
+        CAMetalLayer* layer = nil;
+
+        // the delegate that turns a native close request into a framework close request (§5.2)
+        id window_delegate = nil;
+
+        // the content view that translates the native events of §8.3 into normalized ones (§5.3, §8.3)
+        id content_view = nil;
+
+        // the resize observer, which is removed before the state is released (§4.2)
+        id resize_observer = nil;
+
+        // the backing scale observer, which is removed before the state is released (§4.2)
+        id backing_observer = nil;
+
+        // the distributed accent change observer, which is removed before the state is released (§8.4)
+        id accent_observer = nil;
+
+        // whether a frame was requested and not yet drawn, which is per window pacing (AD-18b)
+        bool frame_requested = false;
+
+        // whether the window is currently on screen, which appkit does not report directly
+        bool visible = false;
+
+        // whether the window is a popup, which the show path and the dismissal monitor consult (§5.1)
+        bool popup = false;
+
+        // the window a transient surface is owned by, which the show path reattaches it to (§5.1)
+        NSWindow* owner = nil;
+
+        // the anchor the popup follows, which is the trigger's content rectangle (§5.1)
+        Rect anchor{};
+
+        // the logical size the popup presents, which the platform scales into its frame (§5.1)
+        Size popup_size{};
+
+        // the local monitor that dismisses the popup on an outside click, which is removed before the state dies (§5.1)
+        id dismiss_monitor = nil;
+
+        // the deactivation observer, which dismisses the popup when the application resigns active (§5.1, §8.4)
+        id deactivate_observer = nil;
+    };
+
+    namespace
+    {
+        // detach a window from the owner appkit lists it under, which is the one child teardown of §5.1
+        void detach_from_owner(NSWindow* window) {
+            // a missing window and an unowned window have no child relation to clear (§5.1)
+            if (window == nil || window.parentWindow == nil)
+                return;
+            // the owner drops the child before it is ordered out or closed, which keeps its list clean (§5.1)
+            [window.parentWindow removeChildWindow:window];
+        }
+
+        NSWindowStyleMask style_mask_for(const WindowOptions& options) {
+            // a popup is a borderless transient surface, which appkit draws with no chrome at all (§5.1)
+            if (options.role == WindowRole::Popup)
+                return NSWindowStyleMaskBorderless;
+            // every albor window is titled and closable, which is what the documented role mask asks for (§5.3)
+            NSWindowStyleMask mask = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable;
+            // a window the user may not resize simply omits the resizable bit (§5.1)
+            if (options.resizable)
+                mask |= NSWindowStyleMaskResizable;
+            // a dialog is a secondary window, which appkit marks as miniaturizable (§5.1)
+            if (options.role == WindowRole::Dialog)
+                mask |= NSWindowStyleMaskMiniaturizable;
+            return mask;
+        }
+
+        WindowMetrics metrics_of(NSWindow* window) {
+            // the window a resize arrived on is measured, and one with no content view has no area to report (§5.3)
+            NSView* content = window.contentView;
+            if (content == nil)
+                return WindowMetrics{};
+            // the content view bounds are in logical points, while the drawable is in physical pixels (AD-27)
+            const NSRect bounds = content.bounds;
+            // the backing scale factor is what separates the logical size from the pixel size (AD-27)
+            const CGFloat scale = window.backingScaleFactor;
+            return WindowMetrics::from_logical(Size{static_cast<float>(bounds.size.width), static_cast<float>(bounds.size.height)}, static_cast<float>(scale));
+        }
+
+        // place a popup under its owner's anchor and keep it on the owner's screen (§5.1)
+        void position_popup(NSWindow* popup, NSWindow* owner, Rect anchor, Size size) {
+            // a popup without a parent keeps the cascade position, because there is no anchor to follow (§5.1)
+            if (owner == nil || owner.contentView == nil)
+                return;
+            // the anchor arrives in top left content coordinates, while appkit content is bottom left (§5.1)
+            NSView* content = owner.contentView;
+            const NSRect content_bounds = content.bounds;
+            const NSRect anchor_in_content = NSMakeRect(static_cast<CGFloat>(anchor.x), content_bounds.size.height - static_cast<CGFloat>(anchor.y) - static_cast<CGFloat>(anchor.height), static_cast<CGFloat>(anchor.width), static_cast<CGFloat>(anchor.height));
+            // the anchor is converted through the window to screen space, which the popup frame uses (§5.1)
+            const NSRect anchor_in_window = [content convertRect:anchor_in_content toView:nil];
+            const NSRect anchor_screen = [owner convertRectToScreen:anchor_in_window];
+            // the screen the owner occupies is the work area the popup must stay inside (§5.1)
+            NSScreen* screen = owner.screen != nil ? owner.screen : [NSScreen mainScreen];
+            const NSRect work = screen != nil ? screen.visibleFrame : NSMakeRect(0.0, 0.0, 1920.0, 1080.0);
+            // the popup hangs below the anchor first, which is the conventional dropdown position (§5.1)
+            const CGFloat width = static_cast<CGFloat>(size.width);
+            const CGFloat height = static_cast<CGFloat>(size.height);
+            CGFloat x = anchor_screen.origin.x;
+            CGFloat y = anchor_screen.origin.y - height;
+            // a popup that would leave the work area flips above the anchor (§5.1)
+            if (y < work.origin.y)
+                y = anchor_screen.origin.y + anchor_screen.size.height;
+            // the popup is clamped into the work area, so a trigger at an edge still shows the list (§5.1)
+            x = std::clamp(x, work.origin.x, std::max(work.origin.x, work.origin.x + work.size.width - width));
+            y = std::clamp(y, work.origin.y, std::max(work.origin.y, work.origin.y + work.size.height - height));
+            // the frame is applied before the panel is ordered front, so the first frame lands in place (§5.1)
+            [popup setFrame:NSMakeRect(x, y, width, height) display:NO];
+            // the panel is a child of its owner, so it follows the owner and stays above it (§5.1)
+            if (popup.parentWindow != owner) {
+                // an old owner is detached first, because a window has one parent at a time (§5.1)
+                detach_from_owner(popup);
+                // the current owner adopts it before the show, which is what makes the popup follow (§5.1)
+                [owner addChildWindow:popup ordered:NSWindowAbove];
+            }
+        }
+
+        // report whether a click landed on the trigger rectangle the popup is anchored to (§5.1)
+        bool anchor_contains(NSWindow* owner, Rect anchor, NSEvent* event) {
+            // a click in another window is outside the anchor, because the anchor belongs to the owner (§5.1)
+            if (owner == nil || event.window != owner || owner.contentView == nil)
+                return false;
+            // the point is converted to content space, where the anchor was recorded (§5.1)
+            NSView* content = owner.contentView;
+            const NSPoint point = [content convertPoint:event.locationInWindow fromView:nil];
+            // the top left anchor is flipped into the bottom left content space appkit uses (§5.1)
+            const CGFloat top = content.bounds.size.height - static_cast<CGFloat>(anchor.y) - static_cast<CGFloat>(anchor.height);
+            // the anchor test is the same half open rectangle the control uses for a hit (§8.3)
+            return point.x >= static_cast<CGFloat>(anchor.x) && point.x < static_cast<CGFloat>(anchor.x + anchor.width) && point.y >= top && point.y < top + static_cast<CGFloat>(anchor.height);
+        }
+
+        // the dismissal a popup shares between its outside click monitor and its deactivation observer (§5.1, §8.4)
+        void dismiss_popup(const std::shared_ptr<MacosWindowState>& state) {
+            // an already hidden popup is not dismissed, so its hook never fires a second time (§5.1, §5.2)
+            if (state->window == nil || !state->visible)
+                return;
+            // a child popup detaches before it is ordered out, so the relation does not outlive the surface (§5.1)
+            detach_from_owner(state->window);
+            // the popup is ordered out, which is the whole of a dismissal for a transient surface (§5.1)
+            [state->window orderOut:nil];
+            state->visible = false;
+            // the framework is told the popup closed, so its owner can re-arm and tear it down (§5.2)
+            if (state->listener != nullptr)
+                state->listener->on_platform_closed();
+        }
+    } // namespace
+
+    std::unique_ptr<MacosPlatformWindow> MacosPlatformWindow::create(const WindowOptions& options) {
+        // an option set the framework refuses is never handed to appkit (§5.1)
+        if (!options.valid())
+            return nullptr;
+        // the shared application has to exist before a window can be ordered front (§4.1, §5.3)
+        NSApplication* application = [NSApplication sharedApplication];
+        // a regular policy is what gives the window a menu bar and a dock tile (§4.1)
+        [application setActivationPolicy:NSApplicationActivationPolicyRegular];
+        // the cascade offset keeps a second window from hiding behind the first one (§5.3)
+        static std::size_t window_ordinal = 0;
+        const double origin_x = 120.0 + 80.0 * static_cast<double>(window_ordinal);
+        const double origin_y = 120.0 + 60.0 * static_cast<double>(window_ordinal);
+        const NSRect frame = NSMakeRect(origin_x, origin_y, static_cast<double>(options.size.width), static_cast<double>(options.size.height));
+        // the popup role builds a panel, which is the appkit surface that floats without activating (§5.1)
+        const bool popup = options.role == WindowRole::Popup;
+        NSWindow* window = nil;
+        if (popup) {
+            // a popup is borderless and never activates the application when it shows (§5.1)
+            NSPanel* panel = [[NSPanel alloc] initWithContentRect:frame styleMask:(style_mask_for(options) | NSWindowStyleMaskNonactivatingPanel) backing:NSBackingStoreBuffered defer:NO];
+            // a popup floats above the ordinary windows, which is what keeps a dropdown above its trigger (§5.1)
+            panel.level = NSFloatingWindowLevel;
+            // the panel takes key only when a control inside it asks for the keyboard (§5.1)
+            panel.becomesKeyOnlyIfNeeded = YES;
+            // the panel hides when the application deactivates, which is the cross application dismissal of §8.4
+            panel.hidesOnDeactivate = YES;
+            // a borderless panel carries a shadow over a clear background (§5.1)
+            panel.hasShadow = YES;
+            panel.opaque = NO;
+            panel.backgroundColor = [NSColor clearColor];
+            window = panel;
+        }
+        else {
+            // a titled window is created with the documented titled, closable and resizable mask (§5.3)
+            window = [[NSWindow alloc] initWithContentRect:frame styleMask:style_mask_for(options) backing:NSBackingStoreBuffered defer:NO];
+        }
+        if (window == nil)
+            return nullptr;
+        // arc owns the window, so appkit must not release it when it closes, which is the over release of #150 (§5.3)
+        window.releasedWhenClosed = NO;
+        window.title = [NSString stringWithUTF8String:options.title.c_str()];
+        // the content view carries the metal layer and translates the native events of §8.3
+        AlborContentView* content = [[AlborContentView alloc] initWithFrame:window.contentView.frame];
+        window.contentView = content;
+        content.wantsLayer = YES;
+        content.layer = [CAMetalLayer layer];
+        // the content view takes the caret, so the key events reach it once the window is key (§8.3)
+        window.initialFirstResponder = content;
+        [window makeFirstResponder:content];
+        // the state is shared because the notification blocks outlive this function and capture it (§4.2)
+        std::shared_ptr<MacosWindowState> state = std::make_shared<MacosWindowState>();
+        state->window = window;
+        state->content_view = content;
+        state->layer = static_cast<CAMetalLayer*>(content.layer);
+        // a popup presents over a clear background, so its layer is non opaque and the compositor may blend it (§5.1)
+        if (popup)
+            state->layer.opaque = NO;
+        // the delegate is the veto point of a native close request, which the framework answers (§5.2)
+        AlborWindowDelegate* delegate = [[AlborWindowDelegate alloc] init];
+        state->window_delegate = delegate;
+        window.delegate = delegate;
+        // the notifications arrive on the main queue, so a resize or a scale change is observed on the ui thread (§4.1)
+        NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
+        NSOperationQueue* main_queue = [NSOperationQueue mainQueue];
+        // a resize reaches the framework as new metrics, because the platform is their authority (§9.1)
+        state->resize_observer = [center addObserverForName:NSWindowDidResizeNotification
+                                                     object:window
+                                                      queue:main_queue
+                                                 usingBlock:^(NSNotification*) {
+                                                   // a gone listener drops the event, because the window died (§4.2)
+                                                   if (state->listener == nullptr)
+                                                       return;
+                                                   // the framework receives the metrics the platform now reports (§9.1)
+                                                   state->listener->on_platform_resize(metrics_of(state->window));
+                                                 }];
+        // a backing scale change is a metrics change as well, because the pixel size moves with it (AD-27)
+        state->backing_observer = [center addObserverForName:NSWindowDidChangeBackingPropertiesNotification
+                                                      object:window
+                                                       queue:main_queue
+                                                  usingBlock:^(NSNotification*) {
+                                                    // a gone listener drops the event, because the window died (§4.2)
+                                                    if (state->listener == nullptr)
+                                                        return;
+                                                    // the framework receives the metrics the platform now reports (§9.1)
+                                                    state->listener->on_platform_resize(metrics_of(state->window));
+                                                  }];
+        // the popup flag is kept so the show path knows not to activate, and the teardown knows it owns a monitor (§5.1)
+        state->popup = popup;
+        // the owner is the appkit window the registry resolved, which an owned surface follows (§5.1)
+        state->owner = (__bridge NSWindow*)options.native_parent.object();
+        // a popup remembers its anchor and extent, because every show repositions and reattaches it (§5.1)
+        if (popup) {
+            // the trigger anchor is kept in content coordinates, where the platform converts it (§5.1)
+            state->anchor = options.anchor;
+            // the logical popup extent is kept, because the frame is set on every show (§5.1)
+            state->popup_size = options.size;
+        }
+        // a popup dismisses on a click outside its bounds, which is the outside dismissal of §5.1
+        if (popup) {
+            // the handler dismisses on a press that reached a window other than the popup (§5.1)
+            NSEvent* (^dismiss)(NSEvent*) = ^NSEvent*(NSEvent* event) {
+              // a click that reached the popup itself is not an outside click, so it passes through (§5.1)
+              if (event.window != state->window && !anchor_contains(state->owner, state->anchor, event))
+                  dismiss_popup(state);
+              // the click is returned, so it still reaches whatever the user actually clicked (§5.1)
+              return event;
+            };
+            // the monitor watches the press events, so a release or a drag never dismisses the popup (§5.1)
+            state->dismiss_monitor = [NSEvent addLocalMonitorForEventsMatchingMask:(NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown | NSEventMaskOtherMouseDown) handler:dismiss];
+            // a deactivating panel hides itself, so the framework is told here, on the posting thread (§5.1, §8.4)
+            state->deactivate_observer = [center addObserverForName:NSApplicationDidResignActiveNotification
+                                                             object:application
+                                                              queue:nil
+                                                         usingBlock:^(NSNotification*) {
+                                                           // the deactivation dismisses through the shared path (§5.1)
+                                                           dismiss_popup(state);
+                                                         }];
+        }
+        // a new window moves the cascade along, so a later window does not stack on this one (§5.3)
+        window_ordinal++;
+        // the accent colour changes on the system settings, announced through the distributed center (§8.4)
+        NSDistributedNotificationCenter* distributed = [NSDistributedNotificationCenter defaultCenter];
+        // an accent change reaches the listener as an appearance change too, which keeps the theme current (§8.4)
+        state->accent_observer = [distributed addObserverForName:@"AppleColorPreferencesChangedNotification"
+                                                          object:nil
+                                                           queue:[NSOperationQueue mainQueue]
+                                                      usingBlock:^(NSNotification*) {
+                                                        // a gone listener drops the event, because the window died (§4.2)
+                                                        if (state->listener == nullptr)
+                                                            return;
+                                                        // the framework receives the new system appearance (§8.4)
+                                                        state->listener->on_platform_appearance_changed(system_appearance_report());
+                                                      }];
+        // the framework window keeps the shared state alive, because the observers reference it (§4.2)
+        return std::unique_ptr<MacosPlatformWindow>(new MacosPlatformWindow(std::move(state)));
+    }
+
+    MacosPlatformWindow::~MacosPlatformWindow() {
+        // the listeners detach first, because a teardown notification would reach a half dead object (§4.2)
+        m_state->listener = nullptr;
+        m_state->window.delegate = nil;
+        // the content view keeps no listener, because the framework window is already gone (§4.2)
+        AlborContentView* content = static_cast<AlborContentView*>(m_state->content_view);
+        if (content != nil)
+            content.listener = nil;
+        // the observers are removed before the state is released, because their blocks captured it (§4.2)
+        NSNotificationCenter* center = [NSNotificationCenter defaultCenter];
+        if (m_state->resize_observer != nil) {
+            [center removeObserver:m_state->resize_observer];
+            m_state->resize_observer = nil;
+        }
+        if (m_state->backing_observer != nil) {
+            [center removeObserver:m_state->backing_observer];
+            m_state->backing_observer = nil;
+        }
+        if (m_state->accent_observer != nil) {
+            [[NSDistributedNotificationCenter defaultCenter] removeObserver:m_state->accent_observer];
+            m_state->accent_observer = nil;
+        }
+        // the dismissal monitor is removed, because it captured the state and would keep the window alive (§5.1)
+        if (m_state->dismiss_monitor != nil) {
+            [NSEvent removeMonitor:m_state->dismiss_monitor];
+            m_state->dismiss_monitor = nil;
+        }
+        // the deactivation observer is removed, because it captured the state and would outlive the window (§5.1, §8.4)
+        if (m_state->deactivate_observer != nil) {
+            [[NSNotificationCenter defaultCenter] removeObserver:m_state->deactivate_observer];
+            m_state->deactivate_observer = nil;
+        }
+        // a child detaches before it closes, because a child left in the owner is the display cycle crash (§5.1)
+        detach_from_owner(m_state->window);
+        // the native window is closed last, so the layer and its drawables die with it (§6.3)
+        [m_state->window close];
+        // the native objects are dropped with the state, which releases them under arc (§5.3)
+        m_state->window = nil;
+        m_state->window_delegate = nil;
+        m_state->content_view = nil;
+        m_state->layer = nil;
+    }
+
+    void MacosPlatformWindow::set_listener(PlatformWindowListener* listener) {
+        m_state->listener = listener;
+        // the delegate holds the same listener, because the close veto travels through it (§5.2)
+        AlborWindowDelegate* delegate = static_cast<AlborWindowDelegate*>(m_state->window_delegate);
+        if (delegate != nil)
+            delegate.listener = listener;
+        // the content view holds the same listener, because the input events travel through it (§8.3)
+        AlborContentView* content = static_cast<AlborContentView*>(m_state->content_view);
+        if (content != nil)
+            content.listener = listener;
+    }
+
+    void MacosPlatformWindow::show() {
+        // a window with no native window cannot be shown (§5.3)
+        if (m_state->window == nil)
+            return;
+        // a popup is non activating, so it is ordered front without taking key (§5.1)
+        if (m_state->popup) {
+            // the surface follows its owner's anchor on every show, because the owner may have moved (§5.1)
+            position_popup(m_state->window, m_state->owner, m_state->anchor, m_state->popup_size);
+            [m_state->window orderFront:nil];
+        }
+        else {
+            // an owned dialog attaches to its parent, which keeps it above and moving with the owner (§5.1)
+            if (m_state->owner != nil && m_state->window.parentWindow != m_state->owner) {
+                // an old owner is detached first, because a window has one parent at a time (§5.1)
+                detach_from_owner(m_state->window);
+                // the owner adopts the dialog before the show, which is the native parent relation (§5.1)
+                [m_state->owner addChildWindow:m_state->window ordered:NSWindowAbove];
+            }
+            [m_state->window makeKeyAndOrderFront:nil];
+            // the application is activated so that the window takes focus and the pacing source ticks (§4.1)
+            [[NSApplication sharedApplication] activateIgnoringOtherApps:YES];
+        }
+        m_state->visible = true;
+    }
+
+    void MacosPlatformWindow::activate() {
+        // a window with no native window has nothing to bring forward (§5.3)
+        if (m_state->window == nil)
+            return;
+        // a popup is non activating by design, so it is never made key (§5.1)
+        if (m_state->popup) {
+            [m_state->window orderFront:nil];
+            return;
+        }
+        // an owned dialog attaches to its parent, which keeps it above the owner when it takes key (§5.1)
+        if (m_state->owner != nil && m_state->window.parentWindow != m_state->owner) {
+            // an old owner is detached first, because a window has one parent at a time (§5.1)
+            detach_from_owner(m_state->window);
+            // the owner adopts the dialog before it is keyed (§5.1)
+            [m_state->owner addChildWindow:m_state->window ordered:NSWindowAbove];
+        }
+        // the window takes key status, which is what moves the caret into it (§5.1)
+        [m_state->window makeKeyAndOrderFront:nil];
+        // the application is activated, because a dialog must take focus from whatever the user was in (§4.1)
+        [[NSApplication sharedApplication] activateIgnoringOtherApps:YES];
+        m_state->visible = true;
+    }
+
+    void MacosPlatformWindow::hide() {
+        // a window with no native window was never on screen (§5.3)
+        if (m_state->window == nil)
+            return;
+        // a hidden child stops following its owner, which keeps the child list of the owner clean (§5.1)
+        detach_from_owner(m_state->window);
+        [m_state->window orderOut:nil];
+        m_state->visible = false;
+    }
+
+    void MacosPlatformWindow::set_title(std::string_view title) {
+        // a window with no native window has no title bar to write into (§5.3)
+        if (m_state->window == nil)
+            return;
+        m_state->window.title = [[NSString alloc] initWithBytes:title.data() length:title.size() encoding:NSUTF8StringEncoding];
+    }
+
+    void MacosPlatformWindow::set_size(Size size) {
+        // a window with no native window cannot be resized (§5.3)
+        if (m_state->window == nil)
+            return;
+        // the origin is kept, so the window grows from the corner the user placed it at (§7.4)
+        const NSRect frame = m_state->window.frame;
+        [m_state->window setFrame:NSMakeRect(frame.origin.x, frame.origin.y, static_cast<double>(size.width), static_cast<double>(size.height)) display:YES];
+    }
+
+    WindowMetrics MacosPlatformWindow::metrics() const {
+        // a window with no native window has no metrics to report (§5.3)
+        if (m_state->window == nil)
+            return WindowMetrics{};
+        return metrics_of(m_state->window);
+    }
+
+    NativeWindowHandle MacosPlatformWindow::native_handle() const {
+        // a window with no layer hands out the invalid handle, which a backend refuses (§3.5)
+        if (m_state->layer == nil)
+            return NativeWindowHandle{};
+        // the layer crosses into the framework as an opaque pointer, which no appkit type may name (§3.5, AD-05)
+        return NativeWindowHandle::from_object((__bridge const void*)m_state->layer);
+    }
+
+    NativeWindowHandle MacosPlatformWindow::native_window_handle() const {
+        // a window that was destroyed hands out the invalid handle, which a popup refuses (§5.1)
+        if (m_state->window == nil)
+            return NativeWindowHandle{};
+        // the appkit window crosses as an opaque pointer, which no public header names (§3.5, AD-05)
+        return NativeWindowHandle::from_object((__bridge const void*)m_state->window);
+    }
+
+    SystemAppearance MacosPlatformWindow::system_appearance() const {
+        // the appearance is a system value, so it is read fresh on every ask rather than cached (§5.3, §8.4)
+        return system_appearance_report();
+    }
+
+    void MacosPlatformWindow::request_frame() {
+        // the pacing source is owned by the event loop, so a window only records that it wants a frame (§4.3)
+        m_state->frame_requested = true;
+    }
+
+    void MacosPlatformWindow::set_text_selection(TextInputRange selection) {
+        // a window with no native window has no input method to address a document through (§8.3)
+        if (m_state->window == nil)
+            return;
+        // the view the input system talks to is the one that stores the range (§8.3)
+        AlborContentView* content = static_cast<AlborContentView*>(m_state->content_view);
+        if (content == nil)
+            return;
+        [content setTextSelection:NSMakeRange(selection.location, selection.length)];
+    }
+
+    void MacosPlatformWindow::set_text_anchor(Rect anchor) {
+        // a window with no native window has no input method to anchor (§8.3)
+        if (m_state->window == nil)
+            return;
+        // the anchor is stored on the view the input system talks to (§8.3)
+        AlborContentView* content = static_cast<AlborContentView*>(m_state->content_view);
+        if (content == nil)
+            return;
+        [content setTextAnchor:NSMakeRect(anchor.x, anchor.y, anchor.width, anchor.height)];
+    }
+
+    bool MacosPlatformWindow::frame_requested() const {
+        // the flag is what the next pacing tick consults to decide whether to draw (§4.3)
+        return m_state->frame_requested;
+    }
+
+    bool MacosPlatformWindow::visible() const {
+        // the flag is the framework's record of what it asked appkit to do (§5.1)
+        return m_state->visible;
+    }
+
+    void MacosPlatformWindow::close() {
+        // a window that was never created has nothing to close (§5.2)
+        if (m_state->window == nil)
+            return;
+        // the listener is detached first, because closing raises notifications the framework is already past (§4.2)
+        m_state->listener = nullptr;
+        m_state->window.delegate = nil;
+        // the content view keeps no listener, because the framework is already past the window (§4.2)
+        AlborContentView* content = static_cast<AlborContentView*>(m_state->content_view);
+        if (content != nil)
+            content.listener = nil;
+        // a child detaches before it closes, so the owner never releases a window appkit still lists (§5.1)
+        detach_from_owner(m_state->window);
+        // the native window is closed without asking the framework, because the framework initiated this (§5.2)
+        [m_state->window close];
+        // a closed window has nothing left to draw (§4.3)
+        m_state->frame_requested = false;
+        m_state->visible = false;
+    }
+
+    MacosPlatformWindow::MacosPlatformWindow(std::shared_ptr<MacosWindowState> state) :
+        m_state(std::move(state)) {}
+} // namespace albor

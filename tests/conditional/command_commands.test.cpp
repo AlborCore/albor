@@ -3,10 +3,10 @@
 
 #include <gtest/gtest.h>
 
-#include "automation/automation_session.h"
-#include "automation/command_commands.h"
-#include "commands/command_registry.h"
-#include "commands/undo_stack.h"
+#include "albor/automation/automation_session.h"
+#include "albor/automation/command_commands.h"
+#include "albor/commands/command_registry.h"
+#include "albor/commands/undo_stack.h"
 
 using namespace albor;
 using namespace albor::automation;

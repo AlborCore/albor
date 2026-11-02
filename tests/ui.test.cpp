@@ -7,21 +7,21 @@
 
 #include <gtest/gtest.h>
 
-#include "core/constraints.h"
-#include "layout/column_layout.h"
-#include "render/frame_scene.h"
-#include "render/image_resource.h"
-#include "render/line_batch.h"
-#include "render/path_resource.h"
-#include "render/picture_resource.h"
-#include "render/render_context.h"
-#include "render/render_executor.h"
-#include "render/renderer_backend.h"
-#include "render/resource_factory.h"
-#include "ui/component.h"
-#include "ui/frame_pipeline.h"
-#include "ui/scene_builder.h"
-#include "ui/ui_node.h"
+#include "albor/core/constraints.h"
+#include "albor/layout/column_layout.h"
+#include "albor/render/frame_scene.h"
+#include "albor/render/image_resource.h"
+#include "albor/render/line_batch.h"
+#include "albor/render/path_resource.h"
+#include "albor/render/picture_resource.h"
+#include "albor/render/render_context.h"
+#include "albor/render/render_executor.h"
+#include "albor/render/renderer_backend.h"
+#include "albor/render/resource_factory.h"
+#include "albor/ui/component.h"
+#include "albor/ui/frame_pipeline.h"
+#include "albor/ui/scene_builder.h"
+#include "albor/ui/ui_node.h"
 
 using namespace albor;
 

@@ -1,7 +1,7 @@
 #include <chrono>
 #include <cstdio>
 
-#include "application/application.h"
+#include "albor/application/application.h"
 #include "examples/reactive-counter/counter_panel.h"
 
 int main() {

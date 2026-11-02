@@ -12,8 +12,8 @@
 
 #include <gtest/gtest.h>
 
-#include "automation/host/automation_host.h"
-#include "core/json.h"
+#include "albor/automation/host/automation_host.h"
+#include "albor/core/json.h"
 
 using namespace albor;
 
