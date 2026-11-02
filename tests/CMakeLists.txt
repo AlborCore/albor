@@ -77,6 +77,9 @@ target_compile_definitions(albor-tests PRIVATE ALBOR_DUAL_ENGINE_DIALOG_UI="${CM
 # the asset fixtures live together, so a generator suite resolves an embedded image from a carried png (§6.4)
 target_compile_definitions(albor-tests PRIVATE ALBOR_TEST_VECTORS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/vectors")
 
+# the exported include root, so a generator suite proves an emitted include names the folder it resolves through (§3.5, AD-19)
+target_compile_definitions(albor-tests PRIVATE ALBOR_FRAMEWORK_INCLUDE_DIR="${PROJECT_SOURCE_DIR}/albor")
+
 # the tests link the framework modules and nothing platform specific, so they run without a window server (§3.2)
 #
 # only the modules that are not already re-exported are named here. albor-preview publishes albor-widgets,

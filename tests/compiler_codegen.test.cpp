@@ -3321,6 +3321,43 @@ component C {
     EXPECT_TRUE(contains(header.content, "std::vector<TextDecoration>"));
 }
 
+TEST(Codegen, EveryFrameworkIncludeInTheGeneratedOutputCarriesTheAlborPrefix) {
+    // arrange a component whose facade reaches the runtime, a record and a widget header (§11.3)
+    const std::string_view source = R"(
+component PrefixProbe {
+    in property<vector<TextDecoration>> tokens: [];
+    Column {
+        TextField { value: "probe"; decorations: tokens; }
+    }
+}
+)";
+    // act the facade files are generated the way the driver generates them for a build (§11.3, §14.2)
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert an include that resolves inside the framework tree always names the albor/ folder (§3.5, AD-19)
+    std::size_t framework_includes = 0;
+    for (const GeneratedFile& file : files) {
+        std::size_t at = file.content.find("#include \"");
+        while (at != std::string::npos) {
+            const std::size_t begin = at + std::string("#include \"").size();
+            const std::size_t end = file.content.find('"', begin);
+            ASSERT_NE(end, std::string::npos) << file.path;
+            const std::string target = file.content.substr(begin, end - begin);
+            const std::size_t prefix = target.rfind("albor/", 0);
+            const std::string inside = prefix == 0U ? target.substr(6) : target;
+            if (std::filesystem::exists(std::filesystem::path(ALBOR_FRAMEWORK_INCLUDE_DIR) / inside)) {
+                ++framework_includes;
+                EXPECT_EQ(prefix, 0U) << file.path << " includes " << target << " unprefixed";
+            }
+            at = file.content.find("#include \"", end);
+        }
+    }
+    // assert a witness that lost the prefix would be rejected, because a lock that cannot fail proves nothing (§16)
+    EXPECT_TRUE(std::filesystem::exists(std::filesystem::path(ALBOR_FRAMEWORK_INCLUDE_DIR) / "ui/component.h"));
+    EXPECT_NE(std::string("ui/component.h").rfind("albor/", 0), 0U);
+    // assert the probe reached the framework tree, because a lock that measured nothing would pass silently (§16)
+    EXPECT_GT(framework_includes, 0U);
+}
+
 TEST(Codegen, AnAssetNamespaceFallsBackWhenTheStemIsEmpty) {
     // arrange a source path ending at a directory, whose stem is empty (§6.4)
     const std::string_view source = "component C { in property<image> icon: @image(\"icon.png\"); Column {} }";
