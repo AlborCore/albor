@@ -62,6 +62,12 @@ TEST(AlignTypeChecker, EveryAlignmentMemberIsAccepted) {
         EXPECT_TRUE(diagnose(std::string("component C { Column { Label { horizontal_align: Align.") + member + "; } } }").diagnostics().empty());
 }
 
+TEST(AlignTypeChecker, TheContentAlignmentResolvesTheSameSet) {
+    // assert the field's own alignment is checked like the two axes, because it carries the same type (§8.2, §11.1)
+    EXPECT_TRUE(diagnose("component C { TextField { content_align: Align.end; } }").diagnostics().empty());
+    EXPECT_EQ(first_code("component C { TextField { content_align: Align.middle; } }"), "E0416");
+}
+
 TEST(AlignTypeChecker, AnUndeclaredMemberIsReported) {
     // assert
     EXPECT_EQ(first_code("component C { Column { Label { horizontal_align: Align.middle; } } }"), "E0416");

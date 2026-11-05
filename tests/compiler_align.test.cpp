@@ -96,6 +96,16 @@ TEST(CommonProperties, TheAlignmentPropertiesCarryTheAlignmentType) {
     EXPECT_TRUE(horizontal->type.is(TypeKind::Align));
 }
 
+TEST(CommonProperties, TheTextFieldCarriesItsOwnContentAlignment) {
+    // arrange
+    const ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act the field places its run inside the plate, which the two container axes do not cover (§8.2)
+    const ElementProperty* content = catalog.find("TextField")->find_property("content_align");
+    // assert the property resolves a written member, because its type is the named set (§8.2)
+    ASSERT_NE(content, nullptr);
+    EXPECT_TRUE(content->type.is(TypeKind::Align));
+}
+
 TEST(CommonProperties, ACommonPropertyDoesNotDisplaceItsOwn) {
     // arrange
     const ElementCatalog catalog = ElementCatalog::with_builtins();

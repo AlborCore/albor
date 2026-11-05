@@ -608,6 +608,27 @@ TEST(PreviewHostChecks, AFieldShowsTheValueAndHintTheAuthorWrote) {
     EXPECT_EQ(field->placeholder(), "type here");
 }
 
+TEST(PreviewHostChecks, AFieldContentAlignmentReachesThePreview) {
+    // arrange an editor pinning its first line to the plate top, which the compiled path applies too (§8.2)
+    const std::string source = R"UI(component Editor {
+    TextField {
+        id: netlist;
+        multiline: true;
+        content_align: Align.start;
+    }
+})UI";
+    BindingEngine engine;
+    // act
+    preview::PreviewResult result = preview::build(source, engine);
+    // assert nothing was reported, because the property is one the catalog declares (§11.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    TextField* field = dynamic_cast<TextField*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<TextField*>(&node) != nullptr; }));
+    ASSERT_NE(field, nullptr);
+    // assert the written member reached the field, because a preview that left it inherited would misplace the run (§8.2)
+    EXPECT_EQ(field->content_align(), Align::Start);
+}
+
 TEST(PreviewHostChecks, AProgressBarShowsTheFractionTheAuthorWrote) {
     // arrange a bar writing its fraction, which a preview shows as the author wrote it (§8)
     const std::string source = R"UI(component WrittenProgress {

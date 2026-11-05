@@ -11,6 +11,7 @@ Single-line by default; set `multiline` for a wrapping, scrolling editor.
 | `placeholder` | `string` | the hint shown while empty |
 | `read_only` | `bool` | displays but refuses editing |
 | `multiline` | `bool` | accepts line breaks, wraps, and scrolls its own viewport |
+| `content_align` | `align` | where the value sits vertically inside the plate: `start`, `center`, `end` or `stretch` |
 | `disabled` | `bool` | refuses all interaction |
 | `font_size` | `float` | density-scaled; accepts `px` |
 | `decorations` | `vector<TextDecoration>` | styled byte ranges for syntax highlighting and diagnostics |
@@ -91,6 +92,42 @@ From C++, the scroll is observable and drivable on any field:
 field->scroll_offset();          // how far the content is scrolled from its leading edge
 field->maximum_scroll_offset();  // zero while the text fits
 field->scroll_to(0.0f);          // clamped into [0, maximum_scroll_offset()]
+```
+
+## Content alignment
+
+The value sits inside the plate according to `content_align`. The alignment is vertical only, so
+the run always begins at the leading inset:
+
+| member | where the run sits |
+| --- | --- |
+| `start` | the first line at the plate top |
+| `center` | centred in the height the run does not fill |
+| `end` | the last line at the plate bottom |
+| `stretch` | the plate top, because a run cannot stretch to fill it |
+
+While `content_align` is unset, the mode decides: a single-line field centres its line in the
+plate, which is what a form field wants when its row hands it spare height, and a multi-line field
+pins its first line to the top, which is what an editor surface wants:
+
+```text
+TextField {
+    id: netlist_editor;
+    multiline: true;
+    content_align: Align.center;   // an explicit override; `start` is the multi-line default
+    value: netlist;
+}
+```
+
+A run that overflows the plate has no spare height to place itself in, so every member scrolls
+from the plate top. The alignment never changes the measurement, the scroll range or the caret
+bytes; the caret, the selection, the hint and the composition underline all follow the run.
+
+From C++ the alignment is the same surface:
+
+```cpp
+field->set_content_align(Align::Start);
+field->content_align();          // Align::Inherit until one is authored, and the mode answers for that
 ```
 
 ## Styled ranges
