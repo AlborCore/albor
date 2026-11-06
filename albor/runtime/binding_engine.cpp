@@ -175,7 +175,7 @@ namespace albor
     void BindingEngine::invalidate(BindingId binding) {
         Binding* entry = find(binding);
         // a stale handle marks nothing (§7.3)
-        if (entry == nullptr)
+        if (entry == nullptr || !entry->registered())
             return;
         // an animation presence write marks its own binding without walking the graph (AD-04d)
         entry->dirty = true;
@@ -202,6 +202,13 @@ namespace albor
                 // an unbound binding that a previous pass removed is skipped (§7.3)
                 if (entry == nullptr)
                     continue;
+                // an unbound binding keeps its slot but carries no work, so the walk skips it (§7.3)
+                if (!entry->registered()) {
+                    // reset the dirty flag for unregistered bindings (§7.3)
+                    entry->dirty = false;
+                    // next
+                    continue;
+                }
                 // the dirty flag clears before the run, so a binding that reads its own target still converges (§7.3)
                 entry->dirty = false;
                 // a static binding runs its plain function over the recorded context, the allocation free path (§13.3)

@@ -268,6 +268,28 @@ TEST(ConditionalCodegen, AReheldConditionalBodyReappearsOnce) {
     EXPECT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), restored - 1);
 }
 
+TEST(ConditionalCodegen, AReopenedBodySkipsTheSinkItsRebuildUnbinds) {
+    // arrange a body that was shown and removed, whose sink binding stays registered (§11.1)
+    BindingEngine engine;
+    ConditionalPanel panel(&engine, nullptr);
+    panel.set_show(true);
+    engine.settle();
+    panel.set_show(false);
+    engine.settle();
+    // act the body source and the condition change before the same frame settles
+    panel.set_label_text("edited");
+    panel.set_show(true);
+    // assert the rebuild skips the sink it unbound and the replacement sink applies the source (§7.3)
+    EXPECT_NO_THROW(engine.settle());
+    const UiNode& column = *static_cast<UiNode&>(panel).child_at(0);
+    ASSERT_EQ(column.child_count(), 4U);
+    const auto* body = dynamic_cast<const Label*>(column.child_at(2));
+    ASSERT_NE(body, nullptr);
+    EXPECT_EQ(body->text(), "edited");
+    EXPECT_EQ(engine.dirty_count(), 0u);
+    EXPECT_FALSE(engine.cycle_detected());
+}
+
 TEST(ConditionalCodegen, AdjacentBodiesKeepTheWrittenOrder) {
     // arrange a panel with two adjacent conditionals, which is the case a shared offset reverses (§11.1)
     BindingEngine engine;
