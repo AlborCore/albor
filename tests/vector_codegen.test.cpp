@@ -268,6 +268,32 @@ TEST(ConditionalCodegen, AReheldConditionalBodyReappearsOnce) {
     EXPECT_EQ(static_cast<UiNode&>(panel).child_at(0)->child_count(), restored - 1);
 }
 
+TEST(ConditionalCodegen, AReopenedBodySkipsTheSinkItsRebuildUnbinds) {
+    // arrange
+    BindingEngine engine;
+    ConditionalPanel panel(&engine, nullptr);
+    panel.set_show(true);
+    engine.settle();
+    panel.set_show(false);
+    engine.settle();
+    // act
+    panel.set_label_text("edited");
+    panel.set_show(true);
+    const std::size_t evaluations_before = engine.evaluation_count();
+    const std::size_t passes = engine.settle();
+    // assert
+    EXPECT_EQ(passes, 2u);
+    EXPECT_EQ(engine.size(), 3u);
+    EXPECT_EQ(engine.evaluation_count() - evaluations_before, 3u);
+    const UiNode& column = *static_cast<UiNode&>(panel).child_at(0);
+    ASSERT_EQ(column.child_count(), 4U);
+    const auto* body = dynamic_cast<const Label*>(column.child_at(2));
+    ASSERT_NE(body, nullptr);
+    EXPECT_EQ(body->text(), "edited");
+    EXPECT_EQ(engine.dirty_count(), 0u);
+    EXPECT_FALSE(engine.cycle_detected());
+}
+
 TEST(ConditionalCodegen, AdjacentBodiesKeepTheWrittenOrder) {
     // arrange a panel with two adjacent conditionals, which is the case a shared offset reverses (§11.1)
     BindingEngine engine;

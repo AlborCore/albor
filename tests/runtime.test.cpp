@@ -1,5 +1,6 @@
 #include <deque>
 #include <memory>
+#include <span>
 #include <string>
 #include <thread>
 #include <type_traits>
@@ -313,6 +314,186 @@ TEST(BindingEngine, UnbindingHandleZeroReportsFailure) {
     BindingEngine engine;
     // assert
     EXPECT_FALSE(engine.unbind(0));
+}
+
+TEST(BindingEngine, ABindingUnboundDuringSettleIsSkipped) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    const PropertyId source = engine.next_property_id();
+    const PropertyId trigger_target = engine.next_property_id();
+    const PropertyId target = engine.next_property_id();
+    struct Unbind
+    {
+        BindingEngine* engine = nullptr;
+        BindingId target = 0;
+        bool armed = false;
+        int value = 0;
+        int evaluations = 0;
+        static void evaluate(void* raw) {
+            // the target writes a value the test reads after the settle (§7.3)
+            auto* self = static_cast<Unbind*>(raw);
+            self->value = 7;
+            self->evaluations++;
+        }
+        static void trigger(void* raw) {
+            // the trigger removes the target that the order already queued (§7.3)
+            auto* self = static_cast<Unbind*>(raw);
+            if (self->armed)
+                self->engine->unbind(self->target);
+        }
+    };
+    Unbind context{.engine = &engine};
+    const PropertyId dependencies[] = {source};
+    const BindingId trigger = engine.bind_static(trigger_target, dependencies, &Unbind::trigger, &context);
+    context.target = engine.bind_static(target, dependencies, &Unbind::evaluate, &context);
+    engine.settle();
+    // act
+    const std::size_t evaluations_before = engine.evaluation_count();
+    context.armed = true;
+    engine.notify_changed(source);
+    // assert
+    EXPECT_NO_THROW(engine.settle());
+    EXPECT_FALSE(engine.bound(context.target));
+    EXPECT_TRUE(engine.bound(trigger));
+    EXPECT_EQ(context.value, 7);
+    EXPECT_EQ(context.evaluations, 1);
+    EXPECT_EQ(engine.evaluation_count() - evaluations_before, 1u);
+    EXPECT_EQ(engine.dirty_count(), 0u);
+    EXPECT_FALSE(engine.cycle_detected());
+}
+
+TEST(BindingEngine, ABindingReboundDuringSettleRunsItsReplacement) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    const PropertyId source = engine.next_property_id();
+    const PropertyId trigger_target = engine.next_property_id();
+    const PropertyId target = engine.next_property_id();
+    struct Rebind
+    {
+        BindingEngine* engine = nullptr;
+        PropertyId target = {};
+        BindingId previous = 0;
+        BindingId replacement = 0;
+        bool armed = false;
+        int value = 0;
+        static void evaluate_first(void* raw) {
+            // the first target writes the value the test reads before the rebind (§7.3)
+            auto* self = static_cast<Rebind*>(raw);
+            self->value = 7;
+        }
+        static void evaluate_replacement(void* raw) {
+            // the replacement writes the value the next pass must apply (§7.3)
+            auto* self = static_cast<Rebind*>(raw);
+            self->value = 11;
+        }
+        static void trigger(void* raw) {
+            // the trigger rebinds the target that the order already queued (§7.3)
+            auto* self = static_cast<Rebind*>(raw);
+            if (!self->armed)
+                return;
+            self->replacement = self->engine->bind_static(self->target, std::span<const PropertyId>(), &Rebind::evaluate_replacement, self);
+        }
+    };
+    Rebind context{.engine = &engine, .target = target};
+    const PropertyId dependencies[] = {source};
+    const BindingId trigger = engine.bind_static(trigger_target, dependencies, &Rebind::trigger, &context);
+    context.previous = engine.bind_static(target, dependencies, &Rebind::evaluate_first, &context);
+    engine.settle();
+    // act
+    context.armed = true;
+    engine.notify_changed(source);
+    // assert
+    EXPECT_NO_THROW(engine.settle());
+    EXPECT_FALSE(engine.bound(context.previous));
+    EXPECT_TRUE(engine.bound(context.replacement));
+    EXPECT_TRUE(engine.bound(trigger));
+    EXPECT_EQ(context.value, 11);
+    EXPECT_EQ(engine.dirty_count(), 0u);
+    EXPECT_FALSE(engine.cycle_detected());
+}
+
+TEST(BindingEngine, InvalidatingAnUnboundBindingMarksNothing) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    const PropertyId target = engine.next_property_id();
+    struct Noop
+    {
+        static void run(void*) {}
+    };
+    const BindingId binding = engine.bind_static(target, {}, &Noop::run, nullptr);
+    EXPECT_TRUE(engine.unbind(binding));
+    // act
+    engine.invalidate(binding);
+    // assert
+    EXPECT_EQ(engine.dirty_count(), 0u);
+    EXPECT_EQ(engine.settle(), 0u);
+    EXPECT_FALSE(engine.cycle_detected());
+}
+
+TEST(BindingEngine, AnUnboundHandleReportsNoTarget) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    const PropertyId target = engine.next_property_id();
+    struct Noop
+    {
+        static void run(void*) {}
+    };
+    const BindingId binding = engine.bind_static(target, {}, &Noop::run, nullptr);
+    // act
+    const bool removed = engine.unbind(binding);
+    // assert
+    EXPECT_TRUE(removed);
+    EXPECT_FALSE(engine.bound(binding));
+    EXPECT_EQ(engine.target(binding), invalid_property_id());
+}
+
+TEST(BindingEngine, AnEmptyEvaluatorCreatesNoBinding) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    const PropertyId target = engine.next_property_id();
+    // act
+    const BindingId binding = engine.bind(target, {}, BindingEvaluator{});
+    const BindingId static_binding = engine.bind_static(target, {}, nullptr, nullptr);
+    // assert
+    EXPECT_EQ(binding, 0u);
+    EXPECT_EQ(static_binding, 0u);
+    EXPECT_EQ(engine.size(), 0u);
+    EXPECT_EQ(engine.dirty_count(), 0u);
+    EXPECT_EQ(engine.settle(), 0u);
+    EXPECT_FALSE(engine.cycle_detected());
+}
+
+TEST(BindingEngine, ADuplicateDependencyLeavesNoConsumerEdge) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    const PropertyId source = engine.next_property_id();
+    const PropertyId target = engine.next_property_id();
+    struct Noop
+    {
+        static void run(void*) {}
+    };
+    const PropertyId dependencies[] = {source, source};
+    const BindingId binding = engine.bind_static(target, dependencies, &Noop::run, nullptr);
+    // act
+    const bool removed = engine.unbind(binding);
+    engine.notify_changed(source);
+    // assert
+    EXPECT_TRUE(removed);
+    EXPECT_EQ(engine.dependent_count(source), 0u);
+    EXPECT_EQ(engine.dirty_count(), 0u);
+    EXPECT_EQ(engine.settle(), 0u);
 }
 
 TEST(BindingEngine, AnUnboundPropertyNoLongerHasDependents) {

@@ -45,10 +45,10 @@ namespace albor
         // hand out the next property slot of the component that is currently open
         [[nodiscard]] PropertyId next_property_id();
 
-        // install an evaluator that writes the target property from its declared dependencies (§7.3)
+        // install an evaluator that writes the target from its dependencies, returning zero when empty (§7.3)
         [[nodiscard]] BindingId bind(PropertyId target, std::vector<PropertyId> dependencies, BindingEvaluator evaluator);
 
-        // install a static evaluator over caller-owned dependencies, which generated code registers (§13.3)
+        // install a static evaluator over caller-owned dependencies, returning zero when the function is null (§13.3)
         [[nodiscard]] BindingId bind_static(PropertyId target, std::span<const PropertyId> dependencies, StaticBindingFn evaluator, void* context);
 
         // remove a binding, which stops the engine evaluating it (§7.3)
@@ -57,7 +57,7 @@ namespace albor
         // report whether a handle still names a registered binding
         [[nodiscard]] bool bound(BindingId binding) const;
 
-        // hand out the target property a binding writes
+        // hand out the target a registered binding writes, or the invalid id for a stale handle
         [[nodiscard]] PropertyId target(BindingId binding) const;
 
         // hand out the declared dependencies of a binding, in the order they were declared
