@@ -90,6 +90,25 @@ TEST(AlignCodegen, AComponentWithoutAlignmentDoesNotPullTheHeader) {
     EXPECT_FALSE(contains(unit, "#include \"albor/core/align.h\""));
 }
 
+TEST(AlignCodegen, AContentAlignmentReachesItsOwnSetter) {
+    // arrange an editor surface, which pins its first line to the plate top (§8.2)
+    const std::vector<GeneratedFile> files = generate("component C { TextField { multiline: true; content_align: Align.start; } }");
+    // act
+    const std::string_view unit = implementation(files).content;
+    // assert the content alignment is not a container axis, so it reaches a setter of its own (§11.3, §8.2)
+    EXPECT_TRUE(contains(unit, "set_content_align(albor::Align::Start)"));
+    EXPECT_FALSE(contains(unit, "set_vertical_align"));
+}
+
+TEST(AlignCodegen, AContentAlignmentPullsTheEnumeratorHeader) {
+    // arrange
+    const std::vector<GeneratedFile> files = generate("component C { TextField { content_align: Align.end; } }");
+    // act
+    const std::string_view unit = implementation(files).content;
+    // assert the enumerator is declared by an included header, exactly as the two axes are (§14.1, §8.2)
+    EXPECT_TRUE(contains(unit, "#include \"albor/core/align.h\""));
+}
+
 TEST(AlignCodegen, TheToolbarPatternCompilesToASpacerCall) {
     // arrange the three part toolbar: an action, a filler and trailing content (§8.2)
     const std::vector<GeneratedFile> files = generate(R"(

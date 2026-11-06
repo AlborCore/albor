@@ -194,6 +194,34 @@ namespace albor::preview
             return values;
         }
 
+        // the alignment a written member names, which a preview applies instead of drawing text (§8.2)
+        bool align_of(const compiler::Expression& expression, Align& result) {
+            // a written member is a field read on the set name, which is how the language spells one (§11.1)
+            const auto* access = dynamic_cast<const compiler::FieldAccessExpression*>(&expression);
+            // a value outside the set carries no alignment, which the diagnostics already reported (§12.2)
+            if (access == nullptr)
+                return false;
+            // the set name decides, so a field read on another record is not an alignment (§11.1)
+            const auto* set_name = dynamic_cast<const compiler::PropertyExpression*>(access->object.get());
+            // a value on another set is skipped rather than guessed, which keeps the preview usable (§12.2)
+            if (set_name == nullptr || set_name->name != "Align")
+                return false;
+            // the member decides, because the language spells the names in lower case (§11.1)
+            if (access->field == "start")
+                result = Align::Start;
+            else if (access->field == "center")
+                result = Align::Center;
+            else if (access->field == "end")
+                result = Align::End;
+            else if (access->field == "stretch")
+                result = Align::Stretch;
+            // a member outside the set is refused, which the checker already reported (§11.1)
+            else
+                return false;
+            // the member landed on the result, which the caller applies to the field (§8.2)
+            return true;
+        }
+
         // turn a written decoration list into the ranges the field paints (§9.1, §12.2)
         std::vector<TextDecoration> decorations_of(const compiler::Expression& expression) {
             // a value outside an array carries no ranges, so the caller keeps the empty result (§9.1)
@@ -571,6 +599,17 @@ namespace albor::preview
                     // the field is the only widget that carries it, and writing it leaves read only alone (§8)
                     if (auto* field = dynamic_cast<TextField*>(built.get()))
                         field->set_multiline(numeric->text == "true");
+                }
+                // a content alignment, which a preview applies as the author wrote it (§8.2)
+                else if (assignment.name == "content_align") {
+                    // the field is the only widget that places its run inside a plate (§8.2)
+                    if (auto* field = dynamic_cast<TextField*>(built.get())) {
+                        // the member is read once, because the setter takes the enumerator (§8.2)
+                        Align align = Align::Inherit;
+                        // a value outside the set is skipped, which the diagnostics already reported (§12.2)
+                        if (align_of(*assignment.value, align))
+                            field->set_content_align(align);
+                    }
                 }
             }
             // each child is built and adopted, which is the preorder a compiled build uses (§11.3)

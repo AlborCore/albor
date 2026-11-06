@@ -149,7 +149,10 @@ namespace albor::devrt
         bool read_align(std::string_view value, Align& out) {
             // the closed set is scanned, because the name is the member (§8.2)
             const std::pair<std::string_view, Align> members[] = {
-                {"inherit", Align::Inherit}, {"start", Align::Start}, {"center", Align::Center}, {"end", Align::End}, {"stretch", Align::Stretch},
+                {"start", Align::Start},
+                {"center", Align::Center},
+                {"end", Align::End},
+                {"stretch", Align::Stretch},
             };
             for (const std::pair<std::string_view, Align>& member : members) {
                 if (member.first == value) {
@@ -774,6 +777,14 @@ namespace albor::devrt
                      if (!read_bool(value, multiline))
                          return false;
                      node.set_multiline(multiline);
+                     return true;
+                 })},
+                {"TextField.content_align", setter<TextField>([](TextField& node, std::string_view value) {
+                     // the alignment is a named member, which places the run inside the plate (§8.2)
+                     Align align;
+                     if (!read_align(value, align))
+                         return false;
+                     node.set_content_align(align);
                      return true;
                  })},
                 {"TextField.disabled", setter<TextField>([](TextField& node, std::string_view value) {

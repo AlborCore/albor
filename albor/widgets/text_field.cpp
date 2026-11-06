@@ -733,6 +733,21 @@ namespace albor
         return m_multiline;
     }
 
+    void TextField::set_content_align(Align align) {
+        // an unchanged alignment redraws nothing, because the run hangs where it hung (§6.1)
+        if (m_content_align == align)
+            return;
+        // the alignment is stored first, so the invalidation walks a field that already places its run (§6.1)
+        m_content_align = align;
+        // the run moved inside the plate without being reshaped, so the next frame is requested (§6.1)
+        invalidate();
+    }
+
+    Align TextField::content_align() const {
+        // the authored value is what an inspector reads back, and inherit means the mode decides (§8.2)
+        return m_content_align;
+    }
+
     void TextField::set_font_size(float font_size) {
         // an unchanged size remeasures nothing, because the metrics did not change (§9.1)
         if (m_font_size == font_size)
@@ -940,16 +955,40 @@ namespace albor
     }
 
     float TextField::content_top() const {
-        // the run hangs vertically centred while it fits, and from the plate top while it overflows (§8.2)
-        return bounds().y + std::max(0.0f, (bounds().height - m_layout.size.height) * 0.5f);
+        // the run hangs where the content alignment places it, and from the plate top while it overflows (§8.2)
+        return aligned_top(m_layout);
+    }
+
+    Align TextField::resolved_content_align() const {
+        // a multi line field pins its first line to the top, which is what an editor surface wants (§8.2)
+        const Align fallback = m_multiline ? Align::Start : Align::Center;
+        // an inherited alignment takes the default its mode implies, which keeps a single line form field centred (§8.2)
+        const Align resolved = resolve_align(m_content_align, fallback);
+        // a run cannot stretch to fill the plate, so the wide setting pins the leading edge instead (§8.2)
+        return resolved == Align::Stretch ? Align::Start : resolved;
+    }
+
+    float TextField::aligned_top(const TextLayout& run) const {
+        // the spare height is what the alignment divides, and an overflowing run has none of it (§8.2)
+        const float spare = std::max(0.0f, bounds().height - run.size.height);
+        // the alignment is resolved once, because the mode answers for an inherited value (§8.2)
+        const Align align = resolved_content_align();
+        // the trailing edge hangs the run from the bottom of the plate (§8.2)
+        if (align == Align::End)
+            return bounds().y + spare;
+        // the middle centres the run in the space it does not fill (§8.2)
+        if (align == Align::Center)
+            return bounds().y + spare * 0.5f;
+        // the leading edge keeps the first line at the plate top, which is the editor default (§8.2)
+        return bounds().y;
     }
 
     float TextField::displayed_top(const TextLayout& displayed) const {
         // a run the value backs hangs where the value run hangs, so the text, the caret and the selection agree (§8.2)
         if (m_layout.size.height > 0.0f)
             return content_top() - m_scroll_offset;
-        // a run with no value behind it centres on its own height, as a hint or first composition does (§8.2)
-        return bounds().y + std::max(0.0f, (bounds().height - displayed.size.height) * 0.5f) - m_scroll_offset;
+        // a run with no value behind it takes the same alignment, so a hint lands where a first line would (§8.2)
+        return aligned_top(displayed) - m_scroll_offset;
     }
 
     float TextField::clamped_scroll_offset(float offset) const {

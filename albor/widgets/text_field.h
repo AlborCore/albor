@@ -9,6 +9,7 @@
 
 #include "albor/animation/animation_engine.h"
 #include "albor/commands/undo_stack.h"
+#include "albor/core/align.h"
 #include "albor/core/clipboard.h"
 #include "albor/text/text_engine.h"
 #include "albor/ui/caret_target.h"
@@ -101,6 +102,12 @@ namespace albor
 
         // report whether the field edits more than one line (§8.3)
         [[nodiscard]] bool multiline() const;
+
+        // set the vertical alignment the run takes inside the plate, which an editor surface pins to the top (§8.2)
+        void set_content_align(Align align);
+
+        // hand out the authored content alignment, where inherit leaves the placement to the mode (§8.2)
+        [[nodiscard]] Align content_align() const;
 
         // replace the font size the value is measured at, which remeasures because the metrics changed (§9.1)
         void set_font_size(float font_size);
@@ -289,7 +296,13 @@ namespace albor
         // hand out where the run's top edge sits before the scroll, which the paint and the caret hang from (§8.2)
         [[nodiscard]] float content_top() const;
 
-        // hand out where a displayed run paints from, the value top when it has a value, else the plate mid (§8.2)
+        // hand out the alignment the run takes, which the mode decides while none is authored (§8.2)
+        [[nodiscard]] Align resolved_content_align() const;
+
+        // hand out the top edge a run takes inside the plate, which an overflowing run pins to the top (§8.2)
+        [[nodiscard]] float aligned_top(const TextLayout& run) const;
+
+        // hand out where a displayed run paints from, the value top when it has a value, else its own alignment (§8.2)
         [[nodiscard]] float displayed_top(const TextLayout& displayed) const;
 
         // hand out the scroll offset clamped into the range, which is the single clamp every writer uses (§8.2)
@@ -393,6 +406,9 @@ namespace albor
 
         // whether the field edits more than one line, which wraps the runs and grows the plate (§8.2)
         bool m_multiline = false;
+
+        // the vertical alignment the run takes inside the plate, which follows the mode while it is inherited (§8.2)
+        Align m_content_align = Align::Inherit;
 
         // how far the content is scrolled from its leading edge, which the caret drives and never the value (§8.2)
         float m_scroll_offset = 0.0f;

@@ -1204,6 +1204,7 @@ namespace albor::compiler
                 {"TextField.placeholder", "set_placeholder"},
                 {"TextField.read_only", "set_read_only"},
                 {"TextField.multiline", "set_multiline"},
+                {"TextField.content_align", "set_content_align"},
                 {"TextField.disabled", "set_disabled"},
                 {"TextField.font_size", "set_font_size"},
                 {"Label.font_family", "set_font_family"},

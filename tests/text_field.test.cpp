@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -1762,8 +1763,8 @@ TEST(TextFieldMultiLineChecks, TheCaretRectFollowsTheLineItHangsOn) {
     EXPECT_EQ(field.caret(), 3u);
     // assert the x is the pen of the byte within its line, which the inset offsets (§9.1)
     EXPECT_FLOAT_EQ(on_second.x, 4.0f);
-    // assert the bar sits on the second line box, which is a baseline below the first (§9.1)
-    EXPECT_NEAR(on_second.y, 30.0f, 0.001f);
+    // assert the bar sits on the second line box, which a multi line field hangs one row below the plate top (§9.1)
+    EXPECT_NEAR(on_second.y, 16.0f, 0.001f);
 }
 
 TEST(TextFieldMultiLineChecks, SingleLineFieldsOwnTheirHeightAndPlainReturn) {
@@ -1838,6 +1839,222 @@ TEST(TextFieldMultiLineChecks, SetMultilineRedrawsAndRemeasures) {
     // assert both passes must run, because the plate may change size (§8.2)
     EXPECT_TRUE(field.measure_dirty());
     EXPECT_TRUE(field.render_dirty());
+}
+
+TEST(TextFieldContentAlignChecks, AMultiLineFieldPinsItsFirstLineToThePlateTop) {
+    // arrange a multi line field in a plate taller than its two rows (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "ab\ncd");
+    field.set_multiline(true);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 60.0f}));
+    // act
+    const Point origin = field.text_origin();
+    // assert the first row hangs from the plate top rather than floating mid surface (§8.2)
+    EXPECT_FLOAT_EQ(origin.y, 0.0f);
+}
+
+TEST(TextFieldContentAlignChecks, ASingleLineFieldStaysCentredInThePlate) {
+    // arrange a single line field in a plate taller than its one row (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "ab");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 60.0f}));
+    // act
+    const Point origin = field.text_origin();
+    // assert the row centres in the space it does not fill, which is the form field contract (§8.2)
+    EXPECT_FLOAT_EQ(origin.y, 22.0f);
+}
+
+TEST(TextFieldContentAlignChecks, ASingleLineHintCentresWhereTheLineWould) {
+    // arrange an empty field whose hint is the run it paints instead of a value (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_placeholder("type a netlist");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 60.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 80.0f}, 1.0f));
+    // act
+    field.render(recorder);
+    // assert the hint takes the same alignment a first line would, rather than a rule of its own (§8.2)
+    std::optional<float> hint_y;
+    for (const DrawCommand& command : recorder.scene()->commands()) {
+        if (command.kind() == DrawCommandKind::Text)
+            hint_y = command.text_geometry().origin.y;
+    }
+    ASSERT_TRUE(hint_y.has_value());
+    EXPECT_FLOAT_EQ(*hint_y, 22.0f);
+}
+
+TEST(TextFieldContentAlignChecks, AnEditorOffTheOriginAnchorsAgainstItsOwnPlate) {
+    // arrange a two row editor whose plate starts below and right of the window origin (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "ab\ncd");
+    field.set_multiline(true);
+    field.arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{120.0f, 60.0f}));
+    // act and assert the leading edge keeps the run one plate down, because the offset is the plate's own (§8.2)
+    EXPECT_FLOAT_EQ(field.text_origin().y, 20.0f);
+    // act and assert the middle divides the spare height inside the plate, not inside the window (§8.2)
+    field.set_content_align(Align::Center);
+    EXPECT_FLOAT_EQ(field.text_origin().y, 34.0f);
+    // act and assert the trailing edge ends the run on the plate bottom, wherever the plate sits (§8.2)
+    field.set_content_align(Align::End);
+    EXPECT_FLOAT_EQ(field.text_origin().y, 48.0f);
+}
+
+TEST(TextFieldContentAlignChecks, AnInheritedContentAlignmentFollowsTheMode) {
+    // arrange a field that authored no alignment (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "ab");
+    // act, assert the field reports the inherit it holds, because its mode answers for it (§8.2)
+    EXPECT_EQ(field.content_align(), Align::Inherit);
+    field.set_multiline(true);
+    EXPECT_EQ(field.content_align(), Align::Inherit);
+}
+
+TEST(TextFieldContentAlignChecks, TheContentAlignmentCentresARunTheModePinnedToTheTop) {
+    // arrange a multi line field whose first line the mode pinned to the plate top (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "ab\ncd");
+    field.set_multiline(true);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 60.0f}));
+    // act
+    field.set_content_align(Align::Center);
+    // assert the authored alignment wins over the mode, because it is the application's decision (§8.2)
+    EXPECT_FLOAT_EQ(field.text_origin().y, 14.0f);
+}
+
+TEST(TextFieldContentAlignChecks, TheContentAlignmentHangsTheRunFromThePlateBottom) {
+    // arrange a multi line field over two rows in a plate taller than both (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "ab\ncd");
+    field.set_multiline(true);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 60.0f}));
+    // act
+    field.set_content_align(Align::End);
+    // assert the run takes the trailing edge, so its last line lands on the plate bottom (§8.2)
+    EXPECT_FLOAT_EQ(field.text_origin().y, 28.0f);
+}
+
+TEST(TextFieldContentAlignChecks, TheContentAlignmentPinsASingleLineToTheTop) {
+    // arrange a single line field that the mode centred in its plate (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "ab");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 60.0f}));
+    // act
+    field.set_content_align(Align::Start);
+    // assert the author can pin one line to the top, because the mode default only fills an inherit (§8.2)
+    EXPECT_FLOAT_EQ(field.text_origin().y, 0.0f);
+}
+
+TEST(TextFieldContentAlignChecks, AStretchedContentAlignmentPinsTheLeadingEdge) {
+    // arrange a multi line field whose author wrote the stretch the spacer idiom uses (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "ab\ncd");
+    field.set_multiline(true);
+    // act
+    field.set_content_align(Align::Stretch);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 60.0f}));
+    // assert a run cannot stretch to fill the plate, so the wide setting pins the leading edge (§8.2)
+    EXPECT_FLOAT_EQ(field.text_origin().y, 0.0f);
+}
+
+TEST(TextFieldContentAlignChecks, AnAuthoredAlignmentSurvivesTheModeChange) {
+    // arrange a field whose author centred the content while it was single line (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "ab\ncd");
+    field.set_content_align(Align::Center);
+    // act the field turns into an editor, which would otherwise pin its content to the top (§8.2)
+    field.set_multiline(true);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 60.0f}));
+    // assert the authored alignment stands, because the mode default only fills an inherited one (§8.2)
+    EXPECT_EQ(field.content_align(), Align::Center);
+    EXPECT_FLOAT_EQ(field.text_origin().y, 14.0f);
+}
+
+TEST(TextFieldContentAlignChecks, TheCaretHangsWhereTheContentAlignmentPlacesIt) {
+    // arrange a bottom anchored field whose caret stands on the second row (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "ab\ncd");
+    field.set_multiline(true);
+    field.set_content_align(Align::End);
+    field.set_caret(3);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 60.0f}));
+    // act
+    const Rect caret = field.caret_rect();
+    // assert the bar follows the run, so the bottom row hangs on the plate bottom (§8.2, §9.1)
+    EXPECT_NEAR(caret.y, 44.0f, 0.001f);
+}
+
+TEST(TextFieldContentAlignChecks, AnEmptyEditorHangsItsHintFromThePlateTop) {
+    // arrange an empty editor showing its hint, which is the run the field paints instead (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    field.set_placeholder("type a netlist");
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 60.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 80.0f}, 1.0f));
+    // act
+    field.render(recorder);
+    // assert the hint sits where a first line would, rather than floating mid plate (§8.2)
+    std::optional<float> hint_y;
+    for (const DrawCommand& command : recorder.scene()->commands()) {
+        if (command.kind() == DrawCommandKind::Text)
+            hint_y = command.text_geometry().origin.y;
+    }
+    ASSERT_TRUE(hint_y.has_value());
+    EXPECT_FLOAT_EQ(*hint_y, 0.0f);
+}
+
+TEST(TextFieldContentAlignChecks, AnOverflowingRunPinsItselfToThePlateTop) {
+    // arrange six rows in a plate that shows two, with the content bottom anchored (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "a\nb\nc\nd\ne\nf");
+    field.set_multiline(true);
+    field.set_content_align(Align::End);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    // act
+    const Point origin = field.text_origin();
+    // assert an overflowing run has no spare height to align in, so every member scrolls from the top (§8.2)
+    EXPECT_FLOAT_EQ(origin.y, 0.0f);
+    EXPECT_FLOAT_EQ(field.maximum_scroll_offset(), 56.0f);
+}
+
+TEST(TextFieldContentAlignChecks, PositioningTheContentLeavesTheScrollOffsetAlone) {
+    // arrange an overflowing field scrolled into the middle of its run (§8.2)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "a\nb\nc\nd\ne\nf");
+    field.set_multiline(true);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    field.scroll_to(20.0f);
+    // act
+    field.set_content_align(Align::End);
+    // assert the visual alignment never rewrites where the reader scrolled to (§8.2)
+    EXPECT_FLOAT_EQ(field.scroll_offset(), 20.0f);
+}
+
+TEST(TextFieldContentAlignChecks, PositioningTheContentRedrawsWithoutRemeasuring) {
+    // arrange a field that has just painted (§6.1)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "ab\ncd");
+    field.set_multiline(true);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 60.0f}));
+    field.clear_dirty();
+    // act
+    field.set_content_align(Align::End);
+    // assert the run moved inside the plate, so the frame is rebuilt but the runs are not reshaped (§6.1, §9.1)
+    EXPECT_TRUE(field.render_dirty());
+    EXPECT_FALSE(field.measure_dirty());
+}
+
+TEST(TextFieldContentAlignChecks, ASteadyContentAlignmentRedrawsNothing) {
+    // arrange a field already anchored where the write will ask (§6.1)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "ab\ncd");
+    field.set_multiline(true);
+    field.set_content_align(Align::End);
+    field.clear_dirty();
+    // act
+    field.set_content_align(Align::End);
+    // assert an unchanged alignment changes no pixel, so the frame is not rebuilt (§6.1)
+    EXPECT_FALSE(field.render_dirty());
 }
 
 TEST(TextFieldImeChecks, ACompositionShowsTheMarkedString) {
@@ -2046,8 +2263,8 @@ TEST(TextFieldClickSelectionChecks, ATripleClickCoversTheLine) {
     Size measured{};
     field.measure(SizeConstraints::at_most(Size{200.0f, 80.0f}), measured);
     field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 80.0f}));
-    // act a triple click lands on the second row (§8.3)
-    Event press{.kind = EventKind::PointerDown, .position = Point{15.0f, 40.0f}, .click_count = 3};
+    // act a triple click lands on the second row, which hangs one row below the plate top (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{15.0f, 24.0f}, .click_count = 3};
     field.dispatch_event(press);
     // assert the line covers the row from its first byte through its content (§8.3)
     EXPECT_EQ(field.selection_start(), std::size_t{6});
@@ -2063,8 +2280,8 @@ TEST(TextFieldClickSelectionChecks, ADoubleClickOnALineBreakCoversTheLine) {
     field.measure(SizeConstraints::at_most(Size{200.0f, 80.0f}), measured);
     field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 80.0f}));
     field.set_selection(7, 9);
-    // act a plain double click lands on the break that ends the first row (§8.3)
-    Event press{.kind = EventKind::PointerDown, .position = Point{58.0f, 30.0f}, .click_count = 2};
+    // act a plain double click lands on the break that ends the first row, which hugs the plate top (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{58.0f, 8.0f}, .click_count = 2};
     field.dispatch_event(press);
     // assert the line's own content is selected, because the break belongs to the row it ends (§8.3)
     EXPECT_EQ(field.selection_start(), std::size_t{0});
