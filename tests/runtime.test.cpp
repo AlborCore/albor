@@ -316,6 +316,46 @@ TEST(BindingEngine, UnbindingHandleZeroReportsFailure) {
     EXPECT_FALSE(engine.unbind(0));
 }
 
+TEST(BindingEngine, ARepeatedRebindReusesItsSlot) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    const PropertyId target = engine.next_property_id();
+    BindingId first = 0;
+    // act
+    for (int cycle = 0; cycle < 100; cycle++) {
+        const BindingId binding = engine.bind(target, {}, [] {});
+        if (cycle == 0)
+            first = binding;
+        EXPECT_TRUE(engine.unbind(binding));
+    }
+    // assert
+    EXPECT_EQ(engine.binding_slot_count(), 1u);
+    EXPECT_EQ(engine.size(), 0u);
+    EXPECT_FALSE(engine.bound(first));
+    EXPECT_EQ(engine.target(first), invalid_property_id());
+}
+
+TEST(BindingEngine, AReusedSlotDoesNotResurrectAStaleHandle) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    const PropertyId target = engine.next_property_id();
+    const BindingId first = engine.bind(target, {}, [] {});
+    EXPECT_TRUE(engine.unbind(first));
+    // act
+    const BindingId second = engine.bind(target, {}, [] {});
+    // assert
+    EXPECT_NE(first, second);
+    EXPECT_FALSE(engine.bound(first));
+    EXPECT_EQ(engine.target(first), invalid_property_id());
+    EXPECT_TRUE(engine.bound(second));
+    EXPECT_EQ(engine.target(second), target);
+    EXPECT_EQ(engine.binding_slot_count(), 1u);
+}
+
 TEST(BindingEngine, ABindingUnboundDuringSettleIsSkipped) {
     // arrange
     BindingEngine engine;
@@ -882,6 +922,49 @@ TEST(BindingEngine, TheEvaluationBudgetIsSixtyFour) {
     const std::size_t budget = BindingEngine::EVALUATION_BUDGET;
     // assert
     EXPECT_EQ(budget, 64u);
+}
+
+TEST(BindingEngine, AnEvaluatorCanRegisterAnotherBindingWhileItRuns) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    const PropertyId first = engine.next_property_id();
+    const PropertyId second = engine.next_property_id();
+    std::size_t spawned_runs = 0;
+    bool registered = false;
+    const BindingId binding = engine.bind(first, {}, [&engine, &registered, &spawned_runs, second] {
+        // the outer evaluator registers a binding while it is running (§7.3)
+        registered = engine.bind(second, {}, [&spawned_runs] { spawned_runs++; }) != 0;
+    });
+    // act
+    engine.settle();
+    // assert
+    EXPECT_TRUE(registered);
+    EXPECT_TRUE(engine.bound(binding));
+    EXPECT_EQ(engine.size(), 2u);
+    EXPECT_EQ(spawned_runs, 1u);
+}
+
+TEST(BindingEngine, AnEvaluatorCanRebindItsOwnTargetWhileItRuns) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    const PropertyId target = engine.next_property_id();
+    std::size_t runs = 0;
+    bool rebound = false;
+    const BindingId binding = engine.bind(target, {}, [&engine, &rebound, &runs, target] {
+        // the outer evaluator replaces itself while it is running (§7.3)
+        runs++;
+        rebound = engine.bind(target, {}, [&runs] { runs++; }) != 0;
+    });
+    // act
+    engine.settle();
+    // assert
+    EXPECT_TRUE(rebound);
+    EXPECT_FALSE(engine.bound(binding));
+    EXPECT_EQ(runs, 2u);
 }
 
 TEST(BindingEngine, AChainOfManyBindingsSettlesInOnePass) {
@@ -1494,6 +1577,57 @@ TEST(Property, AChainOfPropertiesSettlesFromTheSourceDown) {
     EXPECT_EQ(b.get(), 5);
     EXPECT_EQ(c.get(), 50);
     EXPECT_EQ(c.id().base, base);
+}
+
+TEST(Property, AChainedDefaultUpdatesItsConsumer) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    Property<int> height(1);
+    height.set_id(engine.next_property_id());
+    height.set_engine(&engine);
+    Property<int> width(0);
+    width.set_id(engine.next_property_id());
+    width.set_engine(&engine);
+    width.bind([&height] { return height.get() * 2; }, {height.id()});
+    Property<int> area(0);
+    area.set_id(engine.next_property_id());
+    area.set_engine(&engine);
+    area.bind([&width] { return width.get() * width.get(); }, {width.id()});
+    engine.settle();
+    // act
+    height.set(3);
+    engine.settle();
+    // assert
+    EXPECT_EQ(width.get(), 6);
+    EXPECT_EQ(area.get(), 36);
+}
+
+TEST(Property, AReboundTargetsConsumerSeesTheReplacement) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    Property<int> source(1);
+    source.set_id(engine.next_property_id());
+    source.set_engine(&engine);
+    Property<int> target(0);
+    target.set_id(engine.next_property_id());
+    target.set_engine(&engine);
+    target.bind([&source] { return source.get() + 1; }, {source.id()});
+    Property<int> consumer(0);
+    consumer.set_id(engine.next_property_id());
+    consumer.set_engine(&engine);
+    consumer.bind([&target] { return target.get() * 2; }, {target.id()});
+    engine.settle();
+    // act
+    target.unbind();
+    target.bind([] { return 40; }, {});
+    engine.settle();
+    // assert
+    EXPECT_EQ(target.get(), 40);
+    EXPECT_EQ(consumer.get(), 80);
 }
 
 TEST(Property, ADiamondOfPropertiesSettlesItsTipOnce) {

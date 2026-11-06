@@ -306,5 +306,8 @@ namespace albor
     void Property<T>::write_bound(T value) {
         // the bound value is recorded separately, so an override or an animation can mask it (AD-24, AD-04d)
         m_bound_value = std::move(value);
+        // the target's consumers re-evaluate, which is the eager push of a bound write (§7.3, AD-04c)
+        if (m_engine != nullptr)
+            m_engine->notify_changed(m_id);
     }
 } // namespace albor
