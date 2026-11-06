@@ -269,18 +269,22 @@ TEST(ConditionalCodegen, AReheldConditionalBodyReappearsOnce) {
 }
 
 TEST(ConditionalCodegen, AReopenedBodySkipsTheSinkItsRebuildUnbinds) {
-    // arrange a body that was shown and removed, whose sink binding stays registered (§11.1)
+    // arrange
     BindingEngine engine;
     ConditionalPanel panel(&engine, nullptr);
     panel.set_show(true);
     engine.settle();
     panel.set_show(false);
     engine.settle();
-    // act the body source and the condition change before the same frame settles
+    // act
     panel.set_label_text("edited");
     panel.set_show(true);
-    // assert the rebuild skips the sink it unbound and the replacement sink applies the source (§7.3)
-    EXPECT_NO_THROW(engine.settle());
+    const std::size_t evaluations_before = engine.evaluation_count();
+    const std::size_t passes = engine.settle();
+    // assert
+    EXPECT_EQ(passes, 2u);
+    EXPECT_EQ(engine.size(), 3u);
+    EXPECT_EQ(engine.evaluation_count() - evaluations_before, 3u);
     const UiNode& column = *static_cast<UiNode&>(panel).child_at(0);
     ASSERT_EQ(column.child_count(), 4U);
     const auto* body = dynamic_cast<const Label*>(column.child_at(2));

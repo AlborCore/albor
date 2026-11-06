@@ -40,6 +40,9 @@ namespace albor
     }
 
     BindingId BindingEngine::bind(PropertyId target, std::vector<PropertyId> dependencies, BindingEvaluator evaluator) {
+        // a binding with no evaluator has no work, so it is refused rather than leaving a dead slot (§7.3)
+        if (!evaluator)
+            return 0;
         // a target may only carry one binding, because a second one would fight over the same property (§7.3)
         const std::uint64_t key = property_key(target);
         const auto existing = m_producers.find(key);
@@ -63,6 +66,9 @@ namespace albor
     }
 
     BindingId BindingEngine::bind_static(PropertyId target, std::span<const PropertyId> dependencies, StaticBindingFn evaluator, void* context) {
+        // a static binding with no function has no work, so it is refused rather than leaving a dead slot (§7.3)
+        if (evaluator == nullptr)
+            return 0;
         // a target may only carry one binding, because a second one would fight over the same property (§7.3)
         const std::uint64_t key = property_key(target);
         const auto existing = m_producers.find(key);
@@ -97,18 +103,16 @@ namespace albor
         // every dependency loses the consumer edge, so a later change no longer reaches it (§7.3)
         for (const PropertyId dependency : entry.dependencies) {
             auto& consumers = m_dependents[property_key(dependency)];
-            // the edge is erased by value, because the handle alone does not identify the binding (§7.3)
-            for (auto position = consumers.begin(); position != consumers.end(); ++position)
-                if (*position == binding) {
-                    consumers.erase(position);
-                    break;
-                }
+            // every matching edge goes, so a dependency declared twice cannot leave a dead consumer behind (§7.3)
+            std::erase(consumers, binding);
         }
         // the producer edge goes with it, so a consumer no longer waits for a dead writer (§7.3)
         const std::uint64_t key = property_key(entry.target);
         const auto producer = m_producers.find(key);
         if (producer != m_producers.end() && producer->second == binding)
             m_producers.erase(producer);
+        // the handle names no target once unbound, so target() agrees with bound() (§7.3)
+        entry.target = invalid_property_id();
         // the binding is emptied rather than erased, so no handle ever names a different binding (§7.3)
         entry.evaluator = nullptr;
         entry.static_evaluator = nullptr;
@@ -126,7 +130,7 @@ namespace albor
     PropertyId BindingEngine::target(BindingId binding) const {
         // find the binding entry by its handle (§7.3)
         const Binding* entry = find(binding);
-        // a stale handle names no target (§7.3)
+        // a stale or unbound handle names no target, which matches bound() (§7.3)
         if (entry == nullptr)
             return invalid_property_id();
         // the target property
@@ -163,11 +167,11 @@ namespace albor
         // a property nothing depends on settles nothing, which is the common case of a leaf (§7.3)
         if (found == m_dependents.end())
             return;
-        // every consumer becomes dirty, which is the eager push of the change (§7.3, AD-04c)
+        // every registered consumer becomes dirty, which is the eager push of the change (§7.3, AD-04c)
         for (const BindingId binding : found->second) {
             Binding* entry = find(binding);
             // an unbound consumer was removed, so it is skipped rather than resurrected (§7.3)
-            if (entry != nullptr)
+            if (entry != nullptr && entry->registered())
                 entry->dirty = true;
         }
     }
@@ -202,11 +206,9 @@ namespace albor
                 // an unbound binding that a previous pass removed is skipped (§7.3)
                 if (entry == nullptr)
                     continue;
-                // an unbound binding keeps its slot but carries no work, so the walk skips it (§7.3)
+                // an unbound binding keeps its slot but has no work, so the walk clears its flag and skips it (§7.3)
                 if (!entry->registered()) {
-                    // reset the dirty flag for unregistered bindings (§7.3)
                     entry->dirty = false;
-                    // next
                     continue;
                 }
                 // the dirty flag clears before the run, so a binding that reads its own target still converges (§7.3)
