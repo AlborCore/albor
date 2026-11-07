@@ -82,8 +82,5 @@ namespace albor
 
         // the border width the author set, where a negative value follows the theme (§8.4)
         float m_border = -1.0f;
-
-        // whether the author wrote a border colour, which wins over the theme (§8.4)
-        bool m_border_color_set = false;
     };
 } // namespace albor

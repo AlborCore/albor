@@ -1862,8 +1862,8 @@ namespace albor
     }
 
     float TextField::border_width() const {
-        // without a theme the stroke keeps the width the node stored (§8.1)
-        if (theme() == nullptr)
+        // an authored stroke or no theme keeps the width the node stored (§8.1)
+        if (border_width_authored() || theme() == nullptr)
             return UiNode::border_width();
         // a themed field draws its hairline, which the theme sizes (§8.4)
         return 1.0f;
@@ -1873,8 +1873,8 @@ namespace albor
         // without a theme the stroke keeps the colour the node stored (§8.1)
         if (theme() == nullptr)
             return UiNode::border_color();
-        // the border resolves by state, so a focus carries the accent line (§8.4)
-        return resolve(border_colors(), UiNode::border_color());
+        // an authored border wins, otherwise the theme resolves it by state so a focus carries the accent (§8.4)
+        return resolve_authored(border_colors(), UiNode::border_color(), border_color_authored());
     }
 
     const Color* TextField::plate_colors() const {

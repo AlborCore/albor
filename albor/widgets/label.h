@@ -100,6 +100,9 @@ namespace albor
         // the fill colour of the run (§6.1)
         Color m_foreground{1.0f, 1.0f, 1.0f, 1.0f};
 
+        // whether the author wrote the foreground, because an explicit value wins over the theme role (§8.4)
+        bool m_foreground_set = false;
+
         // the size the run is measured at, which the explicit value selects until a role does (§9.1)
         float m_font_size = TextEngine::DEFAULT_FONT_SIZE;
 

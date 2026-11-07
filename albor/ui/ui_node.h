@@ -201,6 +201,12 @@ namespace albor
         // arrange the child only when it asked for a pass or its bounds would move, which keeps a relayout local (§8.2)
         void arrange_if_changed(UiNode& child, const Rect& bounds);
 
+        // report whether the author wrote the border colour, which a themed control reads (§8.4)
+        [[nodiscard]] bool border_color_authored() const;
+
+        // report whether the author wrote the border width, which a themed control reads (§8.4)
+        [[nodiscard]] bool border_width_authored() const;
+
         // the final bounds a parent arranged this node to (§8.2)
         Rect m_bounds;
 
@@ -246,8 +252,14 @@ namespace albor
         // how wide the node strokes its own border, where zero means it draws no border (§6.1)
         float m_border_width = 0.0f;
 
+        // whether the author wrote the border width, because an explicit value wins over the theme metric (§8.4)
+        bool m_border_width_set = false;
+
         // the colour the node strokes its own border with, which is set independently of the fill (§6.1)
         Color m_border_color = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f);
+
+        // whether the author wrote the border colour, because an explicit value wins over a theme role (§8.4)
+        bool m_border_color_set = false;
 
         // the shadow the node casts, which is empty while none is set (§6.1)
         Shadow m_drop_shadow;

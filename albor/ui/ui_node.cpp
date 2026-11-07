@@ -406,11 +406,13 @@ namespace albor
     void UiNode::set_border_width(float width) {
         // a negative width is no border, because a stroke cannot be narrower than nothing (§6.1)
         const float clamped = std::max(0.0f, width);
-        // an unchanged width invalidates nothing, because the node looks the same (§6.1)
-        if (m_border_width == clamped)
+        // an unchanged authored width invalidates nothing, because the node looks the same (§6.1)
+        if (m_border_width_set && m_border_width == clamped)
             return;
         // the width is stored first, so the invalidation walks a tree that already knows the new one (§6.1)
         m_border_width = clamped;
+        // the write is recorded, because an explicit stroke outranks the theme metric (§8.4)
+        m_border_width_set = true;
         // a border change is visual only, because it does not move the node (§6.1)
         invalidate();
     }
@@ -421,11 +423,13 @@ namespace albor
     }
 
     void UiNode::set_border_color(Color color) {
-        // an unchanged colour invalidates nothing, because the node looks the same (§6.1)
-        if (m_border_color == color)
+        // an unchanged authored colour invalidates nothing, because the node looks the same (§6.1)
+        if (m_border_color_set && m_border_color == color)
             return;
         // the colour is stored first, so the invalidation walks a tree that already strokes the new one (§6.1)
         m_border_color = color;
+        // the write is recorded, because an explicit border outranks the theme role (§8.4)
+        m_border_color_set = true;
         // a border change is visual only, because it does not move the node (§6.1)
         invalidate();
     }
@@ -433,6 +437,16 @@ namespace albor
     Color UiNode::border_color() const {
         // the colour is what the author set, because it is independent of the fill (§6.1)
         return m_border_color;
+    }
+
+    bool UiNode::border_color_authored() const {
+        // the flag is the difference between an authored colour and the literal default (§8.4)
+        return m_border_color_set;
+    }
+
+    bool UiNode::border_width_authored() const {
+        // the flag is the difference between an authored width and the literal default (§8.4)
+        return m_border_width_set;
     }
 
     void UiNode::set_drop_shadow(Shadow shadow) {

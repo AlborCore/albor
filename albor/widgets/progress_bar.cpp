@@ -43,7 +43,7 @@ namespace albor
         // a themed track carries a radius, which is what rounds it into a capsule (§8.4)
         const float track_radius = metrics.progress_bar_radius;
         // the track colour resolves by state, so the disabled paint differs without a second literal (§6.1)
-        const Paint track_paint{.fill = resolve(track_colors(), m_track_color)};
+        const Paint track_paint{.fill = resolve_authored(track_colors(), m_track_color, m_track_color_set)};
         // a themed radius means a capsule, which is the shape a native bar is (§8.4)
         if (track_radius > 0.0f)
             context.draw_rounded_rect(track, track_radius, track_paint);
@@ -56,7 +56,7 @@ namespace albor
         // the fill runs from the left edge for the fraction of the track the value names (§8)
         const Rect filled = Rect::from_origin_size(Point{track.x, track.y}, Size{.width = track.width * m_value, .height = track.height});
         // the fill colour resolves by state, where a transparent entry draws nothing (§6.1)
-        const Paint fill_paint{.fill = resolve(fill_colors(), m_fill_color)};
+        const Paint fill_paint{.fill = resolve_authored(fill_colors(), m_fill_color, m_fill_color_set)};
         // a transparent fill records nothing, because the theme chose to show no progress there (§6.1)
         if (!fill_paint.fills())
             return;
@@ -119,23 +119,27 @@ namespace albor
     }
 
     void ProgressBar::set_track_color(Color color) {
-        // an unchanged colour redraws nothing, because the bar looks the same (§6.1)
-        if (m_track_color == color)
-            return;
+        // the write repaints only when it can change the paint, which a no-op write cannot (§6.1)
+        const bool changed = authored_write_changes(m_track_color_set, m_track_color == color);
         // the colour is stored first, so the invalidation walks a bar that already fills the new track (§6.1)
         m_track_color = color;
+        // the write is recorded, because an explicit track outranks the theme role (§8.4)
+        m_track_color_set = true;
         // a track colour change is visual only, so the layout passes are left alone (§6.1)
-        invalidate();
+        if (changed)
+            invalidate();
     }
 
     void ProgressBar::set_fill_color(Color color) {
-        // an unchanged colour redraws nothing, because the bar looks the same (§6.1)
-        if (m_fill_color == color)
-            return;
+        // the write repaints only when it can change the paint, which a no-op write cannot (§6.1)
+        const bool changed = authored_write_changes(m_fill_color_set, m_fill_color == color);
         // the colour is stored first, so the invalidation walks a bar that already fills with the new colour (§6.1)
         m_fill_color = color;
+        // the write is recorded, because an explicit fill outranks the theme role (§8.4)
+        m_fill_color_set = true;
         // a fill colour change is visual only, so the layout passes are left alone (§6.1)
-        invalidate();
+        if (changed)
+            invalidate();
     }
 
     const Color* ProgressBar::track_colors() const {

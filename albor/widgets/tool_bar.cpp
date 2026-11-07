@@ -128,19 +128,21 @@ namespace albor
     float ToolBar::spacing() const { return m_spacing; }
 
     void ToolBar::set_background(Color background) {
-        // an unchanged face redraws nothing, because the strip looks the same (§6.1)
-        if (m_background == background)
-            return;
+        // the write repaints only when it can change the paint, which a no-op write cannot (§6.1)
+        const bool changed = authored_write_changes(m_background_set, m_background == background);
         // the face is stored first, so the invalidation walks a strip that already paints it (§6.1)
         m_background = background;
+        // the write is recorded, because an explicit face outranks the theme role (§8.4)
+        m_background_set = true;
         // a face change is visual only, so the layout passes are left alone (§6.1)
-        invalidate();
+        if (changed)
+            invalidate();
     }
 
     Color ToolBar::background() const {
-        // a themed strip takes the panel face, which is the surface a group sits on (§6.1)
+        // a themed strip resolves the panel face until the author writes a face (§6.1)
         if (theme() != nullptr)
-            return resolve(theme()->palette().panel_background, m_background);
+            return resolve_authored(theme()->palette().panel_background, m_background, m_background_set);
         // an unthemed strip keeps its own face, which is the surface it always had (§6.1)
         return m_background;
     }

@@ -123,6 +123,9 @@ namespace albor
         // the fill colour of the plate (§6.1)
         Color m_background{0.20f, 0.55f, 0.90f, 1.0f};
 
+        // whether the author wrote the plate, because an explicit value wins over the theme role (§8.4)
+        bool m_background_set = false;
+
         // whether the button refuses input (§8.3)
         bool m_disabled = false;
 

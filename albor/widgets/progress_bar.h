@@ -54,8 +54,14 @@ namespace albor
         // the colour of the track (§6.1)
         Color m_track_color{0.24f, 0.27f, 0.32f, 1.0f};
 
+        // whether the author wrote the track, because an explicit value wins over the theme role (§8.4)
+        bool m_track_color_set = false;
+
         // the colour of the progress fill (§6.1)
         Color m_fill_color{0.20f, 0.55f, 0.90f, 1.0f};
+
+        // whether the author wrote the fill, because an explicit value wins over the theme role (§8.4)
+        bool m_fill_color_set = false;
 
         // whether the bar presents its disabled paint (§8.3)
         bool m_disabled = false;

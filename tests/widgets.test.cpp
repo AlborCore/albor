@@ -2959,7 +2959,7 @@ TEST(ThemeChecks, AWidgetWithNoThemeDrawsItsOwnPlate) {
     EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].paint().fill.red, 1.0f);
 }
 
-TEST(ThemeChecks, AThemeOverrideChangesThePaintWithoutTouchingTheWidget) {
+TEST(ThemeChecks, AnAuthoredButtonPlateWinsOverTheTheme) {
     // arrange
     BindingEngine engine;
     StubTextEngine text_engine;
@@ -2970,11 +2970,284 @@ TEST(ThemeChecks, AThemeOverrideChangesThePaintWithoutTouchingTheWidget) {
     button.set_theme(&theme);
     button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
     SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
-    // act the widget is untouched apart from the theme pointer (§6.1)
+    // act
     button.render(recorder);
-    // assert the theme won over the widget's own colour, which is the override direction the plan sets (§6.1)
+    // assert
+    ASSERT_EQ(rect_commands(*recorder.scene()).size(), 1u);
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].paint().fill.red, 1.0f);
+}
+
+TEST(ThemeChecks, AThemedButtonWithoutAnAuthoredPlateUsesTheTheme) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_button_plate(Color::rgb(0.9f, 0.1f, 0.2f));
+    Button button(&engine, &text_engine, "Press");
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert
     ASSERT_EQ(rect_commands(*recorder.scene()).size(), 1u);
     EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].paint().fill.red, 0.9f);
+}
+
+TEST(ThemeChecks, AnAuthoredButtonPlateMatchingTheDefaultStillWins) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_button_plate(Color::rgb(0.9f, 0.1f, 0.2f));
+    Button button(&engine, &text_engine, "Press");
+    const Color authored = button.background();
+    button.set_background(authored);
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert
+    ASSERT_EQ(rect_commands(*recorder.scene()).size(), 1u);
+    EXPECT_EQ(recorder.scene()->commands()[0].paint().fill, authored);
+}
+
+TEST(ThemeChecks, AnAuthoredDisabledButtonStillDims) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    Button button(&engine, &text_engine, "Press");
+    button.set_background(Color::rgb(1.0f, 0.0f, 0.0f));
+    button.set_theme(&theme);
+    button.set_disabled(true);
+    // act
+    const Color plate = button.background();
+    // assert
+    EXPECT_FLOAT_EQ(plate.red, 1.0f);
+    EXPECT_FLOAT_EQ(plate.alpha, 0.45f);
+}
+
+TEST(ThemeChecks, AnAuthoredBorderColourWinsOverTheTheme) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_button_border(Color::rgb(0.0f, 1.0f, 0.0f));
+    theme.set_button_border_width(1.0f);
+    Button button(&engine, &text_engine, "Press");
+    button.set_border_color(Color::rgb(1.0f, 0.0f, 0.0f));
+    button.set_border_width(1.0f);
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert
+    ASSERT_GE(recorder.scene()->commands().size(), 1u);
+    EXPECT_EQ(recorder.scene()->commands()[0].paint().stroke, (Color::rgb(1.0f, 0.0f, 0.0f)));
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].paint().stroke_width, 1.0f);
+}
+
+TEST(ThemeChecks, AnAuthoredBorderWidthWinsOverTheTheme) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_button_border_width(0.0f);
+    Button button(&engine, &text_engine, "Press");
+    button.set_border_width(2.0f);
+    button.set_theme(&theme);
+    // act
+    const float width = button.border_width();
+    // assert
+    EXPECT_FLOAT_EQ(width, 2.0f);
+}
+
+TEST(ThemeChecks, AnAuthoredComboBoxBorderWinsOverTheTheme) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_text_field_border(Color::rgb(0.0f, 1.0f, 0.0f));
+    ComboBox combo(&engine, &text_engine);
+    combo.set_border_color(Color::rgb(1.0f, 0.0f, 0.0f));
+    combo.set_theme(&theme);
+    // act
+    const Color border = combo.border_color();
+    // assert
+    EXPECT_EQ(border, (Color::rgb(1.0f, 0.0f, 0.0f)));
+}
+
+TEST(ThemeChecks, APanelBorderWrittenThroughTheNodeStillWins) {
+    // arrange
+    BindingEngine engine;
+    Theme theme;
+    theme.set_panel_border(Color::rgb(0.0f, 1.0f, 0.0f));
+    Panel panel(&engine);
+    UiNode& node = panel;
+    node.set_border_color(Color::rgb(1.0f, 0.0f, 0.0f));
+    panel.set_theme(&theme);
+    // act
+    const Color border = panel.border_color();
+    // assert
+    EXPECT_EQ(border, (Color::rgb(1.0f, 0.0f, 0.0f)));
+}
+
+TEST(ThemeChecks, AnAuthoredMenuBarFaceWinsOverTheTheme) {
+    // arrange
+    BindingEngine engine;
+    Theme theme;
+    theme.set_panel_background(Color::rgb(0.0f, 1.0f, 0.0f));
+    MenuBar bar(&engine);
+    bar.set_background(Color::rgb(1.0f, 0.0f, 0.0f));
+    bar.set_theme(&theme);
+    // act
+    const Color face = bar.background();
+    // assert
+    EXPECT_EQ(face, (Color::rgb(1.0f, 0.0f, 0.0f)));
+}
+
+TEST(ThemeChecks, AnAuthoredButtonPlateStillLiftsOnHoverAndSinksOnPress) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_button_plate(Color::rgb(0.0f, 1.0f, 0.0f));
+    Button button(&engine, &text_engine, "Press");
+    const Color authored = Color::rgb(0.2f, 0.2f, 0.2f);
+    button.set_background(authored);
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    // act
+    Event enter{.kind = EventKind::PointerEnter, .position = Point{10.0f, 10.0f}};
+    button.dispatch_event(enter);
+    const Color hovered = button.background();
+    Event down{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    button.dispatch_event(down);
+    const Color pressed = button.background();
+    // assert
+    EXPECT_GT(hovered.red, authored.red);
+    EXPECT_LT(hovered.green, 0.5f);
+    EXPECT_LT(pressed.red, hovered.red);
+}
+
+TEST(ThemeChecks, AnAuthoredLabelForegroundWinsOverTheTheme) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_label_foreground(Color::rgb(0.0f, 1.0f, 0.0f));
+    Label label(&engine, &text_engine, "Error");
+    label.set_foreground(Color::rgb(1.0f, 0.0f, 0.0f));
+    label.set_theme(&theme);
+    label.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{80.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    label.render(recorder);
+    // assert
+    ASSERT_EQ(text_commands(*recorder.scene()).size(), 1u);
+    EXPECT_FLOAT_EQ(text_commands(*recorder.scene())[0].paint().fill.red, 1.0f);
+}
+
+TEST(ThemeChecks, AnAuthoredCheckBoxOutlineWinsOverTheTheme) {
+    // arrange
+    BindingEngine engine;
+    Theme theme;
+    theme.set_checkbox_outline(Color::rgb(0.0f, 1.0f, 0.0f));
+    CheckBox box(&engine, "box");
+    box.set_outline(Color::rgb(1.0f, 0.0f, 0.0f));
+    box.set_theme(&theme);
+    box.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{16.0f, 16.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    box.render(recorder);
+    // assert
+    ASSERT_EQ(recorder.scene()->commands().size(), 1u);
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].paint().stroke.red, 1.0f);
+}
+
+TEST(ThemeChecks, AnAuthoredCheckBoxFillWinsOverTheTheme) {
+    // arrange
+    BindingEngine engine;
+    Theme theme;
+    theme.set_checkbox_fill(Color::rgb(0.0f, 1.0f, 0.0f));
+    CheckBox box(&engine, "box");
+    box.set_check_fill(Color::rgb(1.0f, 0.0f, 0.0f));
+    box.set_theme(&theme);
+    box.set_checked(true);
+    box.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{16.0f, 16.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    box.render(recorder);
+    // assert
+    ASSERT_GE(recorder.scene()->commands().size(), 1u);
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].paint().fill.red, 1.0f);
+}
+
+TEST(ThemeChecks, AnAuthoredSliderTrackWinsOverTheTheme) {
+    // arrange
+    BindingEngine engine;
+    Theme theme;
+    theme.set_slider_track(Color::rgb(0.0f, 1.0f, 0.0f));
+    Slider slider(&engine, "slider");
+    slider.set_track_color(Color::rgb(1.0f, 0.0f, 0.0f));
+    slider.set_theme(&theme);
+    slider.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 16.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    slider.render(recorder);
+    // assert
+    ASSERT_EQ(recorder.scene()->commands().size(), 2u);
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].paint().fill.red, 1.0f);
+}
+
+TEST(ThemeChecks, AnAuthoredProgressBarFillWinsOverTheTheme) {
+    // arrange
+    BindingEngine engine;
+    Theme theme;
+    theme.set_progress_bar_fill(Color::rgb(0.0f, 1.0f, 0.0f));
+    ProgressBar bar(&engine, "bar");
+    bar.set_fill_color(Color::rgb(1.0f, 0.0f, 0.0f));
+    bar.set_value(0.5f);
+    bar.set_theme(&theme);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    bar.render(recorder);
+    // assert
+    ASSERT_EQ(recorder.scene()->commands().size(), 2u);
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[1].paint().fill.red, 1.0f);
+}
+
+TEST(ThemeChecks, AnAuthoredToolBarFaceWinsOverTheTheme) {
+    // arrange
+    BindingEngine engine;
+    Theme theme;
+    theme.set_panel_background(Color::rgb(0.0f, 1.0f, 0.0f));
+    ToolBar strip(&engine);
+    strip.set_background(Color::rgb(1.0f, 0.0f, 0.0f));
+    strip.set_theme(&theme);
+    // act
+    const Color face = strip.background();
+    // assert
+    EXPECT_EQ(face, (Color::rgb(1.0f, 0.0f, 0.0f)));
+}
+
+TEST(ThemeChecks, AnAuthoredMenuFaceWinsOverTheTheme) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_panel_background(Color::rgb(0.0f, 1.0f, 0.0f));
+    Menu menu(&engine, &text_engine);
+    menu.set_background(Color::rgb(1.0f, 0.0f, 0.0f));
+    menu.set_theme(&theme);
+    // act
+    const Color face = menu.background();
+    // assert
+    EXPECT_EQ(face, (Color::rgb(1.0f, 0.0f, 0.0f)));
 }
 
 TEST(ThemeChecks, AThemedButtonMeasuresFromTheThemeMetrics) {

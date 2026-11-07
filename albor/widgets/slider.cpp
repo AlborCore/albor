@@ -51,7 +51,7 @@ namespace albor
         // a themed track carries a radius, which is what rounds it into a capsule (§8.4)
         const float track_radius = theme() != nullptr ? metrics.slider_track_radius : 0.0f;
         // the track colour resolves by state, so a hover and a press differ without a second literal (§6.1)
-        const Paint track_paint{.fill = resolve(track_colors(), m_track_color)};
+        const Paint track_paint{.fill = resolve_authored(track_colors(), m_track_color, m_track_color_set)};
         // a themed radius means a capsule, which is the shape a native track is (§8.4)
         if (track_radius > 0.0f)
             context.draw_rounded_rect(track, track_radius, track_paint);
@@ -85,7 +85,7 @@ namespace albor
             context.draw_shadow(thumb, metrics.slider_thumb_radius, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, metrics.slider_thumb_shadow), .offset = Point{0.0f, 2.0f}, .blur = 2.0f});
         }
         // the thumb colour resolves by state, so it is what the user grabs in every state (§6.1)
-        const Paint thumb_paint{.fill = resolve(thumb_colors(), m_thumb_color)};
+        const Paint thumb_paint{.fill = resolve_authored(thumb_colors(), m_thumb_color, m_thumb_color_set)};
         // a themed thumb carries a radius, which a half extent turns into a circle (§8.4)
         const float thumb_radius = theme() != nullptr ? metrics.slider_thumb_radius : 0.0f;
         // a themed radius means a round thumb, which is what a native knob is (§8.4)
@@ -101,7 +101,7 @@ namespace albor
         if (theme() == nullptr || metrics.slider_tick_length <= 0.0f)
             return;
         // the tick colour resolves with the track, which is what a groove sits under (§8.4)
-        const Color tick = resolve(track_colors(), m_track_color);
+        const Color tick = resolve_authored(track_colors(), m_track_color, m_track_color_set);
         // the number of reachable steps is what the range and the step settle for (§8.4)
         const float step_count = std::floor((m_maximum - m_minimum) / std::max(metrics.slider_step, 1.0e-6f));
         // a step count below one has no tick to place, because the track holds a single position (§8.4)
@@ -366,23 +366,27 @@ namespace albor
     }
 
     void Slider::set_track_color(Color color) {
-        // an unchanged colour redraws nothing, because the slider looks the same (§6.1)
-        if (m_track_color == color)
-            return;
+        // the write repaints only when it can change the paint, which a no-op write cannot (§6.1)
+        const bool changed = authored_write_changes(m_track_color_set, m_track_color == color);
         // the colour is stored first, so the invalidation walks a slider that already fills the new track (§6.1)
         m_track_color = color;
+        // the write is recorded, because an explicit track outranks the theme role (§8.4)
+        m_track_color_set = true;
         // a track colour change is visual only, so the layout passes are left alone (§6.1)
-        invalidate();
+        if (changed)
+            invalidate();
     }
 
     void Slider::set_thumb_color(Color color) {
-        // an unchanged colour redraws nothing, because the slider looks the same (§6.1)
-        if (m_thumb_color == color)
-            return;
+        // the write repaints only when it can change the paint, which a no-op write cannot (§6.1)
+        const bool changed = authored_write_changes(m_thumb_color_set, m_thumb_color == color);
         // the colour is stored first, so the invalidation walks a slider that already fills the new thumb (§6.1)
         m_thumb_color = color;
+        // the write is recorded, because an explicit thumb outranks the theme role (§8.4)
+        m_thumb_color_set = true;
         // a thumb colour change is visual only, so the layout passes are left alone (§6.1)
-        invalidate();
+        if (changed)
+            invalidate();
     }
     const Color* Slider::track_colors() const {
         // without a theme the table is unused, because the resolver returns the slider's own value (§6.1)
