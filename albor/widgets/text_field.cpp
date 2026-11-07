@@ -13,6 +13,9 @@ namespace albor
         // how long one half of a caret blink lasts, which is the platform rhythm (§8.3)
         constexpr long CARET_BLINK_MS = 530;
 
+        // a run this short is cheaper to paint whole than to split into a visible subset (§6.2)
+        constexpr std::size_t TEXT_CULL_THRESHOLD = 64;
+
         // report whether a byte is whitespace, the fallback word boundary of §8.3
         bool is_space_byte(char value) { return value == ' ' || value == '\t' || value == '\n' || value == '\r' || value == '\v' || value == '\f'; }
     } // namespace
@@ -79,22 +82,24 @@ namespace albor
         // the content is clipped into the plate, because a run wider than the field must not bleed over it (§6.2)
         context.save();
         context.clip_rect(bounds());
+        // the clip decides which lines are worth recording, because a long log only shows a window of itself (§6.2, §9.1)
+        const TextLayout visible = visible_layout(displayed, context.clip(), draw_y);
         // the styled ranges belong to the value, while a placeholder or a composition keeps the plain path (§9.1)
         const bool shows_value = !has_marked_text() && !shows_placeholder;
         // the range bands sit under the selection, because a selected token must keep the selection visible (§9.1)
         if (shows_value && !m_decorations.empty())
-            paint_decoration_backgrounds(context, displayed, Point{.x = origin.x, .y = draw_y}, draw_y);
+            paint_decoration_backgrounds(context, visible, Point{.x = origin.x, .y = draw_y}, draw_y);
         // the selection is painted under the value, because a highlight sits behind the text it covers (§6.1)
         paint_selection(context);
         // the hint or the value or the mark records at the inset and the scrolled top (§6.1)
-        if (!displayed.empty())
-            context.draw_text(displayed, Point{.x = origin.x, .y = draw_y}, {.fill = resolve(has_marked_text() ? value_colors() : (shows_placeholder ? placeholder_colors() : value_colors()), has_marked_text() ? m_foreground : (shows_placeholder ? m_placeholder_foreground : m_foreground))});
+        if (!visible.empty())
+            context.draw_text(visible, Point{.x = origin.x, .y = draw_y}, {.fill = resolve(has_marked_text() ? value_colors() : (shows_placeholder ? placeholder_colors() : value_colors()), has_marked_text() ? m_foreground : (shows_placeholder ? m_placeholder_foreground : m_foreground))});
         // the range glyphs paint over the base run, which is what gives a token its own colour (§9.1)
         if (shows_value && !m_decorations.empty())
-            paint_decoration_foregrounds(context, displayed, Point{.x = origin.x, .y = draw_y}, draw_y);
+            paint_decoration_foregrounds(context, visible, Point{.x = origin.x, .y = draw_y}, draw_y);
         // the range underlines follow the glyphs, because a diagnostic marks the text it describes (§9.1)
         if (shows_value && !m_decorations.empty())
-            paint_decoration_underlines(context, displayed, Point{.x = origin.x, .y = draw_y}, draw_y);
+            paint_decoration_underlines(context, visible, Point{.x = origin.x, .y = draw_y}, draw_y);
         // the mark rides under the provisional string, which is what a composition announces with (§8.3)
         if (has_marked_text())
             paint_mark_underline(context);
@@ -650,6 +655,18 @@ namespace albor
         // an unchanged value changes nothing, because the field looks and reads the same (§9.1)
         if (m_value == value)
             return;
+        // an appended value reuses the shaped prefix, because a growing log only shapes its new tail (§9.1)
+        if (append_layout(value)) {
+            // the appended text becomes the value the caret and the paint read (§8.3)
+            m_value = std::move(value);
+            // the caret cannot live past the value, so it is pulled back before anything else reads it (§8.3)
+            m_caret = std::min(m_caret, m_value.size());
+            // the selection collapses with the value, because a stale span is no selection at all (§8.3)
+            m_anchor = m_caret;
+            // the viewport follows the caret the write held, so a tall value does not hide it (§8.3)
+            ensure_caret_visible();
+            return;
+        }
         // the value is stored first, so the invalidation walks a field that already shows the new value (§6.1)
         m_value = std::move(value);
         // the caret cannot live past the value, so it is pulled back before anything else reads it (§8.3)
@@ -1383,6 +1400,38 @@ namespace albor
         invalidate();
     }
 
+    TextLayout TextField::visible_layout(const TextLayout& displayed, const Rect& clip, float draw_y) const {
+        // a short run costs more to split than to paint whole, so it takes the base path (§6.2)
+        if (displayed.run == nullptr || displayed.run->lines().size() <= TEXT_CULL_THRESHOLD)
+            return displayed;
+        // the lines whose boxes meet the clip are the only ones the frame can show (§6.2)
+        std::vector<ShapedRun::Line> lines;
+        for (const ShapedRun::Line& line : displayed.run->lines()) {
+            // the line box is where the run places it, carried by the field's scroll (§8.2)
+            const float top = draw_y + line.origin.y - line.ascent;
+            // the bottom of the box is the descent side, which is what decides an overlap (§9.1)
+            const float bottom = draw_y + line.origin.y + line.descent;
+            // a line above or below the clip contributes no ink, so it is left out (§6.2)
+            if (bottom < clip.y || top > clip.y + clip.height)
+                continue;
+            lines.push_back(line);
+        }
+        // a clip that kept every line records the whole run, which is the common small-field case (§6.2)
+        if (lines.size() == displayed.run->lines().size())
+            return displayed;
+        // no visible line records an empty run, which draws nothing (§6.2)
+        if (lines.empty())
+            return TextLayout{};
+        // the subset shares the font and source of the run, so the renderer replays the same face (§9.1)
+        TextLayout subset;
+        subset.run = ShapedRun::make(std::move(lines), displayed.run->font_size(), displayed.run->font_hash(), displayed.run->shape_source());
+        // the extents stay those of the whole run, because the glyph positions are absolute to the line (§9.1)
+        subset.size = displayed.size;
+        subset.ascent = displayed.ascent;
+        subset.descent = displayed.descent;
+        return subset;
+    }
+
     TextLayout TextField::decoration_layout(const TextLayout& displayed, const TextDecoration& decoration) const {
         // a run that was never shaped has no glyphs to split, so the range is empty (§9.1)
         if (displayed.run == nullptr)
@@ -1655,7 +1704,7 @@ namespace albor
         const bool space = is_space_byte(m_value[resolved]);
         std::size_t first = resolved;
         std::size_t last = resolved;
-        // the left edge walks back across characters of the same class, which keeps a cluster whole (§9.1)
+        // the left edge walks back across the same class, which keeps a cluster whole (§9.1)
         while (first > 0) {
             const std::size_t previous = step_backward_byte(first);
             if (previous >= first || is_line_break_byte(previous) || is_space_byte(m_value[previous]) != space)
@@ -1691,6 +1740,61 @@ namespace albor
             return false;
         // both spellings a line break can arrive in select the line, because they end it either way (§8.3)
         return m_value[byte] == '\n' || m_value[byte] == '\r';
+    }
+
+    bool TextField::append_layout(const std::string& value) {
+        // only a measured multi line run can reuse a prefix, because a single line has no rows to keep (§9.1)
+        if (!m_multiline || m_text_engine == nullptr || m_layout.run == nullptr || m_layout.run->lines().empty() || m_measure_width <= 0.0f || has_marked_text())
+            return false;
+        // a value that does not extend the current one needs the full path, because a prefix is what is reused (§9.1)
+        if (value.size() <= m_value.size() || value.compare(0, m_value.size(), m_value) != 0)
+            return false;
+        // the last line is the only one an append can change, because every earlier byte is untouched (§9.1)
+        const ShapedRun::Line& last = m_layout.run->lines().back();
+        // the suffix starts where that last line starts, so its shaped rows can replace it whole (§9.1)
+        const std::string suffix = value.substr(last.start_byte);
+        // only the tail is shaped, which is what makes appending to a long log linear rather than quadratic (§9.1)
+        const TextLayout tail = m_text_engine->measure(suffix, m_measure_width, m_font_size, m_font_spec);
+        // a tail the engine could not shape falls back to a full measure, which keeps every byte placed (§9.1)
+        if (tail.run == nullptr || tail.run->lines().empty())
+            return false;
+        // the prefix rows are copied whole, because their glyphs and origins did not change (§9.1)
+        std::vector<ShapedRun::Line> lines;
+        lines.reserve(m_layout.run->lines().size() - 1 + tail.run->lines().size());
+        for (std::size_t index = 0; index + 1 < m_layout.run->lines().size(); index++)
+            lines.push_back(m_layout.run->lines()[index]);
+        // the tail rows keep their shape, but their byte offsets and baselines move into the old run (§9.1)
+        const float baseline_shift = last.origin.y - tail.run->lines().front().origin.y;
+        for (ShapedRun::Line line : tail.run->lines()) {
+            line.start_byte += last.start_byte;
+            line.end_byte += last.start_byte;
+            line.origin.y += baseline_shift;
+            // the glyph clusters are byte offsets too, so they shift with the line they belong to (§9.1)
+            for (ShapedGlyph& glyph : line.glyphs)
+                glyph.cluster += last.start_byte;
+            lines.push_back(std::move(line));
+        }
+        // the widest row is what the composed run reports, which the full measure would have found too (§9.1)
+        float width = 0.0f;
+        for (const ShapedRun::Line& line : lines)
+            width = std::max(width, line.width);
+        // the composed run shares the font and source, because only the value appended to it (§9.1)
+        m_layout.run = ShapedRun::make(std::move(lines), m_layout.run->font_size(), m_layout.run->font_hash(), m_layout.run->shape_source());
+        // the height is the shifted tail height, which equals the full measure's row count (§9.1)
+        m_layout.size = Size{.width = width, .height = baseline_shift + tail.size.height};
+        // the row metrics stay those of the shaped run, which a log keeps uniform (§9.1)
+        m_layout.ascent = std::max(m_layout.ascent, tail.ascent);
+        m_layout.descent = std::max(m_layout.descent, tail.descent);
+        // the mark belonged to the old value, so the append drops it with the old tail (§8.3)
+        m_marked_layout = TextLayout{};
+        m_marked.clear();
+        // the longer run may have grown the scroll range, so the offset is clamped into it (§8.2)
+        m_scroll_offset = clamped_scroll_offset(m_scroll_offset);
+        // a text change is a size change, so the layout passes must run again (§8.2)
+        invalidate_layout();
+        // the value paint changed either way, which is what an edit means (§6.1)
+        invalidate();
+        return true;
     }
 
     void TextField::remeasure() {
