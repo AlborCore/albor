@@ -7874,6 +7874,132 @@ TEST(ButtonIconChecks, AnIconOnlyButtonUsesItsAuthorIdentityAsTheName) {
     EXPECT_TRUE(button.label().empty());
 }
 
+TEST(ButtonIconChecks, AnIconOnlyButtonPrefersItsTooltipAsTheName) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "", "toolbar.open");
+    button.set_tooltip("Open file");
+    // act
+    const SemanticNode node = button.semantic_node();
+    // assert
+    EXPECT_EQ(node.name(), "Open file");
+    EXPECT_EQ(button.tooltip(), "Open file");
+}
+
+TEST(ButtonIconChecks, ATooltipNamesTheButtonAndLeavesItsIdentitySelectable) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "", "toolbar.open");
+    button.set_tooltip("Open file");
+    // act
+    const SemanticNode node = button.semantic_node();
+    // assert
+    EXPECT_EQ(node.name(), "Open file");
+    EXPECT_EQ(node.explicit_id(), "toolbar.open");
+}
+
+TEST(ButtonIconChecks, ClearingATooltipFallsBackToTheAuthorId) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "", "toolbar.open");
+    button.set_tooltip("Open file");
+    // act
+    button.set_tooltip("");
+    // assert
+    EXPECT_TRUE(button.tooltip().empty());
+    EXPECT_EQ(button.semantic_node().name(), "toolbar.open");
+}
+
+TEST(ButtonIconChecks, ACaptionAndATooltipTradeTheNameInOrder) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "", "toolbar.open");
+    button.set_tooltip("Open file");
+    EXPECT_EQ(button.semantic_node().name(), "Open file");
+    // act
+    button.set_label("Open");
+    // assert
+    EXPECT_EQ(button.semantic_node().name(), "Open");
+    EXPECT_EQ(button.tooltip(), "Open file");
+    button.set_label("");
+    EXPECT_EQ(button.semantic_node().name(), "Open file");
+}
+
+TEST(ButtonIconChecks, ATooltipDoesNotResizeThePlate) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "");
+    Size before{};
+    button.measure(SizeConstraints::unconstrained(), before);
+    button.clear_dirty();
+    // act
+    button.set_tooltip("Open file");
+    Size after{};
+    button.measure(SizeConstraints::unconstrained(), after);
+    // assert
+    EXPECT_FLOAT_EQ(after.width, before.width);
+    EXPECT_FLOAT_EQ(after.height, before.height);
+    EXPECT_FALSE(button.layout_dirty());
+}
+
+TEST(ButtonIconChecks, ATooltipReachesThePublishedSemanticTree) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "", "toolbar.open");
+    button.set_tooltip("Open file");
+    // act
+    const SemanticTree tree = build_semantic_tree(button);
+    // assert
+    ASSERT_EQ(tree.size(), 1u);
+    ASSERT_NE(tree.at(0), nullptr);
+    EXPECT_EQ(tree.at(0)->name(), "Open file");
+    EXPECT_EQ(tree.at(0)->explicit_id(), "toolbar.open");
+}
+
+TEST(ButtonIconChecks, ALabelledButtonKeepsItsCaptionOverTheTooltip) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Save");
+    button.set_tooltip("Save the netlist");
+    // act
+    const SemanticNode node = button.semantic_node();
+    // assert
+    EXPECT_EQ(node.name(), "Save");
+}
+
+TEST(ButtonIconChecks, AnIconOnlyButtonWithNoTooltipOrIdUsesTheRoleWord) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "");
+    // act
+    const SemanticNode node = button.semantic_node();
+    // assert
+    EXPECT_EQ(node.name(), "Button");
+}
+
+TEST(ButtonIconChecks, SetTooltipRedrawsAndAnUnchangedOneDoesNot) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "");
+    button.set_tooltip("Open file");
+    button.clear_dirty();
+    // act
+    button.set_tooltip("Open file");
+    // assert
+    EXPECT_FALSE(button.render_dirty());
+    button.set_tooltip("Open another file");
+    EXPECT_TRUE(button.render_dirty());
+}
+
 TEST(ButtonIconChecks, AnIconOnlyButtonPaintsNoTextAndClearsBackToTheLabelPath) {
     // arrange an icon-only button with a ten point icon (§6.4)
     BindingEngine engine;

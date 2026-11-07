@@ -158,8 +158,15 @@ namespace albor
         SemanticNode node{SemanticRole::Button};
         // the author assigned id travels with the node, because automation selects by it and by nothing else (AD-11)
         node.set_explicit_id(identity().explicit_id);
-        // the name is the label, then the author id, then the role word for an icon-only control (§10.1, AD-11)
-        node.set_name(m_label.empty() ? (identity().explicit_id.empty() ? std::string("Button") : identity().explicit_id) : m_label);
+        // the name is the label, then the tooltip, then the author id, then the role word (§10.1, AD-11)
+        if (!m_label.empty())
+            node.set_name(m_label);
+        else if (!m_tooltip.empty())
+            node.set_name(m_tooltip);
+        else if (!identity().explicit_id.empty())
+            node.set_name(identity().explicit_id);
+        else
+            node.set_name("Button");
         // the bounds travel with the node, because an adapter places the announcement where it was drawn (§10.1)
         node.set_bounds(bounds());
         // a disabled button reports the disabled state, which is what refuses activation (§10.1)
@@ -193,6 +200,21 @@ namespace albor
     const std::string& Button::label() const {
         // the label is what the semantic node announces as the name (§10.1)
         return m_label;
+    }
+
+    void Button::set_tooltip(std::string tooltip) {
+        // an unchanged tooltip changes nothing, because the control looks and reads the same (§6.1)
+        if (m_tooltip == tooltip)
+            return;
+        // the tooltip is stored first, so the next frame reads the new name (§10.1)
+        m_tooltip = std::move(tooltip);
+        // a tooltip is visual text, so the control asks for a frame even before hover painting lands (§6.1)
+        invalidate();
+    }
+
+    const std::string& Button::tooltip() const {
+        // the tooltip is what an icon-only control announces when it has no caption (§10.1)
+        return m_tooltip;
     }
 
     void Button::set_icon(std::shared_ptr<const ImageResource> icon) {

@@ -1129,6 +1129,7 @@ namespace albor::compiler
                 {"Label.foreground", "set_foreground"},
                 {"Label.font_size", "set_font_size"},
                 {"Button.text", "set_label"},
+                {"Button.tooltip", "set_tooltip"},
                 {"Button.icon", "set_icon"},
                 {"Button.icon_size", "set_icon_size"},
                 {"Button.background", "set_background"},
