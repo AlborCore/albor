@@ -1,3 +1,4 @@
+#include <cmath>
 #include <memory>
 #include <vector>
 
@@ -361,6 +362,60 @@ TEST(ScrollViewChecks, AHeightOnlyViewportClipsAndScrollsTheContent) {
     EXPECT_FLOAT_EQ(view.maximum_offset(), 600.0f);
     ASSERT_FALSE(context.clips.empty());
     EXPECT_EQ(context.clips.front(), bounds);
+}
+
+TEST(ScrollViewChecks, ADeclaredHeightWinsOverTheArrangedBounds) {
+    // arrange
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{0.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::at_most(Size{500.0f, 400.0f}), measured);
+    // act
+    view.arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{500.0f, 400.0f}));
+    // assert the declared height survives a parent that assigns a taller rectangle (§8.2)
+    EXPECT_EQ(view.bounds(), (Rect::from_origin_size(Point{10.0f, 20.0f}, Size{500.0f, 300.0f})));
+    EXPECT_FLOAT_EQ(view.maximum_offset(), 600.0f);
+    EXPECT_TRUE(view.scrollable());
+}
+
+TEST(ScrollViewChecks, ADeclaredWidthWinsOverTheArrangedBounds) {
+    // arrange
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    ContentNode* content_ptr = content.get();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 0.0f});
+    Size measured{};
+    view.measure(SizeConstraints::at_most(Size{500.0f, 400.0f}), measured);
+    // act
+    view.arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{500.0f, 400.0f}));
+    // assert the declared width survives a parent that assigns a wider rectangle (§8.2)
+    EXPECT_EQ(view.bounds(), (Rect::from_origin_size(Point{10.0f, 20.0f}, Size{200.0f, 400.0f})));
+    EXPECT_FLOAT_EQ(content_ptr->bounds().width, 200.0f);
+    EXPECT_FLOAT_EQ(view.maximum_offset(), 500.0f);
+}
+
+TEST(ScrollViewChecks, AnUndeclaredAxisUnderAnUnboundedOfferIsFinite) {
+    // arrange
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{0.0f, 300.0f});
+    Size measured{};
+    // act
+    view.measure(SizeConstraints::unconstrained(), measured);
+    // assert an unbounded parent falls back to its preferred extent instead of infinity (§8.2)
+    EXPECT_TRUE(std::isfinite(measured.width));
+    EXPECT_FLOAT_EQ(measured.width, 0.0f);
+    EXPECT_FLOAT_EQ(measured.height, 300.0f);
 }
 
 TEST(ScrollViewChecks, ContentThatFitsHasNowhereToScroll) {

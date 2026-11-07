@@ -31,9 +31,11 @@
 #include "albor/widgets/combo_box.h"
 #include "albor/widgets/image.h"
 #include "albor/widgets/label.h"
+#include "albor/widgets/list_box.h"
 #include "albor/widgets/numeric_stepper.h"
 #include "albor/widgets/radio_button.h"
 #include "albor/widgets/radio_group.h"
+#include "albor/widgets/scroll_view.h"
 #include "albor/widgets/slider.h"
 #include "albor/widgets/tab_page.h"
 #include "albor/widgets/tab_title.h"
@@ -112,7 +114,7 @@ namespace
         if (property == "text" || property == "label" || property == "placeholder" || property == "description")
             return "hello";
         // a float is any number the language writes, and the spacing is trimmed rather than refused (§11.1)
-        if (property == "spacing" || property == "padding" || property == "font_size" || property == "icon_size" || property == "overscan" || property == "row_height" || property == "width" || property == "height" || property == "corner_radius" || property == "border_width")
+        if (property == "spacing" || property == "padding" || property == "font_size" || property == "icon_size" || property == "overscan" || property == "row_height" || property == "width" || property == "height" || property == "viewport_width" || property == "viewport_height" || property == "corner_radius" || property == "border_width")
             return "12";
         // a colour is three channel floats, which is how the language writes one (§11.1)
         if (property == "foreground" || property == "background" || property == "border_color" || property == "outline" || property == "check_fill" || property == "track_color" || property == "thumb_color")
@@ -260,7 +262,7 @@ TEST(DevElementChecks, EveryDeclaredPropertyLandsOnItsOwnElement) {
     TestTextEngine text;
     // the closed catalogue of §8, paired with a value each property holds, which is what a definition writes (§11.1)
     const std::vector<std::pair<std::string, std::string>> assignments{
-        {"Column", "spacing"}, {"Column", "padding"}, {"Row", "spacing"}, {"Grid", "spacing"}, {"Grid", "columns"}, {"Grid", "rows"}, {"Padding", "padding"}, {"Panel", "padding"}, {"Panel", "spacing"}, {"Panel", "background"}, {"Panel", "corner_radius"}, {"Panel", "border_width"}, {"Panel", "border_color"}, {"Card", "padding"}, {"Card", "spacing"}, {"Card", "background"}, {"Card", "corner_radius"}, {"Card", "border_width"}, {"Card", "border_color"}, {"Label", "text"}, {"Label", "foreground"}, {"Label", "font_size"}, {"Button", "text"}, {"Button", "background"}, {"Button", "disabled"}, {"Button", "default"}, {"Button", "cancel"}, {"Slider", "value"}, {"Slider", "disabled"}, {"Slider", "track_color"}, {"Slider", "thumb_color"}, {"CheckBox", "checked"}, {"CheckBox", "disabled"}, {"CheckBox", "outline"}, {"CheckBox", "check_fill"}, {"RadioGroup", "selected"}, {"RadioGroup", "vertical"}, {"RadioGroup", "spacing"}, {"RadioButton", "value"}, {"RadioButton", "label"}, {"RadioButton", "disabled"}, {"NumericStepper", "value"}, {"NumericStepper", "min"}, {"NumericStepper", "max"}, {"NumericStepper", "step"}, {"NumericStepper", "disabled"}, {"Image", "source"}, {"Image", "description"}, {"Image", "width"}, {"Image", "height"}, {"ScrollView", "overscan"}, {"ScrollView", "scrollbar"}, {"ScrollView", "row_height"}, {"TextField", "value"}, {"TextField", "placeholder"}, {"TextField", "read_only"}, {"TextField", "multiline"}, {"TextField", "content_align"}, {"TextField", "disabled"}, {"TextField", "font_size"}, {"ComboBox", "selected"}, {"ComboBox", "placeholder"}, {"ComboBox", "disabled"},
+        {"Column", "spacing"}, {"Column", "padding"}, {"Row", "spacing"}, {"Grid", "spacing"}, {"Grid", "columns"}, {"Grid", "rows"}, {"Padding", "padding"}, {"Panel", "padding"}, {"Panel", "spacing"}, {"Panel", "background"}, {"Panel", "corner_radius"}, {"Panel", "border_width"}, {"Panel", "border_color"}, {"Card", "padding"}, {"Card", "spacing"}, {"Card", "background"}, {"Card", "corner_radius"}, {"Card", "border_width"}, {"Card", "border_color"}, {"Label", "text"}, {"Label", "foreground"}, {"Label", "font_size"}, {"Button", "text"}, {"Button", "background"}, {"Button", "disabled"}, {"Button", "default"}, {"Button", "cancel"}, {"Slider", "value"}, {"Slider", "disabled"}, {"Slider", "track_color"}, {"Slider", "thumb_color"}, {"CheckBox", "checked"}, {"CheckBox", "disabled"}, {"CheckBox", "outline"}, {"CheckBox", "check_fill"}, {"RadioGroup", "selected"}, {"RadioGroup", "vertical"}, {"RadioGroup", "spacing"}, {"RadioButton", "value"}, {"RadioButton", "label"}, {"RadioButton", "disabled"}, {"NumericStepper", "value"}, {"NumericStepper", "min"}, {"NumericStepper", "max"}, {"NumericStepper", "step"}, {"NumericStepper", "disabled"}, {"Image", "source"}, {"Image", "description"}, {"Image", "width"}, {"Image", "height"}, {"ScrollView", "viewport_width"}, {"ScrollView", "viewport_height"}, {"ScrollView", "overscan"}, {"ScrollView", "scrollbar"}, {"ScrollView", "row_height"}, {"ListBox", "viewport_width"}, {"ListBox", "viewport_height"}, {"TextField", "value"}, {"TextField", "placeholder"}, {"TextField", "read_only"}, {"TextField", "multiline"}, {"TextField", "content_align"}, {"TextField", "disabled"}, {"TextField", "font_size"}, {"ComboBox", "selected"}, {"ComboBox", "placeholder"}, {"ComboBox", "disabled"},
     };
     // assert each assignment lands, because a setter the table names but never runs is a table that lies (§11.1)
     for (const std::pair<std::string, std::string>& assignment : assignments) {
@@ -399,7 +401,7 @@ TEST(DevElementChecks, EveryTypedPropertyRefusesAValueItCannotHold) {
     TestTextEngine text;
     // the closed catalogue of the typed properties, each with a value of the wrong shape (§11.1)
     const std::vector<std::tuple<std::string, std::string, std::string>> refusals{
-        {"Column", "spacing", "wide"}, {"Column", "padding", "wide"}, {"Row", "spacing", "wide"}, {"Grid", "spacing", "wide"}, {"Grid", "columns", "wide"}, {"Grid", "rows", "wide"}, {"Padding", "padding", "wide"}, {"Panel", "padding", "wide"}, {"Panel", "spacing", "wide"}, {"Panel", "background", "blue"}, {"Panel", "corner_radius", "wide"}, {"Panel", "border_width", "wide"}, {"Card", "padding", "wide"}, {"Card", "background", "blue"}, {"Label", "foreground", "blue"}, {"Label", "font_size", "big"}, {"Button", "background", "blue"}, {"Button", "disabled", "yes"}, {"Button", "default", "yes"}, {"Button", "cancel", "yes"}, {"Slider", "value", "half"}, {"Slider", "disabled", "yes"}, {"Slider", "track_color", "blue"}, {"Slider", "thumb_color", "blue"}, {"CheckBox", "checked", "yes"}, {"CheckBox", "disabled", "yes"}, {"CheckBox", "outline", "blue"}, {"CheckBox", "check_fill", "blue"}, {"Image", "source", "icon.png"}, {"Image", "width", "wide"}, {"Image", "height", "tall"}, {"ScrollView", "overscan", "some"}, {"ScrollView", "scrollbar", "sometimes"}, {"ScrollView", "row_height", "tall"}, {"TextField", "read_only", "yes"}, {"TextField", "multiline", "yes"}, {"TextField", "content_align", "middle"}, {"TextField", "disabled", "yes"}, {"TextField", "font_size", "big"}, {"ComboBox", "selected", "first"}, {"ComboBox", "disabled", "yes"}, {"Label", "horizontal_align", "middle"}, {"Label", "vertical_align", "middle"},
+        {"Column", "spacing", "wide"}, {"Column", "padding", "wide"}, {"Row", "spacing", "wide"}, {"Grid", "spacing", "wide"}, {"Grid", "columns", "wide"}, {"Grid", "rows", "wide"}, {"Padding", "padding", "wide"}, {"Panel", "padding", "wide"}, {"Panel", "spacing", "wide"}, {"Panel", "background", "blue"}, {"Panel", "corner_radius", "wide"}, {"Panel", "border_width", "wide"}, {"Card", "padding", "wide"}, {"Card", "background", "blue"}, {"Label", "foreground", "blue"}, {"Label", "font_size", "big"}, {"Button", "background", "blue"}, {"Button", "disabled", "yes"}, {"Button", "default", "yes"}, {"Button", "cancel", "yes"}, {"Slider", "value", "half"}, {"Slider", "disabled", "yes"}, {"Slider", "track_color", "blue"}, {"Slider", "thumb_color", "blue"}, {"CheckBox", "checked", "yes"}, {"CheckBox", "disabled", "yes"}, {"CheckBox", "outline", "blue"}, {"CheckBox", "check_fill", "blue"}, {"Image", "source", "icon.png"}, {"Image", "width", "wide"}, {"Image", "height", "tall"}, {"ScrollView", "viewport_width", "wide"}, {"ScrollView", "viewport_height", "tall"}, {"ScrollView", "overscan", "some"}, {"ScrollView", "scrollbar", "sometimes"}, {"ScrollView", "row_height", "tall"}, {"ListBox", "viewport_width", "wide"}, {"ListBox", "viewport_height", "tall"}, {"TextField", "read_only", "yes"}, {"TextField", "multiline", "yes"}, {"TextField", "content_align", "middle"}, {"TextField", "disabled", "yes"}, {"TextField", "font_size", "big"}, {"ComboBox", "selected", "first"}, {"ComboBox", "disabled", "yes"}, {"Label", "horizontal_align", "middle"}, {"Label", "vertical_align", "middle"},
     };
     // assert each setter refuses rather than half applying, because a refused value leaves the node as it was (§11.1)
     for (const std::tuple<std::string, std::string, std::string>& refusal : refusals) {
@@ -423,6 +425,44 @@ TEST(DevElementChecks, AScrollbarPolicyIsReadFromItsNamedMembers) {
     EXPECT_TRUE(apply_property(*scroll, "ScrollView", "scrollbar", "always_off"));
     EXPECT_TRUE(apply_property(*scroll, "ScrollView", "scrollbar", "always_on"));
     EXPECT_FALSE(apply_property(*scroll, "ScrollView", "scrollbar", "sometimes"));
+}
+
+TEST(DevElementChecks, AViewportHeightLeavesTheWidthToTheOffer) {
+    // arrange the viewport the dev path builds for a height-only declaration (§12.1)
+    BindingEngine engine;
+    TestTextEngine text;
+    std::unique_ptr<UiNode> node = create_node("ScrollView", engine, text);
+    ASSERT_NE(node, nullptr);
+    auto* view = dynamic_cast<ScrollView*>(node.get());
+    ASSERT_NE(view, nullptr);
+    // act
+    const bool applied = apply_property(*node, "ScrollView", "viewport_height", "120");
+    Size measured{};
+    view->measure(SizeConstraints::at_most(Size{200.0f, 300.0f}), measured);
+    // assert the dev path keeps the width undeclared and lets it follow the offer (§8.2, §12.1)
+    EXPECT_TRUE(applied);
+    EXPECT_EQ(view->viewport_extent(), (Size{0.0f, 120.0f}));
+    EXPECT_FLOAT_EQ(measured.width, 200.0f);
+    EXPECT_FLOAT_EQ(measured.height, 120.0f);
+}
+
+TEST(DevElementChecks, AListViewportKeepsTheUndeclaredAxis) {
+    // arrange the list the dev path builds for a width-only declaration (§12.1)
+    BindingEngine engine;
+    TestTextEngine text;
+    std::unique_ptr<UiNode> node = create_node("ListBox", engine, text);
+    ASSERT_NE(node, nullptr);
+    auto* list = dynamic_cast<ListBox*>(node.get());
+    ASSERT_NE(list, nullptr);
+    // act
+    const bool applied = apply_property(*node, "ListBox", "viewport_width", "240");
+    Size measured{};
+    list->measure(SizeConstraints::at_most(Size{500.0f, 300.0f}), measured);
+    // assert the list keeps its width and lets the height follow the offer (§8.2, §12.1)
+    EXPECT_TRUE(applied);
+    EXPECT_EQ(list->scroll_view().viewport_extent(), (Size{240.0f, 0.0f}));
+    EXPECT_FLOAT_EQ(measured.width, 240.0f);
+    EXPECT_FLOAT_EQ(measured.height, 300.0f);
 }
 
 TEST(DevElementChecks, AValueTheLanguageNeverWroteIsRefused) {
