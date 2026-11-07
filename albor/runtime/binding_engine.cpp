@@ -249,6 +249,8 @@ namespace albor
     std::size_t BindingEngine::settle() {
         std::size_t passes = 0;
         std::vector<BindingId> order;
+        // a nested settle restores the outer order when it returns (§7.3)
+        std::vector<BindingId>* const previous_order = m_settle_order;
         // the active order is shared with writes, so a consumer a binding dirties joins the same pass (§7.3)
         m_settle_order = &order;
         // the engine repeats until the graph converges or the cycle budget is spent (§7.3, AD-04c)
@@ -293,7 +295,7 @@ namespace albor
             passes++;
         }
         // the order pointer belongs to this call, so a later write does not touch a dead vector (§7.3)
-        m_settle_order = nullptr;
+        m_settle_order = previous_order;
         // spending the whole budget while work remains is the dynamic cycle diagnostic (§7.3)
         m_cycle_detected = dirty_count() > 0;
         return passes;
