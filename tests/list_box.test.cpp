@@ -180,6 +180,19 @@ TEST(ListBoxChecks, TheViewportIsWhatTheListMeasures) {
     EXPECT_EQ(fixture.box.preferred_size(), measured);
 }
 
+TEST(ListBoxChecks, AnUndeclaredWidthTakesTheOfferedWidth) {
+    // arrange
+    Fixture fixture;
+    fixture.box.set_viewport_extent(Size{0.0f, 320.0f});
+    Size measured{};
+    // act
+    fixture.box.measure(SizeConstraints::at_most(Size{240.0f, 400.0f}), measured);
+    // assert the delegated viewport keeps the offered width while its height stays pinned (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 240.0f);
+    EXPECT_FLOAT_EQ(measured.height, 320.0f);
+    EXPECT_FLOAT_EQ(fixture.box.scroll_view().measured_size().width, 240.0f);
+}
+
 TEST(ListBoxChecks, TheViewportTakesTheBoundsTheListWasGiven) {
     // arrange
     Fixture fixture;

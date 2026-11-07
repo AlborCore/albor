@@ -308,6 +308,7 @@ TEST(ScrollViewChecks, ADeclaredViewportIsClampedIntoTheOffer) {
     ScrollView view(&engine);
     auto content = std::make_unique<ContentNode>();
     content->intrinsic = Size{100.0f, 900.0f};
+    ContentNode* content_ptr = content.get();
     view.add_child(std::move(content));
     view.set_viewport_extent(Size{800.0f, 300.0f});
     Size measured{};
@@ -316,6 +317,50 @@ TEST(ScrollViewChecks, ADeclaredViewportIsClampedIntoTheOffer) {
     // assert a declared axis never escapes the parent's ceiling (§8.2)
     EXPECT_FLOAT_EQ(measured.width, 500.0f);
     EXPECT_FLOAT_EQ(measured.height, 300.0f);
+    EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 500.0f);
+}
+
+TEST(ScrollViewChecks, ADeclaredAxisBelowTheMinimumIsRaised) {
+    // arrange
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    ContentNode* content_ptr = content.get();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    // act
+    view.measure(SizeConstraints{.minimum = Size{400.0f, 0.0f}, .preferred = {}, .maximum = Size{800.0f, 600.0f}}, measured);
+    // assert the minimum raises the declared width while the declared height stands (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 400.0f);
+    EXPECT_FLOAT_EQ(measured.height, 300.0f);
+    EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 400.0f);
+}
+
+TEST(ScrollViewChecks, AHeightOnlyViewportClipsAndScrollsTheContent) {
+    // arrange
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{100.0f, 900.0f};
+    ContentNode* content_ptr = content.get();
+    view.add_child(std::move(content));
+    view.set_viewport_extent(Size{0.0f, 300.0f});
+    Size measured{};
+    view.measure(SizeConstraints::at_most(Size{500.0f, 400.0f}), measured);
+    const Rect bounds = Rect::from_origin_size(Point{10.0f, 20.0f}, Size{500.0f, 300.0f});
+    // act
+    view.arrange(bounds);
+    RecordingContext context;
+    view.render(context);
+    // assert the content takes the resolved width and the viewport clips and scrolls at the declared height (§8.2)
+    EXPECT_FLOAT_EQ(content_ptr->bounds().width, 500.0f);
+    EXPECT_FLOAT_EQ(content_ptr->bounds().height, 900.0f);
+    EXPECT_TRUE(view.scrollable());
+    EXPECT_FLOAT_EQ(view.maximum_offset(), 600.0f);
+    ASSERT_FALSE(context.clips.empty());
+    EXPECT_EQ(context.clips.front(), bounds);
 }
 
 TEST(ScrollViewChecks, ContentThatFitsHasNowhereToScroll) {

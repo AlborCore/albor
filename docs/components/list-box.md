@@ -108,6 +108,9 @@ list's `row_height` is the pitch virtualization divides the viewport by.
 
 ## Notes
 
+- `viewport_width` and `viewport_height` resolve independently: a positive axis takes its
+  extent and is clamped into the parent, while a zero or negative axis follows the space the
+  parent offers.
 - `selected` names a row by its position in the collection the `Repeat` walks, in item order.
 - Each row announces itself as a list item carrying its own `selected` and `focused` state,
   which is what screen readers and automation read.
