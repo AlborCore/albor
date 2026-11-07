@@ -63,6 +63,9 @@ reuses the existing element and rebinds it, rather than rebuilding the list.
 
 ## Notes
 
+- `viewport_width` and `viewport_height` resolve independently: a positive axis takes its
+  extent and is clamped into the parent, while a zero or negative axis follows the space the
+  parent offers.
 - `overscan` trades a band of pre-built rows against visible populate cost; it is measured
   in the same units as the viewport.
 - `Scrollbar.on` forces the rail even when it is not needed; `Scrollbar.off` removes it —

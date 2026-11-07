@@ -47,10 +47,10 @@ namespace albor
         // override: announce the viewport, which is what assistive technology scrolls (§10.1)
         [[nodiscard]] SemanticNode semantic_node() const override;
 
-        // set the extent the viewport draws, which is what an author writes instead of a stretch (§8.2)
+        // set the viewport extent, where a zero or negative axis follows the offer and a positive one is declared (§8.2)
         void set_viewport_extent(Size size);
 
-        // hand out the declared viewport extent, which is what the measure pass uses (§8.2)
+        // hand out the declared viewport extent, where zero or negative marks an axis that follows the offer (§8.2)
         [[nodiscard]] Size viewport_extent() const;
 
         // set the height one virtualized row takes, which is what makes an index a position (§8.2, AD-13)
@@ -162,7 +162,7 @@ namespace albor
         // the offset the viewport presents, which a binding or a user scroll writes (§7.3, AD-24)
         Property<float> m_offset;
 
-        // the extent the viewport draws, which is the offered ceiling while an author writes none (§8.2)
+        // the extent the viewport draws, where a zero or negative axis follows the offered ceiling (§8.2)
         Size m_viewport_extent{0.0f, 0.0f};
 
         // the height one virtualized row takes, which is what the content is divided by (§8.2, AD-13)

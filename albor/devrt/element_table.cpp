@@ -694,6 +694,22 @@ namespace albor::devrt
                      return true;
                  })},
                 // a viewport presents its scrollbar and the rows it measures, which is what §8.2 arranges (§8)
+                {"ScrollView.viewport_width", setter<ScrollView>([](ScrollView& node, std::string_view value) {
+                     float pixels = 0.0f;
+                     if (!read_float(value, pixels))
+                         return false;
+                     const Size extent = node.viewport_extent();
+                     node.set_viewport_extent(Size{.width = pixels, .height = extent.height});
+                     return true;
+                 })},
+                {"ScrollView.viewport_height", setter<ScrollView>([](ScrollView& node, std::string_view value) {
+                     float pixels = 0.0f;
+                     if (!read_float(value, pixels))
+                         return false;
+                     const Size extent = node.viewport_extent();
+                     node.set_viewport_extent(Size{.width = extent.width, .height = pixels});
+                     return true;
+                 })},
                 {"ScrollView.overscan", setter<ScrollView>([](ScrollView& node, std::string_view value) {
                      float pixels = 0.0f;
                      if (!read_float(value, pixels))
@@ -716,6 +732,22 @@ namespace albor::devrt
                      return true;
                  })},
                 // a list owns one selection and shapes its rows, which is what §8.3 navigates (§8, §18.3)
+                {"ListBox.viewport_width", setter<ListBox>([](ListBox& node, std::string_view value) {
+                     float pixels = 0.0f;
+                     if (!read_float(value, pixels))
+                         return false;
+                     const Size extent = node.scroll_view().viewport_extent();
+                     node.set_viewport_extent(Size{.width = pixels, .height = extent.height});
+                     return true;
+                 })},
+                {"ListBox.viewport_height", setter<ListBox>([](ListBox& node, std::string_view value) {
+                     float pixels = 0.0f;
+                     if (!read_float(value, pixels))
+                         return false;
+                     const Size extent = node.scroll_view().viewport_extent();
+                     node.set_viewport_extent(Size{.width = extent.width, .height = pixels});
+                     return true;
+                 })},
                 {"ListBox.selected", setter<ListBox>([](ListBox& node, std::string_view value) {
                      long long index = 0;
                      if (!read_int(value, index))

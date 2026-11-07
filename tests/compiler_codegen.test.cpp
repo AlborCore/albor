@@ -1880,6 +1880,27 @@ component LogPanel {
     EXPECT_TRUE(contains(unit.content, "set_overscan(32.0f)"));
 }
 
+TEST(Codegen, AScrollViewWithOneViewportAxisKeepsTheOtherUndeclared) {
+    // arrange a viewport that pins its height and leaves the width to the parent (§8.2)
+    const std::string_view source = R"(
+component LogPanel {
+    ScrollView {
+        viewport_height: 120px;
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    const std::string unit = file_named(files, "log_panel.cpp").content;
+    // assert the unwritten width stays zero, which the measure pass treats as undeclared (§8.2)
+    EXPECT_TRUE(contains(unit, "float m_viewport_w_0 = 0.0f;"));
+    EXPECT_TRUE(contains(unit, "m_viewport_h_0 = 1.2e+02f;"));
+    // assert the pair is still applied as one extent, because the widget takes both axes together (§11.3)
+    EXPECT_TRUE(contains(unit, "n0->set_viewport_extent(Size{m_viewport_w_0, m_viewport_h_0});"));
+    // assert only the written axis gets a binding track (§13.3)
+    EXPECT_FALSE(contains(unit, "track the viewport_width"));
+}
+
 TEST(Codegen, ABoundScrollOffsetBindsOntoTheWidgetProperty) {
     // arrange the offset written as an expression, which is how a log view pins itself (§7.3, AD-24)
     const std::string_view source = R"(

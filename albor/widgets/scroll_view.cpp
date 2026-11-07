@@ -1,6 +1,7 @@
 #include "albor/widgets/scroll_view.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 #include "albor/commands/command.h"
@@ -25,10 +26,16 @@ namespace albor
     }
 
     void ScrollView::measure(const SizeConstraints& constraints, Size& out_size) {
-        // the viewport is what the author declared, or the whole space the parent offers (§8.2)
-        const bool declared = m_viewport_extent.width > 0.0f || m_viewport_extent.height > 0.0f;
-        // an undeclared viewport fills the offer, because a viewport that shrank to its content could not scroll (§8.2)
-        const Size viewport = constraints.constrain(declared ? m_viewport_extent : constraints.maximum);
+        // an unbounded parent has no finite offer, so its preferred extent is the finite fallback (§8.2)
+        const float offered_width = std::isfinite(constraints.maximum.width) ? constraints.maximum.width : (std::isfinite(constraints.preferred.width) ? constraints.preferred.width : 0.0f);
+        // the height follows the same fallback, because an undeclared axis must stay finite (§8.2)
+        const float offered_height = std::isfinite(constraints.maximum.height) ? constraints.maximum.height : (std::isfinite(constraints.preferred.height) ? constraints.preferred.height : 0.0f);
+        // each axis is resolved on its own, because an author may pin one axis and let the other follow the window (§8.2)
+        const float width = std::isfinite(m_viewport_extent.width) && m_viewport_extent.width > 0.0f ? m_viewport_extent.width : offered_width;
+        // an undeclared height keeps the offered ceiling, so a fixed-width view grows with its parent (§8.2)
+        const float height = std::isfinite(m_viewport_extent.height) && m_viewport_extent.height > 0.0f ? m_viewport_extent.height : offered_height;
+        // the resolved pair is clamped into the offer, because the parent's decision is final (§8.2)
+        const Size viewport = constraints.constrain(Size{.width = width, .height = height});
         // the measured size is the viewport, because a scroll container never grows with the content behind it (§8.2)
         m_measured_size = viewport;
         // the preferred size follows the measured one, so a parent can query it without a second measure (§8.2)
@@ -63,11 +70,15 @@ namespace albor
     }
 
     void ScrollView::arrange(const Rect& bounds) {
-        // the assigned bounds replace the previous ones, while the measured size stands as the measure settled it (§8.2)
-        m_bounds = bounds;
+        // a declared axis keeps its extent even when the parent stretches the assigned bounds (§8.2)
+        const float width = m_viewport_extent.width > 0.0f ? std::min(m_viewport_extent.width, bounds.width) : bounds.width;
+        // an undeclared height takes the assigned bounds, which is how a fixed-width view follows its parent (§8.2)
+        const float height = m_viewport_extent.height > 0.0f ? std::min(m_viewport_extent.height, bounds.height) : bounds.height;
+        // the resolved extent is the rectangle the clip, the bar and the scroll range all read (§8.2)
+        m_bounds = Rect::from_origin_size(Point{.x = bounds.x, .y = bounds.y}, Size{.width = width, .height = height});
         // the window reaches the content before it is placed, so its rows exist in time (§8.2, AD-13)
         push_viewport();
-        // the viewport is the assigned bounds, because the bar overlays rather than insetting (§8.2)
+        // the viewport is the arranged extent, because the bar overlays rather than insetting (§8.2)
         const Rect viewport = viewport_rect();
         // the content sits at the offset, which is the whole of what scrolling a viewport does (§8.2)
         const Rect content = Rect::from_origin_size(Point{.x = viewport.x, .y = viewport.y - offset()}, m_content_extent);
