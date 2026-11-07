@@ -75,7 +75,7 @@ namespace albor
         // report whether the node and every ancestor are visible, which input and focus read (§8.3)
         [[nodiscard]] bool visible_in_tree() const;
 
-        // report whether the node itself can take focus, which a container may decline (§8.3)
+        // report whether the node itself can take focus, which a passive node may decline (§8.3)
         [[nodiscard]] virtual bool accepts_focus() const;
 
         // report whether the focus walk enters this node's children, which a decorative subtree declines (§8.3)

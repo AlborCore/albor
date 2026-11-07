@@ -24,8 +24,11 @@ namespace albor
         // record the run at the baseline of the assigned bounds, which is what stage one replays (§6.1)
         void paint_content(RenderContext& context) override;
 
-        // override: answer the pointer transitions, so a label gains hover and focus visuals (§8.3)
+        // override: answer the pointer transitions, so a label gains its hover visuals (§8.3)
         void dispatch_event(Event& event) override;
+
+        // override: decline the caret, because a label is passive text (§8.3)
+        [[nodiscard]] bool accepts_focus() const override;
 
         // override: announce the run as a label whose accessible name is the text it draws (§10.1)
         [[nodiscard]] SemanticNode semantic_node() const override;

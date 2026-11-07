@@ -64,6 +64,11 @@ namespace albor
         UiNode::dispatch_event(event);
     }
 
+    bool Label::accepts_focus() const {
+        // a label is passive text, so it is not a keyboard stop (§8.3)
+        return false;
+    }
+
     SemanticNode Label::semantic_node() const {
         // the role is a label, because the run is static descriptive text (§10.1)
         SemanticNode node{SemanticRole::Label};

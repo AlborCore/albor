@@ -521,6 +521,76 @@ TEST(LabelChecks, AnnouncesTheLabelRoleAndItsText) {
     EXPECT_EQ(node.bounds(), (Rect::from_origin_size(Point{2.0f, 3.0f}, Size{50.0f, 20.0f})));
 }
 
+TEST(LabelChecks, IsNotAFocusStop) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Label label(&engine, &text_engine, "caption");
+    label.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
+    // act
+    const bool focusable = FocusManager::focusable(label);
+    // assert
+    EXPECT_TRUE(label.visible_in_tree());
+    EXPECT_FALSE(label.disabled());
+    EXPECT_FALSE(label.bounds().empty());
+    EXPECT_FALSE(label.accepts_focus());
+    EXPECT_FALSE(focusable);
+}
+
+TEST(LabelChecks, TheFocusManagerSkipsALabel) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    auto label = std::make_unique<Label>(&engine, &text_engine, "caption");
+    auto button = std::make_unique<Button>(&engine, &text_engine, "Press");
+    Label* label_ptr = label.get();
+    Button* button_ptr = button.get();
+    label_ptr->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
+    button_ptr->arrange(Rect::from_origin_size(Point{0.0f, 20.0f}, Size{60.0f, 20.0f}));
+    root.add_child(std::move(label));
+    root.add_child(std::move(button));
+    FocusManager manager;
+    // act
+    manager.focus_next(root);
+    // assert
+    EXPECT_EQ(manager.focused(), button_ptr);
+    EXPECT_EQ(manager.change_count(), 1u);
+    EXPECT_FALSE(label_ptr->focused());
+    EXPECT_TRUE(button_ptr->focused());
+}
+
+TEST(LabelChecks, RequestingFocusOnALabelIsRefused) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Label label(&engine, &text_engine, "caption");
+    label.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
+    FocusManager manager;
+    // act
+    manager.request_focus(&label);
+    // assert
+    EXPECT_EQ(manager.focused(), nullptr);
+    EXPECT_EQ(manager.change_count(), 0u);
+}
+
+TEST(LabelChecks, ALabelAloneIsNotARing) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    auto label = std::make_unique<Label>(&engine, &text_engine, "caption");
+    label->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
+    root.add_child(std::move(label));
+    FocusManager manager;
+    // act
+    manager.focus_next(root);
+    manager.focus_previous(root);
+    // assert
+    EXPECT_EQ(manager.focused(), nullptr);
+    EXPECT_EQ(manager.change_count(), 0u);
+}
+
 TEST(LabelChecks, AVisibleLabelIsNotDisabled) {
     // arrange
     BindingEngine engine;
