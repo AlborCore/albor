@@ -299,6 +299,9 @@ namespace albor
         // hand out the alignment the run takes, which the mode decides while none is authored (§8.2)
         [[nodiscard]] Align resolved_content_align() const;
 
+        // hand out the run a paint records, which culls lines outside the clip (§6.2, §9.1)
+        [[nodiscard]] TextLayout visible_layout(const TextLayout& displayed, const Rect& clip, float draw_y) const;
+
         // hand out the top edge a run takes inside the plate, which an overflowing run pins to the top (§8.2)
         [[nodiscard]] float aligned_top(const TextLayout& run) const;
 
@@ -343,6 +346,9 @@ namespace albor
 
         // paint the caret of the field, which the value and the hint both sit beside (§6.1)
         void paint_caret(RenderContext& context);
+
+        // shape only the tail of an appended value, which is what keeps a growing log linear (§9.1)
+        [[nodiscard]] bool append_layout(const std::string& value);
 
         // lay out the run of a fresh state, which is what every text member change needs (§9.1)
         void remeasure();

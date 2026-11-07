@@ -1714,6 +1714,64 @@ TEST(TextFieldMultiLineChecks, ABackspaceJoinsTwoLines) {
     EXPECT_EQ(field.caret(), 2u);
 }
 
+TEST(TextFieldMultiLineChecks, ALongRunRecordsOnlyTheVisibleLines) {
+    // arrange a field whose value has far more lines than the plate shows (§9.1)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine);
+    field.set_multiline(true);
+    std::string value;
+    for (int line = 0; line < 200; line++)
+        value += "line\n";
+    field.set_value(value);
+    field.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 40.0f}, 1.0f));
+    // act
+    field.render(recorder);
+    // assert the recorded run carries only the rows the clip can show, not all two hundred (§6.2)
+    std::size_t visible_lines = 0;
+    for (const DrawCommand& command : recorder.scene()->commands()) {
+        if (command.kind() == DrawCommandKind::Text && command.text_geometry().layout.run != nullptr)
+            visible_lines += command.text_geometry().layout.run->lines().size();
+    }
+    EXPECT_GT(visible_lines, 0u);
+    EXPECT_LE(visible_lines, 4u);
+}
+
+TEST(TextFieldMultiLineChecks, AnAppendedValueMatchesAFullMeasure) {
+    // arrange an incremental field and a full one over the same final value (§9.1)
+    EditingTextEngine engine;
+    TextField incremental(nullptr, &engine);
+    incremental.set_multiline(true);
+    incremental.set_value("a\nb\n");
+    Size incremental_size{};
+    incremental.measure(SizeConstraints::at_most(Size{120.0f, 1000.0f}), incremental_size);
+    incremental.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 100.0f}));
+    TextField full(nullptr, &engine);
+    full.set_multiline(true);
+    full.set_value("a\nb\nc\nd\n");
+    Size full_size{};
+    full.measure(SizeConstraints::at_most(Size{120.0f, 1000.0f}), full_size);
+    full.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 100.0f}));
+    // act
+    incremental.set_value("a\nb\nc\nd\n");
+    // assert the reused prefix produced the same rows and byte offsets as the full measure (§9.1)
+    ASSERT_NE(incremental.layout().run, nullptr);
+    ASSERT_NE(full.layout().run, nullptr);
+    EXPECT_EQ(incremental.layout().size, full.layout().size);
+    ASSERT_EQ(incremental.layout().run->lines().size(), full.layout().run->lines().size());
+    for (std::size_t index = 0; index < incremental.layout().run->lines().size(); index++) {
+        const ShapedRun::Line& left = incremental.layout().run->lines()[index];
+        const ShapedRun::Line& right = full.layout().run->lines()[index];
+        EXPECT_EQ(left.start_byte, right.start_byte);
+        EXPECT_EQ(left.end_byte, right.end_byte);
+        EXPECT_EQ(left.origin, right.origin);
+        EXPECT_FLOAT_EQ(left.width, right.width);
+        EXPECT_FLOAT_EQ(left.ascent, right.ascent);
+        EXPECT_FLOAT_EQ(left.descent, right.descent);
+        EXPECT_EQ(left.glyphs, right.glyphs);
+    }
+}
+
 TEST(TextFieldMultiLineChecks, ABlankLineIsARealLineToTheCaret) {
     // arrange a value whose middle row is blank (§9.1)
     EditingTextEngine engine;
