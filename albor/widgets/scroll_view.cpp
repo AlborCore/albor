@@ -25,10 +25,12 @@ namespace albor
     }
 
     void ScrollView::measure(const SizeConstraints& constraints, Size& out_size) {
-        // the viewport is what the author declared, or the whole space the parent offers (§8.2)
-        const bool declared = m_viewport_extent.width > 0.0f || m_viewport_extent.height > 0.0f;
+        // each axis is resolved on its own, because an author may pin one axis and let the other follow the window (§8.2)
+        const float width = m_viewport_extent.width > 0.0f ? m_viewport_extent.width : constraints.maximum.width;
+        // an undeclared height keeps the offered ceiling, so a fixed-width view grows with its parent (§8.2)
+        const float height = m_viewport_extent.height > 0.0f ? m_viewport_extent.height : constraints.maximum.height;
         // an undeclared viewport fills the offer, because a viewport that shrank to its content could not scroll (§8.2)
-        const Size viewport = constraints.constrain(declared ? m_viewport_extent : constraints.maximum);
+        const Size viewport = constraints.constrain(Size{.width = width, .height = height});
         // the measured size is the viewport, because a scroll container never grows with the content behind it (§8.2)
         m_measured_size = viewport;
         // the preferred size follows the measured one, so a parent can query it without a second measure (§8.2)
