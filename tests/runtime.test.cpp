@@ -323,14 +323,16 @@ TEST(BindingEngine, ARepeatedRebindReusesItsSlot) {
     (void)engine.begin_component();
     const PropertyId target = engine.next_property_id();
     BindingId first = 0;
+    bool removed_all = true;
     // act
     for (int cycle = 0; cycle < 100; cycle++) {
         const BindingId binding = engine.bind(target, {}, [] {});
         if (cycle == 0)
             first = binding;
-        EXPECT_TRUE(engine.unbind(binding));
+        removed_all = engine.unbind(binding) && removed_all;
     }
     // assert
+    EXPECT_TRUE(removed_all);
     EXPECT_EQ(engine.binding_slot_count(), 1u);
     EXPECT_EQ(engine.size(), 0u);
     EXPECT_FALSE(engine.bound(first));
@@ -354,6 +356,101 @@ TEST(BindingEngine, AReusedSlotDoesNotResurrectAStaleHandle) {
     EXPECT_TRUE(engine.bound(second));
     EXPECT_EQ(engine.target(second), target);
     EXPECT_EQ(engine.binding_slot_count(), 1u);
+}
+
+TEST(BindingEngine, AStaleHandleCannotInvalidateAReusedSlot) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    const PropertyId target = engine.next_property_id();
+    const BindingId first = engine.bind(target, {}, [] {});
+    engine.settle();
+    EXPECT_TRUE(engine.unbind(first));
+    const BindingId second = engine.bind(target, {}, [] {});
+    engine.settle();
+    // act
+    engine.invalidate(first);
+    // assert
+    EXPECT_FALSE(engine.bound(first));
+    EXPECT_TRUE(engine.bound(second));
+    EXPECT_EQ(engine.dirty_count(), 0u);
+    EXPECT_EQ(engine.settle(), 0u);
+}
+
+TEST(BindingEngine, AReusedSlotKeepsOneConsumerEdge) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    const PropertyId source = engine.next_property_id();
+    const PropertyId target = engine.next_property_id();
+    bool removed_all = true;
+    std::size_t runs = 0;
+    BindingId binding = 0;
+    // act
+    for (int cycle = 0; cycle < 100; cycle++) {
+        const BindingId current = engine.bind(target, {source}, [] {});
+        engine.settle();
+        removed_all = engine.unbind(current) && removed_all;
+    }
+    binding = engine.bind(target, {source}, [&runs] { runs++; });
+    engine.settle();
+    engine.notify_changed(source);
+    engine.settle();
+    // assert
+    EXPECT_TRUE(removed_all);
+    EXPECT_EQ(engine.dependent_count(source), 1u);
+    EXPECT_EQ(engine.binding_slot_count(), 1u);
+    EXPECT_EQ(runs, 2u);
+    EXPECT_TRUE(engine.bound(binding));
+}
+
+TEST(BindingEngine, AReusedSlotDuringSettleNeverRunsTheReplacementTwice) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    const PropertyId source = engine.next_property_id();
+    const PropertyId target = engine.next_property_id();
+    const PropertyId trigger_target = engine.next_property_id();
+    struct Rebind
+    {
+        BindingEngine* engine = nullptr;
+        PropertyId target = {};
+        BindingId victim = 0;
+        bool armed = false;
+        std::size_t* replacement_runs = nullptr;
+        static void trigger(void* raw) {
+            // the trigger frees the queued victim and binds its replacement on the same slot (§7.3)
+            auto* self = static_cast<Rebind*>(raw);
+            if (!self->armed)
+                return;
+            self->engine->unbind(self->victim);
+            (void)self->engine->bind(self->target, {}, [runs = self->replacement_runs] { (*runs)++; });
+        }
+    };
+    std::size_t victim_runs = 0;
+    std::size_t replacement_runs = 0;
+    Rebind context{.engine = &engine, .target = target, .replacement_runs = &replacement_runs};
+    const PropertyId dependencies[] = {source};
+    const BindingId trigger = engine.bind_static(trigger_target, dependencies, &Rebind::trigger, &context);
+    const BindingId victim = engine.bind(target, {source}, [&victim_runs] { victim_runs++; });
+    context.victim = victim;
+    engine.settle();
+    // act
+    context.armed = true;
+    engine.notify_changed(source);
+    const std::size_t passes = engine.settle();
+    // assert
+    EXPECT_EQ(victim_runs, 1u);
+    EXPECT_EQ(replacement_runs, 1u);
+    EXPECT_EQ(passes, 2u);
+    EXPECT_EQ(engine.binding_slot_count(), 2u);
+    EXPECT_FALSE(engine.bound(victim));
+    EXPECT_TRUE(engine.bound(trigger));
+    EXPECT_EQ(engine.dirty_count(), 0u);
+    EXPECT_FALSE(engine.cycle_detected());
 }
 
 TEST(BindingEngine, ABindingUnboundDuringSettleIsSkipped) {
@@ -954,10 +1051,13 @@ TEST(BindingEngine, AnEvaluatorCanRebindItsOwnTargetWhileItRuns) {
     const PropertyId target = engine.next_property_id();
     std::size_t runs = 0;
     bool rebound = false;
-    const BindingId binding = engine.bind(target, {}, [&engine, &rebound, &runs, target] {
+    const std::shared_ptr<int> state = std::make_shared<int>(7);
+    const BindingId binding = engine.bind(target, {}, [&engine, &rebound, &runs, target, state] {
         // the outer evaluator replaces itself while it is running (§7.3)
         runs++;
-        rebound = engine.bind(target, {}, [&runs] { runs++; }) != 0;
+        const BindingId replacement = engine.bind(target, {}, [&runs] { runs++; });
+        // the capture is read after the rebind; ASan proves the closure stays alive (§7.3)
+        rebound = replacement != 0 && *state == 7;
     });
     // act
     engine.settle();
@@ -1628,6 +1728,117 @@ TEST(Property, AReboundTargetsConsumerSeesTheReplacement) {
     // assert
     EXPECT_EQ(target.get(), 40);
     EXPECT_EQ(consumer.get(), 80);
+}
+
+TEST(Property, AStaticBindingPropagatesToItsConsumer) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    Property<int> root(1);
+    root.set_id(engine.next_property_id());
+    root.set_engine(&engine);
+    struct Increment
+    {
+        static int evaluate(void* raw) { return static_cast<Property<int>*>(raw)->get() + 1; }
+    };
+    Property<int> middle(0);
+    middle.set_id(engine.next_property_id());
+    middle.set_engine(&engine);
+    const PropertyId middle_dependencies[] = {root.id()};
+    middle.bind_static(&Increment::evaluate, &root, middle_dependencies);
+    struct Scale
+    {
+        static int evaluate(void* raw) { return static_cast<Property<int>*>(raw)->get() * 10; }
+    };
+    Property<int> leaf(0);
+    leaf.set_id(engine.next_property_id());
+    leaf.set_engine(&engine);
+    const PropertyId leaf_dependencies[] = {middle.id()};
+    leaf.bind_static(&Scale::evaluate, &middle, leaf_dependencies);
+    engine.settle();
+    // act
+    root.set(5);
+    const std::size_t passes = engine.settle();
+    // assert
+    EXPECT_EQ(middle.get(), 6);
+    EXPECT_EQ(leaf.get(), 60);
+    EXPECT_EQ(passes, 1u);
+    EXPECT_EQ(engine.dirty_count(), 0u);
+    EXPECT_FALSE(engine.cycle_detected());
+}
+
+TEST(Property, ADeepBoundChainConvergesInOnePass) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    constexpr int depth = 65;
+    std::vector<std::unique_ptr<Property<int>>> chain;
+    for (int index = 0; index <= depth; index++) {
+        chain.push_back(std::make_unique<Property<int>>(0));
+        chain.back()->set_id(engine.next_property_id());
+        chain.back()->set_engine(&engine);
+    }
+    chain[0]->set(100);
+    for (int index = 1; index <= depth; index++) {
+        Property<int>* previous = chain[static_cast<std::size_t>(index - 1)].get();
+        chain[static_cast<std::size_t>(index)]->bind([previous] { return previous->get() + 1; }, {previous->id()});
+    }
+    engine.settle();
+    // act
+    chain[0]->set(200);
+    const std::size_t passes = engine.settle();
+    // assert
+    EXPECT_EQ(chain[static_cast<std::size_t>(depth)]->get(), 265);
+    EXPECT_EQ(passes, 1u);
+    EXPECT_EQ(engine.dirty_count(), 0u);
+    EXPECT_FALSE(engine.cycle_detected());
+}
+
+TEST(Property, ABindingThatReadsItsOwnTargetIsFlaggedAsACycle) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    Property<int> loop(0);
+    loop.set_id(engine.next_property_id());
+    loop.set_engine(&engine);
+    loop.bind([&loop] { return loop.get() + 1; }, {loop.id()});
+    // act
+    const std::size_t passes = engine.settle();
+    // assert
+    EXPECT_EQ(passes, BindingEngine::EVALUATION_BUDGET);
+    EXPECT_TRUE(engine.cycle_detected());
+    EXPECT_GT(engine.dirty_count(), 0u);
+}
+
+TEST(Property, RebindAfterAnOverrideUpdatesTheConsumer) {
+    // arrange
+    BindingEngine engine;
+    // the base is not asserted here, so the identifier is discarded (§7.2)
+    (void)engine.begin_component();
+    Property<int> source(1);
+    source.set_id(engine.next_property_id());
+    source.set_engine(&engine);
+    Property<int> target(0);
+    target.set_id(engine.next_property_id());
+    target.set_engine(&engine);
+    target.bind([&source] { return source.get() + 1; }, {source.id()});
+    Property<int> consumer(0);
+    consumer.set_id(engine.next_property_id());
+    consumer.set_engine(&engine);
+    consumer.bind([&target] { return target.get() * 2; }, {target.id()});
+    engine.settle();
+    target.set(99);
+    engine.settle();
+    // act
+    target.rebind();
+    engine.settle();
+    // assert
+    EXPECT_EQ(target.get(), 2);
+    EXPECT_EQ(consumer.get(), 4);
+    EXPECT_EQ(engine.dirty_count(), 0u);
 }
 
 TEST(Property, ADiamondOfPropertiesSettlesItsTipOnce) {

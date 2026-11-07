@@ -34,9 +34,10 @@ generated binding is a static function plus an array of property ids.
 
 ## The evaluation model
 
-- **Eager push.** A `set` propagates dirtiness along the dependency graph in a topological
-  pass and re-evaluates affected bindings immediately. There is no pull phase, no dirty-flag
-  sweep at frame start, and no stale window.
+- **Eager push.** A `set` or a bound write propagates dirtiness along the dependency graph
+  in a topological pass and re-evaluates affected bindings immediately, including the
+  consumers of the property the binding wrote. There is no pull phase, no dirty-flag sweep
+  at frame start, and no stale window.
 - **Cycles are refused.** A static dependency cycle is rejected by the `.ui` compiler. A
   dynamic cycle that slips past — through an imperative write, for instance — is halted by
   an execution-pass budget (64 iterations) and flagged.

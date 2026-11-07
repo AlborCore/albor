@@ -245,6 +245,9 @@ namespace albor
         // the engine forgets the evaluator, so a later change no longer reaches the property (§7.3)
         m_engine->unbind(m_binding);
         m_binding = 0;
+        // the static evaluator and its context are dead with the binding, so they are cleared too (§13.3)
+        m_static_evaluator = nullptr;
+        m_static_context = nullptr;
         // the last bound value is promoted to the presented value, so unbinding freezes rather than blanks (§7.3)
         m_value = m_bound_value;
         // the property is a plain value again, which is what unbinding means (§7.3)

@@ -104,7 +104,7 @@ namespace albor
             // the properties the evaluator reads, in declaration order
             std::vector<PropertyId> dependencies;
 
-            // the work that produces the bound value, shared so an evaluator that rebinds itself stays alive (§7.3)
+            // the shared callable survives self-rebinding, while the static path stays allocation free (§7.3)
             std::shared_ptr<BindingEvaluator> evaluator;
 
             // the static work that runs when the binding installed a plain function instead of a callable (§13.3)
@@ -138,6 +138,9 @@ namespace albor
         // claim a slot for a new binding, reusing a dead slot and advancing its generation (§7.3)
         [[nodiscard]] BindingId claim_slot(PropertyId target);
 
+        // mark a binding dirty and append it to the active settle order when it is not ordered yet (§7.3)
+        void mark_dirty(BindingId binding);
+
         // hand out the handle of the binding that writes a property, or zero when nothing does
         [[nodiscard]] BindingId producer_of(PropertyId target) const;
 
@@ -149,6 +152,9 @@ namespace albor
 
         // the dead slots a later binding may claim, which keeps a rebuild from growing storage (§7.3)
         std::vector<std::uint32_t> m_free_slots;
+
+        // the order of the active settle, which a write extends while the pass runs (§7.3)
+        std::vector<BindingId>* m_settle_order = nullptr;
 
         // the bindings that read each source property, which is the reverse edge of the graph (§7.3)
         std::unordered_map<std::uint64_t, std::vector<BindingId>> m_dependents;

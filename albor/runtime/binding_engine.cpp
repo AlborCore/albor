@@ -8,7 +8,7 @@ namespace albor
         constexpr std::uint32_t BINDING_SLOT_MASK = 0xffffffffu;
 
         // the high half of a handle is the slot generation, which keeps a stale handle stale after reuse (§7.3)
-        constexpr unsigned BINDING_GENERATION_SHIFT = 32;
+        constexpr std::uint32_t BINDING_GENERATION_SHIFT = 32;
 
         // pack one slot and its generation into the handle the caller holds (§7.3)
         constexpr BindingId make_binding_id(std::uint32_t slot, std::uint32_t generation) { return (static_cast<BindingId>(generation) << BINDING_GENERATION_SHIFT) | static_cast<BindingId>(slot); }
@@ -65,6 +65,7 @@ namespace albor
             Binding& entry = m_bindings[slot - 1];
             // the generation advances, so a handle from the old binding can never name the replacement (§7.3)
             entry.generation++;
+            // a wrap after 2^32 reuses restarts at one, a bound far beyond a session's rebuild count (§7.3)
             if (entry.generation == 0)
                 entry.generation = 1;
             entry.target = target;
@@ -83,7 +84,7 @@ namespace albor
         binding.generation = 1;
         binding.dirty = true;
         m_bindings.push_back(std::move(binding));
-        return make_binding_id(static_cast<std::uint32_t>(m_bindings.size()), 1);
+        return make_binding_id(static_cast<std::uint32_t>(m_bindings.size()), m_bindings.back().generation);
     }
 
     BindingId BindingEngine::bind(PropertyId target, std::vector<PropertyId> dependencies, BindingEvaluator evaluator) {
@@ -142,12 +143,16 @@ namespace albor
             return false;
         // every dependency loses the consumer edge, so a later change no longer reaches it (§7.3)
         for (const PropertyId dependency : entry->dependencies) {
-            auto& consumers = m_dependents[property_key(dependency)];
+            const std::uint64_t dependency_key = property_key(dependency);
+            const auto found = m_dependents.find(dependency_key);
+            // a dependency declared twice finds no edge the second time, so it is skipped (§7.3)
+            if (found == m_dependents.end())
+                continue;
             // every matching edge goes, so a dependency declared twice cannot leave a dead consumer behind (§7.3)
-            std::erase(consumers, binding);
+            std::erase(found->second, binding);
             // an empty reverse edge goes too, so a dead dependency does not hold a map entry (§7.3)
-            if (consumers.empty())
-                m_dependents.erase(property_key(dependency));
+            if (found->second.empty())
+                m_dependents.erase(found);
         }
         // the producer edge goes with it, so a consumer no longer waits for a dead writer (§7.3)
         const std::uint64_t key = property_key(entry->target);
@@ -221,26 +226,31 @@ namespace albor
         if (found == m_dependents.end())
             return;
         // every registered consumer becomes dirty, which is the eager push of the change (§7.3, AD-04c)
-        for (const BindingId binding : found->second) {
-            Binding* entry = find(binding);
-            // an unbound consumer was removed, so it is skipped rather than resurrected (§7.3)
-            if (entry != nullptr && entry->registered())
-                entry->dirty = true;
-        }
+        for (const BindingId binding : found->second)
+            mark_dirty(binding);
     }
 
     void BindingEngine::invalidate(BindingId binding) {
+        // an animation presence write marks its own binding without walking the graph (AD-04d)
+        mark_dirty(binding);
+    }
+
+    void BindingEngine::mark_dirty(BindingId binding) {
         Binding* entry = find(binding);
         // a stale handle marks nothing (§7.3)
         if (entry == nullptr || !entry->registered())
             return;
-        // an animation presence write marks its own binding without walking the graph (AD-04d)
         entry->dirty = true;
+        // a binding outside the active order joins it now, so a write settles its consumers in the same pass (§7.3)
+        if (m_settle_order != nullptr && !entry->ordered)
+            visit(binding, *m_settle_order);
     }
 
     std::size_t BindingEngine::settle() {
         std::size_t passes = 0;
         std::vector<BindingId> order;
+        // the active order is shared with writes, so a consumer a binding dirties joins the same pass (§7.3)
+        m_settle_order = &order;
         // the engine repeats until the graph converges or the cycle budget is spent (§7.3, AD-04c)
         while (passes < EVALUATION_BUDGET) {
             order.clear();
@@ -254,7 +264,8 @@ namespace albor
             // a converged graph leaves nothing dirty, so an empty walk ends the settle (§7.3)
             if (order.empty())
                 break;
-            for (const BindingId binding : order) {
+            for (std::size_t cursor = 0; cursor < order.size(); cursor++) {
+                const BindingId binding = order[cursor];
                 Binding* entry = find(binding);
                 // an unbound binding that a previous pass removed is skipped (§7.3)
                 if (entry == nullptr)
@@ -281,6 +292,8 @@ namespace albor
             }
             passes++;
         }
+        // the order pointer belongs to this call, so a later write does not touch a dead vector (§7.3)
+        m_settle_order = nullptr;
         // spending the whole budget while work remains is the dynamic cycle diagnostic (§7.3)
         m_cycle_detected = dirty_count() > 0;
         return passes;
