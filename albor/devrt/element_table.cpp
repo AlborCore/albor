@@ -504,6 +504,13 @@ namespace albor::devrt
                      node.set_value(next);
                      return true;
                  })},
+                {"ProgressBar.indeterminate", setter<ProgressBar>([](ProgressBar& node, std::string_view value) {
+                     bool indeterminate = false;
+                     if (!read_bool(value, indeterminate))
+                         return false;
+                     node.set_indeterminate(indeterminate);
+                     return true;
+                 })},
                 {"ProgressBar.disabled", setter<ProgressBar>([](ProgressBar& node, std::string_view value) {
                      bool disabled = false;
                      if (!read_bool(value, disabled))

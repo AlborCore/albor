@@ -168,6 +168,9 @@ namespace albor::automation
                 // an expanded popup marks itself, because the state is what a client opens against (§10.1)
                 if (node->expanded())
                     out << " expanded";
+                // an indeterminate bar marks itself, because its remaining length is unknown (§10.1)
+                if (node->indeterminate())
+                    out << " indeterminate";
                 // a disabled node marks itself, because a client must not drive one (§10.1)
                 if (node->disabled())
                     out << " disabled";

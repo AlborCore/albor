@@ -1144,6 +1144,7 @@ namespace albor::compiler
                 {"Slider.action", "set_command"},
                 {"Slider.command", "set_command"},
                 {"ProgressBar.value", "set_value"},
+                {"ProgressBar.indeterminate", "set_indeterminate"},
                 {"ProgressBar.disabled", "set_disabled"},
                 {"ProgressBar.track_color", "set_track_color"},
                 {"ProgressBar.fill_color", "set_fill_color"},

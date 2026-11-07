@@ -195,6 +195,9 @@ namespace albor
         // tell the observer that a subtree joined, which runs after the node is in the tree (§8.4)
         void notify_attached(UiNode* node);
 
+        // answer a change of the animation engine, which an animating widget uses to retire its handle (§7.3)
+        virtual void on_animation_engine_changed(AnimationEngine* engine);
+
         // push the node opacity onto the context, which dims the whole subtree below it (§6.1)
         void push_opacity(RenderContext& context) const;
 

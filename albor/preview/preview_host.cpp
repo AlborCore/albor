@@ -476,6 +476,11 @@ namespace albor::preview
                     // the progress bar is the read only widget that carries the fraction (§8)
                     progress->set_value(static_cast<float>(number_of(*numeric)));
                 }
+                // an unknown-length progress mode, which a preview shows as the author wrote it (§7.3)
+                else if (auto* progress = dynamic_cast<ProgressBar*>(built.get()); progress != nullptr && assignment.name == "indeterminate" && numeric != nullptr) {
+                    // the bar is the read only widget that carries the mode (§7.3)
+                    progress->set_indeterminate(numeric->text == "true");
+                }
                 // an image source, name or explicit size, which the preview shows as the author wrote it (§6.4, §8)
                 else if (auto* image = dynamic_cast<Image*>(built.get()); image != nullptr && (assignment.name == "source" || assignment.name == "description" || assignment.name == "width" || assignment.name == "height")) {
                     // a written asset resolves beside its source file, which is where the build finds it (§6.4)

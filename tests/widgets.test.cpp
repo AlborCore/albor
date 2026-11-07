@@ -7,6 +7,7 @@
 
 #include <gtest/gtest.h>
 
+#include "albor/animation/animation_engine.h"
 #include "albor/commands/command.h"
 #include "albor/commands/command_registry.h"
 #include "albor/commands/shortcut.h"
@@ -5101,6 +5102,245 @@ TEST(ProgressBarChecks, AnUnchangedValueRedrawsNothing) {
     bar.set_value(0.5f);
     // assert
     EXPECT_FALSE(bar.render_dirty());
+}
+
+TEST(ProgressBarChecks, AnIndeterminateBarDrawsASweep) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    bar.set_indeterminate(true);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    bar.render(recorder);
+    // assert
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_EQ(rects.size(), 2u);
+    EXPECT_FLOAT_EQ(rects[0].width, 160.0f);
+    EXPECT_FLOAT_EQ(rects[1].width, 160.0f / 3.0f);
+    EXPECT_FLOAT_EQ(rects[1].x, 160.0f / 3.0f);
+}
+
+TEST(ProgressBarChecks, AnIndeterminateBarIgnoresTheFraction) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    bar.set_value(0.5f);
+    bar.set_indeterminate(true);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    bar.render(recorder);
+    // assert
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_EQ(rects.size(), 2u);
+    EXPECT_FLOAT_EQ(rects[1].width, 160.0f / 3.0f);
+    EXPECT_NE(rects[1].width, 80.0f);
+}
+
+TEST(ProgressBarChecks, AnIndeterminateBarRunsARepeatingAnimation) {
+    // arrange
+    BindingEngine engine;
+    AnimationEngine animations;
+    ProgressBar bar(&engine);
+    bar.set_animation_engine(&animations);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    // act
+    bar.set_indeterminate(true);
+    // assert
+    EXPECT_EQ(animations.active_count(), 1u);
+    animations.advance(0.0625f);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    bar.render(recorder);
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_EQ(rects.size(), 2u);
+    EXPECT_NEAR(rects[1].x, (160.0f - 160.0f / 3.0f) * 0.25f, 1e-4f);
+    bar.set_indeterminate(false);
+    EXPECT_EQ(animations.active_count(), 0u);
+}
+
+TEST(ProgressBarChecks, SwitchingBackToDeterminateRestoresTheFraction) {
+    // arrange
+    BindingEngine engine;
+    AnimationEngine animations;
+    ProgressBar bar(&engine);
+    bar.set_animation_engine(&animations);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    bar.set_value(0.5f);
+    bar.set_indeterminate(true);
+    // act
+    bar.set_indeterminate(false);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    bar.render(recorder);
+    // assert
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_EQ(rects.size(), 2u);
+    EXPECT_FLOAT_EQ(rects[1].width, 80.0f);
+}
+
+TEST(ProgressBarChecks, AnIndeterminateBarAnnouncesTheStateAndIsNotAFocusStop) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine, "download");
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    bar.set_indeterminate(true);
+    // act
+    const SemanticNode node = bar.semantic_node();
+    // assert
+    EXPECT_TRUE(node.indeterminate());
+    EXPECT_EQ(node.name(), "download indeterminate");
+    EXPECT_EQ(node.role(), SemanticRole::ProgressBar);
+    EXPECT_FALSE(bar.accepts_focus());
+    EXPECT_FALSE(FocusManager::focusable(bar));
+}
+
+TEST(ProgressBarChecks, AnIndeterminateBarStartsWhenTheEngineArrives) {
+    // arrange
+    BindingEngine engine;
+    AnimationEngine animations;
+    ProgressBar bar(&engine);
+    bar.set_indeterminate(true);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    EXPECT_EQ(animations.active_count(), 0u);
+    // act
+    bar.set_animation_engine(&animations);
+    // assert
+    EXPECT_EQ(animations.active_count(), 1u);
+}
+
+TEST(ProgressBarChecks, ACancelledSweepIsReArmedByTheNextPaint) {
+    // arrange
+    BindingEngine engine;
+    AnimationEngine animations;
+    ProgressBar bar(&engine);
+    bar.set_animation_engine(&animations);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    bar.set_indeterminate(true);
+    ASSERT_EQ(animations.active_count(), 1u);
+    animations.cancel_all();
+    ASSERT_EQ(animations.active_count(), 0u);
+    // act
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    bar.render(recorder);
+    // assert
+    EXPECT_EQ(animations.active_count(), 1u);
+}
+
+TEST(ProgressBarChecks, AHiddenBarStopsItsSweepAndShowingRestartsIt) {
+    // arrange
+    BindingEngine engine;
+    AnimationEngine animations;
+    ProgressBar bar(&engine);
+    bar.set_animation_engine(&animations);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    bar.set_indeterminate(true);
+    ASSERT_EQ(animations.active_count(), 1u);
+    // act
+    bar.set_visible(false);
+    // assert
+    EXPECT_EQ(animations.active_count(), 0u);
+    bar.set_visible(true);
+    EXPECT_EQ(animations.active_count(), 1u);
+}
+
+TEST(ProgressBarChecks, ARepeatedIndeterminateWriteKeepsOneSweep) {
+    // arrange
+    BindingEngine engine;
+    AnimationEngine animations;
+    ProgressBar bar(&engine);
+    bar.set_animation_engine(&animations);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    // act
+    bar.set_indeterminate(true);
+    bar.set_indeterminate(true);
+    // assert
+    EXPECT_EQ(animations.active_count(), 1u);
+    bar.set_indeterminate(false);
+    bar.set_indeterminate(true);
+    EXPECT_EQ(animations.active_count(), 1u);
+    EXPECT_EQ(animations.advance(0.0625f), 1u);
+}
+
+TEST(ProgressBarChecks, ADestroyedBarLeavesNoSweep) {
+    // arrange
+    AnimationEngine animations;
+    {
+        BindingEngine engine;
+        ProgressBar bar(&engine);
+        bar.set_animation_engine(&animations);
+        bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+        bar.set_indeterminate(true);
+        ASSERT_EQ(animations.active_count(), 1u);
+    }
+    // act / assert
+    EXPECT_EQ(animations.active_count(), 0u);
+    EXPECT_EQ(animations.advance(0.5f), 0u);
+}
+
+TEST(ProgressBarChecks, AnIndeterminateBarWithoutAreaSchedulesNothing) {
+    // arrange
+    BindingEngine engine;
+    AnimationEngine animations;
+    ProgressBar bar(&engine);
+    bar.set_animation_engine(&animations);
+    // act
+    bar.set_indeterminate(true);
+    // assert
+    EXPECT_EQ(animations.active_count(), 0u);
+}
+
+TEST(ProgressBarChecks, AnIndeterminateBarStopsWhenItLosesItsArea) {
+    // arrange
+    BindingEngine engine;
+    AnimationEngine animations;
+    ProgressBar bar(&engine);
+    bar.set_animation_engine(&animations);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    bar.set_indeterminate(true);
+    ASSERT_EQ(animations.active_count(), 1u);
+    // act
+    bar.arrange(Rect{});
+    animations.advance(0.0625f);
+    // assert
+    EXPECT_EQ(animations.active_count(), 0u);
+}
+
+TEST(ProgressBarChecks, ARemovedIndeterminateBarStopsItsSweep) {
+    // arrange
+    BindingEngine engine;
+    AnimationEngine animations;
+    UiNode root;
+    root.set_animation_engine(&animations);
+    auto bar = std::make_unique<ProgressBar>(&engine);
+    ProgressBar* bar_ptr = bar.get();
+    root.add_child(std::move(bar));
+    bar_ptr->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    bar_ptr->set_indeterminate(true);
+    ASSERT_EQ(animations.active_count(), 1u);
+    // act
+    auto removed = root.remove_child(bar_ptr);
+    // assert
+    EXPECT_EQ(animations.active_count(), 0u);
+    EXPECT_EQ(animations.advance(0.5f), 0u);
+}
+
+TEST(ProgressBarChecks, ASweepWrapsWithoutABlankFrame) {
+    // arrange
+    BindingEngine engine;
+    AnimationEngine animations;
+    ProgressBar bar(&engine);
+    bar.set_animation_engine(&animations);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    bar.set_indeterminate(true);
+    // act
+    animations.advance(0.25f);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    bar.render(recorder);
+    // assert
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_EQ(rects.size(), 2u);
+    EXPECT_FLOAT_EQ(rects[1].x, 0.0f);
+    EXPECT_FLOAT_EQ(rects[1].width, 160.0f / 3.0f);
 }
 
 TEST(ProgressBarChecks, PaintsATrackAndAFillForTheFraction) {

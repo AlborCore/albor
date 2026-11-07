@@ -437,6 +437,12 @@ namespace albor
         // the running blink, which the engine hands out and a focus change ends (§7.3)
         AnimationHandle m_blink = 0;
 
+        // the engine that issued the blink, which is what cancels it after the tree drops it (§7.3)
+        AnimationEngine* m_blink_engine = nullptr;
+
+        // override: retire the blink on the old engine and restart it on the new one (§7.3)
+        void on_animation_engine_changed(AnimationEngine* engine) override;
+
         // whether the field refuses everything, which a bound command wins over (§18.7)
         bool m_disabled = false;
 

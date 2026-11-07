@@ -33,6 +33,7 @@
 #include "albor/widgets/label.h"
 #include "albor/widgets/list_box.h"
 #include "albor/widgets/numeric_stepper.h"
+#include "albor/widgets/progress_bar.h"
 #include "albor/widgets/radio_button.h"
 #include "albor/widgets/radio_group.h"
 #include "albor/widgets/scroll_view.h"
@@ -514,6 +515,18 @@ TEST(DevElementChecks, AColourAndAFlagAreReadFromTheDefinition) {
     EXPECT_TRUE(button->disabled());
     EXPECT_TRUE(apply_property(*check, "CheckBox", "checked", "false"));
     EXPECT_FALSE(check->disabled());
+}
+
+TEST(DevElementChecks, AProgressBarFlagLandsOnTheBar) {
+    // arrange
+    BindingEngine engine;
+    TestTextEngine text;
+    std::unique_ptr<UiNode> bar = create_node("ProgressBar", engine, text);
+    ASSERT_NE(bar, nullptr);
+    // act
+    EXPECT_TRUE(apply_property(*bar, "ProgressBar", "indeterminate", "true"));
+    // assert
+    EXPECT_TRUE(static_cast<ProgressBar*>(bar.get())->indeterminate());
 }
 
 TEST(DevElementChecks, ALiveNodeIsNamedByItsDynamicType) {

@@ -99,6 +99,8 @@ namespace albor
         m_children.erase(found);
         // the detached node is a root again, so a later walk up does not reach a dying parent (§8.1)
         removed->m_parent = nullptr;
+        // a detached subtree is no longer driven by a stage, so its animations are released (§7.3)
+        removed->set_animation_engine(nullptr);
         // the subtree left the tree, so the parent asks for a frame (§6.1)
         invalidate_layout();
         return removed;
@@ -144,6 +146,8 @@ namespace albor
         m_overlays.erase(found);
         // the detached overlay is a root again, so a later walk up does not reach a dying parent (§8.3)
         removed->m_parent = nullptr;
+        // a detached overlay is no longer driven by a stage, so its animations are released (§7.3)
+        removed->set_animation_engine(nullptr);
         // the overlay left the tree, so the root asks for a frame (§6.1)
         invalidate_layout();
         return removed;
@@ -528,9 +532,19 @@ namespace albor
     void UiNode::set_animation_engine(AnimationEngine* engine) {
         // the engine is borrowed, because the pipeline and the stage own it (§7.3)
         m_animations = engine;
+        // the node retires or restarts the work it scheduled through the old engine (§7.3)
+        on_animation_engine_changed(engine);
         // every child is handed the same engine, so a widget nested anywhere can schedule (§7.3)
         for (const std::unique_ptr<UiNode>& child : m_children)
             child->set_animation_engine(engine);
+        // every overlay is handed the same engine too, because it may animate a dismissal (§7.3)
+        for (const std::unique_ptr<UiNode>& overlay : m_overlays)
+            overlay->set_animation_engine(engine);
+    }
+
+    void UiNode::on_animation_engine_changed(AnimationEngine* engine) {
+        // a plain node schedules nothing, so a change of engine leaves it as it is (§7.3)
+        (void)engine;
     }
 
     AnimationEngine* UiNode::animation_engine() const {

@@ -178,6 +178,8 @@ namespace albor
         AnimationEngine* engine = animation_engine();
         if (engine == nullptr)
             return;
+        // the engine that issues the handle is remembered, because a later tree move may hand another one (§7.3)
+        m_blink_engine = engine;
         // the blink runs for as long as the field holds the focus, which is a repeating animation (§7.3)
         m_blink = engine->schedule_repeating(
             [this](float phase) {
@@ -197,13 +199,24 @@ namespace albor
 
     void TextField::stop_blink() {
         // a field that never blinked holds no handle, so there is nothing to end (§7.3)
-        if (m_blink == 0)
+        if (m_blink == 0) {
+            m_blink_engine = nullptr;
             return;
-        // the engine is asked only when the tree was handed one, because the handle came from there (§7.3)
-        if (AnimationEngine* engine = animation_engine())
-            (void)engine->cancel(m_blink);
+        }
+        // the issuing engine is asked even after the tree dropped it, because the handle came from there (§7.3)
+        if (m_blink_engine != nullptr)
+            (void)m_blink_engine->cancel(m_blink);
         // the handle is spent, so the next blink schedules a fresh one (§7.3)
         m_blink = 0;
+        m_blink_engine = nullptr;
+    }
+
+    void TextField::on_animation_engine_changed(AnimationEngine* engine) {
+        // the old handle is cancelled through the engine that issued it, which is the only safe path (§7.3)
+        stop_blink();
+        // a focused field starts its blink again on the engine the tree just handed down (§7.3)
+        if (engine != nullptr && focused())
+            start_blink();
     }
 
     void TextField::restart_blink() {
