@@ -33,6 +33,7 @@ Both adapters implement the same `PlatformWindow` and `PlatformEventLoop` interf
 | Popup role | `NSPanel`, owned child, anchored placement, non-activating, non-opaque layer | Win32 popup, owned child, anchored placement, topmost, non-activating | Parity |
 | Outside-click, trigger-click and deactivation dismissal | Present and tested, with anchor exclusion | Present and tested, with trigger forwarding | Parity |
 | Resize, DPI/scale changes | AppKit notifications | `WM_SIZE`, `WM_DPICHANGED`, tested | Parity |
+| Window size contract | `setContentSize`, metrics read the content view | `AdjustWindowRectEx`, metrics read the client rect | Parity |
 | Keyboard/mouse/wheel | Present | Present | Parity |
 | IME/text composition | `NSTextInputClient` | `WM_IME_*`, candidate anchor/selection, tested | Parity |
 | Clipboard | Pasteboard implementation | Win32 clipboard implementation, tested | Parity |
@@ -41,6 +42,14 @@ Both adapters implement the same `PlatformWindow` and `PlatformEventLoop` interf
 | Automation local transport | Unix domain socket | Named pipe, tested | Parity |
 | Accessibility | NSAccessibility bridge, 20 tests | UI Automation bridge, 21 role tests + 1 client test | Parity |
 | Native file dialogs | `NSOpenPanel`/`NSSavePanel` as sheets | `IFileOpenDialog`/`IFileSaveDialog` owned by the parent | Parity, with filters unioned on macOS |
+
+A window size now means the content area on both platforms. `MacosPlatformWindow::set_size` uses
+`setContentSize` instead of treating the argument as the frame, so `metrics()` reports exactly what the
+caller wrote; Win32 already adjusted the frame around its client area. The content view is created at
+the requested content extent and resizes with the window, so the AppKit frame is that content plus the
+title bar. The mirrored suites assert creation, resize and move keep the contract. A `CGWindowList`
+frame comparison is deliberately not part of CI, because a runner may have no on-screen window server;
+the issue's 24x16 window-server delta still needs a desktop reproduction before it is claimed gone.
 
 The popup suites cover ownership, anchor placement, trigger-click forwarding, owner-move following, a parented
 dialog, re-activating a visible dialog and the parented-dialog teardown. The macOS suite carries 18 tests and the

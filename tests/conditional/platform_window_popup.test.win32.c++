@@ -21,7 +21,10 @@ namespace
     class RecordingListener final : public PlatformWindowListener
     {
     public:
-        void on_platform_resize(const WindowMetrics& metrics) override { resize = metrics; }
+        void on_platform_resize(const WindowMetrics& metrics) override {
+            resize = metrics;
+            resizes++;
+        }
 
         bool on_platform_close_request() override { return true; }
 
@@ -43,6 +46,9 @@ namespace
 
         // the metrics the window last reported, which the resize message pushes (§9.1)
         WindowMetrics resize{};
+
+        // how many resize reports the window raised, which a move must not add to (§5.3)
+        int resizes = 0;
 
         // how many closed reports the window raised, which a dismissal raises exactly once (§5.2)
         int closed = 0;
@@ -443,6 +449,76 @@ TEST(Win32PopupWindow, ADeactivationDismissesThePopupAndReportsClosed) {
     EXPECT_EQ(listener.closed, 1);
     // assert the framework records the popup as gone, which the dismissal sets (§5.1)
     EXPECT_FALSE(platform->visible());
+}
+
+TEST(Win32WindowMetrics, CreatingAWindowReportsTheClientSizeItWasGiven) {
+    // arrange a normal window with a known client size (§5.3, AD-27)
+    WindowOptions options;
+    options.title = "metrics-create";
+    options.size = albor::Size{640.0f, 480.0f};
+    // act
+    std::unique_ptr<Win32PlatformWindow> platform = Win32PlatformWindow::create(options);
+    // assert
+    ASSERT_NE(platform, nullptr);
+    const WindowMetrics metrics = platform->metrics();
+    EXPECT_FLOAT_EQ(metrics.logical_size.width, 640.0f);
+    EXPECT_FLOAT_EQ(metrics.logical_size.height, 480.0f);
+}
+
+TEST(Win32WindowMetrics, SetSizeKeepsTheClientSizeAndTheFrameAroundIt) {
+    // arrange a window created at one size and resized to another (§5.3)
+    WindowOptions options;
+    options.title = "metrics-set-size";
+    options.size = albor::Size{400.0f, 300.0f};
+    std::unique_ptr<Win32PlatformWindow> platform = Win32PlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    // act
+    platform->set_size(albor::Size{640.0f, 480.0f});
+    // assert the client area is the requested size, which is what metrics reports (§5.3, AD-27)
+    const WindowMetrics metrics = platform->metrics();
+    EXPECT_FLOAT_EQ(metrics.logical_size.width, 640.0f);
+    EXPECT_FLOAT_EQ(metrics.logical_size.height, 480.0f);
+    // assert the window frame is the client area plus the native chrome (§5.3)
+    HWND window = static_cast<HWND>(const_cast<void*>(platform->native_window_handle().object()));
+    ASSERT_NE(window, nullptr);
+    RECT frame{};
+    ASSERT_NE(GetWindowRect(window, &frame), 0);
+    RECT client{};
+    ASSERT_NE(GetClientRect(window, &client), 0);
+    EXPECT_GT(frame.right - frame.left, client.right - client.left);
+    EXPECT_GT(frame.bottom - frame.top, client.bottom - client.top);
+}
+
+TEST(Win32WindowMetrics, MovingAWindowDoesNotChangeItsSize) {
+    // arrange a shown window whose size is settled (§5.3)
+    WindowOptions options;
+    options.title = "metrics-move";
+    options.size = albor::Size{500.0f, 320.0f};
+    std::unique_ptr<Win32PlatformWindow> platform = Win32PlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    platform->show();
+    const WindowMetrics before = platform->metrics();
+    HWND window = static_cast<HWND>(const_cast<void*>(platform->native_window_handle().object()));
+    ASSERT_NE(window, nullptr);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    RECT origin{};
+    ASSERT_NE(GetWindowRect(window, &origin), 0);
+    // act
+    SetWindowPos(window, nullptr, 40, 30, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    MSG message{};
+    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
+    // assert
+    RECT moved{};
+    ASSERT_NE(GetWindowRect(window, &moved), 0);
+    EXPECT_NE(moved.left, origin.left);
+    EXPECT_EQ(listener.resizes, 0);
+    const WindowMetrics after = platform->metrics();
+    EXPECT_FLOAT_EQ(after.logical_size.width, before.logical_size.width);
+    EXPECT_FLOAT_EQ(after.logical_size.height, before.logical_size.height);
 }
 
 TEST(Win32PopupWindow, ANormalWindowIsNotClosedByDeactivation) {

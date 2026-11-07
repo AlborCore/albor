@@ -17,7 +17,10 @@ namespace
     class RecordingListener final : public PlatformWindowListener
     {
     public:
-        void on_platform_resize(const WindowMetrics& metrics) override { resize = metrics; }
+        void on_platform_resize(const WindowMetrics& metrics) override {
+            resize = metrics;
+            resizes++;
+        }
 
         bool on_platform_close_request() override { return true; }
 
@@ -31,6 +34,9 @@ namespace
 
         // the metrics the window last reported, which the resize observer pushes (§9.1)
         WindowMetrics resize{};
+
+        // how many resize reports the window raised, which a move must not add to (§5.3)
+        int resizes = 0;
 
         // how many closed reports the window raised, which a dismissal raises exactly once (§5.2)
         int closed = 0;
@@ -452,6 +458,97 @@ TEST(MacosPopupWindow, ANormalWindowIsNotClosedByDeactivation) {
     EXPECT_EQ(listener.closed, 0);
     // assert the ordinary window stays on screen, which a deactivation leaves it (§5.3)
     EXPECT_TRUE(platform->visible());
+}
+
+TEST(MacosWindowMetrics, CreatingAWindowReportsTheContentSizeItWasGiven) {
+    // arrange a normal window with a known content size (§5.3, AD-27)
+    WindowOptions options;
+    options.title = "metrics-create";
+    options.size = albor::Size{640.0f, 480.0f};
+    // act
+    std::unique_ptr<MacosPlatformWindow> platform = MacosPlatformWindow::create(options);
+    // assert
+    ASSERT_NE(platform, nullptr);
+    const WindowMetrics metrics = platform->metrics();
+    EXPECT_FLOAT_EQ(metrics.logical_size.width, 640.0f);
+    EXPECT_FLOAT_EQ(metrics.logical_size.height, 480.0f);
+}
+
+TEST(MacosWindowMetrics, SetSizeKeepsTheContentSizeAndTheFrameAroundIt) {
+    // arrange a window created at one size and resized to another (§5.3)
+    WindowOptions options;
+    options.title = "metrics-set-size";
+    options.size = albor::Size{400.0f, 300.0f};
+    std::unique_ptr<MacosPlatformWindow> platform = MacosPlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    // act
+    platform->set_size(albor::Size{640.0f, 480.0f});
+    // assert the content area is the requested size, which is what metrics reports (§5.3, AD-27)
+    const WindowMetrics metrics = platform->metrics();
+    EXPECT_FLOAT_EQ(metrics.logical_size.width, 640.0f);
+    EXPECT_FLOAT_EQ(metrics.logical_size.height, 480.0f);
+    // assert the frame carries the same content plus the native title bar (§5.3)
+    NSWindow* window = (__bridge NSWindow*)const_cast<void*>(platform->native_window_handle().object());
+    ASSERT_NE(window, nil);
+    const NSRect expected = [window frameRectForContentRect:NSMakeRect(0.0, 0.0, 640.0, 480.0)];
+    EXPECT_FLOAT_EQ(window.frame.size.width, expected.size.width);
+    EXPECT_FLOAT_EQ(window.frame.size.height, expected.size.height);
+}
+
+TEST(MacosWindowMetrics, MovingAWindowDoesNotChangeItsSize) {
+    // arrange a shown window whose size is settled (§5.3)
+    WindowOptions options;
+    options.title = "metrics-move";
+    options.size = albor::Size{500.0f, 320.0f};
+    std::unique_ptr<MacosPlatformWindow> platform = MacosPlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    platform->show();
+    const WindowMetrics before = platform->metrics();
+    NSWindow* window = (__bridge NSWindow*)const_cast<void*>(platform->native_window_handle().object());
+    ASSERT_NE(window, nil);
+    RecordingListener listener;
+    platform->set_listener(&listener);
+    const NSPoint origin = window.frame.origin;
+    // act
+    [window setFrameOrigin:NSMakePoint(window.frame.origin.x + 40.0, window.frame.origin.y + 30.0)];
+    // assert
+    EXPECT_FLOAT_EQ(window.frame.origin.x, origin.x + 40.0);
+    EXPECT_EQ(listener.resizes, 0);
+    const WindowMetrics after = platform->metrics();
+    EXPECT_FLOAT_EQ(after.logical_size.width, before.logical_size.width);
+    EXPECT_FLOAT_EQ(after.logical_size.height, before.logical_size.height);
+}
+
+TEST(MacosWindowMetrics, TheWindowServerFrameMatchesTheAppKitFrame) {
+    // arrange a shown window whose server record is looked up by its own window number (§5.3)
+    WindowOptions options;
+    options.title = "metrics-server-frame";
+    options.size = albor::Size{1200.0f, 800.0f};
+    options.visible = false;
+    std::unique_ptr<MacosPlatformWindow> platform = MacosPlatformWindow::create(options);
+    ASSERT_NE(platform, nullptr);
+    platform->show();
+    NSWindow* window = (__bridge NSWindow*)const_cast<void*>(platform->native_window_handle().object());
+    ASSERT_NE(window, nil);
+    const NSInteger number = window.windowNumber;
+    // act
+    CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID);
+    if (list == nullptr)
+        GTEST_SKIP() << "no on screen window server on this host";
+    CGRect server = CGRectNull;
+    for (NSDictionary* entry in (__bridge NSArray*)list) {
+        if ([entry[(id)kCGWindowNumber] integerValue] == number) {
+            NSDictionary* bounds = entry[(id)kCGWindowBounds];
+            server = CGRectMake([bounds[@"X"] doubleValue], [bounds[@"Y"] doubleValue], [bounds[@"Width"] doubleValue], [bounds[@"Height"] doubleValue]);
+        }
+    }
+    CFRelease(list);
+    if (CGRectIsNull(server))
+        GTEST_SKIP() << "the window is not on screen";
+    // assert the frame is the content plus the title bar in both sources (§5.3, AD-27)
+    EXPECT_FLOAT_EQ(server.size.width, window.frame.size.width);
+    EXPECT_FLOAT_EQ(server.size.height, window.frame.size.height);
+    EXPECT_FLOAT_EQ(platform->metrics().logical_size.height, 800.0f);
 }
 
 TEST(MacosPopupWindow, ThePopupLayerIsNonopaque) {

@@ -775,11 +775,12 @@ namespace albor
         if (!registered)
             return nullptr;
         // the initial size is logical pixels grown by the scale the screen reports (AD-27)
-        const float scale = static_cast<float>(initial_dpi()) / 96.0f;
-        RECT frame{0, 0, static_cast<LONG>(options.size.width * scale), static_cast<LONG>(options.size.height * scale)};
+        const UINT dpi = initial_dpi();
+        const float scale = static_cast<float>(dpi) / 96.0f;
+        RECT frame{0, 0, static_cast<LONG>(std::lround(options.size.width * scale)), static_cast<LONG>(std::lround(options.size.height * scale))};
         // the frame is adjusted for the borders and title bar, because the options size the client area (§5.1)
         const DWORD style = style_for(options);
-        AdjustWindowRectEx(&frame, style, FALSE, 0);
+        AdjustWindowRectExForDpi(&frame, style, FALSE, 0, dpi);
         // the state is shared with the window procedure, which reaches it through the window's own user data (§4.2)
         std::shared_ptr<Win32WindowState> state = std::make_shared<Win32WindowState>();
         // the creation style is kept, because a later resize has to adjust against the very frame this window has (§5.1)
@@ -903,10 +904,11 @@ namespace albor
         if (m_state->window == nullptr)
             return;
         // the requested size is the client area in logical pixels, which the frame grows around (§5.1, AD-27)
-        const float scale = scale_of(m_state->window);
-        RECT frame{0, 0, static_cast<LONG>(size.width * scale), static_cast<LONG>(size.height * scale)};
-        // the frame is adjusted against the creation style, because that is the frame this window actually has (§5.1)
-        AdjustWindowRectEx(&frame, m_state->style, FALSE, 0);
+        const UINT dpi = GetDpiForWindow(m_state->window);
+        const float scale = dpi == 0 ? 1.0f : static_cast<float>(dpi) / 96.0f;
+        RECT frame{0, 0, static_cast<LONG>(std::lround(size.width * scale)), static_cast<LONG>(std::lround(size.height * scale))};
+        // the frame is adjusted against the creation style and the window dpi, because that is the frame it has (§5.1)
+        AdjustWindowRectExForDpi(&frame, m_state->style, FALSE, 0, dpi);
         // the origin is kept and no other window moves, so the window grows from the corner the user placed it at (§7.4)
         SetWindowPos(m_state->window, nullptr, 0, 0, frame.right - frame.left, frame.bottom - frame.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
