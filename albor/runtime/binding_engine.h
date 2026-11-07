@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <span>
 #include <unordered_map>
 #include <vector>
@@ -69,6 +70,9 @@ namespace albor
         // hand out the number of bindings that are still registered
         [[nodiscard]] std::size_t size() const;
 
+        // hand out how many binding slots the engine holds, which counts dead slots a test asserts on (§7.3)
+        [[nodiscard]] std::size_t binding_slot_count() const;
+
         // mark every binding that depends on a property dirty, which a property write calls (§7.3)
         void notify_changed(PropertyId source);
 
@@ -100,8 +104,8 @@ namespace albor
             // the properties the evaluator reads, in declaration order
             std::vector<PropertyId> dependencies;
 
-            // the work that produces the bound value
-            BindingEvaluator evaluator;
+            // the shared callable survives self-rebinding, while the static path stays allocation free (§7.3)
+            std::shared_ptr<BindingEvaluator> evaluator;
 
             // the static work that runs when the binding installed a plain function instead of a callable (§13.3)
             StaticBindingFn static_evaluator = nullptr;
@@ -110,7 +114,7 @@ namespace albor
             void* static_context = nullptr;
 
             // report whether the binding still carries work, which is what a live handle means (§7.3)
-            [[nodiscard]] bool registered() const { return evaluator != nullptr || static_evaluator != nullptr; }
+            [[nodiscard]] bool registered() const { return (evaluator != nullptr && static_cast<bool>(*evaluator)) || static_evaluator != nullptr; }
 
             // whether the binding is waiting to be evaluated
             bool dirty = false;
@@ -120,6 +124,9 @@ namespace albor
 
             // whether the binding already took its place in the order of the current pass (§7.3, AD-04a)
             bool ordered = false;
+
+            // the generation this slot carries, which tells a stale handle from its replacement (§7.3)
+            std::uint32_t generation = 1;
         };
 
         // find a binding by handle, returning null when the handle is stale
@@ -128,14 +135,26 @@ namespace albor
         // find a binding by handle for reading, returning null when the handle is stale
         [[nodiscard]] const Binding* find(BindingId binding) const;
 
+        // claim a slot for a new binding, reusing a dead slot and advancing its generation (§7.3)
+        [[nodiscard]] BindingId claim_slot(PropertyId target);
+
+        // mark a binding dirty and append it to the active settle order when it is not ordered yet (§7.3)
+        void mark_dirty(BindingId binding);
+
         // hand out the handle of the binding that writes a property, or zero when nothing does
         [[nodiscard]] BindingId producer_of(PropertyId target) const;
 
         // walk a binding depth first so the returned order evaluates sources before consumers (§7.3, AD-04a)
         void visit(BindingId binding, std::vector<BindingId>& order);
 
-        // the registered bindings
+        // the binding slots, including dead slots waiting for reuse (§7.3)
         std::vector<Binding> m_bindings;
+
+        // the dead slots a later binding may claim, which keeps a rebuild from growing storage (§7.3)
+        std::vector<std::uint32_t> m_free_slots;
+
+        // the order of the active settle, which a write extends while the pass runs (§7.3)
+        std::vector<BindingId>* m_settle_order = nullptr;
 
         // the bindings that read each source property, which is the reverse edge of the graph (§7.3)
         std::unordered_map<std::uint64_t, std::vector<BindingId>> m_dependents;
@@ -145,9 +164,6 @@ namespace albor
 
         // the allocator that hands out component scoped property identifiers (§7.2)
         PropertyIdAllocator m_allocator;
-
-        // the handle the next registered binding receives, where zero is never handed out
-        BindingId m_next_binding = 1;
 
         // how many evaluations the engine has performed
         std::size_t m_evaluations = 0;

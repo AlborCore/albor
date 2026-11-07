@@ -2,6 +2,24 @@
 
 namespace albor
 {
+    namespace
+    {
+        // the low half of a handle is the slot number, so a dead slot can carry a new generation (§7.3)
+        constexpr std::uint32_t BINDING_SLOT_MASK = 0xffffffffu;
+
+        // the high half of a handle is the slot generation, which keeps a stale handle stale after reuse (§7.3)
+        constexpr std::uint32_t BINDING_GENERATION_SHIFT = 32;
+
+        // pack one slot and its generation into the handle the caller holds (§7.3)
+        constexpr BindingId make_binding_id(std::uint32_t slot, std::uint32_t generation) { return (static_cast<BindingId>(generation) << BINDING_GENERATION_SHIFT) | static_cast<BindingId>(slot); }
+
+        // unpack the slot number from a handle, where zero names no binding (§7.3)
+        constexpr std::uint32_t binding_slot(BindingId binding) { return static_cast<std::uint32_t>(binding & BINDING_SLOT_MASK); }
+
+        // unpack the generation from a handle, which a stale slot replacement no longer matches (§7.3)
+        constexpr std::uint32_t binding_generation(BindingId binding) { return static_cast<std::uint32_t>(binding >> BINDING_GENERATION_SHIFT); }
+    } // namespace
+
     PropertyIdAllocator::PropertyIdAllocator(std::uint32_t first_base) :
         m_base(0), m_next_base(first_base), m_next_slot(0), m_components(0) {}
 
@@ -39,6 +57,36 @@ namespace albor
         return m_allocator.next();
     }
 
+    BindingId BindingEngine::claim_slot(PropertyId target) {
+        // a dead slot is reused so a rebuilt sink does not grow the slot vector (§7.3)
+        if (!m_free_slots.empty()) {
+            const std::uint32_t slot = m_free_slots.back();
+            m_free_slots.pop_back();
+            Binding& entry = m_bindings[slot - 1];
+            // the generation advances, so a handle from the old binding can never name the replacement (§7.3)
+            entry.generation++;
+            // a wrap after 2^32 reuses restarts at one, a bound far beyond a session's rebuild count (§7.3)
+            if (entry.generation == 0)
+                entry.generation = 1;
+            entry.target = target;
+            entry.dependencies.clear();
+            entry.evaluator = nullptr;
+            entry.static_evaluator = nullptr;
+            entry.static_context = nullptr;
+            entry.dirty = true;
+            entry.visiting = false;
+            entry.ordered = false;
+            return make_binding_id(slot, entry.generation);
+        }
+        // a fresh slot takes the next index, which is the only time the vector grows (§7.3)
+        Binding binding;
+        binding.target = target;
+        binding.generation = 1;
+        binding.dirty = true;
+        m_bindings.push_back(std::move(binding));
+        return make_binding_id(static_cast<std::uint32_t>(m_bindings.size()), m_bindings.back().generation);
+    }
+
     BindingId BindingEngine::bind(PropertyId target, std::vector<PropertyId> dependencies, BindingEvaluator evaluator) {
         // a binding with no evaluator has no work, so it is refused rather than leaving a dead slot (§7.3)
         if (!evaluator)
@@ -48,20 +96,18 @@ namespace albor
         const auto existing = m_producers.find(key);
         if (existing != m_producers.end())
             unbind(existing->second);
-        // the handle is the 1-based index, so zero is always free to mean no binding (§7.3)
-        const BindingId handle = m_next_binding++;
-        Binding binding;
-        binding.target = target;
+        // the slot is reused when one is free, so a replacement does not grow the binding vector (§7.3)
+        const BindingId handle = claim_slot(target);
+        Binding& binding = *find(handle);
         binding.dependencies = std::move(dependencies);
-        binding.evaluator = std::move(evaluator);
-        // a fresh binding settles on the next settle, which is what makes the first frame correct (§7.3)
-        binding.dirty = true;
-        m_bindings.push_back(std::move(binding));
+        binding.evaluator = std::make_shared<BindingEvaluator>(std::move(evaluator));
         // every declared dependency gains this binding as a consumer, which is the reverse edge of the graph (§7.3)
-        for (const PropertyId dependency : m_bindings.back().dependencies)
+        for (const PropertyId dependency : binding.dependencies)
             m_dependents[property_key(dependency)].push_back(handle);
         // the target records its writer, which is what orders a consumer after its source (§7.3, AD-04a)
         m_producers[key] = handle;
+        // the target's consumers recompute after the replacement, so no consumer sees the old value (§7.3)
+        notify_changed(target);
         return handle;
     }
 
@@ -74,57 +120,64 @@ namespace albor
         const auto existing = m_producers.find(key);
         if (existing != m_producers.end())
             unbind(existing->second);
-        // the handle is the 1-based index, so zero is always free to mean no binding (§7.3)
-        const BindingId handle = m_next_binding++;
-        Binding binding;
-        binding.target = target;
+        // the slot is reused when one is free, so a replacement does not grow the binding vector (§7.3)
+        const BindingId handle = claim_slot(target);
+        Binding& binding = *find(handle);
         binding.dependencies.assign(dependencies.begin(), dependencies.end());
         binding.static_evaluator = evaluator;
         binding.static_context = context;
-        // a fresh binding settles on the next settle, which is what makes the first frame correct (§7.3)
-        binding.dirty = true;
-        m_bindings.push_back(std::move(binding));
         // every declared dependency gains this binding as a consumer, which is the reverse edge of the graph (§7.3)
-        for (const PropertyId dependency : m_bindings.back().dependencies)
+        for (const PropertyId dependency : binding.dependencies)
             m_dependents[property_key(dependency)].push_back(handle);
         // the target records its writer, which is what orders a consumer after its source (§7.3, AD-04a)
         m_producers[key] = handle;
+        // the target's consumers recompute after the replacement, so no consumer sees the old value (§7.3)
+        notify_changed(target);
         return handle;
     }
 
     bool BindingEngine::unbind(BindingId binding) {
         // a stale handle names nothing, so the caller learns the removal did not happen (§7.3)
-        if (binding == 0 || binding > m_bindings.size())
-            return false;
-        Binding& entry = m_bindings[binding - 1];
-        // an already unbound handle changes nothing, so a double removal is a no operation (§7.3)
-        if (!entry.registered())
+        Binding* entry = find(binding);
+        if (entry == nullptr || !entry->registered())
             return false;
         // every dependency loses the consumer edge, so a later change no longer reaches it (§7.3)
-        for (const PropertyId dependency : entry.dependencies) {
-            auto& consumers = m_dependents[property_key(dependency)];
+        for (const PropertyId dependency : entry->dependencies) {
+            const std::uint64_t dependency_key = property_key(dependency);
+            const auto found = m_dependents.find(dependency_key);
+            // a dependency declared twice finds no edge the second time, so it is skipped (§7.3)
+            if (found == m_dependents.end())
+                continue;
             // every matching edge goes, so a dependency declared twice cannot leave a dead consumer behind (§7.3)
-            std::erase(consumers, binding);
+            std::erase(found->second, binding);
+            // an empty reverse edge goes too, so a dead dependency does not hold a map entry (§7.3)
+            if (found->second.empty())
+                m_dependents.erase(found);
         }
         // the producer edge goes with it, so a consumer no longer waits for a dead writer (§7.3)
-        const std::uint64_t key = property_key(entry.target);
+        const std::uint64_t key = property_key(entry->target);
         const auto producer = m_producers.find(key);
         if (producer != m_producers.end() && producer->second == binding)
             m_producers.erase(producer);
         // the handle names no target once unbound, so target() agrees with bound() (§7.3)
-        entry.target = invalid_property_id();
+        entry->target = invalid_property_id();
         // the binding is emptied rather than erased, so no handle ever names a different binding (§7.3)
-        entry.evaluator = nullptr;
-        entry.static_evaluator = nullptr;
-        entry.static_context = nullptr;
-        entry.dependencies.clear();
-        entry.dirty = false;
+        entry->evaluator = nullptr;
+        entry->static_evaluator = nullptr;
+        entry->static_context = nullptr;
+        entry->dependencies.clear();
+        entry->dirty = false;
+        entry->visiting = false;
+        entry->ordered = false;
+        // the dead slot is queued for reuse, which bounds the storage a rebuild cycle can take (§7.3)
+        m_free_slots.push_back(binding_slot(binding));
         return true;
     }
 
     bool BindingEngine::bound(BindingId binding) const {
         // an unbound handle keeps its slot but carries no work (§7.3)
-        return binding != 0 && binding <= m_bindings.size() && m_bindings[binding - 1].registered();
+        const Binding* entry = find(binding);
+        return entry != nullptr && entry->registered();
     }
 
     PropertyId BindingEngine::target(BindingId binding) const {
@@ -162,32 +215,44 @@ namespace albor
         return count;
     }
 
+    std::size_t BindingEngine::binding_slot_count() const {
+        // the slot count includes dead slots, because that is the storage a test measures (§7.3)
+        return m_bindings.size();
+    }
+
     void BindingEngine::notify_changed(PropertyId source) {
         const auto found = m_dependents.find(property_key(source));
         // a property nothing depends on settles nothing, which is the common case of a leaf (§7.3)
         if (found == m_dependents.end())
             return;
         // every registered consumer becomes dirty, which is the eager push of the change (§7.3, AD-04c)
-        for (const BindingId binding : found->second) {
-            Binding* entry = find(binding);
-            // an unbound consumer was removed, so it is skipped rather than resurrected (§7.3)
-            if (entry != nullptr && entry->registered())
-                entry->dirty = true;
-        }
+        for (const BindingId binding : found->second)
+            mark_dirty(binding);
     }
 
     void BindingEngine::invalidate(BindingId binding) {
+        // an animation presence write marks its own binding without walking the graph (AD-04d)
+        mark_dirty(binding);
+    }
+
+    void BindingEngine::mark_dirty(BindingId binding) {
         Binding* entry = find(binding);
         // a stale handle marks nothing (§7.3)
         if (entry == nullptr || !entry->registered())
             return;
-        // an animation presence write marks its own binding without walking the graph (AD-04d)
         entry->dirty = true;
+        // a binding outside the active order joins it now, so a write settles its consumers in the same pass (§7.3)
+        if (m_settle_order != nullptr && !entry->ordered)
+            visit(binding, *m_settle_order);
     }
 
     std::size_t BindingEngine::settle() {
         std::size_t passes = 0;
         std::vector<BindingId> order;
+        // a nested settle restores the outer order when it returns (§7.3)
+        std::vector<BindingId>* const previous_order = m_settle_order;
+        // the active order is shared with writes, so a consumer a binding dirties joins the same pass (§7.3)
+        m_settle_order = &order;
         // the engine repeats until the graph converges or the cycle budget is spent (§7.3, AD-04c)
         while (passes < EVALUATION_BUDGET) {
             order.clear();
@@ -197,11 +262,12 @@ namespace albor
             // every dirty binding enters the walk, which orders sources before their consumers (§7.3, AD-04a)
             for (std::size_t index = 0; index < m_bindings.size(); index++)
                 if (m_bindings[index].dirty)
-                    visit(static_cast<BindingId>(index + 1), order);
+                    visit(make_binding_id(static_cast<std::uint32_t>(index + 1), m_bindings[index].generation), order);
             // a converged graph leaves nothing dirty, so an empty walk ends the settle (§7.3)
             if (order.empty())
                 break;
-            for (const BindingId binding : order) {
+            for (std::size_t cursor = 0; cursor < order.size(); cursor++) {
+                const BindingId binding = order[cursor];
                 Binding* entry = find(binding);
                 // an unbound binding that a previous pass removed is skipped (§7.3)
                 if (entry == nullptr)
@@ -214,14 +280,22 @@ namespace albor
                 // the dirty flag clears before the run, so a binding that reads its own target still converges (§7.3)
                 entry->dirty = false;
                 // a static binding runs its plain function over the recorded context, the allocation free path (§13.3)
-                if (entry->static_evaluator != nullptr)
-                    entry->static_evaluator(entry->static_context);
-                else
-                    entry->evaluator();
+                if (entry->static_evaluator != nullptr) {
+                    const StaticBindingFn evaluator = entry->static_evaluator;
+                    void* const context = entry->static_context;
+                    evaluator(context);
+                }
+                else {
+                    // the shared callable stays alive, because the evaluator may register or rebind while it runs (§7.3)
+                    const std::shared_ptr<BindingEvaluator> evaluator = entry->evaluator;
+                    (*evaluator)();
+                }
                 m_evaluations++;
             }
             passes++;
         }
+        // the order pointer belongs to this call, so a later write does not touch a dead vector (§7.3)
+        m_settle_order = previous_order;
         // spending the whole budget while work remains is the dynamic cycle diagnostic (§7.3)
         m_cycle_detected = dirty_count() > 0;
         return passes;
@@ -246,17 +320,27 @@ namespace albor
     }
 
     BindingEngine::Binding* BindingEngine::find(BindingId binding) {
-        // handle zero and a handle past the end both name no binding (§7.3)
-        if (binding == 0 || binding > m_bindings.size())
+        // handle zero and a slot past the end both name no binding (§7.3)
+        const std::uint32_t slot = binding_slot(binding);
+        if (slot == 0 || slot > m_bindings.size())
             return nullptr;
-        return &m_bindings[binding - 1];
+        Binding& entry = m_bindings[slot - 1];
+        // a generation mismatch means the slot was reused, so the old handle stays stale (§7.3)
+        if (entry.generation != binding_generation(binding))
+            return nullptr;
+        return &entry;
     }
 
     const BindingEngine::Binding* BindingEngine::find(BindingId binding) const {
-        // handle zero and a handle past the end both name no binding (§7.3)
-        if (binding == 0 || binding > m_bindings.size())
+        // handle zero and a slot past the end both name no binding (§7.3)
+        const std::uint32_t slot = binding_slot(binding);
+        if (slot == 0 || slot > m_bindings.size())
             return nullptr;
-        return &m_bindings[binding - 1];
+        const Binding& entry = m_bindings[slot - 1];
+        // a generation mismatch means the slot was reused, so the old handle stays stale (§7.3)
+        if (entry.generation != binding_generation(binding))
+            return nullptr;
+        return &entry;
     }
 
     BindingId BindingEngine::producer_of(PropertyId target) const {

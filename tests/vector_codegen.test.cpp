@@ -294,6 +294,24 @@ TEST(ConditionalCodegen, AReopenedBodySkipsTheSinkItsRebuildUnbinds) {
     EXPECT_FALSE(engine.cycle_detected());
 }
 
+TEST(ConditionalCodegen, AReopenedBodyReusesItsBindingSlot) {
+    // arrange
+    BindingEngine engine;
+    ConditionalPanel panel(&engine, nullptr);
+    // act
+    for (int cycle = 0; cycle < 64; cycle++) {
+        panel.set_show(true);
+        engine.settle();
+        panel.set_show(false);
+        engine.settle();
+    }
+    // assert
+    EXPECT_EQ(engine.binding_slot_count(), 3u);
+    EXPECT_EQ(engine.size(), 3u);
+    EXPECT_EQ(engine.dirty_count(), 0u);
+    EXPECT_FALSE(engine.cycle_detected());
+}
+
 TEST(ConditionalCodegen, AdjacentBodiesKeepTheWrittenOrder) {
     // arrange a panel with two adjacent conditionals, which is the case a shared offset reverses (§11.1)
     BindingEngine engine;

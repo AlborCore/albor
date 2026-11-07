@@ -245,6 +245,9 @@ namespace albor
         // the engine forgets the evaluator, so a later change no longer reaches the property (§7.3)
         m_engine->unbind(m_binding);
         m_binding = 0;
+        // the static evaluator and its context are dead with the binding, so they are cleared too (§13.3)
+        m_static_evaluator = nullptr;
+        m_static_context = nullptr;
         // the last bound value is promoted to the presented value, so unbinding freezes rather than blanks (§7.3)
         m_value = m_bound_value;
         // the property is a plain value again, which is what unbinding means (§7.3)
@@ -306,5 +309,8 @@ namespace albor
     void Property<T>::write_bound(T value) {
         // the bound value is recorded separately, so an override or an animation can mask it (AD-24, AD-04d)
         m_bound_value = std::move(value);
+        // the target's consumers re-evaluate, which is the eager push of a bound write (§7.3, AD-04c)
+        if (m_engine != nullptr)
+            m_engine->notify_changed(m_id);
     }
 } // namespace albor
