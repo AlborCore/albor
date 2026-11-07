@@ -72,6 +72,18 @@ namespace albor
         // the cells the children claim through their spans, which a derived axis counts (§8.2)
         [[nodiscard]] std::size_t claimed_cells() const;
 
+        // the rows the visible children need when placed into a column count (§8.2)
+        [[nodiscard]] std::size_t required_rows(std::size_t column_count) const;
+
+        // the widest visible span, which a derived column count must not shrink below (§8.2)
+        [[nodiscard]] std::size_t widest_visible_span() const;
+
+        // report whether every visible span fits when the grid is that wide (§8.2)
+        [[nodiscard]] bool columns_fit(std::size_t column_count) const;
+
+        // report whether any child is visible, because an all hidden grid measures as nothing (§11.1, §18.2)
+        [[nodiscard]] bool has_visible_children() const;
+
         // the size of the cell at an index, which is the assigned extent divided by the count (§8.2)
         [[nodiscard]] Size cell_size(const Rect& bounds) const;
 

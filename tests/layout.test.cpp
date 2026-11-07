@@ -135,6 +135,46 @@ TEST(StackLayoutChecks, MeasureDoesNotArrange) {
     EXPECT_EQ(child_ptr->arranges, 0u);
 }
 
+TEST(StackLayoutChecks, AHiddenChildLeavesTheStack) {
+    // arrange
+    StackLayout stack;
+    auto visible = std::make_unique<LayoutTestNode>();
+    auto hidden = std::make_unique<LayoutTestNode>();
+    visible->intrinsic = Size{30.0f, 10.0f};
+    hidden->intrinsic = Size{100.0f, 100.0f};
+    LayoutTestNode* hidden_ptr = hidden.get();
+    stack.add_child(std::move(visible));
+    stack.add_child(std::move(hidden));
+    hidden_ptr->set_visible(false);
+    Size measured{};
+    const Rect bounds = Rect::from_origin_size(Point{2.0f, 3.0f}, Size{50.0f, 50.0f});
+    // act
+    stack.measure(SizeConstraints::unconstrained(), measured);
+    stack.arrange(bounds);
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 30.0f);
+    EXPECT_FLOAT_EQ(measured.height, 10.0f);
+    EXPECT_EQ(hidden_ptr->measures, 0u);
+    EXPECT_EQ(hidden_ptr->arranges, 0u);
+}
+
+TEST(StackLayoutChecks, AStackWithEveryChildHiddenMeasuresAsNothing) {
+    // arrange
+    StackLayout stack;
+    auto child = std::make_unique<LayoutTestNode>();
+    LayoutTestNode* child_ptr = child.get();
+    stack.add_child(std::move(child));
+    child_ptr->set_visible(false);
+    Size measured{};
+    // act
+    stack.measure(SizeConstraints::unconstrained(), measured);
+    stack.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f}));
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 0.0f);
+    EXPECT_FLOAT_EQ(measured.height, 0.0f);
+    EXPECT_EQ(child_ptr->arranges, 0u);
+}
+
 TEST(RowLayoutChecks, DefaultsToNoGap) {
     // arrange
     RowLayout row;
@@ -245,6 +285,149 @@ TEST(RowLayoutChecks, PlacesChildrenLeftToRightWithGaps) {
     EXPECT_FLOAT_EQ(second_ptr->bounds().height, 40.0f);
 }
 
+TEST(RowLayoutChecks, AHiddenChildTakesNoSlotOrGap) {
+    // arrange
+    RowLayout row;
+    row.set_gap(5.0f);
+    auto first = std::make_unique<LayoutTestNode>();
+    auto second = std::make_unique<LayoutTestNode>();
+    auto third = std::make_unique<LayoutTestNode>();
+    first->intrinsic = Size{10.0f, 20.0f};
+    second->intrinsic = Size{10.0f, 20.0f};
+    third->intrinsic = Size{10.0f, 20.0f};
+    LayoutTestNode* second_ptr = second.get();
+    LayoutTestNode* third_ptr = third.get();
+    row.add_child(std::move(first));
+    row.add_child(std::move(second));
+    row.add_child(std::move(third));
+    second_ptr->set_visible(false);
+    Size measured{};
+    // act
+    row.measure(SizeConstraints::unconstrained(), measured);
+    row.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 40.0f}));
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 25.0f);
+    EXPECT_EQ(second_ptr->measures, 0u);
+    EXPECT_EQ(second_ptr->arranges, 0u);
+    EXPECT_FLOAT_EQ(third_ptr->bounds().x, 15.0f);
+}
+
+TEST(RowLayoutChecks, AHiddenFirstChildStartsAtTheLeadingEdge) {
+    // arrange
+    RowLayout row;
+    row.set_gap(5.0f);
+    auto first = std::make_unique<LayoutTestNode>();
+    auto second = std::make_unique<LayoutTestNode>();
+    first->intrinsic = Size{10.0f, 20.0f};
+    second->intrinsic = Size{10.0f, 20.0f};
+    LayoutTestNode* first_ptr = first.get();
+    LayoutTestNode* second_ptr = second.get();
+    row.add_child(std::move(first));
+    row.add_child(std::move(second));
+    first_ptr->set_visible(false);
+    Size measured{};
+    // act
+    row.measure(SizeConstraints::unconstrained(), measured);
+    row.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 40.0f}));
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 10.0f);
+    EXPECT_FLOAT_EQ(second_ptr->bounds().x, 0.0f);
+    EXPECT_EQ(first_ptr->measures, 0u);
+    EXPECT_EQ(first_ptr->arranges, 0u);
+}
+
+TEST(RowLayoutChecks, AHiddenStretchChildTakesNoShare) {
+    // arrange
+    RowLayout row;
+    auto first = std::make_unique<LayoutTestNode>();
+    auto hidden = std::make_unique<LayoutTestNode>();
+    auto last = std::make_unique<LayoutTestNode>();
+    first->intrinsic = Size{10.0f, 10.0f};
+    hidden->intrinsic = Size{10.0f, 10.0f};
+    last->intrinsic = Size{10.0f, 10.0f};
+    last->set_horizontal_align(Align::Stretch);
+    LayoutTestNode* hidden_ptr = hidden.get();
+    LayoutTestNode* last_ptr = last.get();
+    row.add_child(std::move(first));
+    row.add_child(std::move(hidden));
+    row.add_child(std::move(last));
+    hidden_ptr->set_horizontal_align(Align::Stretch);
+    hidden_ptr->set_visible(false);
+    Size measured{};
+    // act
+    row.measure(SizeConstraints::unconstrained(), measured);
+    row.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{40.0f, 10.0f}));
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 20.0f);
+    EXPECT_EQ(hidden_ptr->arranges, 0u);
+    EXPECT_FLOAT_EQ(last_ptr->bounds().x, 10.0f);
+    EXPECT_FLOAT_EQ(last_ptr->bounds().width, 30.0f);
+}
+
+TEST(RowLayoutChecks, ARowWithEveryChildHiddenMeasuresAsNothing) {
+    // arrange
+    RowLayout row;
+    row.set_gap(5.0f);
+    auto first = std::make_unique<LayoutTestNode>();
+    auto second = std::make_unique<LayoutTestNode>();
+    LayoutTestNode* first_ptr = first.get();
+    LayoutTestNode* second_ptr = second.get();
+    row.add_child(std::move(first));
+    row.add_child(std::move(second));
+    first_ptr->set_visible(false);
+    second_ptr->set_visible(false);
+    Size measured{};
+    // act
+    row.measure(SizeConstraints::unconstrained(), measured);
+    row.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 40.0f}));
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 0.0f);
+    EXPECT_FLOAT_EQ(measured.height, 0.0f);
+    EXPECT_EQ(first_ptr->measures, 0u);
+    EXPECT_EQ(second_ptr->measures, 0u);
+    EXPECT_EQ(first_ptr->arranges, 0u);
+    EXPECT_EQ(second_ptr->arranges, 0u);
+}
+
+TEST(RowLayoutChecks, AShownChildReturnsToTheRow) {
+    // arrange
+    RowLayout row;
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{10.0f, 20.0f};
+    child->set_explicit_id("field");
+    LayoutTestNode* child_ptr = child.get();
+    row.add_child(std::move(child));
+    child_ptr->set_visible(false);
+    Size measured{};
+    row.measure(SizeConstraints::unconstrained(), measured);
+    row.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 40.0f}));
+    // act
+    child_ptr->set_visible(true);
+    row.measure(SizeConstraints::unconstrained(), measured);
+    row.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 40.0f}));
+    // assert
+    EXPECT_EQ(row.child_count(), 1u);
+    EXPECT_EQ(child_ptr->identity().explicit_id, "field");
+    EXPECT_TRUE(child_ptr->visible());
+    EXPECT_EQ(child_ptr->measures, 1u);
+    EXPECT_EQ(child_ptr->arranges, 1u);
+    EXPECT_FLOAT_EQ(measured.width, 10.0f);
+}
+
+TEST(RowLayoutChecks, HidingAChildMarksTheRowDirty) {
+    // arrange
+    RowLayout row;
+    auto child = std::make_unique<LayoutTestNode>();
+    LayoutTestNode* child_ptr = child.get();
+    row.add_child(std::move(child));
+    row.clear_dirty();
+    // act
+    child_ptr->set_visible(false);
+    // assert
+    EXPECT_TRUE(child_ptr->layout_dirty());
+    EXPECT_TRUE(row.layout_dirty());
+}
+
 TEST(RowLayoutChecks, KeepsTheMeasuredWidthUnderTheAvailableHeight) {
     // arrange
     RowLayout row;
@@ -352,6 +535,86 @@ TEST(ColumnLayoutChecks, PlacesChildrenTopToBottomWithGaps) {
     EXPECT_FLOAT_EQ(first_ptr->bounds().width, 80.0f);
     EXPECT_FLOAT_EQ(second_ptr->bounds().y, 30.0f);
     EXPECT_FLOAT_EQ(second_ptr->bounds().height, 30.0f);
+}
+
+TEST(ColumnLayoutChecks, AHiddenChildTakesNoSlotOrGap) {
+    // arrange
+    ColumnLayout column;
+    column.set_gap(8.0f);
+    auto first = std::make_unique<LayoutTestNode>();
+    auto second = std::make_unique<LayoutTestNode>();
+    auto third = std::make_unique<LayoutTestNode>();
+    first->intrinsic = Size{10.0f, 20.0f};
+    second->intrinsic = Size{10.0f, 20.0f};
+    third->intrinsic = Size{10.0f, 20.0f};
+    LayoutTestNode* second_ptr = second.get();
+    LayoutTestNode* third_ptr = third.get();
+    column.add_child(std::move(first));
+    column.add_child(std::move(second));
+    column.add_child(std::move(third));
+    second_ptr->set_visible(false);
+    Size measured{};
+    // act
+    column.measure(SizeConstraints::unconstrained(), measured);
+    column.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{80.0f, 200.0f}));
+    // assert
+    EXPECT_FLOAT_EQ(measured.height, 48.0f);
+    EXPECT_EQ(second_ptr->measures, 0u);
+    EXPECT_EQ(second_ptr->arranges, 0u);
+    EXPECT_FLOAT_EQ(third_ptr->bounds().y, 28.0f);
+}
+
+TEST(ColumnLayoutChecks, AHiddenStretchChildTakesNoShare) {
+    // arrange
+    ColumnLayout column;
+    auto first = std::make_unique<LayoutTestNode>();
+    auto hidden = std::make_unique<LayoutTestNode>();
+    auto last = std::make_unique<LayoutTestNode>();
+    first->intrinsic = Size{10.0f, 10.0f};
+    hidden->intrinsic = Size{10.0f, 10.0f};
+    last->intrinsic = Size{10.0f, 10.0f};
+    last->set_vertical_align(Align::Stretch);
+    LayoutTestNode* hidden_ptr = hidden.get();
+    LayoutTestNode* last_ptr = last.get();
+    column.add_child(std::move(first));
+    column.add_child(std::move(hidden));
+    column.add_child(std::move(last));
+    hidden_ptr->set_vertical_align(Align::Stretch);
+    hidden_ptr->set_visible(false);
+    Size measured{};
+    // act
+    column.measure(SizeConstraints::unconstrained(), measured);
+    column.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 60.0f}));
+    // assert
+    EXPECT_FLOAT_EQ(measured.height, 20.0f);
+    EXPECT_EQ(hidden_ptr->arranges, 0u);
+    EXPECT_FLOAT_EQ(last_ptr->bounds().y, 10.0f);
+    EXPECT_FLOAT_EQ(last_ptr->bounds().height, 50.0f);
+}
+
+TEST(ColumnLayoutChecks, AColumnWithEveryChildHiddenMeasuresAsNothing) {
+    // arrange
+    ColumnLayout column;
+    column.set_gap(8.0f);
+    auto first = std::make_unique<LayoutTestNode>();
+    auto second = std::make_unique<LayoutTestNode>();
+    LayoutTestNode* first_ptr = first.get();
+    LayoutTestNode* second_ptr = second.get();
+    column.add_child(std::move(first));
+    column.add_child(std::move(second));
+    first_ptr->set_visible(false);
+    second_ptr->set_visible(false);
+    Size measured{};
+    // act
+    column.measure(SizeConstraints::unconstrained(), measured);
+    column.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{80.0f, 200.0f}));
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 0.0f);
+    EXPECT_FLOAT_EQ(measured.height, 0.0f);
+    EXPECT_EQ(first_ptr->measures, 0u);
+    EXPECT_EQ(second_ptr->measures, 0u);
+    EXPECT_EQ(first_ptr->arranges, 0u);
+    EXPECT_EQ(second_ptr->arranges, 0u);
 }
 
 TEST(ColumnLayoutChecks, GapChangeInvalidatesLayout) {
@@ -529,6 +792,52 @@ TEST(PaddingLayoutChecks, WrapperWithoutChildArrangesNothing) {
     // assert
     EXPECT_EQ(padding.bounds(), (Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 50.0f})));
     EXPECT_EQ(padding.child_count(), 0u);
+}
+
+TEST(PaddingLayoutChecks, AHiddenChildLeavesThePadding) {
+    // arrange
+    PaddingLayout padding;
+    padding.set_padding(5.0f);
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{100.0f, 100.0f};
+    LayoutTestNode* child_ptr = child.get();
+    padding.add_child(std::move(child));
+    child_ptr->set_visible(false);
+    Size measured{};
+    // act
+    padding.measure(SizeConstraints::unconstrained(), measured);
+    padding.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 10.0f);
+    EXPECT_FLOAT_EQ(measured.height, 10.0f);
+    EXPECT_EQ(child_ptr->measures, 0u);
+    EXPECT_EQ(child_ptr->arranges, 0u);
+}
+
+TEST(PaddingLayoutChecks, AShownChildReturnsToThePadding) {
+    // arrange
+    PaddingLayout padding;
+    padding.set_padding(5.0f);
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{100.0f, 100.0f};
+    LayoutTestNode* child_ptr = child.get();
+    padding.add_child(std::move(child));
+    child_ptr->set_visible(false);
+    Size measured{};
+    padding.measure(SizeConstraints::unconstrained(), measured);
+    // act
+    child_ptr->set_visible(true);
+    padding.measure(SizeConstraints::unconstrained(), measured);
+    padding.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}));
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 110.0f);
+    EXPECT_FLOAT_EQ(measured.height, 110.0f);
+    EXPECT_EQ(child_ptr->measures, 1u);
+    EXPECT_EQ(child_ptr->arranges, 1u);
+    EXPECT_FLOAT_EQ(child_ptr->bounds().x, 5.0f);
+    EXPECT_FLOAT_EQ(child_ptr->bounds().y, 5.0f);
+    EXPECT_FLOAT_EQ(child_ptr->bounds().width, 10.0f);
+    EXPECT_FLOAT_EQ(child_ptr->bounds().height, 10.0f);
 }
 
 TEST(PaddingLayoutChecks, MeasureDoesNotArrange) {
@@ -782,6 +1091,232 @@ TEST(GridLayoutChecks, ATwoColumnShapePlacesFourChildrenInTwoRows) {
     EXPECT_FLOAT_EQ(third_ptr->bounds().y, 20.0f);
     EXPECT_FLOAT_EQ(fourth_ptr->bounds().x, 20.0f);
     EXPECT_FLOAT_EQ(fourth_ptr->bounds().y, 20.0f);
+}
+
+TEST(GridLayoutChecks, AHiddenChildDoesNotConsumeACell) {
+    // arrange
+    GridLayout grid;
+    grid.set_columns(2);
+    auto first = std::make_unique<LayoutTestNode>();
+    auto second = std::make_unique<LayoutTestNode>();
+    auto third = std::make_unique<LayoutTestNode>();
+    LayoutTestNode* first_ptr = first.get();
+    LayoutTestNode* second_ptr = second.get();
+    LayoutTestNode* third_ptr = third.get();
+    grid.add_child(std::move(first));
+    grid.add_child(std::move(second));
+    grid.add_child(std::move(third));
+    second_ptr->set_visible(false);
+    // act
+    grid.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{40.0f, 20.0f}));
+    // assert
+    EXPECT_EQ(grid.rows(), 1u);
+    EXPECT_EQ(second_ptr->arranges, 0u);
+    EXPECT_FLOAT_EQ(first_ptr->bounds().x, 0.0f);
+    EXPECT_FLOAT_EQ(third_ptr->bounds().x, 20.0f);
+    EXPECT_FLOAT_EQ(third_ptr->bounds().y, 0.0f);
+}
+
+TEST(GridLayoutChecks, AHiddenFirstChildDoesNotShiftTheVisibleOnes) {
+    // arrange
+    GridLayout grid;
+    grid.set_columns(2);
+    auto first = std::make_unique<LayoutTestNode>();
+    auto second = std::make_unique<LayoutTestNode>();
+    auto third = std::make_unique<LayoutTestNode>();
+    LayoutTestNode* first_ptr = first.get();
+    LayoutTestNode* second_ptr = second.get();
+    LayoutTestNode* third_ptr = third.get();
+    grid.add_child(std::move(first));
+    grid.add_child(std::move(second));
+    grid.add_child(std::move(third));
+    first_ptr->set_visible(false);
+    // act
+    grid.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{40.0f, 40.0f}));
+    // assert
+    EXPECT_EQ(grid.rows(), 1u);
+    EXPECT_EQ(first_ptr->arranges, 0u);
+    EXPECT_FLOAT_EQ(second_ptr->bounds().x, 0.0f);
+    EXPECT_FLOAT_EQ(second_ptr->bounds().y, 0.0f);
+    EXPECT_FLOAT_EQ(third_ptr->bounds().x, 20.0f);
+}
+
+TEST(GridLayoutChecks, AHiddenChildWithASpanClaimsNoCell) {
+    // arrange
+    GridLayout grid;
+    grid.set_columns(3, 1);
+    auto first = std::make_unique<LayoutTestNode>();
+    auto hidden = std::make_unique<LayoutTestNode>();
+    auto last = std::make_unique<LayoutTestNode>();
+    LayoutTestNode* first_ptr = first.get();
+    LayoutTestNode* hidden_ptr = hidden.get();
+    LayoutTestNode* last_ptr = last.get();
+    grid.add_child(std::move(first));
+    grid.add_child(std::move(hidden));
+    grid.add_child(std::move(last));
+    ASSERT_TRUE(grid.set_span(1, GridSpan{.columns = 2, .rows = 1}));
+    hidden_ptr->set_visible(false);
+    // act
+    grid.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    // assert
+    EXPECT_EQ(hidden_ptr->arranges, 0u);
+    EXPECT_FLOAT_EQ(first_ptr->bounds().x, 0.0f);
+    EXPECT_FLOAT_EQ(last_ptr->bounds().x, 20.0f);
+}
+
+TEST(GridLayoutChecks, AVisibleSpanSurvivesHiddenSiblings) {
+    // arrange
+    GridLayout grid;
+    grid.set_columns(3);
+    auto first = std::make_unique<LayoutTestNode>();
+    auto second = std::make_unique<LayoutTestNode>();
+    auto third = std::make_unique<LayoutTestNode>();
+    auto fourth = std::make_unique<LayoutTestNode>();
+    auto fifth = std::make_unique<LayoutTestNode>();
+    auto sixth = std::make_unique<LayoutTestNode>();
+    LayoutTestNode* first_ptr = first.get();
+    LayoutTestNode* second_ptr = second.get();
+    LayoutTestNode* third_ptr = third.get();
+    LayoutTestNode* fourth_ptr = fourth.get();
+    LayoutTestNode* fifth_ptr = fifth.get();
+    LayoutTestNode* sixth_ptr = sixth.get();
+    grid.add_child(std::move(first));
+    grid.add_child(std::move(second));
+    grid.add_child(std::move(third));
+    grid.add_child(std::move(fourth));
+    grid.add_child(std::move(fifth));
+    grid.add_child(std::move(sixth));
+    ASSERT_TRUE(grid.set_span(0, GridSpan{.columns = 1, .rows = 2}));
+    third_ptr->set_visible(false);
+    fourth_ptr->set_visible(false);
+    fifth_ptr->set_visible(false);
+    sixth_ptr->set_visible(false);
+    // act
+    grid.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 40.0f}));
+    // assert
+    EXPECT_EQ(grid.rows(), 2u);
+    EXPECT_FLOAT_EQ(first_ptr->bounds().height, 40.0f);
+    EXPECT_FLOAT_EQ(second_ptr->bounds().y, 20.0f);
+    EXPECT_FLOAT_EQ(second_ptr->bounds().height, 20.0f);
+}
+
+TEST(GridLayoutChecks, AVisibleColumnSpanSurvivesAHiddenSibling) {
+    // arrange
+    GridLayout grid;
+    grid.set_rows(2);
+    auto first = std::make_unique<LayoutTestNode>();
+    auto hidden = std::make_unique<LayoutTestNode>();
+    auto last = std::make_unique<LayoutTestNode>();
+    LayoutTestNode* hidden_ptr = hidden.get();
+    LayoutTestNode* last_ptr = last.get();
+    grid.add_child(std::move(first));
+    grid.add_child(std::move(hidden));
+    grid.add_child(std::move(last));
+    ASSERT_TRUE(grid.set_span(2, GridSpan{.columns = 2, .rows = 1}));
+    hidden_ptr->set_visible(false);
+    // act
+    grid.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 40.0f}));
+    // assert
+    EXPECT_EQ(grid.columns(), 3u);
+    EXPECT_EQ(grid.rows(), 2u);
+    EXPECT_EQ(hidden_ptr->arranges, 0u);
+    EXPECT_FLOAT_EQ(last_ptr->bounds().x, 20.0f);
+    EXPECT_FLOAT_EQ(last_ptr->bounds().y, 20.0f);
+    EXPECT_FLOAT_EQ(last_ptr->bounds().width, 40.0f);
+}
+
+TEST(GridLayoutChecks, AReturnedDerivedShapeUsesTheWidenedColumns) {
+    // arrange
+    GridLayout grid;
+    grid.set_rows(2);
+    auto span = std::make_unique<LayoutTestNode>();
+    grid.add_child(std::move(span));
+    for (int index = 0; index < 4; index++)
+        grid.add_child(std::make_unique<LayoutTestNode>());
+    ASSERT_TRUE(grid.set_span(0, GridSpan{.columns = 2, .rows = 1}));
+    // act
+    grid.set_rows(0);
+    // assert
+    EXPECT_EQ(grid.columns(), 2u);
+    EXPECT_EQ(grid.rows(), 3u);
+}
+
+TEST(GridLayoutChecks, AMixedMeasureExcludesAHiddenChild) {
+    // arrange
+    GridLayout grid;
+    grid.set_columns(2);
+    grid.set_gap(4.0f);
+    auto first = std::make_unique<LayoutTestNode>();
+    auto hidden = std::make_unique<LayoutTestNode>();
+    auto third = std::make_unique<LayoutTestNode>();
+    first->intrinsic = Size{10.0f, 6.0f};
+    hidden->intrinsic = Size{100.0f, 100.0f};
+    third->intrinsic = Size{10.0f, 8.0f};
+    LayoutTestNode* hidden_ptr = hidden.get();
+    grid.add_child(std::move(first));
+    grid.add_child(std::move(hidden));
+    grid.add_child(std::move(third));
+    hidden_ptr->set_visible(false);
+    Size measured{};
+    // act
+    grid.measure(SizeConstraints::unconstrained(), measured);
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 24.0f);
+    EXPECT_FLOAT_EQ(measured.height, 8.0f);
+    EXPECT_EQ(hidden_ptr->measures, 0u);
+}
+
+TEST(GridLayoutChecks, AHiddenChildLowersTheDerivedRowCount) {
+    // arrange
+    GridLayout grid;
+    grid.set_columns(2);
+    auto first = std::make_unique<LayoutTestNode>();
+    auto second = std::make_unique<LayoutTestNode>();
+    auto hidden = std::make_unique<LayoutTestNode>();
+    auto fourth = std::make_unique<LayoutTestNode>();
+    auto fifth = std::make_unique<LayoutTestNode>();
+    LayoutTestNode* hidden_ptr = hidden.get();
+    LayoutTestNode* fourth_ptr = fourth.get();
+    LayoutTestNode* fifth_ptr = fifth.get();
+    grid.add_child(std::move(first));
+    grid.add_child(std::move(second));
+    grid.add_child(std::move(hidden));
+    grid.add_child(std::move(fourth));
+    grid.add_child(std::move(fifth));
+    hidden_ptr->set_visible(false);
+    // act
+    grid.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{40.0f, 40.0f}));
+    // assert
+    EXPECT_EQ(grid.rows(), 2u);
+    EXPECT_EQ(hidden_ptr->arranges, 0u);
+    EXPECT_FLOAT_EQ(fourth_ptr->bounds().x, 0.0f);
+    EXPECT_FLOAT_EQ(fourth_ptr->bounds().y, 20.0f);
+    EXPECT_FLOAT_EQ(fifth_ptr->bounds().x, 20.0f);
+    EXPECT_FLOAT_EQ(fifth_ptr->bounds().y, 20.0f);
+}
+
+TEST(GridLayoutChecks, AGridWithEveryChildHiddenMeasuresAsNothing) {
+    // arrange
+    GridLayout grid;
+    grid.set_columns(2, 2);
+    grid.set_gap(5.0f);
+    auto first = std::make_unique<LayoutTestNode>();
+    auto second = std::make_unique<LayoutTestNode>();
+    LayoutTestNode* first_ptr = first.get();
+    LayoutTestNode* second_ptr = second.get();
+    grid.add_child(std::move(first));
+    grid.add_child(std::move(second));
+    first_ptr->set_visible(false);
+    second_ptr->set_visible(false);
+    Size measured{};
+    // act
+    grid.measure(SizeConstraints::unconstrained(), measured);
+    grid.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{40.0f, 20.0f}));
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 0.0f);
+    EXPECT_FLOAT_EQ(measured.height, 0.0f);
+    EXPECT_EQ(first_ptr->arranges, 0u);
+    EXPECT_EQ(second_ptr->arranges, 0u);
 }
 
 TEST(GridLayoutChecks, AGridWithNoChildMeasuresAsNothing) {

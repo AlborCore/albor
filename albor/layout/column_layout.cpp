@@ -12,6 +12,9 @@ namespace albor
         // the offered ceiling shrinks by the insets, because the padding frames the children on every edge (§8.2)
         const SizeConstraints child_constraints = SizeConstraints::at_most(Size{.width = std::max(0.0f, constraints.maximum.width - m_padding * 2.0f), .height = std::max(0.0f, constraints.maximum.height - m_padding * 2.0f)});
         for (const auto& child : children()) {
+            // a hidden child leaves layout, because `visible: false` removes it from both passes (§11.1, §18.2)
+            if (!child->visible())
+                continue;
             // each child measures against that ceiling, so text wraps inside the width the column leaves (§8.2, §9.1)
             Size child_size{};
             child->measure(child_constraints, child_size);
@@ -49,6 +52,9 @@ namespace albor
         // a child before the first one has no gap before it, so the count tracks the gaps actually placed (§8.2)
         std::size_t counted = 0;
         for (const auto& child : children()) {
+            // a hidden child takes no height, because it is not part of the arranged column (§11.1, §18.2)
+            if (!child->visible())
+                continue;
             // the measured height is what the measure phase settled for this child (§8.2)
             natural += child->measured_size().height;
             // only the gaps between children count, so the first child adds none (§8.2)
@@ -59,6 +65,9 @@ namespace albor
         // how many children take the leftover, which is what a spacer asks for (§8.2)
         std::size_t stretching = 0;
         for (const auto& child : children()) {
+            // a hidden child absorbs no leftover, because it is not placed (§11.1, §18.2)
+            if (!child->visible())
+                continue;
             // only a vertically stretching child absorbs the leftover, because the others sit at a fixed offset (§8.2)
             if (resolve_align(child->vertical_align(), Align::Stretch) == Align::Stretch)
                 stretching++;
@@ -72,6 +81,9 @@ namespace albor
         // a child before the first one has no gap before it, so the count tracks the gaps actually placed (§8.2)
         std::size_t placed = 0;
         for (const auto& child : children()) {
+            // a hidden child is not placed, so it neither takes a slot nor a gap (§11.1, §18.2)
+            if (!child->visible())
+                continue;
             // the first child sits at the top edge, so a gap only shifts the ones that follow it (§8.2)
             if (placed > 0)
                 offset += m_gap;

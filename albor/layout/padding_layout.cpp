@@ -10,8 +10,8 @@ namespace albor
     }
 
     void PaddingLayout::measure(const SizeConstraints& constraints, Size& out_size) {
-        // a wrapper with no child has only its insets to measure, so the result is the insets themselves (§8.2)
-        if (children().empty()) {
+        // a wrapper with no visible child has only its insets to measure, because the child left layout (§11.1, §18.2)
+        if (children().empty() || !children().front()->visible()) {
             // the insets alone are the smallest extent the wrapper can have (§8.2)
             const Size insets_only{.width = m_padding.left + m_padding.right, .height = m_padding.top + m_padding.bottom};
             // the insets are clamped like any other result, because a parent decision is final (§8.2)
@@ -40,9 +40,9 @@ namespace albor
     void PaddingLayout::arrange(const Rect& bounds) {
         // the assigned bounds replace the previous ones, while the measured size stands as the measure settled it (§8.2)
         m_bounds = bounds;
-        // a wrapper with no child arranges nothing, because there is no child to inset (§8.2)
+        // a wrapper with no visible child arranges nothing, because there is no child to inset (§11.1, §18.2)
         UiNode* child = child_at(0);
-        if (child == nullptr)
+        if (child == nullptr || !child->visible())
             return;
         // an inset wider than the wrapper would push the child outside it, so each edge is capped at the extent (§8.2)
         const float left = std::min(m_padding.left, bounds.width);
