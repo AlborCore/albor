@@ -69,7 +69,7 @@ namespace albor
             if (!child->visible())
                 continue;
             // only a vertically stretching child absorbs the leftover, because the others sit at a fixed offset (§8.2)
-            if (resolve_align(child->vertical_align(), Align::Stretch) == Align::Stretch)
+            if (resolve_align(child->vertical_align(), Align::Start) == Align::Stretch)
                 stretching++;
         }
         // the leftover is what the children did not ask for, and a negative one is an overflow (§8.2)

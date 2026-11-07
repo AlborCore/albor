@@ -1221,7 +1221,7 @@ TEST(GridLayoutChecks, AVisibleColumnSpanSurvivesAHiddenSibling) {
     EXPECT_EQ(grid.rows(), 2u);
     EXPECT_EQ(hidden_ptr->arranges, 0u);
     EXPECT_FLOAT_EQ(last_ptr->bounds().x, 20.0f);
-    EXPECT_FLOAT_EQ(last_ptr->bounds().y, 20.0f);
+    EXPECT_FLOAT_EQ(last_ptr->bounds().y, 0.0f);
     EXPECT_FLOAT_EQ(last_ptr->bounds().width, 40.0f);
 }
 
