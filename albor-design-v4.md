@@ -13,6 +13,13 @@
 
 ### Revision Log
 
+**4.7 — theme inheritance for late subtrees.** A widget or subtree that joins the window after
+`ThemeController::install` is handed the live theme when it attaches, so a conditional body or a
+repeated row is themed without a host re-walk. §8.4 records the attached-subtree contract. The
+handler reaches the live theme through a weak reference and an install generation, so a dead or
+replaced controller leaves no dangling callback; the controller still has to outlive the widgets it
+themes, because a widget borrows its `Theme` (issue #173).
+
 **4.6 — authored colour precedence.** An author-written colour property is an explicit override over
 the theme role, and the theme remains the fallback for every property the author did not write.
 The state still resolves from the authored value, so hover and press lift or sink it and the
@@ -981,6 +988,14 @@ write. The authored value is the base every state derives from: hover and focus 
 sinks it, and the disabled state reduces its alpha, because a control that refuses input must read
 disabled. This is what lets an application draw an error run in red or a flat toolbar plate without
 replacing the palette, and it keeps role and state resolution for everything else.
+
+**A subtree built after the install is themed when it attaches (settled during implementation).**
+`apply_theme` walks what exists at install time; a conditional body or a repeated row is built
+later. The root therefore carries an attached-subtree notification, and `ThemeController` applies
+the live theme to each subtree as it joins. The handler reaches the live theme through a weak
+reference and an install generation, so a dead or replaced controller leaves no dangling callback;
+the controller still has to outlive the widgets it themes, because a widget borrows its `Theme`. A
+widget that leaves the tree keeps the detaching notification of §8.3.
 
 **Platform-native appearance (settled during implementation, issue 60).** The flat derived
 palette is the portable baseline; the native look is a *preset*, not a rewrite:

@@ -13,7 +13,10 @@ namespace albor
         ThemeController(accents, accents, preset) {}
 
     ThemeController::ThemeController(Accents light_accents, Accents dark_accents, ThemePreset preset) :
-        m_preset(preset), m_light(build(light_accents, ColorScheme::Light)), m_dark(build(dark_accents, ColorScheme::Dark)), m_light_accents(light_accents), m_dark_accents(dark_accents) {}
+        m_preset(preset), m_light(build(light_accents, ColorScheme::Light)), m_dark(build(dark_accents, ColorScheme::Dark)), m_light_accents(light_accents), m_dark_accents(dark_accents) {
+        // the resting scheme is live before an install, so theme() answers the preset immediately (§6.1)
+        sync_theme();
+    }
 
     Theme ThemeController::build(const Accents& accents, ColorScheme scheme) const {
         // the derived preset is the portable baseline, which the builder answers (§6.1)
@@ -45,6 +48,24 @@ namespace albor
         m_root = &root;
         // the scheme is stored first, so the handler below reads the value the tree was given (§6.1)
         m_scheme = scheme;
+        // a new install replaces any previous root, so the old handler must become inert (§8.4)
+        m_attached->generation++;
+        // the live theme is stored where the attached-subtree handler can read it (§8.4)
+        sync_theme();
+        // a subtree built later is themed when it joins, which is what a conditional body or repeat row needs (§8.4)
+        const std::uint64_t generation = m_attached->generation;
+        root.set_attached_handler([state = std::weak_ptr<AttachedState>(m_attached), generation](UiNode* node) {
+            // a null node names nothing, so there is no subtree to theme (§8.4)
+            if (node == nullptr)
+                return;
+            // a controller that died leaves an expired state, so the handler does nothing (§8.4)
+            const std::shared_ptr<AttachedState> locked = state.lock();
+            // a handler left on an older root does nothing, because the controller manages one tree (§8.4)
+            if (locked == nullptr || locked->generation != generation)
+                return;
+            // the new subtree is walked, because every widget in it needs the live theme (§8.4)
+            apply_theme(*node, locked->theme);
+        });
         // the whole subtree is walked, because a nested widget is as unthemed as the root (§6.1)
         apply_theme(root, theme());
         // the application is told, which is where the preference would be persisted (§6.1)
@@ -73,11 +94,8 @@ namespace albor
     }
 
     const Theme& ThemeController::theme() const {
-        // the dark theme is the resting one, because the accents a caller builds default to a dark surface (§6.1)
-        if (m_scheme == ColorScheme::Light)
-            return m_light;
-        // the dark theme answers every other scheme, because there are only two (§6.1)
-        return m_dark;
+        // the live value is the one the attached-subtree handler also reads, so one object serves the whole tree (§8.4)
+        return m_attached->theme;
     }
 
     void ThemeController::set_scheme_changed_handler(std::function<void(ColorScheme)> handler) {
@@ -90,7 +108,14 @@ namespace albor
         return m_root;
     }
 
+    void ThemeController::sync_theme() {
+        // the scheme selects the built theme, which is the one object theme() and the handler both read (§8.4)
+        m_attached->theme = m_scheme == ColorScheme::Light ? m_light : m_dark;
+    }
+
     void ThemeController::reinstall() {
+        // the live value is refreshed even without a root, because an accent change answers theme() before install (§6.1)
+        sync_theme();
         // a controller with no subtree has nothing to reinstall, because it was never installed (§6.1)
         if (m_root == nullptr)
             return;

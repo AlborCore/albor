@@ -60,6 +60,8 @@ namespace albor
         child->m_measure_dirty = true;
         child->m_arrange_dirty = true;
         m_children.push_back(std::move(child));
+        // the observer sees the subtree after it is in the tree, which is when a late theme applies (§8.4)
+        notify_attached(m_children.back().get());
         // adding a subtree changes what the parent draws, so the parent asks for a frame (§6.1)
         invalidate_layout();
         return *this;
@@ -78,6 +80,8 @@ namespace albor
         child->m_measure_dirty = true;
         child->m_arrange_dirty = true;
         m_children.insert(m_children.begin() + static_cast<std::ptrdiff_t>(position), std::move(child));
+        // the observer sees the subtree after it is in the tree, which is when a late theme applies (§8.4)
+        notify_attached(m_children[position].get());
         // reordering a subtree changes what the parent draws (§6.1)
         invalidate_layout();
         return *this;
@@ -119,6 +123,8 @@ namespace albor
         overlay->m_arrange_dirty = true;
         // the overlay is stored above the ordinary children, which is what makes it a layer (§8.3)
         m_overlays.push_back(std::move(overlay));
+        // the observer sees the overlay after it is in the tree, which is when a late theme applies (§8.4)
+        notify_attached(m_overlays.back().get());
         // an overlay changes what the root draws, so the frame is requested (§6.1)
         invalidate_layout();
         return *this;
@@ -472,6 +478,23 @@ namespace albor
     void UiNode::set_detaching_handler(std::function<void(UiNode*)> handler) {
         // the handler belongs to the root, so a caller installs it on the root alone (§8.3)
         m_detaching_handler = std::move(handler);
+    }
+
+    void UiNode::set_attached_handler(std::function<void(UiNode*)> handler) {
+        // the handler belongs to the root, so a caller installs it on the root alone (§8.4)
+        m_attached_handler = std::move(handler);
+    }
+
+    void UiNode::notify_attached(UiNode* node) {
+        // the nearest observer answers, because a controller may be installed over a subtree (§8.4)
+        for (UiNode* current = this; current != nullptr; current = current->m_parent) {
+            // a node with no observer passes the notification upward, which is the root in the usual case (§8.4)
+            if (!current->m_attached_handler)
+                continue;
+            // the handler is handed the node, which is alive and in the tree, so a theme can walk it (§8.4)
+            current->m_attached_handler(node);
+            return;
+        }
     }
 
     void UiNode::notify_detaching(UiNode* node) {

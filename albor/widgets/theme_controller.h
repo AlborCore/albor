@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstdint>
 #include <functional>
+#include <memory>
 
 #include "albor/style/theme_builder.h"
 #include "albor/ui/ui_node.h"
@@ -19,6 +21,12 @@ namespace albor
 
         // build both schemes from one accent set each, because a surface is what a scheme is drawn on (§6.1)
         ThemeController(Accents light_accents, Accents dark_accents, ThemePreset preset = ThemePreset::Derived);
+
+        // a controller owns one tree's live theme, so copying it would share a handler silently (§8.4)
+        ThemeController(const ThemeController&) = delete;
+        ThemeController& operator=(const ThemeController&) = delete;
+        ThemeController(ThemeController&&) = delete;
+        ThemeController& operator=(ThemeController&&) = delete;
 
         // install a scheme over a subtree, which is the one call an application makes at start up (§6.1)
         void install(UiNode& root, ColorScheme scheme);
@@ -45,8 +53,21 @@ namespace albor
         [[nodiscard]] UiNode* root() const;
 
     private:
+        // the theme an attached-subtree notification applies, kept apart so a dead controller is safe (§8.4)
+        struct AttachedState
+        {
+            // the live theme value, which reinstall keeps current without pointing into the controller (§8.4)
+            Theme theme;
+
+            // the install generation, which makes an old root's handler inert after a second install (§8.4)
+            std::uint64_t generation = 0;
+        };
+
         // build one theme through the preset, which is the one call a scheme install needs (§8.4)
         [[nodiscard]] Theme build(const Accents& accents, ColorScheme scheme) const;
+
+        // copy the live scheme into the attached state, which is what theme() and the handler read (§8.4)
+        void sync_theme();
 
         // reinstall the current scheme over the subtree, which a change of scheme runs through (§6.1)
         void reinstall();
@@ -74,5 +95,8 @@ namespace albor
 
         // the handler a scheme change reaches, which an application installs to persist the preference (§6.1)
         std::function<void(ColorScheme)> m_scheme_changed;
+
+        // the state the attached-subtree handler reaches through a weak pointer (§8.4)
+        std::shared_ptr<AttachedState> m_attached = std::make_shared<AttachedState>();
     };
 } // namespace albor

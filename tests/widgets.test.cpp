@@ -2944,6 +2944,216 @@ TEST(ThemeChecks, AChildBuiltAfterTheInstallInheritsTheTheme) {
     EXPECT_EQ(label_ptr->theme(), &theme);
 }
 
+TEST(ThemeChecks, ASubtreeAttachedAfterTheInstallReceivesTheTheme) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    auto column = std::make_unique<ColumnLayout>();
+    ColumnLayout* column_ptr = column.get();
+    root.add_child(std::move(column));
+    ThemeController controller(ThemePreset::Derived);
+    controller.install(root, ColorScheme::Light);
+    auto label = std::make_unique<Label>(&engine, &text_engine, "late");
+    Label* label_ptr = label.get();
+    // act
+    column_ptr->add_child(std::move(label));
+    // assert
+    EXPECT_EQ(label_ptr->theme(), &controller.theme());
+}
+
+TEST(ThemeChecks, ASubtreeAttachedAfterASchemeFlipReceivesTheNewTheme) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    auto column = std::make_unique<ColumnLayout>();
+    ColumnLayout* column_ptr = column.get();
+    root.add_child(std::move(column));
+    ThemeController controller(ThemePreset::Derived);
+    controller.install(root, ColorScheme::Dark);
+    controller.toggle();
+    auto label = std::make_unique<Label>(&engine, &text_engine, "late");
+    Label* label_ptr = label.get();
+    // act
+    column_ptr->add_child(std::move(label));
+    // assert
+    EXPECT_EQ(label_ptr->theme(), &controller.theme());
+    EXPECT_EQ(controller.scheme(), ColorScheme::Light);
+}
+
+TEST(ThemeChecks, AnOverlayAttachedAfterTheInstallReceivesTheTheme) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    ThemeController controller(ThemePreset::Derived);
+    controller.install(root, ColorScheme::Dark);
+    auto label = std::make_unique<Label>(&engine, &text_engine, "overlay");
+    Label* label_ptr = label.get();
+    // act
+    root.add_overlay(std::move(label));
+    // assert
+    EXPECT_EQ(label_ptr->theme(), &controller.theme());
+}
+
+TEST(ThemeChecks, AnOverlayPresentAtInstallReceivesTheTheme) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    auto label = std::make_unique<Label>(&engine, &text_engine, "overlay");
+    Label* label_ptr = label.get();
+    root.add_overlay(std::move(label));
+    ThemeController controller(ThemePreset::Derived);
+    // act
+    controller.install(root, ColorScheme::Dark);
+    // assert
+    EXPECT_EQ(label_ptr->theme(), &controller.theme());
+}
+
+TEST(ThemeChecks, AnOverlayFollowsASchemeFlip) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    ThemeController controller(ThemePreset::Derived);
+    controller.install(root, ColorScheme::Dark);
+    auto label = std::make_unique<Label>(&engine, &text_engine, "overlay");
+    Label* label_ptr = label.get();
+    root.add_overlay(std::move(label));
+    label_ptr->clear_dirty();
+    // act
+    controller.toggle();
+    // assert
+    EXPECT_EQ(controller.scheme(), ColorScheme::Light);
+    EXPECT_EQ(label_ptr->theme(), &controller.theme());
+    EXPECT_TRUE(label_ptr->layout_dirty());
+}
+
+TEST(ThemeChecks, AConditionalInsertReceivesTheTheme) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    auto column = std::make_unique<ColumnLayout>();
+    ColumnLayout* column_ptr = column.get();
+    root.add_child(std::move(column));
+    ThemeController controller(ThemePreset::Derived);
+    controller.install(root, ColorScheme::Dark);
+    auto label = std::make_unique<Label>(&engine, &text_engine, "conditional");
+    Label* label_ptr = label.get();
+    // act
+    column_ptr->insert_child(0, std::move(label));
+    // assert
+    EXPECT_EQ(label_ptr->theme(), &controller.theme());
+}
+
+TEST(ThemeChecks, ANestedSubtreeReceivesTheThemeInOneAttach) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    auto column = std::make_unique<ColumnLayout>();
+    ColumnLayout* column_ptr = column.get();
+    root.add_child(std::move(column));
+    ThemeController controller(ThemePreset::Derived);
+    controller.install(root, ColorScheme::Dark);
+    auto row = std::make_unique<ColumnLayout>();
+    auto label = std::make_unique<Label>(&engine, &text_engine, "nested");
+    Label* label_ptr = label.get();
+    row->add_child(std::move(label));
+    // act
+    column_ptr->add_child(std::move(row));
+    // assert
+    EXPECT_EQ(label_ptr->theme(), &controller.theme());
+}
+
+TEST(ThemeChecks, ARemovedSubtreeIsRetimedWhenReattached) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    auto column = std::make_unique<ColumnLayout>();
+    ColumnLayout* column_ptr = column.get();
+    root.add_child(std::move(column));
+    ThemeController controller(ThemePreset::Derived);
+    controller.install(root, ColorScheme::Dark);
+    auto label = std::make_unique<Label>(&engine, &text_engine, "late");
+    Label* label_ptr = label.get();
+    column_ptr->add_child(std::move(label));
+    auto removed = column_ptr->remove_child(label_ptr);
+    Theme detached;
+    label_ptr->set_theme(&detached);
+    // act
+    controller.toggle();
+    column_ptr->add_child(std::move(removed));
+    // assert
+    EXPECT_EQ(controller.scheme(), ColorScheme::Light);
+    EXPECT_EQ(label_ptr->theme(), &controller.theme());
+    EXPECT_NE(label_ptr->theme(), &detached);
+}
+
+TEST(ThemeChecks, ASecondInstallMakesTheOldRootInert) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode first;
+    auto first_column = std::make_unique<ColumnLayout>();
+    ColumnLayout* first_column_ptr = first_column.get();
+    first.add_child(std::move(first_column));
+    UiNode second;
+    auto second_column = std::make_unique<ColumnLayout>();
+    second.add_child(std::move(second_column));
+    ThemeController controller(ThemePreset::Derived);
+    controller.install(first, ColorScheme::Dark);
+    controller.install(second, ColorScheme::Dark);
+    auto label = std::make_unique<Label>(&engine, &text_engine, "late");
+    Label* label_ptr = label.get();
+    // act
+    first_column_ptr->add_child(std::move(label));
+    // assert
+    EXPECT_EQ(label_ptr->theme(), nullptr);
+}
+
+TEST(ThemeChecks, AThemeInstalledOnASubtreeThemesItsLateChildren) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode outer;
+    auto panel = std::make_unique<ColumnLayout>();
+    ColumnLayout* panel_ptr = panel.get();
+    outer.add_child(std::move(panel));
+    ThemeController controller(ThemePreset::Derived);
+    controller.install(*panel_ptr, ColorScheme::Dark);
+    auto label = std::make_unique<Label>(&engine, &text_engine, "late");
+    Label* label_ptr = label.get();
+    // act
+    panel_ptr->add_child(std::move(label));
+    // assert
+    EXPECT_EQ(label_ptr->theme(), &controller.theme());
+}
+
+TEST(ThemeChecks, ASubtreeAttachedAfterTheControllerDiesStaysUnthemed) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    auto column = std::make_unique<ColumnLayout>();
+    ColumnLayout* column_ptr = column.get();
+    root.add_child(std::move(column));
+    {
+        ThemeController controller(ThemePreset::Derived);
+        controller.install(root, ColorScheme::Dark);
+    }
+    auto label = std::make_unique<Label>(&engine, &text_engine, "late");
+    Label* label_ptr = label.get();
+    // act
+    column_ptr->add_child(std::move(label));
+    // assert
+    EXPECT_EQ(label_ptr->theme(), nullptr);
+}
+
 TEST(ThemeChecks, AWidgetWithNoThemeDrawsItsOwnPlate) {
     // arrange
     BindingEngine engine;
@@ -4742,6 +4952,19 @@ TEST(ThemeControllerChecks, AnAccentChangeKeepsThePreset) {
     controller.set_accents(Accents{}, Accents{});
     // assert the rebuilt theme is still the preset, because the accents only drive the derivation (§8.4)
     EXPECT_EQ(controller.theme().metrics().button_minimum, (Size{24.0f, 28.0f}));
+}
+
+TEST(ThemeControllerChecks, AnAccentChangeBeforeInstallUpdatesTheTheme) {
+    // arrange a controller with no tree, whose resting scheme is dark (§6.1)
+    ThemeController controller(ThemePreset::Derived);
+    Accents light;
+    light.surface = Color::rgb(0.8f, 0.1f, 0.1f);
+    Accents dark;
+    dark.surface = Color::rgb(0.1f, 0.1f, 0.1f);
+    // act
+    controller.set_accents(light, dark);
+    // assert the live value moved with the accents even before an install (§8.4)
+    EXPECT_EQ(controller.theme().surface(), dark.surface);
 }
 
 TEST(NativeThemeChecks, AnUnthemedBoxDrawsItsOutlineWithoutAFill) {

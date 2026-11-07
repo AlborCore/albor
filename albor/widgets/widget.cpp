@@ -7,12 +7,15 @@
 namespace albor
 {
     void apply_theme(UiNode& root, const Theme& theme) {
-        // the whole subtree is walked, because a nested widget is as unthemed as the root (§6.1)
-        root.visit([&theme](UiNode& node) {
-            // a node that is not a widget has nothing to theme, so it is passed over (§6.1)
-            if (auto* widget = dynamic_cast<Widget*>(&node))
-                widget->set_theme(&theme);
-        });
+        // the node itself is themed when it is a widget, because the root is as unthemed as the leaves (§6.1)
+        if (auto* widget = dynamic_cast<Widget*>(&root))
+            widget->set_theme(&theme);
+        // every child is walked, because a nested widget is as unthemed as the root (§6.1)
+        for (const auto& child : root.children())
+            apply_theme(*child, theme);
+        // every overlay is walked too, because an overlay paints above the tree and carries widgets (§8.3, §8.4)
+        for (const auto& overlay : root.overlays())
+            apply_theme(*overlay, theme);
     }
 
     SemanticNode SemanticNodeProvider::semantic_node() const {
