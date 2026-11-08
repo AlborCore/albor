@@ -208,6 +208,12 @@ namespace albor::compiler
                 report_unexpected(">");
                 break;
             }
+            // a structural terminator ends the type, because an unclosed angle cannot cross it (§11.1)
+            if (at_punctuation(";") || at_punctuation("}") || at_punctuation(")") || at_punctuation("{")) {
+                // the unclosed type is reported, because the terminator cannot belong to it (§11.1)
+                report_unexpected(">");
+                break;
+            }
             // a nested type opens another angle, which the depth counts (§11.1)
             if (at_punctuation("<"))
                 depth++;
@@ -325,37 +331,34 @@ namespace albor::compiler
             field.span.start = peek().span.start;
             // the type is a bare name, which a parametric form then extends with its argument (§11.1)
             field.type = expect_identifier();
+            // a field with no type has already been reported, so the rest is skipped to its terminator (§11.1)
+            if (field.type.empty()) {
+                // the units up to the terminator are skipped, so the field cannot stall the loop (§11.1)
+                while (!at_punctuation(";") && !at_punctuation("}") && peek().kind != Token::Kind::End)
+                    advance();
+                // the terminator is consumed when the skip found one, which ends this field (§11.1)
+                accept_punctuation(";");
+                continue;
+            }
             // a parametric form such as vector<string> carries its argument in angles, which are read whole (§11.1, §8.1)
             if (at_punctuation("<")) {
-                // the nesting depth is tracked, because the argument may itself nest (§11.1)
-                std::size_t depth = 0;
-                // the angles run until the matching close, which is what ends a nested argument (§11.1)
-                while (peek().kind != Token::Kind::End) {
-                    // the current unit is appended first, so the argument keeps its own angles (§11.1)
-                    field.type += peek().text;
-                    // an opening angle deepens the nesting, which the depth records (§11.1)
-                    const bool opens = at_punctuation("<");
-                    // a closing angle closes one level of the argument (§11.1)
-                    const bool closes = at_punctuation(">");
-                    // the unit is consumed, so the argument advances exactly once (§11.1)
-                    advance();
-                    // the depth follows the open, because a nested argument opens another angle (§11.1)
-                    if (opens)
-                        depth++;
-                    // the depth follows the close, and the matching one ends the read (§11.1)
-                    if (closes) {
-                        // the depth drops, because the body it opened has closed (§11.1)
-                        depth--;
-                        // a close at depth zero has already been appended, so the argument is complete (§11.1)
-                        if (depth == 0)
-                            break;
-                    }
-                }
+                // the opening angle is consumed, because the argument reader starts inside it (§11.1)
+                advance();
+                // the argument is read to its matching close, which keeps nested arguments whole (§11.1, §8.1)
+                field.type += "<" + read_type_angles() + ">";
             }
             // the name is required, because a binding addresses the field by it (§11.1)
             field.name = expect_identifier();
-            // the field ends at the terminator, which is required (§11.1)
-            expect_punctuation(";");
+            // the field ends at its terminator, which a malformed field may be missing (§11.1)
+            if (!accept_punctuation(";")) {
+                // the problem names the terminator, because that is what the field needs (§11.1)
+                report_unexpected(";");
+                // the rest of the field is skipped, so a malformed field cannot stall the loop (§11.1)
+                while (!at_punctuation(";") && !at_punctuation("}") && peek().kind != Token::Kind::End)
+                    advance();
+                // the terminator is consumed when the skip found one, which ends this field (§11.1)
+                accept_punctuation(";");
+            }
             // the span ends at the terminator, which the reader has already consumed (§11.1)
             field.span.end = last_consumed_end();
             // the field joins the struct, because a struct is exactly the fields it declares (§11.1)

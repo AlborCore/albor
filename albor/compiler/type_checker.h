@@ -481,6 +481,9 @@ namespace albor::compiler
         // report that a name is not in scope, which points at the reference (§11.1)
         void report_unknown_name(const Expression& expression, std::string_view name);
 
+        // report that a handler body reads a repeat item or index, which its shared callback cannot see (§18.1, AD-13)
+        void report_repeat_binding_reads(const Expression& expression, const CheckedNode& repeat, const ElementSignal* signal);
+
         // report that a value cannot fill a target type, which points at the value (§11.1)
         void report_type_mismatch(const Expression& expression, const ValueType& from, const ValueType& to);
 
@@ -492,6 +495,9 @@ namespace albor::compiler
 
         // report that a signal does not exist on an element type (§11.1)
         void report_unknown_signal(SourceSpan span, std::string_view element, std::string_view signal_name);
+
+        // report that one signal is attached more than once on an element, which would redeclare its handler (§11.3)
+        void report_duplicate_handler(SourceSpan span, std::string_view signal_name);
 
         // report that a handler may not assign a property, which points at the statement (§11.1, §7)
         void report_not_assignable(const HandlerStatement& statement, std::string_view name);

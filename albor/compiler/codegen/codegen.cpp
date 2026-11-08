@@ -628,6 +628,9 @@ namespace albor::compiler
 
                 // the conditional that guards this node, which is NO_CONDITIONAL when none does (§11.1)
                 std::size_t conditional = NO_CONDITIONAL;
+
+                // whether this slot is a row body node, whose index is unique among rows rather than the open tree (§18.1)
+                bool row_body = false;
             };
 
             // one repeat and the body it materializes per item, which is what a keyed view owns (§18.1, AD-13)
@@ -718,8 +721,8 @@ namespace albor::compiler
             // walk one node for the blocking conditions, which reports every problem it finds (§11.3)
             void validate_node(const CheckedNode& node);
 
-            // report every conditional inside a repeat body, which a keyed row cannot reconcile (§11.1, AD-13)
-            void reject_conditionals_in_body(const CheckedNode& node);
+            // report every construct inside a repeat body that a keyed row cannot reconcile (§11.1, §18.1, AD-13)
+            void reject_unsupported_in_body(const CheckedNode& node);
 
             // reject a type codegen cannot translate, which is a native or a collection type (§11.3)
             void validate_type(const ValueType& type, const SourceSpan& span);
@@ -807,6 +810,12 @@ namespace albor::compiler
 
             // render the handlers, which are the written bodies behind the callbacks (§11.3)
             void emit_handlers();
+
+            // the slots that carry handlers, which includes the row bodies a repeat builds (§11.3, §18.1)
+            [[nodiscard]] std::vector<const NodeSlot*> handler_slots() const;
+
+            // the generated name of a handler, which a row body distinguishes from an open tree node (§11.3, §18.1)
+            [[nodiscard]] static std::string handler_name(const NodeSlot& slot, std::string_view signal);
 
             // emit the drawing bodies a canvas wrote, which the builder wires to set_draw (§6.4)
             void emit_draw_bodies();
@@ -1492,8 +1501,17 @@ namespace albor::compiler
                         scan_expression(*function.return_value);
                 }
             // the tree is walked, which finds a repeat, a native element or a physical length (§11.3)
-            if (m_component.root != nullptr)
+            if (m_component.root != nullptr) {
+                // a root that is not an element has no container for the body it materializes (§18.1)
+                if (m_component.root->kind != TreeNodeKind::Element) {
+                    // the problem points at the root, because that is what the author must replace (§11.1)
+                    m_diagnostics.add(Diagnostic::Severity::Error, m_component.root->span, "E0513", "a component root must be an element, because a repeat or conditional needs a container");
+                    // the blocking flag is set, which empties the generated output (§11.3)
+                    m_blocked = true;
+                }
+                // the tree is validated even when the root is refused, because nested problems still matter (§11.3)
                 validate_node(*m_component.root);
+            }
         }
 
         void ComponentEmitter::validate_node(const CheckedNode& node) {
@@ -1512,9 +1530,9 @@ namespace albor::compiler
                     validate_node(*child);
                 return;
             }
-            // a repeat materializes keyed rows, so it is checked against what a row identity needs (§18.1, AD-13)
+            // a repeat materializes keyed rows, so it is checked against a row identity (§18.1, AD-13)
             if (node.kind == TreeNodeKind::Repeat) {
-                // the source element must be a record, because a row is keyed by a declared field (§18.1, AD-13)
+                // the source must be a record, because a row is keyed by a declared field (§18.1)
                 if (item_key_field_for(node) == nullptr) {
                     // the problem points at the repeat, because that is what cannot be keyed (§18.1, AD-13)
                     m_diagnostics.add(Diagnostic::Severity::Error, node.span, "E0503", "a repeat needs a record element, because a row is keyed by a field the manifest marks (§18.1, AD-13)");
@@ -1522,9 +1540,9 @@ namespace albor::compiler
                     m_blocked = true;
                     return;
                 }
-                // a conditional inside a row is refused, because a row is built once and never reconciled (§11.1, AD-13)
+                // a conditional or repeat inside a row is refused, because a keyed row is built once (§11.1)
                 if (node.repeat_body != nullptr)
-                    reject_conditionals_in_body(*node.repeat_body);
+                    reject_unsupported_in_body(*node.repeat_body);
                 // the body is validated as a tree of its own, because a row is made of those nodes (§8.1, §18.1)
                 if (node.repeat_body != nullptr)
                     validate_node(*node.repeat_body);
@@ -1585,7 +1603,7 @@ namespace albor::compiler
                 validate_node(*child);
         }
 
-        void ComponentEmitter::reject_conditionals_in_body(const CheckedNode& node) {
+        void ComponentEmitter::reject_unsupported_in_body(const CheckedNode& node) {
             // a conditional is reported at its own span, because that is what the author must move out of the row (§11.1)
             if (node.kind == TreeNodeKind::Conditional) {
                 // the problem names the rule, because a row is materialized once per keyed item (§11.1, AD-13)
@@ -1593,12 +1611,18 @@ namespace albor::compiler
                 // the blocking flag is set, which empties the generated output (§11.3)
                 m_blocked = true;
             }
-            // a nested repeat's body is its own subtree, which is walked for the same reason (§11.1)
-            if (node.repeat_body != nullptr)
-                reject_conditionals_in_body(*node.repeat_body);
-            // the children are walked, because a conditional may hide anywhere in the row (§11.1)
+            // a nested repeat is reported for the same reason, because the row builder expects a plain node (§18.1)
+            if (node.kind == TreeNodeKind::Repeat) {
+                // the problem names the rule, because a row is materialized once per keyed item (§18.1, AD-13)
+                m_diagnostics.add(Diagnostic::Severity::Error, node.span, "E0509", "a repeat body cannot contain a repeat, because a keyed row is built once");
+                // the blocking flag is set, which empties the generated output (§11.3)
+                m_blocked = true;
+                // the nested body is reached again by its own repeat, so stopping here keeps one report per node (§18.1)
+                return;
+            }
+            // the children are walked, because a conditional or repeat may hide anywhere in the row (§11.1)
             for (const std::shared_ptr<CheckedNode>& child : node.children)
-                reject_conditionals_in_body(*child);
+                reject_unsupported_in_body(*child);
         }
 
         void ComponentEmitter::validate_type(const ValueType& type, const SourceSpan& span) {
@@ -1845,7 +1869,7 @@ namespace albor::compiler
             // the body node takes the next index, which names its local inside one row (§8.1, §18.1)
             const std::size_t index = m_body_count++;
             // the slot carries the path from the row root, which is how an update reaches this node (§18.1, AD-13)
-            out.push_back({.index = index, .node = &node, .parent = parent, .row_path = path});
+            out.push_back({.index = index, .node = &node, .parent = parent, .row_path = path, .row_body = true});
             // the children follow in order, because a row nests exactly as the author wrote it (§8.1, §18.1)
             for (std::size_t position = 0; position < node.children.size(); position++) {
                 // the extended path names this child under its parent, which is what an update walks (§18.1, AD-13)
@@ -2528,14 +2552,14 @@ namespace albor::compiler
                 line(2, "static " + cpp_type(property.type) + " compute_" + name + "(void* raw);");
             }
             // each handler declares its body, which the wiring runs (§11.3)
-            for (const NodeSlot& slot : m_nodes) {
+            for (const NodeSlot* slot : handler_slots()) {
                 // the handler is walked per attachment, which wires it after the node is built (§11.3)
-                for (const CheckedHandler& handler : slot.node->handlers) {
+                for (const CheckedHandler& handler : slot->node->handlers) {
                     // the declaration reads after a blank, which separates it from the previous one (§14.1)
                     line(0, "");
-                    const std::string handle = "handle_" + std::to_string(slot.index) + "_" + sanitize(handler.name);
+                    const std::string handle = handler_name(*slot, handler.name);
                     line(2, "// run the " + handler.name + " body, which is what the written handler does (§11.3)");
-                    line(2, "static void " + handle + "(void* raw" + handler_signature(slot.node->element_type, handler.name) + ");");
+                    line(2, "static void " + handle + "(void* raw" + handler_signature(slot->node->element_type, handler.name) + ");");
                 }
             }
             // a canvas with a draw block declares its body, which the wiring runs (§6.4)
@@ -2902,7 +2926,7 @@ namespace albor::compiler
                     lambda_arguments += (lambda_arguments.empty() ? "" : ", ") + parameter.second;
                 }
                 // the wiring forwards every parameter, which is how the body reads the raised value (§11.3)
-                const std::string lambda = "[this](" + lambda_parameters + ") { handle_" + std::to_string(slot.index) + "_" + sanitize(handler.name) + "(this" + (lambda_arguments.empty() ? "" : ", " + lambda_arguments) + "); }";
+                const std::string lambda = "[this](" + lambda_parameters + ") { " + handler_name(slot, handler.name) + "(this" + (lambda_arguments.empty() ? "" : ", " + lambda_arguments) + "); }";
                 line(2, "// wire the " + handler.name + " to the generated handler, which runs the written body (§11.3)");
                 line(2, "n" + std::to_string(slot.index) + "->" + std::string(setter) + "(" + lambda + ");");
             }
@@ -2988,7 +3012,7 @@ namespace albor::compiler
                     lambda_arguments += (lambda_arguments.empty() ? "" : ", ") + parameter.second;
                 }
                 // the handler body is the written one, which is what the row runs (§11.3, §18.1)
-                const std::string lambda = "[this](" + lambda_parameters + ") { handle_" + std::to_string(slot.index) + "_" + sanitize(handler.name) + "(this" + (lambda_arguments.empty() ? "" : ", " + lambda_arguments) + "); }";
+                const std::string lambda = "[self](" + lambda_parameters + ") { " + handler_name(slot, handler.name) + "(self" + (lambda_arguments.empty() ? "" : ", " + lambda_arguments) + "); }";
                 line(2, "// wire the " + handler.name + ", which runs the written handler for this row (§11.3, §18.1)");
                 line(2, "n" + std::to_string(slot.index) + "->" + std::string(setter) + "(" + lambda + ");");
             }
@@ -3675,10 +3699,12 @@ namespace albor::compiler
 
         void ComponentEmitter::emit_handlers() {
             // the handler output is a set of functions, which the implementation unit appends (§11.3)
-            for (const NodeSlot& slot : m_nodes) {
+            for (const NodeSlot* slot_ptr : handler_slots()) {
+                // the slot is read by reference, because every emitted name comes from it (§11.3)
+                const NodeSlot& slot = *slot_ptr;
                 // each handler is emitted on its own, which the builder wired above (§11.3)
                 for (const CheckedHandler& handler : slot.node->handlers) {
-                    const std::string handle = "handle_" + std::to_string(slot.index) + "_" + sanitize(handler.name);
+                    const std::string handle = handler_name(slot, handler.name);
                     line(0, "");
                     line(1, "void " + m_class + "::Impl::" + handle + "(void* raw" + handler_signature(slot.node->element_type, handler.name) + ") {");
                     line(2, "// the body is recovered from the context, which keeps the path allocation free (§13.3)");
@@ -3785,6 +3811,25 @@ namespace albor::compiler
                     m_signal_parameter_types.clear();
                 }
             }
+        }
+
+        std::string ComponentEmitter::handler_name(const NodeSlot& slot, std::string_view signal) {
+            // a row body takes its own prefix, because its index counts row bodies across the component (§18.1, §11.3)
+            const std::string prefix = slot.row_body ? "handle_row_" : "handle_";
+            // the name joins the slot index and the signal, which is what the wiring and the definition share (§11.3)
+            return prefix + std::to_string(slot.index) + "_" + sanitize(signal);
+        }
+
+        std::vector<const ComponentEmitter::NodeSlot*> ComponentEmitter::handler_slots() const {
+            // the component's own nodes come first, because a handler may sit anywhere in the open tree (§11.3)
+            std::vector<const NodeSlot*> slots;
+            for (const NodeSlot& slot : m_nodes)
+                slots.push_back(&slot);
+            // each repeat contributes its row body, because a row node carries its own handler (§18.1, AD-13)
+            for (const RepeatSlot& repeat : m_repeats)
+                for (const NodeSlot& slot : repeat.body)
+                    slots.push_back(&slot);
+            return slots;
         }
 
         void ComponentEmitter::emit_draw_bodies() {

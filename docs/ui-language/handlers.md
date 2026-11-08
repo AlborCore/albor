@@ -60,7 +60,8 @@ Greeting {
 ```
 
 A handler block writes `on_<signal>: { ... }` with **no parameter list** — the parameters are
-the declared ones, and the body refers to them by name.
+the declared ones, and the body refers to them by name. A signal is attached at most once on
+one element; a second `on_` block for the same signal is a compile error.
 
 Every element type's signals are listed with that component —
 [Button](../components/button.md#signals), [Slider](../components/slider.md#signals),
@@ -150,6 +151,10 @@ A handler cannot call an arbitrary method, run a loop, read another component's 
 reach a native object. It is four statements over this component's own members — which is
 exactly what lets the compiler check it completely and compile it to a static function with
 no allocation.
+
+A handler attached inside a `Repeat` body is one callback shared by every row, so it cannot
+read the repeat item or index. Pass the value through a signal that the row raises instead;
+a read of either is a compile error.
 
 ## What handlers compile to
 

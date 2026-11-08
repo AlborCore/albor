@@ -13,6 +13,18 @@
 
 ### Revision Log
 
+**4.9 — closed-form validation for rows and handlers.** A signal attaches at most once on one
+element (`E0436`); a `Repeat` or conditional cannot be the component root, because the body it
+materializes needs a container (`E0513`); and a malformed struct field recovers at the next `;` or
+`}` so a broken declaration cannot stall the parser. The rules keep the compiler's refusals explicit
+rather than emitting duplicate definitions, an empty component, or no output at all (§11.1).
+
+**4.8 — handler scope in a repeated row.** A handler attached inside a `Repeat` body compiles to one
+shared callback for every row, so the repeat item and index are not in its scope. A read of either is
+a compile error (`E0435`); the row passes the value through a signal instead. A signal parameter
+shadows a repeat name or component property of the same spelling, because it is the value the
+callback actually receives (§11.1, §18.1, issue #180).
+
 **4.7 — theme inheritance for late subtrees.** A widget or subtree that joins the window after
 `ThemeController::install` is handed the live theme when it attaches, so a conditional body or a
 repeated row is themed without a host re-walk. §8.4 records the attached-subtree contract. The
@@ -1180,6 +1192,14 @@ A handler body is a closed grammar of exactly four statement forms, each of whic
 
 A handler cannot call an arbitrary method or reach a property of another component. That boundary is
 deliberate, and the four forms above are the whole of what a handler may express today.
+
+An element attaches a signal at most once; a second `on_` block for the same signal is a compile
+error (`E0436`), because the generated handler is named by the element and the signal.
+
+A handler attached inside a `Repeat` body is one shared callback compiled once for every row, so the
+repeat item and index are not in its scope. A read of either is a compile error (`E0435`); the row
+passes the value through a signal instead. A signal parameter shadows a repeat name or component
+property of the same spelling, because it is the value the callback actually receives (§18.1, AD-13).
 
 #### Conditional Rendering
 

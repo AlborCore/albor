@@ -1,0 +1,32 @@
+import task;
+
+// the repeat handler fixture, which proves a virtualized row handler never collides with the open tree (§18.1, AD-13)
+
+component RepeatHandlerPanel {
+    inout property<vector<Task>> tasks;
+    inout property<string> last_edited;
+    inout property<float> last_scrolled;
+
+    ScrollView {
+        row_height: 20px;
+
+        on_scrolled: {
+            last_scrolled = offset;
+        }
+
+        Repeat(task in tasks) {
+            ScrollView {
+                on_scrolled: {
+                    last_scrolled = offset;
+                }
+
+                TextField {
+                    value: task.title;
+                    on_changed: {
+                        last_edited = value;
+                    }
+                }
+            }
+        }
+    }
+}

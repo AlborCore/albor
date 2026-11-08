@@ -1,0 +1,13 @@
+// the row editor fixture, which the repeat handler panel imports (§18.1, AD-13)
+
+component RowEditor {
+    in property<string> key_text;
+    signal edited(string key);
+
+    TextField {
+        value: key_text;
+        on_changed: {
+            edited(key_text);
+        }
+    }
+}

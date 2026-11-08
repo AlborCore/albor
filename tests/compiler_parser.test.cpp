@@ -255,6 +255,30 @@ TEST(Parser, ReportsAStructWithNoName) {
     EXPECT_EQ(first(diagnostics).code, "E0203");
 }
 
+TEST(Parser, RecoversFromAMalformedStructField) {
+    // arrange a field written name-first, which is the mistake the field loop must survive (§11.1)
+    DiagnosticList diagnostics;
+    // act
+    const SourceFile file = parse("struct Frame { key: string; } component C { in property<Frame> frame; }", diagnostics);
+    // assert the malformed field is reported, because a field is a type, a name and a terminator (§11.1)
+    EXPECT_TRUE(diagnostics.has_errors());
+    // assert the reader reached the component, because the malformed field is skipped to its terminator (§11.1)
+    ASSERT_EQ(file.components.size(), 1U);
+    EXPECT_EQ(file.components.at(0).name, "C");
+}
+
+TEST(Parser, RecoversFromAnUnclosedGenericField) {
+    // arrange a field whose generic never closes, which must not swallow the rest of the file (§11.1)
+    DiagnosticList diagnostics;
+    // act
+    const SourceFile file = parse("struct Frame { vector<string key; } component C { in property<Frame> frame; }", diagnostics);
+    // assert the unclosed angle is reported, because a type is never open ended (§11.1)
+    EXPECT_TRUE(diagnostics.has_errors());
+    // assert the reader reached the component, because the terminator stopped the angle read (§11.1)
+    ASSERT_EQ(file.components.size(), 1U);
+    EXPECT_EQ(file.components.at(0).name, "C");
+}
+
 TEST(Parser, ReadsAnEnumWithItsMembers) {
     // arrange, act
     const SourceFile file = parse("enum Status { Todo, Doing, Done }");

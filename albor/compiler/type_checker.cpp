@@ -24,16 +24,7 @@ namespace albor::compiler
                     return parameter.second;
             }
         }
-        // the repeat bindings are checked first, because they are the nearest scope (§11.1)
-        if (repeat != nullptr) {
-            // the item binding carries the element type, which a vector source unwraps for its body (§11.1)
-            if (name == repeat->repeat_item_name)
-                return repeat->repeat_source_type.is(TypeKind::Vector) ? repeat->repeat_source_type.element() : repeat->repeat_source_type;
-            // the index binding is always an integer, because it counts (§11.1)
-            if (name == repeat->repeat_index_name)
-                return scalar(TypeKind::Int);
-        }
-        // the signal parameters are read before the component, because a handler shadows a property (§11.1)
+        // the signal parameters are read first, because a handler binds them by name (§11.1)
         if (handler_signal != nullptr) {
             // each parameter is named by the catalog, so the body writes what the widget carries (§11.1)
             for (std::size_t index = 0; index < handler_signal->parameter_names.size() && index < handler_signal->parameter_types.size(); index++) {
@@ -41,6 +32,15 @@ namespace albor::compiler
                 if (handler_signal->parameter_names[index] == name)
                     return handler_signal->parameter_types[index];
             }
+        }
+        // the repeat bindings follow, because a body outside a handler reads the item and the index (§11.1)
+        if (repeat != nullptr) {
+            // the item binding carries the element type, which a vector source unwraps for its body (§11.1)
+            if (name == repeat->repeat_item_name)
+                return repeat->repeat_source_type.is(TypeKind::Vector) ? repeat->repeat_source_type.element() : repeat->repeat_source_type;
+            // the index binding is always an integer, because it counts (§11.1)
+            if (name == repeat->repeat_index_name)
+                return scalar(TypeKind::Int);
         }
         // the declarations are scanned, because every scope is built from a resolved component (§11.1)
         if (properties != nullptr)
@@ -1181,9 +1181,18 @@ namespace albor::compiler
     }
 
     void TypeChecker::resolve_handlers(const TreeNode& node, const ElementType& type, const Scope& scope, CheckedNode& out) {
-        // each handler resolves on its own, because one mistake must not hide the rest (§11.1)
-        for (const HandlerAttachment& handler : node.handlers)
+        // a signal may be attached once per element, because a second attachment would redeclare its handler (§11.3)
+        std::vector<std::string> attached;
+        for (const HandlerAttachment& handler : node.handlers) {
+            // a repeated attachment is reported and dropped, because one handler is enough to compile (§11.3)
+            if (std::find(attached.begin(), attached.end(), handler.name) != attached.end()) {
+                report_duplicate_handler(handler.span, handler.name);
+                continue;
+            }
+            // the name is remembered, because the next attachment is checked against it (§11.3)
+            attached.push_back(handler.name);
             resolve_handler(handler, type, scope, out);
+        }
     }
 
     void TypeChecker::resolve_handler(const HandlerAttachment& handler, const ElementType& type, const Scope& scope, CheckedNode& out) {
@@ -1201,6 +1210,18 @@ namespace albor::compiler
         // the body resolves against the component plus the signal parameters, which the body reads by name (§11.1)
         Scope body_scope = scope;
         body_scope.handler_signal = signal;
+        // a handler is emitted once for every row, so the row bindings are not in scope there (§18.1, AD-13)
+        if (scope.repeat != nullptr) {
+            // each expression is walked, because the item may hide inside a larger value (§11.1)
+            for (const HandlerStatement& statement : handler.body) {
+                // an assignment carries its value, which may read the row (§11.1)
+                if (statement.value != nullptr)
+                    report_repeat_binding_reads(*statement.value, *scope.repeat, signal);
+                // an invocation carries its arguments, which may read the row (§11.1)
+                for (const ExpressionPtr& argument : statement.arguments)
+                    report_repeat_binding_reads(*argument, *scope.repeat, signal);
+            }
+        }
         for (const HandlerStatement& statement : handler.body)
             resolve_statement(statement, body_scope, out_handler);
         // the handler is kept, because the codegen wires a callback to it (§11.1)
@@ -1934,6 +1955,74 @@ namespace albor::compiler
         m_diagnostics.add(Diagnostic::Severity::Error, expression.location(), "E0409", "'" + std::string(name) + "' is not a property of this component");
     }
 
+    void TypeChecker::report_repeat_binding_reads(const Expression& expression, const CheckedNode& repeat, const ElementSignal* signal) {
+        // a signal parameter shadows the row binding, because the handler binds it by name (§11.1)
+        const auto signal_parameter = [signal](std::string_view name) {
+            if (signal == nullptr)
+                return false;
+            for (std::size_t index = 0; index < signal->parameter_names.size() && index < signal->parameter_types.size(); index++)
+                if (signal->parameter_names[index] == name)
+                    return true;
+            return false;
+        };
+        // a reference to the item or index is reported, because the callback is shared by every row (§18.1, AD-13)
+        if (const auto* reference = dynamic_cast<const PropertyExpression*>(&expression)) {
+            if (signal_parameter(reference->name))
+                return;
+            const bool item = !repeat.repeat_item_name.empty() && reference->name == repeat.repeat_item_name;
+            const bool index = !repeat.repeat_index_name.empty() && reference->name == repeat.repeat_index_name;
+            if (item || index)
+                m_diagnostics.add(Diagnostic::Severity::Error, reference->span, "E0435", "'" + reference->name + "' names the repeat item or index, which a shared row handler cannot read; pass it through the signal");
+            return;
+        }
+        // a conversion wraps its value, which is walked because it may read the row (§11.1)
+        if (const auto* conversion = dynamic_cast<const ConversionExpression*>(&expression)) {
+            report_repeat_binding_reads(*conversion->value, repeat, signal);
+            return;
+        }
+        // a call carries its arguments, which are walked in written order (§11.1)
+        if (const auto* call = dynamic_cast<const CallExpression*>(&expression)) {
+            for (const ExpressionPtr& argument : call->arguments)
+                report_repeat_binding_reads(*argument, repeat, signal);
+            return;
+        }
+        // a binary application has two operands, which are both walked (§11.1)
+        if (const auto* binary = dynamic_cast<const BinaryExpression*>(&expression)) {
+            report_repeat_binding_reads(*binary->left, repeat, signal);
+            report_repeat_binding_reads(*binary->right, repeat, signal);
+            return;
+        }
+        // a unary application has one operand, which is walked (§11.1)
+        if (const auto* unary = dynamic_cast<const UnaryExpression*>(&expression)) {
+            report_repeat_binding_reads(*unary->value, repeat, signal);
+            return;
+        }
+        // a grouping has an inner expression, which is walked (§11.1)
+        if (const auto* grouping = dynamic_cast<const GroupingExpression*>(&expression)) {
+            report_repeat_binding_reads(*grouping->inner, repeat, signal);
+            return;
+        }
+        // a bracketed list has elements, each of which is walked (§8.1)
+        if (const auto* array = dynamic_cast<const ArrayExpression*>(&expression)) {
+            for (const ExpressionPtr& element : array->elements)
+                report_repeat_binding_reads(*element, repeat, signal);
+            return;
+        }
+        // a construction carries field values, which are walked because any may read the row (§11.1)
+        if (const auto* construction = dynamic_cast<const RecordConstructionExpression*>(&expression)) {
+            for (const ConstructionField& field : construction->fields)
+                report_repeat_binding_reads(*field.value, repeat, signal);
+            return;
+        }
+        // a field read walks its object, because the object may be the row item (§11.2)
+        if (const auto* access = dynamic_cast<const FieldAccessExpression*>(&expression)) {
+            // a named value set is a bare name resolved before the object, so it is not a row read (§11.1)
+            if (const auto* object = dynamic_cast<const PropertyExpression*>(access->object.get()); object != nullptr && m_catalog.find_named_value_set(object->name) != nullptr)
+                return;
+            report_repeat_binding_reads(*access->object, repeat, signal);
+        }
+    }
+
     void TypeChecker::report_type_mismatch(const Expression& expression, const ValueType& from, const ValueType& to) {
         // the problem names both sides, because the author needs to know what was refused (§11.1)
         m_diagnostics.add(Diagnostic::Severity::Error, expression.location(), "E0410", "a value of type '" + from.to_string() + "' cannot be used where '" + to.to_string() + "' is required");
@@ -1961,6 +2050,11 @@ namespace albor::compiler
     void TypeChecker::report_unknown_signal(SourceSpan span, std::string_view element, std::string_view signal_name) {
         // the problem names the element, because the signal belongs to it (§11.1)
         m_diagnostics.add(Diagnostic::Severity::Error, span, "E0412", "'" + std::string(element) + "' raises no signal named '" + std::string(signal_name) + "'");
+    }
+
+    void TypeChecker::report_duplicate_handler(SourceSpan span, std::string_view signal_name) {
+        // the problem names the repeated signal, because one attachment is what the handler name admits (§11.3)
+        m_diagnostics.add(Diagnostic::Severity::Error, span, "E0436", "'" + std::string(signal_name) + "' is attached more than once on this element");
     }
 
     void TypeChecker::report_not_assignable(const HandlerStatement& statement, std::string_view name) {
