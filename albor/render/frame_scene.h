@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 #include "albor/core/geometry.h"
@@ -14,8 +15,8 @@ namespace albor
     class FrameScene
     {
     public:
-        // build an empty scene for the metrics the surface presents and the colour it is cleared with (§6.1)
-        FrameScene(WindowMetrics metrics, Color background);
+        // build a scene for the metrics, the background, and an optional damage region (§6.1)
+        FrameScene(WindowMetrics metrics, Color background, std::optional<Rect> damage = std::nullopt, bool culls_commands = false);
 
         // build a scene over rectangles, which is the shape an example that draws by hand hands over (§6.1)
         [[nodiscard]] static FrameScene from_primitives(WindowMetrics metrics, Color background, std::vector<Rect> rects);
@@ -25,6 +26,15 @@ namespace albor
 
         // hand out the background colour the surface is cleared with (§6.1)
         [[nodiscard]] Color background() const;
+
+        // hand out the region a partial frame redraws, or nothing when the frame covers the whole surface (§6.1)
+        [[nodiscard]] const std::optional<Rect>& damage_rect() const;
+
+        // report whether the scene redraws only the damage region instead of the whole surface (§6.1)
+        [[nodiscard]] bool is_partial() const;
+
+        // report whether the command list omits the draws outside the damage region (§6.1)
+        [[nodiscard]] bool culls_commands() const;
 
         // hand out the commands in paint order, which is the order the ui thread recorded them (§6.1)
         [[nodiscard]] const std::vector<DrawCommand>& commands() const;
@@ -53,6 +63,12 @@ namespace albor
 
         // the background the surface is cleared with before any command draws (§6.1)
         Color m_background;
+
+        // the region a partial frame redraws, where an empty value means the whole surface (§6.1)
+        std::optional<Rect> m_damage;
+
+        // whether the command list omits the draws outside the damage region, which needs a retained target (§6.1)
+        bool m_culls_commands = false;
 
         // the commands in paint order, which is what the render thread replays (§6.1, AD-18)
         std::vector<DrawCommand> m_commands;

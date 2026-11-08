@@ -90,6 +90,28 @@ namespace
             // the double claims any event it is offered, which stops the walk (§8.3)
             event.handled = true;
         }
+
+        // add a region without scheduling a frame, which the protected hook exposes to a test (§6.1)
+        void note(const Rect& damage) { note_damage(damage); }
+    };
+
+    // a node that moves itself on an arrange-only pass, which is how a scroll view places its content (§8.2)
+    class MovingNode final : public UiNode
+    {
+    public:
+        // the bounds the next arrange assigns, which the test changes between builds (§8.2)
+        Rect next;
+
+        void measure(const SizeConstraints& constraints, Size& out_size) override {
+            // the node offers its next extent, which keeps the measure pass deterministic (§8.2)
+            out_size = constraints.constrain(Size{.width = next.width, .height = next.height});
+            m_measured_size = out_size;
+        }
+
+        void arrange(const Rect&) override {
+            // the owner places the content, so the bounds a parent offers are ignored (§8.2)
+            m_bounds = next;
+        }
     };
 
     // the commands of one kind of a scene, which is what a retained draw assertion reads off the one list (§6.1)
@@ -251,7 +273,7 @@ namespace
     };
 
     // the render surface double, which begins and ends frames without presenting (§6.2)
-    class TestPipelineSurface final : public RenderSurface
+    class TestPipelineSurface : public RenderSurface
     {
     public:
         [[nodiscard]] bool valid() const override { return true; }
@@ -272,6 +294,14 @@ namespace
         TestPipelineContext m_context;
     };
 
+    // the surface double that keeps its target, which is what lets stage one cull (§6.1)
+    class RetainingPipelineSurface final : public TestPipelineSurface
+    {
+    public:
+        // override: the double keeps its target, so a damage bounded build may drop the rest (§6.1)
+        [[nodiscard]] bool retains_target() const override { return true; }
+    };
+
     // the backend double, which counts the frames stage two executed (§6.2)
     class TestExecutorBackend final : public RendererBackend
     {
@@ -285,7 +315,11 @@ namespace
 
         void resize_surface(RenderSurface&, const WindowMetrics&) override {}
 
-        void execute_frame(RenderSurface&, const FrameScene&) override { frames++; }
+        FrameOutcome execute_frame(RenderSurface&, const FrameScene&) override {
+            // the double counts the frame it was handed, which is what the submit test asserts on (§6.1)
+            frames++;
+            return FrameOutcome::Presented;
+        }
     };
 
     // the node that exposes the protected opacity push and pop, which a test asserts on (§6.1)
@@ -1577,6 +1611,267 @@ TEST(SceneBuilder, ANewBuilderHasCountedNothing) {
     EXPECT_EQ(builder.last_node_id(), 0u);
 }
 
+TEST(UiNode, VisualBoundsIncludeBorderAndShadow) {
+    // arrange a node with a border and a cast, which both paint outside its arranged plate (§6.1, §6.2)
+    UiNode node;
+    node.arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{30.0f, 40.0f}));
+    node.set_border_width(4.0f);
+    node.set_drop_shadow(Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 0.5f), .offset = Point{2.0f, 3.0f}, .blur = 4.0f});
+    // act
+    const Rect visual = node.visual_bounds();
+    // assert the border and the three sigma cast both join the arranged bounds (§6.1)
+    EXPECT_EQ(visual, (Rect{.x = 0.0f, .y = 11.0f, .width = 54.0f, .height = 64.0f}));
+}
+
+TEST(UiNode, VisualBoundsIncludeAChildOutsideTheParent) {
+    // arrange a child placed outside its parent, which a container may do (§8.2)
+    TestNode root;
+    auto child = std::make_unique<TestNode>();
+    TestNode* leaf = child.get();
+    root.add_child(std::move(child));
+    root.arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{20.0f, 20.0f}));
+    leaf->arrange(Rect::from_origin_size(Point{50.0f, 50.0f}, Size{10.0f, 10.0f}));
+    // act
+    const Rect visual = root.visual_bounds();
+    // assert the parent's damage covers the child it can paint, not only its own plate (§6.1)
+    EXPECT_EQ(visual, (Rect{10.0f, 10.0f, 50.0f, 50.0f}));
+}
+
+TEST(UiNode, AShrinkingBorderDamagesItsOldFringe) {
+    // arrange a node whose border shrank, so the old stroke has to be erased (§6.1)
+    UiNode node;
+    const Rect bounds = Rect::from_origin_size(Point{10.0f, 20.0f}, Size{30.0f, 40.0f});
+    node.arrange(bounds);
+    node.set_border_width(4.0f);
+    node.clear_damage_region();
+    // act
+    node.set_border_width(0.0f);
+    // assert the old half width is part of the damage, because the new bounds alone would leave it stale (§6.1)
+    ASSERT_TRUE(node.damage_region().has_value());
+    EXPECT_EQ(*node.damage_region(), bounds.inflated(4.0f));
+}
+
+TEST(UiNode, InvalidationAccumulatesTheUnionOfTheChangedAreas) {
+    // arrange a root whose child reports two separate redraws (§6.1)
+    TestNode root;
+    auto child = std::make_unique<TestNode>();
+    TestNode* leaf = child.get();
+    root.add_child(std::move(child));
+    leaf->arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{30.0f, 40.0f}));
+    // act
+    leaf->invalidate(Rect{10.0f, 20.0f, 5.0f, 5.0f});
+    leaf->invalidate(Rect{30.0f, 40.0f, 5.0f, 5.0f});
+    // assert the root carries one region covering both, which is what a partial frame redraws (§6.1)
+    ASSERT_TRUE(root.damage_region().has_value());
+    EXPECT_EQ(*root.damage_region(), (Rect{10.0f, 20.0f, 25.0f, 25.0f}));
+}
+
+TEST(UiNode, NoteDamageRecordsTheRegionWithoutSchedulingAFrame) {
+    // arrange a root whose damage starts empty, with a handler that counts frame requests (§6.1)
+    UiNode root;
+    std::size_t requests = 0;
+    root.set_invalidation_handler([&requests] { requests++; });
+    auto child = std::make_unique<TestNode>();
+    TestNode* leaf = child.get();
+    root.add_child(std::move(child));
+    root.clear_damage_region();
+    requests = 0;
+    // act
+    leaf->note(Rect{10.0f, 20.0f, 5.0f, 7.0f});
+    // assert the region reached the root, while the arrange-time hook asked for no frame of its own (§6.1)
+    ASSERT_TRUE(root.damage_region().has_value());
+    EXPECT_EQ(*root.damage_region(), (Rect{10.0f, 20.0f, 5.0f, 7.0f}));
+    EXPECT_EQ(requests, 0u);
+}
+
+TEST(SceneBuilder, APureInvalidationCarriesTheDamageRegion) {
+    // arrange a settled tree and a child that changed only its paint (§6.1)
+    SceneBuilder builder;
+    TestNode root;
+    auto child = std::make_unique<TestNode>();
+    TestNode* leaf = child.get();
+    root.add_child(std::move(child));
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
+    (void)builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    leaf->arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{30.0f, 40.0f}));
+    leaf->invalidate();
+    // act
+    const std::shared_ptr<const FrameScene> scene = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    // assert the frame is bounded to the changed child, while the commands remain the full scene (§6.1)
+    ASSERT_TRUE(scene->is_partial());
+    ASSERT_TRUE(scene->damage_rect().has_value());
+    EXPECT_EQ(*scene->damage_rect(), (Rect{9.0f, 19.0f, 32.0f, 42.0f}));
+    EXPECT_FALSE(root.damage_region().has_value());
+}
+
+TEST(SceneBuilder, ACulledBuildKeepsOnlyTheCommandsThatReachTheDamage) {
+    // arrange a column of two separated children, whose bounds a damage region tells apart (§8.2)
+    SceneBuilder builder;
+    ColumnLayout root;
+    root.set_gap(20.0f);
+    auto first = std::make_unique<TestNode>();
+    auto second = std::make_unique<TestNode>();
+    TestNode* changed = first.get();
+    TestNode* untouched = second.get();
+    root.add_child(std::move(first));
+    root.add_child(std::move(second));
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{100.0f, 200.0f}, 1.0f);
+    const std::shared_ptr<const FrameScene> full = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    const std::size_t full_commands = full->command_count();
+    const std::size_t full_drawn = builder.drawn_count();
+    const std::size_t untouched_draws = untouched->draws;
+    changed->invalidate();
+    // act
+    const std::shared_ptr<const FrameScene> scene = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f), true);
+    // assert only the changed child reached the scene, which is the stage one half of the pipeline (§6.1)
+    ASSERT_TRUE(scene->is_partial());
+    ASSERT_TRUE(scene->culls_commands());
+    EXPECT_LT(scene->command_count(), full_commands);
+    EXPECT_EQ(scene->command_count(), 1u);
+    EXPECT_EQ(scene->commands().front().bounds(), changed->bounds());
+    // assert the drawn count follows what the frame actually drew, so the culled subtree is absent from it (§6.1)
+    EXPECT_EQ(builder.drawn_count(), full_drawn - 1u);
+    EXPECT_EQ(builder.visited_count(), 3u);
+    // assert the untouched child was skipped before it painted, which is what stage one saves (§6.1)
+    EXPECT_EQ(untouched->draws, untouched_draws);
+}
+
+TEST(SceneBuilder, ACulledBuildKeepsTheOverlayInsideTheDamage) {
+    // arrange a root with one changed child and two overlays, only one of which is inside the damage (§8.3)
+    SceneBuilder builder;
+    UiNode root;
+    auto child = std::make_unique<TestNode>();
+    TestNode* changed = child.get();
+    root.add_child(std::move(child));
+    auto near = std::make_unique<TestNode>();
+    TestNode* near_overlay = near.get();
+    auto far = std::make_unique<TestNode>();
+    TestNode* far_overlay = far.get();
+    root.add_overlay(std::move(near));
+    root.add_overlay(std::move(far));
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f);
+    (void)builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    changed->arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{40.0f, 40.0f}));
+    near_overlay->arrange(Rect::from_origin_size(Point{20.0f, 20.0f}, Size{20.0f, 20.0f}));
+    far_overlay->arrange(Rect::from_origin_size(Point{10.0f, 160.0f}, Size{20.0f, 20.0f}));
+    changed->invalidate();
+    // act
+    const std::shared_ptr<const FrameScene> scene = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f), true);
+    // assert the overlapping overlay was kept and the far one was culled (§6.1, §8.3)
+    EXPECT_TRUE(scene->culls_commands());
+    EXPECT_EQ(scene->command_count(), 2u);
+}
+
+TEST(SceneBuilder, AnUnfilteredBuildKeepsTheWholeCommandList) {
+    // arrange a settled tree whose child changed only its paint (§6.1)
+    SceneBuilder builder;
+    ColumnLayout root;
+    root.set_gap(20.0f);
+    auto first = std::make_unique<TestNode>();
+    auto second = std::make_unique<TestNode>();
+    TestNode* changed = first.get();
+    root.add_child(std::move(first));
+    root.add_child(std::move(second));
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{100.0f, 200.0f}, 1.0f);
+    const std::shared_ptr<const FrameScene> full = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    changed->invalidate();
+    // act
+    const std::shared_ptr<const FrameScene> scene = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    // assert a surface that cannot retain pixels receives every command, bounded by the damage only (§6.1)
+    EXPECT_TRUE(scene->is_partial());
+    EXPECT_FALSE(scene->culls_commands());
+    EXPECT_EQ(scene->command_count(), full->command_count());
+}
+
+TEST(SceneRecorder, ACulledSceneDropsTheDrawsOutsideTheRegion) {
+    // arrange a recorder that culls against the top left corner (§6.1)
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    recorder.set_damage_filter(Rect{0.0f, 0.0f, 20.0f, 20.0f});
+    // act
+    recorder.draw_rect(Rect{0.0f, 0.0f, 10.0f, 10.0f}, Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f)});
+    recorder.draw_rect(Rect{50.0f, 50.0f, 10.0f, 10.0f}, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    // assert only the command inside the region reached the scene, which is what stage one saves (§6.1)
+    ASSERT_EQ(scene->command_count(), 1u);
+    EXPECT_EQ(scene->commands().front().bounds(), (Rect{0.0f, 0.0f, 10.0f, 10.0f}));
+    // assert the scene records that its list is not whole, which a non retaining surface must refuse (§6.1)
+    EXPECT_TRUE(scene->culls_commands());
+}
+
+TEST(SceneRecorder, ACulledSceneKeepsEveryLayerMarker) {
+    // arrange a recorder that culls away every draw inside a layer (§6.1, §6.2)
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    recorder.set_damage_filter(Rect{0.0f, 0.0f, 20.0f, 20.0f});
+    // act
+    recorder.push_layer(0.5f);
+    recorder.draw_rect(Rect{50.0f, 50.0f, 10.0f, 10.0f}, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    recorder.pop_layer();
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    // assert the pair survives closed, so the replay never pops a layer it never pushed (§6.2)
+    ASSERT_EQ(scene->command_count(), 2u);
+    EXPECT_EQ(scene->commands().front().kind(), DrawCommandKind::LayerPush);
+    EXPECT_EQ(scene->commands().back().kind(), DrawCommandKind::LayerPop);
+}
+
+TEST(SceneRecorder, AnUnfilteredSceneKeepsEveryCommand) {
+    // arrange a recorder with no damage filter, which is the whole frame case (§6.1)
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    recorder.draw_rect(Rect{0.0f, 0.0f, 10.0f, 10.0f}, Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f)});
+    recorder.draw_rect(Rect{50.0f, 50.0f, 10.0f, 10.0f}, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    // act
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    // assert nothing was dropped and the scene declares its list whole (§6.1)
+    EXPECT_EQ(scene->command_count(), 2u);
+    EXPECT_FALSE(scene->culls_commands());
+}
+
+TEST(SceneRecorder, ARotatedRectangleIsRecordedAsItsCornerBound) {
+    // arrange a recorder turned a quarter around the origin, which is what a transformed canvas records (§6.2)
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    recorder.set_transform(Transform{.scale_x = 0.0f, .skew_x = -1.0f, .translate_x = 0.0f, .skew_y = 1.0f, .scale_y = 0.0f, .translate_y = 0.0f});
+    // act
+    recorder.draw_rect(Rect{0.0f, 0.0f, 10.0f, 20.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    const std::shared_ptr<const FrameScene> scene = recorder.scene();
+    // assert the whole transform places the corners, so the record covers the turned extent (§6.1)
+    ASSERT_EQ(scene->command_count(), 1u);
+    EXPECT_EQ(scene->commands().front().bounds(), (Rect{-20.0f, 0.0f, 20.0f, 10.0f}));
+}
+
+TEST(SceneBuilder, AnArrangeOnlyMoveCarriesTheOldAndNewExtents) {
+    // arrange a settled tree whose child moves on an arrange-only pass (§8.2)
+    SceneBuilder builder;
+    UiNode root;
+    auto child = std::make_unique<MovingNode>();
+    MovingNode* leaf = child.get();
+    leaf->next = Rect::from_origin_size(Point{10.0f, 20.0f}, Size{30.0f, 40.0f});
+    root.add_child(std::move(child));
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
+    (void)builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    leaf->next = Rect::from_origin_size(Point{60.0f, 80.0f}, Size{30.0f, 40.0f});
+    leaf->invalidate_arrange();
+    // act
+    const std::shared_ptr<const FrameScene> scene = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    // assert an arrange-only frame is bounded by both placements, which makes scrolling partial (§6.1)
+    ASSERT_TRUE(scene->is_partial());
+    ASSERT_TRUE(scene->damage_rect().has_value());
+    EXPECT_EQ(*scene->damage_rect(), (Rect{9.0f, 19.0f, 82.0f, 102.0f}));
+}
+
+TEST(SceneBuilder, ALayoutInvalidationFallsBackToAFullFrame) {
+    // arrange a settled tree that then asks for a measure and arrange (§8.2)
+    SceneBuilder builder;
+    TestNode root;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{800.0f, 600.0f}, 1.0f);
+    (void)builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    root.invalidate_layout();
+    // act
+    const std::shared_ptr<const FrameScene> scene = builder.build(root, metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    // assert a layout pass can move anything, so no damage region can bound it (§6.1, §8.2)
+    EXPECT_FALSE(scene->is_partial());
+    EXPECT_FALSE(scene->damage_rect().has_value());
+    EXPECT_FALSE(root.damage_region().has_value());
+}
+
 TEST(SceneBuilder, BuildingProducesAnImmutableScene) {
     // arrange
     SceneBuilder builder;
@@ -2140,6 +2435,134 @@ TEST(FramePipeline, SubmittingTheBuiltSceneHandsItToTheExecutor) {
     EXPECT_TRUE(handed);
     EXPECT_EQ(backend.frames, 1u);
     EXPECT_NE(scene, nullptr);
+}
+
+TEST(FramePipeline, ARetainingSurfaceLetsTheBuildCull) {
+    // arrange a column of two separated children, whose bounds a damage region tells apart (§8.2)
+    BindingEngine engine;
+    auto root = std::make_unique<ColumnLayout>();
+    root->set_gap(20.0f);
+    auto first = std::make_unique<TestNode>();
+    auto second = std::make_unique<TestNode>();
+    TestNode* changed = first.get();
+    TestNode* untouched = second.get();
+    root->add_child(std::move(first));
+    root->add_child(std::move(second));
+    FramePipeline pipeline(engine, std::move(root));
+    RetainingPipelineSurface surface;
+    pipeline.set_surface(&surface);
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{100.0f, 200.0f}, 1.0f);
+    const std::shared_ptr<const FrameScene> full = pipeline.build(metrics);
+    const std::size_t full_commands = full->command_count();
+    const std::size_t untouched_draws = untouched->draws;
+    changed->invalidate();
+    // act
+    const std::shared_ptr<const FrameScene> scene = pipeline.build_if_dirty(metrics);
+    // assert a retaining surface receives only the commands that reach the damage (§6.1)
+    ASSERT_NE(scene, nullptr);
+    ASSERT_TRUE(scene->culls_commands());
+    EXPECT_LT(scene->command_count(), full_commands);
+    EXPECT_EQ(untouched->draws, untouched_draws);
+}
+
+TEST(FramePipeline, ANonRetainingSurfaceReceivesTheWholeCommandList) {
+    // arrange a column whose child changes, presented by a surface that keeps no pixels (§6.1)
+    BindingEngine engine;
+    auto root = std::make_unique<ColumnLayout>();
+    root->set_gap(20.0f);
+    auto first = std::make_unique<TestNode>();
+    auto second = std::make_unique<TestNode>();
+    TestNode* changed = first.get();
+    TestNode* untouched = second.get();
+    root->add_child(std::move(first));
+    root->add_child(std::move(second));
+    FramePipeline pipeline(engine, std::move(root));
+    TestPipelineSurface surface;
+    pipeline.set_surface(&surface);
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{100.0f, 200.0f}, 1.0f);
+    const std::shared_ptr<const FrameScene> full = pipeline.build(metrics);
+    const std::size_t untouched_draws = untouched->draws;
+    changed->invalidate();
+    // act
+    const std::shared_ptr<const FrameScene> scene = pipeline.build_if_dirty(metrics);
+    // assert the whole list was recorded, because a surface with no target cannot reuse its pixels (§6.1)
+    ASSERT_NE(scene, nullptr);
+    EXPECT_TRUE(scene->is_partial());
+    EXPECT_FALSE(scene->culls_commands());
+    EXPECT_EQ(scene->command_count(), full->command_count());
+    // assert the untouched child was still recorded, which a full list requires (§6.1)
+    EXPECT_EQ(untouched->draws, untouched_draws + 1u);
+}
+
+TEST(FramePipeline, AFullFrameRequestRebuildsEvenACleanTree) {
+    // arrange a settled pipeline whose tree has nothing dirty (§6.1)
+    BindingEngine engine;
+    auto root = std::make_unique<ColumnLayout>();
+    root->add_child(std::make_unique<TestNode>());
+    FramePipeline pipeline(engine, std::move(root));
+    RetainingPipelineSurface surface;
+    pipeline.set_surface(&surface);
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{100.0f, 200.0f}, 1.0f);
+    (void)pipeline.build(metrics);
+    EXPECT_FALSE(pipeline.pending());
+    // act
+    pipeline.request_full_frame();
+    // assert the request itself owes a frame, even though the tree is clean (§6.1)
+    EXPECT_TRUE(pipeline.pending());
+    const std::shared_ptr<const FrameScene> scene = pipeline.build_if_dirty(metrics);
+    // assert the frame covers the whole surface, which is what a refused culled frame needs (§6.1)
+    ASSERT_NE(scene, nullptr);
+    EXPECT_FALSE(scene->is_partial());
+    EXPECT_FALSE(scene->culls_commands());
+}
+
+TEST(FramePipeline, AFullFrameRequestDoesNotRelayoutACleanTree) {
+    // arrange a settled tree whose measure and arrange counts are reset (§6.1, §8.2)
+    BindingEngine engine;
+    auto root = std::make_unique<TestNode>();
+    TestNode* node = root.get();
+    FramePipeline pipeline(engine, std::move(root));
+    RetainingPipelineSurface surface;
+    pipeline.set_surface(&surface);
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{100.0f, 200.0f}, 1.0f);
+    (void)pipeline.build(metrics);
+    node->measures = 0;
+    node->arranges = 0;
+    // act
+    pipeline.request_full_frame();
+    const std::shared_ptr<const FrameScene> scene = pipeline.build_if_dirty(metrics);
+    // assert the whole frame was recorded without repeating a layout that is still valid (§6.1, §8.2)
+    ASSERT_NE(scene, nullptr);
+    EXPECT_FALSE(scene->is_partial());
+    EXPECT_EQ(node->measures, 0u);
+    EXPECT_EQ(node->arranges, 0u);
+}
+
+TEST(FramePipeline, ABackgroundChangeForcesAWholeFrameWithoutARelayout) {
+    // arrange a settled pipeline over a retaining surface, which is the steady state (§6.1)
+    BindingEngine engine;
+    auto root = std::make_unique<TestNode>();
+    TestNode* node = root.get();
+    FramePipeline pipeline(engine, std::move(root));
+    RetainingPipelineSurface surface;
+    pipeline.set_surface(&surface);
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{100.0f, 200.0f}, 1.0f);
+    (void)pipeline.build(metrics);
+    node->measures = 0;
+    node->arranges = 0;
+    // act
+    pipeline.set_background(Color::rgb(1.0f, 0.0f, 0.0f));
+    // assert the colour change owes a frame, because a stored colour alone draws nothing (§6.1)
+    EXPECT_TRUE(pipeline.pending());
+    const std::shared_ptr<const FrameScene> scene = pipeline.build_if_dirty(metrics);
+    // assert the frame covers the whole surface, because the clear colour is the whole frame (§6.1)
+    ASSERT_NE(scene, nullptr);
+    EXPECT_EQ(scene->background(), (Color::rgb(1.0f, 0.0f, 0.0f)));
+    EXPECT_FALSE(scene->is_partial());
+    EXPECT_FALSE(scene->damage_rect().has_value());
+    // assert a colour change costs no measure or arrange pass, which is what it never changes (§8.2)
+    EXPECT_EQ(node->measures, 0u);
+    EXPECT_EQ(node->arranges, 0u);
 }
 
 TEST(Component, RenderingAComponentPaintsItsBackground) {

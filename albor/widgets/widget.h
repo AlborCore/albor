@@ -80,6 +80,9 @@ namespace albor
         // override: hand out the plate radius, which a theme sets and an unthemed widget leaves hard (§6.2)
         [[nodiscard]] float corner_radius() const override;
 
+        // override: include the focus ring in the damage area, because it paints outside the plate (§6.1, §8.3)
+        [[nodiscard]] Rect visual_bounds() const override;
+
         // override: draw the plate and then the focus ring, which is the only signal a focused control carries (§6.1)
         void paint_background(RenderContext& context) override;
 
@@ -125,6 +128,9 @@ namespace albor
 
         // hand out the rect the focus ring surrounds, which a control smaller than its bounds overrides (§8.4)
         [[nodiscard]] virtual Rect focus_ring_rect() const;
+
+        // hand out the area the focus ring and its halo paint, which stands outside the plate (§6.1)
+        [[nodiscard]] Rect ring_bounds() const;
 
         // stroke the focus ring outside the plate, which a focused widget draws and an unthemed one does not (§6.1)
         virtual void paint_focus_ring(RenderContext& context) const;

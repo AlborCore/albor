@@ -1,6 +1,7 @@
 #include "albor/core/geometry.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace albor
 {
@@ -27,6 +28,33 @@ namespace albor
         return Rect::from_origin_size(Point{.x = left, .y = top}, Size{.width = std::max(0.0f, right - left), .height = std::max(0.0f, bottom - top)});
     }
 
+    Rect Rect::unioned(const Rect& other) const {
+        // an empty rectangle adds nothing, so the other one is the whole union (§6.1)
+        if (empty())
+            return other;
+        // an empty rectangle beside a real one leaves the real one unchanged (§6.1)
+        if (other.empty())
+            return *this;
+        // the union starts at the earlier leading edge on each axis (§6.1)
+        const float left = std::min(x, other.x);
+        // the top edge follows the same rule, because the union covers both (§6.1)
+        const float top = std::min(y, other.y);
+        // the trailing edge is the later of the two, because the union covers both (§6.1)
+        const float right = std::max(x + width, other.x + other.width);
+        // the bottom edge follows the same rule (§6.1)
+        const float bottom = std::max(y + height, other.y + other.height);
+        // the result is one rectangle over both, in the same space the inputs share (§6.1)
+        return Rect::from_origin_size(Point{.x = left, .y = top}, Size{.width = right - left, .height = bottom - top});
+    }
+
+    Rect Rect::inflated(float amount) const {
+        // an empty rectangle has no ink to grow, so it stays empty (§6.1)
+        if (empty())
+            return *this;
+        // the amount grows every edge, so the origin moves back and both extents gain twice it (§6.1)
+        return Rect::from_origin_size(Point{.x = x - amount, .y = y - amount}, Size{.width = width + amount * 2.0f, .height = height + amount * 2.0f});
+    }
+
     Transform Transform::translation(float x, float y) {
         // build a pure translation
         return {.translate_x = x, .translate_y = y};
@@ -44,6 +72,32 @@ namespace albor
         const float mapped_y = skew_y * point.x + scale_y * point.y + translate_y;
         // map a point through the transform
         return {.x = mapped_x, .y = mapped_y};
+    }
+
+    Rect Transform::map(const Rect& rect) const {
+        // an empty rectangle has no corner to place, so it stays empty (§6.2)
+        if (rect.empty())
+            return rect;
+        // the origin maps through the transform, which is where the top left corner lands (§6.2)
+        const Point origin = apply(Point{.x = rect.x, .y = rect.y});
+        // the width edge is placed by the horizontal scale, which is exact for a pure scale (§6.2)
+        const float width_on_x = rect.width * scale_x;
+        // the height edge reaches horizontally through the skew, because a shear turns it (§6.2)
+        const float height_on_x = rect.height * skew_x;
+        // the width edge reaches vertically through the other skew (§6.2)
+        const float width_on_y = rect.width * skew_y;
+        // the height edge is placed by the vertical scale (§6.2)
+        const float height_on_y = rect.height * scale_y;
+        // the left edge is where the origin lands plus whatever either edge reaches left (§6.2)
+        const float left = origin.x + std::min(0.0f, width_on_x) + std::min(0.0f, height_on_x);
+        // the top edge follows the same rule on the other axis (§6.2)
+        const float top = origin.y + std::min(0.0f, width_on_y) + std::min(0.0f, height_on_y);
+        // the width covers both horizontal reaches without subtracting them, which keeps a scale exact (§6.2)
+        const float width = std::abs(width_on_x) + std::abs(height_on_x);
+        // the height covers both vertical reaches the same way (§6.2)
+        const float height = std::abs(width_on_y) + std::abs(height_on_y);
+        // the edges become the rectangle that covers everything the transform places (§6.2)
+        return Rect::from_origin_size(Point{.x = left, .y = top}, Size{.width = width, .height = height});
     }
 
     Transform Transform::then(const Transform& outer) const {

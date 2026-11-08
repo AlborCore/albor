@@ -39,7 +39,7 @@ namespace albor
         void resize_surface(RenderSurface& surface, const WindowMetrics& metrics) override;
 
         // override: execute a frame scene, refusing one at stale metrics rather than repairing it (§6.1, D9.1)
-        void execute_frame(RenderSurface& surface, const FrameScene& scene) override;
+        FrameOutcome execute_frame(RenderSurface& surface, const FrameScene& scene) override;
 
     private:
         // the opaque skia state, so that no skia type reaches this header (§3.5, AD-05)

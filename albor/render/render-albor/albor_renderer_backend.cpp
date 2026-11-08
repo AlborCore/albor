@@ -1,5 +1,7 @@
 #include "albor/render/render-albor/albor_renderer_backend.h"
 
+#include <optional>
+
 #include "albor/render/draw_command.h"
 #include "albor/render/render-albor/albor_backend_support.h"
 #include "albor/render/renderer_backend.h"
@@ -34,22 +36,48 @@ namespace albor::render
         surface.resize(metrics);
     }
 
-    void AlborRendererBackend::execute_frame(RenderSurface& surface, const FrameScene& scene) {
-        // a frame needs a surface that could draw (§6.1)
+    FrameOutcome AlborRendererBackend::execute_frame(RenderSurface& surface, const FrameScene& scene) {
+        // a frame needs a surface that could draw, and a surface that cannot is not a refusal to retry (§6.1)
         if (!surface.valid())
-            return;
+            return FrameOutcome::Presented;
         // a scene at stale metrics is refused rather than repaired here, exactly as the reference does (§6.1, D9.1)
         if (surface.metrics() != scene.metrics())
-            return;
+            return FrameOutcome::RefusedStaleMetrics;
+        // the whole surface is the clip every command was recorded under, which a partial frame narrows below (§6.1)
+        const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, scene.metrics().logical_size);
+        // a translucent background cannot be reproduced by the opaque Copy replacement, so it needs a full frame (§6.1)
+        const bool opaque_background = scene.background().alpha >= 1.0f;
+        // the surface is told before begin, because the target load and the final present depend on it (§6.1, §6.3)
+        const bool partial = scene.is_partial() && opaque_background && surface.set_damage_region(scene.damage_rect());
+        // a full frame clears the target, which also establishes the base a later partial frame needs (§6.1)
+        if (!partial)
+            surface.set_damage_region(std::nullopt);
+        // a culled list without a retained target is missing the draws outside the region, so it cannot be drawn (§6.1)
+        if (scene.culls_commands() && !partial)
+            return FrameOutcome::RefusedNoRetention;
         // stage two begins the frame and draws the immutable scene into it (§6.1, AD-18)
         RenderContext& context = surface.begin_frame();
-        // the background is a full surface rectangle, which the clear of phase one is (§6.1)
-        const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, scene.metrics().logical_size);
-        context.draw_rect(full, {.fill = scene.background()});
-        // the commands replay through the one shared replay, which every backend calls (§6.1, §6.2)
-        replay_commands(scene.commands(), context, full);
+        if (partial) {
+            // the damage is the only area the frame may touch, so the replay is clipped to it (§6.1)
+            const Rect damage = *scene.damage_rect();
+            context.save();
+            context.clip_rect(damage);
+            // the damaged area is replaced by the background rather than blended over the old pixels (§6.1)
+            context.draw_rect(damage, {.fill = scene.background(), .composition = CompositionMode::Copy});
+            // only the commands that can reach the damage replay, which is what skips the untouched vertices (§6.1)
+            replay_commands(scene.commands(), context, full, damage);
+            context.restore();
+        }
+        else {
+            // a full frame paints the background over the whole surface, which the clear of phase one is (§6.1)
+            context.draw_rect(full, {.fill = scene.background()});
+            // the commands replay through the one shared replay, which every backend calls (§6.1, §6.2)
+            replay_commands(scene.commands(), context, full);
+        }
         // the frame finishes once the immutable scene is fully recorded (§6.1)
         surface.end_frame();
+        // the surface drew the whole scene, which is what the pipeline expects of a presented frame (§6.1)
+        return FrameOutcome::Presented;
     }
 
     std::uint64_t AlborRendererBackend::batch_buffer_allocations() const {

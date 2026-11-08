@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -56,6 +57,9 @@ namespace albor
         // hand out how many frames were dropped because the scene was built at metrics the surface does not present at
         [[nodiscard]] std::uint64_t dropped_count() const;
 
+        // take the flag that says a culled scene was refused, which the ui thread answers with a full rebuild (§6.1)
+        [[nodiscard]] bool consume_damage_refusal();
+
     private:
         // the render thread body, which executes one scene per available frame (§6.1)
         void run();
@@ -86,6 +90,9 @@ namespace albor
 
         // how many frames were dropped at stale metrics, which the ui thread answers by resizing the surface (§6.1, D9.1)
         std::uint64_t m_dropped = 0;
+
+        // whether a culled scene was refused for want of a retained target, which the ui thread answers (§6.1)
+        std::atomic<bool> m_damage_refused{false};
 
         // whether the render thread was asked to stop
         bool m_stopping = false;

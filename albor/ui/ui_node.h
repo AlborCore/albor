@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "albor/core/align.h"
@@ -87,6 +88,12 @@ namespace albor
         // hand out the bounds a parent arranged this node to (§8.2)
         [[nodiscard]] const Rect& bounds() const;
 
+        // hand out the area this node and its visible subtree can paint, including border and shadow (§6.1)
+        [[nodiscard]] virtual Rect visual_bounds() const;
+
+        // hand out the area this node paints itself, before its children and overlays join (§6.1)
+        [[nodiscard]] virtual Rect own_bounds() const;
+
         // hand out the size the node measured itself to (§8.2)
         [[nodiscard]] const Size& measured_size() const;
 
@@ -104,6 +111,15 @@ namespace albor
 
         // request a redraw of this node and of everything above it (§6.1)
         void invalidate();
+
+        // request a redraw of the given area, which is what a caret or a hover highlight needs (§6.1)
+        void invalidate(const Rect& damage);
+
+        // hand out the region the root accumulated since the last frame, which a partial frame redraws (§6.1)
+        [[nodiscard]] const std::optional<Rect>& damage_region() const;
+
+        // spend the accumulated damage, which the scene builder does after it built a frame (§6.1)
+        void clear_damage_region();
 
         // mark the layout dirty and request the measure and arrange passes (§8.2)
         void invalidate_layout();
@@ -210,6 +226,12 @@ namespace albor
         // arrange the child only when it asked for a pass or its bounds would move, which keeps a relayout local (§8.2)
         void arrange_if_changed(UiNode& child, const Rect& bounds);
 
+        // narrow the damage a child reports to what this node actually paints, which a clipping container overrides (§6.1)
+        [[nodiscard]] virtual Rect clip_child_damage(const Rect& damage) const;
+
+        // add a redraw region without requesting another frame, which an arrange pass uses for its old extent (§8.2)
+        void note_damage(const Rect& damage);
+
         // report whether the author wrote the border colour, which a themed control reads (§8.4)
         [[nodiscard]] bool border_color_authored() const;
 
@@ -248,6 +270,9 @@ namespace albor
 
         // whether the node asked for a redraw since the last frame (§6.1)
         bool m_render_dirty = true;
+
+        // the redraw region the root accumulated, where an empty value means a full frame (§6.1)
+        std::optional<Rect> m_damage_region;
 
         // whether the node asked to be measured again since the last frame (§8.2)
         bool m_measure_dirty = true;

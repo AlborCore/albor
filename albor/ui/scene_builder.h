@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "albor/core/geometry.h"
@@ -41,6 +42,12 @@ namespace albor
 
         // override: read back the current clip
         [[nodiscard]] const Rect& clip() const override;
+
+        // override: report whether the recorder culls the commands outside the damage region
+        [[nodiscard]] bool has_damage_filter() const override;
+
+        // override: hand out the region the recorder culls against
+        [[nodiscard]] Rect damage_filter() const override;
 
         // override: set the opacity the later draws are dimmed by
         void set_opacity(float opacity) override;
@@ -96,6 +103,12 @@ namespace albor
         // set the background the scene is cleared with (§6.1)
         void set_background(Color background);
 
+        // set the region stage two may redraw instead of the whole surface (§6.1)
+        void set_damage_rect(std::optional<Rect> damage);
+
+        // set the region stage one culls the recorded commands against, or nothing to record them all (§6.1)
+        void set_damage_filter(std::optional<Rect> damage);
+
         // freeze the recorded commands into the immutable scene the render thread consumes (§6.1, AD-18)
         [[nodiscard]] std::shared_ptr<const FrameScene> scene() const;
 
@@ -137,11 +150,20 @@ namespace albor
         // record a command after stamping the clip it was drawn under (§6.2)
         void record(DrawCommand command);
 
+        // report whether a command survives the damage filter, where a layer marker always does (§6.1)
+        [[nodiscard]] bool keeps(const DrawCommand& command) const;
+
         // the metrics the scene is built for (§6.1)
         WindowMetrics m_metrics;
 
         // the background the surface is cleared with (§6.1)
         Color m_background;
+
+        // the region a partial frame redraws, where an empty value means the whole surface (§6.1)
+        std::optional<Rect> m_damage;
+
+        // the region the recorded commands are culled against, where an empty value records all of them (§6.1)
+        std::optional<Rect> m_damage_filter;
 
         // the current transform
         Transform m_transform;
@@ -170,7 +192,7 @@ namespace albor
         SceneBuilder();
 
         // lay out and record the tree for the given metrics, which returns the scene stage two consumes (§6.1)
-        [[nodiscard]] std::shared_ptr<const FrameScene> build(UiNode& root, WindowMetrics metrics, Color background);
+        [[nodiscard]] std::shared_ptr<const FrameScene> build(UiNode& root, WindowMetrics metrics, Color background, bool cull_commands = false);
 
         // install the resolver embedded text draws through, which a composition root does once (§6.4, AD-34)
         void set_outline_resolver(GlyphOutlineResolver resolver);

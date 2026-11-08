@@ -70,6 +70,9 @@ namespace albor
         // set the background the scene is cleared with (§6.1)
         void set_background(Color background);
 
+        // ask the next build for a whole frame, which a surface that refused a culled scene needs (§6.1)
+        void request_full_frame();
+
         // set the surface the attached executor presents into, which the window owns (§6.1)
         void set_surface(RenderSurface* surface);
 
@@ -115,5 +118,8 @@ namespace albor
 
         // how many frames an invalidation asked for (§6.1)
         std::uint64_t m_requests = 0;
+
+        // whether the next build must cover the whole surface, which a refused culled frame asks for (§6.1)
+        bool m_full_frame = false;
     };
 } // namespace albor

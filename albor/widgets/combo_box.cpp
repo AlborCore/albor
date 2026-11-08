@@ -38,6 +38,9 @@ namespace albor
         // override: paint the list after the ordinary tree, which is what puts it above every sibling (§8.3)
         void render(RenderContext& context) override { m_owner.paint_popup(context); }
 
+        // override: the layer's damage is the popup rectangle, because the layer has no arranged bounds (§6.1)
+        [[nodiscard]] Rect visual_bounds() const override { return m_owner.expanded() ? m_owner.popup_rect() : Rect{}; }
+
         // override: the open popup owns every pointer position, including the outside press that closes it (§8.3)
         [[nodiscard]] bool hit_test(Point logical_point) const override {
             // the layer takes every point while it is open, because it also owns the outside dismissal (§8.3)
@@ -355,6 +358,16 @@ namespace albor
         m_bounds = bounds;
         // the arranged extent is the preferred one, because the parent has now decided (§8.2)
         m_preferred_size = Size{.width = bounds.width, .height = bounds.height};
+    }
+
+    Rect ComboBox::visual_bounds() const {
+        // the trigger and its focus ring are the base area, which the widget already answers (§6.1)
+        Rect visual = Widget::visual_bounds();
+        // a native popup paints in its own window, so it contributes no damage to the owner (§5.1)
+        if (!m_expanded || m_popup_window.valid())
+            return visual;
+        // the in-tree popup hangs below the trigger, so its rectangle is part of what the control paints (§8.3)
+        return visual.unioned(popup_rect());
     }
 
     Rect ComboBox::trigger_rect() const {
@@ -862,6 +875,8 @@ namespace albor
         // a closed popup has nothing to change (§8.3)
         if (!m_expanded)
             return;
+        // the open popup area is read before it leaves, so the old rows are erased by the next frame (§6.1)
+        const Rect old_visual = visual_bounds();
         // the popup leaves the screen without changing the selection (§8.3)
         m_expanded = false;
         // a native surface is hidden rather than destroyed, so its tree can be reopened (§5.1)
@@ -872,8 +887,8 @@ namespace albor
             m_popup->set_visible(false);
         // the hover row belongs to the open popup, so it is cleared with it (§8.3)
         m_hovered = -1;
-        // the popup disappears, so the frame is requested (§6.1)
-        invalidate();
+        // both the old popup and the trigger are damaged, because the popup left the screen (§6.1)
+        invalidate(old_visual.unioned(visual_bounds()));
     }
 
     void ComboBox::set_disabled(bool disabled) {

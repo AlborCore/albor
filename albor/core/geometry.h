@@ -52,6 +52,12 @@ namespace albor
         // build the overlap of two rectangles, which is what narrowing a clip to a rectangle settles for (§6.2)
         [[nodiscard]] Rect intersect(const Rect& other) const;
 
+        // build the smallest rectangle covering both, which is how damage regions accumulate (§6.1)
+        [[nodiscard]] Rect unioned(const Rect& other) const;
+
+        // grow every edge by the amount, which covers a stroke or a shadow reach (§6.1)
+        [[nodiscard]] Rect inflated(float amount) const;
+
         // compare two rectangles component wise
         friend bool operator==(const Rect& lhs, const Rect& rhs) = default;
     };
@@ -85,6 +91,9 @@ namespace albor
 
         // map a point through the transform
         [[nodiscard]] Point apply(const Point& point) const;
+
+        // map a rectangle through the transform, returning the rectangle that covers the mapped corners (§6.2)
+        [[nodiscard]] Rect map(const Rect& rect) const;
 
         // the transform applying this one first and the argument second, how a retained draw joins (§6.2, §6.4)
         [[nodiscard]] Transform then(const Transform& outer) const;

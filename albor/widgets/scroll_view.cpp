@@ -87,6 +87,21 @@ namespace albor
             arrange_if_changed(*child, content);
     }
 
+    Rect ScrollView::visual_bounds() const {
+        // a hidden view paints nothing, so it contributes no damage (§6.1)
+        if (!visible())
+            return Rect{};
+        // the view paints its plate, border and cast, while the clipped content is not part of it (§6.1, §6.2)
+        Rect visual = own_bounds();
+        // the focus ring and its halo paint outside the plate, so they join the damage the view reports (§6.1)
+        return visual.unioned(ring_bounds());
+    }
+
+    Rect ScrollView::clip_child_damage(const Rect& damage) const {
+        // the content is painted inside the viewport clip, so a scrolled away extent damages nothing (§6.1, §6.2)
+        return damage.intersect(viewport_rect());
+    }
+
     void ScrollView::paint_children(RenderContext& context) {
         // a view with no area clips nothing, because there is no viewport to clip to (§6.2)
         if (m_bounds.empty())

@@ -86,6 +86,28 @@ namespace albor
         paint_focus_ring(context);
     }
 
+    Rect Widget::visual_bounds() const {
+        // the plate, its border and its children are the base area every widget shares (§6.1)
+        Rect visual = UiNode::visual_bounds();
+        // without a theme or a visible plate there is no ring to include (§6.1)
+        if (m_theme == nullptr || !visible() || bounds().empty())
+            return visual;
+        // the ring paints outside the plate, so its outer edge is part of the damage even while focus is leaving (§6.1)
+        return visual.unioned(ring_bounds());
+    }
+
+    Rect Widget::ring_bounds() const {
+        // a widget with no theme draws no ring, because the metrics that place it belong to the theme (§6.1)
+        if (m_theme == nullptr || !visible() || bounds().empty())
+            return Rect{};
+        // the halo sits one step beyond the ring, and the stroke reaches half its width past both (§6.1)
+        const ControlMetrics& metrics = m_theme->metrics();
+        // the ring rect is inflated by the offset, the halo and the stroke, which is where its paint stops (§6.1)
+        const float reach = metrics.focus_ring_offset + 1.0f + metrics.focus_ring_width;
+        // the ring stands outside the plate, so its outer edge is its own area (§6.1)
+        return focus_ring_rect().inflated(reach);
+    }
+
     Rect Widget::focus_ring_rect() const {
         // the ring surrounds the arranged bounds by default, which is where a plate control draws (§8.4)
         return bounds();

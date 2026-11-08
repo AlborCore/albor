@@ -50,8 +50,18 @@ namespace albor
     std::shared_ptr<const FrameScene> FramePipeline::build(WindowMetrics metrics) {
         // the reactive graph settles before anything is recorded, because a binding may still be dirty (§7.3, §6.1)
         m_engine.settle();
+        // a full-frame request is spent by this build, so a later frame is incremental again (§6.1)
+        if (m_full_frame) {
+            // the request is spent before the record pass, so the next frame narrows again (§6.1)
+            m_full_frame = false;
+            // the whole frame covers any pending damage, so the region is dropped rather than narrowing it (§6.1)
+            if (m_root != nullptr)
+                m_root->clear_damage_region();
+        }
+        // stage one culls only when the surface keeps its target between frames (§6.1)
+        const bool cull_commands = m_surface != nullptr && m_surface->retains_target();
         // the layout and the record pass run on the ui thread, which is what stage one is (§6.1, AD-18)
-        m_last_scene = m_builder.build(*m_root, metrics, m_background);
+        m_last_scene = m_builder.build(*m_root, metrics, m_background, cull_commands);
         // the frame is counted after a successful build, so a failed build is not counted (§6.1)
         m_frames++;
         return m_last_scene;
@@ -87,6 +97,9 @@ namespace albor
         // a pipeline without a root has nothing dirty (§6.1)
         if (m_root == nullptr)
             return false;
+        // a refused culled frame still owes a frame, even when the tree itself is clean (§6.1)
+        if (m_full_frame)
+            return true;
         // the tree is dirty when it or any descendant asked for a frame (§6.1)
         return m_root->render_dirty();
     }
@@ -119,10 +132,17 @@ namespace albor
     }
 
     void FramePipeline::set_background(Color background) {
-        // the background change reaches the next frame, because the tree is already scheduled (§6.1)
+        // the background is stored first, so the next frame records the new one (§6.1)
         m_background = background;
-        // a background change is a visual change, so the root asks for a frame (§6.1)
+        // a background change covers the whole surface, so the next frame cannot be bounded by a node (§6.1)
+        request_full_frame();
+        // the root schedules the frame, because a stored colour alone draws nothing (§6.1)
         if (m_root != nullptr)
             m_root->invalidate();
+    }
+
+    void FramePipeline::request_full_frame() {
+        // the request is recorded rather than scheduled, because the next build is what spends it (§6.1)
+        m_full_frame = true;
     }
 } // namespace albor

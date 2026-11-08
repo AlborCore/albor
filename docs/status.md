@@ -50,7 +50,7 @@ those configurations (AD-10); **Not supported** means there is no Windows implem
 | Render surface, metrics, scale | Full | D3D and Blend2D windowed surfaces |
 | Two-stage frame pipeline | Full | scene build and render execution separated |
 | Custom rendering and retained resources | Full | `CustomRenderNode`, `RenderContext`, batch buffers, glyph cache |
-| `render-albor` GPU backend | Full | Direct3D 11; 73 tests, 41 parity tests, D3D/Metal parity |
+| `render-albor` GPU backend | Full | Direct3D 11; 82 tests, 41 parity tests, D3D/Metal parity, damage culled stage one and damage-bounded partial frames |
 | Blend2D windowed surface | Full | 3 windowed tests |
 | Software and headless renderer | Full | screenshot reference for GPU/software parity |
 | Skia backend | Not supported | macOS-only transitional backend; Windows uses Direct3D and Blend2D |

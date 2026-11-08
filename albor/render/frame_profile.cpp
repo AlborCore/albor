@@ -258,7 +258,7 @@ namespace albor
         report_if_due(state, now);
     }
 
-    void profile_render_frame(double total_ms) {
+    void profile_render_frame(double total_ms, bool partial, float damage_width, float damage_height) {
         ProfileState& state = profile_state();
         // a disabled profile records nothing, which is the whole cost a normal run pays
         if (!state.enabled)
@@ -268,8 +268,11 @@ namespace albor
         state.window.render_frames++;
         add_sample(total_ms, state.window.render_sum, state.window.render_max);
         // a stage two call that overran a display period quotes its present, wait and present phases, which split the cost
-        if (total_ms > SLOW_FRAME_MS)
-            std::fprintf(stderr, "[profile] slow render total=%.2f present=%.2f wait=%.2f upload=%.2f encode=%.2f commit=%.2f meshes=%llu\n", total_ms, state.window.last_present, state.window.last_wait, state.window.last_upload, state.window.last_encode, state.window.last_commit, static_cast<unsigned long long>(state.window.batch_meshes));
+        if (total_ms > SLOW_FRAME_MS) {
+            // a partial scene names the damage it redrew, which tells a narrow frame from a whole surface one (§6.1)
+            const char* scope = partial ? "partial" : "full";
+            std::fprintf(stderr, "[profile] slow render total=%.2f present=%.2f wait=%.2f upload=%.2f encode=%.2f commit=%.2f draws=%llu verts=%llu meshes=%llu scope=%s damage=%.0fx%.0f\n", total_ms, state.window.last_present, state.window.last_wait, state.window.last_upload, state.window.last_encode, state.window.last_commit, static_cast<unsigned long long>(state.window.batch_draws), static_cast<unsigned long long>(state.window.batch_vertices), static_cast<unsigned long long>(state.window.batch_meshes), scope, damage_width, damage_height);
+        }
         report_if_due(state, now);
     }
 

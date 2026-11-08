@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <variant>
 #include <vector>
 
@@ -249,6 +250,9 @@ namespace albor
         // the area the command covers, which an overlay bounds or a debugger measures (§6.2, §12.2)
         [[nodiscard]] Rect bounds() const;
 
+        // the area a damage region must cover for this command, including its stroke fringe (§6.1)
+        [[nodiscard]] Rect damage_bounds() const;
+
         // the transform the retained geometry draws under, which a picture command nests under (§6.4)
         [[nodiscard]] const Transform& transform() const;
 
@@ -347,6 +351,6 @@ namespace albor
         Geometry m_geometry;
     };
 
-    // replay a command list in paint order, which is the one replay a frame and a picture share (§6.1, §6.4)
-    void replay_commands(const std::vector<DrawCommand>& commands, RenderContext& context, const Rect& unclipped);
+    // replay a command list in paint order, skipping anything outside the optional damage region (§6.1, §6.4)
+    void replay_commands(const std::vector<DrawCommand>& commands, RenderContext& context, const Rect& unclipped, const std::optional<Rect>& damage = std::nullopt);
 } // namespace albor

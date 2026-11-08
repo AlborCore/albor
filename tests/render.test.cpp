@@ -67,6 +67,12 @@ namespace
         // how many states were popped
         std::size_t restore_count = 0;
 
+        // how many layers the replay opened, which a damage filter must not drop (§6.2)
+        std::size_t layer_pushes = 0;
+
+        // how many layers the replay closed, which stays balanced with the pushes (§6.2)
+        std::size_t layer_pops = 0;
+
         // every transform the surface was asked to adopt, in order
         std::vector<Transform> transforms;
 
@@ -164,9 +170,20 @@ namespace
 
         [[nodiscard]] float opacity() const override { return current_opacity; }
 
-        void push_layer(float) override {}
+        void push_layer(float) override {
+            layer_pushes++;
+            // a real backend saves the state the layer begins under, which its pop returns to (§6.2)
+            save();
+        }
 
-        void pop_layer() override {}
+        void pop_layer() override {
+            layer_pops++;
+            // the layer state is popped here, exactly as a backend that opened it with save does (§6.2)
+            restore();
+        }
+
+        // hand out how many states remain pushed, which a replay must leave at zero (§6.2)
+        [[nodiscard]] std::size_t depth() const { return states.size(); }
 
         void draw_rect(const Rect& rect, const Paint&) override {
             drawn_rects.push_back(rect);
@@ -317,7 +334,7 @@ namespace
 
         void resize_surface(RenderSurface&, const WindowMetrics&) override {}
 
-        void execute_frame(RenderSurface& surface, const FrameScene& scene) override {
+        FrameOutcome execute_frame(RenderSurface& surface, const FrameScene& scene) override {
             // the double draws the scene the way a real backend would, so the executor is exercised end to end
             RenderContext& context = surface.begin_frame();
             context.save();
@@ -337,6 +354,8 @@ namespace
             }
             executed_rect_counts.push_back(rects);
             executed_batch_counts.push_back(batches);
+            // the double presents everything it is handed, which is what a retaining backend does (§6.1)
+            return FrameOutcome::Presented;
         }
     };
 
@@ -353,7 +372,7 @@ namespace
 
         void resize_surface(RenderSurface&, const WindowMetrics&) override {}
 
-        void execute_frame(RenderSurface&, const FrameScene& scene) override {
+        FrameOutcome execute_frame(RenderSurface&, const FrameScene& scene) override {
             std::unique_lock<std::mutex> lock(m_mutex);
             // the render thread parks here, so the ui thread submits into a known in flight state (§6.1)
             m_arrived++;
@@ -364,6 +383,8 @@ namespace
                 if (command.kind() == DrawCommandKind::Rect)
                     rects++;
             executed_rect_counts.push_back(rects);
+            // the double presents everything it is handed, which is what a retaining backend does (§6.1)
+            return FrameOutcome::Presented;
         }
 
         // wait until the render thread is parked inside a frame, which makes the following submit deterministic (§6.1)
@@ -398,6 +419,26 @@ namespace
 
         // whether the test released the parked render thread (§6.1)
         bool m_released = false;
+    };
+
+    // the backend double that refuses a culled scene, which is what a surface without a target does (§6.1)
+    class RefusingRetentionBackend final : public RendererBackend
+    {
+    public:
+        // how many frames the double was handed, which the refusal test counts (§6.1)
+        std::size_t frames = 0;
+
+        [[nodiscard]] bool ready() const override { return true; }
+
+        [[nodiscard]] std::unique_ptr<RenderSurface> create_surface(NativeWindowHandle, const WindowMetrics&) override { return std::make_unique<TestRenderSurface>(); }
+
+        void resize_surface(RenderSurface&, const WindowMetrics&) override {}
+
+        FrameOutcome execute_frame(RenderSurface&, const FrameScene& scene) override {
+            frames++;
+            // a culled list needs a retained target, so the double refuses it and presents everything else (§6.1)
+            return scene.culls_commands() ? FrameOutcome::RefusedNoRetention : FrameOutcome::Presented;
+        }
     };
 
     // the custom node test double, which paints one rectangle through its retained content hook (§6.4)
@@ -685,6 +726,34 @@ TEST(FrameScene, ConstructionKeepsTheBackground) {
     EXPECT_EQ(scene.background(), (Color::rgb(0.25f, 0.5f, 0.75f)));
 }
 
+TEST(FrameScene, ADamageRegionMarksTheSceneAsPartial) {
+    // arrange
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
+    const Rect damage = Rect::from_origin_size(Point{10.0f, 20.0f}, Size{30.0f, 40.0f});
+    // act
+    const FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f), damage);
+    // assert
+    EXPECT_TRUE(scene.is_partial());
+    ASSERT_TRUE(scene.damage_rect().has_value());
+    EXPECT_EQ(*scene.damage_rect(), damage);
+}
+
+TEST(FrameScene, ASceneWithoutDamageIsAFullFrame) {
+    // arrange, act
+    const FrameScene scene(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f));
+    // assert
+    EXPECT_FALSE(scene.is_partial());
+    EXPECT_FALSE(scene.damage_rect().has_value());
+}
+
+TEST(FrameScene, AnEmptyDamageRegionIsStillAFullFrame) {
+    // arrange a scene carrying a zero area region, which cannot leave pixels untouched (§6.1)
+    const FrameScene scene(WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f), Color::rgb(0.0f, 0.0f, 0.0f), Rect{});
+    // assert the scene asks for the full frame, because an empty region would present nothing (§6.1)
+    EXPECT_FALSE(scene.is_partial());
+    EXPECT_TRUE(scene.damage_rect().has_value());
+}
+
 TEST(FrameScene, FromPrimitivesCarriesTheMetrics) {
     // arrange
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
@@ -856,6 +925,82 @@ TEST(FrameScene, AnEmptyTextCommandIsRefused) {
     scene.add_command(std::move(command));
     // assert a run with no glyphs draws nothing, so the scene carries no dead draw (§6.2)
     EXPECT_EQ(scene.command_count(), 0u);
+}
+
+TEST(FrameScene, ReplaySkipsCommandsOutsideTheDamageRegion) {
+    // arrange a scene with one command in the damage and one far outside it (§6.1)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
+    const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    const Rect damage = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f});
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f), damage);
+    DrawCommand inside = DrawCommand::rectangle(Rect{2.0f, 2.0f, 4.0f, 4.0f}, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    inside.set_clip(full);
+    DrawCommand outside = DrawCommand::rectangle(Rect{200.0f, 200.0f, 4.0f, 4.0f}, Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f)});
+    outside.set_clip(full);
+    scene.add_command(std::move(inside));
+    scene.add_command(std::move(outside));
+    // act
+    TestRenderContext context;
+    replay_commands(scene.commands(), context, full, damage);
+    // assert only the command that can touch the damage reaches the context (§6.1)
+    ASSERT_EQ(context.drawn_rects.size(), 1u);
+    EXPECT_EQ(context.drawn_rects[0], (Rect{2.0f, 2.0f, 4.0f, 4.0f}));
+}
+
+TEST(FrameScene, ReplayKeepsLayerMarkersAroundAKeptDraw) {
+    // arrange a layer with one draw in the damage and one outside it (§6.1, §6.2)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
+    const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    const Rect damage = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f});
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f), damage);
+    DrawCommand inside = DrawCommand::rectangle(Rect{2.0f, 2.0f, 4.0f, 4.0f}, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    inside.set_clip(full);
+    DrawCommand outside = DrawCommand::rectangle(Rect{200.0f, 200.0f, 4.0f, 4.0f}, Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f)});
+    outside.set_clip(full);
+    scene.add_command(DrawCommand::layer_push(0.5f));
+    scene.add_command(std::move(inside));
+    scene.add_command(std::move(outside));
+    scene.add_command(DrawCommand::layer_pop());
+    // act
+    TestRenderContext context;
+    replay_commands(scene.commands(), context, full, damage);
+    // assert the layer still opens and closes around the kept draw, so its compositing stays balanced (§6.2)
+    EXPECT_EQ(context.layer_pushes, 1u);
+    EXPECT_EQ(context.layer_pops, 1u);
+    ASSERT_EQ(context.drawn_rects.size(), 1u);
+    EXPECT_EQ(context.drawn_rects[0], (Rect{2.0f, 2.0f, 4.0f, 4.0f}));
+}
+
+TEST(FrameScene, ACulledReplayLeavesTheLayerStackBalanced) {
+    // arrange a layer with a kept draw, a dropped draw, and a kept draw after the matching pop (§6.1, §6.2)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
+    const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    const Rect damage = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f});
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f), damage);
+    DrawCommand first = DrawCommand::rectangle(Rect{2.0f, 2.0f, 4.0f, 4.0f}, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    first.set_clip(full);
+    DrawCommand dropped = DrawCommand::rectangle(Rect{200.0f, 200.0f, 4.0f, 4.0f}, Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f)});
+    dropped.set_clip(full);
+    DrawCommand last = DrawCommand::rectangle(Rect{3.0f, 3.0f, 6.0f, 6.0f}, Paint{.fill = Color::rgb(0.0f, 0.0f, 1.0f)});
+    last.set_clip(full);
+    scene.add_command(DrawCommand::layer_push(0.5f));
+    scene.add_command(std::move(first));
+    scene.add_command(std::move(dropped));
+    scene.add_command(DrawCommand::layer_pop());
+    scene.add_command(std::move(last));
+    // act
+    TestRenderContext context;
+    replay_commands(scene.commands(), context, full, damage);
+    // assert the clip switch never left a state behind, because a stray save would shift every later clip (§6.2)
+    EXPECT_EQ(context.save_count, context.restore_count);
+    EXPECT_EQ(context.depth(), 0u);
+    // assert the layer pair stayed balanced around the kept draw, which is what its compositing needs (§6.2)
+    EXPECT_EQ(context.layer_pushes, 1u);
+    EXPECT_EQ(context.layer_pops, 1u);
+    // assert both draws inside the damage were emitted while the dropped one was skipped (§6.1)
+    ASSERT_EQ(context.drawn_rects.size(), 2u);
+    EXPECT_EQ(context.drawn_rects[0], (Rect{2.0f, 2.0f, 4.0f, 4.0f}));
+    EXPECT_EQ(context.drawn_rects[1], (Rect{3.0f, 3.0f, 6.0f, 6.0f}));
 }
 
 TEST(FrameScene, EqualityComparesTheCommandsInOrder) {
@@ -1084,6 +1229,225 @@ TEST(RenderExecutor, AnOlderPendingFrameIsDropped) {
     // assert
     EXPECT_EQ(executor.executed_count(), 2u);
     // the middle frame is dropped, so the render thread drew the first and the newest (§6.1)
+    ASSERT_EQ(backend.executed_rect_counts.size(), 2u);
+    EXPECT_EQ(backend.executed_rect_counts[0], 1u);
+    EXPECT_EQ(backend.executed_rect_counts[1], 2u);
+}
+
+TEST(RenderExecutor, APartialFrameQueuedBehindAFullFrameStillExecutes) {
+    // arrange a full frame parked in the render thread, so the next submit is a pending delta (§6.1)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
+    const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    GatedRendererBackend backend;
+    RenderExecutor executor(&backend);
+    TestRenderSurface surface;
+    const std::shared_ptr<const FrameScene> full_scene = std::make_shared<const FrameScene>(FrameScene::from_primitives(metrics, Color::rgb(0.0f, 0.0f, 0.0f), {Rect{0.0f, 0.0f, 1.0f, 1.0f}}));
+    executor.submit(surface, full_scene);
+    backend.wait_until_arrived();
+    // arrange a partial frame that would leave stale pixels if it replaced the full frame (§6.1)
+    FrameScene partial(metrics, Color::rgb(0.0f, 0.0f, 0.0f), Rect{0.0f, 0.0f, 4.0f, 4.0f});
+    DrawCommand first = DrawCommand::rectangle(Rect{0.0f, 0.0f, 2.0f, 2.0f}, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    first.set_clip(full);
+    DrawCommand second = DrawCommand::rectangle(Rect{1.0f, 1.0f, 2.0f, 2.0f}, Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f)});
+    second.set_clip(full);
+    partial.add_command(std::move(first));
+    partial.add_command(std::move(second));
+    // act
+    executor.submit(surface, std::make_shared<const FrameScene>(partial));
+    backend.release();
+    executor.flush();
+    // assert the full frame and then the delta both reached the backend, because the delta needs the full base (§6.1)
+    EXPECT_EQ(executor.executed_count(), 2u);
+    ASSERT_EQ(backend.executed_rect_counts.size(), 2u);
+    EXPECT_EQ(backend.executed_rect_counts[0], 1u);
+    EXPECT_EQ(backend.executed_rect_counts[1], 2u);
+}
+
+TEST(RenderExecutor, APartialFrameDoesNotReplaceAnEarlierPartial) {
+    // arrange a full frame parked in the render thread, so two deltas can queue behind it (§6.1)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
+    const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    GatedRendererBackend backend;
+    RenderExecutor executor(&backend);
+    TestRenderSurface surface;
+    executor.submit(surface, std::make_shared<const FrameScene>(FrameScene::from_primitives(metrics, Color::rgb(0.0f, 0.0f, 0.0f), {Rect{0.0f, 0.0f, 1.0f, 1.0f}})));
+    backend.wait_until_arrived();
+    // arrange two deltas at different places, which both have to reach the target (§6.1)
+    FrameScene first_delta(metrics, Color::rgb(0.0f, 0.0f, 0.0f), Rect{0.0f, 0.0f, 4.0f, 4.0f});
+    DrawCommand first = DrawCommand::rectangle(Rect{0.0f, 0.0f, 2.0f, 2.0f}, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    first.set_clip(full);
+    first_delta.add_command(std::move(first));
+    FrameScene second_delta(metrics, Color::rgb(0.0f, 0.0f, 0.0f), Rect{5.0f, 5.0f, 4.0f, 4.0f});
+    DrawCommand second = DrawCommand::rectangle(Rect{5.0f, 5.0f, 2.0f, 2.0f}, Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f)});
+    second.set_clip(full);
+    second_delta.add_command(std::move(second));
+    // act
+    executor.submit(surface, std::make_shared<const FrameScene>(first_delta));
+    executor.submit(surface, std::make_shared<const FrameScene>(second_delta));
+    backend.release();
+    executor.flush();
+    // assert both deltas executed in order, because dropping either would leave a stale region (§6.1)
+    EXPECT_EQ(executor.executed_count(), 3u);
+    ASSERT_EQ(backend.executed_rect_counts.size(), 3u);
+    EXPECT_EQ(backend.executed_rect_counts[0], 1u);
+    EXPECT_EQ(backend.executed_rect_counts[1], 1u);
+    EXPECT_EQ(backend.executed_rect_counts[2], 1u);
+}
+
+TEST(RenderExecutor, ACoveringPartialReplacesAPendingPartial) {
+    // arrange a full frame parked in the render thread, so the deltas queue behind it (§6.1)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
+    const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    GatedRendererBackend backend;
+    RenderExecutor executor(&backend);
+    TestRenderSurface surface;
+    executor.submit(surface, std::make_shared<const FrameScene>(FrameScene::from_primitives(metrics, Color::rgb(0.0f, 0.0f, 0.0f), {Rect{0.0f, 0.0f, 1.0f, 1.0f}})));
+    backend.wait_until_arrived();
+    // arrange two scroll deltas over the same viewport, which a wheel produces in order (§6.1)
+    FrameScene older(metrics, Color::rgb(0.0f, 0.0f, 0.0f), Rect{0.0f, 0.0f, 10.0f, 10.0f});
+    DrawCommand first = DrawCommand::rectangle(Rect{0.0f, 0.0f, 2.0f, 2.0f}, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    first.set_clip(full);
+    older.add_command(std::move(first));
+    FrameScene newer(metrics, Color::rgb(0.0f, 0.0f, 0.0f), Rect{0.0f, 0.0f, 10.0f, 10.0f});
+    DrawCommand kept = DrawCommand::rectangle(Rect{0.0f, 0.0f, 3.0f, 3.0f}, Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f)});
+    kept.set_clip(full);
+    DrawCommand second = DrawCommand::rectangle(Rect{1.0f, 1.0f, 3.0f, 3.0f}, Paint{.fill = Color::rgb(0.0f, 0.0f, 1.0f)});
+    second.set_clip(full);
+    newer.add_command(std::move(kept));
+    newer.add_command(std::move(second));
+    // act
+    executor.submit(surface, std::make_shared<const FrameScene>(older));
+    executor.submit(surface, std::make_shared<const FrameScene>(newer));
+    backend.release();
+    executor.flush();
+    // assert the newer delta replaced the older one, because it redraws the same area (§6.1)
+    EXPECT_EQ(executor.executed_count(), 2u);
+    ASSERT_EQ(backend.executed_rect_counts.size(), 2u);
+    EXPECT_EQ(backend.executed_rect_counts[0], 1u);
+    EXPECT_EQ(backend.executed_rect_counts[1], 2u);
+}
+
+TEST(RenderExecutor, AContainedPartialIsReplacedButADisjointOneIsKept) {
+    // arrange a full frame parked in the render thread, so the deltas queue behind it (§6.1)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
+    const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    GatedRendererBackend backend;
+    RenderExecutor executor(&backend);
+    TestRenderSurface surface;
+    executor.submit(surface, std::make_shared<const FrameScene>(FrameScene::from_primitives(metrics, Color::rgb(0.0f, 0.0f, 0.0f), {Rect{0.0f, 0.0f, 1.0f, 1.0f}})));
+    backend.wait_until_arrived();
+    // arrange one delta inside the next viewport and one outside it, which a wider scroll leaves (§6.1)
+    FrameScene contained(metrics, Color::rgb(0.0f, 0.0f, 0.0f), Rect{2.0f, 2.0f, 4.0f, 4.0f});
+    DrawCommand inside = DrawCommand::rectangle(Rect{2.0f, 2.0f, 2.0f, 2.0f}, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    inside.set_clip(full);
+    contained.add_command(std::move(inside));
+    FrameScene disjoint(metrics, Color::rgb(0.0f, 0.0f, 0.0f), Rect{20.0f, 20.0f, 4.0f, 4.0f});
+    DrawCommand outside = DrawCommand::rectangle(Rect{20.0f, 20.0f, 2.0f, 2.0f}, Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f)});
+    outside.set_clip(full);
+    disjoint.add_command(std::move(outside));
+    FrameScene covering(metrics, Color::rgb(0.0f, 0.0f, 0.0f), Rect{0.0f, 0.0f, 10.0f, 10.0f});
+    DrawCommand band = DrawCommand::rectangle(Rect{0.0f, 0.0f, 2.0f, 2.0f}, Paint{.fill = Color::rgb(0.0f, 0.0f, 1.0f)});
+    band.set_clip(full);
+    covering.add_command(std::move(band));
+    // act
+    executor.submit(surface, std::make_shared<const FrameScene>(contained));
+    executor.submit(surface, std::make_shared<const FrameScene>(disjoint));
+    executor.submit(surface, std::make_shared<const FrameScene>(covering));
+    backend.release();
+    executor.flush();
+    // assert only the contained delta was dropped, because the disjoint one keeps pixels the covering one leaves (§6.1)
+    EXPECT_EQ(executor.executed_count(), 3u);
+    ASSERT_EQ(backend.executed_rect_counts.size(), 3u);
+    EXPECT_EQ(backend.executed_rect_counts[0], 1u);
+    EXPECT_EQ(backend.executed_rect_counts[1], 1u);
+    EXPECT_EQ(backend.executed_rect_counts[2], 1u);
+}
+
+TEST(RenderExecutor, AFullFrameOnOneSurfaceKeepsAnotherSurfacesDelta) {
+    // arrange a full frame parked for one surface, so a delta for another surface is pending (§6.1)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
+    const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    GatedRendererBackend backend;
+    RenderExecutor executor(&backend);
+    TestRenderSurface first_surface;
+    TestRenderSurface second_surface;
+    executor.submit(first_surface, std::make_shared<const FrameScene>(FrameScene::from_primitives(metrics, Color::rgb(0.0f, 0.0f, 0.0f), {Rect{0.0f, 0.0f, 1.0f, 1.0f}})));
+    backend.wait_until_arrived();
+    FrameScene delta(metrics, Color::rgb(0.0f, 0.0f, 0.0f), Rect{0.0f, 0.0f, 4.0f, 4.0f});
+    DrawCommand shape = DrawCommand::rectangle(Rect{0.0f, 0.0f, 2.0f, 2.0f}, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    shape.set_clip(full);
+    delta.add_command(std::move(shape));
+    executor.submit(second_surface, std::make_shared<const FrameScene>(delta));
+    // act a full frame for the first surface must not drop the second surface's delta (§6.1)
+    executor.submit(first_surface, std::make_shared<const FrameScene>(FrameScene::from_primitives(metrics, Color::rgb(0.0f, 0.0f, 0.0f), {Rect{0.0f, 0.0f, 1.0f, 1.0f}, Rect{1.0f, 1.0f, 2.0f, 2.0f}})));
+    backend.release();
+    executor.flush();
+    // assert the first frame, the other surface's delta, and the newest first frame all executed (§6.1)
+    EXPECT_EQ(executor.executed_count(), 3u);
+    ASSERT_EQ(backend.executed_rect_counts.size(), 3u);
+    EXPECT_EQ(backend.executed_rect_counts[0], 1u);
+    EXPECT_EQ(backend.executed_rect_counts[1], 1u);
+    EXPECT_EQ(backend.executed_rect_counts[2], 2u);
+}
+
+TEST(RenderExecutor, ACulledSceneRefusedForWantOfATargetAsksForAFullFrame) {
+    // arrange a scene whose command list omits everything outside its damage (§6.1)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
+    RefusingRetentionBackend backend;
+    RenderExecutor executor(&backend);
+    TestRenderSurface surface;
+    const Rect damage = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{4.0f, 4.0f});
+    std::shared_ptr<FrameScene> culled = std::make_shared<FrameScene>(metrics, Color::rgb(0.0f, 0.0f, 0.0f), damage, true);
+    DrawCommand shape = DrawCommand::rectangle(damage, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    shape.set_clip(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size));
+    culled->append_command(std::move(shape));
+    // act
+    executor.submit(surface, culled);
+    executor.flush();
+    // assert the refused frame was not counted as presented, because the surface drew nothing (§6.1)
+    EXPECT_EQ(backend.frames, 1u);
+    EXPECT_EQ(executor.executed_count(), 0u);
+    // assert the refusal asks for exactly one whole rebuild, which the ui thread spends next (§6.1)
+    EXPECT_TRUE(executor.consume_damage_refusal());
+    EXPECT_FALSE(executor.consume_damage_refusal());
+}
+
+TEST(RenderExecutor, APresentedFrameDoesNotAskForAFullFrame) {
+    // arrange a scene whose list is whole, which any surface can present (§6.1)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
+    RefusingRetentionBackend backend;
+    RenderExecutor executor(&backend);
+    TestRenderSurface surface;
+    const Rect damage = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{4.0f, 4.0f});
+    std::shared_ptr<FrameScene> scene = std::make_shared<FrameScene>(metrics, Color::rgb(0.0f, 0.0f, 0.0f), damage);
+    // act
+    executor.submit(surface, scene);
+    executor.flush();
+    // assert a whole list presented, so nothing asks to be rebuilt (§6.1)
+    EXPECT_EQ(executor.executed_count(), 1u);
+    EXPECT_FALSE(executor.consume_damage_refusal());
+}
+
+TEST(RenderExecutor, AFullFrameReplacesAPendingPartial) {
+    // arrange a full frame parked in the render thread, so a delta can queue behind it (§6.1)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
+    const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    GatedRendererBackend backend;
+    RenderExecutor executor(&backend);
+    TestRenderSurface surface;
+    executor.submit(surface, std::make_shared<const FrameScene>(FrameScene::from_primitives(metrics, Color::rgb(0.0f, 0.0f, 0.0f), {Rect{0.0f, 0.0f, 1.0f, 1.0f}})));
+    backend.wait_until_arrived();
+    FrameScene delta(metrics, Color::rgb(0.0f, 0.0f, 0.0f), Rect{0.0f, 0.0f, 4.0f, 4.0f});
+    DrawCommand first = DrawCommand::rectangle(Rect{0.0f, 0.0f, 2.0f, 2.0f}, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    first.set_clip(full);
+    delta.add_command(std::move(first));
+    // act a full frame supersedes the pending delta, because it carries the whole state (§6.1)
+    executor.submit(surface, std::make_shared<const FrameScene>(delta));
+    executor.submit(surface, std::make_shared<const FrameScene>(FrameScene::from_primitives(metrics, Color::rgb(0.0f, 0.0f, 0.0f), {Rect{0.0f, 0.0f, 1.0f, 1.0f}, Rect{1.0f, 1.0f, 2.0f, 2.0f}})));
+    backend.release();
+    executor.flush();
+    // assert the first and the newest full frame executed, while the superseded delta was dropped (§6.1)
+    EXPECT_EQ(executor.executed_count(), 2u);
     ASSERT_EQ(backend.executed_rect_counts.size(), 2u);
     EXPECT_EQ(backend.executed_rect_counts[0], 1u);
     EXPECT_EQ(backend.executed_rect_counts[1], 2u);
@@ -2195,6 +2559,96 @@ TEST(DrawCommandShape, AShadowBoundCoversTheBlurReach) {
     // assert the bound is wider than the shape, because the reach is added on both sides (§6.2)
     EXPECT_GT(bound.width, 20.0f);
     EXPECT_GT(bound.height, 20.0f);
+}
+
+TEST(DrawCommandShape, ALineBatchBoundCoversItsPoints) {
+    // arrange a retained line batch, which is culled by its own geometry (§6.4)
+    ResourceFactory factory;
+    const Point points[] = {{10.0f, 20.0f}, {30.0f, 40.0f}};
+    const std::shared_ptr<const LineBatch> batch = factory.create_line_batch(points);
+    // act
+    const DrawCommand command = DrawCommand::line_batch(batch, Transform{}, StrokeStyle{});
+    // assert the bound is the points, not the whole clip, so a damage frame can cull it (§6.4)
+    EXPECT_EQ(command.bounds(), (Rect{10.0f, 20.0f, 20.0f, 20.0f}));
+}
+
+TEST(DrawCommandShape, APictureBoundCoversItsCommands) {
+    // arrange a retained picture with one recorded shape (§6.4)
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    ResourceFactory factory;
+    const std::shared_ptr<const PictureResource> picture = factory.create_picture(recorder);
+    // act
+    const DrawCommand command = DrawCommand::picture(picture, Transform{});
+    // assert the bound follows the retained commands, so a plot can be culled by damage (§6.4)
+    EXPECT_EQ(command.bounds(), (Rect{9.0f, 19.0f, 12.0f, 12.0f}));
+}
+
+TEST(DrawCommandShape, APictureBoundCoversItsCastReach) {
+    // arrange a retained picture holding one soft cast, whose blur reaches far past its shape (§6.2, §6.4)
+    PictureRecorder recorder;
+    recorder.draw_shadow(Rect::from_origin_size(Point{100.0f, 100.0f}, Size{10.0f, 10.0f}), 0.0f, Shadow{.color = Color::rgba(0.0f, 0.0f, 0.0f, 1.0f), .offset = Point{5.0f, 5.0f}, .blur = 20.0f});
+    ResourceFactory factory;
+    const std::shared_ptr<const PictureResource> picture = factory.create_picture(recorder);
+    // act
+    const DrawCommand command = DrawCommand::picture(picture, Transform{});
+    // assert the picture bound carries the three sigma blur reach and the antialias fringe (§6.2, §6.4)
+    EXPECT_EQ(command.damage_bounds(), (Rect{43.0f, 43.0f, 134.0f, 134.0f}));
+}
+
+TEST(DrawCommandShape, APictureBoundStopsAtItsClip) {
+    // arrange a large retained picture recorded under a small clip, which is what a scrolled plot carries (§6.2, §6.4)
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{500.0f, 500.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    ResourceFactory factory;
+    const std::shared_ptr<const PictureResource> picture = factory.create_picture(recorder);
+    DrawCommand command = DrawCommand::picture(picture, Transform{});
+    command.set_clip(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    // act
+    const Rect damage = command.damage_bounds();
+    // assert the visible part is all the picture can damage, so its clipped away area never culls a sibling (§6.2)
+    EXPECT_EQ(damage, (Rect{-1.0f, -1.0f, 102.0f, 102.0f}));
+}
+
+TEST(DrawCommandShape, APictureWhollyOutsideItsClipDamagesNothing) {
+    // arrange a retained picture the clip cuts away entirely, as a scrolled away plot is (§6.2, §6.4)
+    PictureRecorder recorder;
+    recorder.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{20.0f, 20.0f}), Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    ResourceFactory factory;
+    const std::shared_ptr<const PictureResource> picture = factory.create_picture(recorder);
+    DrawCommand command = DrawCommand::picture(picture, Transform{});
+    command.set_clip(Rect::from_origin_size(Point{200.0f, 200.0f}, Size{50.0f, 50.0f}));
+    // act, assert the picture has no visible pixel, so it contributes no damage at the origin (§6.1)
+    EXPECT_TRUE(command.damage_bounds().empty());
+}
+
+TEST(DrawCommandShape, ATextDamageBoundCoversADeepDescender) {
+    // arrange a run whose descent reaches far below its box, which a display or CJK face can do (§9.1)
+    const TextLayout layout{.run = synthetic_run(1, 10.0f), .size = Size{8.0f, 50.0f}, .ascent = 4.0f, .descent = 40.0f};
+    const DrawCommand command = DrawCommand::text(layout, Point{10.0f, 20.0f}, Paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)});
+    // act
+    const Rect damage = command.damage_bounds();
+    // assert half the descent joins the bound, because the ascent alone would leave the deep fringe stale (§9.1)
+    EXPECT_EQ(damage, (Rect{-10.0f, 0.0f, 48.0f, 90.0f}));
+}
+
+TEST(DrawCommandShape, APolylineDamageBoundCoversItsStrokeOnAZeroExtent) {
+    // arrange a horizontal run, whose point hull has no height but whose stroke still paints a band (§6.2)
+    const Point points[] = {Point{.x = 0.0f, .y = 10.0f}, Point{.x = 10.0f, .y = 10.0f}};
+    const DrawCommand command = DrawCommand::polyline(points, StrokeStyle{.color = Color::rgb(1.0f, 1.0f, 1.0f), .width = 2.0f});
+    // act
+    const Rect damage = command.damage_bounds();
+    // assert the stroke width grows the zero extent, because a flat line still covers a band (§6.1)
+    EXPECT_EQ(damage, (Rect{-2.0f, 8.0f, 14.0f, 4.0f}));
+}
+
+TEST(DrawCommandShape, ADamageBoundIncludesTheStrokeFringe) {
+    // arrange a rectangle whose stroke reaches four logical pixels past its shape (§6.1, §6.2)
+    const DrawCommand command = DrawCommand::rectangle(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), .stroke = Color::rgb(1.0f, 1.0f, 1.0f), .stroke_width = 8.0f});
+    // act
+    const Rect damage = command.damage_bounds();
+    // assert the stroke half width and the antialias fringe both join the shape (§6.1)
+    EXPECT_EQ(damage, (Rect{2.0f, 2.0f, 26.0f, 26.0f}));
 }
 
 TEST(DrawCommandShape, AnOpacityDimsAShadowCommand) {

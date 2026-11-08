@@ -52,6 +52,7 @@ namespace albor::render
         void draw_text(const TextLayout& layout, Point origin, const Paint& paint) override;
         void draw_line_batch(const std::shared_ptr<const LineBatch>& batch, const Transform& transform, const StrokeStyle& stroke) override;
         void draw_path(const std::shared_ptr<const PathResource>& path, const Transform& transform, const Paint& paint) override;
+        void draw_glyph_outline(const GlyphOutline& outline, const Transform& transform, const Paint& paint) override;
         void draw_picture(const std::shared_ptr<const PictureResource>& picture, const Transform& transform) override;
         void draw_image(const std::shared_ptr<const ImageResource>& image, const Rect& destination, const Paint& paint) override;
 
@@ -104,6 +105,9 @@ namespace albor::render
 
         // append a cached glyph mesh at the device offset its glyph sits at, which one frame translates (§6.4, AD-06)
         void append_glyph_mesh(const GlyphMesh& mesh, float offset_x, float offset_y, const Color& color, CompositionMode composition);
+
+        // append one glyph, expanding and caching its mesh on the first frame a glyph is drawn (§6.4, AD-06)
+        void append_cached_glyph(const GlyphPathKey& key, const std::vector<PathVerb>& verbs, const std::vector<Point>& points, float device_x, float device_y, const Color& color, CompositionMode composition);
 
         // emit an image as the two triangles its destination rectangle spans (§6.4)
         void emit_image(const Rect& destination, const Color& color, std::uint64_t texture, CompositionMode composition);

@@ -26,8 +26,8 @@ namespace albor
     // record one ui frame, split into the scene build and the submit (§6.1)
     void profile_ui_frame(double build_ms, double submit_ms);
 
-    // record one rendered frame, which is the whole stage two call (§6.1, AD-18)
-    void profile_render_frame(double total_ms);
+    // record one rendered frame, which is the whole stage two call, and the damage it carried (§6.1, AD-18)
+    void profile_render_frame(double total_ms, bool partial, float damage_width, float damage_height);
 
     // record one backend present, which is the encode and the drawable wait (§6.3)
     void profile_present(double present_ms);

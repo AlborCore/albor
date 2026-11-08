@@ -207,10 +207,12 @@ namespace albor
         // an unchanged stroke redraws nothing, because the border is the same (§8.4)
         if (m_border == width)
             return;
+        // the old extent is read before the stroke changes, because a narrower border has to erase its old fringe (§6.1)
+        const Rect old_visual = visual_bounds();
         // the width is stored first, so the invalidation walks a panel that already strokes it (§8.4)
         m_border = width;
-        // a stroke change is visual only, so the layout passes are left alone (§8.4)
-        invalidate();
+        // both extents are damaged, because the panel previously painted the wider border (§6.1)
+        invalidate(old_visual.unioned(visual_bounds()));
     }
 
     float Panel::border_width() const {

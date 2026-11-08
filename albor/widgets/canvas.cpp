@@ -39,8 +39,12 @@ namespace albor
         // an empty canvas draws nothing, because there is no callback to draw with (§6.4)
         if (!m_draw)
             return;
+        // the callback is clipped to the canvas extent, because its coordinates are relative to that corner (§6.4)
+        context.save();
+        context.clip_rect(bounds());
         // the callback records into the stage one context, which is what keeps the frame immutable (§6.1, AD-18)
         m_draw(context);
+        context.restore();
     }
 
     void Canvas::dispatch_event(Event& event) {

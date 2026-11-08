@@ -44,6 +44,9 @@ namespace albor
         // override: clip the children to the viewport and draw the bar over them (§6.2)
         void paint_children(RenderContext& context) override;
 
+        // override: bound the damage by the viewport, because the content may extend far outside it (§6.1, §6.2)
+        [[nodiscard]] Rect visual_bounds() const override;
+
         // override: announce the viewport, which is what assistive technology scrolls (§10.1)
         [[nodiscard]] SemanticNode semantic_node() const override;
 
@@ -127,6 +130,10 @@ namespace albor
 
         // report whether a handler is installed, because an unwatched scroll view still scrolls (§8.3)
         [[nodiscard]] bool watches() const;
+
+    protected:
+        // override: the content is painted inside the viewport clip, so damage outside it is not visible (§6.1, §6.2)
+        [[nodiscard]] Rect clip_child_damage(const Rect& damage) const override;
 
     private:
         // hand out the amount one wheel notch moves the content, which is the conversion this view owns (§8.3)

@@ -35,13 +35,16 @@ namespace albor::software
         surface.resize(metrics);
     }
 
-    void SoftwareRendererBackend::execute_frame(RenderSurface& surface, const FrameScene& scene) {
-        // a frame needs a surface that could draw (§6.1)
+    FrameOutcome SoftwareRendererBackend::execute_frame(RenderSurface& surface, const FrameScene& scene) {
+        // a frame needs a surface that could draw, and a surface that cannot is not a refusal to retry (§6.1)
         if (!surface.valid())
-            return;
+            return FrameOutcome::Presented;
         // a scene at stale metrics is refused rather than repaired here, exactly as the gpu backend does (§6.1, D9.1)
         if (surface.metrics() != scene.metrics())
-            return;
+            return FrameOutcome::RefusedStaleMetrics;
+        // a software surface redraws every pixel, so a culled list would leave the rest stale (§6.1)
+        if (scene.culls_commands())
+            return FrameOutcome::RefusedNoRetention;
         // stage two begins the frame and draws the immutable scene into it (§6.1, AD-18)
         RenderContext& context = surface.begin_frame();
         // the background is a full surface rectangle, which is the clear of phase 1 (§6.1)
@@ -51,6 +54,8 @@ namespace albor::software
         replay_commands(scene.commands(), context, full);
         // the frame finishes once the immutable scene is fully recorded (§6.1)
         surface.end_frame();
+        // the surface drew the whole scene, which is what the pipeline expects of a presented frame (§6.1)
+        return FrameOutcome::Presented;
     }
 
     void install_software_renderer_backend() {

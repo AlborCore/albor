@@ -136,6 +136,26 @@ namespace albor
         // the ring surrounds the thumb, which is the part the user steers (§8.4)
         return thumb_rect(theme()->metrics());
     }
+
+    Rect Slider::visual_bounds() const {
+        // the plate, the ring and the subtree are what the base bound covers (§6.1)
+        Rect visual = Widget::visual_bounds();
+        // an unthemed slider casts no shadow, so the plate bound is the whole damage (§6.1)
+        if (theme() == nullptr || !visible() || bounds().empty())
+            return visual;
+        // the metrics decide the cast, because an unshadowed thumb paints nothing outside the plate (§8.4)
+        const ControlMetrics& metrics = theme()->metrics();
+        if (metrics.slider_thumb_shadow <= 0.0f)
+            return visual;
+        // the cast falls two pixels down and blurs by two, so three sigma plus the offset is its reach (§6.1)
+        const float reach = 2.0f * 3.0f;
+        // the cast rect is the thumb moved by the offset and grown by the blur reach (§6.2)
+        const Rect thumb = thumb_rect(metrics);
+        const Rect cast{.x = thumb.x - reach, .y = thumb.y + 2.0f - reach, .width = thumb.width + reach * 2.0f, .height = thumb.height + reach * 2.0f};
+        // the cast and its antialias fringe join the damage, because a moved thumb must erase the old one (§6.1)
+        return visual.unioned(cast.inflated(1.0f));
+    }
+
     bool Slider::hit_test(Point logical_point) const {
         // a hidden slider is not a hit, because it draws nothing (§8.3)
         if (!visible())

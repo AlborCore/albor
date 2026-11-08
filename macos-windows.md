@@ -137,7 +137,7 @@ default selection, which preserves bold-only family selection. The long-run coun
 
 This remains the strongest part of the Windows port.
 
-- Both backends expose the same **73-test** corpus:
+- Both backends expose the same **82-test** corpus:
   - aligned and feathered geometry
   - clips and transforms
   - soft shadows, hard shadows, sheared casters
@@ -146,16 +146,20 @@ This remains the strongest part of the Windows port.
   - paths, holed/concave/even-odd fills
   - lines, pictures, images, fractional scaling, texture reuse
   - shaped, rotated, sheared, and embedded text runs
-- Metal test file: **73 tests**
-- Direct3D test file: **73 tests**
+- Metal test file: **82 tests**
+- Direct3D test file: **82 tests**
 - Both have 41 parity tests.
 - Both backends cover:
+  - a partial damage frame that preserves pixels outside its region
+  - a retained-target report, and a culled scene refused on a fresh target
+  - a culled scene that presents the same pixels as the whole list
   - canonical RGBA readback
   - reading the same finished frame twice
   - refusing a read while a frame is in flight
   - applying a resize that arrived mid-frame
   - empty offscreen frame behavior
   - real window or layer presentation and submit counting
+  - loading a retained target for a partial frame instead of clearing it
 - Direct3D additionally covers two surfaces binding one window and re-rooting. The macOS suite covers two
   surfaces sharing one `CAMetalLayer` and each retaining its own target and cache.
 - Metal-specific checks have D3D equivalents:
@@ -277,7 +281,7 @@ job remains a tracked enhancement rather than a parity requirement.
 
 | Suite | macOS | Windows |
 | --- | ---: | ---: |
-| `render-albor` backend/parity | 73 | 73 |
+| `render-albor` backend/parity | 82 | 82 |
 | Window popup | 18 | 17 |
 | Blend2D windowed | 3 | 3 |
 | Platform font resolver | 8 dedicated | 8 |
@@ -288,6 +292,14 @@ job remains a tracked enhancement rather than a parity requirement.
 
 ## 8. Changes in the Windows parity pass
 
+- Added damage-bounded partial frames to `render-albor`: the scene carries the region a redraw may touch, the
+  backend clips the replay to it, and both Metal and Direct3D load the retained target instead of clearing it.
+  The mirrored backend suites assert that pixels outside the damage survive the next frame.
+- Added stage one damage culling through `RenderSurface::retains_target()`: a surface that keeps its target lets
+  `SceneBuilder` skip the subtrees that miss the damage and record only the commands that reach it, while a
+  surface that redraws every pixel still receives the whole list. A culled scene the surface refuses is reported
+  by `FrameOutcome::RefusedNoRetention` and rebuilt whole by the pipeline, so the fallback is parity on both
+  backends rather than a silent partial frame.
 - Fixed the Windows shaped and rotated shaped tests by centering on the face ascent/descent and rotating about
   the run baseline; added zero-ink assertions to the Windows and macOS shaped tests.
 - Fixed D3D base-vertex handling by adding `baseVertex` to the uniform block and indexing the vertex buffer with

@@ -4,8 +4,8 @@
 
 namespace albor
 {
-    FrameScene::FrameScene(WindowMetrics metrics, Color background) :
-        m_metrics(metrics), m_background(background) {}
+    FrameScene::FrameScene(WindowMetrics metrics, Color background, std::optional<Rect> damage, bool culls_commands) :
+        m_metrics(metrics), m_background(background), m_damage(std::move(damage)), m_culls_commands(culls_commands) {}
 
     FrameScene FrameScene::from_primitives(WindowMetrics metrics, Color background, std::vector<Rect> rects) {
         // the scene is filled once and never touched again, because the render thread consumes it (§6.1)
@@ -32,6 +32,21 @@ namespace albor
     Color FrameScene::background() const {
         // the background covers the whole logical size of the surface (§6.1)
         return m_background;
+    }
+
+    const std::optional<Rect>& FrameScene::damage_rect() const {
+        // the damage region is the one stage one recorded, which stage two may reduce its work to (§6.1)
+        return m_damage;
+    }
+
+    bool FrameScene::is_partial() const {
+        // a scene with an area to redraw is partial, while an empty region cannot leave anything untouched (§6.1)
+        return m_damage.has_value() && !m_damage->empty();
+    }
+
+    bool FrameScene::culls_commands() const {
+        // a culled scene is only drawable where the previous pixels survive, which stage two refuses otherwise (§6.1)
+        return m_culls_commands;
     }
 
     const std::vector<DrawCommand>& FrameScene::commands() const {

@@ -190,7 +190,13 @@ namespace albor
                     return true;
                 // the half turned over, so the caret is where the phase says (§6.1)
                 m_caret_visible = visible;
-                invalidate();
+                // the field clips the bar, so only the visible part of it can change a pixel (§6.2)
+                const Rect bar = caret_rect().intersect(bounds());
+                // a caret scrolled out of the field changes nothing, so the half asks for no frame (§6.1)
+                if (bar.empty())
+                    return true;
+                // the bar is the only pixel the half changes, so the frame is bounded to it (§6.1, §8.3)
+                invalidate(bar);
                 // the blink keeps running until the focus leaves, which cancel is for (§7.3)
                 return true;
             },
@@ -236,31 +242,66 @@ namespace albor
         // a run the engine did not shape has no x to read, so the highlight draws nothing (§9.1)
         if (m_layout.run == nullptr || m_layout.run->lines().empty())
             return;
-        // the metrics carry the inset, which is where the run starts (§8.2)
-        const ControlMetrics& m = metrics();
         // the span is resolved once, because every line reads the same pair (§8.3)
         const std::size_t span_start = selection_start();
         const std::size_t span_end = selection_end();
-        // the run hangs where the text paint places it, carried up by the scroll (§8.2)
-        const float draw_y = content_top() - m_scroll_offset;
         // every line the span crosses contributes its own highlight, which is what a selection over lines is (§8.3)
         for (std::size_t index = 0; index < m_layout.run->lines().size(); index++) {
-            // the line is read for its own bytes, which is what the span clamps against (§9.1)
-            const ShapedRun::Line& line = m_layout.run->lines()[index];
+            // the band is the line's part of the span, which a line outside it answers empty (§9.1)
+            const Rect band = selection_rect(index, span_start, span_end);
             // a line the span does not touch highlights nothing (§8.3)
-            if (line.end_byte <= span_start || line.start_byte >= span_end)
+            if (band.empty())
                 continue;
-            // the highlight covers the span within the line, which the bytes of this line bound (§8.3)
-            const std::size_t first = std::max(span_start, line.start_byte);
-            const std::size_t last = std::min(span_end, line.end_byte);
-            // the highlight runs from the first byte's pen and stops at the last one's (§9.1)
-            const float start_x = bounds().x + m.text_field_padding + line.origin.x + m_layout.run->x_at_byte(index, first);
-            const float end_x = bounds().x + m.text_field_padding + line.origin.x + m_layout.run->x_at_byte(index, last);
-            // the line box ties the highlight to the ascent and descent the line was measured at (§9.1)
-            const float top = draw_y + line.origin.y - line.ascent;
             // the highlight is one rect over the covered span of the line (§6.2)
-            context.draw_rect(Rect{.x = start_x, .y = top, .width = std::max(0.0f, end_x - start_x), .height = line.ascent + line.descent}, {.fill = resolve(selection_colors(), m_selection_foreground)});
+            context.draw_rect(band, {.fill = resolve(selection_colors(), m_selection_foreground)});
         }
+    }
+
+    Rect TextField::selection_rect(std::size_t index, std::size_t span_start, std::size_t span_end) const {
+        // a run without the line names nothing to paint, which a stale index can ask for (§9.1)
+        if (m_layout.run == nullptr || index >= m_layout.run->lines().size())
+            return Rect{};
+        // the line is read for its own bytes, which is what the span clamps against (§9.1)
+        const ShapedRun::Line& line = m_layout.run->lines()[index];
+        // a line the span does not touch highlights nothing (§8.3)
+        if (line.end_byte <= span_start || line.start_byte >= span_end)
+            return Rect{};
+        // the metrics carry the inset, which is where the run starts (§8.2)
+        const ControlMetrics& metrics_now = metrics();
+        // the highlight covers the span within the line, which the bytes of this line bound (§8.3)
+        const std::size_t first = std::max(span_start, line.start_byte);
+        // the highlight stops at the last byte the span reaches on this line (§8.3)
+        const std::size_t last = std::min(span_end, line.end_byte);
+        // the highlight runs from the first byte's pen and stops at the last one's (§9.1)
+        const float start_x = bounds().x + metrics_now.text_field_padding + line.origin.x + m_layout.run->x_at_byte(index, first);
+        // the right edge is the pen the last byte of the span sits at (§9.1)
+        const float end_x = bounds().x + metrics_now.text_field_padding + line.origin.x + m_layout.run->x_at_byte(index, last);
+        // the run hangs where the text paint places it, carried up by the scroll (§8.2)
+        const float draw_y = content_top() - m_scroll_offset;
+        // the line box ties the highlight to the ascent and descent the line was measured at (§9.1)
+        const float top = draw_y + line.origin.y - line.ascent;
+        // the highlight is one rect over the covered span of the line (§6.2)
+        return Rect{.x = start_x, .y = top, .width = std::max(0.0f, end_x - start_x), .height = line.ascent + line.descent};
+    }
+
+    Rect TextField::selection_bounds(std::size_t span_start, std::size_t span_end) const {
+        // a span with no bytes or a run without lines covers no pixel (§9.1)
+        if (m_layout.run == nullptr || m_layout.run->lines().empty() || span_start >= span_end)
+            return Rect{};
+        // the union starts empty, because no line has contributed a band yet (§6.1)
+        Rect area{};
+        // every line the span crosses contributes its own band, which the union bounds (§8.3)
+        for (std::size_t index = 0; index < m_layout.run->lines().size(); index++) {
+            // the band is the line's part of the span, which a line outside it answers empty (§9.1)
+            const Rect band = selection_rect(index, span_start, span_end);
+            // a line outside the span contributes no area (§8.3)
+            if (band.empty())
+                continue;
+            // the union is the damage a change of this span can touch (§6.1)
+            area = area.unioned(band);
+        }
+        // the paint is clipped to the plate, so the damage is clipped the same way (§6.2)
+        return area.intersect(bounds());
     }
 
     void TextField::paint_caret(RenderContext& context) {
@@ -820,6 +861,12 @@ namespace albor
         // an unchanged pair draws nothing new, because the paint is the same (§6.1)
         if (m_caret == clamped && m_anchor == clamped)
             return;
+        // the old highlight is read before the state moves, because it is what the collapse erases (§6.1)
+        const Rect old_selection = selection_bounds(selection_start(), selection_end());
+        // the old caret bar joins it, because the bar moves with the state (§6.1)
+        const Rect old_caret = caret_rect().intersect(bounds());
+        // the offset is remembered, because a caret follow that scrolls shifts every line (§8.2)
+        const float old_scroll = m_scroll_offset;
         // the offset is stored first, so the invalidation walks a field that already places the caret (§6.1)
         m_caret = clamped;
         // a placement dissolves the selection, because the anchor follows the caret to it (§8.3)
@@ -830,8 +877,18 @@ namespace albor
         restart_blink();
         // the viewport follows the caret, so a move into a hidden line scrolls it on screen (§8.3)
         ensure_caret_visible();
-        // a caret move is visual only, because the value did not change (§6.1)
-        invalidate();
+        // a scrolled viewport repaints every line, because the whole run moved under the clip (§6.1, §8.2)
+        if (m_scroll_offset != old_scroll) {
+            invalidate();
+            return;
+        }
+        // the erased highlight and both caret bars are the only pixels a move changes (§6.1)
+        const Rect damage = old_selection.unioned(old_caret).unioned(caret_rect().intersect(bounds()));
+        // a move that lands on no visible pixel changes nothing, so it asks for no frame (§6.1)
+        if (damage.empty())
+            return;
+        // the caret move is visual only, because the value did not change (§6.1)
+        invalidate(damage);
     }
 
     std::size_t TextField::step_backward_byte(std::size_t byte) const {
@@ -1094,8 +1151,15 @@ namespace albor
     }
 
     void TextField::set_selection(std::size_t start, std::size_t end) {
+        // the old highlight is read before the state moves, because a replacement erases it (§6.1)
+        const Rect old_selection = selection_bounds(selection_start(), selection_end());
+        // the old caret bar joins it, because the active end moves with the state (§6.1)
+        const Rect old_caret = caret_rect().intersect(bounds());
+        // the offset is remembered, because a selection follow that scrolls shifts every line (§8.2)
+        const float old_scroll = m_scroll_offset;
         // the offsets are clamped into the value, because a selection ends where characters end (§8.3)
         const std::size_t first = std::min(start, m_value.size());
+        // the last end is clamped the same way, because a stale span cannot address bytes that left (§8.3)
         const std::size_t last = std::min(end, m_value.size());
         // the anchor takes the lower end and the caret the upper, because the caret is the active end (§8.3)
         m_anchor = std::min(first, last);
@@ -1103,8 +1167,18 @@ namespace albor
         m_caret = std::max(first, last);
         // the viewport follows the active end, so a programmatic selection is not left off screen (§8.3)
         ensure_caret_visible();
+        // a scrolled viewport repaints every line, because the whole run moved under the clip (§6.1, §8.2)
+        if (m_scroll_offset != old_scroll) {
+            invalidate();
+            return;
+        }
+        // both highlights and both caret bars change, because the new span replaces the old one (§6.1)
+        const Rect damage = old_selection.unioned(old_caret).unioned(selection_bounds(m_anchor, m_caret)).unioned(caret_rect().intersect(bounds()));
+        // a selection that lands on no visible pixel changes nothing, so it asks for no frame (§6.1)
+        if (damage.empty())
+            return;
         // a selection change is visual only, because the value did not change (§6.1)
-        invalidate();
+        invalidate(damage);
     }
 
     std::size_t TextField::selection_start() const {
@@ -1662,6 +1736,12 @@ namespace albor
         // an unchanged caret draws nothing new, because the span is the same (§6.1)
         if (m_caret == clamped)
             return;
+        // the old caret bar is read before the state moves, because the bar is one end of the change (§6.1)
+        const Rect old_caret = caret_rect().intersect(bounds());
+        // the previous caret byte is the other end, because the anchor is shared by both spans (§8.3)
+        const std::size_t old_byte = std::min(m_caret, m_value.size());
+        // the offset is remembered, because a drag follow that scrolls shifts every line (§8.2)
+        const float old_scroll = m_scroll_offset;
         // a step that stays on its own line refreshes the column, which a horizontal move chooses (§8.3)
         std::size_t old_line = 0;
         std::size_t new_line = 0;
@@ -1678,8 +1758,20 @@ namespace albor
         restart_blink();
         // the viewport follows the caret, so a drag into a hidden line scrolls it on screen (§8.3)
         ensure_caret_visible();
+        // a scrolled viewport repaints every line, because the whole run moved under the clip (§6.1, §8.2)
+        if (m_scroll_offset != old_scroll) {
+            invalidate();
+            return;
+        }
+        // the span between the two carets is exactly the highlight the drag gained or lost (§6.1, §8.3)
+        const Rect changed = selection_bounds(std::min(old_byte, clamped), std::max(old_byte, clamped));
+        // the old and new bars and the changed span are the only pixels a drag changes (§6.1)
+        const Rect damage = changed.unioned(old_caret).unioned(caret_rect().intersect(bounds()));
+        // a drag that lands on no visible pixel changes nothing, so it asks for no frame (§6.1)
+        if (damage.empty())
+            return;
         // a drag extension is visual only, because the value did not change (§6.1)
-        invalidate();
+        invalidate(damage);
     }
 
     void TextField::select_range(std::size_t first, std::size_t last, bool extend) {
