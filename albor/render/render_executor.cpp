@@ -44,6 +44,25 @@ namespace albor
                 for (std::size_t index = m_requests.size(); index < before; index++)
                     profile_coalesced();
             }
+            // a newer delta redraws everything an older one named, so the older one is superseded (§6.1)
+            else if (scene->damage_rect().has_value()) {
+                // the damage the new scene redraws is the area a pending delta must fall inside to be dropped (§6.1)
+                const Rect damage = *scene->damage_rect();
+                // every replaced frame is counted, because each one was work the ui thread dropped (§6.1)
+                const std::size_t before = m_requests.size();
+                // the newest scene records the current state of its whole damage, so a contained delta is redundant (§6.1)
+                std::erase_if(m_requests, [&surface, &damage](const FrameRequest& request) {
+                    // another surface, a full frame or a whole-surface scene is never dropped (§6.1)
+                    if (request.surface != &surface || !request.scene->is_partial() || !request.scene->damage_rect().has_value())
+                        return false;
+                    // containment is what makes the drop safe: the newer scene repaints the whole older area (§6.1)
+                    const Rect pending = *request.scene->damage_rect();
+                    return pending.intersect(damage) == pending;
+                });
+                // the cleared requests are the coalesced count, which keeps the profile honest (§6.1)
+                for (std::size_t index = m_requests.size(); index < before; index++)
+                    profile_coalesced();
+            }
             // a partial frame is a delta, so a pending full or earlier partial executes first (§6.1)
             m_requests.emplace_back(&surface, scene);
         }

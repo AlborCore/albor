@@ -1650,6 +1650,50 @@ TEST(AlborRenderContextChecks, ReplaysAPictureItsSceneClipDoesNotReach) {
     EXPECT_EQ(batch.draws.size(), 1u);
 }
 
+TEST(AlborRenderContextChecks, AGlyphOutlineReplaysItsRetainedMesh) {
+    // arrange one triangular glyph outline, which the surface expands once (§6.4, AD-06)
+    GlyphOutlineData data;
+    data.verbs = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    data.points = {Point{0.0f, 0.0f}, Point{10.0f, 0.0f}, Point{0.0f, 10.0f}};
+    const GlyphOutline outline(11u, 7u, 13.0f, data);
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    const Paint paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)};
+    GlyphMeshCache cache;
+    // act the first frame expands the outline into the cache and draws it (§6.4)
+    FrameBatch first;
+    AlborRenderContext drawing(first, extent, 1.0f, nullptr, &cache);
+    drawing.draw_glyph_outline(outline, Transform::translation(5.0f, 6.0f), paint);
+    // assert the mesh was retained and the frame carried its triangles (§6.4, AD-06)
+    EXPECT_EQ(cache.count(), 1u);
+    ASSERT_FALSE(first.vertices.empty());
+    // act the second frame replays the retained mesh at the same placement (§6.4)
+    FrameBatch second;
+    AlborRenderContext replaying(second, extent, 1.0f, nullptr, &cache);
+    replaying.draw_glyph_outline(outline, Transform::translation(5.0f, 6.0f), paint);
+    // assert the same geometry came from the cache, and no second mesh was built (§6.4, AD-06)
+    EXPECT_EQ(cache.count(), 1u);
+    ASSERT_EQ(second.vertices.size(), first.vertices.size());
+    EXPECT_EQ(second.indices, first.indices);
+}
+
+TEST(AlborRenderContextChecks, AScaledGlyphOutlineIsNotCachedInDeviceSpace) {
+    // arrange a glyph drawn under a scale, which a device space mesh cannot represent (AD-27)
+    GlyphOutlineData data;
+    data.verbs = {PathVerb::MoveTo, PathVerb::LineTo, PathVerb::LineTo, PathVerb::Close};
+    data.points = {Point{0.0f, 0.0f}, Point{10.0f, 0.0f}, Point{0.0f, 10.0f}};
+    const GlyphOutline outline(12u, 8u, 13.0f, data);
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    const Paint paint{.fill = Color::rgb(1.0f, 1.0f, 1.0f)};
+    GlyphMeshCache cache;
+    FrameBatch batch;
+    AlborRenderContext context(batch, extent, 1.0f, nullptr, &cache);
+    // act
+    context.draw_glyph_outline(outline, Transform::scaling(2.0f, 2.0f), paint);
+    // assert the scaled outline still drew, but kept no device space mesh (§6.4, AD-27)
+    EXPECT_EQ(cache.count(), 0u);
+    EXPECT_FALSE(batch.vertices.empty());
+}
+
 TEST(AlborRenderContextChecks, RefusesAMissingOrEmptyPicture) {
     // arrange
     FrameBatch batch;

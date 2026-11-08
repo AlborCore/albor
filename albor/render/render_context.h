@@ -8,6 +8,7 @@
 #include "albor/core/geometry.h"
 #include "albor/core/paint.h"
 #include "albor/render/frame_scene.h"
+#include "albor/render/glyph_outline.h"
 
 namespace albor
 {
@@ -88,6 +89,12 @@ namespace albor
 
         // draw a retained immutable path under a transform, which replays without rebuilding geometry (§6.4, AD-06)
         virtual void draw_path(const std::shared_ptr<const PathResource>& path, const Transform& transform, const Paint& paint) = 0;
+
+        // draw one embedded glyph outline, which a backend with a mesh cache replays without tessellating (§6.4, AD-06)
+        virtual void draw_glyph_outline(const GlyphOutline& outline, const Transform& transform, const Paint& paint) {
+            // a backend with no glyph mesh cache replays the retained outline path every frame (§6.2)
+            draw_path(outline.path(), transform, paint);
+        }
 
         // replay a retained picture's commands in order under a transform (§6.4, AD-06)
         virtual void draw_picture(const std::shared_ptr<const PictureResource>& picture, const Transform& transform) = 0;

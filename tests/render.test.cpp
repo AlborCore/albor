@@ -1294,6 +1294,75 @@ TEST(RenderExecutor, APartialFrameDoesNotReplaceAnEarlierPartial) {
     EXPECT_EQ(backend.executed_rect_counts[2], 1u);
 }
 
+TEST(RenderExecutor, ACoveringPartialReplacesAPendingPartial) {
+    // arrange a full frame parked in the render thread, so the deltas queue behind it (§6.1)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
+    const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    GatedRendererBackend backend;
+    RenderExecutor executor(&backend);
+    TestRenderSurface surface;
+    executor.submit(surface, std::make_shared<const FrameScene>(FrameScene::from_primitives(metrics, Color::rgb(0.0f, 0.0f, 0.0f), {Rect{0.0f, 0.0f, 1.0f, 1.0f}})));
+    backend.wait_until_arrived();
+    // arrange two scroll deltas over the same viewport, which a wheel produces in order (§6.1)
+    FrameScene older(metrics, Color::rgb(0.0f, 0.0f, 0.0f), Rect{0.0f, 0.0f, 10.0f, 10.0f});
+    DrawCommand first = DrawCommand::rectangle(Rect{0.0f, 0.0f, 2.0f, 2.0f}, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    first.set_clip(full);
+    older.add_command(std::move(first));
+    FrameScene newer(metrics, Color::rgb(0.0f, 0.0f, 0.0f), Rect{0.0f, 0.0f, 10.0f, 10.0f});
+    DrawCommand kept = DrawCommand::rectangle(Rect{0.0f, 0.0f, 3.0f, 3.0f}, Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f)});
+    kept.set_clip(full);
+    DrawCommand second = DrawCommand::rectangle(Rect{1.0f, 1.0f, 3.0f, 3.0f}, Paint{.fill = Color::rgb(0.0f, 0.0f, 1.0f)});
+    second.set_clip(full);
+    newer.add_command(std::move(kept));
+    newer.add_command(std::move(second));
+    // act
+    executor.submit(surface, std::make_shared<const FrameScene>(older));
+    executor.submit(surface, std::make_shared<const FrameScene>(newer));
+    backend.release();
+    executor.flush();
+    // assert the newer delta replaced the older one, because it redraws the same area (§6.1)
+    EXPECT_EQ(executor.executed_count(), 2u);
+    ASSERT_EQ(backend.executed_rect_counts.size(), 2u);
+    EXPECT_EQ(backend.executed_rect_counts[0], 1u);
+    EXPECT_EQ(backend.executed_rect_counts[1], 2u);
+}
+
+TEST(RenderExecutor, AContainedPartialIsReplacedButADisjointOneIsKept) {
+    // arrange a full frame parked in the render thread, so the deltas queue behind it (§6.1)
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);
+    const Rect full = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    GatedRendererBackend backend;
+    RenderExecutor executor(&backend);
+    TestRenderSurface surface;
+    executor.submit(surface, std::make_shared<const FrameScene>(FrameScene::from_primitives(metrics, Color::rgb(0.0f, 0.0f, 0.0f), {Rect{0.0f, 0.0f, 1.0f, 1.0f}})));
+    backend.wait_until_arrived();
+    // arrange one delta inside the next viewport and one outside it, which a wider scroll leaves (§6.1)
+    FrameScene contained(metrics, Color::rgb(0.0f, 0.0f, 0.0f), Rect{2.0f, 2.0f, 4.0f, 4.0f});
+    DrawCommand inside = DrawCommand::rectangle(Rect{2.0f, 2.0f, 2.0f, 2.0f}, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    inside.set_clip(full);
+    contained.add_command(std::move(inside));
+    FrameScene disjoint(metrics, Color::rgb(0.0f, 0.0f, 0.0f), Rect{20.0f, 20.0f, 4.0f, 4.0f});
+    DrawCommand outside = DrawCommand::rectangle(Rect{20.0f, 20.0f, 2.0f, 2.0f}, Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f)});
+    outside.set_clip(full);
+    disjoint.add_command(std::move(outside));
+    FrameScene covering(metrics, Color::rgb(0.0f, 0.0f, 0.0f), Rect{0.0f, 0.0f, 10.0f, 10.0f});
+    DrawCommand band = DrawCommand::rectangle(Rect{0.0f, 0.0f, 2.0f, 2.0f}, Paint{.fill = Color::rgb(0.0f, 0.0f, 1.0f)});
+    band.set_clip(full);
+    covering.add_command(std::move(band));
+    // act
+    executor.submit(surface, std::make_shared<const FrameScene>(contained));
+    executor.submit(surface, std::make_shared<const FrameScene>(disjoint));
+    executor.submit(surface, std::make_shared<const FrameScene>(covering));
+    backend.release();
+    executor.flush();
+    // assert only the contained delta was dropped, because the disjoint one keeps pixels the covering one leaves (§6.1)
+    EXPECT_EQ(executor.executed_count(), 3u);
+    ASSERT_EQ(backend.executed_rect_counts.size(), 3u);
+    EXPECT_EQ(backend.executed_rect_counts[0], 1u);
+    EXPECT_EQ(backend.executed_rect_counts[1], 1u);
+    EXPECT_EQ(backend.executed_rect_counts[2], 1u);
+}
+
 TEST(RenderExecutor, AFullFrameOnOneSurfaceKeepsAnotherSurfacesDelta) {
     // arrange a full frame parked for one surface, so a delta for another surface is pending (§6.1)
     const WindowMetrics metrics = WindowMetrics::from_logical(Size{640.0f, 480.0f}, 1.0f);

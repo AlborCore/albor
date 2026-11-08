@@ -567,7 +567,7 @@ namespace albor
         // the pen places the glyph, and the command's transform places the pen (§6.4, §6.1)
         const Transform pen{.translate_x = geometry.position.x, .translate_y = geometry.position.y};
         // the retained path draws under both, so a scaled subtree scales its glyphs (§6.4, AD-06)
-        context.draw_path(geometry.outline->path(), pen.then(m_transform), m_paint);
+        context.draw_glyph_outline(*geometry.outline, pen.then(m_transform), m_paint);
     }
 
     bool DrawCommand::uses_the_context_transform(DrawCommandKind kind) {
