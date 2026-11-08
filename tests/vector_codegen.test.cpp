@@ -8,16 +8,21 @@
 #include "albor/runtime/binding_engine.h"
 #include "albor/text/text_engine.h"
 #include "albor/ui/scene_builder.h"
+#include "albor/ui/ui_event.h"
 #include "albor/widgets/label.h"
+#include "albor/widgets/text_field.h"
 #include "albor/window/window_metrics.h"
 #include "conditional_panel.h"
 #include "guarded_flat_repeat_panel.h"
+#include "guarded_repeat_handler_panel.h"
 #include "guarded_repeat_panel.h"
 #include "image_panel.h"
 #include "nested_direct_panel.h"
 #include "nested_panel.h"
 #include "ordered_panel.h"
 #include "record_panel.h"
+#include "repeat_handler_component_panel.h"
+#include "repeat_handler_panel.h"
 #include "scroll_log.h"
 #include "task/image_record.h"
 #include "task_list.h"
@@ -658,4 +663,42 @@ TEST(VectorCodegen, ADoubledRowHeightResizesTheScrollbarThumb) {
     // assert the thumb is shorter, because the content the extent cache reports is twice as tall (§8.2)
     ASSERT_EQ(thumb_heights.size(), 1u);
     EXPECT_LT(thumb_heights.at(0), 120.0f);
+}
+
+TEST(RepeatHandlerCodegen, TheGeneratedHandlerFacadesLink) {
+    // arrange the engine a generated component reads (§11.3)
+    BindingEngine engine;
+    // act each facade is constructed, which pulls its generated unit into the link (§14.2)
+    RepeatHandlerPanel panel(&engine, nullptr);
+    RepeatHandlerComponentPanel component(&engine, nullptr);
+    GuardedRepeatHandlerPanel guarded(&engine, nullptr);
+    // assert the facades expose the properties they were generated with, which is what construction proves (§11.3)
+    EXPECT_TRUE(panel.tasks().empty());
+    EXPECT_TRUE(component.tasks().empty());
+    EXPECT_FALSE(guarded.show());
+}
+
+TEST(RepeatHandlerCodegen, ARowHandlerRunsWithTheRowContext) {
+    // arrange a repeated row editor whose edit signal the panel forwards to its own handler (§18.1, AD-13)
+    BindingEngine engine;
+    CountingTextEngine text;
+    RepeatHandlerComponentPanel panel(&engine, &text);
+    std::string reported;
+    panel.set_on_row_changed([&reported](std::string key) { reported = std::move(key); });
+    panel.set_tasks(std::vector<Task>{Task{.key = "a", .title = "first", .done = false}});
+    // act the engine settles, which materializes the row component (§18.1, AD-13)
+    (void)engine.settle();
+    // act the row editor is reached through the panel, and its field raises the change (§8.3, §18.1)
+    UiNode* column = static_cast<UiNode&>(panel).child_at(0);
+    ASSERT_NE(column, nullptr);
+    ASSERT_EQ(column->child_count(), 1U);
+    UiNode* row = column->child_at(0);
+    ASSERT_NE(row, nullptr);
+    TextField* field = dynamic_cast<TextField*>(row->child_at(0));
+    ASSERT_NE(field, nullptr);
+    Event event{.kind = EventKind::TextInput, .text = "z"};
+    field->dispatch_event(event);
+    // assert the shared row handler ran with the row context, and the row signal reached the panel (§18.1, AD-13)
+    EXPECT_TRUE(event.handled);
+    EXPECT_EQ(reported, "a");
 }

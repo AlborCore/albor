@@ -1,0 +1,20 @@
+import task;
+import "row_editor.ui";
+
+// the repeat handler component fixture, which proves a row component signal reaches the shared handler (§18.1, AD-13)
+
+component RepeatHandlerComponentPanel {
+    in property<vector<Task>> tasks;
+    signal row_changed(string key);
+
+    Column {
+        Repeat(row in tasks) {
+            RowEditor {
+                key_text: row.key;
+                on_edited: {
+                    row_changed(key);
+                }
+            }
+        }
+    }
+}

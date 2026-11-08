@@ -1,0 +1,22 @@
+import task;
+
+// the guarded repeat handler fixture, which proves a guarded row handler compiles with no signal parameters (§11.1, AD-13)
+
+component GuardedRepeatHandlerPanel {
+    inout property<bool> show;
+    inout property<vector<Task>> tasks;
+    inout property<int> presses;
+
+    Column {
+        if show {
+            Repeat(task in tasks) {
+                Button {
+                    text: task.title;
+                    on_clicked: {
+                        presses = presses + 1;
+                    }
+                }
+            }
+        }
+    }
+}

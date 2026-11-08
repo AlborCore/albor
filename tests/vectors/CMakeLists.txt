@@ -45,6 +45,18 @@ albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/guard
 # the guarded flat repeat facade is generated, which proves a repeat that is the whole conditional body appears with it (§11.1, §18.1)
 albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/guarded_flat_repeat_panel.ui" --manifest "${CMAKE_CURRENT_SOURCE_DIR}/task.manifest")
 
+# the repeat handler facade is generated, which proves a virtualized row handler never collides with the open tree (§18.1, AD-13)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/repeat_handler_panel.ui" --manifest "${CMAKE_CURRENT_SOURCE_DIR}/task.manifest")
+
+# the row editor facade is generated first, because the repeat handler component imports it (§11.1, §18.1)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/row_editor.ui")
+
+# the repeat handler component facade proves a row component signal reaches the shared handler (§18.1, AD-13)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/repeat_handler_component_panel.ui" IMPORTS "row_editor.ui" --manifest "${CMAKE_CURRENT_SOURCE_DIR}/task.manifest")
+
+# the guarded repeat handler facade proves a guarded row handler with no parameters compiles (§11.1, AD-13)
+albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/guarded_repeat_handler_panel.ui" --manifest "${CMAKE_CURRENT_SOURCE_DIR}/task.manifest")
+
 # the collection facade is generated, which proves a handler mutates a vector property in place (§11.1)
 albor_build_ui_component(albor-vector-fixture "${CMAKE_CURRENT_SOURCE_DIR}/collection_panel.ui")
 

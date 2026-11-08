@@ -2267,6 +2267,475 @@ component task_board {
     EXPECT_TRUE(contains(unit, "Align::"));
 }
 
+TEST(Codegen, AHandlerInsideARepeatBodyCapturesTheRowContext) {
+    // arrange a repeated field whose edit raises a handler, which the static row builder installs (§18.1, AD-13)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    catalog.add_record(RecordType{.name = "Task", .fields = {RecordFieldType{.name = "key", .type = scalar(TypeKind::String), .is_key = true}, RecordFieldType{.name = "title", .type = scalar(TypeKind::String), .is_key = false}}});
+    DiagnosticList diagnostics;
+    const std::string source = R"(component task_board {
+        inout property<vector<Task>> tasks;
+        inout property<string> last;
+
+        Column {
+            Repeat(task in tasks) {
+                TextField {
+                    value: task.title;
+                    on_changed: {
+                        last = value;
+                    }
+                }
+            }
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert the row is generated, because a record with a key is a legal repeat source (§18.1, AD-13)
+    EXPECT_FALSE(diagnostics.has_errors());
+    const GeneratedFile& cpp = file_named(files, "task_board.cpp");
+    // assert the row handler captures the context the builder recovered, because a static function has no this (§18.1)
+    EXPECT_TRUE(contains(cpp.content, "set_on_change([self](std::string value) { handle_row_0_changed(self, value); });"));
+    // assert the handler is declared and defined, because the row builder is what calls it (§11.3, §18.1)
+    EXPECT_TRUE(contains(cpp.content, "static void handle_row_0_changed(void* raw, [[maybe_unused]] std::string value);"));
+    EXPECT_TRUE(contains(cpp.content, "Impl::handle_row_0_changed(void* raw, [[maybe_unused]] std::string value) {"));
+    // assert the row builder never captures this, which does not exist in a static member function (§18.1)
+    EXPECT_FALSE(contains(cpp.content, "[this]"));
+}
+
+TEST(Codegen, AComponentHandlerInsideARepeatCapturesTheRowContext) {
+    // arrange a row editor whose edit signal the repeated body forwards, which is the shape a table uses (§18.1, AD-13)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    catalog.add_record(RecordType{.name = "Row", .fields = {RecordFieldType{.name = "key", .type = scalar(TypeKind::String), .is_key = true}}});
+    DiagnosticList diagnostics;
+    const std::string source = R"(
+component RowEditor {
+    in property<string> key_text;
+    signal edited(string key);
+
+    TextField {
+        value: key_text;
+        on_changed: {
+            edited(key_text);
+        }
+    }
+}
+
+component Panel {
+    in property<vector<Row>> rows;
+    signal row_changed(string key);
+
+    Column {
+        Repeat(row in rows) {
+            RowEditor {
+                key_text: row.key;
+                on_edited: {
+                    row_changed(key);
+                }
+            }
+        }
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert the row component is generated, because a record with a key is a legal repeat source (§18.1, AD-13)
+    EXPECT_FALSE(diagnostics.has_errors());
+    const GeneratedFile& panel = file_named(files, "panel.cpp");
+    // assert the component handler captures the row context, because the row builder is static (§18.1)
+    EXPECT_TRUE(contains(panel.content, "set_on_edited([self](std::string key) { handle_row_0_edited(self, key); });"));
+    // assert the handler is declared and defined, because the row builder is what calls it (§11.3, §18.1)
+    EXPECT_TRUE(contains(panel.content, "static void handle_row_0_edited(void* raw, [[maybe_unused]] std::string key);"));
+    EXPECT_TRUE(contains(panel.content, "Impl::handle_row_0_edited(void* raw, [[maybe_unused]] std::string key) {"));
+    // assert the row builder never captures this, which does not exist in a static member function (§18.1)
+    EXPECT_FALSE(contains(panel.content, "[this]"));
+}
+
+TEST(Codegen, ARowHandlerNameDoesNotCollideWithAnOpenTreeHandler) {
+    // arrange a root handler and a row handler naming slot zero and the same signal, which collide (§18.1)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    catalog.add_record(RecordType{.name = "Task", .fields = {RecordFieldType{.name = "key", .type = scalar(TypeKind::String), .is_key = true}, RecordFieldType{.name = "title", .type = scalar(TypeKind::String), .is_key = false}}});
+    DiagnosticList diagnostics;
+    const std::string source = R"(component c {
+        in property<vector<Task>> tasks;
+        inout property<float> offset_seen;
+
+        ScrollView {
+            on_scrolled: {
+                offset_seen = offset;
+            }
+
+            Repeat(task in tasks) {
+                ScrollView {
+                    on_scrolled: {
+                        offset_seen = offset;
+                    }
+                }
+            }
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert the open tree handler keeps its plain name, because it is not a row body (§11.3)
+    EXPECT_FALSE(diagnostics.has_errors());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "set_on_scroll([this](float offset) { handle_0_scrolled(this, offset); });"));
+    // assert the row handler takes the row prefix and the row context, because its index is a row index (§18.1)
+    EXPECT_TRUE(contains(cpp.content, "set_on_scroll([self](float offset) { handle_row_0_scrolled(self, offset); });"));
+    // assert both declarations exist under their distinct names, which is what keeps the definitions apart (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "static void handle_0_scrolled(void* raw, [[maybe_unused]] float offset);"));
+    EXPECT_TRUE(contains(cpp.content, "static void handle_row_0_scrolled(void* raw, [[maybe_unused]] float offset);"));
+}
+
+TEST(Codegen, RowHandlerNamesStayUniqueAcrossRepeats) {
+    // arrange two repeats in one component, whose body slots share the zero based row counter (§18.1, AD-13)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    catalog.add_record(RecordType{.name = "Task", .fields = {RecordFieldType{.name = "key", .type = scalar(TypeKind::String), .is_key = true}, RecordFieldType{.name = "title", .type = scalar(TypeKind::String), .is_key = false}}});
+    DiagnosticList diagnostics;
+    const std::string source = R"(component c {
+        in property<vector<Task>> tasks;
+        inout property<string> last;
+
+        Column {
+            Repeat(task in tasks) {
+                TextField {
+                    value: task.title;
+                    on_changed: {
+                        last = value;
+                    }
+                }
+            }
+
+            Repeat(task in tasks) {
+                TextField {
+                    value: task.title;
+                    on_changed: {
+                        last = value;
+                    }
+                }
+            }
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert the two rows take different handler names, because the body counter is shared by every repeat (§18.1, AD-13)
+    EXPECT_FALSE(diagnostics.has_errors());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "static void handle_row_0_changed(void* raw, [[maybe_unused]] std::string value);"));
+    EXPECT_TRUE(contains(cpp.content, "static void handle_row_1_changed(void* raw, [[maybe_unused]] std::string value);"));
+    // assert each row wires its own handler, because a duplicate name would redeclare the same function (§11.3)
+    EXPECT_TRUE(contains(cpp.content, "set_on_change([self](std::string value) { handle_row_0_changed(self, value); });"));
+    EXPECT_TRUE(contains(cpp.content, "set_on_change([self](std::string value) { handle_row_1_changed(self, value); });"));
+}
+
+TEST(Codegen, AHandlerInsideARepeatCannotReadTheRowItem) {
+    // arrange a row handler that reads the repeated item, which the shared callback cannot see (§18.1, AD-13)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    catalog.add_record(RecordType{.name = "Task", .fields = {RecordFieldType{.name = "key", .type = scalar(TypeKind::String), .is_key = true}, RecordFieldType{.name = "title", .type = scalar(TypeKind::String), .is_key = false}}});
+    DiagnosticList diagnostics;
+    const std::string source = R"(component c {
+        in property<vector<Task>> tasks;
+        inout property<string> last;
+
+        Column {
+            Repeat(task in tasks) {
+                TextField {
+                    value: task.title;
+                    on_changed: {
+                        last = task.title;
+                    }
+                }
+            }
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert the row item is refused, because the callback is shared by every row (§18.1, AD-13)
+    EXPECT_TRUE(diagnostics.has_errors());
+    EXPECT_TRUE(files.empty());
+    EXPECT_TRUE(has_code(diagnostics, "E0435"));
+}
+
+TEST(Codegen, AHandlerInsideARepeatCannotReadTheRowItemThroughAnExpression) {
+    // arrange a row handler that reads the item inside a conversion, which the walk must follow (§18.1, AD-13)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    catalog.add_record(RecordType{.name = "Task", .fields = {RecordFieldType{.name = "key", .type = scalar(TypeKind::String), .is_key = true}, RecordFieldType{.name = "title", .type = scalar(TypeKind::String), .is_key = false}}});
+    DiagnosticList diagnostics;
+    const std::string source = R"(component c {
+        in property<vector<Task>> tasks;
+        inout property<string> last;
+
+        Column {
+            Repeat(task in tasks) {
+                TextField {
+                    value: task.title;
+                    on_changed: {
+                        last = string(task.title);
+                    }
+                }
+            }
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert the nested item read is refused, because the shared callback cannot see the row (§18.1, AD-13)
+    EXPECT_TRUE(diagnostics.has_errors());
+    EXPECT_TRUE(files.empty());
+    EXPECT_TRUE(has_code(diagnostics, "E0435"));
+}
+
+TEST(Codegen, AHandlerInsideARepeatCannotReadTheRowIndex) {
+    // arrange a row handler that reads the row index, which the shared callback cannot see either (§18.1, AD-13)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    catalog.add_record(RecordType{.name = "Task", .fields = {RecordFieldType{.name = "key", .type = scalar(TypeKind::String), .is_key = true}, RecordFieldType{.name = "title", .type = scalar(TypeKind::String), .is_key = false}}});
+    DiagnosticList diagnostics;
+    const std::string source = R"(component c {
+        in property<vector<Task>> tasks;
+        inout property<int> seen;
+
+        Column {
+            Repeat(task in tasks, index) {
+                TextField {
+                    value: task.title;
+                    on_changed: {
+                        seen = index;
+                    }
+                }
+            }
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert the row index is refused, because the callback is shared by every row (§18.1, AD-13)
+    EXPECT_TRUE(diagnostics.has_errors());
+    EXPECT_TRUE(files.empty());
+    EXPECT_TRUE(has_code(diagnostics, "E0435"));
+}
+
+TEST(Codegen, AHandlerInsideARepeatCannotReadAShadowedRowItem) {
+    // arrange a component property sharing the item name, which the item still shadows in the body's scope (§11.1)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    catalog.add_record(RecordType{.name = "Task", .fields = {RecordFieldType{.name = "key", .type = scalar(TypeKind::String), .is_key = true}, RecordFieldType{.name = "title", .type = scalar(TypeKind::String), .is_key = false}}});
+    DiagnosticList diagnostics;
+    const std::string source = R"(component c {
+        in property<vector<Task>> tasks;
+        inout property<Task> task;
+        inout property<Task> current;
+
+        Column {
+            Repeat(task in tasks) {
+                TextField {
+                    value: task.title;
+                    on_changed: {
+                        current = task;
+                    }
+                }
+            }
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert the shadowed item is still refused, because the handler cannot see the row binding it names (§18.1, AD-13)
+    EXPECT_TRUE(diagnostics.has_errors());
+    EXPECT_TRUE(files.empty());
+    EXPECT_TRUE(has_code(diagnostics, "E0435"));
+}
+
+TEST(Codegen, ANestedRepeatInsideARowIsRefused) {
+    // arrange three repeats inside a row chain, whose bodies a keyed row cannot reconcile (§18.1, AD-13)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    catalog.add_record(RecordType{.name = "Task", .fields = {RecordFieldType{.name = "key", .type = scalar(TypeKind::String), .is_key = true}, RecordFieldType{.name = "title", .type = scalar(TypeKind::String), .is_key = false}}});
+    DiagnosticList diagnostics;
+    const std::string source = R"(component c {
+        in property<vector<Task>> tasks;
+
+        Column {
+            Repeat(first in tasks) {
+                Column {
+                    Repeat(second in tasks) {
+                        Column {
+                            Repeat(third in tasks) {
+                                Column {
+                                    Repeat(fourth in tasks) {
+                                        Label {
+                                            text: fourth.title;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert the nested repeats are refused instead of reaching the row builder as plain nodes (§18.1, AD-13)
+    EXPECT_TRUE(diagnostics.has_errors());
+    EXPECT_TRUE(files.empty());
+    // assert each nested repeat is named once, because the walk stops at a repeat its own node reports (§18.1)
+    std::size_t reported = 0;
+    for (const Diagnostic& diagnostic : diagnostics.diagnostics())
+        if (diagnostic.code == "E0509")
+            reported++;
+    EXPECT_EQ(reported, 3U);
+}
+
+TEST(Codegen, AHandlerInsideARepeatCanReadANamedValueSet) {
+    // arrange an enum whose name matches the item, which a field access resolves as a set (§11.1)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    catalog.add_record(RecordType{.name = "Task", .fields = {RecordFieldType{.name = "key", .type = scalar(TypeKind::String), .is_key = true}, RecordFieldType{.name = "title", .type = scalar(TypeKind::String), .is_key = false}}});
+    DiagnosticList diagnostics;
+    const std::string source = R"(
+enum Status {
+    Todo,
+    Doing,
+    Done
+}
+
+component c {
+    in property<vector<Task>> tasks;
+    inout property<Status> out;
+
+    Column {
+        Repeat(Status in tasks) {
+            TextField {
+                value: "x";
+                on_changed: {
+                    out = Status.Todo;
+                }
+            }
+        }
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert the set name is not mistaken for the item, because the field access resolves the set first (§11.1)
+    EXPECT_FALSE(diagnostics.has_errors());
+    EXPECT_FALSE(files.empty());
+    // assert the member reaches the generated handler as the enum value, which is the legal read (§11.1)
+    EXPECT_TRUE(contains(file_named(files, "c.cpp").content, "Status::Todo"));
+}
+
+TEST(Codegen, AHandlerSignalParameterShadowsTheRowItem) {
+    // arrange a signal parameter whose name matches the item, which the handler binds by name (§11.1)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    catalog.add_record(RecordType{.name = "Task", .fields = {RecordFieldType{.name = "key", .type = scalar(TypeKind::String), .is_key = true}, RecordFieldType{.name = "title", .type = scalar(TypeKind::String), .is_key = false}}});
+    DiagnosticList diagnostics;
+    const std::string source = R"(component c {
+        in property<vector<Task>> tasks;
+        inout property<string> last;
+
+        Column {
+            Repeat(value in tasks) {
+                TextField {
+                    value: value.title;
+                    on_changed: {
+                        last = value;
+                    }
+                }
+            }
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert the handler reads the signal parameter, which shadows the item of the same name (§11.1)
+    EXPECT_FALSE(diagnostics.has_errors());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "self->m_last.set(value);"));
+    // assert the row binding still reads the item, because a binding has no signal parameter (§18.1, AD-13)
+    EXPECT_TRUE(contains(cpp.content, "set_value(item.title);"));
+}
+
+TEST(Codegen, ADuplicateHandlerOnOneNodeIsRefused) {
+    // arrange one field with the same signal attached twice, which would redeclare its handler (§11.3)
+    DiagnosticList diagnostics;
+    const std::string source = R"(component c {
+        inout property<string> last;
+
+        TextField {
+            on_changed: {
+                last = value;
+            }
+
+            on_changed: {
+                last = value;
+            }
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the duplicate is a diagnostic rather than two generated definitions (§11.3)
+    EXPECT_TRUE(diagnostics.has_errors());
+    EXPECT_TRUE(files.empty());
+    EXPECT_TRUE(has_code(diagnostics, "E0436"));
+}
+
+TEST(Codegen, ARepeatAtTheComponentRootIsRefused) {
+    // arrange a repeat with no container, which has nowhere to attach the rows it materializes (§18.1, AD-13)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    catalog.add_record(RecordType{.name = "Task", .fields = {RecordFieldType{.name = "key", .type = scalar(TypeKind::String), .is_key = true}, RecordFieldType{.name = "title", .type = scalar(TypeKind::String), .is_key = false}}});
+    DiagnosticList diagnostics;
+    const std::string source = R"(component c {
+        in property<vector<Task>> tasks;
+
+        Repeat(task in tasks) {
+            Label {
+                text: task.title;
+            }
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert the root is refused instead of silently generating no rows (§18.1, AD-13)
+    EXPECT_TRUE(diagnostics.has_errors());
+    EXPECT_TRUE(files.empty());
+    EXPECT_TRUE(has_code(diagnostics, "E0513"));
+}
+
+TEST(Codegen, AConditionalAtTheComponentRootIsRefused) {
+    // arrange a conditional with no container, which has nowhere to attach the body it instantiates (§11.1)
+    DiagnosticList diagnostics;
+    const std::string source = R"(component c {
+        in property<bool> show;
+
+        if show {
+            Column {}
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the root is refused instead of leaving the body without a tree position (§11.1)
+    EXPECT_TRUE(diagnostics.has_errors());
+    EXPECT_TRUE(files.empty());
+    EXPECT_TRUE(has_code(diagnostics, "E0513"));
+}
+
+TEST(Codegen, TwoDifferentHandlersOnOneNodeAreAccepted) {
+    // arrange one field with two distinct signals, which are not duplicate attachments (§11.3)
+    DiagnosticList diagnostics;
+    const std::string source = R"(component c {
+        inout property<string> last;
+
+        TextField {
+            on_changed: {
+                last = value;
+            }
+
+            on_committed: {
+                last = value;
+            }
+        }
+    })";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert both signals are generated, because the duplicate rule keys on the signal name (§11.3)
+    EXPECT_FALSE(diagnostics.has_errors());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "static void handle_0_changed(void* raw, [[maybe_unused]] std::string value);"));
+    EXPECT_TRUE(contains(cpp.content, "static void handle_0_committed(void* raw, [[maybe_unused]] std::string value);"));
+}
+
 TEST(CodegenColour, ATransparentizeCallBecomesTheMethodCall) {
     // arrange a component whose root carries the dimmed colour (§6.1)
     const std::string source = R"(

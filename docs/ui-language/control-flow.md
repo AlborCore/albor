@@ -21,7 +21,8 @@ A non-present element occupies no layout, and it rebuilds from scratch when it r
 its identity, its bindings and its state start over.
 
 That makes `if` the right tool for a mutually exclusive pair where only one alternative is
-ever valid: a loading spinner or the content, a success panel or an error panel.
+ever valid: a loading spinner or the content, a success panel or an error panel. A conditional
+is not a root element: the body it instantiates needs a container to hang from.
 
 ## `visible`: hide in place
 
@@ -58,7 +59,8 @@ Column {
 ```
 
 `Repeat(item in collection)` instantiates its body once per element. The item name binds the
-current element; the body is ordinary markup and may be any size. An optional second name is
+current element; the body is ordinary markup and may be any size. A `Repeat` is not a root
+element: the rows it builds need a container to hang from. An optional second name is
 the row index:
 
 ```text
@@ -102,3 +104,6 @@ navigation over the window it builds.
 
 Mutate the underlying collection from a handler with the closed method set
 ([Built-in methods](handlers.md#built-in-methods)); the rows follow.
+
+A handler written inside the `Repeat` body cannot read the item or index, because it is one
+callback shared by every row; pass the value through a signal instead.

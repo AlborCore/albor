@@ -36,6 +36,10 @@ A bare identifier resolves in a fixed order — the innermost scope wins:
 
 An unknown name is a compile error, not a silent lookup at runtime.
 
+A handler attached inside a `Repeat` body is one shared callback for every row, so it cannot
+read the repeat item or index; pass the value through a signal instead. A signal parameter of
+the same name resolves before the repeat name, because it is the value the handler receives.
+
 ## Operators
 
 | operator | accepts | yields |
