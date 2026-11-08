@@ -7,6 +7,7 @@
 
 #include <gtest/gtest.h>
 
+#include "albor/animation/animation_engine.h"
 #include "albor/commands/command.h"
 #include "albor/commands/command_registry.h"
 #include "albor/commands/shortcut.h"
@@ -519,6 +520,76 @@ TEST(LabelChecks, AnnouncesTheLabelRoleAndItsText) {
     EXPECT_EQ(node.role(), SemanticRole::Label);
     EXPECT_EQ(node.name(), "Albor");
     EXPECT_EQ(node.bounds(), (Rect::from_origin_size(Point{2.0f, 3.0f}, Size{50.0f, 20.0f})));
+}
+
+TEST(LabelChecks, IsNotAFocusStop) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Label label(&engine, &text_engine, "caption");
+    label.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
+    // act
+    const bool focusable = FocusManager::focusable(label);
+    // assert
+    EXPECT_TRUE(label.visible_in_tree());
+    EXPECT_FALSE(label.disabled());
+    EXPECT_FALSE(label.bounds().empty());
+    EXPECT_FALSE(label.accepts_focus());
+    EXPECT_FALSE(focusable);
+}
+
+TEST(LabelChecks, TheFocusManagerSkipsALabel) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    auto label = std::make_unique<Label>(&engine, &text_engine, "caption");
+    auto button = std::make_unique<Button>(&engine, &text_engine, "Press");
+    Label* label_ptr = label.get();
+    Button* button_ptr = button.get();
+    label_ptr->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
+    button_ptr->arrange(Rect::from_origin_size(Point{0.0f, 20.0f}, Size{60.0f, 20.0f}));
+    root.add_child(std::move(label));
+    root.add_child(std::move(button));
+    FocusManager manager;
+    // act
+    manager.focus_next(root);
+    // assert
+    EXPECT_EQ(manager.focused(), button_ptr);
+    EXPECT_EQ(manager.change_count(), 1u);
+    EXPECT_FALSE(label_ptr->focused());
+    EXPECT_TRUE(button_ptr->focused());
+}
+
+TEST(LabelChecks, RequestingFocusOnALabelIsRefused) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Label label(&engine, &text_engine, "caption");
+    label.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
+    FocusManager manager;
+    // act
+    manager.request_focus(&label);
+    // assert
+    EXPECT_EQ(manager.focused(), nullptr);
+    EXPECT_EQ(manager.change_count(), 0u);
+}
+
+TEST(LabelChecks, ALabelAloneIsNotARing) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    auto label = std::make_unique<Label>(&engine, &text_engine, "caption");
+    label->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{50.0f, 20.0f}));
+    root.add_child(std::move(label));
+    FocusManager manager;
+    // act
+    manager.focus_next(root);
+    manager.focus_previous(root);
+    // assert
+    EXPECT_EQ(manager.focused(), nullptr);
+    EXPECT_EQ(manager.change_count(), 0u);
 }
 
 TEST(LabelChecks, AVisibleLabelIsNotDisabled) {
@@ -2874,6 +2945,216 @@ TEST(ThemeChecks, AChildBuiltAfterTheInstallInheritsTheTheme) {
     EXPECT_EQ(label_ptr->theme(), &theme);
 }
 
+TEST(ThemeChecks, ASubtreeAttachedAfterTheInstallReceivesTheTheme) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    auto column = std::make_unique<ColumnLayout>();
+    ColumnLayout* column_ptr = column.get();
+    root.add_child(std::move(column));
+    ThemeController controller(ThemePreset::Derived);
+    controller.install(root, ColorScheme::Light);
+    auto label = std::make_unique<Label>(&engine, &text_engine, "late");
+    Label* label_ptr = label.get();
+    // act
+    column_ptr->add_child(std::move(label));
+    // assert
+    EXPECT_EQ(label_ptr->theme(), &controller.theme());
+}
+
+TEST(ThemeChecks, ASubtreeAttachedAfterASchemeFlipReceivesTheNewTheme) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    auto column = std::make_unique<ColumnLayout>();
+    ColumnLayout* column_ptr = column.get();
+    root.add_child(std::move(column));
+    ThemeController controller(ThemePreset::Derived);
+    controller.install(root, ColorScheme::Dark);
+    controller.toggle();
+    auto label = std::make_unique<Label>(&engine, &text_engine, "late");
+    Label* label_ptr = label.get();
+    // act
+    column_ptr->add_child(std::move(label));
+    // assert
+    EXPECT_EQ(label_ptr->theme(), &controller.theme());
+    EXPECT_EQ(controller.scheme(), ColorScheme::Light);
+}
+
+TEST(ThemeChecks, AnOverlayAttachedAfterTheInstallReceivesTheTheme) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    ThemeController controller(ThemePreset::Derived);
+    controller.install(root, ColorScheme::Dark);
+    auto label = std::make_unique<Label>(&engine, &text_engine, "overlay");
+    Label* label_ptr = label.get();
+    // act
+    root.add_overlay(std::move(label));
+    // assert
+    EXPECT_EQ(label_ptr->theme(), &controller.theme());
+}
+
+TEST(ThemeChecks, AnOverlayPresentAtInstallReceivesTheTheme) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    auto label = std::make_unique<Label>(&engine, &text_engine, "overlay");
+    Label* label_ptr = label.get();
+    root.add_overlay(std::move(label));
+    ThemeController controller(ThemePreset::Derived);
+    // act
+    controller.install(root, ColorScheme::Dark);
+    // assert
+    EXPECT_EQ(label_ptr->theme(), &controller.theme());
+}
+
+TEST(ThemeChecks, AnOverlayFollowsASchemeFlip) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    ThemeController controller(ThemePreset::Derived);
+    controller.install(root, ColorScheme::Dark);
+    auto label = std::make_unique<Label>(&engine, &text_engine, "overlay");
+    Label* label_ptr = label.get();
+    root.add_overlay(std::move(label));
+    label_ptr->clear_dirty();
+    // act
+    controller.toggle();
+    // assert
+    EXPECT_EQ(controller.scheme(), ColorScheme::Light);
+    EXPECT_EQ(label_ptr->theme(), &controller.theme());
+    EXPECT_TRUE(label_ptr->layout_dirty());
+}
+
+TEST(ThemeChecks, AConditionalInsertReceivesTheTheme) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    auto column = std::make_unique<ColumnLayout>();
+    ColumnLayout* column_ptr = column.get();
+    root.add_child(std::move(column));
+    ThemeController controller(ThemePreset::Derived);
+    controller.install(root, ColorScheme::Dark);
+    auto label = std::make_unique<Label>(&engine, &text_engine, "conditional");
+    Label* label_ptr = label.get();
+    // act
+    column_ptr->insert_child(0, std::move(label));
+    // assert
+    EXPECT_EQ(label_ptr->theme(), &controller.theme());
+}
+
+TEST(ThemeChecks, ANestedSubtreeReceivesTheThemeInOneAttach) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    auto column = std::make_unique<ColumnLayout>();
+    ColumnLayout* column_ptr = column.get();
+    root.add_child(std::move(column));
+    ThemeController controller(ThemePreset::Derived);
+    controller.install(root, ColorScheme::Dark);
+    auto row = std::make_unique<ColumnLayout>();
+    auto label = std::make_unique<Label>(&engine, &text_engine, "nested");
+    Label* label_ptr = label.get();
+    row->add_child(std::move(label));
+    // act
+    column_ptr->add_child(std::move(row));
+    // assert
+    EXPECT_EQ(label_ptr->theme(), &controller.theme());
+}
+
+TEST(ThemeChecks, ARemovedSubtreeIsRetimedWhenReattached) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    auto column = std::make_unique<ColumnLayout>();
+    ColumnLayout* column_ptr = column.get();
+    root.add_child(std::move(column));
+    ThemeController controller(ThemePreset::Derived);
+    controller.install(root, ColorScheme::Dark);
+    auto label = std::make_unique<Label>(&engine, &text_engine, "late");
+    Label* label_ptr = label.get();
+    column_ptr->add_child(std::move(label));
+    auto removed = column_ptr->remove_child(label_ptr);
+    Theme detached;
+    label_ptr->set_theme(&detached);
+    // act
+    controller.toggle();
+    column_ptr->add_child(std::move(removed));
+    // assert
+    EXPECT_EQ(controller.scheme(), ColorScheme::Light);
+    EXPECT_EQ(label_ptr->theme(), &controller.theme());
+    EXPECT_NE(label_ptr->theme(), &detached);
+}
+
+TEST(ThemeChecks, ASecondInstallMakesTheOldRootInert) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode first;
+    auto first_column = std::make_unique<ColumnLayout>();
+    ColumnLayout* first_column_ptr = first_column.get();
+    first.add_child(std::move(first_column));
+    UiNode second;
+    auto second_column = std::make_unique<ColumnLayout>();
+    second.add_child(std::move(second_column));
+    ThemeController controller(ThemePreset::Derived);
+    controller.install(first, ColorScheme::Dark);
+    controller.install(second, ColorScheme::Dark);
+    auto label = std::make_unique<Label>(&engine, &text_engine, "late");
+    Label* label_ptr = label.get();
+    // act
+    first_column_ptr->add_child(std::move(label));
+    // assert
+    EXPECT_EQ(label_ptr->theme(), nullptr);
+}
+
+TEST(ThemeChecks, AThemeInstalledOnASubtreeThemesItsLateChildren) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode outer;
+    auto panel = std::make_unique<ColumnLayout>();
+    ColumnLayout* panel_ptr = panel.get();
+    outer.add_child(std::move(panel));
+    ThemeController controller(ThemePreset::Derived);
+    controller.install(*panel_ptr, ColorScheme::Dark);
+    auto label = std::make_unique<Label>(&engine, &text_engine, "late");
+    Label* label_ptr = label.get();
+    // act
+    panel_ptr->add_child(std::move(label));
+    // assert
+    EXPECT_EQ(label_ptr->theme(), &controller.theme());
+}
+
+TEST(ThemeChecks, ASubtreeAttachedAfterTheControllerDiesStaysUnthemed) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    UiNode root;
+    auto column = std::make_unique<ColumnLayout>();
+    ColumnLayout* column_ptr = column.get();
+    root.add_child(std::move(column));
+    {
+        ThemeController controller(ThemePreset::Derived);
+        controller.install(root, ColorScheme::Dark);
+    }
+    auto label = std::make_unique<Label>(&engine, &text_engine, "late");
+    Label* label_ptr = label.get();
+    // act
+    column_ptr->add_child(std::move(label));
+    // assert
+    EXPECT_EQ(label_ptr->theme(), nullptr);
+}
+
 TEST(ThemeChecks, AWidgetWithNoThemeDrawsItsOwnPlate) {
     // arrange
     BindingEngine engine;
@@ -2889,7 +3170,7 @@ TEST(ThemeChecks, AWidgetWithNoThemeDrawsItsOwnPlate) {
     EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].paint().fill.red, 1.0f);
 }
 
-TEST(ThemeChecks, AThemeOverrideChangesThePaintWithoutTouchingTheWidget) {
+TEST(ThemeChecks, AnAuthoredButtonPlateWinsOverTheTheme) {
     // arrange
     BindingEngine engine;
     StubTextEngine text_engine;
@@ -2900,11 +3181,284 @@ TEST(ThemeChecks, AThemeOverrideChangesThePaintWithoutTouchingTheWidget) {
     button.set_theme(&theme);
     button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
     SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
-    // act the widget is untouched apart from the theme pointer (§6.1)
+    // act
     button.render(recorder);
-    // assert the theme won over the widget's own colour, which is the override direction the plan sets (§6.1)
+    // assert
+    ASSERT_EQ(rect_commands(*recorder.scene()).size(), 1u);
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].paint().fill.red, 1.0f);
+}
+
+TEST(ThemeChecks, AThemedButtonWithoutAnAuthoredPlateUsesTheTheme) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_button_plate(Color::rgb(0.9f, 0.1f, 0.2f));
+    Button button(&engine, &text_engine, "Press");
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert
     ASSERT_EQ(rect_commands(*recorder.scene()).size(), 1u);
     EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].paint().fill.red, 0.9f);
+}
+
+TEST(ThemeChecks, AnAuthoredButtonPlateMatchingTheDefaultStillWins) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_button_plate(Color::rgb(0.9f, 0.1f, 0.2f));
+    Button button(&engine, &text_engine, "Press");
+    const Color authored = button.background();
+    button.set_background(authored);
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert
+    ASSERT_EQ(rect_commands(*recorder.scene()).size(), 1u);
+    EXPECT_EQ(recorder.scene()->commands()[0].paint().fill, authored);
+}
+
+TEST(ThemeChecks, AnAuthoredDisabledButtonStillDims) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    Button button(&engine, &text_engine, "Press");
+    button.set_background(Color::rgb(1.0f, 0.0f, 0.0f));
+    button.set_theme(&theme);
+    button.set_disabled(true);
+    // act
+    const Color plate = button.background();
+    // assert
+    EXPECT_FLOAT_EQ(plate.red, 1.0f);
+    EXPECT_FLOAT_EQ(plate.alpha, 0.45f);
+}
+
+TEST(ThemeChecks, AnAuthoredBorderColourWinsOverTheTheme) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_button_border(Color::rgb(0.0f, 1.0f, 0.0f));
+    theme.set_button_border_width(1.0f);
+    Button button(&engine, &text_engine, "Press");
+    button.set_border_color(Color::rgb(1.0f, 0.0f, 0.0f));
+    button.set_border_width(1.0f);
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert
+    ASSERT_GE(recorder.scene()->commands().size(), 1u);
+    EXPECT_EQ(recorder.scene()->commands()[0].paint().stroke, (Color::rgb(1.0f, 0.0f, 0.0f)));
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].paint().stroke_width, 1.0f);
+}
+
+TEST(ThemeChecks, AnAuthoredBorderWidthWinsOverTheTheme) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_button_border_width(0.0f);
+    Button button(&engine, &text_engine, "Press");
+    button.set_border_width(2.0f);
+    button.set_theme(&theme);
+    // act
+    const float width = button.border_width();
+    // assert
+    EXPECT_FLOAT_EQ(width, 2.0f);
+}
+
+TEST(ThemeChecks, AnAuthoredComboBoxBorderWinsOverTheTheme) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_text_field_border(Color::rgb(0.0f, 1.0f, 0.0f));
+    ComboBox combo(&engine, &text_engine);
+    combo.set_border_color(Color::rgb(1.0f, 0.0f, 0.0f));
+    combo.set_theme(&theme);
+    // act
+    const Color border = combo.border_color();
+    // assert
+    EXPECT_EQ(border, (Color::rgb(1.0f, 0.0f, 0.0f)));
+}
+
+TEST(ThemeChecks, APanelBorderWrittenThroughTheNodeStillWins) {
+    // arrange
+    BindingEngine engine;
+    Theme theme;
+    theme.set_panel_border(Color::rgb(0.0f, 1.0f, 0.0f));
+    Panel panel(&engine);
+    UiNode& node = panel;
+    node.set_border_color(Color::rgb(1.0f, 0.0f, 0.0f));
+    panel.set_theme(&theme);
+    // act
+    const Color border = panel.border_color();
+    // assert
+    EXPECT_EQ(border, (Color::rgb(1.0f, 0.0f, 0.0f)));
+}
+
+TEST(ThemeChecks, AnAuthoredMenuBarFaceWinsOverTheTheme) {
+    // arrange
+    BindingEngine engine;
+    Theme theme;
+    theme.set_panel_background(Color::rgb(0.0f, 1.0f, 0.0f));
+    MenuBar bar(&engine);
+    bar.set_background(Color::rgb(1.0f, 0.0f, 0.0f));
+    bar.set_theme(&theme);
+    // act
+    const Color face = bar.background();
+    // assert
+    EXPECT_EQ(face, (Color::rgb(1.0f, 0.0f, 0.0f)));
+}
+
+TEST(ThemeChecks, AnAuthoredButtonPlateStillLiftsOnHoverAndSinksOnPress) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_button_plate(Color::rgb(0.0f, 1.0f, 0.0f));
+    Button button(&engine, &text_engine, "Press");
+    const Color authored = Color::rgb(0.2f, 0.2f, 0.2f);
+    button.set_background(authored);
+    button.set_theme(&theme);
+    button.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{60.0f, 20.0f}));
+    // act
+    Event enter{.kind = EventKind::PointerEnter, .position = Point{10.0f, 10.0f}};
+    button.dispatch_event(enter);
+    const Color hovered = button.background();
+    Event down{.kind = EventKind::PointerDown, .position = Point{10.0f, 10.0f}};
+    button.dispatch_event(down);
+    const Color pressed = button.background();
+    // assert
+    EXPECT_GT(hovered.red, authored.red);
+    EXPECT_LT(hovered.green, 0.5f);
+    EXPECT_LT(pressed.red, hovered.red);
+}
+
+TEST(ThemeChecks, AnAuthoredLabelForegroundWinsOverTheTheme) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_label_foreground(Color::rgb(0.0f, 1.0f, 0.0f));
+    Label label(&engine, &text_engine, "Error");
+    label.set_foreground(Color::rgb(1.0f, 0.0f, 0.0f));
+    label.set_theme(&theme);
+    label.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{80.0f, 20.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    label.render(recorder);
+    // assert
+    ASSERT_EQ(text_commands(*recorder.scene()).size(), 1u);
+    EXPECT_FLOAT_EQ(text_commands(*recorder.scene())[0].paint().fill.red, 1.0f);
+}
+
+TEST(ThemeChecks, AnAuthoredCheckBoxOutlineWinsOverTheTheme) {
+    // arrange
+    BindingEngine engine;
+    Theme theme;
+    theme.set_checkbox_outline(Color::rgb(0.0f, 1.0f, 0.0f));
+    CheckBox box(&engine, "box");
+    box.set_outline(Color::rgb(1.0f, 0.0f, 0.0f));
+    box.set_theme(&theme);
+    box.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{16.0f, 16.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    box.render(recorder);
+    // assert
+    ASSERT_EQ(recorder.scene()->commands().size(), 1u);
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].paint().stroke.red, 1.0f);
+}
+
+TEST(ThemeChecks, AnAuthoredCheckBoxFillWinsOverTheTheme) {
+    // arrange
+    BindingEngine engine;
+    Theme theme;
+    theme.set_checkbox_fill(Color::rgb(0.0f, 1.0f, 0.0f));
+    CheckBox box(&engine, "box");
+    box.set_check_fill(Color::rgb(1.0f, 0.0f, 0.0f));
+    box.set_theme(&theme);
+    box.set_checked(true);
+    box.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{16.0f, 16.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    box.render(recorder);
+    // assert
+    ASSERT_GE(recorder.scene()->commands().size(), 1u);
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].paint().fill.red, 1.0f);
+}
+
+TEST(ThemeChecks, AnAuthoredSliderTrackWinsOverTheTheme) {
+    // arrange
+    BindingEngine engine;
+    Theme theme;
+    theme.set_slider_track(Color::rgb(0.0f, 1.0f, 0.0f));
+    Slider slider(&engine, "slider");
+    slider.set_track_color(Color::rgb(1.0f, 0.0f, 0.0f));
+    slider.set_theme(&theme);
+    slider.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 16.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    slider.render(recorder);
+    // assert
+    ASSERT_EQ(recorder.scene()->commands().size(), 2u);
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[0].paint().fill.red, 1.0f);
+}
+
+TEST(ThemeChecks, AnAuthoredProgressBarFillWinsOverTheTheme) {
+    // arrange
+    BindingEngine engine;
+    Theme theme;
+    theme.set_progress_bar_fill(Color::rgb(0.0f, 1.0f, 0.0f));
+    ProgressBar bar(&engine, "bar");
+    bar.set_fill_color(Color::rgb(1.0f, 0.0f, 0.0f));
+    bar.set_value(0.5f);
+    bar.set_theme(&theme);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    bar.render(recorder);
+    // assert
+    ASSERT_EQ(recorder.scene()->commands().size(), 2u);
+    EXPECT_FLOAT_EQ(recorder.scene()->commands()[1].paint().fill.red, 1.0f);
+}
+
+TEST(ThemeChecks, AnAuthoredToolBarFaceWinsOverTheTheme) {
+    // arrange
+    BindingEngine engine;
+    Theme theme;
+    theme.set_panel_background(Color::rgb(0.0f, 1.0f, 0.0f));
+    ToolBar strip(&engine);
+    strip.set_background(Color::rgb(1.0f, 0.0f, 0.0f));
+    strip.set_theme(&theme);
+    // act
+    const Color face = strip.background();
+    // assert
+    EXPECT_EQ(face, (Color::rgb(1.0f, 0.0f, 0.0f)));
+}
+
+TEST(ThemeChecks, AnAuthoredMenuFaceWinsOverTheTheme) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Theme theme;
+    theme.set_panel_background(Color::rgb(0.0f, 1.0f, 0.0f));
+    Menu menu(&engine, &text_engine);
+    menu.set_background(Color::rgb(1.0f, 0.0f, 0.0f));
+    menu.set_theme(&theme);
+    // act
+    const Color face = menu.background();
+    // assert
+    EXPECT_EQ(face, (Color::rgb(1.0f, 0.0f, 0.0f)));
 }
 
 TEST(ThemeChecks, AThemedButtonMeasuresFromTheThemeMetrics) {
@@ -4401,6 +4955,19 @@ TEST(ThemeControllerChecks, AnAccentChangeKeepsThePreset) {
     EXPECT_EQ(controller.theme().metrics().button_minimum, (Size{24.0f, 28.0f}));
 }
 
+TEST(ThemeControllerChecks, AnAccentChangeBeforeInstallUpdatesTheTheme) {
+    // arrange a controller with no tree, whose resting scheme is dark (§6.1)
+    ThemeController controller(ThemePreset::Derived);
+    Accents light;
+    light.surface = Color::rgb(0.8f, 0.1f, 0.1f);
+    Accents dark;
+    dark.surface = Color::rgb(0.1f, 0.1f, 0.1f);
+    // act
+    controller.set_accents(light, dark);
+    // assert the live value moved with the accents even before an install (§8.4)
+    EXPECT_EQ(controller.theme().surface(), dark.surface);
+}
+
 TEST(NativeThemeChecks, AnUnthemedBoxDrawsItsOutlineWithoutAFill) {
     // arrange an unchecked box with no theme, whose fill the outline pass always left empty (§8.4)
     BindingEngine engine;
@@ -4535,6 +5102,245 @@ TEST(ProgressBarChecks, AnUnchangedValueRedrawsNothing) {
     bar.set_value(0.5f);
     // assert
     EXPECT_FALSE(bar.render_dirty());
+}
+
+TEST(ProgressBarChecks, AnIndeterminateBarDrawsASweep) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    bar.set_indeterminate(true);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    bar.render(recorder);
+    // assert
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_EQ(rects.size(), 2u);
+    EXPECT_FLOAT_EQ(rects[0].width, 160.0f);
+    EXPECT_FLOAT_EQ(rects[1].width, 160.0f / 3.0f);
+    EXPECT_FLOAT_EQ(rects[1].x, 160.0f / 3.0f);
+}
+
+TEST(ProgressBarChecks, AnIndeterminateBarIgnoresTheFraction) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    bar.set_value(0.5f);
+    bar.set_indeterminate(true);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    bar.render(recorder);
+    // assert
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_EQ(rects.size(), 2u);
+    EXPECT_FLOAT_EQ(rects[1].width, 160.0f / 3.0f);
+    EXPECT_NE(rects[1].width, 80.0f);
+}
+
+TEST(ProgressBarChecks, AnIndeterminateBarRunsARepeatingAnimation) {
+    // arrange
+    BindingEngine engine;
+    AnimationEngine animations;
+    ProgressBar bar(&engine);
+    bar.set_animation_engine(&animations);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    // act
+    bar.set_indeterminate(true);
+    // assert
+    EXPECT_EQ(animations.active_count(), 1u);
+    animations.advance(0.0625f);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    bar.render(recorder);
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_EQ(rects.size(), 2u);
+    EXPECT_NEAR(rects[1].x, (160.0f - 160.0f / 3.0f) * 0.25f, 1e-4f);
+    bar.set_indeterminate(false);
+    EXPECT_EQ(animations.active_count(), 0u);
+}
+
+TEST(ProgressBarChecks, SwitchingBackToDeterminateRestoresTheFraction) {
+    // arrange
+    BindingEngine engine;
+    AnimationEngine animations;
+    ProgressBar bar(&engine);
+    bar.set_animation_engine(&animations);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    bar.set_value(0.5f);
+    bar.set_indeterminate(true);
+    // act
+    bar.set_indeterminate(false);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    bar.render(recorder);
+    // assert
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_EQ(rects.size(), 2u);
+    EXPECT_FLOAT_EQ(rects[1].width, 80.0f);
+}
+
+TEST(ProgressBarChecks, AnIndeterminateBarAnnouncesTheStateAndIsNotAFocusStop) {
+    // arrange
+    BindingEngine engine;
+    ProgressBar bar(&engine, "download");
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    bar.set_indeterminate(true);
+    // act
+    const SemanticNode node = bar.semantic_node();
+    // assert
+    EXPECT_TRUE(node.indeterminate());
+    EXPECT_EQ(node.name(), "download indeterminate");
+    EXPECT_EQ(node.role(), SemanticRole::ProgressBar);
+    EXPECT_FALSE(bar.accepts_focus());
+    EXPECT_FALSE(FocusManager::focusable(bar));
+}
+
+TEST(ProgressBarChecks, AnIndeterminateBarStartsWhenTheEngineArrives) {
+    // arrange
+    BindingEngine engine;
+    AnimationEngine animations;
+    ProgressBar bar(&engine);
+    bar.set_indeterminate(true);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    EXPECT_EQ(animations.active_count(), 0u);
+    // act
+    bar.set_animation_engine(&animations);
+    // assert
+    EXPECT_EQ(animations.active_count(), 1u);
+}
+
+TEST(ProgressBarChecks, ACancelledSweepIsReArmedByTheNextPaint) {
+    // arrange
+    BindingEngine engine;
+    AnimationEngine animations;
+    ProgressBar bar(&engine);
+    bar.set_animation_engine(&animations);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    bar.set_indeterminate(true);
+    ASSERT_EQ(animations.active_count(), 1u);
+    animations.cancel_all();
+    ASSERT_EQ(animations.active_count(), 0u);
+    // act
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    bar.render(recorder);
+    // assert
+    EXPECT_EQ(animations.active_count(), 1u);
+}
+
+TEST(ProgressBarChecks, AHiddenBarStopsItsSweepAndShowingRestartsIt) {
+    // arrange
+    BindingEngine engine;
+    AnimationEngine animations;
+    ProgressBar bar(&engine);
+    bar.set_animation_engine(&animations);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    bar.set_indeterminate(true);
+    ASSERT_EQ(animations.active_count(), 1u);
+    // act
+    bar.set_visible(false);
+    // assert
+    EXPECT_EQ(animations.active_count(), 0u);
+    bar.set_visible(true);
+    EXPECT_EQ(animations.active_count(), 1u);
+}
+
+TEST(ProgressBarChecks, ARepeatedIndeterminateWriteKeepsOneSweep) {
+    // arrange
+    BindingEngine engine;
+    AnimationEngine animations;
+    ProgressBar bar(&engine);
+    bar.set_animation_engine(&animations);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    // act
+    bar.set_indeterminate(true);
+    bar.set_indeterminate(true);
+    // assert
+    EXPECT_EQ(animations.active_count(), 1u);
+    bar.set_indeterminate(false);
+    bar.set_indeterminate(true);
+    EXPECT_EQ(animations.active_count(), 1u);
+    EXPECT_EQ(animations.advance(0.0625f), 1u);
+}
+
+TEST(ProgressBarChecks, ADestroyedBarLeavesNoSweep) {
+    // arrange
+    AnimationEngine animations;
+    {
+        BindingEngine engine;
+        ProgressBar bar(&engine);
+        bar.set_animation_engine(&animations);
+        bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+        bar.set_indeterminate(true);
+        ASSERT_EQ(animations.active_count(), 1u);
+    }
+    // act / assert
+    EXPECT_EQ(animations.active_count(), 0u);
+    EXPECT_EQ(animations.advance(0.5f), 0u);
+}
+
+TEST(ProgressBarChecks, AnIndeterminateBarWithoutAreaSchedulesNothing) {
+    // arrange
+    BindingEngine engine;
+    AnimationEngine animations;
+    ProgressBar bar(&engine);
+    bar.set_animation_engine(&animations);
+    // act
+    bar.set_indeterminate(true);
+    // assert
+    EXPECT_EQ(animations.active_count(), 0u);
+}
+
+TEST(ProgressBarChecks, AnIndeterminateBarStopsWhenItLosesItsArea) {
+    // arrange
+    BindingEngine engine;
+    AnimationEngine animations;
+    ProgressBar bar(&engine);
+    bar.set_animation_engine(&animations);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    bar.set_indeterminate(true);
+    ASSERT_EQ(animations.active_count(), 1u);
+    // act
+    bar.arrange(Rect{});
+    animations.advance(0.0625f);
+    // assert
+    EXPECT_EQ(animations.active_count(), 0u);
+}
+
+TEST(ProgressBarChecks, ARemovedIndeterminateBarStopsItsSweep) {
+    // arrange
+    BindingEngine engine;
+    AnimationEngine animations;
+    UiNode root;
+    root.set_animation_engine(&animations);
+    auto bar = std::make_unique<ProgressBar>(&engine);
+    ProgressBar* bar_ptr = bar.get();
+    root.add_child(std::move(bar));
+    bar_ptr->arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    bar_ptr->set_indeterminate(true);
+    ASSERT_EQ(animations.active_count(), 1u);
+    // act
+    auto removed = root.remove_child(bar_ptr);
+    // assert
+    EXPECT_EQ(animations.active_count(), 0u);
+    EXPECT_EQ(animations.advance(0.5f), 0u);
+}
+
+TEST(ProgressBarChecks, ASweepWrapsWithoutABlankFrame) {
+    // arrange
+    BindingEngine engine;
+    AnimationEngine animations;
+    ProgressBar bar(&engine);
+    bar.set_animation_engine(&animations);
+    bar.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{160.0f, 8.0f}));
+    bar.set_indeterminate(true);
+    // act
+    animations.advance(0.25f);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    bar.render(recorder);
+    // assert
+    const std::vector<Rect> rects = rect_commands(*recorder.scene());
+    ASSERT_EQ(rects.size(), 2u);
+    EXPECT_FLOAT_EQ(rects[1].x, 0.0f);
+    EXPECT_FLOAT_EQ(rects[1].width, 160.0f / 3.0f);
 }
 
 TEST(ProgressBarChecks, PaintsATrackAndAFillForTheFraction) {
@@ -7066,6 +7872,132 @@ TEST(ButtonIconChecks, AnIconOnlyButtonUsesItsAuthorIdentityAsTheName) {
     // assert the label is empty and the author identity names the button (§10.1)
     EXPECT_EQ(node.name(), "toolbar.open");
     EXPECT_TRUE(button.label().empty());
+}
+
+TEST(ButtonIconChecks, AnIconOnlyButtonPrefersItsTooltipAsTheName) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "", "toolbar.open");
+    button.set_tooltip("Open file");
+    // act
+    const SemanticNode node = button.semantic_node();
+    // assert
+    EXPECT_EQ(node.name(), "Open file");
+    EXPECT_EQ(button.tooltip(), "Open file");
+}
+
+TEST(ButtonIconChecks, ATooltipNamesTheButtonAndLeavesItsIdentitySelectable) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "", "toolbar.open");
+    button.set_tooltip("Open file");
+    // act
+    const SemanticNode node = button.semantic_node();
+    // assert
+    EXPECT_EQ(node.name(), "Open file");
+    EXPECT_EQ(node.explicit_id(), "toolbar.open");
+}
+
+TEST(ButtonIconChecks, ClearingATooltipFallsBackToTheAuthorId) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "", "toolbar.open");
+    button.set_tooltip("Open file");
+    // act
+    button.set_tooltip("");
+    // assert
+    EXPECT_TRUE(button.tooltip().empty());
+    EXPECT_EQ(button.semantic_node().name(), "toolbar.open");
+}
+
+TEST(ButtonIconChecks, ACaptionAndATooltipTradeTheNameInOrder) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "", "toolbar.open");
+    button.set_tooltip("Open file");
+    EXPECT_EQ(button.semantic_node().name(), "Open file");
+    // act
+    button.set_label("Open");
+    // assert
+    EXPECT_EQ(button.semantic_node().name(), "Open");
+    EXPECT_EQ(button.tooltip(), "Open file");
+    button.set_label("");
+    EXPECT_EQ(button.semantic_node().name(), "Open file");
+}
+
+TEST(ButtonIconChecks, ATooltipDoesNotResizeThePlate) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "");
+    Size before{};
+    button.measure(SizeConstraints::unconstrained(), before);
+    button.clear_dirty();
+    // act
+    button.set_tooltip("Open file");
+    Size after{};
+    button.measure(SizeConstraints::unconstrained(), after);
+    // assert
+    EXPECT_FLOAT_EQ(after.width, before.width);
+    EXPECT_FLOAT_EQ(after.height, before.height);
+    EXPECT_FALSE(button.layout_dirty());
+}
+
+TEST(ButtonIconChecks, ATooltipReachesThePublishedSemanticTree) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "", "toolbar.open");
+    button.set_tooltip("Open file");
+    // act
+    const SemanticTree tree = build_semantic_tree(button);
+    // assert
+    ASSERT_EQ(tree.size(), 1u);
+    ASSERT_NE(tree.at(0), nullptr);
+    EXPECT_EQ(tree.at(0)->name(), "Open file");
+    EXPECT_EQ(tree.at(0)->explicit_id(), "toolbar.open");
+}
+
+TEST(ButtonIconChecks, ALabelledButtonKeepsItsCaptionOverTheTooltip) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Save");
+    button.set_tooltip("Save the netlist");
+    // act
+    const SemanticNode node = button.semantic_node();
+    // assert
+    EXPECT_EQ(node.name(), "Save");
+}
+
+TEST(ButtonIconChecks, AnIconOnlyButtonWithNoTooltipOrIdUsesTheRoleWord) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "");
+    // act
+    const SemanticNode node = button.semantic_node();
+    // assert
+    EXPECT_EQ(node.name(), "Button");
+}
+
+TEST(ButtonIconChecks, SetTooltipRedrawsAndAnUnchangedOneDoesNot) {
+    // arrange
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "");
+    button.set_tooltip("Open file");
+    button.clear_dirty();
+    // act
+    button.set_tooltip("Open file");
+    // assert
+    EXPECT_FALSE(button.render_dirty());
+    button.set_tooltip("Open another file");
+    EXPECT_TRUE(button.render_dirty());
 }
 
 TEST(ButtonIconChecks, AnIconOnlyButtonPaintsNoTextAndClearsBackToTheLabelPath) {

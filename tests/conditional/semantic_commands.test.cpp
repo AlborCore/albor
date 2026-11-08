@@ -105,6 +105,27 @@ namespace
         std::unique_ptr<SemanticProvider> semantic_child(std::size_t) const override { return nullptr; }
     };
 
+    // the unknown-length bar the scene publishes, which carries the state a client reads (§10.1)
+    class ProgressBarNode final : public SemanticProvider
+    {
+    public:
+        SemanticNode semantic_node() const override {
+            // the role is a progress bar, which a reader announces as unknown-length (§10.1)
+            SemanticNode node{SemanticRole::ProgressBar};
+            // the id is the author written one, because that is the only selector automation offers (§18.1, AD-11)
+            node.set_explicit_id("download");
+            // the name carries no fraction, because the remaining length is unknown (§10.1)
+            node.set_name("download");
+            // the state is what tells a client the two modes apart (§10.1)
+            node.set_indeterminate(true);
+            return node;
+        }
+
+        std::size_t semantic_child_count() const override { return 0; }
+
+        std::unique_ptr<SemanticProvider> semantic_child(std::size_t) const override { return nullptr; }
+    };
+
     // the provider a suite drives, which publishes a button and a label with author ids (§10.1, AD-11)
     class SceneProvider final : public SemanticProvider
     {
@@ -123,7 +144,7 @@ namespace
             return node;
         }
 
-        std::size_t semantic_child_count() const override { return 4; }
+        std::size_t semantic_child_count() const override { return 5; }
 
         std::unique_ptr<SemanticProvider> semantic_child(std::size_t index) const override {
             // the first child is the identified button, which is what most commands target (§18.1, AD-11)
@@ -138,6 +159,9 @@ namespace
             // the fourth child is the text field, whose selection a client reads beside its value (§10.1)
             if (index == 3)
                 return std::make_unique<FieldNode>();
+            // the fifth child is the unknown-length bar, whose state tells the modes apart (§10.1)
+            if (index == 4)
+                return std::make_unique<ProgressBarNode>();
             // an index past the end names no child (§10.1)
             return nullptr;
         }
@@ -203,6 +227,16 @@ TEST(SemanticCommands, ATextFieldDumpsItsSelectionBesideItsValue) {
     // assert a client reads the edited range the same way it reads the value (§8.3, §10.1)
     ASSERT_TRUE(result.ok);
     EXPECT_NE(result.payload.find("textfield netlist Netlist value=alpha beta selection=0:5 multiline"), std::string::npos);
+}
+
+TEST(SemanticCommands, AnIndeterminateBarDumpsTheState) {
+    // arrange
+    Fixture fixture;
+    // act
+    const AutomationResult result = fixture.run("semantic.tree");
+    // assert the dump marks the bar's unknown-length state (§10.1, §10.3)
+    ASSERT_TRUE(result.ok);
+    EXPECT_NE(result.payload.find("progress_bar download download indeterminate"), std::string::npos);
 }
 
 TEST(SemanticCommands, ANodeWithNoAuthorIdIsDumpedButNotAddressable) {

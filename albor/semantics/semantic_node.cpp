@@ -147,6 +147,16 @@ namespace albor
         m_states.expanded = expanded;
     }
 
+    bool SemanticNode::indeterminate() const {
+        // the state is what an unknown-length progress bar announces instead of a fraction (§10.1)
+        return m_states.indeterminate;
+    }
+
+    void SemanticNode::set_indeterminate(bool indeterminate) {
+        // the state is independent of disabled and focus, because it describes the kind of work (§10.1)
+        m_states.indeterminate = indeterminate;
+    }
+
     bool SemanticNode::has_range() const {
         // only a control that published a write carries a range, because a number nobody can change is no range (§10.1)
         return m_has_range;

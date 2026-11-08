@@ -24,8 +24,11 @@ namespace albor
         // record the run at the baseline of the assigned bounds, which is what stage one replays (§6.1)
         void paint_content(RenderContext& context) override;
 
-        // override: answer the pointer transitions, so a label gains hover and focus visuals (§8.3)
+        // override: answer the pointer transitions, so a label gains its hover visuals (§8.3)
         void dispatch_event(Event& event) override;
+
+        // override: decline the caret, because a label is passive text (§8.3)
+        [[nodiscard]] bool accepts_focus() const override;
 
         // override: announce the run as a label whose accessible name is the text it draws (§10.1)
         [[nodiscard]] SemanticNode semantic_node() const override;
@@ -96,6 +99,9 @@ namespace albor
 
         // the fill colour of the run (§6.1)
         Color m_foreground{1.0f, 1.0f, 1.0f, 1.0f};
+
+        // whether the author wrote the foreground, because an explicit value wins over the theme role (§8.4)
+        bool m_foreground_set = false;
 
         // the size the run is measured at, which the explicit value selects until a role does (§9.1)
         float m_font_size = TextEngine::DEFAULT_FONT_SIZE;

@@ -60,6 +60,8 @@ namespace albor
         child->m_measure_dirty = true;
         child->m_arrange_dirty = true;
         m_children.push_back(std::move(child));
+        // the observer sees the subtree after it is in the tree, which is when a late theme applies (§8.4)
+        notify_attached(m_children.back().get());
         // adding a subtree changes what the parent draws, so the parent asks for a frame (§6.1)
         invalidate_layout();
         return *this;
@@ -78,6 +80,8 @@ namespace albor
         child->m_measure_dirty = true;
         child->m_arrange_dirty = true;
         m_children.insert(m_children.begin() + static_cast<std::ptrdiff_t>(position), std::move(child));
+        // the observer sees the subtree after it is in the tree, which is when a late theme applies (§8.4)
+        notify_attached(m_children[position].get());
         // reordering a subtree changes what the parent draws (§6.1)
         invalidate_layout();
         return *this;
@@ -95,6 +99,8 @@ namespace albor
         m_children.erase(found);
         // the detached node is a root again, so a later walk up does not reach a dying parent (§8.1)
         removed->m_parent = nullptr;
+        // a detached subtree is no longer driven by a stage, so its animations are released (§7.3)
+        removed->set_animation_engine(nullptr);
         // the subtree left the tree, so the parent asks for a frame (§6.1)
         invalidate_layout();
         return removed;
@@ -119,6 +125,8 @@ namespace albor
         overlay->m_arrange_dirty = true;
         // the overlay is stored above the ordinary children, which is what makes it a layer (§8.3)
         m_overlays.push_back(std::move(overlay));
+        // the observer sees the overlay after it is in the tree, which is when a late theme applies (§8.4)
+        notify_attached(m_overlays.back().get());
         // an overlay changes what the root draws, so the frame is requested (§6.1)
         invalidate_layout();
         return *this;
@@ -138,6 +146,8 @@ namespace albor
         m_overlays.erase(found);
         // the detached overlay is a root again, so a later walk up does not reach a dying parent (§8.3)
         removed->m_parent = nullptr;
+        // a detached overlay is no longer driven by a stage, so its animations are released (§7.3)
+        removed->set_animation_engine(nullptr);
         // the overlay left the tree, so the root asks for a frame (§6.1)
         invalidate_layout();
         return removed;
@@ -406,11 +416,13 @@ namespace albor
     void UiNode::set_border_width(float width) {
         // a negative width is no border, because a stroke cannot be narrower than nothing (§6.1)
         const float clamped = std::max(0.0f, width);
-        // an unchanged width invalidates nothing, because the node looks the same (§6.1)
-        if (m_border_width == clamped)
+        // an unchanged authored width invalidates nothing, because the node looks the same (§6.1)
+        if (m_border_width_set && m_border_width == clamped)
             return;
         // the width is stored first, so the invalidation walks a tree that already knows the new one (§6.1)
         m_border_width = clamped;
+        // the write is recorded, because an explicit stroke outranks the theme metric (§8.4)
+        m_border_width_set = true;
         // a border change is visual only, because it does not move the node (§6.1)
         invalidate();
     }
@@ -421,11 +433,13 @@ namespace albor
     }
 
     void UiNode::set_border_color(Color color) {
-        // an unchanged colour invalidates nothing, because the node looks the same (§6.1)
-        if (m_border_color == color)
+        // an unchanged authored colour invalidates nothing, because the node looks the same (§6.1)
+        if (m_border_color_set && m_border_color == color)
             return;
         // the colour is stored first, so the invalidation walks a tree that already strokes the new one (§6.1)
         m_border_color = color;
+        // the write is recorded, because an explicit border outranks the theme role (§8.4)
+        m_border_color_set = true;
         // a border change is visual only, because it does not move the node (§6.1)
         invalidate();
     }
@@ -433,6 +447,16 @@ namespace albor
     Color UiNode::border_color() const {
         // the colour is what the author set, because it is independent of the fill (§6.1)
         return m_border_color;
+    }
+
+    bool UiNode::border_color_authored() const {
+        // the flag is the difference between an authored colour and the literal default (§8.4)
+        return m_border_color_set;
+    }
+
+    bool UiNode::border_width_authored() const {
+        // the flag is the difference between an authored width and the literal default (§8.4)
+        return m_border_width_set;
     }
 
     void UiNode::set_drop_shadow(Shadow shadow) {
@@ -458,6 +482,23 @@ namespace albor
     void UiNode::set_detaching_handler(std::function<void(UiNode*)> handler) {
         // the handler belongs to the root, so a caller installs it on the root alone (§8.3)
         m_detaching_handler = std::move(handler);
+    }
+
+    void UiNode::set_attached_handler(std::function<void(UiNode*)> handler) {
+        // the handler belongs to the root, so a caller installs it on the root alone (§8.4)
+        m_attached_handler = std::move(handler);
+    }
+
+    void UiNode::notify_attached(UiNode* node) {
+        // the nearest observer answers, because a controller may be installed over a subtree (§8.4)
+        for (UiNode* current = this; current != nullptr; current = current->m_parent) {
+            // a node with no observer passes the notification upward, which is the root in the usual case (§8.4)
+            if (!current->m_attached_handler)
+                continue;
+            // the handler is handed the node, which is alive and in the tree, so a theme can walk it (§8.4)
+            current->m_attached_handler(node);
+            return;
+        }
     }
 
     void UiNode::notify_detaching(UiNode* node) {
@@ -491,9 +532,19 @@ namespace albor
     void UiNode::set_animation_engine(AnimationEngine* engine) {
         // the engine is borrowed, because the pipeline and the stage own it (§7.3)
         m_animations = engine;
+        // the node retires or restarts the work it scheduled through the old engine (§7.3)
+        on_animation_engine_changed(engine);
         // every child is handed the same engine, so a widget nested anywhere can schedule (§7.3)
         for (const std::unique_ptr<UiNode>& child : m_children)
             child->set_animation_engine(engine);
+        // every overlay is handed the same engine too, because it may animate a dismissal (§7.3)
+        for (const std::unique_ptr<UiNode>& overlay : m_overlays)
+            overlay->set_animation_engine(engine);
+    }
+
+    void UiNode::on_animation_engine_changed(AnimationEngine* engine) {
+        // a plain node schedules nothing, so a change of engine leaves it as it is (§7.3)
+        (void)engine;
     }
 
     AnimationEngine* UiNode::animation_engine() const {

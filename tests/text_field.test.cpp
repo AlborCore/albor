@@ -2560,6 +2560,24 @@ TEST(TextFieldChecks, AFieldDestroyedWhileBlinkingLeavesNoAnimationBehind) {
     EXPECT_EQ(animations.advance(0.1f), 0u);
 }
 
+TEST(TextFieldChecks, AFieldRemovedWhileBlinkingLeavesNoAnimationBehind) {
+    // arrange a focused field that owns a running blink, inside a tree that then drops it (§7.3)
+    EditingTextEngine text;
+    AnimationEngine animations;
+    UiNode root;
+    root.set_animation_engine(&animations);
+    auto field = std::make_unique<TextField>(nullptr, &text, "Albor");
+    TextField* field_ptr = field.get();
+    root.add_child(std::move(field));
+    field_ptr->set_focused(true);
+    ASSERT_EQ(animations.active_count(), 1u);
+    // act
+    auto removed = root.remove_child(field_ptr);
+    // assert
+    EXPECT_EQ(animations.active_count(), 0u);
+    EXPECT_EQ(animations.advance(0.1f), 0u);
+}
+
 TEST(TextFieldChecks, LosingTheFocusCancelsTheBlink) {
     // arrange a focused field with a running blink (§7.3)
     EditingTextEngine text;

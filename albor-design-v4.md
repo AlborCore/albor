@@ -13,6 +13,18 @@
 
 ### Revision Log
 
+**4.7 — theme inheritance for late subtrees.** A widget or subtree that joins the window after
+`ThemeController::install` is handed the live theme when it attaches, so a conditional body or a
+repeated row is themed without a host re-walk. §8.4 records the attached-subtree contract. The
+handler reaches the live theme through a weak reference and an install generation, so a dead or
+replaced controller leaves no dangling callback; the controller still has to outlive the widgets it
+themes, because a widget borrows its `Theme` (issue #173).
+
+**4.6 — authored colour precedence.** An author-written colour property is an explicit override over
+the theme role, and the theme remains the fallback for every property the author did not write.
+The state still resolves from the authored value, so hover and press lift or sink it and the
+disabled state dims it; §8.4 records the rule and AD-30 is revised to name it (issue #174).
+
 **4.5 — the `albor/` include folder.** The framework's module directories moved under a top-level
 `albor/` folder, so every public header resolves as `albor/<module>/<header>.h` and the include
 paths match the `albor::` namespace. The installed package exports the headers under
@@ -969,6 +981,22 @@ Installation is a single call, `apply_theme(root, theme)`, which walks a subtree
 theme to every widget in it. It lives in `widgets/` rather than on `UiNode`, because the ui tree
 must not know what a widget or a theme is (§3.2, AD-05).
 
+**An authored colour is an explicit override (settled during implementation).** A widget that
+exposes a colour property may be given a value by the author, and that value wins over the role
+entry the theme would supply; the theme is the fallback for every property the author did not
+write. The authored value is the base every state derives from: hover and focus lift it, press
+sinks it, and the disabled state reduces its alpha, because a control that refuses input must read
+disabled. This is what lets an application draw an error run in red or a flat toolbar plate without
+replacing the palette, and it keeps role and state resolution for everything else.
+
+**A subtree built after the install is themed when it attaches (settled during implementation).**
+`apply_theme` walks what exists at install time; a conditional body or a repeated row is built
+later. The root therefore carries an attached-subtree notification, and `ThemeController` applies
+the live theme to each subtree as it joins. The handler reaches the live theme through a weak
+reference and an install generation, so a dead or replaced controller leaves no dangling callback;
+the controller still has to outlive the widgets it themes, because a widget borrows its `Theme`. A
+widget that leaves the tree keeps the detaching notification of §8.3.
+
 **Platform-native appearance (settled during implementation, issue 60).** The flat derived
 palette is the portable baseline; the native look is a *preset*, not a rewrite:
 
@@ -1476,7 +1504,7 @@ Every architectural decision from Phase 0 is formally settled for production imp
 | **AD-27** | Units Definition | **Decided** | `px` denotes logical pixels; `phx` denotes physical device pixels. |
 | **AD-28** | Candidate Primary HAL | **Decided, revised** | The `RendererBackend`/`RenderContext` HAL is primary; `render-albor` is the shipped public GPU backend, Blend2D the portable CPU backend, and Skia the transitional/reference implementation. WebGPU/Dawn remains an optional future pluggable candidate. |
 | **AD-29** | Scene Command Vocabulary | **Decided** | A `FrameScene` is one ordered list of tagged `DrawCommand` values, shared verbatim with `PictureResource`; clips are stamped per command at record time rather than replayed as a stack. |
-| **AD-30** | Style Resolution | **Decided** | Widgets resolve colour by role and state through a `Theme`, never carrying literals; palettes are derived from a few accents; a null theme preserves existing values exactly. |
+| **AD-30** | Style Resolution | **Decided, revised** | Widgets resolve colour by role and state through a `Theme`; an author-written colour property is an explicit override whose states still derive from it; palettes are derived from a few accents; a null theme preserves existing values exactly. |
 | **AD-31** | Composite Contract Enforcement | **Decided** | `Component::render` is not overridable: it runs background, content, then children, and subclasses override `paint_content`, so a missing phase is a compile error rather than a silently absent subtree. |
 | **AD-32** | Borrowed Node Lifetime | **Decided** | A subtree leaving the tree is announced to observers while it is still alive and still in the tree; observers of borrowed node pointers must be told before the mutation, never after. |
 | **AD-33** | Surface Ownership | **Decided** | A surface is owned by the thread that created its layer; resize runs on that thread, and the render executor drops a frame whose metrics are stale rather than stretching it. |

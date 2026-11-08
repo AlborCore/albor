@@ -1470,6 +1470,7 @@ TEST(Codegen, AProgressBarIsConstructedAndWired) {
     const std::string source = R"(component C {
         ProgressBar {
             value: 0.5;
+            indeterminate: true;
             track_color: #101010;
             fill_color: #3366ff;
         }
@@ -1481,6 +1482,7 @@ TEST(Codegen, AProgressBarIsConstructedAndWired) {
     EXPECT_TRUE(contains(cpp.content, "std::make_unique<ProgressBar>(engine);"));
     EXPECT_TRUE(contains(cpp.content, "#include \"albor/widgets/progress_bar.h\""));
     EXPECT_TRUE(contains(cpp.content, "set_value("));
+    EXPECT_TRUE(contains(cpp.content, "set_indeterminate("));
     EXPECT_TRUE(contains(cpp.content, "set_track_color("));
     EXPECT_TRUE(contains(cpp.content, "set_fill_color("));
 }
@@ -1494,6 +1496,7 @@ TEST(Codegen, AProgressBarCatalogEntryExists) {
     ASSERT_NE(progress, nullptr);
     EXPECT_FALSE(progress->accepts_children);
     EXPECT_TRUE(progress->find_property("value") != nullptr);
+    EXPECT_TRUE(progress->find_property("indeterminate") != nullptr);
     EXPECT_TRUE(progress->find_property("disabled") != nullptr);
     EXPECT_TRUE(progress->find_property("track_color") != nullptr);
     EXPECT_TRUE(progress->find_property("fill_color") != nullptr);
@@ -3289,6 +3292,7 @@ TEST(Codegen, ButtonIconPropertiesReachTheButton) {
 component C {
     Button {
         text: "Go";
+        tooltip: @tr("Go forward");
         icon: @image("icon.png");
         icon_size: 20px;
     }
@@ -3300,6 +3304,7 @@ component C {
     // assert the icon accessor and the square setter reach the generated source (§11.3)
     ASSERT_TRUE(diagnostics.diagnostics().empty());
     const GeneratedFile& cpp = file_named(generation.files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "->set_tooltip(albor::i18n::translate("));
     EXPECT_TRUE(contains(cpp.content, "->set_icon(image_panel_assets::image_0())"));
     EXPECT_TRUE(contains(cpp.content, "->set_icon_size("));
 }

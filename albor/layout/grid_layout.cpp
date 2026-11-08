@@ -10,6 +10,12 @@ namespace albor
     }
 
     void GridLayout::measure(const SizeConstraints& constraints, Size& out_size) {
+        // an all hidden grid has no content, so it measures as nothing even with explicit gaps (§11.1, §18.2)
+        if (!has_visible_children()) {
+            m_measured_size = constraints.constrain(Size{});
+            out_size = m_measured_size;
+            return;
+        }
         // the effective shape is resolved once, because a derived count depends on the children (§8.2)
         const std::size_t column_count = columns();
         const std::size_t row_count = rows();
@@ -25,6 +31,9 @@ namespace albor
         Size largest{};
         // the children are measured in order, because a span moves the ones that follow it (§8.2)
         for (std::size_t index = 0; index < child_count(); index++) {
+            // a hidden child leaves layout, because `visible: false` removes it from both passes (§11.1, §18.2)
+            if (!child_at(index)->visible())
+                continue;
             // each child is measured unconstrained first, because the grid learns its cell from the result (§8.2)
             Size child_size{};
             child_at(index)->measure(inner, child_size);
@@ -50,6 +59,9 @@ namespace albor
         // the cursor is a linear cell index, because a span advances by whole cells on a grid read in rows (§8.2)
         std::size_t cursor = 0;
         for (std::size_t index = 0; index < child_count(); index++) {
+            // a hidden child consumes no cell, so it neither takes a slot nor advances the cursor (§11.1, §18.2)
+            if (!child_at(index)->visible())
+                continue;
             // the cursor names the column and row from the grid width, which is what makes it wrap (§8.2)
             const std::size_t column = cursor % column_count;
             const std::size_t row = cursor / column_count;
@@ -172,10 +184,16 @@ namespace albor
         if (!m_columns_auto)
             return m_columns;
         // an explicit row count divides the claimed area into that many rows (§8.2)
-        if (!m_rows_auto)
-            return (count + m_rows - 1) / m_rows;
-        // neither was written, so the grid falls back to one column of every child (§8.2)
-        return 1;
+        const std::size_t lower = !m_rows_auto ? (count + m_rows - 1) / m_rows : 1;
+        // a visible span must fit the derived width, because hiding a sibling may not clip it (§8.2)
+        const std::size_t widest = widest_visible_span();
+        // the width grows until every visible span fits where the cursor puts it (§8.2)
+        std::size_t width = std::max(lower, widest);
+        // the bound is reached only by a shape whose spans cannot be placed, which a grid refuses (§8.2)
+        const std::size_t bound = count + widest * child_count() + 1;
+        while (width < bound && !columns_fit(width))
+            ++width;
+        return width;
     }
 
     std::size_t GridLayout::effective_rows() const {
@@ -184,11 +202,12 @@ namespace albor
         // an explicit row count is what the author wrote, and it stands as it is (§8.2)
         if (!m_rows_auto)
             return m_rows;
-        // an explicit column count divides the claimed area into that many columns (§8.2)
-        if (!m_columns_auto)
-            return (count + m_columns - 1) / m_columns;
-        // neither was written, so every claimed cell takes one row of the single column (§8.2)
-        return count;
+        // the resolved width decides how many cells a row holds, which a span must respect (§8.2)
+        const std::size_t width = effective_columns();
+        // the claimed area divides into rows, because every cell is placed once (§8.2)
+        const std::size_t derived = (count + width - 1) / width;
+        // the placement must match the effective width, because a span claims rows from where it starts (§8.2)
+        return std::max(derived, required_rows(width));
     }
 
     std::size_t GridLayout::claimed_cells() const {
@@ -196,6 +215,9 @@ namespace albor
         std::size_t cells = 0;
         // the children are walked in order, because a span is recorded by index (§8.2)
         for (std::size_t index = 0; index < child_count(); index++) {
+            // a hidden child claims no cell, because the derived shape follows what is shown (§11.1, §18.2)
+            if (!child_at(index)->visible())
+                continue;
             // the effective span is the recorded one or the single cell a plain child occupies (§8.2)
             const GridSpan span = effective_span(index);
             // the area is the product, which is the number of cells the cursor advances by (§8.2)
@@ -203,6 +225,85 @@ namespace albor
         }
         // an empty grid still asks a valid question, so the count is never zero (§8.2)
         return std::max<std::size_t>(cells, 1);
+    }
+
+    std::size_t GridLayout::required_rows(std::size_t column_count) const {
+        // a width of zero has no cell to place into, so the empty grid answers one row (§8.2)
+        if (column_count == 0)
+            return 1;
+        // the cursor is the linear cell index the arrange pass walks (§8.2)
+        std::size_t cursor = 0;
+        // a grid with no visible child still divides into one row (§8.2)
+        std::size_t rows = 1;
+        // the children are walked in order, because a span moves the ones that follow it (§8.2)
+        for (std::size_t index = 0; index < child_count(); index++) {
+            // a hidden child claims no row, because it is not placed (§11.1, §18.2)
+            if (!child_at(index)->visible())
+                continue;
+            // the cursor names the column the child starts in, which is what a span is measured from (§8.2)
+            const std::size_t column = cursor % column_count;
+            // the row is the cursor divided by the width, which is where the span begins (§8.2)
+            const std::size_t row = cursor / column_count;
+            // the span is read per child, because each one may cover a different number of cells (§8.2)
+            const GridSpan span = effective_span(index);
+            // a span past the last cell is capped, which is what the arrange pass also does (§8.2)
+            const std::size_t span_columns = std::min(span.columns, column_count - column);
+            // the widest span decides how many rows the grid needs, because it starts at this row (§8.2)
+            rows = std::max(rows, row + span.rows);
+            // the cursor advances by the cells the span covered, which is the arrange pass contract (§8.2)
+            cursor += span_columns + (span.rows - 1) * column_count;
+        }
+        return rows;
+    }
+
+    std::size_t GridLayout::widest_visible_span() const {
+        // a grid with no visible span still divides into at least one column (§8.2)
+        std::size_t widest = 1;
+        // the children are walked in order, because a span is recorded by index (§8.2)
+        for (std::size_t index = 0; index < child_count(); index++) {
+            // a hidden child must not keep the grid wider than what it shows (§11.1, §18.2)
+            if (!child_at(index)->visible())
+                continue;
+            // the widest visible span is what a derived width must not shrink below (§8.2)
+            widest = std::max(widest, effective_span(index).columns);
+        }
+        return widest;
+    }
+
+    bool GridLayout::columns_fit(std::size_t column_count) const {
+        // a width of zero has no cell to place into, so no span fits (§8.2)
+        if (column_count == 0)
+            return false;
+        // the cursor is the linear cell index the arrange pass walks (§8.2)
+        std::size_t cursor = 0;
+        // the children are walked in order, because a span moves the ones that follow it (§8.2)
+        for (std::size_t index = 0; index < child_count(); index++) {
+            // a hidden child claims no width, because it is not placed (§11.1, §18.2)
+            if (!child_at(index)->visible())
+                continue;
+            // the cursor names the column the child starts in, which is what a span is measured from (§8.2)
+            const std::size_t column = cursor % column_count;
+            // the span is read per child, because each one may cover a different number of cells (§8.2)
+            const GridSpan span = effective_span(index);
+            // a span that does not fit the remaining width would be clipped, so this width is refused (§8.2)
+            const std::size_t span_columns = std::min(span.columns, column_count - column);
+            if (span_columns < span.columns)
+                return false;
+            // the cursor advances by the cells the span covered, which is the arrange pass contract (§8.2)
+            cursor += span_columns + (span.rows - 1) * column_count;
+        }
+        return true;
+    }
+
+    bool GridLayout::has_visible_children() const {
+        // the first visible child answers, because the grid has content as soon as one exists (§8.2)
+        for (std::size_t index = 0; index < child_count(); index++) {
+            // a visible child is content the grid must measure (§8.2)
+            if (child_at(index)->visible())
+                return true;
+        }
+        // no visible child means the grid has nothing to measure (§8.2)
+        return false;
     }
 
     bool GridLayout::set_span(std::size_t index, GridSpan span) {

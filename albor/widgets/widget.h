@@ -132,6 +132,12 @@ namespace albor
         // resolve a role in the current state, falling back to the widget's own value when no theme is installed (§6.1)
         [[nodiscard]] Color resolve(const Color* theme_colors, Color own) const;
 
+        // resolve an authored colour, which wins over the theme while a disabled control still dims (§8.4)
+        [[nodiscard]] Color resolve_authored(const Color* theme_colors, Color own, bool authored) const;
+
+        // report whether an authored write changes the paint, which keeps a no-op write from a frame (§6.1)
+        [[nodiscard]] bool authored_write_changes(bool authored, bool same_value) const;
+
         // the fallback metrics, which are what a widget measures from while no theme is installed (§8.2)
         [[nodiscard]] static const ControlMetrics& default_metrics();
 

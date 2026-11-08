@@ -163,15 +163,15 @@ namespace albor
     }
 
     void Panel::set_background(Color background) {
-        // an unchanged authored face redraws nothing, because the panel looks the same (§6.1)
-        if (m_background_set && m_background == background)
-            return;
+        // the write repaints only when it can change the paint, which a no-op write cannot (§6.1)
+        const bool changed = authored_write_changes(m_background_set, m_background == background);
         // the face is stored first, so the invalidation walks a panel that already paints it (§6.1)
         m_background = background;
         // an authored face wins over the theme, which is what a one-off surface asks for (§6.1)
         m_background_set = true;
         // a face change is visual only, so the layout passes are left alone (§6.1)
-        invalidate();
+        if (changed)
+            invalidate();
     }
 
     Color Panel::background() const {
@@ -225,17 +225,13 @@ namespace albor
     }
 
     void Panel::set_border_color(Color color) {
-        // the node stores the colour first, so the border resolver reads the authored value (§8.4)
+        // the node stores the colour and records the write, which is what the resolver reads (§8.4)
         UiNode::set_border_color(color);
-        // an authored border colour wins over the theme, which is what a one-off surface asks for (§8.4)
-        m_border_color_set = true;
-        // a border change is visual only, so the layout passes are left alone (§8.4)
-        invalidate();
     }
 
     Color Panel::border_color() const {
         // a themed panel resolves the border by state until the author writes one (§8.4)
-        if (!m_border_color_set && theme() != nullptr)
+        if (!border_color_authored() && theme() != nullptr)
             return resolve(theme()->palette().panel_border, UiNode::border_color());
         // an authored or unthemed panel keeps the colour the node stored (§8.4)
         return UiNode::border_color();

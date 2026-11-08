@@ -75,7 +75,7 @@ namespace albor
         // report whether the node and every ancestor are visible, which input and focus read (§8.3)
         [[nodiscard]] bool visible_in_tree() const;
 
-        // report whether the node itself can take focus, which a container may decline (§8.3)
+        // report whether the node itself can take focus, which a passive node may decline (§8.3)
         [[nodiscard]] virtual bool accepts_focus() const;
 
         // report whether the focus walk enters this node's children, which a decorative subtree declines (§8.3)
@@ -165,6 +165,9 @@ namespace albor
         // install the handler told when a subtree is about to leave the tree, which the input module needs (§8.3)
         void set_detaching_handler(std::function<void(UiNode*)> handler);
 
+        // install the handler told when a subtree joins the tree, which a late theme install needs (§8.4)
+        void set_attached_handler(std::function<void(UiNode*)> handler);
+
         // hand out the identity the author assigned, which automation and semantics key on (AD-11)
         [[nodiscard]] const NodeIdentity& identity() const;
 
@@ -189,6 +192,12 @@ namespace albor
         // tell the observer that a subtree is about to leave, which runs while the node is still alive (§8.3)
         void notify_detaching(UiNode* node);
 
+        // tell the observer that a subtree joined, which runs after the node is in the tree (§8.4)
+        void notify_attached(UiNode* node);
+
+        // answer a change of the animation engine, which an animating widget uses to retire its handle (§7.3)
+        virtual void on_animation_engine_changed(AnimationEngine* engine);
+
         // push the node opacity onto the context, which dims the whole subtree below it (§6.1)
         void push_opacity(RenderContext& context) const;
 
@@ -200,6 +209,12 @@ namespace albor
 
         // arrange the child only when it asked for a pass or its bounds would move, which keeps a relayout local (§8.2)
         void arrange_if_changed(UiNode& child, const Rect& bounds);
+
+        // report whether the author wrote the border colour, which a themed control reads (§8.4)
+        [[nodiscard]] bool border_color_authored() const;
+
+        // report whether the author wrote the border width, which a themed control reads (§8.4)
+        [[nodiscard]] bool border_width_authored() const;
 
         // the final bounds a parent arranged this node to (§8.2)
         Rect m_bounds;
@@ -228,6 +243,9 @@ namespace albor
         // the handler told about a detaching subtree, which only the root carries (§8.3)
         std::function<void(UiNode*)> m_detaching_handler;
 
+        // the handler told about an attached subtree, which only the root carries (§8.4)
+        std::function<void(UiNode*)> m_attached_handler;
+
         // whether the node asked for a redraw since the last frame (§6.1)
         bool m_render_dirty = true;
 
@@ -246,8 +264,14 @@ namespace albor
         // how wide the node strokes its own border, where zero means it draws no border (§6.1)
         float m_border_width = 0.0f;
 
+        // whether the author wrote the border width, because an explicit value wins over the theme metric (§8.4)
+        bool m_border_width_set = false;
+
         // the colour the node strokes its own border with, which is set independently of the fill (§6.1)
         Color m_border_color = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f);
+
+        // whether the author wrote the border colour, because an explicit value wins over a theme role (§8.4)
+        bool m_border_color_set = false;
 
         // the shadow the node casts, which is empty while none is set (§6.1)
         Shadow m_drop_shadow;

@@ -8,6 +8,7 @@ A read-only indicator that shows how far a task has advanced. The value is norma
 | property | type | notes |
 | --- | --- | --- |
 | `value` | `float` | the fraction of the bar that is filled, in the range `[0, 1]` |
+| `indeterminate` | `bool` | shows a repeating sweep for work whose remaining length is unknown; `value` is ignored |
 | `disabled` | `bool` | draws the dimmed track and fill; the bar takes no input either way |
 | `track_color` | `color` | the unfilled track colour; defaults to the theme |
 | `fill_color` | `color` | the progress fill colour; defaults to the theme's accent |
@@ -46,5 +47,7 @@ value: float(bytes_done) / float(bytes_total);
 
 ## Semantics
 
-The bar announces the `progress_bar` role, its author-assigned `id`, and its current
-fraction. It exposes no actions, because the user does not drive it.
+The bar announces the `progress_bar` role, its author-assigned `id`, and its current fraction. In
+indeterminate mode the semantic tree marks it `indeterminate` and the name carries no fraction,
+because the remaining length is unknown. It exposes no actions, because the user does not drive it,
+and it is not a keyboard focus stop.

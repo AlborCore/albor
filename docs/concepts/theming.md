@@ -65,8 +65,11 @@ controller.install(*application.root(handle), appearance.scheme);
 application.set_window_background(handle, controller.theme().surface());
 ```
 
-The controller installs over the tree once; from then on widgets resolve colours through it.
-A scheme switch repaints against the other accent set without rebuilding the tree.
+The controller installs over the tree once; from then on widgets resolve colours through it unless
+the author wrote an explicit colour. A subtree built later, such as a conditional body or a repeated
+row, receives the live theme when it joins the window, so no frame hook is needed. The controller
+must outlive the tree, because a widget borrows the theme rather than owning it. A scheme switch
+repaints against the other accent set without rebuilding the tree.
 
 ## System appearance
 
@@ -93,5 +96,11 @@ CheckBox { outline: #0A82FF; check_fill: #0A82FF; }
 
 Colour literals are `#RRGGBB` or `#RRGGBBAA`; the colour operations
 ([Expressions and bindings](../ui-language/expressions.md#colour-operations)) compose them.
+
+An authored colour is an explicit override: it wins over the theme's role entry, while a property
+the author did not write keeps resolving by role and state. The authored value is the base every
+state derives from, so hover and focus lift it, press sinks it, and the disabled state dims it
+because a disabled control must still read disabled. An authored colour survives a scheme flip, so
+the application owns the contrast of a one-off plate.
 
 The [rendering](rendering.md) page covers the pipeline these colours travel through.

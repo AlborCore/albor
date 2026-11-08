@@ -408,6 +408,10 @@ namespace albor::devrt
                      node.set_label(std::string(value));
                      return true;
                  })},
+                {"Button.tooltip", setter<Button>([](Button& node, std::string_view value) {
+                     node.set_tooltip(std::string(value));
+                     return true;
+                 })},
                 {"Button.icon",
                  [](UiNode& node, std::string_view value, const std::filesystem::path& asset_root) {
                      // the dynamic type is the element the definition named, which keeps the key per element (§11.1)
@@ -502,6 +506,13 @@ namespace albor::devrt
                      if (!read_float(value, next))
                          return false;
                      node.set_value(next);
+                     return true;
+                 })},
+                {"ProgressBar.indeterminate", setter<ProgressBar>([](ProgressBar& node, std::string_view value) {
+                     bool indeterminate = false;
+                     if (!read_bool(value, indeterminate))
+                         return false;
+                     node.set_indeterminate(indeterminate);
                      return true;
                  })},
                 {"ProgressBar.disabled", setter<ProgressBar>([](ProgressBar& node, std::string_view value) {

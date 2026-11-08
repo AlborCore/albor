@@ -100,8 +100,14 @@ namespace albor
         // the colour of the box outline (§6.1)
         Color m_outline{0.85f, 0.87f, 0.90f, 1.0f};
 
+        // whether the author wrote the outline, because an explicit value wins over the theme role (§8.4)
+        bool m_outline_set = false;
+
         // the colour a checked box fills with (§6.1)
         Color m_check_fill{0.20f, 0.55f, 0.90f, 1.0f};
+
+        // whether the author wrote the fill, because an explicit value wins over the theme role (§8.4)
+        bool m_check_fill_set = false;
 
         // whether the box is checked, which is what the semantic check state reports (§10.1)
         bool m_checked = false;

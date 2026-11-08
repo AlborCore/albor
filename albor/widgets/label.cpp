@@ -64,6 +64,11 @@ namespace albor
         UiNode::dispatch_event(event);
     }
 
+    bool Label::accepts_focus() const {
+        // a label is passive text, so it is not a keyboard stop (§8.3)
+        return false;
+    }
+
     SemanticNode Label::semantic_node() const {
         // the role is a label, because the run is static descriptive text (§10.1)
         SemanticNode node{SemanticRole::Label};
@@ -97,13 +102,15 @@ namespace albor
     }
 
     void Label::set_foreground(Color color) {
-        // an unchanged colour redraws nothing, because the label looks the same (§6.1)
-        if (m_foreground == color)
-            return;
+        // the write repaints only when it can change the paint, which a no-op write cannot (§6.1)
+        const bool changed = authored_write_changes(m_foreground_set, m_foreground == color);
         // the colour is stored first, so the invalidation walks a label that already paints the new colour (§6.1)
         m_foreground = color;
+        // the write is recorded, because an explicit foreground outranks the theme role (§8.4)
+        m_foreground_set = true;
         // a colour change is visual only, so the layout passes are left alone (§6.1)
-        invalidate();
+        if (changed)
+            invalidate();
     }
 
     Color Label::foreground() const {
@@ -224,14 +231,13 @@ namespace albor
     }
 
     Color Label::foreground_color() const {
-        // without a theme the run keeps its own colour, which is the unthemed behaviour (§6.1)
-        if (theme() == nullptr)
-            return m_foreground;
-        // a caption is the secondary role, so it dims through the token the theme carries rather than a literal (§8.4)
-        if (m_role == TextRole::Caption)
-            return resolve(foreground_colors(), m_foreground).transparentized(1.0f - theme()->typography().secondary_opacity);
+        // an authored foreground wins, otherwise the role resolves through the theme (§8.4)
+        const Color resolved = resolve_authored(foreground_colors(), m_foreground, m_foreground_set);
+        // a caption dims through the secondary token only while the theme owns the colour (§8.4)
+        if (theme() != nullptr && !m_foreground_set && m_role == TextRole::Caption)
+            return resolved.transparentized(1.0f - theme()->typography().secondary_opacity);
         // every other role reads the resolved foreground (§8.4)
-        return resolve(foreground_colors(), m_foreground);
+        return resolved;
     }
 
     const TextLayout& Label::layout() const {

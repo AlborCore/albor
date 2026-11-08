@@ -59,6 +59,9 @@ namespace albor
         // the strip surface, which the theme replaces by state when one is installed (§6.1)
         Color m_background{0.13f, 0.15f, 0.19f, 1.0f};
 
+        // whether the author wrote the face, because an explicit value wins over the theme role (§8.4)
+        bool m_background_set = false;
+
         // the radius the strip face draws, where a negative value is a hard rectangle (§6.2)
         float m_radius = 6.0f;
     };

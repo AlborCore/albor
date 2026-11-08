@@ -252,6 +252,18 @@ TEST(SemanticNode, TheStateSetReadsBackWhatWasWritten) {
     EXPECT_EQ(states.check, CheckState::Checked);
 }
 
+TEST(SemanticNode, TheIndeterminateStateCanBeSetAndCleared) {
+    // arrange
+    SemanticNode node(SemanticRole::ProgressBar);
+    // act
+    node.set_indeterminate(true);
+    // assert
+    EXPECT_TRUE(node.indeterminate());
+    EXPECT_TRUE(node.states().indeterminate);
+    node.set_indeterminate(false);
+    EXPECT_FALSE(node.indeterminate());
+}
+
 TEST(SemanticNode, TheMutableStateSetCanBeEditedInPlace) {
     // arrange
     SemanticNode node(SemanticRole::Slider);

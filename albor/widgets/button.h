@@ -46,6 +46,12 @@ namespace albor
         // hand out the drawn label (§10.1)
         [[nodiscard]] const std::string& label() const;
 
+        // replace the tooltip an icon-only control announces, which a future hover surface will paint (§10.1)
+        void set_tooltip(std::string tooltip);
+
+        // hand out the tooltip the control announces (§10.1)
+        [[nodiscard]] const std::string& tooltip() const;
+
         // replace the retained icon, where an empty handle returns the text-only plate (§6.4, §8.2)
         void set_icon(std::shared_ptr<const ImageResource> icon);
 
@@ -111,6 +117,9 @@ namespace albor
         // the drawn label, which is also the accessible name (§10.1)
         std::string m_label;
 
+        // the tooltip an icon-only button announces, which is the hover text and the name fallback (§10.1)
+        std::string m_tooltip;
+
         // the retained icon, which is empty on a text-only button (§6.4)
         std::shared_ptr<const ImageResource> m_icon;
 
@@ -122,6 +131,9 @@ namespace albor
 
         // the fill colour of the plate (§6.1)
         Color m_background{0.20f, 0.55f, 0.90f, 1.0f};
+
+        // whether the author wrote the plate, because an explicit value wins over the theme role (§8.4)
+        bool m_background_set = false;
 
         // whether the button refuses input (§8.3)
         bool m_disabled = false;

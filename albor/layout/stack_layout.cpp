@@ -10,6 +10,9 @@ namespace albor
         // the offered ceiling travels down, because a parent knows the space the child has to fit in (§8.2)
         const SizeConstraints child_constraints = SizeConstraints::at_most(constraints.maximum);
         for (const auto& child : children()) {
+            // a hidden child leaves layout, because `visible: false` removes it from both passes (§11.1, §18.2)
+            if (!child->visible())
+                continue;
             // each child measures against that ceiling, so an overlay never grows past the stack (§8.2)
             Size child_size{};
             child->measure(child_constraints, child_size);
@@ -26,7 +29,10 @@ namespace albor
         // the assigned bounds replace the previous ones, while the measured size stands as the measure settled it (§8.2)
         m_bounds = bounds;
         for (const auto& child : children()) {
-            // every child receives the whole of the stack, which is what makes them overlap (§8.2)
+            // a hidden child is not placed, because it is not part of the arranged overlay (§11.1, §18.2)
+            if (!child->visible())
+                continue;
+            // every visible child receives the whole of the stack, which is what makes them overlap (§8.2)
             arrange_if_changed(*child, bounds);
         }
     }

@@ -107,8 +107,14 @@ namespace albor
         // the colour of the track (§6.1)
         Color m_track_color{0.30f, 0.32f, 0.36f, 1.0f};
 
+        // whether the author wrote the track, because an explicit value wins over the theme role (§8.4)
+        bool m_track_color_set = false;
+
         // the colour of the thumb (§6.1)
         Color m_thumb_color{0.95f, 0.96f, 0.98f, 1.0f};
+
+        // whether the author wrote the thumb, because an explicit value wins over the theme role (§8.4)
+        bool m_thumb_color_set = false;
 
         // whether the slider refuses input (§8.3)
         bool m_disabled = false;

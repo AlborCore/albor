@@ -130,6 +130,9 @@ namespace albor
         // whether a combo box or another popup control is currently open (§10.1)
         bool expanded = false;
 
+        // whether the node represents work whose remaining length is unknown (§10.1)
+        bool indeterminate = false;
+
         // compare two state sets field by field
         friend bool operator==(const SemanticStates& lhs, const SemanticStates& rhs) = default;
     };
@@ -271,6 +274,12 @@ namespace albor
 
         // set or clear the expanded state, which a combo box updates when its popup opens (§10.1)
         void set_expanded(bool expanded);
+
+        // report whether the node's remaining work is unknown (§10.1)
+        [[nodiscard]] bool indeterminate() const;
+
+        // set or clear the indeterminate state, which an unknown-length progress bar reports (§10.1)
+        void set_indeterminate(bool indeterminate);
 
         // report whether the node carries a numeric range, which a slider and a stepper do (§10.1)
         [[nodiscard]] bool has_range() const;

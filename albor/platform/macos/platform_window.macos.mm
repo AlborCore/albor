@@ -648,11 +648,16 @@ namespace albor
         // arc owns the window, so appkit must not release it when it closes, which is the over release of #150 (§5.3)
         window.releasedWhenClosed = NO;
         window.title = [NSString stringWithUTF8String:options.title.c_str()];
-        // the content view carries the metal layer and translates the native events of §8.3
-        AlborContentView* content = [[AlborContentView alloc] initWithFrame:window.contentView.frame];
+        // the content view carries the requested content extent, which appkit frames with the title bar (§5.3, AD-27)
+        const NSRect content_frame = NSMakeRect(0.0, 0.0, static_cast<double>(options.size.width), static_cast<double>(options.size.height));
+        AlborContentView* content = [[AlborContentView alloc] initWithFrame:content_frame];
+        // the view follows the window, because a resize must not leave a stale content frame behind (§5.3)
+        content.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
         window.contentView = content;
         content.wantsLayer = YES;
         content.layer = [CAMetalLayer layer];
+        // the layer starts at the content extent, which the renderer then keeps current (AD-27)
+        content.layer.frame = content.bounds;
         // the content view takes the caret, so the key events reach it once the window is key (§8.3)
         window.initialFirstResponder = content;
         [window makeFirstResponder:content];
@@ -868,9 +873,8 @@ namespace albor
         // a window with no native window cannot be resized (§5.3)
         if (m_state->window == nil)
             return;
-        // the origin is kept, so the window grows from the corner the user placed it at (§7.4)
-        const NSRect frame = m_state->window.frame;
-        [m_state->window setFrame:NSMakeRect(frame.origin.x, frame.origin.y, static_cast<double>(size.width), static_cast<double>(size.height)) display:YES];
+        // the requested size is the content area, which is what metrics reports and layout measures (AD-27)
+        [m_state->window setContentSize:NSMakeSize(static_cast<double>(size.width), static_cast<double>(size.height))];
     }
 
     WindowMetrics MacosPlatformWindow::metrics() const {

@@ -1,17 +1,21 @@
 #include "albor/widgets/widget.h"
 
 #include "albor/commands/command.h"
+#include "albor/style/theme_builder.h"
 #include "albor/ui/semantic_tree_builder.h"
 
 namespace albor
 {
     void apply_theme(UiNode& root, const Theme& theme) {
-        // the whole subtree is walked, because a nested widget is as unthemed as the root (§6.1)
-        root.visit([&theme](UiNode& node) {
-            // a node that is not a widget has nothing to theme, so it is passed over (§6.1)
-            if (auto* widget = dynamic_cast<Widget*>(&node))
-                widget->set_theme(&theme);
-        });
+        // the node itself is themed when it is a widget, because the root is as unthemed as the leaves (§6.1)
+        if (auto* widget = dynamic_cast<Widget*>(&root))
+            widget->set_theme(&theme);
+        // every child is walked, because a nested widget is as unthemed as the root (§6.1)
+        for (const auto& child : root.children())
+            apply_theme(*child, theme);
+        // every overlay is walked too, because an overlay paints above the tree and carries widgets (§8.3, §8.4)
+        for (const auto& overlay : root.overlays())
+            apply_theme(*overlay, theme);
     }
 
     SemanticNode SemanticNodeProvider::semantic_node() const {
@@ -268,6 +272,34 @@ namespace albor
             return own;
         // with a theme the role wins, because the theme is the surface an application configures (§6.1)
         return theme_colors[state_index(state())];
+    }
+
+    Color Widget::resolve_authored(const Color* theme_colors, Color own, bool authored) const {
+        // without an authored value or a theme the role resolver already answers the widget's own value (§6.1)
+        if (!authored || theme_colors == nullptr)
+            return resolve(theme_colors, own);
+        // the authored value is the base every state derives from, because the state must stay visible (§8.4)
+        switch (state()) {
+        case ControlState::Hovered:
+            return ThemeBuilder::lighten(own, 0.08f);
+        case ControlState::Pressed:
+            return ThemeBuilder::darken(own, 0.12f);
+        case ControlState::Disabled:
+            return Color::rgba(own.red, own.green, own.blue, own.alpha * 0.45f);
+        case ControlState::Focused:
+            return ThemeBuilder::lighten(own, 0.04f);
+        case ControlState::Normal:
+        default:
+            return own;
+        }
+    }
+
+    bool Widget::authored_write_changes(bool authored, bool same_value) const {
+        // an already authored value repaints only when it moves (§6.1)
+        if (authored)
+            return !same_value;
+        // the first write repaints when a theme was supplying the role, even if the raw value matches (§8.4)
+        return theme() != nullptr || !same_value;
     }
 
     const ControlMetrics& Widget::default_metrics() {

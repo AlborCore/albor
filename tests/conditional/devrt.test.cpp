@@ -33,6 +33,7 @@
 #include "albor/widgets/label.h"
 #include "albor/widgets/list_box.h"
 #include "albor/widgets/numeric_stepper.h"
+#include "albor/widgets/progress_bar.h"
 #include "albor/widgets/radio_button.h"
 #include "albor/widgets/radio_group.h"
 #include "albor/widgets/scroll_view.h"
@@ -111,7 +112,7 @@ namespace
         if (element == "TextField" && property == "decorations")
             return R"([{"start":"0","end":"1","foreground":"1, 0, 0","underline":"true"}])";
         // a name outside the declared set is a table lie, so the test fails loudly rather than reading a default (§11.1)
-        if (property == "text" || property == "label" || property == "placeholder" || property == "description")
+        if (property == "text" || property == "label" || property == "placeholder" || property == "description" || property == "tooltip")
             return "hello";
         // a float is any number the language writes, and the spacing is trimmed rather than refused (§11.1)
         if (property == "spacing" || property == "padding" || property == "font_size" || property == "icon_size" || property == "overscan" || property == "row_height" || property == "width" || property == "height" || property == "viewport_width" || property == "viewport_height" || property == "corner_radius" || property == "border_width")
@@ -262,7 +263,7 @@ TEST(DevElementChecks, EveryDeclaredPropertyLandsOnItsOwnElement) {
     TestTextEngine text;
     // the closed catalogue of §8, paired with a value each property holds, which is what a definition writes (§11.1)
     const std::vector<std::pair<std::string, std::string>> assignments{
-        {"Column", "spacing"}, {"Column", "padding"}, {"Row", "spacing"}, {"Grid", "spacing"}, {"Grid", "columns"}, {"Grid", "rows"}, {"Padding", "padding"}, {"Panel", "padding"}, {"Panel", "spacing"}, {"Panel", "background"}, {"Panel", "corner_radius"}, {"Panel", "border_width"}, {"Panel", "border_color"}, {"Card", "padding"}, {"Card", "spacing"}, {"Card", "background"}, {"Card", "corner_radius"}, {"Card", "border_width"}, {"Card", "border_color"}, {"Label", "text"}, {"Label", "foreground"}, {"Label", "font_size"}, {"Button", "text"}, {"Button", "background"}, {"Button", "disabled"}, {"Button", "default"}, {"Button", "cancel"}, {"Slider", "value"}, {"Slider", "disabled"}, {"Slider", "track_color"}, {"Slider", "thumb_color"}, {"CheckBox", "checked"}, {"CheckBox", "disabled"}, {"CheckBox", "outline"}, {"CheckBox", "check_fill"}, {"RadioGroup", "selected"}, {"RadioGroup", "vertical"}, {"RadioGroup", "spacing"}, {"RadioButton", "value"}, {"RadioButton", "label"}, {"RadioButton", "disabled"}, {"NumericStepper", "value"}, {"NumericStepper", "min"}, {"NumericStepper", "max"}, {"NumericStepper", "step"}, {"NumericStepper", "disabled"}, {"Image", "source"}, {"Image", "description"}, {"Image", "width"}, {"Image", "height"}, {"ScrollView", "viewport_width"}, {"ScrollView", "viewport_height"}, {"ScrollView", "overscan"}, {"ScrollView", "scrollbar"}, {"ScrollView", "row_height"}, {"ListBox", "viewport_width"}, {"ListBox", "viewport_height"}, {"TextField", "value"}, {"TextField", "placeholder"}, {"TextField", "read_only"}, {"TextField", "multiline"}, {"TextField", "content_align"}, {"TextField", "disabled"}, {"TextField", "font_size"}, {"ComboBox", "selected"}, {"ComboBox", "placeholder"}, {"ComboBox", "disabled"},
+        {"Column", "spacing"}, {"Column", "padding"}, {"Row", "spacing"}, {"Grid", "spacing"}, {"Grid", "columns"}, {"Grid", "rows"}, {"Padding", "padding"}, {"Panel", "padding"}, {"Panel", "spacing"}, {"Panel", "background"}, {"Panel", "corner_radius"}, {"Panel", "border_width"}, {"Panel", "border_color"}, {"Card", "padding"}, {"Card", "spacing"}, {"Card", "background"}, {"Card", "corner_radius"}, {"Card", "border_width"}, {"Card", "border_color"}, {"Label", "text"}, {"Label", "foreground"}, {"Label", "font_size"}, {"Button", "text"}, {"Button", "tooltip"}, {"Button", "background"}, {"Button", "disabled"}, {"Button", "default"}, {"Button", "cancel"}, {"Slider", "value"}, {"Slider", "disabled"}, {"Slider", "track_color"}, {"Slider", "thumb_color"}, {"CheckBox", "checked"}, {"CheckBox", "disabled"}, {"CheckBox", "outline"}, {"CheckBox", "check_fill"}, {"RadioGroup", "selected"}, {"RadioGroup", "vertical"}, {"RadioGroup", "spacing"}, {"RadioButton", "value"}, {"RadioButton", "label"}, {"RadioButton", "disabled"}, {"NumericStepper", "value"}, {"NumericStepper", "min"}, {"NumericStepper", "max"}, {"NumericStepper", "step"}, {"NumericStepper", "disabled"}, {"Image", "source"}, {"Image", "description"}, {"Image", "width"}, {"Image", "height"}, {"ScrollView", "viewport_width"}, {"ScrollView", "viewport_height"}, {"ScrollView", "overscan"}, {"ScrollView", "scrollbar"}, {"ScrollView", "row_height"}, {"ListBox", "viewport_width"}, {"ListBox", "viewport_height"}, {"TextField", "value"}, {"TextField", "placeholder"}, {"TextField", "read_only"}, {"TextField", "multiline"}, {"TextField", "content_align"}, {"TextField", "disabled"}, {"TextField", "font_size"}, {"ComboBox", "selected"}, {"ComboBox", "placeholder"}, {"ComboBox", "disabled"},
     };
     // assert each assignment lands, because a setter the table names but never runs is a table that lies (§11.1)
     for (const std::pair<std::string, std::string>& assignment : assignments) {
@@ -514,6 +515,30 @@ TEST(DevElementChecks, AColourAndAFlagAreReadFromTheDefinition) {
     EXPECT_TRUE(button->disabled());
     EXPECT_TRUE(apply_property(*check, "CheckBox", "checked", "false"));
     EXPECT_FALSE(check->disabled());
+}
+
+TEST(DevElementChecks, AProgressBarFlagLandsOnTheBar) {
+    // arrange
+    BindingEngine engine;
+    TestTextEngine text;
+    std::unique_ptr<UiNode> bar = create_node("ProgressBar", engine, text);
+    ASSERT_NE(bar, nullptr);
+    // act
+    EXPECT_TRUE(apply_property(*bar, "ProgressBar", "indeterminate", "true"));
+    // assert
+    EXPECT_TRUE(static_cast<ProgressBar*>(bar.get())->indeterminate());
+}
+
+TEST(DevElementChecks, AButtonTooltipLandsOnTheButton) {
+    // arrange
+    BindingEngine engine;
+    TestTextEngine text;
+    std::unique_ptr<UiNode> button = create_node("Button", engine, text);
+    ASSERT_NE(button, nullptr);
+    // act
+    EXPECT_TRUE(apply_property(*button, "Button", "tooltip", "Open file"));
+    // assert
+    EXPECT_EQ(static_cast<Button*>(button.get())->tooltip(), "Open file");
 }
 
 TEST(DevElementChecks, ALiveNodeIsNamedByItsDynamicType) {

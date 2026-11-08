@@ -719,17 +719,17 @@ namespace albor
     }
 
     float ComboBox::border_width() const {
+        // an authored stroke or no theme keeps the width the node stored (§8.1)
+        if (border_width_authored() || theme() == nullptr)
+            return UiNode::border_width();
         // a themed control takes the control hairline, which is the stroke a form entry reads through (§8.4)
-        if (theme() != nullptr)
-            return theme()->metrics().button_border_width;
-        // the unthemed fallback keeps a hairline so the trigger reads as a control (§8.4)
-        return UiNode::border_width();
+        return theme()->metrics().button_border_width;
     }
 
     Color ComboBox::border_color() const {
-        // a themed control resolves the field border by state, which is the focus and disabled surface (§8.4)
+        // an authored border wins, otherwise the theme resolves the field border by state (§8.4)
         if (theme() != nullptr)
-            return theme()->palette().text_field_border[state_index(state())];
+            return resolve_authored(theme()->palette().text_field_border, UiNode::border_color(), border_color_authored());
         // the unthemed fallback keeps the colour the node stored (§8.4)
         return UiNode::border_color();
     }

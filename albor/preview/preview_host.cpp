@@ -451,6 +451,12 @@ namespace albor::preview
                     else if (auto* button = dynamic_cast<Button*>(built.get()))
                         button->set_label(text_of(*assignment.value));
                 }
+                // a button tooltip, which names an icon-only control and is the hover text (§10.1)
+                else if (assignment.name == "tooltip") {
+                    // a button carries the tooltip beside its caption (§10.1)
+                    if (auto* button = dynamic_cast<Button*>(built.get()))
+                        button->set_tooltip(text_of(*assignment.value));
+                }
                 // a button icon and its square, which the preview resolves beside the source (§6.4)
                 else if (assignment.name == "icon" && dynamic_cast<Button*>(built.get()) != nullptr) {
                     // only a static embedded asset can be resolved, because the preview evaluates no binding (§12.2)
@@ -475,6 +481,11 @@ namespace albor::preview
                 else if (auto* progress = dynamic_cast<ProgressBar*>(built.get()); progress != nullptr && assignment.name == "value" && numeric != nullptr) {
                     // the progress bar is the read only widget that carries the fraction (§8)
                     progress->set_value(static_cast<float>(number_of(*numeric)));
+                }
+                // an unknown-length progress mode, which a preview shows as the author wrote it (§7.3)
+                else if (auto* progress = dynamic_cast<ProgressBar*>(built.get()); progress != nullptr && assignment.name == "indeterminate" && numeric != nullptr) {
+                    // the bar is the read only widget that carries the mode (§7.3)
+                    progress->set_indeterminate(numeric->text == "true");
                 }
                 // an image source, name or explicit size, which the preview shows as the author wrote it (§6.4, §8)
                 else if (auto* image = dynamic_cast<Image*>(built.get()); image != nullptr && (assignment.name == "source" || assignment.name == "description" || assignment.name == "width" || assignment.name == "height")) {

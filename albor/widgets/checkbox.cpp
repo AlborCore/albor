@@ -57,7 +57,7 @@ namespace albor
         // a checked or mixed box carries a fill, which is the only way the accent reads without a glyph (§6.1)
         if (m_checked || m_indeterminate) {
             // the fill resolves by state, so a hover and a press differ without a second literal (§6.1)
-            const Paint fill_paint{.fill = resolve(fill_colors(), m_check_fill)};
+            const Paint fill_paint{.fill = resolve_authored(fill_colors(), m_check_fill, m_check_fill_set)};
             // a themed fill shares the box radius, so the accent reads as one rounded shape (§8.4)
             if (metrics.checkbox_corner_radius > 0.0f)
                 context.draw_rounded_rect(box, metrics.checkbox_corner_radius, fill_paint);
@@ -67,10 +67,10 @@ namespace albor
         }
         // the outline resolves by state, so the border reads as part of the control (§6.1)
         if (metrics.checkbox_corner_radius > 0.0f)
-            context.draw_rounded_rect(box, metrics.checkbox_corner_radius, {.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), .stroke = resolve(outline_colors(), m_outline), .stroke_width = outline_width()});
+            context.draw_rounded_rect(box, metrics.checkbox_corner_radius, {.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), .stroke = resolve_authored(outline_colors(), m_outline, m_outline_set), .stroke_width = outline_width()});
         // without a themed radius the outline is the hard rectangle the box always drew (§8.4)
         else
-            context.draw_rect(box, {.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), .stroke = resolve(outline_colors(), m_outline), .stroke_width = outline_width()});
+            context.draw_rect(box, {.fill = Color::rgba(0.0f, 0.0f, 0.0f, 0.0f), .stroke = resolve_authored(outline_colors(), m_outline, m_outline_set), .stroke_width = outline_width()});
         // a mixed box draws the dash before the mark, because one is checked and the other is not (§10.1)
         if (m_indeterminate)
             paint_indeterminate_dash(context, box);
@@ -271,13 +271,15 @@ namespace albor
     }
 
     void CheckBox::set_outline(Color outline) {
-        // an unchanged colour redraws nothing, because the box looks the same (§6.1)
-        if (m_outline == outline)
-            return;
+        // the write repaints only when it can change the paint, which a no-op write cannot (§6.1)
+        const bool changed = authored_write_changes(m_outline_set, m_outline == outline);
         // the colour is stored first, so the invalidation walks a box that already strokes the new colour (§6.1)
         m_outline = outline;
+        // the write is recorded, because an explicit outline outranks the theme role (§8.4)
+        m_outline_set = true;
         // an outline change is visual only, so the layout passes are left alone (§6.1)
-        invalidate();
+        if (changed)
+            invalidate();
     }
 
     Color CheckBox::outline() const {
@@ -286,13 +288,15 @@ namespace albor
     }
 
     void CheckBox::set_check_fill(Color check_fill) {
-        // an unchanged colour redraws nothing, because the box looks the same (§6.1)
-        if (m_check_fill == check_fill)
-            return;
+        // the write repaints only when it can change the paint, which a no-op write cannot (§6.1)
+        const bool changed = authored_write_changes(m_check_fill_set, m_check_fill == check_fill);
         // the colour is stored first, so the invalidation walks a box that already fills the new colour (§6.1)
         m_check_fill = check_fill;
+        // the write is recorded, because an explicit fill outranks the theme role (§8.4)
+        m_check_fill_set = true;
         // a fill change is visual only, so the layout passes are left alone (§6.1)
-        invalidate();
+        if (changed)
+            invalidate();
     }
     float CheckBox::outline_width() const {
         // the width comes from the theme when one is installed (§6.1)

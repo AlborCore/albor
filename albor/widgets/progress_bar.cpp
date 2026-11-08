@@ -1,11 +1,23 @@
 #include "albor/widgets/progress_bar.h"
 
 #include <algorithm>
+#include <chrono>
+
+namespace
+{
+    // the indeterminate sweep repeats every 250 ms, which is the cadence the issue names (§7.3)
+    constexpr int SWEEP_MILLISECONDS = 250;
+} // namespace
 
 namespace albor
 {
     ProgressBar::ProgressBar(BindingEngine* engine, std::string explicit_id) :
         Widget(engine, std::move(explicit_id)) {}
+
+    ProgressBar::~ProgressBar() {
+        // the animation the engine holds would keep calling into the bar after it dies (§7.3)
+        stop_animation();
+    }
 
     void ProgressBar::measure(const SizeConstraints& constraints, Size& out_size) {
         // a progress bar has no content, so its extent comes from the themed control metric (§8.2)
@@ -34,6 +46,9 @@ namespace albor
         // a bar with no area draws nothing, because there is no track to draw (§6.2)
         if (bounds().empty())
             return;
+        // an indeterminate bar starts its sweep on the first paint an engine can drive (§7.3)
+        if (m_indeterminate)
+            ensure_animation();
         // the metrics come from the theme when one is installed (§6.1)
         const ControlMetrics& metrics = theme() != nullptr ? theme()->metrics() : default_metrics();
         // the thickness is what the theme says, or the value the bar always drew with (§6.1)
@@ -43,23 +58,47 @@ namespace albor
         // a themed track carries a radius, which is what rounds it into a capsule (§8.4)
         const float track_radius = metrics.progress_bar_radius;
         // the track colour resolves by state, so the disabled paint differs without a second literal (§6.1)
-        const Paint track_paint{.fill = resolve(track_colors(), m_track_color)};
+        const Paint track_paint{.fill = resolve_authored(track_colors(), m_track_color, m_track_color_set)};
         // a themed radius means a capsule, which is the shape a native bar is (§8.4)
         if (track_radius > 0.0f)
             context.draw_rounded_rect(track, track_radius, track_paint);
         // without a themed radius the track is a hard band (§6.1)
         else
             context.draw_rect(track, track_paint);
+        // the fill colour resolves by state, where a transparent entry draws nothing (§6.1)
+        const Paint fill_paint{.fill = resolve_authored(fill_colors(), m_fill_color, m_fill_color_set)};
+        // a transparent fill records nothing, because the theme chose to show no progress there (§6.1)
+        if (!fill_paint.fills())
+            return;
+        // an indeterminate bar draws a third of the track sweeping across it (§7.3)
+        if (m_indeterminate) {
+            // the segment is a third of the track, which is the width the sweep carries (§7.3)
+            const float segment = track.width / 3.0f;
+            // the segment travels from the leading edge to the trailing edge as the phase moves (§7.3)
+            const float sweep_left = track.x + std::max(0.0f, track.width - segment) * m_phase;
+            // the visible part is clipped to the track, so the sweep cannot paint outside it (§6.2)
+            const float visible_left = std::max(track.x, sweep_left);
+            // the visible right edge is the earlier of the segment end and the track end (§6.2)
+            const float visible_right = std::min(track.x + track.width, sweep_left + segment);
+            // a segment with no visible width records nothing, because it is off the track (§6.2)
+            if (visible_right <= visible_left)
+                return;
+            // the sweep is the visible part of the segment, at the track thickness (§7.3)
+            const Rect sweep = Rect::from_origin_size(Point{visible_left, track.y}, Size{visible_right - visible_left, track.height});
+            // the sweep shares the track radius, so the two endpoints read as one line (§8.4)
+            const float sweep_radius = std::min(track_radius, sweep.width * 0.5f);
+            // a themed radius draws a capsule, while an unthemed one draws a hard band (§8.4)
+            if (sweep_radius > 0.0f)
+                context.draw_rounded_rect(sweep, sweep_radius, fill_paint);
+            else
+                context.draw_rect(sweep, fill_paint);
+            return;
+        }
         // an empty bar has no fill, because there is no progress to show (§8)
         if (m_value <= 0.0f)
             return;
         // the fill runs from the left edge for the fraction of the track the value names (§8)
         const Rect filled = Rect::from_origin_size(Point{track.x, track.y}, Size{.width = track.width * m_value, .height = track.height});
-        // the fill colour resolves by state, where a transparent entry draws nothing (§6.1)
-        const Paint fill_paint{.fill = resolve(fill_colors(), m_fill_color)};
-        // a transparent fill records nothing, because the theme chose to show no progress there (§6.1)
-        if (!fill_paint.fills())
-            return;
         // a themed radius is capped at half the fill, so a short fill still rounds cleanly (§8.4)
         const float fill_radius = std::min(track_radius, filled.width * 0.5f);
         // the fill shares the track radius, so the two endpoints read as one line (§8.4)
@@ -81,8 +120,15 @@ namespace albor
         node.set_disabled(disabled());
         // a progress bar is not checkable, so the check state stays not checkable (§10.1)
         node.set_check(CheckState::NotCheckable);
-        // the name carries the fraction, because the numeric value is what a screen reader must speak (§10.1)
-        node.set_name(identity().explicit_id + " " + std::to_string(m_value));
+        // an unknown-length bar reports the indeterminate state instead of a fraction (§10.1)
+        node.set_indeterminate(m_indeterminate);
+        // an unnamed bar falls back to its role word, so the name never starts with a space (§10.1)
+        const std::string base = identity().explicit_id.empty() ? std::string("ProgressBar") : identity().explicit_id;
+        // the name carries the fraction or the unknown-length state, because that is what a reader speaks (§10.1)
+        if (m_indeterminate)
+            node.set_name(base + " indeterminate");
+        else
+            node.set_name(base + " " + std::to_string(m_value));
         return node;
     }
 
@@ -103,6 +149,103 @@ namespace albor
         return m_value;
     }
 
+    void ProgressBar::set_indeterminate(bool indeterminate) {
+        // an unchanged state redraws nothing, because the bar looks the same (§6.1)
+        if (m_indeterminate == indeterminate)
+            return;
+        // the state is stored first, so the sweep starts from a bar that already carries it (§7.3)
+        m_indeterminate = indeterminate;
+        // an indeterminate bar starts its animation, while a determinate one stops it (§7.3)
+        if (m_indeterminate)
+            ensure_animation();
+        else
+            stop_animation();
+        // switching the mode is visual only, so the layout passes are left alone (§6.1)
+        invalidate();
+    }
+
+    bool ProgressBar::indeterminate() const {
+        // the state is what the paint and the semantic node both read (§7.3)
+        return m_indeterminate;
+    }
+
+    bool ProgressBar::accepts_focus() const {
+        // a read-only bar takes no keys, so it is not a keyboard stop (§8.3)
+        return false;
+    }
+
+    void ProgressBar::set_visible(bool visible) {
+        // the node and its subtree carry the new visibility before the sweep is touched (§8.3)
+        Widget::set_visible(visible);
+        // a hidden bar ends its sweep, because a bar that cannot paint must not keep the frame loop awake (§7.3)
+        if (!visible)
+            stop_animation();
+        // a shown bar starts its sweep again, because the next paint is the first one back (§7.3)
+        else if (m_indeterminate)
+            ensure_animation();
+    }
+
+    void ProgressBar::on_animation_engine_changed(AnimationEngine* engine) {
+        // the old handle is cancelled through the engine that issued it, which is the only safe path (§7.3)
+        stop_animation();
+        // a bar that is still indeterminate starts on the new engine, if one was handed down (§7.3)
+        if (engine != nullptr && m_indeterminate)
+            ensure_animation();
+    }
+
+    void ProgressBar::ensure_animation() {
+        // a determinate bar has no sweep to start (§7.3)
+        if (!m_indeterminate)
+            return;
+        // a bar with no area cannot paint, so it must not keep the frame loop awake (§6.2, §7.3)
+        if (bounds().empty())
+            return;
+        // the engine the tree currently hands the bar is the one that has to drive the sweep (§7.3)
+        AnimationEngine* engine = animation_engine();
+        // a handle the current engine no longer runs is spent, because a cancel or a move retired it (§7.3)
+        if (m_animation != 0 && (m_animation_engine != engine || engine == nullptr || !engine->running(m_animation)))
+            stop_animation();
+        // an already running sweep needs no second schedule (§7.3)
+        if (m_animation != 0)
+            return;
+        // a tree with no engine leaves the sweep at its resting phase, which still paints (§7.3)
+        if (engine == nullptr)
+            return;
+        // the engine that issues the handle is remembered, because a later tree move may hand another one (§7.3)
+        m_animation_engine = engine;
+        // the sweep repeats forever, because an unknown task has no end to stop at (§7.3)
+        m_animation = engine->schedule_repeating(
+            [this](float phase) {
+                // a bar that left the tree, its screen or its area ends the sweep, because it cannot paint (§7.3)
+                if (bounds().empty() || !visible_in_tree() || m_animation_engine != animation_engine()) {
+                    m_animation = 0;
+                    m_animation_engine = nullptr;
+                    return false;
+                }
+                // a pass that lands on one restarts at the leading edge, so the sweep never blanks (§7.3)
+                m_phase = phase >= 1.0f ? 0.0f : phase;
+                // the sweep moved, so the bar asks for a frame (§6.1)
+                invalidate();
+                // the sweep keeps running until the bar turns determinate, hides or dies (§7.3)
+                return true;
+            },
+            std::chrono::milliseconds(SWEEP_MILLISECONDS));
+    }
+
+    void ProgressBar::stop_animation() {
+        // a bar that never animated holds no handle, so there is nothing to end (§7.3)
+        if (m_animation == 0) {
+            m_animation_engine = nullptr;
+            return;
+        }
+        // the issuing engine is asked even after the tree dropped it, because the handle came from there (§7.3)
+        if (m_animation_engine != nullptr)
+            (void)m_animation_engine->cancel(m_animation);
+        // the handle is spent, so a later indeterminate switch schedules a fresh one (§7.3)
+        m_animation = 0;
+        m_animation_engine = nullptr;
+    }
+
     void ProgressBar::set_disabled(bool disabled) {
         // an unchanged state redraws nothing, because the bar looks the same (§6.1)
         if (m_disabled == disabled)
@@ -119,23 +262,27 @@ namespace albor
     }
 
     void ProgressBar::set_track_color(Color color) {
-        // an unchanged colour redraws nothing, because the bar looks the same (§6.1)
-        if (m_track_color == color)
-            return;
+        // the write repaints only when it can change the paint, which a no-op write cannot (§6.1)
+        const bool changed = authored_write_changes(m_track_color_set, m_track_color == color);
         // the colour is stored first, so the invalidation walks a bar that already fills the new track (§6.1)
         m_track_color = color;
+        // the write is recorded, because an explicit track outranks the theme role (§8.4)
+        m_track_color_set = true;
         // a track colour change is visual only, so the layout passes are left alone (§6.1)
-        invalidate();
+        if (changed)
+            invalidate();
     }
 
     void ProgressBar::set_fill_color(Color color) {
-        // an unchanged colour redraws nothing, because the bar looks the same (§6.1)
-        if (m_fill_color == color)
-            return;
+        // the write repaints only when it can change the paint, which a no-op write cannot (§6.1)
+        const bool changed = authored_write_changes(m_fill_color_set, m_fill_color == color);
         // the colour is stored first, so the invalidation walks a bar that already fills with the new colour (§6.1)
         m_fill_color = color;
+        // the write is recorded, because an explicit fill outranks the theme role (§8.4)
+        m_fill_color_set = true;
         // a fill colour change is visual only, so the layout passes are left alone (§6.1)
-        invalidate();
+        if (changed)
+            invalidate();
     }
 
     const Color* ProgressBar::track_colors() const {
