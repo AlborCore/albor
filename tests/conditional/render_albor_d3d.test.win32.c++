@@ -304,9 +304,9 @@ TEST(AlborRendererBackendChecks, ACulledFrameMatchesTheWholeFrameOverTheSameDama
     ASSERT_NE(culled, nullptr);
     const Rect full_rect = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
     const Rect damage = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{4.0f, 4.0f});
-    const Rect far = Rect::from_origin_size(Point{6.0f, 6.0f}, Size{2.0f, 2.0f});
+    const Rect distant = Rect::from_origin_size(Point{6.0f, 6.0f}, Size{2.0f, 2.0f});
     FrameScene base(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
-    DrawCommand base_far = DrawCommand::rectangle(far, Paint{.fill = Color::rgb(0.0f, 0.0f, 1.0f)});
+    DrawCommand base_far = DrawCommand::rectangle(distant, Paint{.fill = Color::rgb(0.0f, 0.0f, 1.0f)});
     base_far.set_clip(full_rect);
     base.add_command(std::move(base_far));
     backend.execute_frame(*whole, base);
@@ -315,7 +315,7 @@ TEST(AlborRendererBackendChecks, ACulledFrameMatchesTheWholeFrameOverTheSameDama
     FrameScene full_change(metrics, Color::rgb(0.0f, 0.0f, 0.0f), damage);
     DrawCommand full_green = DrawCommand::rectangle(damage, Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f)});
     full_green.set_clip(full_rect);
-    DrawCommand full_far = DrawCommand::rectangle(far, Paint{.fill = Color::rgb(0.0f, 0.0f, 1.0f)});
+    DrawCommand full_far = DrawCommand::rectangle(distant, Paint{.fill = Color::rgb(0.0f, 0.0f, 1.0f)});
     full_far.set_clip(full_rect);
     full_change.add_command(std::move(full_green));
     full_change.add_command(std::move(full_far));
