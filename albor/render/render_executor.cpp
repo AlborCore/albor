@@ -148,8 +148,10 @@ namespace albor
         // stage two only touches the immutable scene and the surface, never application state (§6.1, AD-18)
         const FrameProfileScope render_scope;
         const FrameOutcome outcome = m_backend->execute_frame(*request.surface, *request.scene);
+        // the damage the scene carried is what a slow frame reports, which tells a narrow frame from a whole one (§6.1)
+        const Rect damage = request.scene->damage_rect().value_or(Rect{});
         // the whole stage two call is what the render thread spends on the frame, which the profile reports (§6.1)
-        profile_render_frame(render_scope.elapsed_ms());
+        profile_render_frame(render_scope.elapsed_ms(), request.scene->is_partial(), damage.width, damage.height);
         {
             // the lock is taken to publish the count and to release the flush waiters (§6.1)
             const std::lock_guard<std::mutex> lock(m_mutex);

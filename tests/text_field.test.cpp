@@ -1143,6 +1143,31 @@ TEST(TextFieldSelectionChecks, ADragExtendsTheSelectionWhileThePressHolds) {
     EXPECT_EQ(field.selection_end(), 3u);
 }
 
+TEST(TextFieldSelectionChecks, ADragDamagesOnlyTheChangedSpan) {
+    // arrange a field whose plate is much wider than the span a drag changes (§8.3)
+    EditingTextEngine engine;
+    TextField field(nullptr, &engine, "Albor netlist");
+    const Rect bounds = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{400.0f, 20.0f});
+    field.arrange(bounds);
+    Event down{.kind = EventKind::PointerDown, .position = Point{14.0f, 10.0f}};
+    field.dispatch_event(down);
+    field.clear_damage_region();
+    // act one move extends the selection by two characters (§8.3)
+    Event move{.kind = EventKind::PointerMove, .position = Point{34.0f, 10.0f}};
+    field.dispatch_event(move);
+    // assert the frame is bounded to the strip the drag changed, not the whole plate (§6.1)
+    ASSERT_TRUE(field.damage_region().has_value());
+    EXPECT_LT(field.damage_region()->width, bounds.width * 0.5f);
+    EXPECT_GE(field.damage_region()->width, EditingTextEngine::ADVANCE * 2.0f);
+    // act the pointer moves back toward the anchor, which removes the same strip (§8.3)
+    field.clear_damage_region();
+    Event back{.kind = EventKind::PointerMove, .position = Point{14.0f, 10.0f}};
+    field.dispatch_event(back);
+    // assert the erased strip is the damage again, which is what makes a drag follow the pointer (§6.1)
+    ASSERT_TRUE(field.damage_region().has_value());
+    EXPECT_LT(field.damage_region()->width, bounds.width * 0.5f);
+}
+
 TEST(TextFieldSelectionChecks, AReleaseEndsTheDrag) {
     // arrange
     EditingTextEngine engine;

@@ -329,6 +329,12 @@ namespace albor
         // paint the selection over the value, which the value paints over (§6.1)
         void paint_selection(RenderContext& context);
 
+        // hand out the highlight rect one line covers within a span, which the paint and the damage share (§8.3)
+        [[nodiscard]] Rect selection_rect(std::size_t line, std::size_t span_start, std::size_t span_end) const;
+
+        // hand out the union of a span's highlight rects, which bounds the damage a selection change makes (§6.1)
+        [[nodiscard]] Rect selection_bounds(std::size_t span_start, std::size_t span_end) const;
+
         // paint the background bands of the styled ranges, which sit under the value (§9.1)
         void paint_decoration_backgrounds(RenderContext& context, const TextLayout& displayed, Point origin, float draw_y) const;
 
