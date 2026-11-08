@@ -5563,6 +5563,30 @@ TEST(TextFieldFontChecks, AFontSelectionRemeasuresAndInvalidates) {
     EXPECT_EQ(text_engine.last_font_spec.weight, FontWeight::Semibold);
 }
 
+TEST(TextFieldBlinkChecks, ACaretBlinkDamagesOnlyTheCaret) {
+    // arrange a focused field on an animation engine, which is what starts a blink (§7.3, §8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    AnimationEngine animations;
+    TextField field(&engine, &text_engine, "netlist");
+    field.set_animation_engine(&animations);
+    const Rect bounds = Rect::from_origin_size(Point{10.0f, 20.0f}, Size{200.0f, 80.0f});
+    field.arrange(bounds);
+    field.set_focused(true);
+    field.clear_damage_region();
+    // act the first half turns over, which hides the caret (§7.3)
+    animations.advance(0.4f);
+    // assert the damage is the caret bar rather than the whole plate, because nothing else changed (§6.1, §8.3)
+    ASSERT_TRUE(field.damage_region().has_value());
+    EXPECT_LT(field.damage_region()->width, bounds.width * 0.5f);
+    EXPECT_GT(field.damage_region()->height, 0.0f);
+    // act a frame inside the same half leaves the caret alone (§7.3)
+    field.clear_damage_region();
+    animations.advance(0.05f);
+    // assert the frame inside the hidden half records no damage at all (§6.1)
+    EXPECT_FALSE(field.damage_region().has_value());
+}
+
 TEST(TabPageChecks, MeasuresTheLabelForTheStrip) {
     // arrange a page whose label the strip draws (§9.1)
     BindingEngine engine;

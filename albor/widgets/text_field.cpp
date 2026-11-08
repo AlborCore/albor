@@ -190,7 +190,13 @@ namespace albor
                     return true;
                 // the half turned over, so the caret is where the phase says (§6.1)
                 m_caret_visible = visible;
-                invalidate();
+                // the field clips the bar, so only the visible part of it can change a pixel (§6.2)
+                const Rect bar = caret_rect().intersect(bounds());
+                // a caret scrolled out of the field changes nothing, so the half asks for no frame (§6.1)
+                if (bar.empty())
+                    return true;
+                // the bar is the only pixel the half changes, so the frame is bounded to it (§6.1, §8.3)
+                invalidate(bar);
                 // the blink keeps running until the focus leaves, which cancel is for (§7.3)
                 return true;
             },
