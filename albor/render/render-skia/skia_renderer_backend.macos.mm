@@ -114,13 +114,16 @@ namespace albor
         surface.resize(metrics);
     }
 
-    void SkiaRendererBackend::execute_frame(RenderSurface& surface, const FrameScene& scene) {
-        // a frame needs a surface that could acquire a drawable (§6.1)
+    FrameOutcome SkiaRendererBackend::execute_frame(RenderSurface& surface, const FrameScene& scene) {
+        // a frame needs a surface that could acquire a drawable, and one that cannot is not a retry (§6.1)
         if (!surface.valid())
-            return;
+            return FrameOutcome::Presented;
         // a scene at stale metrics is refused rather than repaired here (§6.1, D9.1)
         if (surface.metrics() != scene.metrics())
-            return;
+            return FrameOutcome::RefusedStaleMetrics;
+        // a drawable surface redraws every pixel, so a culled list would leave the rest stale (§6.1)
+        if (scene.culls_commands())
+            return FrameOutcome::RefusedNoRetention;
         // stage two acquires the drawable and draws the immutable scene into it (§6.1, AD-18)
         RenderContext& context = surface.begin_frame();
         // the background is a full surface rectangle, which is the clear of phase 1 (§6.1)
@@ -130,6 +133,8 @@ namespace albor
         replay_commands(scene.commands(), context, full);
         // the frame is presented once the immutable scene is fully recorded (§6.1)
         surface.end_frame();
+        // the surface drew the whole scene, which is what the pipeline expects of a presented frame (§6.1)
+        return FrameOutcome::Presented;
     }
 
     void install_skia_renderer_backend() {

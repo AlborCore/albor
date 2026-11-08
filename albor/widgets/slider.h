@@ -24,6 +24,9 @@ namespace albor
         // record the track and the thumb, which is what a slider looks like (§6.1)
         void paint_content(RenderContext& context) override;
 
+        // override: include the thumb shadow in the damage area, because it paints outside the plate (§6.1, §8.4)
+        [[nodiscard]] Rect visual_bounds() const override;
+
         // override: a slider is a hit only where it is visible and enabled (§8.3)
         [[nodiscard]] bool hit_test(Point logical_point) const override;
 

@@ -72,6 +72,9 @@ namespace albor
             return;
         // the tick interval is recorded before the frame work, because a stalled ui thread shows there first (§6.1)
         profile_ui_tick();
+        // a surface that refused a culled frame asks for one rebuilt whole, which stage one answers here (§6.1)
+        if (m_executor->consume_damage_refusal())
+            m_pipeline->request_full_frame();
         // an application that owns its scene builds it here, and stage two still executes it off the ui thread (§6.1)
         if (m_scene_source) {
             const FrameProfileScope build_scope;

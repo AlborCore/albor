@@ -10,6 +10,19 @@
 
 namespace albor
 {
+    // the outcome of executing one immutable scene, which stage two reports to the frame pipeline (§6.1)
+    enum class FrameOutcome
+    {
+        // the scene reached the surface and was presented (§6.1)
+        Presented,
+
+        // the surface presents at other metrics, so the scene was dropped (§6.1, D9.1)
+        RefusedStaleMetrics,
+
+        // the surface could not retain its target, so a culled scene must be rebuilt whole (§6.1)
+        RefusedNoRetention
+    };
+
     // the renderer half of the framework, which every backend implements (§6.2, AD-05)
     class RendererBackend
     {
@@ -26,7 +39,7 @@ namespace albor
         virtual void resize_surface(RenderSurface& surface, const WindowMetrics& metrics) = 0;
 
         // execute an immutable frame scene, which is stage two of the frame pipeline (§6.1, AD-18)
-        virtual void execute_frame(RenderSurface& surface, const FrameScene& scene) = 0;
+        virtual FrameOutcome execute_frame(RenderSurface& surface, const FrameScene& scene) = 0;
     };
 
     // the signature a renderer backend implements to build itself (§6.2)

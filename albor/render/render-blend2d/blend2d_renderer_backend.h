@@ -28,7 +28,7 @@ namespace albor::blend2d
         void resize_surface(RenderSurface& surface, const WindowMetrics& metrics) override;
 
         // override: replay the immutable scene onto the cpu raster (§6.1, AD-18)
-        void execute_frame(RenderSurface& surface, const FrameScene& scene) override;
+        FrameOutcome execute_frame(RenderSurface& surface, const FrameScene& scene) override;
     };
 
     // install the blend2d backend as the composition root's backend, which a headless run does (§6.3, AD-26)

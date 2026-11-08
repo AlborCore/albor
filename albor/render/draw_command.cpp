@@ -1,6 +1,7 @@
 #include "albor/render/draw_command.h"
 
 #include <algorithm>
+#include <cmath>
 #include <span>
 
 #include <utility>
@@ -357,9 +358,38 @@ namespace albor
             // the run covers where the transform places that extent (§6.4)
             return mapped_bounds(extent);
         }
-        case DrawCommandKind::LineBatch:
-            // a batch has no single rectangle of its own, so it covers the clip it draws under (§6.2)
-            return clip();
+        case DrawCommandKind::LineBatch: {
+            // a batch is bounded by the points it carries, which is what lets a damage frame cull it (§6.4)
+            const std::shared_ptr<const LineBatch>& batch = batch_geometry().batch;
+            // a missing or empty batch covers nothing, which is the quiet default (§6.4)
+            if (batch == nullptr || batch->points().empty())
+                return Rect{};
+            // the first point starts every edge, placed under the command transform (§6.2)
+            const Point first = m_transform.apply(batch->points().front());
+            // the left edge starts at the first point (§6.2)
+            float left = first.x;
+            // the right edge starts at the same point (§6.2)
+            float right = left;
+            // the top edge starts at the same point (§6.2)
+            float top = first.y;
+            // the bottom edge starts at the same point (§6.2)
+            float bottom = top;
+            // every further point widens the edges, which makes the bound conservative (§6.2)
+            for (const Point& point : batch->points()) {
+                // the point lands where the command transform places it (§6.2)
+                const Point drawn = m_transform.apply(point);
+                // the left edge follows the leftmost point (§6.2)
+                left = std::min(left, drawn.x);
+                // the right edge follows the rightmost (§6.2)
+                right = std::max(right, drawn.x);
+                // the top edge follows the topmost (§6.2)
+                top = std::min(top, drawn.y);
+                // the bottom edge follows the bottommost (§6.2)
+                bottom = std::max(bottom, drawn.y);
+            }
+            // the bound is returned whole (§6.2)
+            return Rect{.x = left, .y = top, .width = right - left, .height = bottom - top};
+        }
         case DrawCommandKind::Path: {
             // a contour is bounded by its own points, which the resource carries (§6.4)
             const std::shared_ptr<const PathResource>& path = path_geometry().path;
@@ -392,9 +422,27 @@ namespace albor
             // the bound is returned whole (§6.4)
             return Rect{.x = left, .y = top, .width = right - left, .height = bottom - top};
         }
-        case DrawCommandKind::Picture:
-            // a picture may draw anything, so it covers the clip entirely (§6.2)
-            return clip();
+        case DrawCommandKind::Picture: {
+            // a picture is bounded by the commands it replays, which is what lets a damage frame cull it (§6.4)
+            const std::shared_ptr<const PictureResource>& picture = picture_geometry().picture;
+            // a missing or empty picture covers nothing, which is the quiet default (§6.4)
+            if (picture == nullptr || picture->empty())
+                return Rect{};
+            // the inner commands are unioned in their own scene space, because each carries its own transform (§6.4)
+            Rect area{};
+            // every draw contributes its own bound, while the layer markers add no geometry (§6.2)
+            for (const DrawCommand& command : picture->commands()) {
+                // a layer marker owns no geometry, so it cannot widen the picture (§6.2)
+                if (command.kind() == DrawCommandKind::LayerPush || command.kind() == DrawCommandKind::LayerPop)
+                    continue;
+                // the command damage bound joins the picture, so an inner stroke is not lost (§6.4)
+                area = area.unioned(command.damage_bounds());
+            }
+            // the outer transform places the whole picture, so its bound maps once (§6.4)
+            const Rect placed = mapped_bounds(area);
+            // a picture is cut by the clip it was recorded under, so only the visible part can leave damage (§6.2, §6.4)
+            return placed.intersect(clip());
+        }
         case DrawCommandKind::Image:
             // an image covers where it was placed, mapped by the transform it draws under (§6.2, §6.4)
             return mapped_bounds(image_geometry().destination);
@@ -442,6 +490,63 @@ namespace albor
         }
         // a kind outside the enumeration covers nothing, which is the quiet default (§6.2)
         return Rect{};
+    }
+
+    Rect DrawCommand::damage_bounds() const {
+        // a command that draws nothing has no damage, which keeps a zero length primitive out (§6.1)
+        if (draws_nothing())
+            return Rect{};
+        // the geometry bound is the base, because every kind has one even when it is the clip (§6.1, §6.2)
+        Rect area = bounds();
+        // a picture its clip cuts away entirely paints no pixel, so it cannot damage the surface (§6.4)
+        if (kind() == DrawCommandKind::Picture && area.empty())
+            return Rect{};
+        // a one pixel fringe covers the antialias seam every primitive can leave at its edge (§6.1)
+        float reach = 1.0f;
+        // a transformed stroke covers more device area, so its local width is scaled by the retained transform (§6.2)
+        const float scale_x = std::sqrt(m_transform.scale_x * m_transform.scale_x + m_transform.skew_y * m_transform.skew_y);
+        // the vertical axis uses its own two coefficients, because a non uniform scale reaches differently (§6.2)
+        const float scale_y = std::sqrt(m_transform.skew_x * m_transform.skew_x + m_transform.scale_y * m_transform.scale_y);
+        // the larger axis is the conservative reach for a stroke under the transform (§6.2)
+        const float scale = std::max(scale_x, scale_y);
+        // a stroke extends beyond the shape it follows, so its reach joins the damage bound (§6.2)
+        switch (kind()) {
+        case DrawCommandKind::Rect:
+        case DrawCommandKind::RoundedRect:
+        case DrawCommandKind::Path:
+        case DrawCommandKind::GlyphOutline:
+            // a filled or stroked shape uses the whole stroke width, because a miter reaches past half (§6.2)
+            reach = std::max(reach, m_paint.stroke_width * scale);
+            break;
+        case DrawCommandKind::Text: {
+            // a run can overhang its measured box above and below, so the deeper half extent covers the fringe (§9.1)
+            const TextLayout& layout = text_geometry().layout;
+            // a descender reaches below the baseline, so the ascent alone does not bound a deep one (§9.1)
+            const float overhang = std::max(layout.ascent, layout.descent) * 0.5f * scale;
+            // the stroke and the overhang both reach past the box, so the larger one joins the damage bound (§6.2)
+            reach = std::max(reach, std::max(m_paint.stroke_width * scale, overhang));
+            break;
+        }
+        case DrawCommandKind::Polyline:
+            // a polyline stroke can miter past half its width, so the whole width covers the join (§6.2)
+            reach = std::max(reach, polyline_geometry().stroke.width * scale);
+            break;
+        case DrawCommandKind::LineBatch:
+            // a retained batch can carry caps and joins, so its whole width is the safe reach (§6.4)
+            reach = std::max(reach, batch_geometry().stroke.width * scale);
+            break;
+        case DrawCommandKind::Image:
+            // an image has no stroke of its own, so only the antialias fringe grows its bound (§6.4)
+            break;
+        case DrawCommandKind::Shadow:
+        case DrawCommandKind::Picture:
+        case DrawCommandKind::LayerPush:
+        case DrawCommandKind::LayerPop:
+            // these bounds already include the reach or the clip the command is cut by (§6.2, §6.4)
+            break;
+        }
+        // the reach grows every edge explicitly, because a horizontal or vertical line has one zero extent (§6.1)
+        return Rect{.x = area.x - reach, .y = area.y - reach, .width = area.width + reach * 2.0f, .height = area.height + reach * 2.0f};
     }
 
     Rect DrawCommand::shadow_bounds() const {
@@ -583,7 +688,7 @@ namespace albor
             return;
         }
     }
-    void replay_commands(const std::vector<DrawCommand>& commands, RenderContext& context, const Rect& unclipped) {
+    void replay_commands(const std::vector<DrawCommand>& commands, RenderContext& context, const Rect& unclipped, const std::optional<Rect>& damage) {
         // the applied clip starts as the whole area, which is what the commands of an unclipped tree record (§6.2)
         Rect applied = unclipped;
         // the applied radius starts at zero, because the whole area carries no corners (§6.2)
@@ -593,6 +698,9 @@ namespace albor
 
         // every command replays in paint order, which is the order the ui thread recorded (§6.1)
         for (const DrawCommand& command : commands) {
+            // a command that cannot touch the damage region is skipped, which is what makes a partial frame cheap (§6.1)
+            if (damage && command.kind() != DrawCommandKind::LayerPush && command.kind() != DrawCommandKind::LayerPop && command.damage_bounds().intersect(*damage).empty())
+                continue;
             // a layer marker owns no geometry, so the switch closes around it and the next draw reopens (§6.2)
             if (command.kind() == DrawCommandKind::LayerPush || command.kind() == DrawCommandKind::LayerPop) {
                 // a clip open above the marker would nest inside the layer rather than around it (§6.2)

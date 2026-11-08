@@ -15,8 +15,12 @@ namespace albor
         // a node the layout gave no area draws nothing, because it occupies no pixel (§6.4)
         if (m_bounds.empty())
             return;
+        // the retained content is clipped to the node bounds, which is the contract of render_content (§6.4)
+        context.save();
+        context.clip_rect(m_bounds);
         // the retained content is the node, so the base recursion is deliberately not called (§6.4, AD-06)
         render_content(context, m_bounds);
+        context.restore();
     }
 
     void CustomRenderNode::set_intrinsic_size(Size size) {

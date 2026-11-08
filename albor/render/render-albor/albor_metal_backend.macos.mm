@@ -9,6 +9,7 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -338,6 +339,8 @@ namespace albor::render
             [[nodiscard]] bool valid() const override;
             [[nodiscard]] const WindowMetrics& metrics() const override;
             void resize(const WindowMetrics& metrics) override;
+            [[nodiscard]] bool retains_target() const override;
+            bool set_damage_region(const std::optional<Rect>& damage) override;
             RenderContext& begin_frame() override;
             void end_frame() override;
             [[nodiscard]] std::vector<std::uint8_t> read_pixels() const override;
@@ -366,6 +369,12 @@ namespace albor::render
 
             // the metrics the surface presents at (§6.1, D9.1)
             WindowMetrics m_metrics;
+
+            // the region the next frame may redraw, or nothing for a full target clear (§6.1)
+            std::optional<Rect> m_damage;
+
+            // whether the target carries a completed full frame, which a partial frame needs before it loads (§6.1)
+            bool m_target_initialized = false;
 
             // the colour target every frame draws into, which the read back and the present both read (§6.3)
             id<MTLTexture> m_target = nil;
@@ -479,12 +488,17 @@ namespace albor::render
             }
             // the new target carries no finished frame yet, so a read back waits for one (§6.3)
             m_finished = 0;
+            // a reallocated target has no pixels to preserve, so the next frame must be full (§6.1)
+            m_target_initialized = false;
         }
 
         void AlborRenderSurface::resize(const WindowMetrics& metrics) {
             // metrics with no area cannot be presented, so the previous target is kept (§6.2)
             if (!metrics.valid())
                 return;
+            // a target replaced by a resize has no pixels to preserve, so no old damage survives it (§6.1)
+            if (!m_begun)
+                m_damage.reset();
             // a resize while a frame is in flight waits for the frame, so no frame mixes two extents (§6.2, D9.1)
             if (m_begun) {
                 m_pending_metrics = metrics;
@@ -494,6 +508,23 @@ namespace albor::render
             // the extent is replaced on the thread that owns the surface (§5.3, D9.1)
             m_metrics = metrics;
             allocate();
+        }
+
+        bool AlborRenderSurface::retains_target() const {
+            // the private target keeps its pixels between frames, which is what a partial frame loads (§6.1, §6.3)
+            return true;
+        }
+
+        bool AlborRenderSurface::set_damage_region(const std::optional<Rect>& damage) {
+            // a partial frame needs a target that already carries a full frame, because it loads rather than clears (§6.1)
+            if (damage.has_value() && !m_target_initialized) {
+                // the hint is refused, so stage two draws the full command list instead (§6.1)
+                m_damage.reset();
+                return false;
+            }
+            // the surface receives the region before begin, so end_frame knows whether the target may be loaded (§6.1)
+            m_damage = damage;
+            return damage.has_value();
         }
 
         RenderContext& AlborRenderSurface::begin_frame() {
@@ -902,12 +933,17 @@ namespace albor::render
 
         void AlborRenderSurface::end_frame() {
             // an end without a begun frame is a no operation rather than an error (§6.1)
-            if (!m_begun)
+            if (!m_begun) {
+                // a damage hint that never began a frame is spent, so it cannot leak into the next one (§6.1)
+                m_damage.reset();
                 return;
+            }
             // the present is what the frame spends after the scene is recorded, which the profile reports (§6.3)
             const FrameProfileScope present_scope;
             // the batch is complete once the scene is recorded, so its size is what the profile reports (§6.3)
             profile_batch(m_batch.vertices.size(), m_batch.indices.size() / 3u, m_batch.draws.size(), m_batch.shadows.size(), m_glyph_meshes.count());
+            // a full frame is the one that establishes the target a later partial frame loads (§6.1)
+            const bool full_frame = !m_damage.has_value();
             // the frame runs inside a pool, because a render thread has none of its own (§6.3, AD-18)
             @autoreleasepool {
                 // the frame is one command buffer, which the queue submits once (§6.3)
@@ -917,10 +953,10 @@ namespace albor::render
                 id<CAMetalDrawable> drawable = m_layer != nil ? [m_layer nextDrawable] : nil;
                 // the wait is the compositor pacing, which a slow frame shows before the encode (§6.3)
                 profile_drawable_wait(wait_scope.elapsed_ms());
-                // the pass clears the target first, which an empty frame leaves transparent (§6.1)
+                // a full frame clears the target, while a partial frame keeps the pixels outside its damage (§6.1)
                 MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
                 pass.colorAttachments[0].texture = m_target;
-                pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+                pass.colorAttachments[0].loadAction = m_damage.has_value() ? MTLLoadActionLoad : MTLLoadActionClear;
                 pass.colorAttachments[0].storeAction = MTLStoreActionStore;
                 pass.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 0.0);
                 // the images the frame carries become textures once, which a later frame reuses (AD-06)
@@ -933,7 +969,7 @@ namespace albor::render
                 profile_encode(encode_scope.elapsed_ms());
                 // the blit and the commit finish the present, which the profile splits from the encode (§6.3)
                 const FrameProfileScope commit_scope;
-                // a windowed frame blits the target onto the drawable, which keeps one pixel path for both kinds (§6.3)
+                // a windowed frame blits the target onto the drawable, one pixel path (§6.3)
                 if (drawable != nil) {
                     id<MTLBlitCommandEncoder> blit = [command blitCommandEncoder];
                     [blit copyFromTexture:m_target sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(m_target.width, m_target.height, 1) toTexture:drawable.texture destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
@@ -950,6 +986,11 @@ namespace albor::render
             profile_present(present_scope.elapsed_ms());
             // the frame is no longer in flight, so a read back accepts one (§6.1)
             m_begun = false;
+            // a full frame initializes the target, while a partial keeps the flag it found (§6.1)
+            if (full_frame && m_target != nil)
+                m_target_initialized = true;
+            // the damage is spent, so the next frame starts full unless told otherwise (§6.1)
+            m_damage.reset();
             // a resize that waited for this frame applies now, so the next frame uses one extent (§6.2)
             if (m_resize_pending) {
                 // the resize runs inside a pool too, because it allocates descriptors on a thread that owns none (§6.3)

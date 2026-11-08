@@ -41,6 +41,7 @@
 #include "albor/widgets/progress_bar.h"
 #include "albor/widgets/radio_button.h"
 #include "albor/widgets/radio_group.h"
+#include "albor/widgets/scroll_view.h"
 #include "albor/widgets/slider.h"
 #include "albor/widgets/tab_page.h"
 #include "albor/widgets/tab_title.h"
@@ -373,6 +374,21 @@ TEST(LabelChecks, ARunThatFillsTheBoxSitsAtTheTop) {
     // assert there is no slack to centre, so the run stays at the box top, which keeps existing layouts (§9.1)
     ASSERT_EQ(text_commands(*recorder.scene()).size(), 1u);
     EXPECT_FLOAT_EQ(text_commands(*recorder.scene()).front().text_geometry().origin.y, 10.0f);
+}
+
+TEST(LabelChecks, TheRunIsClippedToTheLabelBox) {
+    // arrange a label narrower than its measured run (§9.1)
+    BindingEngine engine;
+    StubTextEngine text;
+    Label label(&engine, &text, "overflow");
+    const Rect bounds = Rect::from_origin_size(Point{5.0f, 6.0f}, Size{10.0f, 20.0f});
+    label.arrange(bounds);
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    label.render(recorder);
+    // assert the run cannot paint over the next row, which a partial frame would otherwise leave stale (§6.2)
+    ASSERT_EQ(recorder.scene()->command_count(), 1u);
+    EXPECT_EQ(recorder.scene()->commands().front().clip(), bounds);
 }
 
 TEST(LabelChecks, AnEmptyRunRecordsNothing) {
@@ -1718,6 +1734,21 @@ TEST(SliderChecks, RendersTheTrackAndTheThumb) {
     EXPECT_EQ(rect_commands(*recorder.scene()).size(), 2u);
 }
 
+TEST(SliderChecks, AThemedThumbShadowIsPartOfTheDamageArea) {
+    // arrange a themed slider whose thumb casts a soft shadow beyond the plate (§8.4)
+    BindingEngine engine;
+    const Theme theme = Theme::fluent(Accents{}, ColorScheme::Light);
+    Slider slider(&engine);
+    slider.set_theme(&theme);
+    const Rect bounds = Rect::from_origin_size(Point{10.0f, 20.0f}, Size{120.0f, 22.0f});
+    slider.arrange(bounds);
+    // act
+    const Rect visual = slider.visual_bounds();
+    // assert the cast reaches past the plate on every side, because a partial frame clips to this bound (§6.1)
+    EXPECT_LE(visual.x, bounds.x - 6.0f);
+    EXPECT_GE(visual.y + visual.height, bounds.y + 27.0f);
+}
+
 TEST(SliderChecks, TheThumbMovesWithTheValue) {
     // arrange
     BindingEngine engine;
@@ -2329,6 +2360,21 @@ TEST(CanvasChecks, TheDrawCallbackRecordsIntoTheContext) {
     EXPECT_TRUE(canvas.draws());
     EXPECT_EQ(canvas.draw_count(), 1u);
     EXPECT_EQ(rect_commands(*recorder.scene()).size(), 1u);
+}
+
+TEST(CanvasChecks, TheDrawCallbackIsClippedToTheCanvas) {
+    // arrange a canvas whose callback paints past its extent (§6.4)
+    BindingEngine engine;
+    Canvas canvas(&engine);
+    const Rect bounds = Rect::from_origin_size(Point{10.0f, 20.0f}, Size{40.0f, 30.0f});
+    canvas.arrange(bounds);
+    canvas.set_draw([](RenderContext& context) { context.draw_rect(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}), {}); });
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 200.0f}, 1.0f));
+    // act
+    canvas.render(recorder);
+    // assert the callback is clipped to the canvas, so its overflow cannot outlive a partial redraw (§6.4)
+    ASSERT_EQ(recorder.scene()->command_count(), 1u);
+    EXPECT_EQ(recorder.scene()->commands().front().clip(), bounds);
 }
 
 TEST(CanvasChecks, AnEmptyCanvasRecordsNothing) {
@@ -4248,6 +4294,25 @@ TEST(FocusRingChecks, AFocusedControlStrokesARingOutsideItsPlate) {
     const float offset = theme.metrics().focus_ring_offset;
     EXPECT_LT(rects[1].x, rects[0].x - offset + 0.001f);
     EXPECT_GT(rects[1].width, rects[0].width);
+}
+
+TEST(FocusRingChecks, TheDamageAreaIncludesTheRingOutsideThePlate) {
+    // arrange a themed control whose ring paints outside its arranged plate (§6.1)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = ThemeBuilder::dark(Accents{});
+    Button button(&engine, &text_engine, "Press");
+    button.set_theme(&theme);
+    const Rect bounds = Rect::from_origin_size(Point{10.0f, 10.0f}, Size{60.0f, 20.0f});
+    button.arrange(bounds);
+    // act
+    const Rect damage = button.visual_bounds();
+    // assert the damage area reaches past the plate by the ring offset and its stroke (§6.1)
+    const float offset = theme.metrics().focus_ring_offset;
+    EXPECT_LT(damage.x, bounds.x - offset + 0.001f);
+    EXPECT_LT(damage.y, bounds.y - offset + 0.001f);
+    EXPECT_GT(damage.width, bounds.width + offset * 2.0f);
+    EXPECT_GT(damage.height, bounds.height + offset * 2.0f);
 }
 
 TEST(FocusRingChecks, TheRingStrokesRatherThanFills) {
@@ -7314,6 +7379,21 @@ TEST(PanelChecks, RendersItsFaceAndBorderThroughTheTheme) {
     EXPECT_EQ(plate.paint().stroke, Color::rgb(0.5f, 0.6f, 0.7f));
 }
 
+TEST(PanelChecks, AShrinkingBorderDamagesItsOldFringe) {
+    // arrange a panel whose authored border shrinks back to the hairline (§8.4)
+    BindingEngine engine;
+    Panel panel(&engine);
+    const Rect bounds = Rect::from_origin_size(Point{10.0f, 20.0f}, Size{80.0f, 40.0f});
+    panel.arrange(bounds);
+    panel.set_border_width(8.0f);
+    panel.clear_damage_region();
+    // act
+    panel.set_border_width(0.0f);
+    // assert the old stroke width is part of the damage, which a post-change invalidate would miss (§6.1)
+    ASSERT_TRUE(panel.damage_region().has_value());
+    EXPECT_EQ(*panel.damage_region(), bounds.inflated(8.0f));
+}
+
 TEST(PanelChecks, MeasuresChildrenInsideThePaddingAndSpacing) {
     // arrange two fixed children, which make the panel extent arithmetic (§8.2)
     BindingEngine engine;
@@ -7634,6 +7714,28 @@ TEST(ComboBoxChecks, ATriggerPressTogglesThePopup) {
     // assert the second press closes the popup again (§8.3)
     EXPECT_FALSE(combo.expanded());
     EXPECT_TRUE(second.handled);
+}
+
+TEST(ComboBoxChecks, TheOpenPopupIsPartOfTheDamageArea) {
+    // arrange an open combo box whose popup hangs below its trigger (§8.3)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ComboBox combo(&engine, &text_engine);
+    combo.set_items({"Alpha", "Beta"});
+    combo.arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{160.0f, 28.0f}));
+    combo.open();
+    // act
+    const Rect visual = combo.visual_bounds();
+    // assert the damage covers the popup below the trigger, not only the trigger plate (§6.1)
+    EXPECT_GT(visual.height, 28.0f);
+    // act a close erases the popup area as well as the trigger (§6.1)
+    combo.clear_damage_region();
+    combo.close();
+    // assert the old popup is part of the damage, because hiding it leaves stale rows otherwise (§6.1)
+    ASSERT_TRUE(combo.damage_region().has_value());
+    EXPECT_GT(combo.damage_region()->height, 28.0f);
+    // assert the damage covers exactly the area the open popup reported, which is the region that turned stale (§6.1)
+    EXPECT_EQ(*combo.damage_region(), visual);
 }
 
 TEST(ComboBoxChecks, APressOnAnOptionChoosesIt) {
@@ -8327,4 +8429,66 @@ TEST(SemanticWalkChecks, AContainerWithoutAProviderWalksItsSubtree) {
     ASSERT_NE(found, nullptr);
     EXPECT_EQ(found->role(), SemanticRole::Button);
     EXPECT_EQ(found->name(), "Deep");
+}
+
+TEST(ScrollViewChecks, TheVisualBoundsStayInsideTheViewport) {
+    // arrange a view showing the middle of ten thousand pixels of content (§8.2, §6.1)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<WidgetChildNode>();
+    content->m_intrinsic = Size{400.0f, 10000.0f};
+    view.add_child(std::move(content));
+    const Rect bounds = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{400.0f, 600.0f});
+    Size measured{};
+    view.measure(SizeConstraints::tight(Size{400.0f, 600.0f}), measured);
+    view.arrange(bounds);
+    view.set_offset(500.0f);
+    view.arrange(bounds);
+    ASSERT_FLOAT_EQ(view.offset(), 500.0f);
+    // act
+    const Rect visual = view.visual_bounds();
+    // assert the content scrolled away is clipped, so it never widens the damage the view reports (§6.1, §6.2)
+    EXPECT_EQ(visual, bounds);
+}
+
+TEST(ScrollViewChecks, AnInvalidationIsBoundedByTheViewport) {
+    // arrange a view whose content reaches far above and below the viewport (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto child = std::make_unique<WidgetChildNode>();
+    WidgetChildNode* content = child.get();
+    content->m_intrinsic = Size{400.0f, 10000.0f};
+    view.add_child(std::move(child));
+    const Rect bounds = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{400.0f, 600.0f});
+    Size measured{};
+    view.measure(SizeConstraints::tight(Size{400.0f, 600.0f}), measured);
+    view.arrange(bounds);
+    view.set_offset(500.0f);
+    view.arrange(bounds);
+    view.clear_damage_region();
+    // act the content asks for a redraw, which the view clips to its viewport (§6.1, §6.2)
+    content->invalidate();
+    // assert the content's whole extent never widens the damage, because only the viewport shows it (§6.1)
+    ASSERT_TRUE(view.damage_region().has_value());
+    EXPECT_EQ(*view.damage_region(), bounds);
+}
+
+TEST(ScrollViewChecks, AScrollDamagesOnlyTheViewport) {
+    // arrange a view showing one page of ten thousand pixels of content (§8.2)
+    BindingEngine engine;
+    ScrollView view(&engine);
+    auto content = std::make_unique<WidgetChildNode>();
+    content->m_intrinsic = Size{400.0f, 10000.0f};
+    view.add_child(std::move(content));
+    const Rect bounds = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{400.0f, 600.0f});
+    Size measured{};
+    view.measure(SizeConstraints::tight(Size{400.0f, 600.0f}), measured);
+    view.arrange(bounds);
+    view.clear_damage_region();
+    // act
+    view.set_offset(600.0f);
+    view.arrange(bounds);
+    // assert the old and new placements are both clipped to the viewport rather than the content extent (§6.1)
+    ASSERT_TRUE(view.damage_region().has_value());
+    EXPECT_EQ(*view.damage_region(), bounds);
 }

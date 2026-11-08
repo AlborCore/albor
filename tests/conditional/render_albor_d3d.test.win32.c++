@@ -143,6 +143,225 @@ TEST(AlborRendererBackendChecks, ClearsAnEmptyOffscreenFrameToTransparent) {
     }
 }
 
+TEST(AlborRendererBackendChecks, APartialFramePreservesPixelsOutsideItsDamage) {
+    // arrange a full frame that paints the whole target blue (§6.1)
+    AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{8.0f, 8.0f}, 1.0f);
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(surface, nullptr);
+    const Rect full_rect = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    backend.execute_frame(*surface, FrameScene(metrics, Color::rgb(0.0f, 0.0f, 1.0f)));
+    // arrange a partial frame that changes only the top left corner (§6.1)
+    const Rect damage = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{4.0f, 4.0f});
+    FrameScene partial_scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f), damage);
+    DrawCommand green = DrawCommand::rectangle(damage, Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f)});
+    green.set_clip(full_rect);
+    DrawCommand outside = DrawCommand::rectangle(Rect::from_origin_size(Point{6.0f, 6.0f}, Size{2.0f, 2.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    outside.set_clip(full_rect);
+    partial_scene.add_command(std::move(green));
+    partial_scene.add_command(std::move(outside));
+    // act
+    backend.execute_frame(*surface, partial_scene);
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    // assert the damaged corner is green and the untouched corner remains the previous blue (§6.1)
+    ASSERT_EQ(pixels.size(), 8u * 8u * 4u);
+    const std::size_t changed = (1u * 8u + 1u) * 4u;
+    EXPECT_EQ(pixels[changed], 0u);
+    EXPECT_EQ(pixels[changed + 1u], 255u);
+    EXPECT_EQ(pixels[changed + 2u], 0u);
+    const std::size_t untouched = (6u * 8u + 6u) * 4u;
+    EXPECT_EQ(pixels[untouched], 0u);
+    EXPECT_EQ(pixels[untouched + 1u], 0u);
+    EXPECT_EQ(pixels[untouched + 2u], 255u);
+}
+
+TEST(AlborRendererBackendChecks, APartialFrameMapsItsDamageThroughTheDeviceScale) {
+    // arrange a two-to-one surface, where logical damage and physical pixels differ (§6.1, AD-27)
+    AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{4.0f, 4.0f}, 2.0f);
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(surface, nullptr);
+    const Rect full_rect = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    backend.execute_frame(*surface, FrameScene(metrics, Color::rgb(0.0f, 0.0f, 1.0f)));
+    const Rect damage = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{2.0f, 2.0f});
+    FrameScene partial_scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f), damage);
+    DrawCommand green = DrawCommand::rectangle(damage, Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f)});
+    green.set_clip(full_rect);
+    partial_scene.add_command(std::move(green));
+    // act
+    backend.execute_frame(*surface, partial_scene);
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    // assert the logical damage covers the physical top left and the rest keeps the previous blue (§6.1)
+    ASSERT_EQ(pixels.size(), 8u * 8u * 4u);
+    const std::size_t changed = (2u * 8u + 2u) * 4u;
+    EXPECT_EQ(pixels[changed + 1u], 255u);
+    const std::size_t untouched = (6u * 8u + 6u) * 4u;
+    EXPECT_EQ(pixels[untouched + 2u], 255u);
+}
+
+TEST(AlborRendererBackendChecks, APartialFrameOnAFreshTargetFillsTheBackground) {
+    // arrange a fresh target and a partial scene, which has no prior pixels to load (§6.1)
+    AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{8.0f, 8.0f}, 1.0f);
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(surface, nullptr);
+    const Rect damage = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{4.0f, 4.0f});
+    const FrameScene scene(metrics, Color::rgb(1.0f, 0.0f, 0.0f), damage);
+    // act
+    backend.execute_frame(*surface, scene);
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    // assert the refused partial hint made a full background frame, so no pixel is undefined (§6.1)
+    ASSERT_EQ(pixels.size(), 8u * 8u * 4u);
+    for (std::size_t pixel = 0; pixel < 64u; pixel++) {
+        EXPECT_EQ(pixels[pixel * 4u], 255u);
+        EXPECT_EQ(pixels[pixel * 4u + 3u], 255u);
+    }
+}
+
+TEST(AlborRendererBackendChecks, APartialFrameWithATranslucentBackgroundIsAFullFrame) {
+    // arrange a full translucent target, which a partial frame cannot reproduce with an opaque replacement (§6.1)
+    AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{8.0f, 8.0f}, 1.0f);
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(surface, nullptr);
+    const Color background = Color::rgba(0.0f, 0.0f, 1.0f, 0.5f);
+    backend.execute_frame(*surface, FrameScene(metrics, background));
+    const Rect damage = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{4.0f, 4.0f});
+    const FrameScene partial(metrics, background, damage);
+    // act
+    backend.execute_frame(*surface, partial);
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    // assert the alpha is the background alpha everywhere, because a translucent scene stays full (§6.1)
+    ASSERT_EQ(pixels.size(), 8u * 8u * 4u);
+    for (std::size_t pixel = 0; pixel < 64u; pixel++)
+        EXPECT_NEAR(pixels[pixel * 4u + 3u], 128u, 1u);
+}
+
+TEST(AlborRendererBackendChecks, TheSurfaceKeepsItsTargetBetweenFrames) {
+    // arrange a surface over a device, which is what stage one asks before it culls (§6.1)
+    AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{8.0f, 8.0f}, 1.0f);
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(surface, nullptr);
+    // act, assert the private target is reported as retained, so a culled scene may load it (§6.1, §6.3)
+    EXPECT_TRUE(surface->retains_target());
+}
+
+TEST(AlborRendererBackendChecks, ACulledSceneOnAFreshTargetIsRefused) {
+    // arrange a fresh target and a culled scene, which has no prior pixels to preserve (§6.1)
+    AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{8.0f, 8.0f}, 1.0f);
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(surface, nullptr);
+    const Rect full_rect = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    const Rect damage = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{4.0f, 4.0f});
+    FrameScene scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f), damage, true);
+    DrawCommand green = DrawCommand::rectangle(damage, Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f)});
+    green.set_clip(full_rect);
+    scene.add_command(std::move(green));
+    // act
+    const FrameOutcome outcome = backend.execute_frame(*surface, scene);
+    // assert the surface refused, because a culled list on a fresh target would lose the rest of the frame (§6.1)
+    EXPECT_EQ(outcome, FrameOutcome::RefusedNoRetention);
+    // assert nothing was presented, so the window keeps the frame it already had (§6.1)
+    EXPECT_TRUE(surface->read_pixels().empty());
+}
+
+TEST(AlborRendererBackendChecks, ACulledSceneDrawsInsideItsDamage) {
+    // arrange a full blue target, which is what a culled scene loads (§6.1)
+    AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{8.0f, 8.0f}, 1.0f);
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(surface, nullptr);
+    const Rect full_rect = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    backend.execute_frame(*surface, FrameScene(metrics, Color::rgb(0.0f, 0.0f, 1.0f)));
+    // arrange a culled scene whose only command reaches the damage (§6.1)
+    const Rect damage = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{4.0f, 4.0f});
+    FrameScene culled(metrics, Color::rgb(0.0f, 0.0f, 1.0f), damage, true);
+    DrawCommand green = DrawCommand::rectangle(damage, Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f)});
+    green.set_clip(full_rect);
+    culled.add_command(std::move(green));
+    // act
+    const FrameOutcome outcome = backend.execute_frame(*surface, culled);
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    // assert the culled scene presented and only the damaged corner changed (§6.1)
+    EXPECT_EQ(outcome, FrameOutcome::Presented);
+    ASSERT_EQ(pixels.size(), 8u * 8u * 4u);
+    const std::size_t changed = (1u * 8u + 1u) * 4u;
+    EXPECT_EQ(pixels[changed], 0u);
+    EXPECT_EQ(pixels[changed + 1u], 255u);
+    const std::size_t untouched = (6u * 8u + 6u) * 4u;
+    EXPECT_EQ(pixels[untouched + 2u], 255u);
+}
+
+TEST(AlborRendererBackendChecks, ACulledFrameMatchesTheWholeFrameOverTheSameDamage) {
+    // arrange two targets that begin from the same whole frame (§6.1)
+    AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{8.0f, 8.0f}, 1.0f);
+    const std::unique_ptr<RenderSurface> whole = backend.create_surface(NativeWindowHandle{}, metrics);
+    const std::unique_ptr<RenderSurface> culled = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(whole, nullptr);
+    ASSERT_NE(culled, nullptr);
+    const Rect full_rect = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    const Rect damage = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{4.0f, 4.0f});
+    const Rect far = Rect::from_origin_size(Point{6.0f, 6.0f}, Size{2.0f, 2.0f});
+    FrameScene base(metrics, Color::rgb(0.0f, 0.0f, 0.0f));
+    DrawCommand base_far = DrawCommand::rectangle(far, Paint{.fill = Color::rgb(0.0f, 0.0f, 1.0f)});
+    base_far.set_clip(full_rect);
+    base.add_command(std::move(base_far));
+    backend.execute_frame(*whole, base);
+    backend.execute_frame(*culled, base);
+    // arrange the same change twice, once with the whole list and once with the list culled (§6.1)
+    FrameScene full_change(metrics, Color::rgb(0.0f, 0.0f, 0.0f), damage);
+    DrawCommand full_green = DrawCommand::rectangle(damage, Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f)});
+    full_green.set_clip(full_rect);
+    DrawCommand full_far = DrawCommand::rectangle(far, Paint{.fill = Color::rgb(0.0f, 0.0f, 1.0f)});
+    full_far.set_clip(full_rect);
+    full_change.add_command(std::move(full_green));
+    full_change.add_command(std::move(full_far));
+    FrameScene culled_change(metrics, Color::rgb(0.0f, 0.0f, 0.0f), damage, true);
+    DrawCommand culled_green = DrawCommand::rectangle(damage, Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f)});
+    culled_green.set_clip(full_rect);
+    culled_change.add_command(std::move(culled_green));
+    // act
+    backend.execute_frame(*whole, full_change);
+    backend.execute_frame(*culled, culled_change);
+    // assert a list culled at stage one presents the same pixels as the whole list (§6.1)
+    EXPECT_EQ(whole->read_pixels(), culled->read_pixels());
+}
+
+TEST(AlborRendererBackendChecks, TwoPartialFramesKeepEachOthersPixels) {
+    // arrange a full blue target and two adjacent deltas, which must both survive (§6.1)
+    AlborRendererBackend backend;
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{8.0f, 8.0f}, 1.0f);
+    const std::unique_ptr<RenderSurface> surface = backend.create_surface(NativeWindowHandle{}, metrics);
+    ASSERT_NE(surface, nullptr);
+    const Rect full_rect = Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size);
+    backend.execute_frame(*surface, FrameScene(metrics, Color::rgb(0.0f, 0.0f, 1.0f)));
+    const Rect first_damage = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{2.0f, 2.0f});
+    FrameScene first_scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f), first_damage);
+    DrawCommand green = DrawCommand::rectangle(first_damage, Paint{.fill = Color::rgb(0.0f, 1.0f, 0.0f)});
+    green.set_clip(full_rect);
+    first_scene.add_command(std::move(green));
+    backend.execute_frame(*surface, first_scene);
+    const Rect second_damage = Rect::from_origin_size(Point{2.0f, 2.0f}, Size{2.0f, 2.0f});
+    FrameScene second_scene(metrics, Color::rgb(0.0f, 0.0f, 0.0f), second_damage);
+    DrawCommand red = DrawCommand::rectangle(second_damage, Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)});
+    red.set_clip(full_rect);
+    second_scene.add_command(std::move(red));
+    // act
+    backend.execute_frame(*surface, second_scene);
+    const std::vector<std::uint8_t> pixels = surface->read_pixels();
+    // assert the first delta kept its green and the second painted red over the blue base (§6.1)
+    ASSERT_EQ(pixels.size(), 8u * 8u * 4u);
+    const std::size_t first_pixel = (1u * 8u + 1u) * 4u;
+    EXPECT_EQ(pixels[first_pixel + 1u], 255u);
+    const std::size_t second_pixel = (3u * 8u + 3u) * 4u;
+    EXPECT_EQ(pixels[second_pixel], 255u);
+    const std::size_t base_pixel = (5u * 8u + 5u) * 4u;
+    EXPECT_EQ(pixels[base_pixel + 2u], 255u);
+}
+
 TEST(AlborRendererBackendChecks, ReadsBackInCanonicalRgbaOrder) {
     // arrange a colour with three distinct channels, which a rotation or a lost channel would expose (AD-26)
     AlborRendererBackend backend;

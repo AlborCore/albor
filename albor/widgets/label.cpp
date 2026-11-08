@@ -50,8 +50,12 @@ namespace albor
         const Rect& b = bounds();
         // the run centres in the box, so a label stretched by a list row lines up on the row's middle (§8.2)
         const float offset_y = std::max(0.0f, (b.height - m_layout.size.height) * 0.5f);
+        // the run is clipped to the label box, because a narrow row must not paint over its neighbour (§6.2)
+        context.save();
+        context.clip_rect(b);
         // the run is recorded at the top of its box, and the colour resolves by role and state (§6.1, §9.1)
         context.draw_text(m_layout, Point{.x = b.x, .y = b.y + offset_y}, {.fill = foreground_color()});
+        context.restore();
     }
 
     void Label::dispatch_event(Event& event) {

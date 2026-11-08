@@ -56,6 +56,16 @@ namespace albor
         return m_clip.rect;
     }
 
+    bool SceneRecorder::has_damage_filter() const {
+        // an empty filter culls nothing, so the recorder answers as an unfiltered one (§6.1)
+        return m_damage_filter.has_value() && !m_damage_filter->empty();
+    }
+
+    Rect SceneRecorder::damage_filter() const {
+        // a recorder with no filter reports an empty region, which a culling node never reads (§6.1)
+        return m_damage_filter.value_or(Rect{});
+    }
+
     void SceneRecorder::set_opacity(float opacity) {
         // the opacity is clamped into the unit range, because a binding computed from data can land outside it (§6.1)
         m_opacity = std::clamp(opacity, 0.0f, 1.0f);
@@ -198,11 +208,33 @@ namespace albor
         m_background = background;
     }
 
+    void SceneRecorder::set_damage_rect(std::optional<Rect> damage) {
+        // the damage region is the part stage two may redraw, or nothing for a full frame (§6.1)
+        m_damage = std::move(damage);
+    }
+
+    void SceneRecorder::set_damage_filter(std::optional<Rect> damage) {
+        // the filter is the part of the frame stage one keeps, or nothing to keep all of it (§6.1)
+        m_damage_filter = std::move(damage);
+    }
+
+    bool SceneRecorder::keeps(const DrawCommand& command) const {
+        // a recorder with no filter keeps every command, which is the full frame case (§6.1)
+        if (!has_damage_filter())
+            return true;
+        // a layer marker carries no geometry, so it stays paired with its sibling either way (§6.2)
+        if (command.kind() == DrawCommandKind::LayerPush || command.kind() == DrawCommandKind::LayerPop)
+            return true;
+        // a command that draws nothing contributes no pixels, so it is dropped with the rest (§6.1)
+        if (command.draws_nothing())
+            return false;
+        // a command whose damaged area misses the region cannot paint inside it (§6.1)
+        return !command.damage_bounds().intersect(*m_damage_filter).empty();
+    }
+
     Rect SceneRecorder::to_scene(const Rect& rect) const {
-        // the origin maps through the transform, so a nested node lands where its parent placed it (§6.1)
-        const Point mapped = to_scene(Point{.x = rect.x, .y = rect.y});
-        // the extent scales with the transform, so a scaled node draws a scaled rectangle (§6.1)
-        return Rect{.x = mapped.x, .y = mapped.y, .width = rect.width * m_transform.scale_x, .height = rect.height * m_transform.scale_y};
+        // the whole transform maps both corners, so a scaled, rotated or sheared record lands where stage two draws (§6.1)
+        return m_transform.map(rect);
     }
 
     Point SceneRecorder::to_scene(const Point& point) const {
@@ -211,11 +243,16 @@ namespace albor
     }
 
     std::shared_ptr<const FrameScene> SceneRecorder::scene() const {
-        // the recorded commands build the scene, which is what stage two replays (§6.1)
-        std::shared_ptr<FrameScene> scene = std::make_shared<FrameScene>(m_metrics, m_background);
+        // a scene recorded against a filter omits whatever lay outside it, which needs a retained target (§6.1)
+        const bool culls_commands = has_damage_filter();
+        // the scene carries the damage, the background and whether its command list is whole (§6.1)
+        std::shared_ptr<FrameScene> scene = std::make_shared<FrameScene>(m_metrics, m_background, m_damage, culls_commands);
         // the commands travel into the scene in paint order, because stage two replays them as recorded (§6.1, AD-18)
-        for (const DrawCommand& command : m_commands)
-            scene->append_command(command);
+        for (const DrawCommand& command : m_commands) {
+            // a command outside the damage region is left out, which is what stage one saves (§6.1)
+            if (keeps(command))
+                scene->append_command(command);
+        }
         // a layer the caller left open is closed at the seal, so a malformed tree still composites once (§6.2)
         for (std::size_t open = m_layers; open > 0; --open) {
             // the synthesized pop carries the clip the recorder ended under, which the replay ignores for markers (§6.2)
@@ -258,7 +295,7 @@ namespace albor
             number(*child);
     }
 
-    std::shared_ptr<const FrameScene> SceneBuilder::build(UiNode& root, WindowMetrics metrics, Color background) {
+    std::shared_ptr<const FrameScene> SceneBuilder::build(UiNode& root, WindowMetrics metrics, Color background, bool cull_commands) {
         m_visited = 0;
         m_drawn = 0;
         m_laid_out = 0;
@@ -280,17 +317,42 @@ namespace albor
             Size measured{};
             root.measure(SizeConstraints::tight(metrics.logical_size), measured);
         }
-        // the arrange places every node, and it reuses the last measure wherever the extent did not change (§8.2)
+        // the arrange places every node, reusing the last measure when the extent holds (§8.2)
         if (arrange) {
             // the root is arranged to the full window, because a ui tree covers its surface (§8.2)
             root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size));
         }
+        // a measure pass can resize any node, while an arrange pass records the old and new extents (§6.1, §8.2)
+        const bool full_frame = resized || measure;
+        // the damage is read after layout, because a moved node reports where it now draws (§8.2)
+        std::optional<Rect> damage;
+        if (!full_frame) {
+            // the root carries the union of every invalidation since the last frame (§6.1)
+            damage = root.damage_region();
+            // one logical pixel covers the antialias fringe a painted edge can leave (§6.1)
+            if (damage)
+                damage = damage->inflated(1.0f);
+            // a node outside the surface contributes no pixels, so its damage is clipped to the frame (§6.1)
+            if (damage)
+                damage = damage->intersect(Rect::from_origin_size(Point{0.0f, 0.0f}, metrics.logical_size));
+            // an empty region falls back to the full frame rather than lying about it (§6.1)
+            if (damage && damage->empty())
+                damage.reset();
+        }
+        // the damage is spent before recording, so an invalidation raised while drawing stays for the next frame (§6.1)
+        root.clear_damage_region();
+        // a culled scene needs a surface that keeps its target, which the pipeline reports (§6.1)
+        const bool culls = cull_commands && damage.has_value();
         SceneRecorder recorder(metrics);
         // the resolver is handed on, because an embedded run expands into outlines during this recording (§6.4, AD-34)
         recorder.set_outline_resolver(m_outline_resolver);
         // the outline cache is handed on as well, because the recorder itself is built per frame (§6.4, AD-06)
         recorder.set_outline_cache(&m_outline_cache);
         recorder.set_background(background);
+        // the damage region is what stage two redraws when the list is whole, which any surface receives (§6.1)
+        recorder.set_damage_rect(damage);
+        // only a retaining surface may receive a culled list, which is the stage one half of the damage pipeline (§6.1)
+        recorder.set_damage_filter(culls ? damage : std::nullopt);
         recorder.save();
         // an invisible tree draws nothing, so the scene carries only the background (§6.1)
         const bool draws = root.visible();
@@ -298,15 +360,20 @@ namespace albor
             root.render(recorder);
         recorder.restore();
         // one walk counts the phases of the build, the layout and the record pass both touched the subtree (§6.1, §8.2)
-        root.visit([this, draws](const UiNode& node) {
+        root.visit([this, draws, &damage](const UiNode& node) {
             // every node of the subtree was numbered and walked (§6.1)
             m_visited++;
             // a node the layout gave area is placed, while a zero extent node occupies no cell of the frame (§8.2)
             if (!node.bounds().empty())
                 m_laid_out++;
-            // only a visible node reaches the renderer, because stage one visits the visible tree (§6.1)
-            if (draws && node.visible())
-                m_drawn++;
+            // an invisible tree draws nothing, so no node is counted as drawn (§6.1)
+            if (!draws || !node.visible())
+                return;
+            // a culled frame draws only the nodes whose subtree reaches the damage, where an empty one is whole (§6.1)
+            if (damage && node.visual_bounds().intersect(*damage).empty())
+                return;
+            // the node reached the renderer, which is what the drawn count reports (§6.1)
+            m_drawn++;
         });
         // the dirty flags clear only after a successful build, so a failed build keeps them (§6.1)
         root.clear_dirty();

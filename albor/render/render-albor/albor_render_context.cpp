@@ -581,7 +581,7 @@ namespace albor::render
         // the picture nests under the transform the scene gave it, which applies before the current one (§6.4)
         const Transform outer = m_transform;
         m_transform = transform.then(outer);
-        // the command list replays through this context, which is the one replay a frame and a picture share (§6.1, §6.4)
+        // the inner commands draw in picture space, while the clip is scene space, so the whole list replays (§6.1, §6.4)
         replay_commands(picture->commands(), *this, m_extent);
         // the transform the draw was recorded under is restored (§6.4)
         m_transform = outer;

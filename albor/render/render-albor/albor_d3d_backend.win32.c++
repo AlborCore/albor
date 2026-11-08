@@ -18,6 +18,7 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -474,6 +475,8 @@ namespace albor::render
             [[nodiscard]] bool valid() const override;
             [[nodiscard]] const WindowMetrics& metrics() const override;
             void resize(const WindowMetrics& metrics) override;
+            [[nodiscard]] bool retains_target() const override;
+            bool set_damage_region(const std::optional<Rect>& damage) override;
             RenderContext& begin_frame() override;
             void end_frame() override;
             [[nodiscard]] std::vector<std::uint8_t> read_pixels() const override;
@@ -549,6 +552,12 @@ namespace albor::render
 
             // the metrics the surface presents at (§6.1, D9.1)
             WindowMetrics m_metrics;
+
+            // the region the next frame may redraw, or nothing for a full target clear (§6.1)
+            std::optional<Rect> m_damage;
+
+            // whether the target carries a completed full frame, which a partial frame needs before it loads (§6.1)
+            bool m_target_initialized = false;
 
             // the colour target every frame draws into, which the read back and the present both read (§6.3)
             ComPtr<ID3D11Texture2D> m_target;
@@ -819,6 +828,8 @@ namespace albor::render
             m_target_view = std::move(view);
             // the new target carries no finished frame yet, so a read back waits for one (§6.3)
             m_finished = 0;
+            // a reallocated target has no pixels to preserve, so the next frame must be full (§6.1)
+            m_target_initialized = false;
         }
 
         void AlborRenderSurface::resize(const WindowMetrics& metrics) {
@@ -833,6 +844,8 @@ namespace albor::render
                 m_resize_pending.store(true);
                 return;
             }
+            // a target replaced by a resize has no pixels to preserve, so no old damage survives it (§6.1)
+            m_damage.reset();
             // the previous target is kept aside, so a refused resize leaves the surface on the extent it presented (§6.3)
             ComPtr<ID3D11Texture2D> previous_target = m_target;
             ComPtr<ID3D11RenderTargetView> previous_view = m_target_view;
@@ -858,6 +871,23 @@ namespace albor::render
             m_target = std::move(previous_target);
             m_target_view = std::move(previous_view);
             m_finished = previous_finished;
+        }
+
+        bool AlborRenderSurface::retains_target() const {
+            // the private target keeps its pixels between frames, which is what a partial frame loads (§6.1, §6.3)
+            return true;
+        }
+
+        bool AlborRenderSurface::set_damage_region(const std::optional<Rect>& damage) {
+            // a partial frame needs a target that already carries a full frame, because it loads rather than clears (§6.1)
+            if (damage.has_value() && !m_target_initialized) {
+                // the hint is refused, so stage two draws the full command list instead (§6.1)
+                m_damage.reset();
+                return false;
+            }
+            // the surface receives the region before begin, so encode knows whether the target may be loaded (§6.1)
+            m_damage = damage;
+            return damage.has_value();
         }
 
         RenderContext& AlborRenderSurface::begin_frame() {
@@ -891,10 +921,15 @@ namespace albor::render
 
         void AlborRenderSurface::end_frame() {
             // an end without a begun frame is a no operation rather than an error (§6.1)
-            if (!m_begun.load())
+            if (!m_begun.load()) {
+                // a damage hint that never began a frame is spent, so it cannot leak into the next one (§6.1)
+                m_damage.reset();
                 return;
+            }
             // the present is what the frame spends after the scene is recorded, which the profile reports (§6.3)
             const FrameProfileScope present_scope;
+            // a full frame is the one that establishes the target a later partial frame loads (§6.1)
+            const bool full_frame = !m_damage.has_value();
             // the batch is complete once the scene is recorded, so its size is what the profile reports (§6.3)
             profile_batch(m_batch.vertices.size(), m_batch.indices.size() / 3u, m_batch.draws.size(), m_batch.shadows.size(), m_glyph_meshes.count());
             bool finished = false;
@@ -917,7 +952,7 @@ namespace albor::render
                 const FrameProfileScope upload_scope;
                 upload_textures();
                 profile_upload(upload_scope.elapsed_ms());
-                // the encode replays every recorded draw, which the clear begins (§6.3)
+                // the encode replays the recorded draws, which the clear begins (§6.3)
                 const FrameProfileScope encode_scope;
                 encode();
                 profile_encode(encode_scope.elapsed_ms());
@@ -931,6 +966,11 @@ namespace albor::render
                     m_finished++;
                 // the frame is no longer in flight, and a resize that waited for it is taken together (§6.2)
                 m_begun.store(false);
+                // a full frame initializes the target, while a partial keeps the flag it found (§6.1)
+                if (full_frame && m_target != nullptr)
+                    m_target_initialized = true;
+                // the damage is spent, so the next frame starts full unless told otherwise (§6.1)
+                m_damage.reset();
                 pending = m_resize_pending.exchange(false);
                 pending_metrics = m_pending_metrics;
             }
@@ -1419,8 +1459,8 @@ namespace albor::render
             frame.view = m_target_view;
             frame.width = std::max<UINT>(1u, static_cast<UINT>(m_metrics.pixel_size.width));
             frame.height = std::max<UINT>(1u, static_cast<UINT>(m_metrics.pixel_size.height));
-            // the frame starts from a transparent clear, which an empty frame leaves (§6.1)
-            bind_target(frame, true);
+            // a full frame clears the target, while a partial frame keeps the pixels outside its damage (§6.1)
+            bind_target(frame, !m_damage.has_value());
             context->RSSetState(state.rasterizer.Get());
             // the retained vertex and index buffers take the batch, which a steady frame rewrites (§6.3, AD-06)
             const bool has_vertices = fill_vertices(m_batch_vertices, device, context, m_batch.vertices.data(), m_batch.vertices.size());

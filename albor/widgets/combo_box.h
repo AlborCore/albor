@@ -39,6 +39,9 @@ namespace albor
         // override: place the trigger, while the popup is placed by the same bounds when it opens (§8.2)
         void arrange(const Rect& bounds) override;
 
+        // override: include the open popup, because it paints outside the trigger (§6.1, §8.3)
+        [[nodiscard]] Rect visual_bounds() const override;
+
         // override: record the trigger and the arrow, while the popup layer records the list (§6.1)
         void paint_content(RenderContext& context) override;
 

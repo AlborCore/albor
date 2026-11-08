@@ -34,12 +34,17 @@ namespace albor
             // a stopped executor accepts nothing, because its thread is gone (§6.1)
             if (m_stopping)
                 return false;
-            // a pending frame the new one replaces is a frame the ui thread dropped, which the profile counts (§6.1)
-            if (!m_requests.empty())
-                profile_coalesced();
-            // an older pending frame is dropped, so the render thread always draws the newest state (§6.1)
-            m_requests.clear();
-            // append to list of pending frame requests
+            // a full frame replaces the pending work for its own surface, because it carries that surface's state (§6.1)
+            if (!scene->is_partial()) {
+                // every replaced frame is counted, because each one was work the ui thread dropped (§6.1)
+                const std::size_t before = m_requests.size();
+                // another surface's pending delta is kept, because one executor may serve more than one surface (§6.1)
+                std::erase_if(m_requests, [&surface](const FrameRequest& request) { return request.surface == &surface; });
+                // the cleared requests are the coalesced count, which keeps the profile honest (§6.1)
+                for (std::size_t index = m_requests.size(); index < before; index++)
+                    profile_coalesced();
+            }
+            // a partial frame is a delta, so a pending full or earlier partial executes first (§6.1)
             m_requests.emplace_back(&surface, scene);
         }
         // the render thread is woken so that the frame is presented without waiting for the next native event (§6.1)
@@ -90,6 +95,11 @@ namespace albor
         return m_dropped;
     }
 
+    bool RenderExecutor::consume_damage_refusal() {
+        // the flag is exchanged rather than read, so one refusal asks for exactly one full rebuild (§6.1)
+        return m_damage_refused.exchange(false);
+    }
+
     void RenderExecutor::run() {
         // the loop ends only when the ui thread asked it to, so a pending frame never keeps it alive (§6.1)
         while (true) {
@@ -137,13 +147,18 @@ namespace albor
         }
         // stage two only touches the immutable scene and the surface, never application state (§6.1, AD-18)
         const FrameProfileScope render_scope;
-        m_backend->execute_frame(*request.surface, *request.scene);
+        const FrameOutcome outcome = m_backend->execute_frame(*request.surface, *request.scene);
         // the whole stage two call is what the render thread spends on the frame, which the profile reports (§6.1)
         profile_render_frame(render_scope.elapsed_ms());
         {
             // the lock is taken to publish the count and to release the flush waiters (§6.1)
             const std::lock_guard<std::mutex> lock(m_mutex);
-            m_executed++;
+            // a surface that refused a culled scene did not present, so the frame is not counted (§6.1)
+            if (outcome == FrameOutcome::Presented)
+                m_executed++;
+            // a surface without a retained target asks the ui thread to rebuild the frame whole (§6.1)
+            if (outcome == FrameOutcome::RefusedNoRetention)
+                m_damage_refused.store(true);
             m_busy = false;
         }
         // a ui thread blocked in flush is released now that the frame is done (§6.1)

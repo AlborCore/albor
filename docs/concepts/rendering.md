@@ -16,6 +16,26 @@ thread never calls application code.
 Because the scene is immutable, a frame can be built while the previous one is still being
 presented, and no lock protects a drawing structure: ownership simply moves.
 
+## Damage regions
+
+An invalidation records the area that changed, not only the fact that something did. The
+frame then carries a damage region, and both stages use it:
+
+- **Scene build** asks the surface whether it keeps its target between frames
+  (`RenderSurface::retains_target`). When it does, the build skips the subtrees that cannot
+  reach the damage and records only the commands that do, so the scene carries a handful of
+  draws instead of the whole tree. When it does not, the whole tree is recorded, because a
+  surface that repaints every pixel needs every command.
+- **Scene execution** replays the scene clipped to the damage region and replaces only those
+  pixels, loading the retained target instead of clearing it. A scene whose command list was
+  culled is refused (`FrameOutcome::RefusedNoRetention`) by a surface that cannot retain its
+  target, and the pipeline rebuilds it whole — a culled scene never reaches a surface that
+  would leave the rest stale.
+
+A resize, a measure pass, a transparent window background, and the first frame after a target
+is allocated always fall back to a whole frame. A stage-one culled scene is therefore an
+optimisation of the same result, never a second set of visibility rules.
+
 ## Backends
 
 Rendering sits behind a stable interface; the backend is **selected by linking**:

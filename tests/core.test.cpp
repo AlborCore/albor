@@ -314,6 +314,47 @@ TEST(Rect, IntersectWithAContainerIsTheContainedRectangle) {
     EXPECT_EQ(overlap, narrow);
 }
 
+TEST(Rect, UnionedCoversBothRectangles) {
+    // arrange two rectangles on opposite corners, so the union spans the gap between them (§6.1)
+    const Rect first = Rect::from_origin_size(Point{10.0f, 20.0f}, Size{30.0f, 40.0f});
+    const Rect second = Rect::from_origin_size(Point{80.0f, 100.0f}, Size{20.0f, 10.0f});
+    // act
+    const Rect unioned = first.unioned(second);
+    // assert the result starts at the earlier edge and ends at the later one (§6.1)
+    EXPECT_FLOAT_EQ(unioned.x, 10.0f);
+    EXPECT_FLOAT_EQ(unioned.y, 20.0f);
+    EXPECT_FLOAT_EQ(unioned.width, 90.0f);
+    EXPECT_FLOAT_EQ(unioned.height, 90.0f);
+}
+
+TEST(Rect, UnionedWithAnEmptyRectangleKeepsTheRealOne) {
+    // arrange a real rectangle and the empty value a hidden node reports (§6.1)
+    const Rect real = Rect::from_origin_size(Point{10.0f, 20.0f}, Size{30.0f, 40.0f});
+    const Rect empty{};
+    // act, assert
+    EXPECT_EQ(real.unioned(empty), real);
+    EXPECT_EQ(empty.unioned(real), real);
+}
+
+TEST(Rect, InflatedGrowsEveryEdge) {
+    // arrange
+    const Rect rect = Rect::from_origin_size(Point{10.0f, 20.0f}, Size{30.0f, 40.0f});
+    // act
+    const Rect inflated = rect.inflated(5.0f);
+    // assert the origin moves back and both extents gain twice the amount (§6.1)
+    EXPECT_FLOAT_EQ(inflated.x, 5.0f);
+    EXPECT_FLOAT_EQ(inflated.y, 15.0f);
+    EXPECT_FLOAT_EQ(inflated.width, 40.0f);
+    EXPECT_FLOAT_EQ(inflated.height, 50.0f);
+}
+
+TEST(Rect, InflatingAnEmptyRectangleKeepsItEmpty) {
+    // arrange
+    const Rect empty{};
+    // act, assert
+    EXPECT_TRUE(empty.inflated(5.0f).empty());
+}
+
 TEST(Rect, FromOriginSizeWithAPositiveExtentIsNotEmpty) {
     // arrange
     const Point origin{0.0f, 0.0f};
@@ -406,6 +447,45 @@ TEST(Transform, ScalingByOneIsTheIdentity) {
     const Point mapped = transform.apply(point);
     // assert
     EXPECT_EQ(mapped, (Point{11.0f, 13.0f}));
+}
+
+TEST(Transform, MapOfARectangleAtTheIdentityIsItself) {
+    // arrange a rectangle and the identity transform (§6.2)
+    const Rect rect = Rect::from_origin_size(Point{10.0f, 20.0f}, Size{30.0f, 40.0f});
+    // act
+    const Rect mapped = Transform{}.map(rect);
+    // assert an identity transform places the rectangle where it was (§6.2)
+    EXPECT_EQ(mapped, rect);
+}
+
+TEST(Transform, MapOfARotatedRectangleCoversEveryCorner) {
+    // arrange a rectangle turned a quarter around the origin (§6.2)
+    const Rect rect = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 20.0f});
+    const Transform rotation{.scale_x = 0.0f, .skew_x = -1.0f, .translate_x = 0.0f, .skew_y = 1.0f, .scale_y = 0.0f, .translate_y = 0.0f};
+    // act
+    const Rect mapped = rotation.map(rect);
+    // assert the bound covers the turned extent rather than the untransformed one (§6.2)
+    EXPECT_FLOAT_EQ(mapped.x, -20.0f);
+    EXPECT_FLOAT_EQ(mapped.y, 0.0f);
+    EXPECT_FLOAT_EQ(mapped.width, 20.0f);
+    EXPECT_FLOAT_EQ(mapped.height, 10.0f);
+}
+
+TEST(Transform, MapOfAScaledRectangleKeepsTheExtentExact) {
+    // arrange a rectangle under a scale, which a device pixel ratio applies to every record (§6.2, AD-27)
+    const Rect rect = Rect::from_origin_size(Point{0.1f, 0.1f}, Size{1.0f, 2.0f});
+    // act
+    const Rect mapped = Transform::scaling(2.0f, 3.0f).map(rect);
+    // assert the extent is the product of the axis and the extent, never a difference of two mapped corners (§6.2)
+    EXPECT_EQ(mapped.width, 2.0f);
+    EXPECT_EQ(mapped.height, 6.0f);
+}
+
+TEST(Transform, MappingAnEmptyRectangleKeepsItEmpty) {
+    // arrange, act
+    const Rect mapped = Transform::translation(5.0f, 7.0f).map(Rect{});
+    // assert an empty rectangle stays the empty rectangle, so a cull test never invents an area (§6.2)
+    EXPECT_EQ(mapped, Rect{});
 }
 
 TEST(Transform, ApplyScalesBeforeItTranslates) {

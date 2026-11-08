@@ -1636,6 +1636,20 @@ TEST(AlborRenderContextChecks, ReplaysAPictureNestedUnderItsTransform) {
     EXPECT_EQ(context.transform(), Transform{});
 }
 
+TEST(AlborRenderContextChecks, ReplaysAPictureItsSceneClipDoesNotReach) {
+    // arrange a picture recorded in its own space, drawn at a translation beyond the narrowed scene clip (§6.1, §6.4)
+    FrameBatch batch;
+    const Rect extent = Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f});
+    AlborRenderContext context(batch, extent, 1.0f);
+    context.clip_rect(Rect::from_origin_size(Point{40.0f, 40.0f}, Size{10.0f, 10.0f}));
+    std::vector<DrawCommand> commands;
+    commands.push_back(DrawCommand::rectangle(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{10.0f, 10.0f}), Paint{.fill = Color::rgb(1.0f, 0.0f, 0.0f)}));
+    // act
+    context.draw_picture(std::make_shared<const PictureResource>(20u, commands), Transform::translation(40.0f, 40.0f));
+    // assert the picture space bound was not culled by a scene space clip, which would drop the visible draw (§6.1)
+    EXPECT_EQ(batch.draws.size(), 1u);
+}
+
 TEST(AlborRenderContextChecks, RefusesAMissingOrEmptyPicture) {
     // arrange
     FrameBatch batch;

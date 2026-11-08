@@ -200,10 +200,17 @@ namespace albor
     }
 
     void UiNode::render_children(RenderContext& context) {
+        // a partial build culls the subtrees that cannot reach the damaged region (§6.1)
+        const bool culling = context.has_damage_filter();
+        // the damage is in scene coordinates, which the current transform maps a subtree bound into (§6.2)
+        const Rect damage = culling ? context.damage_filter() : Rect{};
         // a container draws nothing itself, but still records its children (§6.1)
         for (const auto& child : m_children) {
             // an invisible child is not visited, so the scene carries only what is on screen (§6.1)
             if (!child->visible())
+                continue;
+            // a subtree that cannot reach the damage paints nothing this frame, so it is skipped whole (§6.1)
+            if (culling && context.transform().map(child->visual_bounds()).intersect(damage).empty())
                 continue;
             child->render(context);
         }
@@ -211,6 +218,9 @@ namespace albor
         for (const auto& overlay : m_overlays) {
             // a hidden overlay is not visited, so a dismissed popup leaves no commands (§6.1)
             if (!overlay->visible())
+                continue;
+            // an overlay that misses the damage is skipped like a child, because it paints nothing inside it (§6.1)
+            if (culling && context.transform().map(overlay->visual_bounds()).intersect(damage).empty())
                 continue;
             overlay->render(context);
         }
@@ -280,6 +290,48 @@ namespace albor
         return m_bounds;
     }
 
+    Rect UiNode::own_bounds() const {
+        // a hidden node paints nothing, so it contributes no damage (§6.1)
+        if (!m_visible)
+            return Rect{};
+        // the node starts with its own area, which a control's plate fills (§6.1)
+        Rect visual = m_bounds;
+        // a border strokes outside the plate by half its width, so the damage has to include that fringe (§6.1)
+        if (m_bounds.empty() == false && border_width() > 0.0f)
+            visual = visual.unioned(m_bounds.inflated(border_width()));
+        // a drop shadow paints outside the shape by its offset and its blur reach (§6.2)
+        if (m_bounds.empty() == false && m_drop_shadow.casts()) {
+            // the cast is bounded the same way the scene replay bounds it, so no pixels are left outside (§6.1)
+            const float reach = m_drop_shadow.blur * 3.0f;
+            // the cast's own rectangle moves with the offset before the reach grows it (§6.2)
+            const Rect cast = Rect{.x = m_bounds.x + m_drop_shadow.offset.x - reach, .y = m_bounds.y + m_drop_shadow.offset.y - reach, .width = m_bounds.width + reach * 2.0f, .height = m_bounds.height + reach * 2.0f};
+            // the cast joins the node's own area, because both are painted by this node (§6.1)
+            visual = visual.unioned(cast);
+        }
+        // the node's own paint is what it contributes before its subtree draws (§6.1)
+        return visual;
+    }
+
+    Rect UiNode::visual_bounds() const {
+        // a hidden node paints nothing, so it contributes no damage and its subtree does not draw either (§6.1)
+        if (!m_visible)
+            return Rect{};
+        // the node starts with its own area, which a control's plate fills (§6.1)
+        Rect visual = own_bounds();
+        // a child may paint outside the parent's bounds, so its visible area joins the subtree (§6.1)
+        for (const auto& child : m_children) {
+            // a hidden child paints nothing, and its own visual bounds already answers empty (§6.1)
+            visual = visual.unioned(child->visual_bounds());
+        }
+        // an overlay is painted above the children and may leave the parent's bounds too (§8.3)
+        for (const auto& overlay : m_overlays) {
+            // the overlay's visible area is part of what this subtree can paint (§8.3)
+            visual = visual.unioned(overlay->visual_bounds());
+        }
+        // the subtree's visible area is the whole damage a change in it can touch (§6.1)
+        return visual;
+    }
+
     const Size& UiNode::measured_size() const {
         // the measured size is what the measure phase produced (§8.2)
         return m_measured_size;
@@ -310,14 +362,46 @@ namespace albor
     Align UiNode::vertical_align() const { return m_vertical_align; }
 
     void UiNode::invalidate() {
+        // the node asks for its own visual area, which is what a focus ring, a hover state or a caret changes (§6.1)
+        invalidate(visual_bounds());
+    }
+
+    void UiNode::invalidate(const Rect& damage) {
         // the node itself asks for a redraw (§6.1)
         m_render_dirty = true;
         // the redraw must reach the surface, so the request walks up to the root (§6.1)
-        if (m_parent != nullptr)
-            m_parent->invalidate();
+        if (m_parent != nullptr) {
+            // the parent narrows the area to what it shows, so a clipped away child damages nothing (§6.1)
+            m_parent->invalidate(m_parent->clip_child_damage(damage));
+            return;
+        }
+        // only the root accumulates the region, because it is the one the scene builder reads (§6.1)
+        if (!damage.empty())
+            m_damage_region = m_damage_region ? m_damage_region->unioned(damage) : damage;
         // only the root carries the handler, so exactly one frame is requested per invalidation (§6.1)
-        if (m_invalidation_handler && m_parent == nullptr)
+        if (m_invalidation_handler)
             m_invalidation_handler();
+    }
+
+    const std::optional<Rect>& UiNode::damage_region() const {
+        // the root hands out what its subtree asked to redraw since the last frame (§6.1)
+        return m_damage_region;
+    }
+
+    void UiNode::clear_damage_region() {
+        // the frame consumed the region, so the next invalidation starts a fresh one (§6.1)
+        m_damage_region = std::nullopt;
+    }
+
+    void UiNode::note_damage(const Rect& damage) {
+        // an ancestor forwards the area to the root, which is where the scene builder reads it (§6.1)
+        if (m_parent != nullptr) {
+            m_parent->note_damage(damage);
+            return;
+        }
+        // the root only stores a real area, because an empty one cannot leave anything untouched (§6.1)
+        if (!damage.empty())
+            m_damage_region = m_damage_region ? m_damage_region->unioned(damage) : damage;
     }
 
     void UiNode::invalidate_layout() {
@@ -352,8 +436,17 @@ namespace albor
         // a child that asked for no pass and would not move keeps the placement it already has (§8.2)
         if (!child.m_measure_dirty && !child.m_arrange_dirty && child.m_bounds == bounds)
             return;
+        // the old extent is read first, because a move leaves pixels where the child used to draw (§8.2)
+        const Rect old_visual = child.visual_bounds();
         // anything else is arranged, because the pass or the move is what the child is owed (§8.2)
         child.arrange(bounds);
+        // both extents are damaged, clipped to what this node shows, which makes an arrange only frame partial (§6.1)
+        child.note_damage(clip_child_damage(old_visual.unioned(child.visual_bounds())));
+    }
+
+    Rect UiNode::clip_child_damage(const Rect& damage) const {
+        // a node that paints every child whole narrows nothing, which is the ordinary container (§6.1)
+        return damage;
     }
 
     bool UiNode::render_dirty() const { return m_render_dirty; }
@@ -419,12 +512,14 @@ namespace albor
         // an unchanged authored width invalidates nothing, because the node looks the same (§6.1)
         if (m_border_width_set && m_border_width == clamped)
             return;
+        // the old extent is read before the stroke changes, because a narrower border has to erase its old fringe (§6.1)
+        const Rect old_visual = visual_bounds();
         // the width is stored first, so the invalidation walks a tree that already knows the new one (§6.1)
         m_border_width = clamped;
         // the write is recorded, because an explicit stroke outranks the theme metric (§8.4)
         m_border_width_set = true;
-        // a border change is visual only, because it does not move the node (§6.1)
-        invalidate();
+        // both extents are damaged, because a border that shrank still leaves pixels where it used to be (§6.1)
+        invalidate(old_visual.unioned(visual_bounds()));
     }
 
     float UiNode::border_width() const {
@@ -463,10 +558,12 @@ namespace albor
         // an unchanged shadow invalidates nothing, because the node looks the same (§6.1)
         if (m_drop_shadow == shadow)
             return;
+        // the old extent is read before the cast changes, because a removed shadow has to erase its old reach (§6.1)
+        const Rect old_visual = visual_bounds();
         // the shadow is stored first, so the invalidation walks a tree that already casts the new one (§6.1)
         m_drop_shadow = shadow;
-        // a cast change is visual only, because it does not move the node (§6.1)
-        invalidate();
+        // both extents are damaged, because a cast that shrank still leaves pixels where it used to fall (§6.1)
+        invalidate(old_visual.unioned(visual_bounds()));
     }
 
     const Shadow& UiNode::drop_shadow() const {

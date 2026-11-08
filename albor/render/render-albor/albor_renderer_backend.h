@@ -31,8 +31,8 @@ namespace albor::render
         // override: resize a surface, which the shell has nothing to resize before the device lands (§6.2)
         void resize_surface(RenderSurface& surface, const WindowMetrics& metrics) override;
 
-        // override: execute an immutable frame scene, which the shell refuses without a device (§6.1, AD-18)
-        void execute_frame(RenderSurface& surface, const FrameScene& scene) override;
+        // override: execute an immutable frame scene, reporting whether the surface could present it (§6.1, AD-18)
+        FrameOutcome execute_frame(RenderSurface& surface, const FrameScene& scene) override;
 
         // report how many gpu batch buffers the backend allocated, which a steady frame must not raise (§6.3, AD-06)
         [[nodiscard]] std::uint64_t batch_buffer_allocations() const;

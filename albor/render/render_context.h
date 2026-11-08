@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "albor/core/geometry.h"
@@ -42,6 +43,18 @@ namespace albor
 
         // read back the current clip, which a test asserts against a test double (§6.2)
         [[nodiscard]] virtual const Rect& clip() const = 0;
+
+        // report whether stage one is culling the commands outside a damage region (§6.1)
+        [[nodiscard]] virtual bool has_damage_filter() const {
+            // a context that is not culling keeps every command, which is the full frame case (§6.1)
+            return false;
+        }
+
+        // hand out the region stage one culls against, which is empty when nothing is culled (§6.1)
+        [[nodiscard]] virtual Rect damage_filter() const {
+            // no filter means every command belongs to the frame (§6.1)
+            return Rect{};
+        }
 
         // set the opacity every later draw is dimmed by, which is how a node property reaches the surface (§6.1)
         virtual void set_opacity(float opacity) = 0;
@@ -97,6 +110,19 @@ namespace albor
 
         // resize the surface, which a window resize requires (§6.2)
         virtual void resize(const WindowMetrics& metrics) = 0;
+
+        // report whether the surface keeps its target between frames, which lets stage one cull (§6.1)
+        [[nodiscard]] virtual bool retains_target() const {
+            // a surface that redraws every pixel cannot be handed a culled scene (§6.1)
+            return false;
+        }
+
+        // tell the surface which region the next frame redraws, reporting whether it can retain the target (§6.1)
+        virtual bool set_damage_region(const std::optional<Rect>& damage) {
+            // a surface that cannot retain pixels refuses the hint and redraws the whole frame (§6.1)
+            (void)damage;
+            return false;
+        }
 
         // begin a frame and hand out the context that draws it, keeping the frame state the end resolves (§6.1, AD-18)
         virtual RenderContext& begin_frame() = 0;
