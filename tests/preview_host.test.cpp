@@ -629,6 +629,28 @@ TEST(PreviewHostChecks, AFieldContentAlignmentReachesThePreview) {
     EXPECT_EQ(field->content_align(), Align::Start);
 }
 
+TEST(PreviewHostChecks, ALabelAlignmentReachesThePreview) {
+    // arrange a sidebar button pinning its label to the leading edge, which the compiled path applies too (§8.2)
+    const std::string source = R"UI(component Sidebar {
+    Button {
+        id: tran;
+        text: ".TRAN";
+        text_align: Align.start;
+        horizontal_align: Align.stretch;
+    }
+})UI";
+    BindingEngine engine;
+    // act
+    preview::PreviewResult result = preview::build(source, engine);
+    // assert nothing was reported, because the property is one the catalog declares (§11.2)
+    EXPECT_EQ(result.diagnostics, 0U);
+    ASSERT_NE(result.root, nullptr);
+    Button* button = dynamic_cast<Button*>(find_first(*result.root, [](UiNode& node) { return dynamic_cast<Button*>(&node) != nullptr; }));
+    ASSERT_NE(button, nullptr);
+    // assert the written member reached the button, because a preview that left it centred would misplace the run (§8.2)
+    EXPECT_EQ(button->text_align(), Align::Start);
+}
+
 TEST(PreviewHostChecks, AProgressBarShowsTheFractionTheAuthorWrote) {
     // arrange a bar writing its fraction, which a preview shows as the author wrote it (§8)
     const std::string source = R"UI(component WrittenProgress {

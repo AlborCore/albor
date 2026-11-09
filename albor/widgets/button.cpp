@@ -65,27 +65,37 @@ namespace albor
     }
 
     void Button::paint_content(RenderContext& context) {
-        // a text-only button keeps the original centred label path, so its output is byte compatible (§6.2)
+        // a text-only button keeps the single run label path, which places the run by its alignment (§6.2)
         if (m_icon == nullptr) {
             // an empty label draws no run, because a button may carry no text at all (§6.2)
             if (m_label_layout.empty())
                 return;
             // the label colour resolves by state, so a hover and a press read differently without a second literal (§6.1)
             const Color label_color = resolve(label_colors(), Color{0.96f, 0.97f, 0.99f, 1.0f});
-            // the run is centred on the plate as a box, where every line places its baseline (§6.1, §9.1)
-            const Point origin{.x = bounds().x + (bounds().width - m_label_layout.size.width) * 0.5f, .y = bounds().y + (bounds().height - m_label_layout.size.height) * 0.5f};
+            // the inset the plate reserves on either side is the theme's, which a stretched row must honour (§8.2)
+            const ControlMetrics& metrics = theme() != nullptr ? theme()->metrics() : default_metrics();
+            // the authored alignment decides where the run starts, where an inherited value centres it (§8.2)
+            const Align align = resolved_text_align();
+            // a leading run starts at the inset, a trailing one ends at it, and the middle splits the spare (§8.2)
+            const float origin_x = align == Align::Start ? bounds().x + metrics.button_padding_horizontal : align == Align::End ? bounds().x + bounds().width - metrics.button_padding_horizontal - m_label_layout.size.width : bounds().x + (bounds().width - m_label_layout.size.width) * 0.5f;
+            // a run wider than the plate starts at its leading edge, so it never paints over a neighbour (§8.2)
+            const float clamped_x = std::clamp(origin_x, bounds().x, std::max(bounds().x, bounds().x + bounds().width - m_label_layout.size.width));
             // the run is recorded over the plate, which is the last thing the frame draws for this button (§6.1)
-            context.draw_text(m_label_layout, origin, {.fill = label_color});
+            context.draw_text(m_label_layout, Point{.x = clamped_x, .y = bounds().y + (bounds().height - m_label_layout.size.height) * 0.5f}, {.fill = label_color});
             return;
         }
         // the icon square is the first half of the content group, which the plate centres (§6.4, §8.2)
         const float side = resolved_icon_size();
         // the gap sits between the icon and the label, while an icon-only button has no gap (§8.2)
         const float gap = m_label_layout.empty() ? 0.0f : 6.0f;
-        // the group is what the plate centres, because an icon-only button centres its square alone (§8.2)
+        // the group is what the plate places, because an icon-only button places its square alone (§8.2)
         const float group_width = side + gap + m_label_layout.size.width;
-        // the group starts at the left edge the centred extent leaves (§8.2)
-        const float group_x = bounds().x + (bounds().width - group_width) * 0.5f;
+        // the inset the plate reserves on either side is the theme's, which a stretched row must honour (§8.2)
+        const ControlMetrics& metrics = theme() != nullptr ? theme()->metrics() : default_metrics();
+        // the authored alignment decides where the group starts, where an inherited value centres it (§8.2)
+        const Align align = resolved_text_align();
+        // a leading group starts at the inset, a trailing one ends at it, and the middle splits the spare (§8.2)
+        const float group_x = std::clamp(align == Align::Start ? bounds().x + metrics.button_padding_horizontal : align == Align::End ? bounds().x + bounds().width - metrics.button_padding_horizontal - group_width : bounds().x + (bounds().width - group_width) * 0.5f, bounds().x, std::max(bounds().x, bounds().x + bounds().width - group_width));
         // the icon hangs at the content's vertical centre, which is where a push control reads (§8.2)
         const Rect icon_rect = Rect::from_origin_size(Point{.x = group_x, .y = bounds().y + (bounds().height - side) * 0.5f}, Size{.width = side, .height = side});
         // the image is recorded under the plate's content, which the renderer samples into the square (§6.4)
@@ -354,6 +364,28 @@ namespace albor
             return Color::rgba(m_background.red * 0.5f, m_background.green * 0.5f, m_background.blue * 0.5f, m_background.alpha);
         // the plate fill is what the base records before the label (§6.2)
         return m_background;
+    }
+
+    void Button::set_text_align(Align align) {
+        // an unchanged alignment redraws nothing, because the run hangs where it hung (§6.1)
+        if (m_text_align == align)
+            return;
+        // the alignment is stored first, so the invalidation walks a button that already carries it (§8.2)
+        m_text_align = align;
+        // the run moved inside the plate, so the next frame is requested without a remeasure (§6.1)
+        invalidate();
+    }
+
+    Align Button::text_align() const {
+        // the authored value is what an inspector reads back, and inherit means the plate centres (§8.2)
+        return m_text_align;
+    }
+
+    Align Button::resolved_text_align() const {
+        // an inherited value centres the run, which is what a push control has always drawn (§8.2)
+        const Align align = resolve_align(m_text_align, Align::Center);
+        // a run cannot stretch to fill the plate, so the wide setting pins the leading edge instead (§8.2)
+        return align == Align::Stretch ? Align::Start : align;
     }
 
     const Color* Button::plate_colors() const {

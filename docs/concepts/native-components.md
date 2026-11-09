@@ -40,12 +40,27 @@ record Task {
     key: string;          // the row identity — a field named key
     title: string;
     done: bool = false;   // a field may carry a default
+    choices: vector<string>;   // a row may carry its own choices
 }
 ```
 
 - A field named **`key`** carries the record's identity. That is what a virtualized
   `Repeat` keys its rows by — the identity a background update correlates against
   ([Control flow](../ui-language/control-flow.md#virtualized-scrolling)).
+- A field may be any manifest scalar, `Snapshot<T>`, or a collection such as
+  `vector<string>` (nested collections included). A collection field becomes a
+  `std::vector<T>` member of the generated header, with the headers it needs.
+- A repeat row reads a collection field like any other field, so the row can carry the
+  options its editor shows:
+
+  ```text
+  Repeat(option in options) {
+      ComboBox { items: option.choices; }
+  }
+  ```
+
+- A collection default is the empty list, `[]`; a non-empty list default is refused with
+  `E0310` because the generator does not quote element values yet.
 - Defaults are ordinary values; omitted fields are value-initialised.
 
 ## Importing

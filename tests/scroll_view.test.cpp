@@ -7,6 +7,8 @@
 #include "albor/commands/command.h"
 #include "albor/core/constraints.h"
 #include "albor/core/scrollable_content.h"
+#include "albor/layout/column_layout.h"
+#include "albor/layout/row_layout.h"
 #include "albor/runtime/binding_engine.h"
 #include "albor/semantics/semantic_node.h"
 #include "albor/ui/ui_event.h"
@@ -265,6 +267,115 @@ TEST(ScrollViewChecks, AnUndeclaredWidthTakesTheOfferedWidth) {
     EXPECT_FLOAT_EQ(measured.width, 500.0f);
     EXPECT_FLOAT_EQ(measured.height, 300.0f);
     EXPECT_FLOAT_EQ(content_ptr->measured_size().width, 500.0f);
+}
+
+TEST(ScrollViewChecks, AnUndeclaredWidthFillsTheSpaceARowLeavesIt) {
+    // arrange a fixed width sidebar and a page whose width is left to the row (§8.2)
+    BindingEngine engine;
+    RowLayout row;
+    auto sidebar = std::make_unique<ScrollView>(&engine);
+    sidebar->set_viewport_extent(Size{120.0f, 40.0f});
+    auto page = std::make_unique<ScrollView>(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{0.0f, 900.0f};
+    page->add_child(std::move(content));
+    page->set_horizontal_align(Align::Stretch);
+    ScrollView* page_ptr = page.get();
+    row.add_child(std::move(sidebar));
+    row.add_child(std::move(page));
+    Size measured{};
+    // act
+    row.measure(SizeConstraints::at_most(Size{500.0f, 400.0f}), measured);
+    row.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{500.0f, 400.0f}));
+    // assert the page measures and sits in exactly the width the sidebar left (§8.2)
+    EXPECT_FLOAT_EQ(measured.width, 500.0f);
+    EXPECT_FLOAT_EQ(page_ptr->measured_size().width, 380.0f);
+    EXPECT_FLOAT_EQ(page_ptr->bounds().x, 120.0f);
+    EXPECT_FLOAT_EQ(page_ptr->bounds().width, 380.0f);
+}
+
+TEST(ScrollViewChecks, AnUndeclaredHeightFillsTheSpaceAColumnLeavesIt) {
+    // arrange a stacked heading above a page whose height is left to the column (§8.2)
+    BindingEngine engine;
+    ColumnLayout column;
+    auto heading = std::make_unique<ScrollView>(&engine);
+    heading->set_viewport_extent(Size{200.0f, 100.0f});
+    auto page = std::make_unique<ScrollView>(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{0.0f, 900.0f};
+    page->add_child(std::move(content));
+    page->set_vertical_align(Align::Stretch);
+    ScrollView* page_ptr = page.get();
+    column.add_child(std::move(heading));
+    column.add_child(std::move(page));
+    Size measured{};
+    // act
+    column.measure(SizeConstraints::at_most(Size{200.0f, 400.0f}), measured);
+    column.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 400.0f}));
+    // assert the page measures and sits in exactly the height the heading left (§8.2)
+    EXPECT_FLOAT_EQ(measured.height, 400.0f);
+    EXPECT_FLOAT_EQ(page_ptr->measured_size().height, 300.0f);
+    EXPECT_FLOAT_EQ(page_ptr->bounds().y, 100.0f);
+    EXPECT_FLOAT_EQ(page_ptr->bounds().height, 300.0f);
+}
+
+TEST(ScrollViewChecks, AnActionRowBelowAFlexiblePageKeepsItsHeight) {
+    // arrange the issue's dialog shape, where the page scrolls and the actions sit below it (§8.2)
+    BindingEngine engine;
+    ColumnLayout column;
+    auto body = std::make_unique<RowLayout>();
+    body->set_vertical_align(Align::Stretch);
+    auto sidebar = std::make_unique<ScrollView>(&engine);
+    sidebar->set_viewport_extent(Size{120.0f, 40.0f});
+    auto page = std::make_unique<ScrollView>(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{0.0f, 900.0f};
+    page->add_child(std::move(content));
+    page->set_horizontal_align(Align::Stretch);
+    body->add_child(std::move(sidebar));
+    body->add_child(std::move(page));
+    RowLayout* body_ptr = body.get();
+    auto footer = std::make_unique<ScrollView>(&engine);
+    footer->set_viewport_extent(Size{100.0f, 32.0f});
+    ScrollView* footer_ptr = footer.get();
+    column.add_child(std::move(body));
+    column.add_child(std::move(footer));
+    Size measured{};
+    // act
+    column.measure(SizeConstraints::at_most(Size{500.0f, 400.0f}), measured);
+    column.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{500.0f, 400.0f}));
+    // assert the flexible body shrinks to leave the action row its height (§8.2)
+    EXPECT_FLOAT_EQ(body_ptr->measured_size().height, 368.0f);
+    EXPECT_FLOAT_EQ(footer_ptr->measured_size().height, 32.0f);
+    EXPECT_FLOAT_EQ(footer_ptr->bounds().y, 368.0f);
+    EXPECT_FLOAT_EQ(footer_ptr->bounds().height, 32.0f);
+}
+
+TEST(ScrollViewChecks, AFlexibleScrollViewLeavesItsSiblingItsWidth) {
+    // arrange the mirror order, where the page scrolls before a fixed action beside it (§8.2)
+    BindingEngine engine;
+    RowLayout row;
+    row.set_gap(10.0f);
+    auto page = std::make_unique<ScrollView>(&engine);
+    auto content = std::make_unique<ContentNode>();
+    content->intrinsic = Size{0.0f, 900.0f};
+    page->add_child(std::move(content));
+    page->set_horizontal_align(Align::Stretch);
+    auto action = std::make_unique<ScrollView>(&engine);
+    action->set_viewport_extent(Size{120.0f, 40.0f});
+    ScrollView* page_ptr = page.get();
+    ScrollView* action_ptr = action.get();
+    row.add_child(std::move(page));
+    row.add_child(std::move(action));
+    Size measured{};
+    // act
+    row.measure(SizeConstraints::at_most(Size{500.0f, 400.0f}), measured);
+    row.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{500.0f, 400.0f}));
+    // assert the flexible page takes only the space the action and the gap left (§8.2)
+    EXPECT_FLOAT_EQ(page_ptr->measured_size().width, 370.0f);
+    EXPECT_FLOAT_EQ(action_ptr->measured_size().width, 120.0f);
+    EXPECT_FLOAT_EQ(action_ptr->bounds().x, 380.0f);
+    EXPECT_FLOAT_EQ(action_ptr->bounds().width, 120.0f);
 }
 
 TEST(ScrollViewChecks, AnUndeclaredHeightTakesTheOfferedHeight) {

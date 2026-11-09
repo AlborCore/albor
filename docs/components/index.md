@@ -44,17 +44,20 @@ Every element exposes these seven, in addition to its own:
 
 | property | type | effect |
 | --- | --- | --- |
-| `horizontal_align` | `align` | `Align.start`, `Align.center`, `Align.end`, `Align.stretch` on the horizontal screen axis |
-| `vertical_align` | `align` | the same set on the vertical screen axis |
+| `horizontal_align` | `align` | `Align.start`, `Align.center`, `Align.end`, `Align.stretch` on the horizontal screen axis; the main axis in a `Row` |
+| `vertical_align` | `align` | the same set on the vertical screen axis; the main axis in a `Column` |
 | `visible` | `bool` | hide in place, keeping identity, bindings and state ([control flow](../ui-language/control-flow.md#visible-hide-in-place)) |
 | `opacity` | `float` | dims the node and its subtree, where `1.0` is opaque |
 | `border_width` | `float` | strokes a border around the node |
 | `border_color` | `color` | the border stroke colour |
 | `drop_shadow` | `Shadow` | a `Shadow { color, offset: Point { x, y }, blur }` cast under the node |
 
-The alignment axes are screen axes — horizontal is always horizontal — and neither one is
-the parent's main axis. `stretch` is the spacer idiom that absorbs leftover space; the
-patterns live under [Layout](../concepts/layout.md#patterns).
+The alignment axes are screen axes. In a `Row`, `horizontal_align` is the main axis and
+`vertical_align` the cross axis; in a `Column` they swap. On the main axis, `Align.stretch`
+declares the child **flexible**: it absorbs spare space and, when the fixed children
+overflow, it is measured against the space they leave. On the cross axis, `stretch` fills the
+container's content extent. The patterns live under
+[Layout](../concepts/layout.md#patterns).
 
 ## Identity
 

@@ -554,6 +554,23 @@ record Task {
     ASSERT_EQ(file.records.at(0).fields.size(), 3U);
 }
 
+TEST(ManifestParser, ARecordFieldKeepsItsBracketedType) {
+    // arrange a row whose field carries a collection, which is what an option card reads (§11.2, §8)
+    const std::string_view source = R"(
+record OptionRow {
+    key: string;
+    choices: vector<string>;
+    nested: vector<vector<int>>;
+}
+)";
+    // act
+    const ManifestFile file = parse(source);
+    // assert the field type keeps both angles, because the glue generator spells it from the name (§11.2)
+    ASSERT_EQ(file.records.at(0).fields.size(), 3U);
+    EXPECT_EQ(file.records.at(0).fields.at(1).type, "vector<string>");
+    EXPECT_EQ(file.records.at(0).fields.at(2).type, "vector<vector<int>>");
+}
+
 TEST(ManifestParser, TheKeyFieldCarriesTheRecordsIdentity) {
     // arrange
     const std::string_view source = R"(

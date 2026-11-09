@@ -69,6 +69,17 @@ Repeat(item in items, index) {
 }
 ```
 
+A record row may carry its own collection fields, which the body reads like any other field.
+An option card can therefore give every row its own choices:
+
+```text
+inout property<vector<OptionRow>> options;
+
+Repeat(option in options) {
+    ComboBox { items: option.choices; }
+}
+```
+
 Inside the body the item name shadows outer names of the same spelling, exactly as a signal
 parameter does ([Expressions and bindings](expressions.md#names)).
 

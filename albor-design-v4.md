@@ -884,6 +884,16 @@ Two rules make the skip sound, and both are contracts rather than implementation
    unconditional passes used to hide, so introducing the skip without this guard would have
    turned a forgotten invalidation into a visible layout bug.
 
+**Flexible Children Are Declared, Not Inferred (settled during implementation):**
+
+A `Row` or `Column` resolves its main-axis space in one measure pass. Every visible child is first
+measured against the whole content extent. A child participates in an overflow only when it
+declares `Align.stretch` on the parent's main axis (`horizontal_align` in a `Row`,
+`vertical_align` in a `Column`). When the probe exceeds the content extent, those children are
+measured again with an equal share of the space left by the fixed children, the gaps and the
+padding; the fixed children keep their measured extent. Without such a declaration the overflow
+stands and the parent keeps its measured extent, so an authored size is never silently changed.
+
 The remaining refinement, deliberately not built, is subtree-level relayout and partial repaint:
 a side table keyed by node identity holding cached screen bounds, per-item dirty tracking, dirty
 regions capped at a small fixed number of rectangles, and back-buffer-age history so a

@@ -100,6 +100,16 @@ TEST(AlignCodegen, AContentAlignmentReachesItsOwnSetter) {
     EXPECT_FALSE(contains(unit, "set_vertical_align"));
 }
 
+TEST(AlignCodegen, ALabelAlignmentReachesTheButtonSetter) {
+    // arrange a sidebar row whose button pins its label to the leading edge (§8.2)
+    const std::vector<GeneratedFile> files = generate("component C { Column { Button { text: \".TRAN\"; text_align: Align.start; horizontal_align: Align.stretch; } } }");
+    // act
+    const std::string_view unit = implementation(files).content;
+    // assert the label alignment is a button property, so it reaches a setter of its own (§11.3, §8.2)
+    EXPECT_TRUE(contains(unit, "set_text_align(albor::Align::Start)"));
+    EXPECT_FALSE(contains(unit, "set_content_align"));
+}
+
 TEST(AlignCodegen, AContentAlignmentPullsTheEnumeratorHeader) {
     // arrange
     const std::vector<GeneratedFile> files = generate("component C { TextField { content_align: Align.end; } }");

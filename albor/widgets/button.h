@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "albor/commands/command_invocation.h"
+#include "albor/core/align.h"
 #include "albor/text/text_engine.h"
 #include "albor/ui/dialog_control.h"
 #include "albor/widgets/widget.h"
@@ -94,6 +95,12 @@ namespace albor
         // override: hand out the plate fill, which the base records before the label and which resolves by state (§6.2)
         [[nodiscard]] Color background() const override;
 
+        // replace the horizontal alignment of the label inside the plate, where inherit centres it (§8.2)
+        void set_text_align(Align align);
+
+        // hand out the authored label alignment, which an inspector reads back (§8.2)
+        [[nodiscard]] Align text_align() const;
+
         // override: hand out how wide the plate strokes its border, which the theme owns per state (§8.4)
         [[nodiscard]] float border_width() const override;
 
@@ -125,6 +132,9 @@ namespace albor
 
         // the square extent the icon draws at, where zero follows the theme default (§8.2)
         float m_icon_size = 0.0f;
+
+        // the authored horizontal alignment of the label, where inherit centres it (§8.2)
+        Align m_text_align = Align::Inherit;
 
         // the work a press performs (§8.3)
         std::function<void()> m_on_click;
@@ -158,5 +168,8 @@ namespace albor
 
         // the square extent the icon draws at, which the author or the default decides (§8.2)
         [[nodiscard]] float resolved_icon_size() const;
+
+        // the horizontal alignment the label draws at, where inherit and stretch centre or lead (§8.2)
+        [[nodiscard]] Align resolved_text_align() const;
     };
 } // namespace albor

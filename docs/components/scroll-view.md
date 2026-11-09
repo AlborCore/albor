@@ -51,6 +51,27 @@ component TaskList {
 }
 ```
 
+## Filling the space a parent leaves
+
+An undeclared axis follows the extent its parent offers. Inside a `Row` or `Column`, the view
+must also declare the parent's main axis as `stretch`, otherwise it is a fixed child and the
+parent overflows:
+
+```text
+Row {
+    Column { /* fixed sidebar */ }
+
+    ScrollView {
+        horizontal_align: Align.stretch;   // take the width the sidebar leaves
+        scrollbar: Scrollbar.as_needed;
+        Column { /* page content */ }
+    }
+}
+```
+
+In a `Column`, the equivalent declaration is `vertical_align: Align.stretch`. A declared
+`viewport_width` or `viewport_height` still wins: `stretch` never grows a fixed viewport.
+
 ## Virtualized scrolling
 
 At scale a `Repeat` over a `ScrollView` virtualizes: it constructs rows for the visible
@@ -65,7 +86,8 @@ reuses the existing element and rebinds it, rather than rebuilding the list.
 
 - `viewport_width` and `viewport_height` resolve independently: a positive axis takes its
   extent and is clamped into the parent, while a zero or negative axis follows the space the
-  parent offers.
+  parent offers. To take the leftover inside a `Row` or `Column`, declare `Align.stretch` on
+  that main axis ([above](#filling-the-space-a-parent-leaves)).
 - `overscan` trades a band of pre-built rows against visible populate cost; it is measured
   in the same units as the viewport.
 - `Scrollbar.on` forces the rail even when it is not needed; `Scrollbar.off` removes it —

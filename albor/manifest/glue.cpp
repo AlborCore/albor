@@ -79,27 +79,106 @@ namespace albor::manifest
             return "std::shared_ptr<const " + std::string(element) + ">";
         }
 
-        // the element type of a Snapshot<T> property, which the glue forwards rather than includes (§11.2, AD-17)
-        std::optional<std::string> snapshot_element(std::string_view type) {
-            // only a snapshot names an application type, which is what the facade needs to declare ahead (§11.2, AD-17)
-            if (const auto cpp = snapshot_cpp(type)) {
-                // the open bracket is the fixed lead again, which sizes the element slice (§11.2)
-                constexpr std::string_view prefix = "Snapshot<";
-                // the element name sits between the brackets, which is what the forward declaration names (§11.2)
-                const std::string_view element = type.substr(prefix.size(), type.size() - prefix.size() - 1);
-                return std::string(element);
-            }
-            // a type that is not a snapshot carries no element, which only snapshots need (§11.2)
-            return std::nullopt;
-        }
-
         // the c++ spelling of a manifest type, which decides what the accessor signatures use (§11.2)
         std::optional<std::string> glue_cpp(std::string_view type) {
             // the scalar spellings take precedence, which cover the simple types (§11.2)
             if (const auto scalar = scalar_cpp(type))
                 return scalar;
+            // a collection is spelled over its element, which recurses into a nested one (§8.1, §11.2)
+            constexpr std::string_view vector_prefix = "vector<";
+            if (type.starts_with(vector_prefix) && type.ends_with(">")) {
+                // the element sits between the brackets, which the recursive spelling resolves (§11.2)
+                const std::string_view element = type.substr(vector_prefix.size(), type.size() - vector_prefix.size() - 1);
+                // an empty argument names no element, which the caller reports (§11.2)
+                if (element.empty())
+                    return std::nullopt;
+                // the element is translated with the same closed set, so a nested collection resolves too (§8.1)
+                if (const auto inner = glue_cpp(element))
+                    return "std::vector<" + *inner + ">";
+                // an element outside the set blocks the whole collection, which is what the caller reports (§11.2)
+                return std::nullopt;
+            }
             // the snapshot spelling is the fallback, which covers the wrapped types (§11.2)
             return snapshot_cpp(type);
+        }
+
+        // report whether a written type carries a leaf type at any nesting depth (§8.1, §11.2)
+        bool type_carries(std::string_view type, std::string_view leaf) {
+            // the leaf itself answers, which is the shallow case (§11.2)
+            if (type == leaf)
+                return true;
+            // a collection carries its element, which may itself nest (§8.1)
+            constexpr std::string_view vector_prefix = "vector<";
+            if (type.starts_with(vector_prefix) && type.ends_with(">")) {
+                // the element sits between the brackets, which the recursion reads (§11.2)
+                const std::string_view element = type.substr(vector_prefix.size(), type.size() - vector_prefix.size() - 1);
+                return !element.empty() && type_carries(element, leaf);
+            }
+            // a snapshot carries its element, which may itself nest (§13.2)
+            constexpr std::string_view snapshot_prefix = "Snapshot<";
+            if (type.starts_with(snapshot_prefix) && type.ends_with(">")) {
+                // the element sits between the brackets, which the recursion reads (§11.2)
+                const std::string_view element = type.substr(snapshot_prefix.size(), type.size() - snapshot_prefix.size() - 1);
+                return !element.empty() && type_carries(element, leaf);
+            }
+            // a type that reached no leaf carries none (§11.2)
+            return false;
+        }
+
+        // report whether a written type's default is one the glue can spell, which is only an empty collection (§11.2)
+        bool spellable_default(std::string_view type, std::string_view value) {
+            // a scalar or record default is re-emitted as written, which the manifest already spelled (§11.2)
+            if (!type.starts_with("vector<"))
+                return true;
+            // a collection default is the empty list, because a non-empty element list needs quoting (§11.2)
+            return value.empty() || value == "[]";
+        }
+
+        // report whether a value type can be forward declared, which a qualified or scalar name cannot (§11.2)
+        bool forwardable_element(std::string_view name) {
+            // an empty name or the framework image handle is defined elsewhere, so no forward duplicates it (§6.4)
+            if (name.empty() || name == "ImageResource")
+                return false;
+            // a plain identifier is not a builtin scalar, because a scalar has no forward declaration (§11.2)
+            static const std::string_view SCALARS[] = {"bool", "char", "double", "float", "int", "long", "short", "signed", "unsigned", "void"};
+            for (const std::string_view scalar : SCALARS)
+                if (scalar == name)
+                    return false;
+            // every character must be an identifier character, because a qualified name needs its header (§11.2)
+            for (const char byte : name) {
+                // a character outside the identifier set makes the name unforwardable (§11.2)
+                if (!std::isalnum(static_cast<unsigned char>(byte)) && byte != '_')
+                    return false;
+            }
+            // the name is a plain identifier, which a struct declaration satisfies (§11.2)
+            return true;
+        }
+
+        // collect the value types a c++ spelling owns, which a forward declaration satisfies (§13.2)
+        bool collect_owned_types(std::string_view cpp_type, std::vector<std::string>& forwards) {
+            // the prefix names the ownership the element follows, which every shared handle spells (§13.2)
+            constexpr std::string_view owner_prefix = "std::shared_ptr<const ";
+            // whether any owned type was found, which decides whether the memory header is needed (§13.2)
+            bool found = false;
+            // the spelling may hold more than one handle, which the scan visits in order (§13.2)
+            std::size_t position = 0;
+            while ((position = cpp_type.find(owner_prefix, position)) != std::string_view::npos) {
+                // the element sits between the prefix and the closing angle (§11.2)
+                const std::size_t begin = position + owner_prefix.size();
+                const std::size_t end = cpp_type.find('>', begin);
+                // a spelling without a closing angle names no element, which the scan leaves alone (§11.2)
+                if (end == std::string_view::npos)
+                    break;
+                // the element joins the forward list once, when it can be declared ahead (§11.2)
+                const std::string element(cpp_type.substr(begin, end - begin));
+                if (forwardable_element(element) && std::find(forwards.begin(), forwards.end(), element) == forwards.end())
+                    forwards.push_back(element);
+                // a found handle forces the header, which the shared pointer type requires (§13.2)
+                found = true;
+                // the scan resumes after this element, so a later handle is found too (§13.2)
+                position = end + 1;
+            }
+            return found;
         }
 
         // one field of a record ready to emit, which the generated struct is built from (§11.2, AD-13)
@@ -135,6 +214,12 @@ namespace albor::manifest
 
             // whether any field is an image, which pulls the memory and image headers (AD-05)
             bool needs_image = false;
+
+            // whether a member owns a shared value, which pulls the memory header (§13.2)
+            bool needs_memory = false;
+
+            // the value types a shared handle refers to, which a forward declaration satisfies (§11.2)
+            std::vector<std::string> forward_types;
         };
 
         // one property ready to emit, which the generated accessors are built from (§11.2)
@@ -219,14 +304,19 @@ namespace albor::manifest
             emit_line(out, 0, "#pragma once");
             // the blank opens the include section, which separates the guard (§14.1)
             emit_line(out, 0, "");
-            // the string members need the string header, which a text field pulls (§11.2)
-            const bool has_text = std::any_of(record.fields.begin(), record.fields.end(), [](const GluedField& field) { return field.cpp_type == "std::string"; });
-            // an image member pulls the owning pointer, which its declaration names (§6.4)
-            if (record.needs_image)
+            // the string members need the string header, which a text field or a collection of one pulls (§11.2)
+            const bool has_text = std::any_of(record.fields.begin(), record.fields.end(), [](const GluedField& field) { return field.cpp_type.find("std::string") != std::string::npos; });
+            // a collection member needs the vector header, which its declaration names (§8.1, §11.2)
+            const bool has_vector = std::any_of(record.fields.begin(), record.fields.end(), [](const GluedField& field) { return field.cpp_type.find("std::vector<") != std::string::npos; });
+            // an image or shared value pulls the owning pointer, which its declaration names (§6.4, §13.2)
+            if (record.needs_image || record.needs_memory)
                 emit_line(out, 0, "#include <memory>");
             // a text field pulls the header, which its member is declared against (§11.2)
             if (has_text)
                 emit_line(out, 0, "#include <string>");
+            // a collection field pulls the header, which its element list is declared against (§8.1, §11.2)
+            if (has_vector)
+                emit_line(out, 0, "#include <vector>");
             // the standard section closes, which separates it from the project headers (§14.1)
             emit_line(out, 0, "");
             // a colour member pulls the paint header, which the framework type lives in (AD-05)
@@ -240,6 +330,9 @@ namespace albor::manifest
             // the record lives in the framework namespace, which is what the generated properties name (§14.1)
             emit_line(out, 0, "namespace albor");
             emit_line(out, 0, "{");
+            // the owned value types are declared ahead, because a shared handle only needs the name (§11.2, §13.2)
+            for (const std::string& forward : record.forward_types)
+                emit_line(out, 1, "struct " + forward + ";");
             // the struct is a plain aggregate, because a record is data rather than behaviour (§11.2, AD-13)
             emit_line(out, 1, "// the " + record.name + " record the " + std::string(module) + " manifest declares, which a repeat walks (§11.2, AD-13)");
             // the aggregate opens, which is what keeps it constructible from a .ui binding (§14.1)
@@ -252,8 +345,10 @@ namespace albor::manifest
                 emit_line(out, 2, "// the " + field.name + " field" + role);
                 // an image default has no path form in a manifest, so the handle starts empty (§11.2, §6.4)
                 const bool image_handle = field.cpp_type == "std::shared_ptr<const ImageResource>";
+                // an empty collection default is the braced initialiser, which a vector member accepts (§8.1)
+                const std::string default_text = field.cpp_type.find("std::vector<") != std::string::npos && field.default_value == "[]" ? std::string("{}") : field.default_value;
                 // a default the manifest wrote is re-emitted, which is what makes the aggregate usable (§11.2)
-                const std::string initializer = field.default_value.empty() || image_handle ? "" : " = " + field.default_value;
+                const std::string initializer = default_text.empty() || image_handle ? "" : " = " + default_text;
                 // the member is the declaration, which is the whole of a record field (§14.1)
                 emit_line(out, 2, field.cpp_type + " " + field.name + initializer + ";");
             }
@@ -287,6 +382,10 @@ namespace albor::manifest
             // the role read needs the string view header, which a role component reaches (§10.1)
             if (component.semantic_role)
                 emit_line(out, 0, "#include <string_view>");
+            // a collection signature needs the vector header, which a native property of one names (§8.1, §11.2)
+            const bool has_vector = std::any_of(component.properties.begin(), component.properties.end(), [](const GluedProperty& property) { return property.cpp_type.find("std::vector<") != std::string::npos; });
+            if (has_vector)
+                emit_line(out, 0, "#include <vector>");
             // the standard section closes, which separates it from the project headers (§14.1)
             emit_line(out, 0, "");
             // a colour signature pulls the paint header, which only a colour component needs (§11.2)
@@ -567,15 +666,25 @@ namespace albor::manifest
 
         // the initializer one stub member takes, which the override or the declared default carries (§11.2)
         std::string preview_member_initializer(const NativeProperty& property, const NativeComponent& native) {
+            // a collection property is a vector, which spells its empty default as a braced initialiser (§8.1)
+            const bool collection = property.type.starts_with("vector<");
             // the overrides are scanned from the end, because a later override wins (§11.2)
             for (auto entry = native.preview_overrides.rbegin(); entry != native.preview_overrides.rend(); ++entry) {
                 // the name decides, so the last override for the property is the one that shows (§11.2)
-                if (entry->property == property.name)
+                if (entry->property == property.name) {
+                    // an empty collection override is the braced initialiser, which a vector member accepts (§8.1)
+                    if (collection && entry->value_text == "[]")
+                        return "{}";
                     return "{" + preview_member_value(property, entry->value_text) + "}";
+                }
             }
             // without an override the declared default fills the member, which is what the stub shows (§11.2)
-            if (property.has_default)
+            if (property.has_default) {
+                // an empty collection default is the braced initialiser, which a vector member accepts (§8.1)
+                if (collection && property.default_text == "[]")
+                    return "{}";
                 return "{" + preview_member_value(property, property.default_text) + "}";
+            }
             // a property with neither override nor default stays default constructed, which the brace empty writes (§11.2)
             return "{}";
         }
@@ -698,14 +807,26 @@ namespace albor::manifest
                     // this field is dropped, which keeps a partial struct out of the output (§11.2)
                     continue;
                 }
-                // a colour field pulls the paint header, which the framework type lives in (AD-05)
-                if (field.type == "color")
+                // a non-empty collection default needs quoting, which the glue does not spell (§11.2)
+                if (!spellable_default(field.type, field.default_value)) {
+                    // the flag is set, which empties the generated output at the end (§11.2)
+                    blocked = true;
+                    // the problem points at the field, because that is what the author must change (§11.2)
+                    m_diagnostics.add(Diagnostic::Severity::Error, field.span, "E0310", "a collection default must be an empty list");
+                    // this field is dropped, which keeps invalid output from being written (§11.2)
+                    continue;
+                }
+                // a colour field at any depth pulls the paint header, which the framework type lives in (AD-05)
+                if (type_carries(field.type, "color"))
                     record.needs_paint = true;
-                // an image field pulls the handle header and the owning pointer (AD-05, §6.4)
-                if (field.type == "image")
+                // an image field at any depth pulls the handle header and the owning pointer (AD-05, §6.4)
+                if (type_carries(field.type, "image"))
                     record.needs_image = true;
                 // the translated field joins the record, which the struct is emitted from (§11.2)
                 record.fields.push_back(GluedField{.name = field.name, .cpp_type = *cpp, .default_value = field.default_value, .is_key = field.is_key});
+                // a shared handle member needs the memory header and a forward declaration of its value type (§13.2)
+                if (collect_owned_types(*cpp, record.forward_types))
+                    record.needs_memory = true;
             }
             // the module path of the unit is the file module, which the caller places under (§14.2)
             const std::string module_name = std::string(file.module);
@@ -736,29 +857,26 @@ namespace albor::manifest
                     // the remaining properties still translate, which reports every bad type (§11.2)
                     continue;
                 }
+                // a non-empty collection default needs quoting, which the glue does not spell (§11.2)
+                if (property.has_default && !spellable_default(property.type, property.default_text)) {
+                    // the flag is set, which empties the generated output at the end (§11.2)
+                    blocked = true;
+                    // the problem points at the property, because that is what the author must change (§11.2)
+                    m_diagnostics.add(Diagnostic::Severity::Error, property.span, "E0310", "a collection default must be an empty list");
+                    // this property is dropped, which keeps invalid output from being written (§11.2)
+                    continue;
+                }
                 // the translated property joins the set, which the accessor pairs come from (§11.2)
                 component.properties.push_back(GluedProperty{.name = property.name, .cpp_type = *cpp});
-                // a colour property pulls the paint header, which the framework type lives in (AD-05)
-                if (property.type == "color")
+                // a colour property at any depth pulls the paint header, which the framework type lives in (AD-05)
+                if (type_carries(property.type, "color"))
                     component.needs_paint = true;
-                // an image property pulls the handle header and the owning pointer (§6.4, AD-05)
-                if (property.type == "image")
+                // an image property at any depth pulls the handle header and the owning pointer (§6.4, AD-05)
+                if (type_carries(property.type, "image"))
                     component.needs_image = true;
-                // a snapshot property pulls the memory header and a forward declaration for the signature (§13.2, AD-17)
-                if (property.type.starts_with("Snapshot<")) {
-                    // the header is forced, which the shared pointer type requires (§13.2)
+                // a shared handle at any depth pulls the memory header and a forward declaration (§13.2, AD-17)
+                if (collect_owned_types(*cpp, component.forward_types))
                     component.needs_memory = true;
-                    // the element names the declared type, which the accessor signatures use (§11.2)
-                    const auto forward = snapshot_element(property.type);
-                    // the element is declared when it extracts, which is always for a snapshot (§11.2)
-                    if (forward) {
-                        // a data type is forwarded once, because the accessor signatures only need the name (§11.2, AD-17)
-                        const bool known = std::find(component.forward_types.begin(), component.forward_types.end(), *forward) != component.forward_types.end();
-                        // a type that is not yet known joins the list, which stays deduplicated (§11.2)
-                        if (!known)
-                            component.forward_types.push_back(*forward);
-                    }
-                }
             }
             // each signal is translated on its own, because one bad parameter must not hide the rest (§11.2)
             for (const NativeSignal& signal : native.signals) {
@@ -782,6 +900,15 @@ namespace albor::manifest
                         acceptable = false;
                         continue;
                     }
+                    // a colour parameter at any depth pulls the paint header (§11.2)
+                    if (type_carries(parameter.type, "color"))
+                        component.needs_paint = true;
+                    // an image parameter pulls the handle header and the owning pointer (§6.4)
+                    if (type_carries(parameter.type, "image"))
+                        component.needs_image = true;
+                    // a shared handle parameter pulls the memory header and its forward declaration (§13.2)
+                    if (collect_owned_types(*cpp, component.forward_types))
+                        component.needs_memory = true;
                     // a later parameter takes the separator, which is how a signature reads (§11.2)
                     if (!glued.parameter_list.empty()) {
                         // the parameter list grows the comma, which joins the declarations (§11.2)
@@ -797,12 +924,6 @@ namespace albor::manifest
                     glued.argument_list += parameter.name;
                     // the type alone joins the slot list, which only the std::function signature needs (§11.2)
                     glued.slot_type_list += *cpp;
-                    // a colour parameter pulls the paint header, which the framework type lives in (AD-05)
-                    if (parameter.type == "color")
-                        component.needs_paint = true;
-                    // an image parameter pulls the handle header and the owning pointer (§6.4, AD-05)
-                    if (parameter.type == "image")
-                        component.needs_image = true;
                 }
                 // a signal that translated wholly is admitted, which emits its setter and its raiser (§11.2)
                 if (acceptable) {
@@ -815,13 +936,21 @@ namespace albor::manifest
             // each override names a declared property, which the stub relies on (§11.2)
             for (const PreviewOverride& override_entry : native.preview_overrides) {
                 // the declared properties are scanned, because an override may only retune one (§11.2)
-                const bool declared = std::any_of(native.properties.begin(), native.properties.end(), [&override_entry](const NativeProperty& property) { return property.name == override_entry.property; });
+                const auto declared = std::find_if(native.properties.begin(), native.properties.end(), [&override_entry](const NativeProperty& property) { return property.name == override_entry.property; });
                 // an override without a property is reported, which also voids the output (§11.2)
-                if (!declared) {
+                if (declared == native.properties.end()) {
                     // the flag is set, which empties the generated output at the end (§11.2)
                     blocked = true;
                     // the problem names the property, because that is what the manifest wrote (§11.2)
                     m_diagnostics.add(Diagnostic::Severity::Error, override_entry.span, "E0307", "the preview override names the undeclared property '" + override_entry.property + "'");
+                    continue;
+                }
+                // a non-empty collection override needs quoting, which the glue does not spell (§11.2)
+                if (!spellable_default(declared->type, override_entry.value_text)) {
+                    // the flag is set, which empties the generated output at the end (§11.2)
+                    blocked = true;
+                    // the problem points at the override, because that is what the author must change (§11.2)
+                    m_diagnostics.add(Diagnostic::Severity::Error, override_entry.span, "E0310", "a collection default must be an empty list");
                 }
             }
             // a component that blocked cannot emit, which leaves the output empty at the end (§11.2)
