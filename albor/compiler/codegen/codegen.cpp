@@ -1424,6 +1424,12 @@ namespace albor::compiler
                         m_record_headers.push_back("albor/widgets/text_field.h");
                     return;
                 }
+                // insets is a core geometry record declared in geometry.h (§8.2)
+                if (record->name == "Insets" || record->name == "Point") {
+                    if (std::find(m_record_headers.begin(), m_record_headers.end(), std::string("albor/core/geometry.h")) == m_record_headers.end())
+                        m_record_headers.push_back("albor/core/geometry.h");
+                    return;
+                }
                 // each imported module is searched, because the record lives in exactly one of them (§11.1, §11.2, AD-17)
                 for (const std::string& module : m_modules) {
                     // the header path is the module and the snake cased record, which is what the generator wrote (§11.2)

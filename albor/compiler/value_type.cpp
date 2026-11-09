@@ -309,7 +309,7 @@ namespace albor::compiler
         // a container insets its children, which is what a padded area is (§8.2)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Padding",
-                                              // the inset is a length, which the surface scales (§8.2, AD-27)
+                                              // the inset is a length or Insets record (§8.2, AD-27)
                                               .properties = {ElementProperty{.name = "padding", .type = scalar(TypeKind::Float), .assignable = true}},
                                               // a padded area raises no signal of its own (§8.2)
                                               .signals = {},
@@ -548,6 +548,14 @@ namespace albor::compiler
                                               .signals = {},
                                               // a strip holds the controls and menu items it places (§8)
                                               .accepts_children = true});
+        // the insets applied to four edges, which a declared `.ui` construction fills (§8.2)
+        RecordType insets;
+        insets.name = "Insets";
+        insets.fields.push_back(RecordFieldType{.name = "top", .type = scalar(TypeKind::Float)});
+        insets.fields.push_back(RecordFieldType{.name = "right", .type = scalar(TypeKind::Float)});
+        insets.fields.push_back(RecordFieldType{.name = "bottom", .type = scalar(TypeKind::Float)});
+        insets.fields.push_back(RecordFieldType{.name = "left", .type = scalar(TypeKind::Float)});
+        catalog.add_record(insets);
         // the offset a shadow falls by, which a declared `.ui` construction fills (§6.2)
         RecordType point;
         // the record is named by the type the shadow field takes (§6.2)

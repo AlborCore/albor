@@ -7,9 +7,28 @@ piece of content, rather than the spacing of a whole stack.
 
 | property | type | notes |
 | --- | --- | --- |
-| `padding` | `float` | the inset on all four sides; density-scaled, accepts `px` |
+| `padding` | `float` or `Insets` | uniform inset on all four sides (`float`/`px`), or per-edge insets via `Insets` record |
 
 Plus the [common properties](index.md#common-properties).
+
+## Insets Record
+
+To specify asymmetric padding, assign an `Insets` record specifying any of `top`, `right`, `bottom`, and `left`:
+
+```text
+Insets {
+    top: 4px,
+    right: 8px,
+    bottom: 4px,
+    left: 10px
+}
+```
+
+Unspecified fields default to `0px`. For example, to specify a left-only padding:
+
+```text
+padding: Insets { left: 10px };
+```
 
 ## Signals
 
@@ -19,7 +38,9 @@ None.
 
 Exactly one — the content that gets the inset.
 
-## Example
+## Examples
+
+### Uniform padding
 
 ```text
 component Panel {
@@ -35,6 +56,19 @@ component Panel {
             Label { text: caption; }
             Label { text: @tr("some detail"); }
         }
+    }
+}
+```
+
+### Asymmetric / per-edge padding
+
+```text
+component IndentedSection {
+    Padding {
+        id: indented;
+        padding: Insets { left: 10px };
+
+        Label { text: @tr("Indented content"); }
     }
 }
 ```

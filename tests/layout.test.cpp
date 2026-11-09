@@ -853,16 +853,16 @@ TEST(ColumnLayoutChecks, AChildIsOfferedTheCeilingOfTheColumnMinusItsPadding) {
 
 TEST(PaddingLayoutChecks, EmptyInsetsAreTheDefault) {
     // arrange
-    const EdgeInsets insets{};
+    const Insets insets{};
     // act assert
     EXPECT_TRUE(insets.empty());
 }
 
 TEST(PaddingLayoutChecks, InsetsCompareFieldByField) {
     // arrange
-    const EdgeInsets lhs{.top = 1.0f, .right = 2.0f, .bottom = 3.0f, .left = 4.0f};
-    const EdgeInsets rhs{.top = 1.0f, .right = 2.0f, .bottom = 3.0f, .left = 4.0f};
-    const EdgeInsets other{.top = 1.0f, .right = 2.0f, .bottom = 3.0f, .left = 5.0f};
+    const Insets lhs{.top = 1.0f, .right = 2.0f, .bottom = 3.0f, .left = 4.0f};
+    const Insets rhs{.top = 1.0f, .right = 2.0f, .bottom = 3.0f, .left = 4.0f};
+    const Insets other{.top = 1.0f, .right = 2.0f, .bottom = 3.0f, .left = 5.0f};
     // act assert
     EXPECT_EQ(lhs, rhs);
     EXPECT_NE(lhs, other);
@@ -1041,7 +1041,7 @@ TEST(PaddingLayoutChecks, PaddingChangeInvalidatesLayout) {
     padding.set_padding(2.0f);
     // assert
     EXPECT_TRUE(padding.layout_dirty());
-    EXPECT_EQ(padding.padding(), (EdgeInsets{.top = 2.0f, .right = 2.0f, .bottom = 2.0f, .left = 2.0f}));
+    EXPECT_EQ(padding.padding(), (Insets{.top = 2.0f, .right = 2.0f, .bottom = 2.0f, .left = 2.0f}));
 }
 
 TEST(PaddingLayoutChecks, UnchangedPaddingDoesNotInvalidate) {
@@ -1053,6 +1053,18 @@ TEST(PaddingLayoutChecks, UnchangedPaddingDoesNotInvalidate) {
     padding.set_padding(1.0f, 2.0f, 3.0f, 4.0f);
     // assert
     EXPECT_FALSE(padding.layout_dirty());
+}
+
+TEST(PaddingLayoutChecks, InsetsOverloadSetsPadding) {
+    // arrange
+    PaddingLayout padding;
+    padding.clear_dirty();
+    const Insets insets{.top = 10.0f, .right = 20.0f, .bottom = 30.0f, .left = 40.0f};
+    // act
+    padding.set_padding(insets);
+    // assert
+    EXPECT_TRUE(padding.layout_dirty());
+    EXPECT_EQ(padding.padding(), insets);
 }
 
 TEST(PaddingLayoutChecks, NestingComposesTheInsets) {

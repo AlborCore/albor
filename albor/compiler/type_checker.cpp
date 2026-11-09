@@ -1172,7 +1172,8 @@ namespace albor::compiler
             return;
         }
         // the value must match the property, because nothing widens implicitly (§11.1)
-        if (!assignable(out_assignment.type, property->type)) {
+        const bool insets_overload = type.name == "Padding" && assignment.name == "padding" && out_assignment.type.is(TypeKind::Native) && out_assignment.type.native_name() == "Insets";
+        if (!insets_overload && !assignable(out_assignment.type, property->type)) {
             // the mismatch points at the value, because that is what the author must change (§11.1)
             report_type_mismatch(*out_assignment.value, out_assignment.type, property->type);
         }
