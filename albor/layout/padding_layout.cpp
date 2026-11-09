@@ -4,11 +4,6 @@
 
 namespace albor
 {
-    bool EdgeInsets::empty() const {
-        // an inset set that consumes nothing on every edge is the unconfigured one (§8.2)
-        return top == 0.0f && right == 0.0f && bottom == 0.0f && left == 0.0f;
-    }
-
     void PaddingLayout::measure(const SizeConstraints& constraints, Size& out_size) {
         // a wrapper with no visible child has only its insets to measure, because the child left layout (§11.1, §18.2)
         if (children().empty() || !children().front()->visible()) {
@@ -61,15 +56,20 @@ namespace albor
 
     void PaddingLayout::set_padding(float top, float right, float bottom, float left) {
         // an unchanged inset set remeasures nothing, because the layout did not change (§8.2)
-        if (m_padding == EdgeInsets{.top = top, .right = right, .bottom = bottom, .left = left})
+        if (m_padding == Insets{.top = top, .right = right, .bottom = bottom, .left = left})
             return;
         // the insets are stored first, so the invalidation walks a wrapper that already knows its new spacing (§8.2)
-        m_padding = EdgeInsets{.top = top, .right = right, .bottom = bottom, .left = left};
+        m_padding = Insets{.top = top, .right = right, .bottom = bottom, .left = left};
         // an inset change resizes the child, so the measure and arrange passes run again (§8.2)
         invalidate_layout();
     }
 
-    const EdgeInsets& PaddingLayout::padding() const {
+    void PaddingLayout::set_padding(const Insets& insets) {
+        // the record overload delegates to the four component setter (§8.2)
+        set_padding(insets.top, insets.right, insets.bottom, insets.left);
+    }
+
+    const Insets& PaddingLayout::padding() const {
         // the insets are the ones the last measure pass accounted for (§8.2)
         return m_padding;
     }

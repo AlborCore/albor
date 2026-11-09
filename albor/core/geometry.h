@@ -62,6 +62,28 @@ namespace albor
         friend bool operator==(const Rect& lhs, const Rect& rhs) = default;
     };
 
+    // the four edge insets applied around content, in logical pixels (§8.2)
+    struct Insets
+    {
+        // the inset above the content in logical pixels (§8.2)
+        float top = 0.0f;
+
+        // the inset to the right of the content in logical pixels (§8.2)
+        float right = 0.0f;
+
+        // the inset below the content in logical pixels (§8.2)
+        float bottom = 0.0f;
+
+        // the inset to the left of the content in logical pixels (§8.2)
+        float left = 0.0f;
+
+        // report whether the insets consume no space at all, which is what an unconfigured inset carries (§8.2)
+        [[nodiscard]] bool empty() const;
+
+        // compare two inset sets field by field
+        friend bool operator==(const Insets& lhs, const Insets& rhs) = default;
+    };
+
     // the affine transform a render context applies to its drawing commands (§6.2)
     struct Transform
     {

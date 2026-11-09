@@ -10,6 +10,11 @@ namespace albor
         return width <= 0.0f || height <= 0.0f;
     }
 
+    bool Insets::empty() const {
+        // an inset set that consumes nothing on every edge is the unconfigured one (§8.2)
+        return top == 0.0f && right == 0.0f && bottom == 0.0f && left == 0.0f;
+    }
+
     Rect Rect::from_origin_size(Point origin, Size size) {
         // build a rectangle from an origin and an extent
         return {.x = origin.x, .y = origin.y, .width = size.width, .height = size.height};

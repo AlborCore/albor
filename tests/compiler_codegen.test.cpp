@@ -3623,6 +3623,46 @@ component C {
     EXPECT_TRUE(contains(cpp.content, "->set_border_color("));
 }
 
+TEST(Codegen, PaddingWithPartialInsetsRecordEmitsDefaultedFields) {
+    // arrange
+    const std::string_view source = R"(
+component C {
+    Padding {
+        padding: Insets { left: 10px };
+        Label { text: "Content"; }
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    const GeneratedFile& h = file_named(files, "c.h");
+    EXPECT_TRUE(contains(cpp.content, "n0->set_padding(Insets{.left = 1e+01f});"));
+    EXPECT_TRUE(contains(h.content, "#include \"albor/core/geometry.h\""));
+}
+
+TEST(Codegen, PaddingWithFullInsetsRecordEmitsAllFields) {
+    // arrange
+    const std::string_view source = R"(
+component C {
+    Padding {
+        padding: Insets { top: 2px, right: 4px, bottom: 6px, left: 10px };
+        Label { text: "Content"; }
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "n0->set_padding(Insets{.top = 2.0f, .right = 4.0f, .bottom = 6.0f, .left = 1e+01f});"));
+}
+
 TEST(Codegen, GridShapePropertiesReachTheLayout) {
     // arrange a grid whose shape and gap the author wrote (§8.2)
     const std::string_view source = R"(

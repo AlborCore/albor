@@ -440,6 +440,35 @@ TEST(TypeChecker, AcceptsALengthIntoAFloatProperty) {
     EXPECT_TRUE(assignment.type.is(TypeKind::Length));
 }
 
+TEST(TypeChecker, AcceptsInsetsRecordConstructionIntoPadding) {
+    // arrange, act
+    const CheckedFile file = check("component C { Padding { padding: Insets { left: 10px, top: 4px }; Label {} } }");
+    // assert
+    const CheckedAssignment& assignment = only(file).root->assignments.at(0);
+    EXPECT_TRUE(assignment.type.is(TypeKind::Native));
+    EXPECT_EQ(assignment.type.native_name(), "Insets");
+}
+
+TEST(TypeChecker, RejectsInsetsIntoNonPaddingProperty) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("component C { Column { padding: Insets { left: 10px }; } }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0410");
+}
+
+TEST(TypeChecker, RejectsInsetsIntoFloatScalarProperty) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("component C { Slider { value: Insets { left: 10px }; } }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0410");
+}
+
 TEST(TypeChecker, RecordsTheDependenciesOfABinding) {
     // arrange, act
     const CheckedFile file = check("component C { in property<int> a: 1; in property<int> b: 2; Label { text: @tr(\"x\") + string(a + b); } }");
