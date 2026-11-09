@@ -259,6 +259,143 @@ TEST(RowLayoutChecks, AChildIsOfferedTheCeilingOfTheRow) {
     EXPECT_FLOAT_EQ(child_ptr->offered.maximum.height, 60.0f);
 }
 
+TEST(RowLayoutChecks, AChildIsOfferedTheSpaceItsSiblingsLeft) {
+    // arrange a fixed width sibling before a child that declares the main axis stretch (§8.2)
+    RowLayout row;
+    row.set_gap(10.0f);
+    auto sidebar = std::make_unique<LayoutTestNode>();
+    auto page = std::make_unique<LayoutTestNode>();
+    sidebar->intrinsic = Size{120.0f, 40.0f};
+    page->intrinsic = Size{500.0f, 40.0f};
+    page->set_horizontal_align(Align::Stretch);
+    LayoutTestNode* page_ptr = page.get();
+    row.add_child(std::move(sidebar));
+    row.add_child(std::move(page));
+    Size measured{};
+    // act
+    row.measure(SizeConstraints::at_most(Size{500.0f, 60.0f}), measured);
+    // assert the page is offered only what the sidebar and the gap left (§8.2)
+    EXPECT_FLOAT_EQ(page_ptr->offered.maximum.width, 370.0f);
+    EXPECT_FLOAT_EQ(measured.width, 500.0f);
+}
+
+TEST(RowLayoutChecks, PaddingIsKeptOutOfWhatTheChildrenAreOffered) {
+    // arrange a padded row whose one child must fit inside the inset (§8.2)
+    RowLayout row;
+    row.set_padding(10.0f);
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{500.0f, 40.0f};
+    LayoutTestNode* child_ptr = child.get();
+    row.add_child(std::move(child));
+    Size measured{};
+    // act
+    row.measure(SizeConstraints::at_most(Size{200.0f, 80.0f}), measured);
+    // assert the child never measures into the padding, which would overflow the row (§8.2)
+    EXPECT_FLOAT_EQ(child_ptr->offered.maximum.width, 180.0f);
+    EXPECT_FLOAT_EQ(measured.width, 200.0f);
+}
+
+TEST(RowLayoutChecks, AFlexibleChildDoesNotStarveItsLaterSibling) {
+    // arrange a scroll view before a button, which the old sequential offer collapsed to zero (§8.2)
+    RowLayout row;
+    auto page = std::make_unique<LayoutTestNode>();
+    auto action = std::make_unique<LayoutTestNode>();
+    page->intrinsic = Size{500.0f, 40.0f};
+    page->set_horizontal_align(Align::Stretch);
+    action->intrinsic = Size{80.0f, 40.0f};
+    LayoutTestNode* action_ptr = action.get();
+    row.add_child(std::move(page));
+    row.add_child(std::move(action));
+    Size measured{};
+    // act
+    row.measure(SizeConstraints::at_most(Size{500.0f, 60.0f}), measured);
+    row.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{500.0f, 60.0f}));
+    // assert the action keeps its measured width and sits inside the row (§8.2)
+    EXPECT_FLOAT_EQ(action_ptr->measured_size().width, 80.0f);
+    EXPECT_FLOAT_EQ(action_ptr->bounds().width, 80.0f);
+    EXPECT_FLOAT_EQ(measured.width, 500.0f);
+}
+
+TEST(RowLayoutChecks, PaddingAndGapsAreKeptOutOfTheFlexibleShare) {
+    // arrange a padded and gapped row whose flexible child must take only the space left (§8.2)
+    RowLayout row;
+    row.set_padding(10.0f);
+    row.set_gap(10.0f);
+    auto sidebar = std::make_unique<LayoutTestNode>();
+    auto page = std::make_unique<LayoutTestNode>();
+    sidebar->intrinsic = Size{120.0f, 40.0f};
+    page->intrinsic = Size{500.0f, 40.0f};
+    page->set_horizontal_align(Align::Stretch);
+    LayoutTestNode* page_ptr = page.get();
+    row.add_child(std::move(sidebar));
+    row.add_child(std::move(page));
+    Size measured{};
+    // act
+    row.measure(SizeConstraints::at_most(Size{500.0f, 80.0f}), measured);
+    // assert the flexible child is offered the content less the fixed child and the gap (§8.2)
+    EXPECT_FLOAT_EQ(page_ptr->measured_size().width, 350.0f);
+    EXPECT_FLOAT_EQ(measured.width, 500.0f);
+}
+
+TEST(RowLayoutChecks, TwoFlexibleChildrenSplitTheContent) {
+    // arrange two children that declare stretch, which the overflow must divide between them (§8.2)
+    RowLayout row;
+    row.set_gap(10.0f);
+    auto first = std::make_unique<LayoutTestNode>();
+    auto second = std::make_unique<LayoutTestNode>();
+    first->intrinsic = Size{500.0f, 40.0f};
+    second->intrinsic = Size{500.0f, 40.0f};
+    first->set_horizontal_align(Align::Stretch);
+    second->set_horizontal_align(Align::Stretch);
+    LayoutTestNode* first_ptr = first.get();
+    LayoutTestNode* second_ptr = second.get();
+    row.add_child(std::move(first));
+    row.add_child(std::move(second));
+    Size measured{};
+    // act
+    row.measure(SizeConstraints::at_most(Size{500.0f, 60.0f}), measured);
+    // assert each child takes half the content less the gap, and the row fills the offer (§8.2)
+    EXPECT_FLOAT_EQ(first_ptr->measured_size().width, 245.0f);
+    EXPECT_FLOAT_EQ(second_ptr->measured_size().width, 245.0f);
+    EXPECT_FLOAT_EQ(measured.width, 500.0f);
+}
+
+TEST(RowLayoutChecks, AFullWidthChildWithoutStretchKeepsItsExtent) {
+    // arrange a full width child that never declared stretch, which the row must not shrink (§8.2)
+    RowLayout row;
+    auto page = std::make_unique<LayoutTestNode>();
+    auto action = std::make_unique<LayoutTestNode>();
+    page->intrinsic = Size{500.0f, 40.0f};
+    action->intrinsic = Size{80.0f, 40.0f};
+    LayoutTestNode* page_ptr = page.get();
+    LayoutTestNode* action_ptr = action.get();
+    row.add_child(std::move(page));
+    row.add_child(std::move(action));
+    Size measured{};
+    // act
+    row.measure(SizeConstraints::at_most(Size{500.0f, 60.0f}), measured);
+    // assert the authored extents stand, because only a declared stretch gives space up (§8.2)
+    EXPECT_FLOAT_EQ(page_ptr->measured_size().width, 500.0f);
+    EXPECT_FLOAT_EQ(action_ptr->measured_size().width, 80.0f);
+    EXPECT_FLOAT_EQ(measured.width, 500.0f);
+}
+
+TEST(RowLayoutChecks, AChildIsOfferedTheContentHeight) {
+    // arrange a padded row whose cross axis offer must exclude the inset (§8.2)
+    RowLayout row;
+    row.set_padding(10.0f);
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{10.0f, 80.0f};
+    LayoutTestNode* child_ptr = child.get();
+    row.add_child(std::move(child));
+    Size measured{};
+    // act
+    row.measure(SizeConstraints::at_most(Size{200.0f, 100.0f}), measured);
+    // assert the child is offered only the height inside the padding (§8.2)
+    EXPECT_FLOAT_EQ(child_ptr->offered.maximum.height, 80.0f);
+    EXPECT_FLOAT_EQ(measured.height, 100.0f);
+}
+
 TEST(RowLayoutChecks, PlacesChildrenLeftToRightWithGaps) {
     // arrange
     RowLayout row;
@@ -510,6 +647,47 @@ TEST(ColumnLayoutChecks, AddsOneGapBetweenChildrenOnly) {
     // assert
     EXPECT_FLOAT_EQ(measured.width, 10.0f);
     EXPECT_FLOAT_EQ(measured.height, 46.0f);
+}
+
+TEST(ColumnLayoutChecks, AChildIsOfferedTheSpaceItsSiblingsLeft) {
+    // arrange a stacked heading above a child that declares the main axis stretch (§8.2)
+    ColumnLayout column;
+    column.set_gap(10.0f);
+    auto heading = std::make_unique<LayoutTestNode>();
+    auto page = std::make_unique<LayoutTestNode>();
+    heading->intrinsic = Size{80.0f, 120.0f};
+    page->intrinsic = Size{80.0f, 600.0f};
+    page->set_vertical_align(Align::Stretch);
+    LayoutTestNode* page_ptr = page.get();
+    column.add_child(std::move(heading));
+    column.add_child(std::move(page));
+    Size measured{};
+    // act
+    column.measure(SizeConstraints::at_most(Size{200.0f, 500.0f}), measured);
+    // assert the page is offered only what the heading and the gap left (§8.2)
+    EXPECT_FLOAT_EQ(page_ptr->offered.maximum.height, 370.0f);
+    EXPECT_FLOAT_EQ(measured.height, 500.0f);
+}
+
+TEST(ColumnLayoutChecks, AFlexibleFirstChildDoesNotStarveItsLaterSibling) {
+    // arrange a scroll view above an action row, which the old sequential offer collapsed to zero (§8.2)
+    ColumnLayout column;
+    auto page = std::make_unique<LayoutTestNode>();
+    auto action = std::make_unique<LayoutTestNode>();
+    page->intrinsic = Size{200.0f, 400.0f};
+    page->set_vertical_align(Align::Stretch);
+    action->intrinsic = Size{80.0f, 32.0f};
+    LayoutTestNode* action_ptr = action.get();
+    column.add_child(std::move(page));
+    column.add_child(std::move(action));
+    Size measured{};
+    // act
+    column.measure(SizeConstraints::at_most(Size{200.0f, 400.0f}), measured);
+    column.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 400.0f}));
+    // assert the action keeps its measured height and sits inside the column (§8.2)
+    EXPECT_FLOAT_EQ(action_ptr->measured_size().height, 32.0f);
+    EXPECT_FLOAT_EQ(action_ptr->bounds().height, 32.0f);
+    EXPECT_FLOAT_EQ(measured.height, 400.0f);
 }
 
 TEST(ColumnLayoutChecks, PlacesChildrenTopToBottomWithGaps) {

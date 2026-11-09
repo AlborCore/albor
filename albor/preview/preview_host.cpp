@@ -483,9 +483,9 @@ namespace albor::preview
                     progress->set_value(static_cast<float>(number_of(*numeric)));
                 }
                 // an unknown-length progress mode, which a preview shows as the author wrote it (§7.3)
-                else if (auto* progress = dynamic_cast<ProgressBar*>(built.get()); progress != nullptr && assignment.name == "indeterminate" && numeric != nullptr) {
+                else if (auto* indeterminate = dynamic_cast<ProgressBar*>(built.get()); indeterminate != nullptr && assignment.name == "indeterminate" && numeric != nullptr) {
                     // the bar is the read only widget that carries the mode (§7.3)
-                    progress->set_indeterminate(numeric->text == "true");
+                    indeterminate->set_indeterminate(numeric->text == "true");
                 }
                 // an image source, name or explicit size, which the preview shows as the author wrote it (§6.4, §8)
                 else if (auto* image = dynamic_cast<Image*>(built.get()); image != nullptr && (assignment.name == "source" || assignment.name == "description" || assignment.name == "width" || assignment.name == "height")) {
@@ -610,6 +610,17 @@ namespace albor::preview
                     // the field is the only widget that carries it, and writing it leaves read only alone (§8)
                     if (auto* field = dynamic_cast<TextField*>(built.get()))
                         field->set_multiline(numeric->text == "true");
+                }
+                // a label alignment, which a preview applies as the author wrote it (§8.2)
+                else if (assignment.name == "text_align") {
+                    // the button is the control that places its label inside a plate (§8.2)
+                    if (auto* button = dynamic_cast<Button*>(built.get())) {
+                        // the member is read once, because the setter takes the enumerator (§8.2)
+                        Align align = Align::Inherit;
+                        // a value outside the set is skipped, which the diagnostics already reported (§12.2)
+                        if (align_of(*assignment.value, align))
+                            button->set_text_align(align);
+                    }
                 }
                 // a content alignment, which a preview applies as the author wrote it (§8.2)
                 else if (assignment.name == "content_align") {

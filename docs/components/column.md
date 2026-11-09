@@ -53,8 +53,13 @@ component Greeting {
 
 ## Notes
 
-- `vertical_align` on a child is the child's position **within** its column slot — it is a
-  screen axis, never the column's main axis
-  ([Layout](../concepts/layout.md#containers)).
+- `vertical_align` on a child is its position on the column's **main axis**;
+  `horizontal_align` is the cross axis ([Layout](../concepts/layout.md#containers)).
+- `Align.stretch` on the main axis marks a child **flexible**: it absorbs spare height and,
+  when the fixed children overflow, it is measured against the height they leave. A fixed
+  child keeps its authored height even if the column then overflows.
 - A child with no natural size and `vertical_align: Align.stretch` is the spacer idiom —
   it takes whatever height the column does not use.
+- A `ScrollView` with no `viewport_height` fills the height a column leaves only when it
+  declares `vertical_align: Align.stretch`. Without it the scroll view is a fixed child and
+  measures the whole offered height.

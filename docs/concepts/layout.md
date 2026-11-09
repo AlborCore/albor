@@ -39,7 +39,7 @@ logical unit they were designed around. A 1-pixel hairline is what `phx` is for.
 | [ScrollView](../components/scroll-view.md) | one content child, scrollable | viewport, offset, scrollbar policy |
 | [ListBox](../components/list-box.md) | a list of rows, scrollable | selection, row height, scrollbar policy |
 
-Every element also carries the three common properties:
+Every element also carries the common properties:
 
 ```text
 horizontal_align: Align.stretch;   // start | center | end | stretch
@@ -47,8 +47,11 @@ vertical_align: Align.center;
 visible: armed;                    // hide in place, keep state ([control flow](../ui-language/control-flow.md#visible-hide-in-place))
 ```
 
-The alignment axes are **screen axes** — horizontal is always horizontal — even inside a
-`Column` whose main axis is vertical. `vertical_align` is never the parent's main axis.
+The alignment axes are **screen axes**. In a `Row`, `horizontal_align` places a child on the
+main axis and `vertical_align` on the cross axis; in a `Column` the two swap. On the main
+axis, `Align.stretch` is also the declaration that a child is **flexible**: it absorbs spare
+space, and when the fixed children overflow it is measured against the space they leave. On
+the cross axis, `Align.stretch` fills the parent's content extent.
 
 ## Patterns
 
@@ -88,6 +91,52 @@ Row {
     Label { horizontal_align: Align.stretch; text: frequency_text; }
 }
 ```
+
+### A scrolling page beside a fixed sidebar
+
+A `ScrollView` with no declared viewport extent follows the space its parent offers. Inside a
+`Row` or `Column`, declare the parent's main axis as `stretch` so the view is the child that
+takes the remaining space:
+
+```text
+Column {
+    padding: 16px;
+
+    Row {
+        vertical_align: Align.stretch;      // the body takes the height the actions leave
+
+        Column {                            // a fixed width sidebar
+            Label { text: @tr("Simulation"); }
+        }
+
+        ScrollView {
+            horizontal_align: Align.stretch; // the page takes the width the sidebar leaves
+            scrollbar: Scrollbar.on;
+
+            Column { /* the page content */ }
+        }
+    }
+
+    Row {
+        horizontal_align: Align.end;
+        Button { text: @tr("OK"); }
+    }
+}
+```
+
+Without `horizontal_align: Align.stretch` the scroll view is a fixed child: it measures the
+whole offered width, so the row overflows instead of silently shrinking it.
+
+### When the fixed children do not fit
+
+A `Row` or `Column` first measures every visible child against its content extent. If the
+total, the gaps and the padding fit, nothing else happens. If they overflow, only the
+children that declared `Align.stretch` on the main axis are measured again, each with an
+equal share of the space the fixed children did not use. A fixed child keeps exactly the
+extent it measured, even when that means the row or column overflows.
+
+Flexibility is therefore **declared, never inferred** from a child's measured size: a child
+that happens to measure as wide as the offer is still fixed unless it says `stretch`.
 
 The full source of these — `align_panel.ui` in `examples/form/` — is the reference for the
 idioms a real form is built from.

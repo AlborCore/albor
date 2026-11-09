@@ -337,7 +337,7 @@ namespace albor::compiler
                 while (!at_punctuation(";") && !at_punctuation("}") && peek().kind != Token::Kind::End)
                     advance();
                 // the terminator is consumed when the skip found one, which ends this field (§11.1)
-                accept_punctuation(";");
+                (void)accept_punctuation(";");
                 continue;
             }
             // a parametric form such as vector<string> carries its argument in angles, which are read whole (§11.1, §8.1)
@@ -357,7 +357,7 @@ namespace albor::compiler
                 while (!at_punctuation(";") && !at_punctuation("}") && peek().kind != Token::Kind::End)
                     advance();
                 // the terminator is consumed when the skip found one, which ends this field (§11.1)
-                accept_punctuation(";");
+                (void)accept_punctuation(";");
             }
             // the span ends at the terminator, which the reader has already consumed (§11.1)
             field.span.end = last_consumed_end();

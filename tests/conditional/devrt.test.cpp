@@ -126,6 +126,9 @@ namespace
         // a content alignment is a named member of the set the two axes already use (§8.2)
         if (property == "content_align")
             return "start";
+        // a label alignment is a member of the same set, which the button reads (§8.2)
+        if (property == "text_align")
+            return "start";
         // a radio value is an integer, which the group matches against its selected value (§8)
         if (property == "value" && element == "RadioButton")
             return "1";
@@ -263,7 +266,7 @@ TEST(DevElementChecks, EveryDeclaredPropertyLandsOnItsOwnElement) {
     TestTextEngine text;
     // the closed catalogue of §8, paired with a value each property holds, which is what a definition writes (§11.1)
     const std::vector<std::pair<std::string, std::string>> assignments{
-        {"Column", "spacing"}, {"Column", "padding"}, {"Row", "spacing"}, {"Grid", "spacing"}, {"Grid", "columns"}, {"Grid", "rows"}, {"Padding", "padding"}, {"Panel", "padding"}, {"Panel", "spacing"}, {"Panel", "background"}, {"Panel", "corner_radius"}, {"Panel", "border_width"}, {"Panel", "border_color"}, {"Card", "padding"}, {"Card", "spacing"}, {"Card", "background"}, {"Card", "corner_radius"}, {"Card", "border_width"}, {"Card", "border_color"}, {"Label", "text"}, {"Label", "foreground"}, {"Label", "font_size"}, {"Button", "text"}, {"Button", "tooltip"}, {"Button", "background"}, {"Button", "disabled"}, {"Button", "default"}, {"Button", "cancel"}, {"Slider", "value"}, {"Slider", "disabled"}, {"Slider", "track_color"}, {"Slider", "thumb_color"}, {"CheckBox", "checked"}, {"CheckBox", "disabled"}, {"CheckBox", "outline"}, {"CheckBox", "check_fill"}, {"RadioGroup", "selected"}, {"RadioGroup", "vertical"}, {"RadioGroup", "spacing"}, {"RadioButton", "value"}, {"RadioButton", "label"}, {"RadioButton", "disabled"}, {"NumericStepper", "value"}, {"NumericStepper", "min"}, {"NumericStepper", "max"}, {"NumericStepper", "step"}, {"NumericStepper", "disabled"}, {"Image", "source"}, {"Image", "description"}, {"Image", "width"}, {"Image", "height"}, {"ScrollView", "viewport_width"}, {"ScrollView", "viewport_height"}, {"ScrollView", "overscan"}, {"ScrollView", "scrollbar"}, {"ScrollView", "row_height"}, {"ListBox", "viewport_width"}, {"ListBox", "viewport_height"}, {"TextField", "value"}, {"TextField", "placeholder"}, {"TextField", "read_only"}, {"TextField", "multiline"}, {"TextField", "content_align"}, {"TextField", "disabled"}, {"TextField", "font_size"}, {"ComboBox", "selected"}, {"ComboBox", "placeholder"}, {"ComboBox", "disabled"},
+        {"Column", "spacing"}, {"Column", "padding"}, {"Row", "spacing"}, {"Grid", "spacing"}, {"Grid", "columns"}, {"Grid", "rows"}, {"Padding", "padding"}, {"Panel", "padding"}, {"Panel", "spacing"}, {"Panel", "background"}, {"Panel", "corner_radius"}, {"Panel", "border_width"}, {"Panel", "border_color"}, {"Card", "padding"}, {"Card", "spacing"}, {"Card", "background"}, {"Card", "corner_radius"}, {"Card", "border_width"}, {"Card", "border_color"}, {"Label", "text"}, {"Label", "foreground"}, {"Label", "font_size"}, {"Button", "text"}, {"Button", "text_align"}, {"Button", "tooltip"}, {"Button", "background"}, {"Button", "disabled"}, {"Button", "default"}, {"Button", "cancel"}, {"Slider", "value"}, {"Slider", "disabled"}, {"Slider", "track_color"}, {"Slider", "thumb_color"}, {"CheckBox", "checked"}, {"CheckBox", "disabled"}, {"CheckBox", "outline"}, {"CheckBox", "check_fill"}, {"RadioGroup", "selected"}, {"RadioGroup", "vertical"}, {"RadioGroup", "spacing"}, {"RadioButton", "value"}, {"RadioButton", "label"}, {"RadioButton", "disabled"}, {"NumericStepper", "value"}, {"NumericStepper", "min"}, {"NumericStepper", "max"}, {"NumericStepper", "step"}, {"NumericStepper", "disabled"}, {"Image", "source"}, {"Image", "description"}, {"Image", "width"}, {"Image", "height"}, {"ScrollView", "viewport_width"}, {"ScrollView", "viewport_height"}, {"ScrollView", "overscan"}, {"ScrollView", "scrollbar"}, {"ScrollView", "row_height"}, {"ListBox", "viewport_width"}, {"ListBox", "viewport_height"}, {"TextField", "value"}, {"TextField", "placeholder"}, {"TextField", "read_only"}, {"TextField", "multiline"}, {"TextField", "content_align"}, {"TextField", "disabled"}, {"TextField", "font_size"}, {"ComboBox", "selected"}, {"ComboBox", "placeholder"}, {"ComboBox", "disabled"},
     };
     // assert each assignment lands, because a setter the table names but never runs is a table that lies (§11.1)
     for (const std::pair<std::string, std::string>& assignment : assignments) {
@@ -323,6 +326,26 @@ TEST(DevElementChecks, AButtonDialogRoleLandsOnTheButton) {
     EXPECT_TRUE(is_cancel);
     EXPECT_TRUE(button->is_default());
     EXPECT_TRUE(button->is_cancel());
+}
+
+TEST(DevElementChecks, ALabelAlignmentLandsOnTheButton) {
+    // arrange a button, whose label the definition may pin to an edge (§8.2)
+    BindingEngine engine;
+    TestTextEngine text;
+    std::unique_ptr<UiNode> node = create_node("Button", engine, text);
+    ASSERT_NE(node, nullptr);
+    auto* button = dynamic_cast<Button*>(node.get());
+    ASSERT_NE(button, nullptr);
+    // act the definition writes the trailing edge, which the setter takes as a named member (§8.2)
+    const bool applied = apply_property(*node, "Button", "text_align", "end");
+    // assert the alignment reached the control rather than only the setter table (§8.2)
+    EXPECT_TRUE(applied);
+    EXPECT_EQ(button->text_align(), Align::End);
+    // act a word outside the alignment set, which the language never writes (§8.2)
+    const bool refused = apply_property(*node, "Button", "text_align", "sideways");
+    // assert the value was refused rather than silently replacing the alignment (§8.2)
+    EXPECT_FALSE(refused);
+    EXPECT_EQ(button->text_align(), Align::End);
 }
 
 TEST(DevElementChecks, AComboBoxOptionArrayLandsAsAStaticList) {

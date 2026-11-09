@@ -67,8 +67,12 @@ Label { horizontal_align: Align.stretch; }
 ScrollView { scrollbar: Scrollbar.off; }
 ```
 
-`stretch` is the spacer idiom: a child that declares no natural size absorbs the leftover
-space on its axis. [Layout](../concepts/layout.md) walks through the patterns.
+On a container's main axis, `stretch` also declares a **flexible** child: it absorbs the
+leftover space, and when the fixed children overflow it is measured against the space they
+leave. On the cross axis, `stretch` fills the container's content extent. Flexibility is
+never inferred from the measured size — a child that happens to measure as wide as the offer
+stays fixed unless it declares `stretch`. [Layout](../concepts/layout.md#containers) walks
+through the patterns.
 
 ## Collections
 
@@ -81,6 +85,10 @@ inout property<vector<Task>> tasks;
 with the closed method set — `append`, `remove_at`, `clear`, `set`
 ([Signals and handlers](handlers.md#built-in-methods)) — and `Repeat` builds rows over it
 ([Control flow](control-flow.md#repeat-rows-over-a-collection)).
+
+A manifest record field may also be a `vector<T>`; a `Repeat` row reads it like any other
+field, which lets each row carry its own editor options
+([Records](../concepts/native-components.md#records)).
 
 ## Snapshot
 

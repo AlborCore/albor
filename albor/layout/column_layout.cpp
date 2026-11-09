@@ -1,23 +1,43 @@
 #include "albor/layout/column_layout.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace albor
 {
     void ColumnLayout::measure(const SizeConstraints& constraints, Size& out_size) {
+        // the padding frames the children, so neither the width nor the height offer includes it (§8.2)
+        const float padding_total = m_padding * 2.0f;
+        // the width one child may fill is the column's content width, which a finite offer names (§8.2)
+        const float content_width = std::isfinite(constraints.maximum.width) ? std::max(0.0f, constraints.maximum.width - padding_total) : constraints.maximum.width;
+        // the height one child may fill is the column's content height, which a finite offer names (§8.2)
+        const float content_height = std::isfinite(constraints.maximum.height) ? std::max(0.0f, constraints.maximum.height - padding_total) : constraints.maximum.height;
+        // the gaps only sit between visible children, which is what the first probe accounts for (§8.2)
+        std::size_t visible_count = 0;
+        for (const auto& child : children())
+            if (child->visible())
+                visible_count++;
+        // the space the gaps take is fixed, because every visible pair contributes one gap (§8.2)
+        const float gap_total = visible_count > 1 ? m_gap * static_cast<float>(visible_count - 1) : 0.0f;
+        // the constraints every child is measured against, which both passes read (§8.2)
+        const auto offering = [content_width](float height) { return SizeConstraints::at_most(Size{.width = content_width, .height = height}); };
+        // a child is flexible only when it declares stretch on the column's main axis (§8.2)
+        const auto flexible = [](const UiNode& child) { return resolve_align(child.vertical_align(), Align::Start) == Align::Stretch; };
         // an empty column measures as nothing, because there is no child to take an extent from (§8.2)
         Size total{};
         // a child before the first one has no gap before it, so the count tracks the gaps actually placed (§8.2)
         std::size_t placed = 0;
-        // the offered ceiling shrinks by the insets, because the padding frames the children on every edge (§8.2)
-        const SizeConstraints child_constraints = SizeConstraints::at_most(Size{.width = std::max(0.0f, constraints.maximum.width - m_padding * 2.0f), .height = std::max(0.0f, constraints.maximum.height - m_padding * 2.0f)});
+        // how many children declared the main axis stretch, which is what redistributes an overflow (§8.2)
+        std::size_t flexible_count = 0;
+        // the height the children that did not declare stretch asked for, which the overflow leaves them (§8.2)
+        float fixed_height = 0.0f;
         for (const auto& child : children()) {
             // a hidden child leaves layout, because `visible: false` removes it from both passes (§11.1, §18.2)
             if (!child->visible())
                 continue;
-            // each child measures against that ceiling, so text wraps inside the width the column leaves (§8.2, §9.1)
+            // each child first measures against the whole content, which is what the probe asks (§8.2)
             Size child_size{};
-            child->measure(child_constraints, child_size);
+            child->measure(offering(content_height), child_size);
             // the heights accumulate, because the children stack vertically (§8.2)
             total.height += child_size.height;
             // the column is as wide as its widest child, because every child receives the full width (§8.2)
@@ -25,12 +45,47 @@ namespace albor
             // only the gaps between children count, so the first child adds none (§8.2)
             if (placed > 0)
                 total.height += m_gap;
-            // increment the count of placed children
+            // a child that declared stretch takes a share of the overflow, while the others keep what they asked (§8.2)
+            if (flexible(*child))
+                flexible_count++;
+            else
+                fixed_height += child_size.height;
             placed++;
         }
         // the inset adds on both sides, because the padding frames the children on every edge (§8.2)
-        total.width += m_padding * 2.0f;
-        total.height += m_padding * 2.0f;
+        total.width += padding_total;
+        // the same inset applies on the other axis, because the padding is uniform (§8.2)
+        total.height += padding_total;
+        // an overflowing column re-offers the fixed children's leftover to the children that declared stretch (§8.2)
+        if (std::isfinite(constraints.maximum.height) && total.height > constraints.maximum.height && flexible_count > 0) {
+            // the space the flexible children share is what the fixed children and the gaps left (§8.2)
+            const float share = std::max(0.0f, content_height - fixed_height - gap_total) / static_cast<float>(flexible_count);
+            // the second pass measures each child against the share its declaration earned (§8.2)
+            total = Size{};
+            placed = 0;
+            for (const auto& child : children()) {
+                // a hidden child leaves layout, because it is not part of the arranged column (§11.1, §18.2)
+                if (!child->visible())
+                    continue;
+                // the probe result is still the child's measured size, which the fixed children keep (§8.2)
+                Size child_size = child->measured_size();
+                // a flexible child takes the share, while a fixed child keeps the probe it measured against (§8.2)
+                if (flexible(*child))
+                    child->measure(offering(share), child_size);
+                // the heights accumulate, because the children stack vertically (§8.2)
+                total.height += child_size.height;
+                // the column is as wide as its widest child, because every child receives the full width (§8.2)
+                total.width = std::max(total.width, child_size.width);
+                // only the gaps between children count, so the first child adds none (§8.2)
+                if (placed > 0)
+                    total.height += m_gap;
+                placed++;
+            }
+            // the inset adds on both sides, because the padding frames the children on every edge (§8.2)
+            total.width += padding_total;
+            // the same inset applies on the other axis, because the padding is uniform (§8.2)
+            total.height += padding_total;
+        }
         // the total is clamped into the offered constraints, because a parent decision is final (§8.2)
         m_measured_size = constraints.constrain(total);
         out_size = m_measured_size;

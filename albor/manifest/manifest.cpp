@@ -177,7 +177,7 @@ namespace albor::manifest
         if (!at_punctuation("<"))
             return name;
         // the bracketed remainder is read whole, because a nested type carries its own angles (§11.2)
-        return name + expect_bracketed_type();
+        return name + "<" + expect_bracketed_type() + ">";
     }
 
     std::string ManifestParser::expect_bracketed_type() {
@@ -612,6 +612,20 @@ namespace albor::manifest
             // an image field carries an immutable handle, which names no platform type either (§6.4, AD-05)
             if (written == "image")
                 return compiler::scalar(compiler::TypeKind::Image);
+            // a collection field carries the element its brackets name, which a binding may walk (§8.1, §11.2)
+            constexpr std::string_view vector_prefix = "vector<";
+            if (written.starts_with(vector_prefix) && written.ends_with(">")) {
+                // the element sits between the brackets, which recurses into a nested collection (§8.1)
+                const std::string_view element = written.substr(vector_prefix.size(), written.size() - vector_prefix.size() - 1);
+                // an empty argument names no type, so the field is untyped rather than guessed (§11.2)
+                if (!element.empty()) {
+                    // the element type is resolved by the same closed set, which keeps the two spellings aligned (§11.2)
+                    const compiler::ValueType inner = field_value_type(element);
+                    // a resolved element makes the collection, while an unknown one stays an error (§11.2)
+                    if (!inner.is_error())
+                        return compiler::ValueType::parameterized(compiler::TypeKind::Vector, inner);
+                }
+            }
             // a snapshot field carries an immutable shared value, which is how data crosses a thread (§11.2, §13.2)
             if (written.starts_with("Snapshot<") && written.ends_with(">")) {
                 // the element name sits between the brackets, which is the type argument (§11.2, §13.2)

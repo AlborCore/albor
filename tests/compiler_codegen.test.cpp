@@ -1028,6 +1028,22 @@ TEST(Codegen, ARecordFieldReadRendersAsAMemberAccess) {
     EXPECT_FALSE(has_code(diagnostics, "E0416"));
 }
 
+TEST(Codegen, ACollectionRecordFieldFeedsAComboFromARepeatedRow) {
+    // arrange a record whose row carries its own choices, which the option card renders (§11.2, §8)
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    catalog.add_record(RecordType{.name = "OptionRow", .fields = {RecordFieldType{.name = "key", .type = scalar(TypeKind::String), .is_key = true}, RecordFieldType{.name = "value", .type = scalar(TypeKind::String), .is_key = false}, RecordFieldType{.name = "choices", .type = ValueType::parameterized(TypeKind::Vector, scalar(TypeKind::String)), .is_key = false}}});
+    DiagnosticList diagnostics;
+    // the combo reads the field off the row the repeat binds, which is what the issue could not express (§11.2, AD-13)
+    const std::string_view source = "import settings; component C { in property<vector<OptionRow>> rows; Column { Repeat(row in rows) { ComboBox { items: row.choices; } } } }";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics, catalog);
+    // assert the row builder hands the declared collection to the combo, which is the whole fix (§11.3)
+    EXPECT_FALSE(diagnostics.has_errors());
+    ASSERT_FALSE(files.empty());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "set_items(item.choices)"));
+}
+
 TEST(Codegen, AUiStructEmitsAGuardedDefinition) {
     // arrange
     DiagnosticList diagnostics;

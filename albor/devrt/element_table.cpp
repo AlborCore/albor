@@ -408,6 +408,14 @@ namespace albor::devrt
                      node.set_label(std::string(value));
                      return true;
                  })},
+                {"Button.text_align", setter<Button>([](Button& node, std::string_view value) {
+                     // the alignment is a named member, which places the run inside the plate (§8.2)
+                     Align align;
+                     if (!read_align(value, align))
+                         return false;
+                     node.set_text_align(align);
+                     return true;
+                 })},
                 {"Button.tooltip", setter<Button>([](Button& node, std::string_view value) {
                      node.set_tooltip(std::string(value));
                      return true;

@@ -808,6 +808,98 @@ TEST(ButtonChecks, RendersThePlateAndTheLabel) {
     EXPECT_EQ(text_commands(*recorder.scene()).front().text_geometry().layout.run->glyph_count(), 5u);
 }
 
+TEST(ButtonChecks, AStartAlignedLabelSitsAtTheLeadingEdge) {
+    // arrange a stretched sidebar row whose label must not be centred (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.set_text_align(Align::Start);
+    button.arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{100.0f, 30.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the run starts at the plate's leading edge, which is what a sidebar row needs (§8.2)
+    ASSERT_EQ(text_commands(*recorder.scene()).size(), 1u);
+    EXPECT_FLOAT_EQ(text_commands(*recorder.scene()).front().text_geometry().origin.x, 10.0f);
+}
+
+TEST(ButtonChecks, AStartAlignedLabelHonoursTheThemedInset) {
+    // arrange a themed button, whose plate reserves horizontal padding beside the label (§8.4)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    const Theme theme = Theme::fluent(Accents{}, ColorScheme::Light);
+    Button button(&engine, &text_engine, "Press");
+    button.set_theme(&theme);
+    button.set_text_align(Align::Start);
+    button.arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{200.0f, 30.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{300.0f, 100.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the run starts inside the inset rather than at the border (§8.4, §8.2)
+    ASSERT_EQ(text_commands(*recorder.scene()).size(), 1u);
+    EXPECT_FLOAT_EQ(text_commands(*recorder.scene()).front().text_geometry().origin.x, 22.0f);
+}
+
+TEST(ButtonChecks, AnEndAlignedLabelSitsAtTheTrailingEdge) {
+    // arrange a button whose label is pinned to the far side of the plate (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.set_text_align(Align::End);
+    button.arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{100.0f, 30.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the run ends at the plate's trailing edge, which is the mirror of the leading pin (§8.2)
+    ASSERT_EQ(text_commands(*recorder.scene()).size(), 1u);
+    EXPECT_FLOAT_EQ(text_commands(*recorder.scene()).front().text_geometry().origin.x, 60.0f);
+}
+
+TEST(ButtonChecks, ALabelWiderThanThePlateStartsAtItsLeadingEdge) {
+    // arrange a button arranged narrower than its run, which a tight parent can produce (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.set_text_align(Align::End);
+    button.arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{20.0f, 30.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{100.0f, 100.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the run starts at the plate rather than painting over the neighbour before it (§8.2)
+    ASSERT_EQ(text_commands(*recorder.scene()).size(), 1u);
+    EXPECT_FLOAT_EQ(text_commands(*recorder.scene()).front().text_geometry().origin.x, 10.0f);
+}
+
+TEST(ButtonChecks, AnInheritedLabelAlignmentStaysCentred) {
+    // arrange a button whose alignment is left to the plate (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{100.0f, 30.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the run keeps the centred placement the control always used (§8.2)
+    ASSERT_EQ(text_commands(*recorder.scene()).size(), 1u);
+    EXPECT_FLOAT_EQ(text_commands(*recorder.scene()).front().text_geometry().origin.x, 35.0f);
+}
+
+TEST(ButtonChecks, AStretchAlignedLabelPinsTheLeadingEdge) {
+    // arrange a button whose label was aligned with the axis keyword (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    Button button(&engine, &text_engine, "Press");
+    button.set_text_align(Align::Stretch);
+    button.arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{100.0f, 30.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{200.0f, 100.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the authored value is reported, while the paint pins the run to the leading edge (§8.2)
+    EXPECT_EQ(button.text_align(), Align::Stretch);
+    ASSERT_EQ(text_commands(*recorder.scene()).size(), 1u);
+    EXPECT_FLOAT_EQ(text_commands(*recorder.scene()).front().text_geometry().origin.x, 10.0f);
+}
+
 TEST(ButtonChecks, AnUnlabelledButtonRecordsOnlyThePlate) {
     // arrange
     BindingEngine engine;
@@ -8174,6 +8266,28 @@ TEST(ButtonIconChecks, TheIconAndLabelAreBothRecorded) {
             images++;
     EXPECT_EQ(images, 1u);
     EXPECT_EQ(text_commands(*recorder.scene()).size(), 1u);
+}
+
+TEST(ButtonIconChecks, AnEndAlignedGroupEndsAtTheTrailingEdge) {
+    // arrange an icon and label aligned to the trailing edge, where the group moves as one (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    ResourceFactory factory;
+    std::uint8_t pixels[8 * 8 * 4]{};
+    Button button(&engine, &text_engine, "Go");
+    button.set_icon(factory.create_image(8, 8, ImageFormat::RGBA8, pixels));
+    button.set_icon_size(20.0f);
+    button.set_text_align(Align::End);
+    button.arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{200.0f, 24.0f}));
+    SceneRecorder recorder(WindowMetrics::from_logical(Size{300.0f, 100.0f}, 1.0f));
+    // act
+    button.render(recorder);
+    // assert the icon and label end at the plate's trailing edge rather than being centred (§8.2)
+    for (const DrawCommand& command : recorder.scene()->commands())
+        if (command.kind() == DrawCommandKind::Image)
+            EXPECT_FLOAT_EQ(command.image_geometry().destination.x, 164.0f);
+    ASSERT_EQ(text_commands(*recorder.scene()).size(), 1u);
+    EXPECT_FLOAT_EQ(text_commands(*recorder.scene()).front().text_geometry().origin.x, 190.0f);
 }
 
 TEST(TextFieldDecorationChecks, AStyledRangeAddsForegroundAndUnderlineCommands) {

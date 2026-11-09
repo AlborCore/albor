@@ -179,6 +179,21 @@ native component WaveformView {
     EXPECT_TRUE(has_code(diagnostics, "E0306"));
 }
 
+TEST(ManifestGlue, AnImageParameterBeforeAnUnknownOneStillBlocks) {
+    // arrange a signal whose known parameter precedes an untranslatable one (§11.2)
+    constexpr std::string_view manifest = R"(
+native component Gallery {
+    signal picked(image icon, Table row);
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(manifest, diagnostics);
+    // assert the unknown parameter blocks the signal without reading a missing spelling (§11.2)
+    EXPECT_TRUE(files.empty());
+    EXPECT_TRUE(has_code(diagnostics, "E0306"));
+}
+
 TEST(ManifestGlue, TheScalarPropertiesCoverTheBoolAndTextSpellings) {
     // arrange
     constexpr std::string_view manifest = R"(
@@ -505,6 +520,172 @@ record Task {
     EXPECT_NE(files.at(0).content.find("which carries the identity a row is keyed by"), std::string::npos);
 }
 
+TEST(RecordGlue, ACollectionFieldEmitsItsElementAndHeader) {
+    // arrange a record whose row carries its own choices, which is what an option card needs (§11.2, §8)
+    const std::string_view source = R"(
+record OptionRow {
+    key: string;
+    choices: vector<string>;
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the member is the standard vector over the declared element (§8.1, §11.2)
+    ASSERT_EQ(files.size(), 1U);
+    EXPECT_NE(files.at(0).content.find("std::vector<std::string> choices;"), std::string::npos);
+    // assert both headers are included, because the collection and its element need them (§14.1)
+    EXPECT_NE(files.at(0).content.find("#include <string>"), std::string::npos);
+    EXPECT_NE(files.at(0).content.find("#include <vector>"), std::string::npos);
+}
+
+TEST(RecordGlue, AnEmptyCollectionDefaultBecomesABracedInitializer) {
+    // arrange a manifest field whose collection starts empty, which the manifest spells as brackets (§11.2)
+    const std::string_view source = R"(
+record OptionRow {
+    key: string;
+    choices: vector<string> = [];
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the empty list re-emits as the initialiser a vector member accepts (§11.2)
+    ASSERT_EQ(files.size(), 1U);
+    EXPECT_NE(files.at(0).content.find("std::vector<std::string> choices = {};"), std::string::npos);
+}
+
+TEST(RecordGlue, ASharedValueFieldPullsItsOwnershipHeaders) {
+    // arrange a record whose field carries an immutable snapshot, which crosses as a shared handle (§13.2)
+    const std::string_view source = R"(
+record Wave {
+    key: string;
+    data: Snapshot<WaveformData>;
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the member is the shared const handle and its element is declared ahead (§13.2, AD-17)
+    ASSERT_EQ(files.size(), 1U);
+    EXPECT_NE(files.at(0).content.find("#include <memory>"), std::string::npos);
+    EXPECT_NE(files.at(0).content.find("struct WaveformData;"), std::string::npos);
+    EXPECT_NE(files.at(0).content.find("std::shared_ptr<const WaveformData> data;"), std::string::npos);
+}
+
+TEST(RecordGlue, AColourCollectionPullsThePaintHeader) {
+    // arrange a record whose collection holds colours, which the header must name completely (§11.2, AD-05)
+    const std::string_view source = R"(
+record Palette {
+    key: string;
+    accents: vector<color>;
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the member is the vector over Color and its definition is included (§8.1, §14.1)
+    ASSERT_EQ(files.size(), 1U);
+    EXPECT_NE(files.at(0).content.find("std::vector<Color> accents;"), std::string::npos);
+    EXPECT_NE(files.at(0).content.find("#include \"albor/core/paint.h\""), std::string::npos);
+}
+
+TEST(RecordGlue, ANestedCollectionEmitsNestedVectors) {
+    // arrange a record whose field nests two collections, which the recursion must spell (§8.1)
+    const std::string_view source = R"(
+record Grid {
+    key: string;
+    cells: vector<vector<int>>;
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the member is the nested vector and its header is included (§8.1)
+    ASSERT_EQ(files.size(), 1U);
+    EXPECT_NE(files.at(0).content.find("std::vector<std::vector<int>> cells;"), std::string::npos);
+    EXPECT_NE(files.at(0).content.find("#include <vector>"), std::string::npos);
+}
+
+TEST(RecordGlue, AnImageCollectionPullsTheHandleHeaderWithoutAForward) {
+    // arrange a record whose collection holds images, which the header must name completely (§6.4)
+    const std::string_view source = R"(
+record Gallery {
+    key: string;
+    icons: vector<image>;
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the handle header is included and the framework type is not forward declared (§6.4, §14.1)
+    ASSERT_EQ(files.size(), 1U);
+    EXPECT_NE(files.at(0).content.find("std::vector<std::shared_ptr<const ImageResource>> icons;"), std::string::npos);
+    EXPECT_NE(files.at(0).content.find("#include \"albor/render/image_resource.h\""), std::string::npos);
+    EXPECT_EQ(files.at(0).content.find("struct ImageResource;"), std::string::npos);
+}
+
+TEST(RecordGlue, ANonEmptyCollectionDefaultIsRefused) {
+    // arrange a collection default the glue cannot spell, because its elements need quoting (§11.2)
+    DiagnosticList diagnostics;
+    const std::string_view source = R"(
+record OptionRow {
+    key: string;
+    choices: vector<string> = ["A", "B"];
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the output is empty and the author is told why, rather than invalid C++ being written (§11.2)
+    EXPECT_TRUE(files.empty());
+    ASSERT_EQ(diagnostics.count(), 1U);
+    EXPECT_EQ(diagnostics.diagnostics().at(0).code, "E0310");
+}
+
+TEST(NativeGlue, ASnapshotCollectionForwardsItsElement) {
+    // arrange a native property that holds a collection of snapshots, which the header must declare (§13.2)
+    const std::string_view source = R"(
+native component Waves {
+    in property<vector<Snapshot<Wave>>> items;
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source);
+    // assert the facade names the nested handle and declares its element ahead (§13.2, AD-17)
+    ASSERT_EQ(files.size(), 2U);
+    EXPECT_NE(files.at(0).content.find("#include <memory>"), std::string::npos);
+    EXPECT_NE(files.at(0).content.find("#include <vector>"), std::string::npos);
+    EXPECT_NE(files.at(0).content.find("struct Wave;"), std::string::npos);
+    EXPECT_NE(files.at(0).content.find("std::vector<std::shared_ptr<const Wave>>"), std::string::npos);
+}
+
+TEST(NativeGlue, ANonEmptyCollectionPropertyDefaultIsRefused) {
+    // arrange a native property whose collection default needs quoting, which the glue does not spell (§11.2)
+    DiagnosticList diagnostics;
+    const std::string_view source = R"(
+native component Tags {
+    in property<vector<string>> tags: ["a"];
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the output is empty and the author is told why (§11.2)
+    EXPECT_TRUE(files.empty());
+    EXPECT_TRUE(has_code(diagnostics, "E0310"));
+}
+
+TEST(NativeGlue, ANonEmptyCollectionPreviewOverrideIsRefused) {
+    // arrange a preview override that fills a collection, which the stub cannot spell (§11.2, §12.2)
+    DiagnosticList diagnostics;
+    const std::string_view source = R"(
+native component Tags {
+    in property<vector<string>> tags;
+    preview {
+        tags: ["a"];
+    }
+}
+)";
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert the override blocks the stub rather than emitting invalid C++ (§11.2)
+    EXPECT_TRUE(files.empty());
+    EXPECT_TRUE(has_code(diagnostics, "E0310"));
+}
+
 TEST(RecordGlue, AnUntranslatableFieldTypeBlocksTheOutput) {
     // arrange
     DiagnosticList diagnostics;
@@ -585,6 +766,28 @@ record Task {
     EXPECT_TRUE(record->find_field("retries")->type.is(TypeKind::Int));
     EXPECT_TRUE(record->find_field("ratio")->type.is(TypeKind::Float));
     EXPECT_TRUE(record->find_field("done")->type.is(TypeKind::Bool));
+}
+
+TEST(RecordRegistration, ACollectionFieldKeepsItsElementType) {
+    // arrange a record whose row carries its own choices, which a combo box reads (§11.2, §8)
+    const std::string_view source = R"(
+record OptionRow {
+    key: string;
+    choices: vector<string>;
+}
+)";
+    DiagnosticList diagnostics;
+    const ManifestFile file = ManifestParser(Lexer(source, diagnostics).tokenize(), diagnostics).parse("settings");
+    ElementCatalog catalog = ElementCatalog::with_builtins();
+    // act
+    register_records(file, catalog);
+    // assert the field is a vector over the element the manifest named (§8.1, §11.2)
+    const RecordType* record = catalog.find_record("OptionRow");
+    ASSERT_NE(record, nullptr);
+    const RecordFieldType* choices = record->find_field("choices");
+    ASSERT_NE(choices, nullptr);
+    EXPECT_TRUE(choices->type.is(TypeKind::Vector));
+    EXPECT_TRUE(choices->type.element().is(TypeKind::String));
 }
 
 TEST(RecordRegistration, AnImageFieldResolvesToTheImageKind) {
