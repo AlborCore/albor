@@ -469,6 +469,25 @@ TEST(TypeChecker, RejectsInsetsIntoFloatScalarProperty) {
     EXPECT_EQ(first(diagnostics).code, "E0410");
 }
 
+TEST(TypeChecker, AcceptsSizedBoxWithAllSizingProperties) {
+    // arrange, act
+    const CheckedFile file = check("component C { SizedBox { width: 120px; height: 40px; min_width: 80px; min_height: 30px; max_width: 200px; max_height: 100px; Label {} } }");
+    // assert
+    const CheckedNode& node = *only(file).root;
+    EXPECT_EQ(node.element_type, "SizedBox");
+    EXPECT_EQ(node.assignments.size(), 6U);
+}
+
+TEST(TypeChecker, RejectsInvalidPropertyOnSizedBox) {
+    // arrange
+    DiagnosticList diagnostics;
+    // act
+    check("component C { SizedBox { unknown_property: 10px; } }", diagnostics);
+    // assert
+    ASSERT_GE(diagnostics.count(), 1U);
+    EXPECT_EQ(first(diagnostics).code, "E0411");
+}
+
 TEST(TypeChecker, RecordsTheDependenciesOfABinding) {
     // arrange, act
     const CheckedFile file = check("component C { in property<int> a: 1; in property<int> b: 2; Label { text: @tr(\"x\") + string(a + b); } }");

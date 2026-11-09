@@ -36,6 +36,7 @@ logical unit they were designed around. A 1-pixel hairline is what `phx` is for.
 | [Stack](../components/stack.md) | on top of each other | overlays; no properties |
 | [Grid](../components/grid.md) | in cells | `spacing`, `columns`, `rows`; a table layout |
 | [Padding](../components/padding.md) | one child, inset | `padding` (uniform `px` or asymmetric `Insets`) |
+| [SizedBox](../components/sized-box.md) | one child, sized | `width`, `height`, `min_width`, `min_height`, `max_width`, `max_height` |
 | [ScrollView](../components/scroll-view.md) | one content child, scrollable | viewport, offset, scrollbar policy |
 | [ListBox](../components/list-box.md) | a list of rows, scrollable | selection, row height, scrollbar policy |
 

@@ -3663,6 +3663,36 @@ component C {
     EXPECT_TRUE(contains(cpp.content, "n0->set_padding(Insets{.top = 2.0f, .right = 4.0f, .bottom = 6.0f, .left = 1e+01f});"));
 }
 
+TEST(Codegen, SizedBoxEmitsLayoutConstructionAndSetters) {
+    // arrange
+    const std::string_view source = R"(
+component C {
+    SizedBox {
+        width: 120px;
+        height: 40px;
+        min_width: 80px;
+        min_height: 30px;
+        max_width: 200px;
+        max_height: 100px;
+        Label { text: "Content"; }
+    }
+}
+)";
+    DiagnosticList diagnostics;
+    // act
+    const std::vector<GeneratedFile> files = generate(source, diagnostics);
+    // assert
+    ASSERT_TRUE(diagnostics.diagnostics().empty());
+    const GeneratedFile& cpp = file_named(files, "c.cpp");
+    EXPECT_TRUE(contains(cpp.content, "std::make_unique<SizedBoxLayout>()"));
+    EXPECT_TRUE(contains(cpp.content, "->set_width("));
+    EXPECT_TRUE(contains(cpp.content, "->set_height("));
+    EXPECT_TRUE(contains(cpp.content, "->set_min_width("));
+    EXPECT_TRUE(contains(cpp.content, "->set_min_height("));
+    EXPECT_TRUE(contains(cpp.content, "->set_max_width("));
+    EXPECT_TRUE(contains(cpp.content, "->set_max_height("));
+}
+
 TEST(Codegen, GridShapePropertiesReachTheLayout) {
     // arrange a grid whose shape and gap the author wrote (§8.2)
     const std::string_view source = R"(

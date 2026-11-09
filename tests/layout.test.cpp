@@ -6,6 +6,7 @@
 #include "albor/layout/grid_layout.h"
 #include "albor/layout/padding_layout.h"
 #include "albor/layout/row_layout.h"
+#include "albor/layout/sized_box_layout.h"
 #include "albor/layout/stack_layout.h"
 
 using namespace albor;
@@ -1938,4 +1939,447 @@ TEST(ColumnLayoutChecks, UnchangedPaddingDoesNotInvalidate) {
     column.set_padding(5.0f);
     // assert
     EXPECT_FALSE(column.layout_dirty());
+}
+
+TEST(SizedBoxLayoutChecks, EmptyBoxWithoutChildMeasuresAsZero) {
+    // arrange
+    SizedBoxLayout box;
+    Size measured{};
+    // act
+    box.measure(SizeConstraints::unconstrained(), measured);
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 0.0f);
+    EXPECT_FLOAT_EQ(measured.height, 0.0f);
+}
+
+TEST(SizedBoxLayoutChecks, EmptyBoxWithExactDimensionsMeasuresAsThoseDimensions) {
+    // arrange
+    SizedBoxLayout box;
+    box.set_width(120.0f);
+    box.set_height(40.0f);
+    Size measured{};
+    // act
+    box.measure(SizeConstraints::unconstrained(), measured);
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 120.0f);
+    EXPECT_FLOAT_EQ(measured.height, 40.0f);
+}
+
+TEST(SizedBoxLayoutChecks, EmptyBoxWithMinDimensionsMeasuresAsFloor) {
+    // arrange
+    SizedBoxLayout box;
+    box.set_min_width(80.0f);
+    box.set_min_height(30.0f);
+    Size measured{};
+    // act
+    box.measure(SizeConstraints::unconstrained(), measured);
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 80.0f);
+    EXPECT_FLOAT_EQ(measured.height, 30.0f);
+}
+
+TEST(SizedBoxLayoutChecks, EmptyBoxWithMaxDimensionsCapsFloor) {
+    // arrange
+    SizedBoxLayout box;
+    box.set_min_width(100.0f);
+    box.set_max_width(60.0f);
+    Size measured{};
+    // act
+    box.measure(SizeConstraints::unconstrained(), measured);
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 60.0f);
+}
+
+TEST(SizedBoxLayoutChecks, ChildSmallerThanExactWidthExpandsToWidth) {
+    // arrange
+    SizedBoxLayout box;
+    box.set_width(120.0f);
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{40.0f, 20.0f};
+    box.add_child(std::move(child));
+    Size measured{};
+    // act
+    box.measure(SizeConstraints::unconstrained(), measured);
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 120.0f);
+    EXPECT_FLOAT_EQ(measured.height, 20.0f);
+}
+
+TEST(SizedBoxLayoutChecks, ChildLargerThanExactWidthClampsToWidth) {
+    // arrange
+    SizedBoxLayout box;
+    box.set_width(100.0f);
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{160.0f, 25.0f};
+    box.add_child(std::move(child));
+    Size measured{};
+    // act
+    box.measure(SizeConstraints::unconstrained(), measured);
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 100.0f);
+    EXPECT_FLOAT_EQ(measured.height, 25.0f);
+}
+
+TEST(SizedBoxLayoutChecks, ExactHeightForcesHeightOnChild) {
+    // arrange
+    SizedBoxLayout box;
+    box.set_height(50.0f);
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{30.0f, 80.0f};
+    box.add_child(std::move(child));
+    Size measured{};
+    // act
+    box.measure(SizeConstraints::unconstrained(), measured);
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 30.0f);
+    EXPECT_FLOAT_EQ(measured.height, 50.0f);
+}
+
+TEST(SizedBoxLayoutChecks, BothWidthAndHeightForceDimensions) {
+    // arrange
+    SizedBoxLayout box;
+    box.set_width(200.0f);
+    box.set_height(100.0f);
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{50.0f, 50.0f};
+    box.add_child(std::move(child));
+    Size measured{};
+    // act
+    box.measure(SizeConstraints::unconstrained(), measured);
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 200.0f);
+    EXPECT_FLOAT_EQ(measured.height, 100.0f);
+}
+
+TEST(SizedBoxLayoutChecks, FloorWidthExpandsSmallerChild) {
+    // arrange
+    SizedBoxLayout box;
+    box.set_min_width(120.0f);
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{40.0f, 20.0f};
+    box.add_child(std::move(child));
+    Size measured{};
+    // act
+    box.measure(SizeConstraints::unconstrained(), measured);
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 120.0f);
+    EXPECT_FLOAT_EQ(measured.height, 20.0f);
+}
+
+TEST(SizedBoxLayoutChecks, FloorWidthLeavesLargerChildUnchanged) {
+    // arrange
+    SizedBoxLayout box;
+    box.set_min_width(120.0f);
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{160.0f, 20.0f};
+    box.add_child(std::move(child));
+    Size measured{};
+    // act
+    box.measure(SizeConstraints::unconstrained(), measured);
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 160.0f);
+    EXPECT_FLOAT_EQ(measured.height, 20.0f);
+}
+
+TEST(SizedBoxLayoutChecks, CeilingWidthCapsLargerChild) {
+    // arrange
+    SizedBoxLayout box;
+    box.set_max_width(150.0f);
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{200.0f, 30.0f};
+    box.add_child(std::move(child));
+    Size measured{};
+    // act
+    box.measure(SizeConstraints::unconstrained(), measured);
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 150.0f);
+    EXPECT_FLOAT_EQ(measured.height, 30.0f);
+}
+
+TEST(SizedBoxLayoutChecks, ExactWidthOverridesFloorAndCeiling) {
+    // arrange
+    SizedBoxLayout box;
+    box.set_min_width(50.0f);
+    box.set_max_width(200.0f);
+    box.set_width(100.0f);
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{10.0f, 10.0f};
+    box.add_child(std::move(child));
+    Size measured{};
+    // act
+    box.measure(SizeConstraints::unconstrained(), measured);
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 100.0f);
+}
+
+TEST(SizedBoxLayoutChecks, ClampsIntoParentConstraints) {
+    // arrange
+    SizedBoxLayout box;
+    box.set_width(200.0f);
+    Size measured{};
+    // act
+    box.measure(SizeConstraints::at_most(Size{150.0f, 100.0f}), measured);
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 150.0f);
+}
+
+TEST(SizedBoxLayoutChecks, HiddenChildIsIgnoredLikeEmptyBox) {
+    // arrange
+    SizedBoxLayout box;
+    box.set_width(100.0f);
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{50.0f, 50.0f};
+    child->set_visible(false);
+    box.add_child(std::move(child));
+    Size measured{};
+    // act
+    box.measure(SizeConstraints::unconstrained(), measured);
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 100.0f);
+    EXPECT_FLOAT_EQ(measured.height, 0.0f);
+}
+
+TEST(SizedBoxLayoutChecks, ArrangesChildWithStretchAlignment) {
+    // arrange
+    SizedBoxLayout box;
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{50.0f, 30.0f};
+    child->set_horizontal_align(Align::Stretch);
+    child->set_vertical_align(Align::Stretch);
+    LayoutTestNode* child_ptr = child.get();
+    box.add_child(std::move(child));
+    // act
+    box.arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{120.0f, 40.0f}));
+    // assert
+    EXPECT_FLOAT_EQ(child_ptr->bounds().x, 10.0f);
+    EXPECT_FLOAT_EQ(child_ptr->bounds().y, 20.0f);
+    EXPECT_FLOAT_EQ(child_ptr->bounds().width, 120.0f);
+    EXPECT_FLOAT_EQ(child_ptr->bounds().height, 40.0f);
+}
+
+TEST(SizedBoxLayoutChecks, ArrangesChildWithStartAlignment) {
+    // arrange
+    SizedBoxLayout box;
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{50.0f, 30.0f};
+    child->set_horizontal_align(Align::Start);
+    child->set_vertical_align(Align::Start);
+    LayoutTestNode* child_ptr = child.get();
+    box.add_child(std::move(child));
+    Size measured{};
+    box.measure(SizeConstraints::unconstrained(), measured);
+    // act
+    box.arrange(Rect::from_origin_size(Point{10.0f, 20.0f}, Size{120.0f, 40.0f}));
+    // assert
+    EXPECT_FLOAT_EQ(child_ptr->bounds().x, 10.0f);
+    EXPECT_FLOAT_EQ(child_ptr->bounds().y, 20.0f);
+    EXPECT_FLOAT_EQ(child_ptr->bounds().width, 50.0f);
+    EXPECT_FLOAT_EQ(child_ptr->bounds().height, 30.0f);
+}
+
+TEST(SizedBoxLayoutChecks, ArrangesChildWithCenterAlignment) {
+    // arrange
+    SizedBoxLayout box;
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{60.0f, 20.0f};
+    child->set_horizontal_align(Align::Center);
+    child->set_vertical_align(Align::Center);
+    LayoutTestNode* child_ptr = child.get();
+    box.add_child(std::move(child));
+    Size measured{};
+    box.measure(SizeConstraints::unconstrained(), measured);
+    // act
+    box.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    // assert
+    EXPECT_FLOAT_EQ(child_ptr->bounds().x, 30.0f);
+    EXPECT_FLOAT_EQ(child_ptr->bounds().y, 10.0f);
+    EXPECT_FLOAT_EQ(child_ptr->bounds().width, 60.0f);
+    EXPECT_FLOAT_EQ(child_ptr->bounds().height, 20.0f);
+}
+
+TEST(SizedBoxLayoutChecks, ArrangesChildWithEndAlignment) {
+    // arrange
+    SizedBoxLayout box;
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{40.0f, 20.0f};
+    child->set_horizontal_align(Align::End);
+    child->set_vertical_align(Align::End);
+    LayoutTestNode* child_ptr = child.get();
+    box.add_child(std::move(child));
+    Size measured{};
+    box.measure(SizeConstraints::unconstrained(), measured);
+    // act
+    box.arrange(Rect::from_origin_size(Point{10.0f, 10.0f}, Size{100.0f, 50.0f}));
+    // assert
+    EXPECT_FLOAT_EQ(child_ptr->bounds().x, 70.0f);
+    EXPECT_FLOAT_EQ(child_ptr->bounds().y, 40.0f);
+    EXPECT_FLOAT_EQ(child_ptr->bounds().width, 40.0f);
+    EXPECT_FLOAT_EQ(child_ptr->bounds().height, 20.0f);
+}
+
+TEST(SizedBoxLayoutChecks, PropertyChangesInvalidateLayout) {
+    // arrange
+    SizedBoxLayout box;
+    box.clear_dirty();
+    // act
+    box.set_width(100.0f);
+    // assert
+    EXPECT_TRUE(box.layout_dirty());
+    EXPECT_EQ(box.width(), 100.0f);
+    // act
+    box.clear_dirty();
+    box.set_height(50.0f);
+    // assert
+    EXPECT_TRUE(box.layout_dirty());
+    EXPECT_EQ(box.height(), 50.0f);
+    // act
+    box.clear_dirty();
+    box.set_min_width(80.0f);
+    // assert
+    EXPECT_TRUE(box.layout_dirty());
+    EXPECT_EQ(box.min_width(), 80.0f);
+    // act
+    box.clear_dirty();
+    box.set_min_height(40.0f);
+    // assert
+    EXPECT_TRUE(box.layout_dirty());
+    EXPECT_EQ(box.min_height(), 40.0f);
+    // act
+    box.clear_dirty();
+    box.set_max_width(200.0f);
+    // assert
+    EXPECT_TRUE(box.layout_dirty());
+    EXPECT_EQ(box.max_width(), 200.0f);
+    // act
+    box.clear_dirty();
+    box.set_max_height(100.0f);
+    // assert
+    EXPECT_TRUE(box.layout_dirty());
+    EXPECT_EQ(box.max_height(), 100.0f);
+}
+
+TEST(SizedBoxLayoutChecks, UnchangedPropertyDoesNotInvalidate) {
+    // arrange
+    SizedBoxLayout box;
+    box.set_width(100.0f);
+    box.clear_dirty();
+    // act
+    box.set_width(100.0f);
+    // assert
+    EXPECT_FALSE(box.layout_dirty());
+}
+
+TEST(SizedBoxLayoutChecks, ArrangesAlignedChildInsideExplicitDimensions) {
+    // arrange
+    SizedBoxLayout box;
+    box.set_width(120.0f);
+    box.set_height(40.0f);
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{40.0f, 20.0f};
+    child->set_horizontal_align(Align::Center);
+    child->set_vertical_align(Align::Center);
+    LayoutTestNode* child_ptr = child.get();
+    box.add_child(std::move(child));
+    Size measured{};
+    box.measure(SizeConstraints::unconstrained(), measured);
+    // act
+    box.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{120.0f, 40.0f}));
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 120.0f);
+    EXPECT_FLOAT_EQ(measured.height, 40.0f);
+    EXPECT_FLOAT_EQ(child_ptr->bounds().x, 40.0f);
+    EXPECT_FLOAT_EQ(child_ptr->bounds().y, 10.0f);
+    EXPECT_FLOAT_EQ(child_ptr->bounds().width, 40.0f);
+    EXPECT_FLOAT_EQ(child_ptr->bounds().height, 20.0f);
+}
+
+TEST(SizedBoxLayoutChecks, FloorHeightExpandsSmallerChild) {
+    // arrange
+    SizedBoxLayout box;
+    box.set_min_height(60.0f);
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{40.0f, 20.0f};
+    box.add_child(std::move(child));
+    Size measured{};
+    // act
+    box.measure(SizeConstraints::unconstrained(), measured);
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 40.0f);
+    EXPECT_FLOAT_EQ(measured.height, 60.0f);
+}
+
+TEST(SizedBoxLayoutChecks, CeilingHeightCapsTallerChild) {
+    // arrange
+    SizedBoxLayout box;
+    box.set_max_height(50.0f);
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{40.0f, 80.0f};
+    box.add_child(std::move(child));
+    Size measured{};
+    // act
+    box.measure(SizeConstraints::unconstrained(), measured);
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 40.0f);
+    EXPECT_FLOAT_EQ(measured.height, 50.0f);
+}
+
+TEST(SizedBoxLayoutChecks, InvertedParentCeilingIsHonoured) {
+    // arrange
+    SizedBoxLayout box;
+    box.set_min_width(100.0f);
+    auto child = std::make_unique<LayoutTestNode>();
+    child->intrinsic = Size{100.0f, 20.0f};
+    box.add_child(std::move(child));
+    Size measured{};
+    // act
+    box.measure(SizeConstraints::at_most(Size{50.0f, 50.0f}), measured);
+    // assert
+    EXPECT_FLOAT_EQ(measured.width, 50.0f);
+}
+
+TEST(SizedBoxLayoutChecks, ClearingPropertiesRestoresUnconstrained) {
+    // arrange
+    SizedBoxLayout box;
+    box.set_width(100.0f);
+    box.set_height(50.0f);
+    box.set_min_width(80.0f);
+    box.set_min_height(40.0f);
+    box.set_max_width(200.0f);
+    box.set_max_height(100.0f);
+    box.clear_dirty();
+    // act
+    box.clear_width();
+    // assert
+    EXPECT_TRUE(box.layout_dirty());
+    EXPECT_FALSE(box.width().has_value());
+    // act
+    box.clear_dirty();
+    box.clear_height();
+    // assert
+    EXPECT_TRUE(box.layout_dirty());
+    EXPECT_FALSE(box.height().has_value());
+    // act
+    box.clear_dirty();
+    box.clear_min_width();
+    // assert
+    EXPECT_TRUE(box.layout_dirty());
+    EXPECT_FALSE(box.min_width().has_value());
+    // act
+    box.clear_dirty();
+    box.clear_min_height();
+    // assert
+    EXPECT_TRUE(box.layout_dirty());
+    EXPECT_FALSE(box.min_height().has_value());
+    // act
+    box.clear_dirty();
+    box.clear_max_width();
+    // assert
+    EXPECT_TRUE(box.layout_dirty());
+    EXPECT_FALSE(box.max_width().has_value());
+    // act
+    box.clear_dirty();
+    box.clear_max_height();
+    // assert
+    EXPECT_TRUE(box.layout_dirty());
+    EXPECT_FALSE(box.max_height().has_value());
 }

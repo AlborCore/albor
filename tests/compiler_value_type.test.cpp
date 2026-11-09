@@ -276,6 +276,7 @@ TEST(ElementCatalog, HoldsEveryBuiltinWidget) {
     EXPECT_TRUE(catalog.find("Column") != nullptr);
     EXPECT_TRUE(catalog.find("Row") != nullptr);
     EXPECT_TRUE(catalog.find("Padding") != nullptr);
+    EXPECT_TRUE(catalog.find("SizedBox") != nullptr);
     EXPECT_TRUE(catalog.find("Stack") != nullptr);
     EXPECT_TRUE(catalog.find("Grid") != nullptr);
     EXPECT_TRUE(catalog.find("Label") != nullptr);
@@ -302,6 +303,7 @@ TEST(ElementCatalog, HoldsTheContainersAndTheLeavesApart) {
     // assert
     EXPECT_TRUE(catalog.find("Column")->accepts_children);
     EXPECT_TRUE(catalog.find("Padding")->accepts_children);
+    EXPECT_TRUE(catalog.find("SizedBox")->accepts_children);
     EXPECT_TRUE(catalog.find("Stack")->accepts_children);
     EXPECT_TRUE(catalog.find("Grid")->accepts_children);
     EXPECT_TRUE(catalog.find("ListBox")->accepts_children);
@@ -450,14 +452,14 @@ TEST(ElementCatalog, AddsANativeTypeFromAManifest) {
     ASSERT_TRUE(catalog.find("WaveformView") != nullptr);
     EXPECT_TRUE(catalog.find("WaveformView")->find_property("line_color") != nullptr);
     EXPECT_TRUE(catalog.find("WaveformView")->find_signal("selection_changed") != nullptr);
-    EXPECT_EQ(catalog.types().size(), 30U);
+    EXPECT_EQ(catalog.types().size(), 31U);
 }
 
 TEST(ElementCatalog, StartsWithNothingBeyondTheBuiltins) {
     // arrange, act
     const ElementCatalog catalog = ElementCatalog::with_builtins();
     // assert
-    EXPECT_EQ(catalog.types().size(), 29U);
+    EXPECT_EQ(catalog.types().size(), 30U);
 }
 
 TEST(ElementCatalog, RefusesToShadowABuiltinWithAManifest) {
@@ -467,7 +469,7 @@ TEST(ElementCatalog, RefusesToShadowABuiltinWithAManifest) {
     catalog.add_native(ElementType{.name = "Label", .properties = {}, .signals = {}, .accepts_children = true});
     // assert
     EXPECT_FALSE(catalog.find("Label")->accepts_children);
-    EXPECT_EQ(catalog.types().size(), 29U);
+    EXPECT_EQ(catalog.types().size(), 30U);
 }
 
 TEST(ElementCatalog, RefusesToRedefineANativeDataType) {

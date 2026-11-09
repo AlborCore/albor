@@ -315,6 +315,15 @@ namespace albor::compiler
                                               .signals = {},
                                               // a padded area is a container, so it accepts children (§8.2)
                                               .accepts_children = true});
+        // a container that sizes or constrains its child, which is what a sized box is (§8.2)
+        catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
+                                              .name = "SizedBox",
+                                              // the sizing bounds are lengths the surface scales (§8.2, AD-27)
+                                              .properties = {ElementProperty{.name = "width", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "height", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "min_width", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "min_height", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "max_width", .type = scalar(TypeKind::Float), .assignable = true}, ElementProperty{.name = "max_height", .type = scalar(TypeKind::Float), .assignable = true}},
+                                              // a sized box raises no signal of its own (§8.2)
+                                              .signals = {},
+                                              // a sized box is a container, so it accepts children (§8.2)
+                                              .accepts_children = true});
         // a container stacks its children in place, which is what an overlay area is (§8.2)
         catalog.m_types.push_back(ElementType{// the name the author writes after an element keyword (§11.1)
                                               .name = "Stack",
