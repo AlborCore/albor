@@ -19,6 +19,7 @@
 #include "albor/layout/grid_layout.h"
 #include "albor/layout/padding_layout.h"
 #include "albor/layout/row_layout.h"
+#include "albor/layout/sized_box_layout.h"
 #include "albor/layout/stack_layout.h"
 #include "albor/render/image_resource.h"
 #include "albor/resources/embedded_image.h"
@@ -204,6 +205,7 @@ namespace albor::devrt
                 {"Column", [](std::string_view, BindingEngine&, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<ColumnLayout>()); }},
                 {"Row", [](std::string_view, BindingEngine&, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<RowLayout>()); }},
                 {"Padding", [](std::string_view, BindingEngine&, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<PaddingLayout>()); }},
+                {"SizedBox", [](std::string_view, BindingEngine&, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<SizedBoxLayout>()); }},
                 {"Stack", [](std::string_view, BindingEngine&, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<StackLayout>()); }},
                 {"Grid", [](std::string_view, BindingEngine&, TextEngine&) -> std::unique_ptr<UiNode> { return std::unique_ptr<UiNode>(std::make_unique<GridLayout>()); }},
                 // a panel is a themed container, so it takes the engine that settles its properties (§8)
@@ -296,6 +298,48 @@ namespace albor::devrt
                      if (!read_float(value, padding))
                          return false;
                      node.set_padding(padding);
+                     return true;
+                 })},
+                {"SizedBox.width", setter<SizedBoxLayout>([](SizedBoxLayout& node, std::string_view value) {
+                     float width = 0.0f;
+                     if (!read_float(value, width))
+                         return false;
+                     node.set_width(width);
+                     return true;
+                 })},
+                {"SizedBox.height", setter<SizedBoxLayout>([](SizedBoxLayout& node, std::string_view value) {
+                     float height = 0.0f;
+                     if (!read_float(value, height))
+                         return false;
+                     node.set_height(height);
+                     return true;
+                 })},
+                {"SizedBox.min_width", setter<SizedBoxLayout>([](SizedBoxLayout& node, std::string_view value) {
+                     float min_width = 0.0f;
+                     if (!read_float(value, min_width))
+                         return false;
+                     node.set_min_width(min_width);
+                     return true;
+                 })},
+                {"SizedBox.min_height", setter<SizedBoxLayout>([](SizedBoxLayout& node, std::string_view value) {
+                     float min_height = 0.0f;
+                     if (!read_float(value, min_height))
+                         return false;
+                     node.set_min_height(min_height);
+                     return true;
+                 })},
+                {"SizedBox.max_width", setter<SizedBoxLayout>([](SizedBoxLayout& node, std::string_view value) {
+                     float max_width = 0.0f;
+                     if (!read_float(value, max_width))
+                         return false;
+                     node.set_max_width(max_width);
+                     return true;
+                 })},
+                {"SizedBox.max_height", setter<SizedBoxLayout>([](SizedBoxLayout& node, std::string_view value) {
+                     float max_height = 0.0f;
+                     if (!read_float(value, max_height))
+                         return false;
+                     node.set_max_height(max_height);
                      return true;
                  })},
                 // a panel presents the inset, gap, face and border of a card (§8.2, §8.4)
@@ -1004,7 +1048,7 @@ namespace albor::devrt
     std::string_view element_of(const UiNode& node) {
         // the dynamic type decides, because a node is one element of the closed set and nothing else (§8)
         const std::pair<const UiNode*, std::string_view> elements[] = {
-            {dynamic_cast<const ColumnLayout*>(&node), "Column"}, {dynamic_cast<const RowLayout*>(&node), "Row"}, {dynamic_cast<const PaddingLayout*>(&node), "Padding"}, {dynamic_cast<const StackLayout*>(&node), "Stack"}, {dynamic_cast<const GridLayout*>(&node), "Grid"}, {dynamic_cast<const Panel*>(&node), "Panel"}, {dynamic_cast<const Label*>(&node), "Label"}, {dynamic_cast<const Button*>(&node), "Button"}, {dynamic_cast<const Slider*>(&node), "Slider"}, {dynamic_cast<const CheckBox*>(&node), "CheckBox"}, {dynamic_cast<const Canvas*>(&node), "Canvas"}, {dynamic_cast<const Image*>(&node), "Image"}, {dynamic_cast<const ScrollView*>(&node), "ScrollView"}, {dynamic_cast<const ListBox*>(&node), "ListBox"}, {dynamic_cast<const ComboBox*>(&node), "ComboBox"}, {dynamic_cast<const TabView*>(&node), "TabView"}, {dynamic_cast<const TabPage*>(&node), "Tab"}, {dynamic_cast<const TabTitle*>(&node), "TabTitle"}, {dynamic_cast<const RadioGroup*>(&node), "RadioGroup"}, {dynamic_cast<const RadioButton*>(&node), "RadioButton"}, {dynamic_cast<const NumericStepper*>(&node), "NumericStepper"}, {dynamic_cast<const TextField*>(&node), "TextField"},
+            {dynamic_cast<const ColumnLayout*>(&node), "Column"}, {dynamic_cast<const RowLayout*>(&node), "Row"}, {dynamic_cast<const PaddingLayout*>(&node), "Padding"}, {dynamic_cast<const SizedBoxLayout*>(&node), "SizedBox"}, {dynamic_cast<const StackLayout*>(&node), "Stack"}, {dynamic_cast<const GridLayout*>(&node), "Grid"}, {dynamic_cast<const Panel*>(&node), "Panel"}, {dynamic_cast<const Label*>(&node), "Label"}, {dynamic_cast<const Button*>(&node), "Button"}, {dynamic_cast<const Slider*>(&node), "Slider"}, {dynamic_cast<const CheckBox*>(&node), "CheckBox"}, {dynamic_cast<const Canvas*>(&node), "Canvas"}, {dynamic_cast<const Image*>(&node), "Image"}, {dynamic_cast<const ScrollView*>(&node), "ScrollView"}, {dynamic_cast<const ListBox*>(&node), "ListBox"}, {dynamic_cast<const ComboBox*>(&node), "ComboBox"}, {dynamic_cast<const TabView*>(&node), "TabView"}, {dynamic_cast<const TabPage*>(&node), "Tab"}, {dynamic_cast<const TabTitle*>(&node), "TabTitle"}, {dynamic_cast<const RadioGroup*>(&node), "RadioGroup"}, {dynamic_cast<const RadioButton*>(&node), "RadioButton"}, {dynamic_cast<const NumericStepper*>(&node), "NumericStepper"}, {dynamic_cast<const TextField*>(&node), "TextField"},
         };
         // the first match wins, because the widget types above are disjoint classes (§8)
         for (const std::pair<const UiNode*, std::string_view>& element : elements) {

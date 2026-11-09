@@ -24,6 +24,7 @@
 #include "albor/layout/grid_layout.h"
 #include "albor/layout/padding_layout.h"
 #include "albor/layout/row_layout.h"
+#include "albor/layout/sized_box_layout.h"
 #include "albor/layout/stack_layout.h"
 #include "albor/render/image_resource.h"
 #include "albor/resources/embedded_image.h"
@@ -307,6 +308,8 @@ namespace albor::preview
                 built = std::make_unique<RowLayout>();
             else if (node.element_type == "Padding")
                 built = std::make_unique<PaddingLayout>();
+            else if (node.element_type == "SizedBox")
+                built = std::make_unique<SizedBoxLayout>();
             else if (node.element_type == "Stack")
                 built = std::make_unique<StackLayout>();
             else if (node.element_type == "Grid")
@@ -508,6 +511,25 @@ namespace albor::preview
                             image->set_width(static_cast<float>(number));
                         else
                             image->set_height(static_cast<float>(number));
+                    }
+                }
+                // a sized box constraint dimension, which sizes or bounds the box (§8.2)
+                else if (auto* sized_box = dynamic_cast<SizedBoxLayout*>(built.get()); sized_box != nullptr && (assignment.name == "width" || assignment.name == "height" || assignment.name == "min_width" || assignment.name == "min_height" || assignment.name == "max_width" || assignment.name == "max_height")) {
+                    double number = 0.0;
+                    if (number_of_expression(*assignment.value, number)) {
+                        const float val = static_cast<float>(number);
+                        if (assignment.name == "width")
+                            sized_box->set_width(val);
+                        else if (assignment.name == "height")
+                            sized_box->set_height(val);
+                        else if (assignment.name == "min_width")
+                            sized_box->set_min_width(val);
+                        else if (assignment.name == "min_height")
+                            sized_box->set_min_height(val);
+                        else if (assignment.name == "max_width")
+                            sized_box->set_max_width(val);
+                        else if (assignment.name == "max_height")
+                            sized_box->set_max_height(val);
                     }
                 }
                 // a numeric value, which a stepper or a radio choice carries (§8)

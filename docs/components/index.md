@@ -1,6 +1,6 @@
 # Components
 
-The `.ui` language ships twenty-nine elements: sixteen containers that arrange children, and
+The `.ui` language ships thirty elements: seventeen containers that arrange children, and
 thirteen leaves that draw or edit. Every element also carries the seven common properties below, and
 every element may carry an `id`.
 
@@ -11,6 +11,7 @@ every element may carry an `id`.
 | [Column](column.md) | container | a vertical stack with spacing and padding |
 | [Row](row.md) | container | a horizontal stack with spacing |
 | [Padding](padding.md) | container | insets its child |
+| [SizedBox](sized-box.md) | container | sizes or constrains its child, or acts as a spacer |
 | [Stack](stack.md) | container | overlays its children |
 | [Grid](grid.md) | container | equal cells in a grid |
 | [Panel](panel.md) | container | a themed section with padding, face and border |
