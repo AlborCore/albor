@@ -5773,6 +5773,90 @@ TEST(TabViewChecks, MeasuresTheStripAndTheSelectedPage) {
     EXPECT_FLOAT_EQ(measured.height, 62.0f);
 }
 
+TEST(TabViewChecks, AFirstShownPageArrangesItsSubtree) {
+    // arrange two pages whose bodies hold a column, with the second page the one the view shows (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto first_owner = std::make_unique<TabPage>(&engine, &text_engine, "One");
+    auto first_body = std::make_unique<WidgetChildNode>();
+    first_body->m_intrinsic = Size{50.0f, 40.0f};
+    WidgetChildNode* body = first_body.get();
+    auto first_column = std::make_unique<ColumnLayout>();
+    auto first_leaf_owner = std::make_unique<WidgetChildNode>();
+    first_leaf_owner->m_intrinsic = Size{50.0f, 40.0f};
+    WidgetChildNode* first_leaf = first_leaf_owner.get();
+    first_column->add_child(std::move(first_leaf_owner));
+    first_body->add_child(std::move(first_column));
+    first_owner->add_child(std::move(first_body));
+    tabs.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "Two");
+    auto second_body = std::make_unique<WidgetChildNode>();
+    second_body->m_intrinsic = Size{50.0f, 40.0f};
+    auto second_column = std::make_unique<ColumnLayout>();
+    auto second_leaf_owner = std::make_unique<WidgetChildNode>();
+    second_leaf_owner->m_intrinsic = Size{50.0f, 40.0f};
+    second_column->add_child(std::move(second_leaf_owner));
+    second_body->add_child(std::move(second_column));
+    second_owner->add_child(std::move(second_body));
+    tabs.add_child(std::move(second_owner));
+    tabs.set_selected(1);
+    Size measured{};
+    tabs.measure(SizeConstraints::tight(Size{200.0f, 100.0f}), measured);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // the frame pipeline clears the flags after it built a frame, which a test passes on its own (§6.1)
+    tabs.clear_dirty();
+    // assert the hidden page was placed without a measure, which leaves its content without an extent (§8.2)
+    EXPECT_TRUE(first_leaf->bounds().empty());
+    const Rect body_bounds = body->bounds();
+    // act the first page is selected for the first time, which is what a press on its header does (§8.3)
+    tabs.set_selected(0);
+    tabs.measure(SizeConstraints::tight(Size{200.0f, 100.0f}), measured);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // assert the body kept the rect it already held, so the placement happened despite an unchanged rect (§8.2)
+    EXPECT_EQ(body->bounds(), body_bounds);
+    // assert the newly shown page placed its content, because a subtree that returns to the frame is arranged (§8.2)
+    EXPECT_FALSE(first_leaf->bounds().empty());
+    EXPECT_FLOAT_EQ(first_leaf->bounds().height, 40.0f);
+}
+
+TEST(TabViewChecks, APageChangedWhileHiddenArrangesItsNewContent) {
+    // arrange two pages whose bodies hold a column, with the second page the one the view shows (§8.2)
+    BindingEngine engine;
+    StubTextEngine text_engine;
+    TabView tabs(&engine);
+    auto first_owner = std::make_unique<TabPage>(&engine, &text_engine, "One");
+    auto first_body = std::make_unique<WidgetChildNode>();
+    first_body->m_intrinsic = Size{50.0f, 40.0f};
+    auto first_column = std::make_unique<ColumnLayout>();
+    auto first_leaf_owner = std::make_unique<WidgetChildNode>();
+    first_leaf_owner->m_intrinsic = Size{50.0f, 40.0f};
+    WidgetChildNode* first_leaf = first_leaf_owner.get();
+    first_column->add_child(std::move(first_leaf_owner));
+    first_body->add_child(std::move(first_column));
+    first_owner->add_child(std::move(first_body));
+    tabs.add_child(std::move(first_owner));
+    auto second_owner = std::make_unique<TabPage>(&engine, &text_engine, "Two");
+    tabs.add_child(std::move(second_owner));
+    tabs.set_selected(1);
+    Size measured{};
+    tabs.measure(SizeConstraints::tight(Size{200.0f, 100.0f}), measured);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    tabs.clear_dirty();
+    // the hidden page content grows, which the view measures only once the page is shown again (§8.2)
+    first_leaf->m_intrinsic = Size{50.0f, 60.0f};
+    first_leaf->invalidate_layout();
+    tabs.measure(SizeConstraints::tight(Size{200.0f, 100.0f}), measured);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    tabs.clear_dirty();
+    // act the first page is selected for the first time, which is what a press on its header does (§8.3)
+    tabs.set_selected(0);
+    tabs.measure(SizeConstraints::tight(Size{200.0f, 100.0f}), measured);
+    tabs.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 100.0f}));
+    // assert the content is placed at the extent it now measures, because the shown subtree is arranged (§8.2)
+    EXPECT_FLOAT_EQ(first_leaf->bounds().height, 60.0f);
+}
+
 TEST(TabViewChecks, ShowsOnlyTheSelectedPage) {
     // arrange two pages arranged under a strip (§8.2)
     BindingEngine engine;

@@ -943,6 +943,48 @@ TEST(UiNode, SettingTheSameVisibilityChangesNothing) {
     EXPECT_FALSE(node.render_dirty());
 }
 
+TEST(UiNode, ShowingASubtreeMarksItsDescendantsForArrangement) {
+    // arrange a laid out parent and child, which a finished frame leaves clean (§8.2)
+    TestNode root;
+    auto parent_owner = std::make_unique<TestNode>();
+    TestNode* parent = parent_owner.get();
+    auto leaf_owner = std::make_unique<TestNode>();
+    TestNode* leaf = leaf_owner.get();
+    parent->add_child(std::move(leaf_owner));
+    root.add_child(std::move(parent_owner));
+    Size measured{};
+    root.measure(SizeConstraints::tight(Size{100.0f, 100.0f}), measured);
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    // the hidden parent is cleared again, so the subtree starts the show without a pending pass (§6.1)
+    parent->set_visible(false);
+    root.clear_dirty();
+    // act
+    parent->set_visible(true);
+    // assert the descendant is arranged again, because it left both layout passes while it was hidden (§8.2)
+    EXPECT_TRUE(leaf->arrange_dirty());
+    EXPECT_TRUE(leaf->render_dirty());
+}
+
+TEST(UiNode, ShowingAnAlreadyVisibleParentLeavesTheSubtreeClean) {
+    // arrange a laid out parent and child, which a finished frame leaves clean (§8.2)
+    TestNode root;
+    auto parent_owner = std::make_unique<TestNode>();
+    TestNode* parent = parent_owner.get();
+    auto leaf_owner = std::make_unique<TestNode>();
+    TestNode* leaf = leaf_owner.get();
+    parent->add_child(std::move(leaf_owner));
+    root.add_child(std::move(parent_owner));
+    Size measured{};
+    root.measure(SizeConstraints::tight(Size{100.0f, 100.0f}), measured);
+    root.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{100.0f, 100.0f}));
+    root.clear_dirty();
+    // act
+    parent->set_visible(true);
+    // assert an unchanged visibility asks for no pass, which keeps a steady frame free of the subtree walk (§6.1)
+    EXPECT_FALSE(leaf->arrange_dirty());
+    EXPECT_FALSE(leaf->render_dirty());
+}
+
 TEST(UiNode, ANewNodeCarriesNoAuthorIdentity) {
     // arrange, act
     TestNode node;
