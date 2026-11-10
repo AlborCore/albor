@@ -1028,3 +1028,175 @@ TEST(ListBoxChecks, APressOnARowBesideTheThumbSelectsThatRow) {
     // assert an earlier row stays clickable after a later one is selected, which is the defect this guards (§18.3)
     EXPECT_EQ(fixture.box.selected_index(), 0U);
 }
+
+TEST(ListBoxChecks, AGutterPressSelectsNoRow) {
+    // arrange a scrollable list whose trailing ten pixels are the bar's gutter, not content (§8.2)
+    Fixture fixture;
+    for (int index = 0; index < 8; index++)
+        fixture.add_row("row" + std::to_string(index));
+    fixture.box.set_row_height(24.0f);
+    fixture.layout(320.0f, 160.0f);
+    InputController controller;
+    controller.attach(fixture.box);
+    // act a press lands in the gutter below the thumb, where no row is drawn (§8.2, §8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{315.0f, 150.0f}};
+    controller.deliver(press);
+    // assert the press names no row and is left for a parent, because the gutter belongs to the bar (§8.3)
+    EXPECT_EQ(fixture.box.scroll_view().content_viewport().width, 310.0f);
+    EXPECT_FALSE(press.handled);
+    EXPECT_FALSE(fixture.box.has_selection());
+}
+
+TEST(ListBoxChecks, TheGutterThumbDragsWithoutSelectingARow) {
+    // arrange a scrollable list whose thumb fills the top of the trailing gutter (§8.2)
+    Fixture fixture;
+    for (int index = 0; index < 8; index++)
+        fixture.add_row("row" + std::to_string(index));
+    fixture.box.set_row_height(24.0f);
+    fixture.layout(320.0f, 160.0f);
+    InputController controller;
+    controller.attach(fixture.box);
+    // act a press lands on the thumb and drags it to the bottom of the track (§8.3)
+    Event press{.kind = EventKind::PointerDown, .position = Point{315.0f, 10.0f}};
+    controller.deliver(press);
+    Event move{.kind = EventKind::PointerMove, .position = Point{315.0f, 150.0f}};
+    controller.deliver(move);
+    // assert the drag scrolls the list and leaves the selection alone, because the gutter is the bar's (§8.3)
+    EXPECT_TRUE(press.handled);
+    EXPECT_TRUE(move.handled);
+    EXPECT_FLOAT_EQ(fixture.box.scroll_view().offset(), 32.0f);
+    EXPECT_FALSE(fixture.box.has_selection());
+}
+
+TEST(ListBoxChecks, TheWheelScrollsTheInternalViewportInTheNativeDirection) {
+    // arrange a scrollable list whose internal viewport owns the wheel (§8.2, §8.3)
+    Fixture fixture;
+    for (int index = 0; index < 8; index++)
+        fixture.add_row("row" + std::to_string(index));
+    fixture.box.set_row_height(24.0f);
+    fixture.layout(320.0f, 160.0f);
+    InputController controller;
+    controller.attach(fixture.box);
+    // act an up notch at the leading edge, which cannot move and is left for a parent (§8.3)
+    Event up{.kind = EventKind::Wheel, .position = Point{50.0f, 50.0f}, .scroll = 1.0f};
+    controller.deliver(up);
+    // assert the viewport stays at the start and declines the event, because the up notch turns toward it (§8.3)
+    EXPECT_FALSE(up.handled);
+    EXPECT_FLOAT_EQ(fixture.box.scroll_view().offset(), 0.0f);
+    // act a down notch, which turns toward the end
+    Event down{.kind = EventKind::Wheel, .position = Point{50.0f, 50.0f}, .scroll = -1.0f};
+    controller.deliver(down);
+    // assert the internal viewport follows the sign and clamps at the range end (§8.2, §8.3)
+    EXPECT_TRUE(down.handled);
+    EXPECT_FLOAT_EQ(fixture.box.scroll_view().offset(), 32.0f);
+    // act an up notch from the end
+    Event back{.kind = EventKind::Wheel, .position = Point{50.0f, 50.0f}, .scroll = 1.0f};
+    controller.deliver(back);
+    // assert the wheel returns toward the start by the same line extent (§8.3)
+    EXPECT_TRUE(back.handled);
+    EXPECT_FLOAT_EQ(fixture.box.scroll_view().offset(), 0.0f);
+}
+
+TEST(ListBoxChecks, AWheelOverADisabledListIsRefused) {
+    // arrange a disabled list that owns an internal viewport (§8.3)
+    Fixture fixture;
+    for (int index = 0; index < 8; index++)
+        fixture.add_row("row" + std::to_string(index));
+    fixture.box.set_row_height(24.0f);
+    fixture.layout(320.0f, 160.0f);
+    fixture.box.set_disabled(true);
+    InputController controller;
+    controller.attach(fixture.box);
+    // act a down notch that would scroll an enabled list toward the end (§8.3)
+    Event wheel{.kind = EventKind::Wheel, .position = Point{50.0f, 50.0f}, .scroll = -1.0f};
+    controller.deliver(wheel);
+    // assert the disabled state reaches the internal viewport, which refuses the wheel and keeps its place (§8.3)
+    EXPECT_FALSE(wheel.handled);
+    EXPECT_FLOAT_EQ(fixture.box.scroll_view().offset(), 0.0f);
+}
+
+TEST(ListBoxChecks, AListWhoseViewportFitsLeavesTheWheelToThePage) {
+    // arrange a list whose rows fit inside its own viewport, hosted by a page viewport it overflows (§8.2)
+    BindingEngine engine;
+    ScrollView page(&engine);
+    auto list = std::make_unique<ListBox>(&engine);
+    list->set_viewport_extent(Size{0.0f, 400.0f});
+    list->set_row_height(24.0f);
+    auto rows = std::make_unique<RowContent>();
+    rows->add_plain_row();
+    rows->add_plain_row();
+    list->scroll_view().add_child(std::move(rows));
+    list->set_item_count(2);
+    ListBox* list_ptr = list.get();
+    page.add_child(std::move(list));
+    page.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    page.measure(SizeConstraints::unconstrained(), measured);
+    page.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    ASSERT_FLOAT_EQ(list_ptr->scroll_view().maximum_offset(), 0.0f);
+    ASSERT_FLOAT_EQ(page.maximum_offset(), 100.0f);
+    InputController controller;
+    controller.attach(page);
+    Event wheel{.kind = EventKind::Wheel, .position = Point{50.0f, 50.0f}, .scroll = -1.0f};
+    // act a down notch over the list, which has nowhere to scroll
+    controller.deliver(wheel);
+    // assert the list declines and the page takes the notch (§8.3)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_FLOAT_EQ(page.offset(), 40.0f);
+    EXPECT_FLOAT_EQ(list_ptr->scroll_view().offset(), 0.0f);
+}
+
+TEST(ListBoxChecks, AListThatCanScrollKeepsTheWheelFromThePage) {
+    // arrange a list with enough rows to scroll, hosted by a page viewport it overflows (§8.2)
+    BindingEngine engine;
+    ScrollView page(&engine);
+    auto list = std::make_unique<ListBox>(&engine);
+    list->set_viewport_extent(Size{0.0f, 400.0f});
+    list->set_row_height(24.0f);
+    auto rows = std::make_unique<RowContent>();
+    for (int index = 0; index < 20; index++)
+        rows->add_plain_row();
+    list->scroll_view().add_child(std::move(rows));
+    list->set_item_count(20);
+    ListBox* list_ptr = list.get();
+    page.add_child(std::move(list));
+    page.set_viewport_extent(Size{200.0f, 300.0f});
+    Size measured{};
+    page.measure(SizeConstraints::unconstrained(), measured);
+    page.arrange(Rect::from_origin_size(Point{0.0f, 0.0f}, Size{200.0f, 300.0f}));
+    ASSERT_FLOAT_EQ(list_ptr->scroll_view().maximum_offset(), 80.0f);
+    ASSERT_FLOAT_EQ(page.maximum_offset(), 100.0f);
+    InputController controller;
+    controller.attach(page);
+    Event wheel{.kind = EventKind::Wheel, .position = Point{50.0f, 50.0f}, .scroll = -1.0f};
+    // act a down notch over the list, which can honour it
+    controller.deliver(wheel);
+    // assert the list consumes the notch and the page keeps its place (§8.3)
+    EXPECT_TRUE(wheel.handled);
+    EXPECT_FLOAT_EQ(list_ptr->scroll_view().offset(), 40.0f);
+    EXPECT_FLOAT_EQ(page.offset(), 0.0f);
+}
+
+TEST(ListBoxChecks, TheSelectionBandStopsAtTheBarGutter) {
+    // arrange a themed, overflowing list whose selection is drawn under the rows (§6.1, §8.2)
+    Fixture fixture;
+    for (int index = 0; index < 8; index++)
+        fixture.add_row("row" + std::to_string(index));
+    fixture.box.set_row_height(24.0f);
+    const Theme theme = Theme::macos(Accents{}, ColorScheme::Light);
+    apply_theme(fixture.box, theme);
+    fixture.layout(320.0f, 160.0f);
+    fixture.box.select(3);
+    const WindowMetrics metrics = WindowMetrics::from_logical(Size{320.0f, 160.0f}, 1.0f);
+    SceneBuilder builder;
+    // act
+    const std::shared_ptr<const FrameScene> scene = builder.build(fixture.box, metrics, Color::rgb(0.925f, 0.925f, 0.930f));
+    // assert the band takes the content viewport rather than the full bounds, so the bar paints alone (§6.1)
+    bool band = false;
+    for (const DrawCommand& command : scene->commands())
+        if (command.kind() == DrawCommandKind::RoundedRect && command.rect_geometry().rect.width == 310.0f && command.rect_geometry().rect.height == 24.0f) {
+            band = true;
+            EXPECT_EQ(command.clip(), fixture.box.scroll_view().content_viewport());
+        }
+    EXPECT_TRUE(band);
+}

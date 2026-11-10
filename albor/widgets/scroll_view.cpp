@@ -42,23 +42,27 @@ namespace albor
         m_preferred_size = m_measured_size;
         // the result is what the parent places, which is the viewport rather than the content (§8.2)
         out_size = m_measured_size;
-        // the content is measured with no height ceiling, because a tall content scrolls (§8.2)
-        const SizeConstraints content_constraints = SizeConstraints::at_most(Size{.width = viewport.width, .height = std::numeric_limits<float>::infinity()});
         // the row height reaches the content first, because the extent below is arithmetic over it (§8.2, AD-13)
         apply_row_extent();
-        // the reported extent wins, because only it knows the rows it did not build (§8.2)
-        Size measured_extent{};
-        for (const auto& child : children()) {
-            // each child measures against that ceiling, so the content keeps its natural height (§8.2)
-            Size child_size{};
-            child->measure(content_constraints, child_size);
-            // the content the scroll view scrolls is one container, so the last measured extent is the one (§8.2)
-            measured_extent = child_size;
+        // an always on bar reserves its gutter before the content is measured, because the policy owns the decision (§8)
+        const bool forced = m_visibility == ScrollbarVisibility::AlwaysOn;
+        // the reserved width is what the content keeps, which is what keeps it out of the gutter (§8.2)
+        const float content_width = std::max(0.0f, viewport.width - bar_extent());
+        // the full width probe is what decides whether an as needed bar has to reserve a gutter (§8.2)
+        bool reserved = forced;
+        // the content extent is measured against the width the policy leaves it (§8.2)
+        Size measured_extent = measure_content(forced ? content_width : viewport.width);
+        // the as needed policy reserves only when a bar wider than nothing has to draw a gutter (§8)
+        if (m_visibility == ScrollbarVisibility::AsNeeded && bar_extent() > 0.0f && measured_extent.height > viewport.height) {
+            // the bar is needed, so its gutter is reserved and the content is measured inside the rest (§8.2)
+            reserved = true;
+            // the second pass is what keeps wrapping and height consistent with the visible width (§8.2)
+            measured_extent = measure_content(content_width);
         }
+        // the decision is stored, because the clip and the pushed window both read the same one (§8.2)
+        m_bar_reserved = reserved;
         // the scrollable contract reports the extent of the whole content rather than the built part (§8.2, AD-13)
-        const ScrollableContent* scrollable = dynamic_cast<const ScrollableContent*>(child_at(0));
-        // the reported extent is authoritative, because a virtualizing content builds only the visible rows (§8.2)
-        m_content_extent = scrollable != nullptr ? scrollable->content_extent() : measured_extent;
+        m_content_extent = measured_extent;
         // a content that changed hands the offset back to its binding, which is what a pinned log view needs (§7.3, AD-24)
         if (m_content_extent != m_settled_content_extent) {
             // the settled extent is remembered, so the next content change is recognised (§7.3)
@@ -74,17 +78,20 @@ namespace albor
         const float width = m_viewport_extent.width > 0.0f ? std::min(m_viewport_extent.width, bounds.width) : bounds.width;
         // an undeclared height takes the assigned bounds, which is how a fixed-width view follows its parent (§8.2)
         const float height = m_viewport_extent.height > 0.0f ? std::min(m_viewport_extent.height, bounds.height) : bounds.height;
-        // the resolved extent is the rectangle the clip, the bar and the scroll range all read (§8.2)
+        // the resolved extent is what the content viewport, the bar and the scroll range derive from (§8.2)
         m_bounds = Rect::from_origin_size(Point{.x = bounds.x, .y = bounds.y}, Size{.width = width, .height = height});
         // the window reaches the content before it is placed, so its rows exist in time (§8.2, AD-13)
         push_viewport();
-        // the viewport is the arranged extent, because the bar overlays rather than insetting (§8.2)
-        const Rect viewport = viewport_rect();
-        // the content sits at the offset, which is the whole of what scrolling a viewport does (§8.2)
-        const Rect content = Rect::from_origin_size(Point{.x = viewport.x, .y = viewport.y - offset()}, m_content_extent);
+        // the content viewport is the arranged extent less the reserved bar gutter (§8.2)
+        const Rect viewport = content_viewport();
+        // the content sits at the offset, and never wider than the content viewport (§8.2)
+        const Rect content = Rect::from_origin_size(Point{.x = viewport.x, .y = viewport.y - offset()}, Size{.width = std::min(m_content_extent.width, viewport.width), .height = m_content_extent.height});
         // the single content child is placed at the offset, which is what moves the content (§8.2)
         for (const auto& child : children())
             arrange_if_changed(*child, content);
+        // the bar follows the content, so its strip is damaged by the same arrange (§6.1)
+        if (!m_bounds.empty() && scrollbar_visible())
+            note_damage(scrollbar_track_rect());
     }
 
     Rect ScrollView::visual_bounds() const {
@@ -98,23 +105,23 @@ namespace albor
     }
 
     Rect ScrollView::clip_child_damage(const Rect& damage) const {
-        // the content is painted inside the viewport clip, so a scrolled away extent damages nothing (§6.1, §6.2)
-        return damage.intersect(viewport_rect());
+        // the content is painted inside the content viewport, so a scrolled away extent damages nothing (§6.1, §6.2)
+        return damage.intersect(content_viewport());
     }
 
     void ScrollView::paint_children(RenderContext& context) {
         // a view with no area clips nothing, because there is no viewport to clip to (§6.2)
         if (m_bounds.empty())
             return;
-        // the clip is pushed so the content can be scissored to the viewport (§6.2)
+        // the clip is pushed so the content can be scissored to the content viewport (§6.2)
         context.save();
-        // the viewport is the clip, which is what keeps scrolled content out of the surrounding surface (§6.2)
-        context.clip_rect(viewport_rect());
+        // the content viewport is the clip, which is what keeps scrolled content out of the gutter and the surface (§6.2)
+        context.clip_rect(content_viewport());
         // the content records inside the clip, in insertion order (§6.1)
         render_children(context);
         // the clip is popped, so the bar below is not scissored to it (§6.2)
         context.restore();
-        // the bar draws over the content, because it reports a position the content itself cannot show (§6.1)
+        // the bar draws after the content, in the gutter the clip kept it out of (§6.1)
         paint_scrollbar(context);
     }
 
@@ -129,10 +136,10 @@ namespace albor
             // a disabled view does not claim the wheel, because it refuses input (§8.3)
             if (disabled())
                 return;
-            // the event is claimed, so no ancestor acts on the same wheel (§8.3)
-            event.handled = true;
-            // the delta is converted here, because this container owns the policy (§8.3)
-            scroll_by(event.scroll * wheel_scale(event));
+            // a positive wheel turns toward the start, so it subtracts from the offset (§8.3)
+            const bool moved = scroll_by(-event.scroll * wheel_scale(event));
+            // a notch that found an edge stays unclaimed, so an enclosing viewport takes it (§8.3)
+            event.handled = moved;
             return;
         }
         // a move that continues a thumb drag steers the offset, which is what dragging the bar means (§8.3)
@@ -156,7 +163,7 @@ namespace albor
             // a disabled view does not claim a press, because it refuses input (§8.3)
             if (disabled())
                 return;
-            // a press outside the viewport is not this view's, because only the bar is draggable (§8.3)
+            // a press outside the bounds is not this view's, because only the bar is draggable (§8.3)
             if (!hit_test(event.position) || !scrollbar_visible())
                 return;
             // the thumb is the only draggable part, so a press must land on it rather than merely beside it (§8.3)
@@ -198,10 +205,10 @@ namespace albor
             scroll_by(-line);
         // a page key moves a whole viewport, which is what paging means (§8.3)
         else if (event.key == Key::PageDown)
-            scroll_by(viewport_rect().height);
+            scroll_by(content_viewport().height);
         // the other page key moves a whole viewport the other way (§8.3)
         else if (event.key == Key::PageUp)
-            scroll_by(-viewport_rect().height);
+            scroll_by(-content_viewport().height);
         // the home key goes to the leading edge, which is the only place the content starts (§8.3)
         else if (event.key == Key::Home)
             scroll_to(0.0f);
@@ -218,7 +225,7 @@ namespace albor
         // a disabled view is not a hit, because it refuses input (§8.3)
         if (disabled())
             return false;
-        // the press must land inside the viewport, because content scrolled out of it is not there to press (§8.3)
+        // the press must land inside the bounds, because content scrolled out of the content viewport is not there (§8.3)
         const bool inside = logical_point.x >= m_bounds.x && logical_point.x < m_bounds.x + m_bounds.width && logical_point.y >= m_bounds.y && logical_point.y < m_bounds.y + m_bounds.height;
         return inside && !m_bounds.empty();
     }
@@ -282,8 +289,8 @@ namespace albor
             return;
         // the policy is stored first, so the invalidation walks a view that already knows it (§8)
         m_visibility = visibility;
-        // the bar appeared or disappeared, which changes the frame (§6.1)
-        invalidate();
+        // the bar appearing or disappearing changes the content area, so both layout passes run (§8.2)
+        invalidate_layout();
     }
 
     ScrollbarVisibility ScrollView::scrollbar_visibility() const { return m_visibility; }
@@ -295,8 +302,8 @@ namespace albor
         // an always off bar is never drawn, while the content still scrolls (§8)
         if (m_visibility == ScrollbarVisibility::AlwaysOff)
             return false;
-        // the as needed policy draws the bar only while the content reaches past the viewport (§8)
-        return scrollable();
+        // the as needed policy draws the bar the measure pass reserved a gutter for (§8)
+        return bar_reserved();
     }
 
     void ScrollView::set_overscan(float pixels) {
@@ -319,7 +326,7 @@ namespace albor
     }
 
     void ScrollView::set_offset(float offset) {
-        // the offset is written as a user scroll writes it, so it detaches a binding (§7.3, AD-24)
+        // a write that changes the presented offset detaches a binding, while a no-op keeps it (§7.3, AD-24)
         scroll_to(offset);
     }
 
@@ -332,7 +339,7 @@ namespace albor
 
     float ScrollView::maximum_offset() const {
         // content that fits has nothing to scroll, which is the zero range (§8.2)
-        return std::max(0.0f, m_content_extent.height - viewport_rect().height);
+        return std::max(0.0f, m_content_extent.height - content_viewport().height);
     }
 
     void ScrollView::set_disabled(bool disabled) {
@@ -389,16 +396,16 @@ namespace albor
         return scrollable == nullptr ? nullptr : scrollable->row_node(position);
     }
 
-    bool ScrollView::scrollable() const { return m_content_extent.height > viewport_rect().height + 0.0f; }
+    bool ScrollView::scrollable() const { return m_content_extent.height > content_viewport().height + 0.0f; }
 
-    void ScrollView::scroll_by(float amount) { scroll_to(offset() + amount); }
+    bool ScrollView::scroll_by(float amount) { return scroll_to(offset() + amount); }
 
-    void ScrollView::scroll_to(float offset) {
+    bool ScrollView::scroll_to(float destination) {
         // the destination is clamped into the range, which is what stops a drag overshooting the content (§8.2)
-        const float clamped = std::clamp(offset, 0.0f, maximum_offset());
-        // an unchanged destination moves nothing, so no write and no report (§8.2)
-        if (m_offset.get() == clamped)
-            return;
+        const float clamped = std::clamp(destination, 0.0f, maximum_offset());
+        // the presented offset decides the no-op; the stored channel keeps its value for a range that grows (§7.3)
+        if (offset() == clamped)
+            return false;
         // a press on the bar is a user scroll, which takes precedence over a bound offset (§7.3, AD-24)
         m_offset.set(clamped);
         // the offset moved the content, so only the placement runs (§8.2)
@@ -406,6 +413,8 @@ namespace albor
         // a handler that is installed is told, which is what the signal reports (§8.3)
         if (m_on_scroll)
             m_on_scroll(clamped);
+        // the offset moved, which is what the wheel claim reads (§8.3)
+        return true;
     }
 
     void ScrollView::set_on_scroll(std::function<void(float)> handler) { m_on_scroll = std::move(handler); }
@@ -422,37 +431,84 @@ namespace albor
         return line;
     }
 
-    Rect ScrollView::viewport_rect() const { return m_bounds; }
+    Rect ScrollView::content_viewport() const {
+        // a reserved bar takes its gutter from the content, which keeps the content out of it (§8.2)
+        const float width = std::max(0.0f, m_bounds.width - (bar_reserved() ? bar_extent() : 0.0f));
+        // the content starts where the viewport starts, because only the trailing strip is reserved (§8.2)
+        return Rect::from_origin_size(Point{.x = m_bounds.x, .y = m_bounds.y}, Size{.width = width, .height = m_bounds.height});
+    }
+
+    bool ScrollView::bar_reserved() const {
+        // the policy is the one statement of the matrix: off takes none, on always, as needed from the measure (§8)
+        return m_visibility == ScrollbarVisibility::AlwaysOn || (m_visibility == ScrollbarVisibility::AsNeeded && m_bar_reserved);
+    }
+
+    float ScrollView::bar_extent() const {
+        // the width is what the theme says, or the value the bar always drew with (§6.1)
+        const float extent = theme() != nullptr ? theme()->metrics().scrollbar_extent : SCROLLBAR_EXTENT;
+        // a negative metric would widen the content past the viewport, so the gutter never inverts (§8.2)
+        return std::max(0.0f, extent);
+    }
+
+    float ScrollView::drawn_bar_extent() const {
+        // a bar wider than the view is clipped to it, so the strip never paints outside the bounds (§8.2)
+        return std::min(bar_extent(), m_bounds.width);
+    }
+
+    Size ScrollView::measure_content(float width) {
+        // the content is measured with no height ceiling, because a tall content scrolls (§8.2)
+        const SizeConstraints content_constraints = SizeConstraints::at_most(Size{.width = width, .height = std::numeric_limits<float>::infinity()});
+        // the reported extent starts empty, because a content child is what names it (§8.2)
+        Size measured_extent{};
+        // each child measures against that ceiling, so the content keeps its natural height (§8.2)
+        for (const auto& child : children()) {
+            // the child measures against the width the gutter leaves it (§8.2)
+            Size child_size{};
+            // the measure settles the size the child reports, which is what the extent below reads (§8.2)
+            child->measure(content_constraints, child_size);
+            // the content the scroll view scrolls is one container, so the last measured extent is the one (§8.2)
+            measured_extent = child_size;
+        }
+        // the scrollable contract reports the extent of the whole content rather than the built part (§8.2, AD-13)
+        const ScrollableContent* scrollable = dynamic_cast<const ScrollableContent*>(child_at(0));
+        // the reported extent is authoritative, because a virtualizing content builds only the visible rows (§8.2)
+        return scrollable != nullptr ? scrollable->content_extent() : measured_extent;
+    }
+
+    Rect ScrollView::scrollbar_track_rect() const {
+        // an unplaced view has no gutter to paint, so there is no strip either (§6.2)
+        if (m_bounds.empty())
+            return Rect{};
+        // the strip is the trailing edge of the bounds, which is the gutter the content viewport excludes (§8.2)
+        const float extent = drawn_bar_extent();
+        return Rect::from_origin_size(Point{.x = m_bounds.x + m_bounds.width - extent, .y = m_bounds.y}, Size{.width = extent, .height = m_bounds.height});
+    }
 
     void ScrollView::paint_scrollbar(RenderContext& context) const {
         // the policy decides whether a bar is drawn at all, which is a per instance decision (§8)
         if (!scrollbar_visible())
             return;
-        // the metrics come from the theme when one is installed (§6.1)
-        const ControlMetrics& metrics = theme() != nullptr ? theme()->metrics() : default_metrics();
-        // the width is what the theme says, or the value the bar always drew with (§6.1)
-        const float extent = theme() != nullptr ? metrics.scrollbar_extent : SCROLLBAR_EXTENT;
-        // the bar sits against the trailing edge of the viewport, which is where a vertical bar belongs (§6.1)
-        const Rect track = Rect::from_origin_size(Point{.x = m_bounds.x + m_bounds.width - extent, .y = m_bounds.y}, Size{.width = extent, .height = m_bounds.height});
+        // the strip is the reserved gutter, which the content viewport excludes (§8.2)
+        const Rect track = scrollbar_track_rect();
         // the track colour resolves by state, so a hover and a press differ without a second literal (§6.1)
         context.draw_rect(track, {.fill = resolve(track_colors(), Color{0.0f, 0.0f, 0.0f, 0.0f})});
         // a viewport with no travel has no reachable position, so the thumb is left off (§6.2)
         if (!scrollable())
             return;
+        // the thumb takes the width of the strip, so its end caps sit flush with the gutter (§6.1)
+        const float extent = drawn_bar_extent();
         // the thumb colour resolves by state, so the same resolver the other controls use reads it (§6.1)
         context.draw_rounded_rect(thumb_rect(), extent * 0.5f, {.fill = resolve(thumb_colors(), Color{0.42f, 0.46f, 0.52f, 1.0f})});
     }
 
     Rect ScrollView::thumb_rect() const {
-        // the metrics come from the theme when one is installed (§6.1)
-        const ControlMetrics& metrics = theme() != nullptr ? theme()->metrics() : default_metrics();
-        // the width is what the theme says, or the value the bar always drew with (§6.1)
-        const float extent = theme() != nullptr ? metrics.scrollbar_extent : SCROLLBAR_EXTENT;
+        // the width is the gutter the bounds can hold, which is the strip the thumb rides in (§8.2)
+        const float extent = drawn_bar_extent();
         // the smallest thumb is what the theme says, or the value the bar always drew with (§6.1)
-        const float floor = theme() != nullptr ? metrics.scrollbar_thumb_minimum : SCROLLBAR_THUMB_MINIMUM;
+        const float floor = theme() != nullptr ? theme()->metrics().scrollbar_thumb_minimum : SCROLLBAR_THUMB_MINIMUM;
         // the thumb takes the share of the track the viewport takes of the content, which is what the ratio means (§8.2)
         const float travel = m_bounds.height;
-        // the content is never shorter than the viewport here, because a bar is only drawn when it overflows (§8.2)
+        // the share is clamped, because a forced bar may be drawn before the content has any travel (§8.2)
         const float share = std::clamp(travel / std::max(1.0f, m_content_extent.height), 0.0f, 1.0f);
         // the thumb never shrinks below the grabbable floor, which is what keeps a long content reachable (§8.2)
         const float height = std::min(travel, std::max(floor, travel * share));
@@ -508,8 +564,10 @@ namespace albor
             return;
         // the row height travels first, because the window it produces is arithmetic over that height (§8.2, AD-13)
         apply_row_extent();
-        // the window carries the viewport, the content extent, the offset and the overscan (§8.2)
-        const ScrollViewport window{.viewport = viewport_rect().empty() ? Size{} : Size{.width = m_bounds.width, .height = m_bounds.height}, .content = m_content_extent, .offset = offset(), .overscan = m_overscan};
+        // the window carries the content viewport, the content extent, the offset and the overscan (§8.2)
+        const Rect viewport = content_viewport();
+        // the window names the area the content actually occupies, because a reserved gutter is not content (§8.2)
+        const ScrollViewport window{.viewport = viewport.empty() ? Size{} : Size{.width = viewport.width, .height = viewport.height}, .content = m_content_extent, .offset = offset(), .overscan = m_overscan};
         // the content builds against the window, which is what keeps only the visible rows materialized (§8.2, AD-13)
         scrollable->set_scroll_viewport(window);
     }
